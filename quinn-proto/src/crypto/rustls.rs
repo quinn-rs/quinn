@@ -46,7 +46,7 @@ impl crypto::Session for TlsSession {
     type ClientConfig = Arc<rustls::ClientConfig>;
     type HmacKey = hmac::Key;
     type HeaderKey = aead::quic::HeaderProtectionKey;
-    type Key = PacketKey;
+    type PacketKey = PacketKey;
     type ServerConfig = Arc<rustls::ServerConfig>;
 
     /// Create the initial set of keys given the initial ConnectionId
@@ -66,7 +66,7 @@ impl crypto::Session for TlsSession {
         }
     }
 
-    fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::Key)> {
+    fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::PacketKey)> {
         let secret = self.get_early_secret()?;
         // If an early secret is known, TLS guarantees it's associated with a resumption
         // ciphersuite,
@@ -126,7 +126,7 @@ impl crypto::Session for TlsSession {
         Some(result)
     }
 
-    fn next_1rtt_keys(&mut self) -> KeyPair<Self::Key> {
+    fn next_1rtt_keys(&mut self) -> KeyPair<Self::PacketKey> {
         let secrets = self.secrets.as_ref().expect("not in 1rtt");
         let next = self.update_secrets(&secrets.client, &secrets.server);
         let (local, remote) = select_secrets(&next, self.side());

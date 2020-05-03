@@ -38,7 +38,7 @@ pub trait Session: Send + Sized {
     /// Type of keys used to protect packet headers
     type HeaderKey: HeaderKey;
     /// Type used to represent packet protection keys
-    type Key: Key;
+    type PacketKey: PacketKey;
     /// Type used to hold configuration for server sessions
     type ServerConfig: ServerConfig<Self>;
 
@@ -59,7 +59,7 @@ pub trait Session: Send + Sized {
     ///
     /// Returns `None` if the key material is not available. This might happen if you have
     /// not connected to this server before.
-    fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::Key)>;
+    fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::PacketKey)>;
 
     /// If the 0-RTT-encrypted data has been accepted by the peer
     fn early_data_accepted(&self) -> Option<bool>;
@@ -86,7 +86,7 @@ pub trait Session: Send + Sized {
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<CryptoSpace<Self>>;
 
     /// Compute keys for the next key update
-    fn next_1rtt_keys(&mut self) -> KeyPair<Self::Key>;
+    fn next_1rtt_keys(&mut self) -> KeyPair<Self::PacketKey>;
 
     /// Generate the integrity tag for a retry packet
     fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
@@ -136,7 +136,7 @@ where
 }
 
 /// Keys used to protect packet payloads
-pub trait Key: Send {
+pub trait PacketKey: Send {
     /// Encrypt the packet payload with the given packet number
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
     /// Decrypt the packet payload with the given packet number

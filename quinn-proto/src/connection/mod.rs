@@ -16,7 +16,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{EndpointConfig, ServerConfig, TransportConfig},
-    crypto::{self, HeaderKey, Key, KeyPair},
+    crypto::{self, HeaderKey, KeyPair, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
     packet::{Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId},
@@ -102,12 +102,12 @@ where
     /// Highest usable packet number space
     highest_space: SpaceId,
     /// 1-RTT keys used prior to a key update
-    prev_crypto: Option<PrevCrypto<S::Key>>,
+    prev_crypto: Option<PrevCrypto<S::PacketKey>>,
     /// 1-RTT keys to be used for the next key update
     ///
     /// These are generated in advance to prevent timing attacks and/or DoS by third-party attackers
     /// spoofing key updates.
-    next_crypto: Option<KeyPair<S::Key>>,
+    next_crypto: Option<KeyPair<S::PacketKey>>,
     /// Latest PATH_CHALLENGE token issued to the peer along the current path
     path_challenge: Option<u64>,
     accepted_0rtt: bool,
@@ -2806,7 +2806,7 @@ pub fn initial_close<K, H, R>(
     reason: R,
 ) -> Box<[u8]>
 where
-    K: crypto::Key,
+    K: crypto::PacketKey,
     H: crypto::HeaderKey,
     R: Into<Close>,
 {
@@ -2965,7 +2965,7 @@ const MAX_ACK_BLOCKS: usize = 64;
 
 struct PrevCrypto<K>
 where
-    K: crypto::Key,
+    K: crypto::PacketKey,
 {
     /// The keys used for the previous key phase, temporarily retained to decrypt packets sent by
     /// the peer prior to its own key update.
@@ -3156,5 +3156,5 @@ impl DatagramState {
 
 struct ZeroRttCrypto<S: crypto::Session> {
     header: S::HeaderKey,
-    packet: S::Key,
+    packet: S::PacketKey,
 }

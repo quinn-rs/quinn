@@ -19,7 +19,8 @@ use crate::{
     config::{ClientConfig, ConfigError, EndpointConfig, ServerConfig},
     connection::{initial_close, Connection, ConnectionError},
     crypto::{
-        self, ClientConfig as ClientCryptoConfig, Key, KeyPair, ServerConfig as ServerCryptoConfig,
+        self, ClientConfig as ClientCryptoConfig, KeyPair, PacketKey,
+        ServerConfig as ServerCryptoConfig,
     },
     packet::{Header, Packet, PacketDecodeError, PartialDecode},
     shared::{
@@ -456,7 +457,7 @@ where
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         rest: Option<BytesMut>,
-        crypto: &KeyPair<S::Key>,
+        crypto: &KeyPair<S::PacketKey>,
         header_crypto: &KeyPair<S::HeaderKey>,
     ) -> Option<(ConnectionHandle, Connection<S>)> {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
@@ -551,7 +552,7 @@ where
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
                 buf.extend_from_slice(&S::retry_tag(&dst_cid, &buf));
-                encode.finish::<S::Key, S::HeaderKey>(&mut buf, &header_crypto.local, None);
+                encode.finish::<S::PacketKey, S::HeaderKey>(&mut buf, &header_crypto.local, None);
 
                 self.transmits.push_back(Transmit {
                     destination: remote,
