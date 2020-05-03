@@ -9,7 +9,7 @@ use ring::{aead, hmac};
 pub use rustls::TLSError;
 use rustls::{
     self,
-    quic::{ClientQuicExt, ServerQuicExt},
+    quic::{ClientQuicExt, Secrets, ServerQuicExt},
     Session,
 };
 use webpki::DNSNameRef;
@@ -21,18 +21,22 @@ use crate::{
 };
 
 /// A rustls TLS session
-pub enum TlsSession {
-    #[doc(hidden)]
+pub struct TlsSession {
+    /// Most recently computed secrets, if any
+    secrets: Option<Secrets>,
+    inner: SessionKind,
+}
+
+enum SessionKind {
     Client(rustls::ClientSession),
-    #[doc(hidden)]
     Server(rustls::ServerSession),
 }
 
 impl TlsSession {
     fn side(&self) -> Side {
-        match self {
-            TlsSession::Client(_) => Side::Client,
-            TlsSession::Server(_) => Side::Server,
+        match self.inner {
+            SessionKind::Client(_) => Side::Client,
+            SessionKind::Server(_) => Side::Server,
         }
     }
 }
@@ -48,9 +52,9 @@ impl crypto::Session for TlsSession {
         AuthenticationData {
             peer_certificates: self.get_peer_certificates().map(|v| v.into()),
             protocol: self.get_alpn_protocol().map(|p| p.into()),
-            server_name: match self {
-                TlsSession::Client(_) => None,
-                TlsSession::Server(session) => session.get_sni_hostname().map(|s| s.into()),
+            server_name: match self.inner {
+                SessionKind::Client(_) => None,
+                SessionKind::Server(ref session) => session.get_sni_hostname().map(|s| s.into()),
             },
         }
     }
@@ -69,16 +73,16 @@ impl crypto::Session for TlsSession {
     }
 
     fn early_data_accepted(&self) -> Option<bool> {
-        match self {
-            TlsSession::Client(session) => Some(session.is_early_data_accepted()),
+        match self.inner {
+            SessionKind::Client(ref session) => Some(session.is_early_data_accepted()),
             _ => None,
         }
     }
 
     fn is_handshaking(&self) -> bool {
-        match self {
-            TlsSession::Client(session) => session.is_handshaking(),
-            TlsSession::Server(session) => session.is_handshaking(),
+        match self.inner {
+            SessionKind::Client(ref session) => session.is_handshaking(),
+            SessionKind::Server(ref session) => session.is_handshaking(),
         }
     }
 
@@ -111,6 +115,7 @@ impl crypto::Session for TlsSession {
         let suite = self
             .get_negotiated_ciphersuite()
             .expect("should not get secrets without cipher suite");
+        self.secrets = Some(secrets.clone());
         Some(Crypto::new(
             self.side(),
             suite.get_aead_alg(),
@@ -119,20 +124,12 @@ impl crypto::Session for TlsSession {
         ))
     }
 
-    fn update_keys(&self, keys: &Self::Keys) -> Self::Keys {
-        let (client_secret, server_secret) = match self.side() {
-            Side::Client => (&keys.local_secret, &keys.remote_secret),
-            Side::Server => (&keys.remote_secret, &keys.local_secret),
-        };
-
-        let secrets = self.update_secrets(&client_secret, &server_secret);
+    fn next_1rtt_keys(&mut self) -> Crypto {
+        let secrets = self.secrets.as_ref().expect("not in 1rtt");
+        let next = self.update_secrets(&secrets.client, &secrets.server);
+        self.secrets = Some(next.clone());
         let suite = self.get_negotiated_ciphersuite().unwrap();
-        Crypto::new(
-            self.side(),
-            suite.get_aead_alg(),
-            secrets.client,
-            secrets.server,
-        )
+        Crypto::new(self.side(), suite.get_aead_alg(), next.client, next.server)
     }
 
     fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
@@ -181,18 +178,18 @@ impl crypto::Session for TlsSession {
 impl Deref for TlsSession {
     type Target = dyn rustls::Session;
     fn deref(&self) -> &Self::Target {
-        match *self {
-            TlsSession::Client(ref session) => session,
-            TlsSession::Server(ref session) => session,
+        match self.inner {
+            SessionKind::Client(ref session) => session,
+            SessionKind::Server(ref session) => session,
         }
     }
 }
 
 impl DerefMut for TlsSession {
     fn deref_mut(&mut self) -> &mut (dyn rustls::Session + 'static) {
-        match *self {
-            TlsSession::Client(ref mut session) => session,
-            TlsSession::Server(ref mut session) => session,
+        match self.inner {
+            SessionKind::Client(ref mut session) => session,
+            SessionKind::Server(ref mut session) => session,
         }
     }
 }
@@ -249,11 +246,14 @@ impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
     ) -> Result<TlsSession, ConnectError> {
         let pki_server_name = DNSNameRef::try_from_ascii_str(server_name)
             .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?;
-        Ok(TlsSession::Client(rustls::ClientSession::new_quic(
-            self,
-            pki_server_name,
-            to_vec(params),
-        )))
+        Ok(TlsSession {
+            secrets: None,
+            inner: SessionKind::Client(rustls::ClientSession::new_quic(
+                self,
+                pki_server_name,
+                to_vec(params),
+            )),
+        })
     }
 }
 
@@ -266,7 +266,10 @@ impl crypto::ServerConfig<TlsSession> for Arc<rustls::ServerConfig> {
     }
 
     fn start_session(&self, params: &TransportParameters) -> TlsSession {
-        TlsSession::Server(rustls::ServerSession::new_quic(self, to_vec(params)))
+        TlsSession {
+            secrets: None,
+            inner: SessionKind::Server(rustls::ServerSession::new_quic(self, to_vec(params))),
+        }
     }
 }
 
