@@ -16,7 +16,9 @@ use webpki::DNSNameRef;
 
 use super::ring::{generate_key_pairs, generate_keys, initial_keys, PacketKey};
 use crate::{
-    connection::CryptoSpace, crypto, crypto::KeyPair, transport_parameters::TransportParameters,
+    crypto,
+    crypto::{KeyPair, Keys},
+    transport_parameters::TransportParameters,
     CertificateChain, ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
 };
 
@@ -50,9 +52,9 @@ impl crypto::Session for TlsSession {
     type ServerConfig = Arc<rustls::ServerConfig>;
 
     /// Create the initial set of keys given the initial ConnectionId
-    fn initial_keys(id: &ConnectionId, side: Side) -> CryptoSpace<Self> {
+    fn initial_keys(id: &ConnectionId, side: Side) -> Keys<Self> {
         let (header, packet) = initial_keys(id, side);
-        CryptoSpace { header, packet }
+        Keys { header, packet }
     }
 
     fn authentication_data(&self) -> AuthenticationData {
@@ -113,7 +115,7 @@ impl crypto::Session for TlsSession {
         }
     }
 
-    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<CryptoSpace<Self>> {
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys<Self>> {
         let secrets = self.write_hs(buf)?;
         let (local, remote) = select_secrets(&secrets, self.side());
         let suite = self
@@ -121,7 +123,7 @@ impl crypto::Session for TlsSession {
             .expect("should not get secrets without cipher suite");
         let aead = suite.get_aead_alg();
         let (header, packet) = generate_key_pairs(aead, local, remote);
-        let result = CryptoSpace { header, packet };
+        let result = Keys { header, packet };
         self.secrets = Some(secrets);
         Some(result)
     }

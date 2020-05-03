@@ -7,14 +7,14 @@ use std::{
 
 use super::assembler::Assembler;
 use crate::{
-    crypto, crypto::KeyPair, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt,
+    crypto, crypto::Keys, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt,
 };
 
 pub(crate) struct PacketSpace<S>
 where
     S: crypto::Session,
 {
-    pub(crate) crypto: Option<CryptoSpace<S>>,
+    pub(crate) crypto: Option<Keys<S>>,
     pub(crate) dedup: Dedup,
     /// Highest received packet number
     pub(crate) rx_packet: u64,
@@ -302,14 +302,6 @@ impl Dedup {
             true
         }
     }
-}
-
-pub struct CryptoSpace<S>
-where
-    S: crypto::Session,
-{
-    pub packet: KeyPair<S::PacketKey>,
-    pub header: KeyPair<S::HeaderKey>,
 }
 
 #[cfg(test)]

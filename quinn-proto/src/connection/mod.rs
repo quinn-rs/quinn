@@ -16,7 +16,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{EndpointConfig, ServerConfig, TransportConfig},
-    crypto::{self, HeaderKey, KeyPair, PacketKey},
+    crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
     packet::{Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId},
@@ -35,7 +35,6 @@ mod assembler;
 mod send_buffer;
 
 mod spaces;
-pub use spaces::CryptoSpace;
 use spaces::{PacketSpace, Retransmits, SentPacket};
 
 mod streams;
@@ -1496,7 +1495,7 @@ where
     }
 
     /// Switch to stronger cryptography during handshake
-    fn upgrade_crypto(&mut self, space: SpaceId, crypto: CryptoSpace<S>) {
+    fn upgrade_crypto(&mut self, space: SpaceId, crypto: Keys<S>) {
         debug_assert!(
             self.spaces[space as usize].crypto.is_none(),
             "already reached packet space {:?}",
