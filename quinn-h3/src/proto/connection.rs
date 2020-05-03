@@ -1,8 +1,8 @@
-use std::collections::VecDeque;
+use std::collections::HashSet;
 
 use bytes::{Buf, Bytes, BytesMut};
 use quinn_proto::StreamId;
-use std::convert::TryFrom;
+use std::{cmp, convert::TryFrom};
 use tracing::trace;
 
 use crate::{
@@ -45,7 +45,8 @@ pub struct Connection {
     decoder_table: DynamicTable,
     encoder_table: DynamicTable,
     pending_streams: [BytesMut; 3],
-    requests_in_flight: VecDeque<StreamId>,
+    requests_in_flight: HashSet<StreamId>,
+    max_id_in_flight: u64,
     go_away: bool,
 
     #[cfg(feature = "interop-test-accessors")]
@@ -75,7 +76,8 @@ impl Connection {
             pending_streams,
             remote_settings: None,
             encoder_table: DynamicTable::new(),
-            requests_in_flight: VecDeque::with_capacity(32),
+            requests_in_flight: HashSet::with_capacity(32),
+            max_id_in_flight: 0,
             go_away: false,
 
             #[cfg(feature = "interop-test-accessors")]
@@ -187,13 +189,14 @@ impl Connection {
 
     pub fn request_initiated(&mut self, id: StreamId) {
         if !self.go_away {
-            self.requests_in_flight.push_back(id);
+            self.requests_in_flight.insert(id);
+            self.max_id_in_flight = cmp::max(id.0, self.max_id_in_flight);
         }
     }
 
     pub fn request_finished(&mut self, id: StreamId) {
         if !self.go_away {
-            self.requests_in_flight.push_back(id);
+            self.requests_in_flight.remove(&id);
         }
     }
 
@@ -204,8 +207,7 @@ impl Connection {
     pub fn go_away(&mut self) {
         if !self.go_away {
             self.go_away = true;
-            let id = self.requests_in_flight.back().map(|i| i.0).unwrap_or(0) + 1;
-            HttpFrame::Goaway(id)
+            HttpFrame::Goaway(self.max_id_in_flight)
                 .encode(&mut self.pending_streams[PendingStreamType::Control as usize]);
         }
     }
@@ -293,7 +295,8 @@ mod tests {
                     BytesMut::with_capacity(2048),
                     BytesMut::with_capacity(2048),
                 ],
-                requests_in_flight: VecDeque::with_capacity(32),
+                requests_in_flight: HashSet::with_capacity(32),
+                max_id_in_flight: 0,
                 go_away: false,
 
                 #[cfg(feature = "interop-test-accessors")]
