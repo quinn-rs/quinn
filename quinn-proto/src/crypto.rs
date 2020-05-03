@@ -13,8 +13,8 @@ use std::str;
 use bytes::BytesMut;
 
 use crate::{
-    config::ConfigError, connection::CryptoSpace, shared::ConnectionId,
-    transport_parameters::TransportParameters, ConnectError, Side, TransportError,
+    config::ConfigError, shared::ConnectionId, transport_parameters::TransportParameters,
+    ConnectError, Side, TransportError,
 };
 
 /// Cryptography interface based on *ring*
@@ -43,7 +43,7 @@ pub trait Session: Send + Sized {
     type ServerConfig: ServerConfig<Self>;
 
     /// Create the initial set of keys given the client's initial destination ConnectionId
-    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> CryptoSpace<Self>;
+    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys<Self>;
 
     /// Get the data agreed upon during the cryptographic handshake
     ///
@@ -83,7 +83,7 @@ pub trait Session: Send + Sized {
     ///
     /// When the handshake proceeds to the next phase, this method will return a new set of
     /// keys to encrypt data with.
-    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<CryptoSpace<Self>>;
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys<Self>>;
 
     /// Compute keys for the next key update
     fn next_1rtt_keys(&mut self) -> KeyPair<Self::PacketKey>;
@@ -101,6 +101,17 @@ pub struct KeyPair<T> {
     pub local: T,
     /// Key for decrypting data
     pub remote: T,
+}
+
+/// A complete set of keys for a certain packet space
+pub struct Keys<S>
+where
+    S: Session,
+{
+    /// Header protection keys
+    pub header: KeyPair<S::HeaderKey>,
+    /// Packet protection keys
+    pub packet: KeyPair<S::PacketKey>,
 }
 
 /// Client-side configuration for the crypto protocol
