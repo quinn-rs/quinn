@@ -14,7 +14,7 @@ use rustls::{
 };
 use webpki::DNSNameRef;
 
-use super::ring::Crypto;
+use super::ring::{initial_keys, Crypto};
 use crate::{
     crypto, transport_parameters::TransportParameters, CertificateChain, ConnectError,
     ConnectionId, Side, TransportError, TransportErrorCode,
@@ -47,6 +47,11 @@ impl crypto::Session for TlsSession {
     type HmacKey = hmac::Key;
     type Keys = Crypto;
     type ServerConfig = Arc<rustls::ServerConfig>;
+
+    /// Create the initial set of keys given the initial ConnectionId
+    fn initial_keys(id: &ConnectionId, side: Side) -> Crypto {
+        initial_keys(id, side)
+    }
 
     fn authentication_data(&self) -> AuthenticationData {
         AuthenticationData {

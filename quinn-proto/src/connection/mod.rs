@@ -179,7 +179,7 @@ where
             Side::Client
         };
         let initial_space = PacketSpace {
-            crypto: Some(CryptoSpace::new(S::Keys::new_initial(&init_cid, side))),
+            crypto: Some(CryptoSpace::new(S::initial_keys(&init_cid, side))),
             ..PacketSpace::new(now)
         };
         let state = State::Handshake(state::Handshake {
@@ -1764,9 +1764,7 @@ where
 
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
                         self.spaces[0] = PacketSpace {
-                            crypto: Some(CryptoSpace::new(S::Keys::new_initial(
-                                &rem_cid, self.side,
-                            ))),
+                            crypto: Some(CryptoSpace::new(S::initial_keys(&rem_cid, self.side))),
                             next_packet_number: self.spaces[0].next_packet_number,
                             crypto_offset: client_hello.len() as u64,
                             ..PacketSpace::new(now)

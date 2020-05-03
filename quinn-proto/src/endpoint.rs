@@ -252,7 +252,7 @@ where
                 return None;
             }
 
-            let crypto = S::Keys::new_initial(&dst_cid, Side::Server);
+            let crypto = S::initial_keys(&dst_cid, Side::Server);
             let header_crypto = crypto.header_keys();
             return match first_decode.finish(Some(&header_crypto)) {
                 Ok(packet) => self

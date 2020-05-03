@@ -91,17 +91,6 @@ impl From<hkdf::Okm<'_, IvLen>> for Iv {
 impl crypto::Keys for Crypto {
     type HeaderKeys = RingHeaderCrypto;
 
-    fn new_initial(id: &ConnectionId, side: Side) -> Self {
-        let cipher = &aead::AES_128_GCM;
-        const CLIENT_LABEL: &[u8] = b"client in";
-        const SERVER_LABEL: &[u8] = b"server in";
-        let hs_secret = initial_secret(id);
-
-        let client_secret = expanded_initial_secret(&hs_secret, CLIENT_LABEL);
-        let server_secret = expanded_initial_secret(&hs_secret, SERVER_LABEL);
-        Self::new(side, cipher, client_secret, server_secret)
-    }
-
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
         let (cipher, iv, key) = (
             self.sealing_key.algorithm(),
@@ -230,6 +219,16 @@ fn header_key_from_secret(
     }
 }
 
+pub(crate) fn initial_keys(id: &ConnectionId, side: Side) -> Crypto {
+    const CLIENT_LABEL: &[u8] = b"client in";
+    const SERVER_LABEL: &[u8] = b"server in";
+    let hs_secret = initial_secret(id);
+
+    let client = expanded_initial_secret(&hs_secret, CLIENT_LABEL);
+    let server = expanded_initial_secret(&hs_secret, SERVER_LABEL);
+    Crypto::new(side, &aead::AES_128_GCM, client, server)
+}
+
 fn expanded_initial_secret(prk: &hkdf::Prk, label: &[u8]) -> hkdf::Prk {
     hkdf_expand(prk, label, hkdf::HKDF_SHA256)
 }
@@ -288,8 +287,8 @@ mod test {
     #[test]
     fn handshake_crypto_roundtrip() {
         let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
-        let client = Crypto::new_initial(&conn, Side::Client);
-        let server = Crypto::new_initial(&conn, Side::Server);
+        let client = initial_keys(&conn, Side::Client);
+        let server = initial_keys(&conn, Side::Server);
 
         let mut buf = b"headerpayload".to_vec();
         buf.resize(buf.len() + client.tag_len(), 0);
@@ -321,9 +320,9 @@ mod test {
     #[test]
     fn packet_protection() {
         let id = ConnectionId::new(&hex!("8394c8f03e515708"));
-        let server = Crypto::new_initial(&id, Side::Server);
+        let server = initial_keys(&id, Side::Server);
         let server_header = server.header_keys();
-        let client = Crypto::new_initial(&id, Side::Client);
+        let client = initial_keys(&id, Side::Client);
         let client_header = client.header_keys();
         let plaintext = hex!(
             "c1ff00001205f067a5502a4262b50040740000

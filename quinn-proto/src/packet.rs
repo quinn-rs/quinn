@@ -822,16 +822,16 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "ring")]
+    #[cfg(feature = "rustls")]
     #[test]
     fn header_encoding() {
         use crate::{
-            crypto::{ring::Crypto, Keys},
+            crypto::{rustls::TlsSession, Keys, Session},
             Side,
         };
 
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
-        let client_crypto = Crypto::new_initial(&dcid, Side::Client);
+        let client_crypto = TlsSession::initial_keys(&dcid, Side::Client);
         let client_header_crypto = client_crypto.header_keys();
         let mut buf = Vec::new();
         let header = Header::Initial {
@@ -857,7 +857,7 @@ mod tests {
             )[..]
         );
 
-        let server_crypto = Crypto::new_initial(&dcid, Side::Server);
+        let server_crypto = TlsSession::initial_keys(&dcid, Side::Server);
         let server_header_crypto = server_crypto.header_keys();
         let decode = PartialDecode::new(buf.as_slice().into(), 0).unwrap().0;
         let mut packet = decode.finish(Some(&server_header_crypto)).unwrap();
