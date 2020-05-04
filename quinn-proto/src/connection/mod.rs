@@ -35,7 +35,8 @@ mod assembler;
 mod send_buffer;
 
 mod spaces;
-use spaces::{CryptoSpace, PacketSpace, Retransmits, SentPacket};
+pub use spaces::CryptoSpace;
+use spaces::{PacketSpace, Retransmits, SentPacket};
 
 mod streams;
 use streams::Streams;
@@ -80,7 +81,7 @@ where
     /// Whether or not 0-RTT was enabled during the handshake. Does not imply acceptance.
     zero_rtt_enabled: bool,
     /// Set if 0-RTT is supported, then cleared when no longer needed.
-    zero_rtt_crypto: Option<CryptoSpace<S::Keys>>,
+    zero_rtt_crypto: Option<CryptoSpace<S>>,
     key_phase: bool,
     /// Transport parameters set by the peer
     params: TransportParameters,
@@ -97,7 +98,7 @@ where
     /// Outgoing spin bit state
     spin: bool,
     /// Packet number spaces: initial, handshake, 1-RTT
-    spaces: [PacketSpace<S::Keys>; 3],
+    spaces: [PacketSpace<S>; 3],
     /// Highest usable packet number space
     highest_space: SpaceId,
     /// 1-RTT keys used prior to a key update
@@ -179,7 +180,7 @@ where
             Side::Client
         };
         let initial_space = PacketSpace {
-            crypto: Some(CryptoSpace::new(S::initial_keys(&init_cid, side))),
+            crypto: Some(S::initial_keys(&init_cid, side)),
             ..PacketSpace::new(now)
         };
         let state = State::Handshake(state::Handshake {
@@ -1198,7 +1199,7 @@ where
 
     fn earliest_time_and_space(
         &self,
-        get: impl Fn(&PacketSpace<S::Keys>) -> Option<Instant>,
+        get: impl Fn(&PacketSpace<S>) -> Option<Instant>,
     ) -> Option<(Instant, SpaceId)> {
         SpaceId::iter()
             .filter(|&id| id != SpaceId::Data || !self.is_handshaking())
@@ -1383,7 +1384,7 @@ where
     }
 
     fn init_0rtt(&mut self) {
-        let packet = match self.crypto.early_crypto() {
+        let crypto = match self.crypto.early_crypto() {
             Some(x) => x,
             None => return,
         };
@@ -1411,10 +1412,7 @@ where
         }
         trace!("0-RTT enabled");
         self.zero_rtt_enabled = true;
-        self.zero_rtt_crypto = Some(CryptoSpace {
-            header: packet.header_keys(),
-            packet,
-        });
+        self.zero_rtt_crypto = Some(crypto);
     }
 
     fn read_crypto(
@@ -1497,7 +1495,7 @@ where
     }
 
     /// Switch to stronger cryptography during handshake
-    fn upgrade_crypto(&mut self, space: SpaceId, crypto: S::Keys) {
+    fn upgrade_crypto(&mut self, space: SpaceId, crypto: CryptoSpace<S>) {
         debug_assert!(
             self.spaces[space as usize].crypto.is_none(),
             "already reached packet space {:?}",
@@ -1508,7 +1506,7 @@ where
             // Precompute the first key update
             self.next_crypto = Some(self.crypto.next_1rtt_keys());
         }
-        self.spaces[space as usize].crypto = Some(CryptoSpace::new(crypto));
+        self.spaces[space as usize].crypto = Some(crypto);
         debug_assert!(space as usize > self.highest_space as usize);
         self.highest_space = space;
         if space == SpaceId::Data && self.side.is_client() {
@@ -1764,7 +1762,7 @@ where
 
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
                         self.spaces[0] = PacketSpace {
-                            crypto: Some(CryptoSpace::new(S::initial_keys(&rem_cid, self.side))),
+                            crypto: Some(S::initial_keys(&rem_cid, self.side)),
                             next_packet_number: self.spaces[0].next_packet_number,
                             crypto_offset: client_hello.len() as u64,
                             ..PacketSpace::new(now)
@@ -2743,11 +2741,11 @@ where
         Duration::from_micros(self.params.max_ack_delay * 1000)
     }
 
-    fn space(&self, id: SpaceId) -> &PacketSpace<S::Keys> {
+    fn space(&self, id: SpaceId) -> &PacketSpace<S> {
         &self.spaces[id as usize]
     }
 
-    fn space_mut(&mut self, id: SpaceId) -> &mut PacketSpace<S::Keys> {
+    fn space_mut(&mut self, id: SpaceId) -> &mut PacketSpace<S> {
         &mut self.spaces[id as usize]
     }
 
@@ -2791,16 +2789,16 @@ where
     }
 }
 
-pub fn initial_close<K, R>(
-    crypto: &K,
-    header_crypto: &K::HeaderKeys,
+pub fn initial_close<S, R>(
+    crypto: &S::Keys,
+    header_crypto: &S::HeaderKeys,
     remote_id: &ConnectionId,
     local_id: &ConnectionId,
     packet_number: u8,
     reason: R,
 ) -> Box<[u8]>
 where
-    K: crypto::Keys,
+    S: crypto::Session,
     R: Into<Close>,
 {
     let number = PacketNumber::U8(packet_number);

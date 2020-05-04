@@ -11,10 +11,8 @@ use crate::{
 
 /// Keys for encrypting and decrypting packet payloads
 pub struct Crypto {
-    pub(crate) local_secret: hkdf::Prk,
     local_iv: Iv,
     sealing_key: aead::LessSafeKey,
-    pub(crate) remote_secret: hkdf::Prk,
     remote_iv: Iv,
     opening_key: aead::LessSafeKey,
 }
@@ -35,10 +33,8 @@ impl Crypto {
         let (remote_key, remote_iv) = Self::get_keys(cipher, &remote_secret);
 
         Crypto {
-            local_secret,
             sealing_key: aead::LessSafeKey::new(local_key),
             local_iv,
-            remote_secret,
             opening_key: aead::LessSafeKey::new(remote_key),
             remote_iv,
         }
@@ -89,8 +85,6 @@ impl From<hkdf::Okm<'_, IvLen>> for Iv {
 }
 
 impl crypto::Keys for Crypto {
-    type HeaderKeys = RingHeaderCrypto;
-
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
         let (cipher, iv, key) = (
             self.sealing_key.algorithm(),
@@ -135,14 +129,6 @@ impl crypto::Keys for Crypto {
             .map_err(|_| ())?;
         payload.truncate(payload_len - cipher.tag_len());
         Ok(())
-    }
-
-    fn header_keys(&self) -> RingHeaderCrypto {
-        let cipher = self.sealing_key.algorithm();
-        RingHeaderCrypto {
-            local: header_key_from_secret(cipher, &self.local_secret),
-            remote: header_key_from_secret(cipher, &self.remote_secret),
-        }
     }
 
     fn tag_len(&self) -> usize {
@@ -219,14 +205,15 @@ fn header_key_from_secret(
     }
 }
 
-pub(crate) fn initial_keys(id: &ConnectionId, side: Side) -> Crypto {
+pub(crate) fn initial_keys(id: &ConnectionId, side: Side) -> (RingHeaderCrypto, Crypto) {
     const CLIENT_LABEL: &[u8] = b"client in";
     const SERVER_LABEL: &[u8] = b"server in";
     let hs_secret = initial_secret(id);
 
     let client = expanded_initial_secret(&hs_secret, CLIENT_LABEL);
     let server = expanded_initial_secret(&hs_secret, SERVER_LABEL);
-    Crypto::new(side, &aead::AES_128_GCM, client, server)
+
+    generate_key_pairs(side, &aead::AES_128_GCM, client, server)
 }
 
 fn expanded_initial_secret(prk: &hkdf::Prk, label: &[u8]) -> hkdf::Prk {
@@ -275,6 +262,25 @@ impl crypto::HmacKey for hmac::Key {
     }
 }
 
+pub(crate) fn generate_key_pairs(
+    side: Side,
+    aead: &'static aead::Algorithm,
+    client_secret: hkdf::Prk,
+    server_secret: hkdf::Prk,
+) -> (RingHeaderCrypto, Crypto) {
+    let (local_secret, remote_secret) = match side {
+        Side::Client => (&client_secret, &server_secret),
+        Side::Server => (&server_secret, &client_secret),
+    };
+    (
+        RingHeaderCrypto {
+            local: header_key_from_secret(aead, local_secret),
+            remote: header_key_from_secret(aead, remote_secret),
+        },
+        Crypto::new(side, aead, client_secret, server_secret),
+    )
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -287,8 +293,8 @@ mod test {
     #[test]
     fn handshake_crypto_roundtrip() {
         let conn = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
-        let client = initial_keys(&conn, Side::Client);
-        let server = initial_keys(&conn, Side::Server);
+        let (_, client) = initial_keys(&conn, Side::Client);
+        let (_, server) = initial_keys(&conn, Side::Server);
 
         let mut buf = b"headerpayload".to_vec();
         buf.resize(buf.len() + client.tag_len(), 0);
@@ -320,10 +326,8 @@ mod test {
     #[test]
     fn packet_protection() {
         let id = ConnectionId::new(&hex!("8394c8f03e515708"));
-        let server = initial_keys(&id, Side::Server);
-        let server_header = server.header_keys();
-        let client = initial_keys(&id, Side::Client);
-        let client_header = client.header_keys();
+        let (server_header, server) = initial_keys(&id, Side::Server);
+        let (client_header, client) = initial_keys(&id, Side::Client);
         let plaintext = hex!(
             "c1ff00001205f067a5502a4262b50040740000
              0d0000000018410a020000560303eefc e7f7b37ba1d1632e96677825ddf73988

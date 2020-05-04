@@ -13,8 +13,8 @@ use std::str;
 use bytes::BytesMut;
 
 use crate::{
-    config::ConfigError, shared::ConnectionId, transport_parameters::TransportParameters,
-    ConnectError, Side, TransportError,
+    config::ConfigError, connection::CryptoSpace, shared::ConnectionId,
+    transport_parameters::TransportParameters, ConnectError, Side, TransportError,
 };
 
 /// Cryptography interface based on *ring*
@@ -35,13 +35,15 @@ pub trait Session: Send + Sized {
     type ClientConfig: ClientConfig<Self>;
     /// Type used to sign various values
     type HmacKey: HmacKey;
+    /// Type used for header protection keys
+    type HeaderKeys: HeaderKeys;
     /// Type used to represent packet protection keys
     type Keys: Keys;
     /// Type used to hold configuration for server sessions
     type ServerConfig: ServerConfig<Self>;
 
     /// Create the initial set of keys given the client's initial destination ConnectionId
-    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Self::Keys;
+    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> CryptoSpace<Self>;
 
     /// Get the data agreed upon during the cryptographic handshake
     ///
@@ -57,7 +59,7 @@ pub trait Session: Send + Sized {
     ///
     /// Returns `None` if the key material is not available. This might happen if you have
     /// not connected to this server before.
-    fn early_crypto(&self) -> Option<Self::Keys>;
+    fn early_crypto(&self) -> Option<CryptoSpace<Self>>;
 
     /// If the 0-RTT-encrypted data has been accepted by the peer
     fn early_data_accepted(&self) -> Option<bool>;
@@ -81,7 +83,7 @@ pub trait Session: Send + Sized {
     ///
     /// When the handshake proceeds to the next phase, this method will return a new set of
     /// keys to encrypt data with.
-    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Self::Keys>;
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<CryptoSpace<Self>>;
 
     /// Compute keys for the next key update
     fn next_1rtt_keys(&mut self) -> Self::Keys;
@@ -127,15 +129,10 @@ where
 
 /// Keys used to protect packet payloads
 pub trait Keys: Send {
-    /// Type used for header protection keys
-    type HeaderKeys: HeaderKeys;
-
     /// Encrypt the packet payload with the given packet number
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
     /// Decrypt the packet payload with the given packet number
     fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()>;
-    /// Derive the header protection keys from these packet protection keys
-    fn header_keys(&self) -> Self::HeaderKeys;
     /// The length of the AEAD tag appended to packets on encryption
     fn tag_len(&self) -> usize;
 }
