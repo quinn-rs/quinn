@@ -450,7 +450,7 @@ impl Connection {
     ///     let (response, mut body_reader) = recv_response.await?;
     ///     let mut body = String::new();
     ///     body_reader.read_to_string(&mut body).await?;
-    ///    
+    ///
     ///     Ok(())
     /// }
     /// ```
@@ -512,14 +512,14 @@ impl Connection {
 
         let recv = RecvResponse::new(FrameDecoder::stream(recv), self.0.clone(), stream_id);
         match body.into() {
-            Body::Buf(payload) => {
+            Body(Some(payload)) => {
                 let send: WriteFrame<DataFrame<_>> = WriteFrame::new(send, DataFrame { payload });
                 Ok((
                     recv,
                     BodyWriter::new(send.await?, self.0.clone(), stream_id, false),
                 ))
             }
-            Body::None => Ok((
+            Body(None) => Ok((
                 recv,
                 BodyWriter::new(send, self.0.clone(), stream_id, false),
             )),

@@ -785,8 +785,8 @@ impl Sender {
         )?
         .await?;
         let send = match body.into() {
-            Body::None => send,
-            Body::Buf(payload) => WriteFrame::new(send, DataFrame { payload }).await?,
+            Body(None) => send,
+            Body(Some(payload)) => WriteFrame::new(send, DataFrame { payload }).await?,
         };
         Ok(BodyWriter::new(send, self.conn, self.stream_id, true))
     }

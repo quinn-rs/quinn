@@ -39,28 +39,23 @@ use crate::{
 ///
 /// [`http::Request<B>`]: https://docs.rs/http/*/http/request/index.html
 /// [`http::Response<B>`]: https://docs.rs/http/*/http/response/index.html
-pub enum Body {
-    /// Inexistent body
-    None,
-    /// Buffer-contained body
-    Buf(Bytes),
-}
+pub struct Body(pub(crate) Option<Bytes>);
 
 impl From<()> for Body {
     fn from(_: ()) -> Self {
-        Body::None
+        Body(None)
     }
 }
 
 impl From<Bytes> for Body {
     fn from(buf: Bytes) -> Self {
-        Body::Buf(buf)
+        Body(Some(buf))
     }
 }
 
 impl From<&str> for Body {
     fn from(buf: &str) -> Self {
-        Body::Buf(Bytes::copy_from_slice(buf.as_ref()))
+        Body(Some(Bytes::copy_from_slice(buf.as_ref())))
     }
 }
 
@@ -360,7 +355,7 @@ impl BodyWriter {
     ///     let mut trailers = HeaderMap::new();
     ///     trailers.insert("trailing", "here".parse()?);
     ///     body_writer.trailers(trailers).await?;
-    ///    
+    ///
     ///     Ok(())
     /// }
     /// ```
