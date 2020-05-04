@@ -11,7 +11,7 @@ use helpers::{get, post, timeout_join, Helper};
 async fn serve_one(mut incoming: IncomingConnection) -> Result<(), crate::Error> {
     let mut incoming_req = incoming.next().await.expect("no accept").await?;
     while let Some(recv_req) = incoming_req.next().await {
-        let (_, sender) = recv_req.await?;
+        let (_, mut sender) = recv_req.await?;
         sender
             .send_response(
                 Response::builder()
@@ -58,7 +58,7 @@ async fn serve_one_request_client_body(mut incoming: IncomingConnection) -> Stri
         .await
         .expect("accept");
     let recv_req = incoming_req.next().await.expect("wait request");
-    let (mut req, sender) = recv_req.await.expect("recv_req");
+    let (mut req, mut sender) = recv_req.await.expect("recv_req");
     let body = req.body_mut().read_to_end().await.expect("read body");
 
     sender
@@ -120,7 +120,7 @@ async fn client_cancel_response() {
             .expect("accept");
         let recv_req = incoming_req.next().await.expect("wait request");
         delay_for(Duration::from_millis(25)).await;
-        let (_, sender) = recv_req.await.expect("recv_req");
+        let (_, mut sender) = recv_req.await.expect("recv_req");
         sender
             .send_response(
                 Response::builder()
@@ -158,7 +158,7 @@ async fn go_away() {
             .expect("accept");
         let recv_req = incoming_req.next().await.expect("wait request");
         incoming_req.go_away();
-        let (_, sender) = recv_req.await.expect("recv_req");
+        let (_, mut sender) = recv_req.await.expect("recv_req");
         sender
             .send_response(
                 Response::builder()
@@ -196,7 +196,7 @@ async fn serve_n_0rtt(mut incoming: IncomingConnection, n: usize) -> Result<(), 
             .map_err(|_| ())
             .expect("0rtt failed");
         while let Some(recv_req) = incoming_req.next().await {
-            let (_, sender) = recv_req.await?;
+            let (_, mut sender) = recv_req.await?;
             sender
                 .send_response(
                     Response::builder()

@@ -93,7 +93,7 @@ async fn download_server(
         select! {
             _ = &mut stop_recv => break,
             Some(recv_req) = incoming_req.next() => {
-                let (request, sender) = recv_req.await.expect("recv_req");
+                let (request, mut sender) = recv_req.await.expect("recv_req");
                 let frame_size = request
                     .headers()
                     .get("frame_size")
@@ -175,7 +175,7 @@ async fn upload_server(
         select! {
             _ = &mut stop_recv => break,
             Some(recv_req) = incoming_req.next() => {
-                let (mut req, sender) = recv_req.await.expect("recv_req");
+                let (mut req, mut sender) = recv_req.await.expect("recv_req");
                 while let Some(Ok(_)) = req.body_mut().data().await {}
                 let response = Response::builder()
                     .status(StatusCode::OK)
