@@ -119,13 +119,12 @@ async fn client_cancel_response() {
             .await
             .expect("accept");
         let recv_req = incoming_req.next().await.expect("wait request");
-        delay_for(Duration::from_millis(25)).await;
         let (_, mut sender) = recv_req.await.expect("recv_req");
         sender
             .send_response(
                 Response::builder()
                     .status(StatusCode::OK)
-                    .body(Body::from(()))
+                    .body(Body::from("a".repeat(1024 * 1024 * 100).as_ref()))
                     .unwrap(),
             )
             .await
@@ -133,10 +132,9 @@ async fn client_cancel_response() {
     });
 
     let conn = helper.make_connection().await;
-    delay_for(Duration::from_millis(50)).await;
     let (req, mut resp) = conn.send_request(get("/"));
     req.await.unwrap();
-    resp.cancel();
+    resp.cancel().await;
 
     assert_matches!(
         timeout_join(server_handle).await,
