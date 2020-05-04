@@ -23,7 +23,7 @@ struct Opt {
     #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
     cert: Option<PathBuf>,
     /// Address to listen on
-    #[structopt(long = "listen", default_value = "0.0.0.0:4433")]
+    #[structopt(long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
 }
 
