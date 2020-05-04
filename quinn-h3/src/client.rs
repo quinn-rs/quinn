@@ -91,6 +91,7 @@ use crate::{
     proto::{headers::Header, settings::Settings, ErrorCode},
     Error, SendData, ZeroRttAccepted,
 };
+use futures_util::future;
 
 /// Configure and build a new HTTP/3 client
 ///
@@ -663,19 +664,39 @@ impl RecvResponse {
         }
     }
 
-    /// Cancel a HTTP/3 response reception
+    /// Cancel an HTTP/3 response reception
     ///
     /// Server will receive a request error with `REQUEST_CANCELLED` code. Any call on any
     /// object related with this request will fail.
-    pub fn cancel(&mut self) {
-        if let Some(recv) = self.recv.as_mut() {
-            self.conn
-                .h3
-                .lock()
-                .unwrap()
-                .cancel_request(self.stream_id.unwrap());
-            recv.reset(ErrorCode::REQUEST_CANCELLED);
+    pub async fn cancel(&mut self) {
+        let stream_id = match self.state {
+            RecvResponseState::Finished => None,
+            RecvResponseState::Opening(ref mut o) => {
+                future::poll_fn(|cx| {
+                    Poll::Ready(match o.poll_unpin(cx) {
+                        Poll::Ready(Ok((mut r, i))) => {
+                            let _ = r.stop(ErrorCode::REQUEST_CANCELLED.into());
+                            Some(i)
+                        }
+                        _ => None,
+                    })
+                })
+                .await
+            }
+            RecvResponseState::Receiving => {
+                self.recv
+                    .take()
+                    .unwrap()
+                    .reset(ErrorCode::REQUEST_CANCELLED);
+                self.stream_id.take()
+            }
+        };
+
+        if let Some(id) = stream_id {
+            self.conn.h3.lock().unwrap().cancel_request(id);
         }
+
+        self.state = RecvResponseState::Finished;
     }
 }
 
