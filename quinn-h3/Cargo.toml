@@ -5,7 +5,7 @@ authors = [
     "Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>",
     "Jean-Christophe BEGUE <begue.jc@gmail.com>"
 ]
-license = "MIT/Apache-2.0"
+license = "MIT OR Apache-2.0"
 repository = "https://github.com/djc/quinn"
 description = "QUIC HTTP/3 protocol implementation"
 readme = "../README.md"
