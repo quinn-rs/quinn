@@ -831,8 +831,7 @@ mod tests {
         };
 
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
-        let client_crypto = TlsSession::initial_keys(&dcid, Side::Client);
-        let client_header_crypto = client_crypto.header_keys();
+        let client = TlsSession::initial_keys(&dcid, Side::Client);
         let mut buf = Vec::new();
         let header = Header::Initial {
             number: PacketNumber::U8(0),
@@ -842,8 +841,8 @@ mod tests {
         };
         let encode = header.encode(&mut buf);
         let header_len = buf.len();
-        buf.resize(header_len + 16 + client_crypto.tag_len(), 0);
-        encode.finish(&mut buf, &client_header_crypto, Some((0, &client_crypto)));
+        buf.resize(header_len + 16 + client.packet.tag_len(), 0);
+        encode.finish(&mut buf, &client.header, Some((0, &client.packet)));
 
         for byte in &buf {
             print!("{:02x}", byte);
@@ -857,15 +856,15 @@ mod tests {
             )[..]
         );
 
-        let server_crypto = TlsSession::initial_keys(&dcid, Side::Server);
-        let server_header_crypto = server_crypto.header_keys();
+        let server = TlsSession::initial_keys(&dcid, Side::Server);
         let decode = PartialDecode::new(buf.as_slice().into(), 0).unwrap().0;
-        let mut packet = decode.finish(Some(&server_header_crypto)).unwrap();
+        let mut packet = decode.finish(Some(&server.header)).unwrap();
         assert_eq!(
             packet.header_data[..],
             hex!("c0ff00001b0806b858ec6f80452b0000402100")[..]
         );
-        server_crypto
+        server
+            .packet
             .decrypt(0, &packet.header_data, &mut packet.payload)
             .unwrap();
         assert_eq!(packet.payload[..], [0; 16]);

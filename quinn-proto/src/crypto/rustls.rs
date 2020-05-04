@@ -14,10 +14,10 @@ use rustls::{
 };
 use webpki::DNSNameRef;
 
-use super::ring::{initial_keys, Crypto};
+use super::ring::{generate_key_pairs, initial_keys, Crypto, RingHeaderCrypto};
 use crate::{
-    crypto, transport_parameters::TransportParameters, CertificateChain, ConnectError,
-    ConnectionId, Side, TransportError, TransportErrorCode,
+    connection::CryptoSpace, crypto, transport_parameters::TransportParameters, CertificateChain,
+    ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
 };
 
 /// A rustls TLS session
@@ -45,12 +45,14 @@ impl crypto::Session for TlsSession {
     type AuthenticationData = AuthenticationData;
     type ClientConfig = Arc<rustls::ClientConfig>;
     type HmacKey = hmac::Key;
+    type HeaderKeys = RingHeaderCrypto;
     type Keys = Crypto;
     type ServerConfig = Arc<rustls::ServerConfig>;
 
     /// Create the initial set of keys given the initial ConnectionId
-    fn initial_keys(id: &ConnectionId, side: Side) -> Crypto {
-        initial_keys(id, side)
+    fn initial_keys(id: &ConnectionId, side: Side) -> CryptoSpace<Self> {
+        let (header, packet) = initial_keys(id, side);
+        CryptoSpace { header, packet }
     }
 
     fn authentication_data(&self) -> AuthenticationData {
@@ -64,17 +66,18 @@ impl crypto::Session for TlsSession {
         }
     }
 
-    fn early_crypto(&self) -> Option<Self::Keys> {
+    fn early_crypto(&self) -> Option<CryptoSpace<Self>> {
         let secret = self.get_early_secret()?;
         // If an early secret is known, TLS guarantees it's associated with a resumption
         // ciphersuite,
         let suite = self.get_negotiated_ciphersuite().unwrap();
-        Some(Crypto::new(
+        let (header, packet) = generate_key_pairs(
             self.side(),
             suite.get_aead_alg(),
             secret.clone(),
             secret.clone(),
-        ))
+        );
+        Some(CryptoSpace { header, packet })
     }
 
     fn early_data_accepted(&self) -> Option<bool> {
@@ -115,18 +118,19 @@ impl crypto::Session for TlsSession {
         }
     }
 
-    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Self::Keys> {
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<CryptoSpace<Self>> {
         let secrets = self.write_hs(buf)?;
         let suite = self
             .get_negotiated_ciphersuite()
             .expect("should not get secrets without cipher suite");
         self.secrets = Some(secrets.clone());
-        Some(Crypto::new(
+        let (header, packet) = generate_key_pairs(
             self.side(),
             suite.get_aead_alg(),
             secrets.client,
             secrets.server,
-        ))
+        );
+        Some(CryptoSpace { header, packet })
     }
 
     fn next_1rtt_keys(&mut self) -> Crypto {

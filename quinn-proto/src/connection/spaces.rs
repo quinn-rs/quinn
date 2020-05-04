@@ -8,11 +8,11 @@ use std::{
 use super::assembler::Assembler;
 use crate::{crypto, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt};
 
-pub(crate) struct PacketSpace<K>
+pub(crate) struct PacketSpace<S>
 where
-    K: crypto::Keys,
+    S: crypto::Session,
 {
-    pub(crate) crypto: Option<CryptoSpace<K>>,
+    pub(crate) crypto: Option<CryptoSpace<S>>,
     pub(crate) dedup: Dedup,
     /// Highest received packet number
     pub(crate) rx_packet: u64,
@@ -58,9 +58,9 @@ where
     pub(crate) ping_pending: bool,
 }
 
-impl<K> PacketSpace<K>
+impl<S> PacketSpace<S>
 where
-    K: crypto::Keys,
+    S: crypto::Session,
 {
     pub(crate) fn new(now: Instant) -> Self {
         Self {
@@ -302,24 +302,12 @@ impl Dedup {
     }
 }
 
-pub struct CryptoSpace<K>
+pub struct CryptoSpace<S>
 where
-    K: crypto::Keys,
+    S: crypto::Session,
 {
-    pub packet: K,
-    pub header: K::HeaderKeys,
-}
-
-impl<K> CryptoSpace<K>
-where
-    K: crypto::Keys,
-{
-    pub fn new(packet: K) -> Self {
-        Self {
-            header: packet.header_keys(),
-            packet,
-        }
-    }
+    pub packet: S::Keys,
+    pub header: S::HeaderKeys,
 }
 
 #[cfg(test)]

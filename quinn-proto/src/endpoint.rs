@@ -253,8 +253,7 @@ where
             }
 
             let crypto = S::initial_keys(&dst_cid, Side::Server);
-            let header_crypto = crypto.header_keys();
-            return match first_decode.finish(Some(&header_crypto)) {
+            return match first_decode.finish(Some(&crypto.header)) {
                 Ok(packet) => self
                     .handle_first_packet(
                         now,
@@ -262,8 +261,8 @@ where
                         ecn,
                         packet,
                         remaining,
-                        &crypto,
-                        &header_crypto,
+                        &crypto.packet,
+                        &crypto.header,
                     )
                     .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
                 Err(e) => {
@@ -456,7 +455,7 @@ where
         mut packet: Packet,
         rest: Option<BytesMut>,
         crypto: &S::Keys,
-        header_crypto: &<S::Keys as Keys>::HeaderKeys,
+        header_crypto: &S::HeaderKeys,
     ) -> Option<(ConnectionHandle, Connection<S>)> {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
             Header::Initial {
@@ -498,7 +497,7 @@ where
             self.transmits.push_back(Transmit {
                 destination: remote,
                 ecn: None,
-                contents: initial_close(
+                contents: initial_close::<S, _>(
                     crypto,
                     header_crypto,
                     &src_cid,
@@ -520,7 +519,7 @@ where
             self.transmits.push_back(Transmit {
                 destination: remote,
                 ecn: None,
-                contents: initial_close(
+                contents: initial_close::<S, _>(
                     crypto,
                     header_crypto,
                     &src_cid,
@@ -549,11 +548,7 @@ where
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
                 buf.extend_from_slice(&S::retry_tag(&dst_cid, &buf));
-                encode.finish::<S::Keys, <S::Keys as Keys>::HeaderKeys>(
-                    &mut buf,
-                    header_crypto,
-                    None,
-                );
+                encode.finish::<S::Keys, S::HeaderKeys>(&mut buf, header_crypto, None);
 
                 self.transmits.push_back(Transmit {
                     destination: remote,
@@ -578,7 +573,7 @@ where
                     self.transmits.push_back(Transmit {
                         destination: remote,
                         ecn: None,
-                        contents: initial_close(
+                        contents: initial_close::<S, _>(
                             crypto,
                             header_crypto,
                             &src_cid,
@@ -621,7 +616,7 @@ where
                     self.transmits.push_back(Transmit {
                         destination: remote,
                         ecn: None,
-                        contents: initial_close(
+                        contents: initial_close::<S, _>(
                             crypto,
                             header_crypto,
                             &src_cid,
