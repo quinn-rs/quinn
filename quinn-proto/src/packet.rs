@@ -102,7 +102,7 @@ impl PartialDecode {
 
     pub(crate) fn finish<H>(self, header_crypto: Option<&H>) -> Result<Packet, PacketDecodeError>
     where
-        H: crypto::HeaderKeys,
+        H: crypto::HeaderKey,
     {
         use self::PlainHeader::*;
         let Self {
@@ -184,7 +184,7 @@ impl PartialDecode {
         header_crypto: &H,
     ) -> Result<PacketNumber, PacketDecodeError>
     where
-        H: crypto::HeaderKeys,
+        H: crypto::HeaderKey,
     {
         let packet_length = buf.get_ref().len();
         let pn_offset = buf.position() as usize;
@@ -432,8 +432,8 @@ pub(crate) struct PartialEncode {
 impl PartialEncode {
     pub(crate) fn finish<K, H>(self, buf: &mut [u8], header_crypto: &H, crypto: Option<(u64, &K)>)
     where
-        K: crypto::Keys,
-        H: crypto::HeaderKeys,
+        K: crypto::Key,
+        H: crypto::HeaderKey,
     {
         let PartialEncode { header_len, pn, .. } = self;
         let (pn_len, write_len) = match pn {
@@ -826,7 +826,7 @@ mod tests {
     #[test]
     fn header_encoding() {
         use crate::{
-            crypto::{rustls::TlsSession, Keys, Session},
+            crypto::{rustls::TlsSession, Key, Session},
             Side,
         };
 
@@ -841,8 +841,12 @@ mod tests {
         };
         let encode = header.encode(&mut buf);
         let header_len = buf.len();
-        buf.resize(header_len + 16 + client.packet.tag_len(), 0);
-        encode.finish(&mut buf, &client.header, Some((0, &client.packet)));
+        buf.resize(header_len + 16 + client.packet.local.tag_len(), 0);
+        encode.finish(
+            &mut buf,
+            &client.header.local,
+            Some((0, &client.packet.local)),
+        );
 
         for byte in &buf {
             print!("{:02x}", byte);
@@ -858,13 +862,14 @@ mod tests {
 
         let server = TlsSession::initial_keys(&dcid, Side::Server);
         let decode = PartialDecode::new(buf.as_slice().into(), 0).unwrap().0;
-        let mut packet = decode.finish(Some(&server.header)).unwrap();
+        let mut packet = decode.finish(Some(&server.header.remote)).unwrap();
         assert_eq!(
             packet.header_data[..],
             hex!("c0ff00001b0806b858ec6f80452b0000402100")[..]
         );
         server
             .packet
+            .remote
             .decrypt(0, &packet.header_data, &mut packet.payload)
             .unwrap();
         assert_eq!(packet.payload[..], [0; 16]);

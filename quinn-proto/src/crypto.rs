@@ -35,10 +35,10 @@ pub trait Session: Send + Sized {
     type ClientConfig: ClientConfig<Self>;
     /// Type used to sign various values
     type HmacKey: HmacKey;
-    /// Type used for header protection keys
-    type HeaderKeys: HeaderKeys;
+    /// Type of keys used to protect packet headers
+    type HeaderKey: HeaderKey;
     /// Type used to represent packet protection keys
-    type Keys: Keys;
+    type Key: Key;
     /// Type used to hold configuration for server sessions
     type ServerConfig: ServerConfig<Self>;
 
@@ -59,7 +59,7 @@ pub trait Session: Send + Sized {
     ///
     /// Returns `None` if the key material is not available. This might happen if you have
     /// not connected to this server before.
-    fn early_crypto(&self) -> Option<CryptoSpace<Self>>;
+    fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::Key)>;
 
     /// If the 0-RTT-encrypted data has been accepted by the peer
     fn early_data_accepted(&self) -> Option<bool>;
@@ -86,13 +86,21 @@ pub trait Session: Send + Sized {
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<CryptoSpace<Self>>;
 
     /// Compute keys for the next key update
-    fn next_1rtt_keys(&mut self) -> Self::Keys;
+    fn next_1rtt_keys(&mut self) -> KeyPair<Self::Key>;
 
     /// Generate the integrity tag for a retry packet
     fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
 
     /// Verify the integrity of a retry packet
     fn is_valid_retry(orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool;
+}
+
+/// A pair of keys for bidirectional communication
+pub struct KeyPair<T> {
+    /// Key for encrypting data
+    pub local: T,
+    /// Key for decrypting data
+    pub remote: T,
 }
 
 /// Client-side configuration for the crypto protocol
@@ -128,7 +136,7 @@ where
 }
 
 /// Keys used to protect packet payloads
-pub trait Keys: Send {
+pub trait Key: Send {
     /// Encrypt the packet payload with the given packet number
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
     /// Decrypt the packet payload with the given packet number
@@ -138,7 +146,7 @@ pub trait Keys: Send {
 }
 
 /// Keys used to protect packet headers
-pub trait HeaderKeys: Send {
+pub trait HeaderKey: Send {
     /// Decrypt the given packet's header
     fn decrypt(&self, pn_offset: usize, packet: &mut [u8]);
     /// Encrypt the given packet's header

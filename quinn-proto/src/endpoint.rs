@@ -18,7 +18,9 @@ use crate::{
     coding::BufMutExt,
     config::{ClientConfig, ConfigError, EndpointConfig, ServerConfig},
     connection::{initial_close, Connection, ConnectionError},
-    crypto::{self, ClientConfig as ClientCryptoConfig, Keys, ServerConfig as ServerCryptoConfig},
+    crypto::{
+        self, ClientConfig as ClientCryptoConfig, Key, KeyPair, ServerConfig as ServerCryptoConfig,
+    },
     packet::{Header, Packet, PacketDecodeError, PartialDecode},
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
@@ -253,7 +255,7 @@ where
             }
 
             let crypto = S::initial_keys(&dst_cid, Side::Server);
-            return match first_decode.finish(Some(&crypto.header)) {
+            return match first_decode.finish(Some(&crypto.header.remote)) {
                 Ok(packet) => self
                     .handle_first_packet(
                         now,
@@ -454,8 +456,8 @@ where
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         rest: Option<BytesMut>,
-        crypto: &S::Keys,
-        header_crypto: &S::HeaderKeys,
+        crypto: &KeyPair<S::Key>,
+        header_crypto: &KeyPair<S::HeaderKey>,
     ) -> Option<(ConnectionHandle, Connection<S>)> {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
             Header::Initial {
@@ -469,6 +471,7 @@ where
         let packet_number = packet_number.expand(0);
 
         if crypto
+            .remote
             .decrypt(
                 packet_number as u64,
                 &packet.header_data,
@@ -497,9 +500,9 @@ where
             self.transmits.push_back(Transmit {
                 destination: remote,
                 ecn: None,
-                contents: initial_close::<S, _>(
-                    crypto,
-                    header_crypto,
+                contents: initial_close(
+                    &crypto.local,
+                    &header_crypto.local,
                     &src_cid,
                     &temp_loc_cid,
                     0,
@@ -519,9 +522,9 @@ where
             self.transmits.push_back(Transmit {
                 destination: remote,
                 ecn: None,
-                contents: initial_close::<S, _>(
-                    crypto,
-                    header_crypto,
+                contents: initial_close(
+                    &crypto.local,
+                    &header_crypto.local,
                     &src_cid,
                     &temp_loc_cid,
                     0,
@@ -548,7 +551,7 @@ where
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
                 buf.extend_from_slice(&S::retry_tag(&dst_cid, &buf));
-                encode.finish::<S::Keys, S::HeaderKeys>(&mut buf, header_crypto, None);
+                encode.finish::<S::Key, S::HeaderKey>(&mut buf, &header_crypto.local, None);
 
                 self.transmits.push_back(Transmit {
                     destination: remote,
@@ -573,9 +576,9 @@ where
                     self.transmits.push_back(Transmit {
                         destination: remote,
                         ecn: None,
-                        contents: initial_close::<S, _>(
-                            crypto,
-                            header_crypto,
+                        contents: initial_close(
+                            &crypto.local,
+                            &header_crypto.local,
                             &src_cid,
                             &temp_loc_cid,
                             0,
@@ -616,9 +619,9 @@ where
                     self.transmits.push_back(Transmit {
                         destination: remote,
                         ecn: None,
-                        contents: initial_close::<S, _>(
-                            crypto,
-                            header_crypto,
+                        contents: initial_close(
+                            &crypto.local,
+                            &header_crypto.local,
                             &src_cid,
                             &temp_loc_cid,
                             0,

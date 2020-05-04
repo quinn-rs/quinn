@@ -16,7 +16,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{EndpointConfig, ServerConfig, TransportConfig},
-    crypto::{self, HeaderKeys, Keys},
+    crypto::{self, HeaderKey, Key, KeyPair},
     frame,
     frame::{Close, Datagram, FrameStruct},
     packet::{Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId},
@@ -81,7 +81,7 @@ where
     /// Whether or not 0-RTT was enabled during the handshake. Does not imply acceptance.
     zero_rtt_enabled: bool,
     /// Set if 0-RTT is supported, then cleared when no longer needed.
-    zero_rtt_crypto: Option<CryptoSpace<S>>,
+    zero_rtt_crypto: Option<ZeroRttCrypto<S>>,
     key_phase: bool,
     /// Transport parameters set by the peer
     params: TransportParameters,
@@ -102,12 +102,12 @@ where
     /// Highest usable packet number space
     highest_space: SpaceId,
     /// 1-RTT keys used prior to a key update
-    prev_crypto: Option<PrevCrypto<S::Keys>>,
+    prev_crypto: Option<PrevCrypto<S::Key>>,
     /// 1-RTT keys to be used for the next key update
     ///
     /// These are generated in advance to prevent timing attacks and/or DoS by third-party attackers
     /// spoofing key updates.
-    next_crypto: Option<S::Keys>,
+    next_crypto: Option<KeyPair<S::Key>>,
     /// Latest PATH_CHALLENGE token issued to the peer along the current path
     path_challenge: Option<u64>,
     accepted_0rtt: bool,
@@ -439,7 +439,7 @@ where
                 let max_len = buf.capacity()
                     - partial_encode.start
                     - partial_encode.header_len
-                    - space.crypto.as_ref().unwrap().packet.tag_len();
+                    - space.crypto.as_ref().unwrap().packet.local.tag_len();
                 match self.state {
                     State::Closed(state::Closed { ref reason }) => reason.encode(&mut buf, max_len),
                     State::Draining => frame::ConnectionClose {
@@ -459,19 +459,20 @@ where
             };
 
             let space = &mut self.spaces[space_id as usize];
-            let crypto = if let Some(ref crypto) = space.crypto {
-                crypto
+            let (header_crypto, packet_crypto) = if let Some(ref crypto) = space.crypto {
+                (&crypto.header.local, &crypto.packet.local)
             } else if space_id == SpaceId::Data {
-                self.zero_rtt_crypto.as_ref().unwrap()
+                let zero_rtt = self.zero_rtt_crypto.as_ref().unwrap();
+                (&zero_rtt.header, &zero_rtt.packet)
             } else {
                 unreachable!("tried to send {:?} packet without keys", space_id);
             };
 
             let mut padded = if pad_space == Some(space_id)
-                && buf.len() < MIN_INITIAL_SIZE - crypto.packet.tag_len()
+                && buf.len() < MIN_INITIAL_SIZE - packet_crypto.tag_len()
             {
                 // Initial-bearing packets MUST be padded
-                buf.resize(MIN_INITIAL_SIZE - crypto.packet.tag_len(), 0);
+                buf.resize(MIN_INITIAL_SIZE - packet_crypto.tag_len(), 0);
                 true
             } else {
                 false
@@ -481,11 +482,11 @@ where
             // To ensure that sufficient data is available for sampling, packets are padded so that the
             // combined lengths of the encoded packet number and protected payload is at least 4 bytes
             // longer than the sample required for header protection.
-            let protected_payload_len = (buf.len() + crypto.packet.tag_len())
+            let protected_payload_len = (buf.len() + packet_crypto.tag_len())
                 - partial_encode.start
                 - partial_encode.header_len;
             if let Some(padding_minus_one) =
-                (crypto.header.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
+                (header_crypto.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
             {
                 let padding = padding_minus_one + 1;
                 padded = true;
@@ -493,13 +494,13 @@ where
                 buf.resize(buf.len() + padding, 0);
             }
 
-            buf.resize(buf.len() + crypto.packet.tag_len(), 0);
+            buf.resize(buf.len() + packet_crypto.tag_len(), 0);
             debug_assert!(buf.len() < self.mtu as usize);
             let packet_buf = &mut buf[partial_encode.start..];
             partial_encode.finish(
                 packet_buf,
-                &crypto.header,
-                Some((exact_number, &crypto.packet)),
+                header_crypto,
+                Some((exact_number, packet_crypto)),
             );
 
             if let Some((sent, acks, stream_frames)) = sent {
@@ -792,7 +793,7 @@ where
             - 1                 // flags byte
             - self.rem_cid.len()
             - 4                 // worst-case packet number size
-            - self.space(SpaceId::Data).crypto.as_ref().or_else(|| self.zero_rtt_crypto.as_ref()).unwrap().packet.tag_len()
+            - self.space(SpaceId::Data).crypto.as_ref().map_or_else(|| &self.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
             - Datagram::SIZE_BOUND;
         self.config.datagram_receive_buffer_size?;
         let limit = self.params.max_datagram_frame_size?.into_inner();
@@ -1384,7 +1385,7 @@ where
     }
 
     fn init_0rtt(&mut self) {
-        let crypto = match self.crypto.early_crypto() {
+        let (header, packet) = match self.crypto.early_crypto() {
             Some(x) => x,
             None => return,
         };
@@ -1412,7 +1413,7 @@ where
         }
         trace!("0-RTT enabled");
         self.zero_rtt_enabled = true;
-        self.zero_rtt_crypto = Some(crypto);
+        self.zero_rtt_crypto = Some(ZeroRttCrypto { header, packet });
     }
 
     fn read_crypto(
@@ -1568,7 +1569,7 @@ where
             }
         } else if let Some(space) = partial_decode.space() {
             if let Some(ref crypto) = self.spaces[space as usize].crypto {
-                Some(&crypto.header)
+                Some(&crypto.header.remote)
             } else {
                 debug!(
                     "discarding unexpected {:?} packet ({} bytes)",
@@ -2372,16 +2373,18 @@ where
         let tag_len = space
             .crypto
             .as_ref()
-            .unwrap_or_else(|| {
-                debug_assert_eq!(
-                    space_id,
-                    SpaceId::Data,
-                    "tried to send {:?} packet without keys",
-                    space_id
-                );
-                zero_rtt_crypto.unwrap()
-            })
-            .packet
+            .map_or_else(
+                || {
+                    debug_assert_eq!(
+                        space_id,
+                        SpaceId::Data,
+                        "tried to send {:?} packet without keys",
+                        space_id
+                    );
+                    &zero_rtt_crypto.unwrap().packet
+                },
+                |x| &x.packet.local,
+            )
             .tag_len();
         let max_size = buf.capacity() - tag_len;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
@@ -2617,7 +2620,12 @@ where
         let crypto = if packet.header.is_0rtt() {
             &self.zero_rtt_crypto.as_ref().unwrap().packet
         } else if key_phase == self.key_phase || space != SpaceId::Data {
-            &self.spaces[space as usize].crypto.as_mut().unwrap().packet
+            &self.spaces[space as usize]
+                .crypto
+                .as_mut()
+                .unwrap()
+                .packet
+                .remote
         } else if let Some(prev) = self.prev_crypto.as_ref().and_then(|crypto| {
             // If this packet comes prior to acknowledgment of the key update by the peer,
             if crypto.end_packet.map_or(true, |(pn, _)| number < pn) {
@@ -2629,14 +2637,14 @@ where
                 None
             }
         }) {
-            &prev.crypto
+            &prev.crypto.remote
         } else {
             // We're in the Data space with a key phase mismatch and either there is no locally
             // initiated key update or the locally initiated key update was acknowledged by a
             // lower-numbered packet. The key phase mismatch must therefore represent a new
             // remotely-initiated key update.
             crypto_update = true;
-            self.next_crypto.as_ref().unwrap()
+            &self.next_crypto.as_ref().unwrap().remote
         };
 
         crypto
@@ -2789,16 +2797,17 @@ where
     }
 }
 
-pub fn initial_close<S, R>(
-    crypto: &S::Keys,
-    header_crypto: &S::HeaderKeys,
+pub fn initial_close<K, H, R>(
+    crypto: &K,
+    header_crypto: &H,
     remote_id: &ConnectionId,
     local_id: &ConnectionId,
     packet_number: u8,
     reason: R,
 ) -> Box<[u8]>
 where
-    S: crypto::Session,
+    K: crypto::Key,
+    H: crypto::HeaderKey,
     R: Into<Close>,
 {
     let number = PacketNumber::U8(packet_number);
@@ -2956,11 +2965,11 @@ const MAX_ACK_BLOCKS: usize = 64;
 
 struct PrevCrypto<K>
 where
-    K: crypto::Keys,
+    K: crypto::Key,
 {
     /// The keys used for the previous key phase, temporarily retained to decrypt packets sent by
     /// the peer prior to its own key update.
-    crypto: K,
+    crypto: KeyPair<K>,
     /// The incoming packet that ends the interval for which these keys are applicable, and the time
     /// of its receipt.
     ///
@@ -3143,4 +3152,9 @@ impl DatagramState {
             outgoing_total: 0,
         }
     }
+}
+
+struct ZeroRttCrypto<S: crypto::Session> {
+    header: S::HeaderKey,
+    packet: S::Key,
 }

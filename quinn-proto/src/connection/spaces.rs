@@ -6,7 +6,9 @@ use std::{
 };
 
 use super::assembler::Assembler;
-use crate::{crypto, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt};
+use crate::{
+    crypto, crypto::KeyPair, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt,
+};
 
 pub(crate) struct PacketSpace<S>
 where
@@ -306,8 +308,8 @@ pub struct CryptoSpace<S>
 where
     S: crypto::Session,
 {
-    pub packet: S::Keys,
-    pub header: S::HeaderKeys,
+    pub packet: KeyPair<S::Key>,
+    pub header: KeyPair<S::HeaderKey>,
 }
 
 #[cfg(test)]
