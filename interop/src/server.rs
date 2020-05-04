@@ -161,7 +161,7 @@ async fn h3_handle_request(recv_request: RecvRequest) -> Result<()> {
     Ok(())
 }
 
-async fn h3_home(sender: quinn_h3::server::Sender) -> Result<()> {
+async fn h3_home(mut sender: quinn_h3::server::Sender) -> Result<()> {
     let response = Response::builder()
         .status(StatusCode::OK)
         .header("server", VERSION)
@@ -174,7 +174,7 @@ async fn h3_home(sender: quinn_h3::server::Sender) -> Result<()> {
     Ok(())
 }
 
-async fn h3_payload(sender: quinn_h3::server::Sender, len: usize) -> Result<()> {
+async fn h3_payload(mut sender: quinn_h3::server::Sender, len: usize) -> Result<()> {
     if len > 1_000_000_000 {
         let response = Response::builder()
             .status(StatusCode::BAD_REQUEST)

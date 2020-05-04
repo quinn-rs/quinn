@@ -201,7 +201,7 @@ async fn request_server(
         select! {
             _ = &mut stop_recv => break,
             Some(recv_req) = incoming_req.next() => {
-                let (_, sender) = recv_req.await.expect("recv_req");
+                let (_, mut sender) = recv_req.await.expect("recv_req");
                 sender.send_response(make_response())
                     .await
                     .expect("send_response");
