@@ -5,7 +5,7 @@ use std::{
     sync::Arc,
 };
 
-use ring::{aead, hmac};
+use ring::{aead, hkdf, hmac};
 pub use rustls::TLSError;
 use rustls::{
     self,
@@ -14,10 +14,10 @@ use rustls::{
 };
 use webpki::DNSNameRef;
 
-use super::ring::{generate_key_pairs, initial_keys, Crypto, RingHeaderCrypto};
+use super::ring::{generate_key_pairs, generate_keys, initial_keys, PacketKey};
 use crate::{
-    connection::CryptoSpace, crypto, transport_parameters::TransportParameters, CertificateChain,
-    ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
+    connection::CryptoSpace, crypto, crypto::KeyPair, transport_parameters::TransportParameters,
+    CertificateChain, ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
 };
 
 /// A rustls TLS session
@@ -45,8 +45,8 @@ impl crypto::Session for TlsSession {
     type AuthenticationData = AuthenticationData;
     type ClientConfig = Arc<rustls::ClientConfig>;
     type HmacKey = hmac::Key;
-    type HeaderKeys = RingHeaderCrypto;
-    type Keys = Crypto;
+    type HeaderKey = aead::quic::HeaderProtectionKey;
+    type Key = PacketKey;
     type ServerConfig = Arc<rustls::ServerConfig>;
 
     /// Create the initial set of keys given the initial ConnectionId
@@ -66,18 +66,13 @@ impl crypto::Session for TlsSession {
         }
     }
 
-    fn early_crypto(&self) -> Option<CryptoSpace<Self>> {
+    fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::Key)> {
         let secret = self.get_early_secret()?;
         // If an early secret is known, TLS guarantees it's associated with a resumption
         // ciphersuite,
         let suite = self.get_negotiated_ciphersuite().unwrap();
-        let (header, packet) = generate_key_pairs(
-            self.side(),
-            suite.get_aead_alg(),
-            secret.clone(),
-            secret.clone(),
-        );
-        Some(CryptoSpace { header, packet })
+        let aead = suite.get_aead_alg();
+        Some(generate_keys(aead, &secret))
     }
 
     fn early_data_accepted(&self) -> Option<bool> {
@@ -120,25 +115,28 @@ impl crypto::Session for TlsSession {
 
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<CryptoSpace<Self>> {
         let secrets = self.write_hs(buf)?;
+        let (local, remote) = select_secrets(&secrets, self.side());
         let suite = self
             .get_negotiated_ciphersuite()
             .expect("should not get secrets without cipher suite");
-        self.secrets = Some(secrets.clone());
-        let (header, packet) = generate_key_pairs(
-            self.side(),
-            suite.get_aead_alg(),
-            secrets.client,
-            secrets.server,
-        );
-        Some(CryptoSpace { header, packet })
+        let aead = suite.get_aead_alg();
+        let (header, packet) = generate_key_pairs(aead, local, remote);
+        let result = CryptoSpace { header, packet };
+        self.secrets = Some(secrets);
+        Some(result)
     }
 
-    fn next_1rtt_keys(&mut self) -> Crypto {
+    fn next_1rtt_keys(&mut self) -> KeyPair<Self::Key> {
         let secrets = self.secrets.as_ref().expect("not in 1rtt");
         let next = self.update_secrets(&secrets.client, &secrets.server);
-        self.secrets = Some(next.clone());
+        let (local, remote) = select_secrets(&next, self.side());
         let suite = self.get_negotiated_ciphersuite().unwrap();
-        Crypto::new(self.side(), suite.get_aead_alg(), next.client, next.server)
+        let keys = KeyPair {
+            local: PacketKey::new(suite.get_aead_alg(), local),
+            remote: PacketKey::new(suite.get_aead_alg(), remote),
+        };
+        self.secrets = Some(next);
+        keys
     }
 
     fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
@@ -200,6 +198,13 @@ impl DerefMut for TlsSession {
             SessionKind::Client(ref mut session) => session,
             SessionKind::Server(ref mut session) => session,
         }
+    }
+}
+
+fn select_secrets(secrets: &rustls::quic::Secrets, side: Side) -> (&hkdf::Prk, &hkdf::Prk) {
+    match side {
+        Side::Client => (&secrets.client, &secrets.server),
+        Side::Server => (&secrets.server, &secrets.client),
     }
 }
 

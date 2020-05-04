@@ -4,39 +4,23 @@ use ring::{aead, hkdf, hmac};
 use crate::{
     config::ConfigError,
     crypto,
+    crypto::KeyPair,
     packet::{PacketNumber, LONG_HEADER_FORM},
     shared::ConnectionId,
     Side,
 };
 
 /// Keys for encrypting and decrypting packet payloads
-pub struct Crypto {
-    local_iv: Iv,
-    sealing_key: aead::LessSafeKey,
-    remote_iv: Iv,
-    opening_key: aead::LessSafeKey,
+pub struct PacketKey {
+    iv: Iv,
+    key: aead::LessSafeKey,
 }
 
-impl Crypto {
-    pub(crate) fn new(
-        side: Side,
-        cipher: &'static aead::Algorithm,
-        client_secret: hkdf::Prk,
-        server_secret: hkdf::Prk,
-    ) -> Self {
-        let (local_secret, remote_secret) = match side {
-            Side::Client => (client_secret, server_secret),
-            Side::Server => (server_secret, client_secret),
-        };
-
-        let (local_key, local_iv) = Self::get_keys(cipher, &local_secret);
-        let (remote_key, remote_iv) = Self::get_keys(cipher, &remote_secret);
-
-        Crypto {
-            sealing_key: aead::LessSafeKey::new(local_key),
-            local_iv,
-            opening_key: aead::LessSafeKey::new(remote_key),
-            remote_iv,
+impl PacketKey {
+    pub(crate) fn new(cipher: &'static aead::Algorithm, secret: &hkdf::Prk) -> Self {
+        Self {
+            key: aead::LessSafeKey::new(hkdf_expand(secret, b"quic key", cipher)),
+            iv: hkdf_expand(secret, b"quic iv", IvLen),
         }
     }
 
@@ -49,13 +33,6 @@ impl Crypto {
         for (out, inp) in out.iter_mut().zip(iv.0.iter()) {
             *out ^= inp;
         }
-    }
-
-    fn get_keys(cipher: &'static aead::Algorithm, secret: &hkdf::Prk) -> (aead::UnboundKey, Iv) {
-        (
-            hkdf_expand(secret, b"quic key", cipher),
-            hkdf_expand(secret, b"quic iv", IvLen),
-        )
     }
 }
 
@@ -84,23 +61,18 @@ impl From<hkdf::Okm<'_, IvLen>> for Iv {
     }
 }
 
-impl crypto::Keys for Crypto {
+impl crypto::Key for PacketKey {
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
-        let (cipher, iv, key) = (
-            self.sealing_key.algorithm(),
-            &self.local_iv,
-            &self.sealing_key,
-        );
-
         let mut nonce_buf = [0u8; aead::NONCE_LEN];
-        let nonce = &mut nonce_buf[..cipher.nonce_len()];
-        self.write_nonce(iv, packet, nonce);
+        let nonce = &mut nonce_buf[..self.key.algorithm().nonce_len()];
+        self.write_nonce(&self.iv, packet, nonce);
 
         let (header, payload) = buf.split_at_mut(header_len);
-        let (payload, tag) = payload.split_at_mut(payload.len() - cipher.tag_len());
+        let (payload, tag) = payload.split_at_mut(payload.len() - self.key.algorithm().tag_len());
         let header = aead::Aad::from(header);
         let nonce = aead::Nonce::try_assume_unique_for_key(nonce).unwrap();
-        let tagged = key
+        let tagged = self
+            .key
             .seal_in_place_separate_tag(nonce, header, payload)
             .unwrap();
 
@@ -112,43 +84,29 @@ impl crypto::Keys for Crypto {
             return Err(());
         }
 
-        let (cipher, iv, key) = (
-            self.opening_key.algorithm(),
-            &self.remote_iv,
-            &self.opening_key,
-        );
-
         let mut nonce_buf = [0u8; aead::NONCE_LEN];
-        let nonce = &mut nonce_buf[..cipher.nonce_len()];
-        self.write_nonce(iv, packet, nonce);
+        let nonce = &mut nonce_buf[..self.key.algorithm().nonce_len()];
+        self.write_nonce(&self.iv, packet, nonce);
         let payload_len = payload.len();
 
         let header = aead::Aad::from(header);
         let nonce = aead::Nonce::try_assume_unique_for_key(nonce).unwrap();
-        key.open_in_place(nonce, header, payload.as_mut())
+        self.key
+            .open_in_place(nonce, header, payload.as_mut())
             .map_err(|_| ())?;
-        payload.truncate(payload_len - cipher.tag_len());
+        payload.truncate(payload_len - self.key.algorithm().tag_len());
         Ok(())
     }
 
     fn tag_len(&self) -> usize {
-        self.sealing_key.algorithm().tag_len()
+        self.key.algorithm().tag_len()
     }
 }
 
-/// Keys for encrypting and decrypting packet headers
-pub struct RingHeaderCrypto {
-    local: aead::quic::HeaderProtectionKey,
-    remote: aead::quic::HeaderProtectionKey,
-}
-
-impl crypto::HeaderKeys for RingHeaderCrypto {
+impl crypto::HeaderKey for aead::quic::HeaderProtectionKey {
     fn decrypt(&self, pn_offset: usize, packet: &mut [u8]) {
         let (header, sample) = packet.split_at_mut(pn_offset + 4);
-        let mask = self
-            .remote
-            .new_mask(&sample[0..self.sample_size()])
-            .unwrap();
+        let mask = self.new_mask(&sample[0..self.sample_size()]).unwrap();
         if header[0] & LONG_HEADER_FORM == LONG_HEADER_FORM {
             // Long header: 4 bits masked
             header[0] ^= mask[0] & 0x0f;
@@ -167,7 +125,7 @@ impl crypto::HeaderKeys for RingHeaderCrypto {
 
     fn encrypt(&self, pn_offset: usize, packet: &mut [u8]) {
         let (header, sample) = packet.split_at_mut(pn_offset + 4);
-        let mask = self.local.new_mask(&sample[0..self.sample_size()]).unwrap();
+        let mask = self.new_mask(&sample[0..self.sample_size()]).unwrap();
         let pn_length = PacketNumber::decode_len(header[0]);
         if header[0] & 0x80 == 0x80 {
             // Long header: 4 bits masked
@@ -185,7 +143,7 @@ impl crypto::HeaderKeys for RingHeaderCrypto {
     }
 
     fn sample_size(&self) -> usize {
-        self.local.algorithm().sample_len()
+        self.algorithm().sample_len()
     }
 }
 
@@ -205,15 +163,21 @@ fn header_key_from_secret(
     }
 }
 
-pub(crate) fn initial_keys(id: &ConnectionId, side: Side) -> (RingHeaderCrypto, Crypto) {
+pub(crate) fn initial_keys(
+    id: &ConnectionId,
+    side: Side,
+) -> (KeyPair<aead::quic::HeaderProtectionKey>, KeyPair<PacketKey>) {
     const CLIENT_LABEL: &[u8] = b"client in";
     const SERVER_LABEL: &[u8] = b"server in";
     let hs_secret = initial_secret(id);
 
     let client = expanded_initial_secret(&hs_secret, CLIENT_LABEL);
     let server = expanded_initial_secret(&hs_secret, SERVER_LABEL);
-
-    generate_key_pairs(side, &aead::AES_128_GCM, client, server)
+    let (local, remote) = match side {
+        Side::Client => (client, server),
+        Side::Server => (server, client),
+    };
+    generate_key_pairs(&aead::AES_128_GCM, &local, &remote)
 }
 
 fn expanded_initial_secret(prk: &hkdf::Prk, label: &[u8]) -> hkdf::Prk {
@@ -263,21 +227,31 @@ impl crypto::HmacKey for hmac::Key {
 }
 
 pub(crate) fn generate_key_pairs(
-    side: Side,
     aead: &'static aead::Algorithm,
-    client_secret: hkdf::Prk,
-    server_secret: hkdf::Prk,
-) -> (RingHeaderCrypto, Crypto) {
-    let (local_secret, remote_secret) = match side {
-        Side::Client => (&client_secret, &server_secret),
-        Side::Server => (&server_secret, &client_secret),
-    };
+    local_secret: &hkdf::Prk,
+    remote_secret: &hkdf::Prk,
+) -> (KeyPair<aead::quic::HeaderProtectionKey>, KeyPair<PacketKey>) {
+    let (local_header, local_packet) = generate_keys(aead, local_secret);
+    let (remote_header, remote_packet) = generate_keys(aead, remote_secret);
     (
-        RingHeaderCrypto {
-            local: header_key_from_secret(aead, local_secret),
-            remote: header_key_from_secret(aead, remote_secret),
+        KeyPair {
+            local: local_header,
+            remote: remote_header,
         },
-        Crypto::new(side, aead, client_secret, server_secret),
+        KeyPair {
+            local: local_packet,
+            remote: remote_packet,
+        },
+    )
+}
+
+pub(crate) fn generate_keys(
+    aead: &'static aead::Algorithm,
+    secret: &hkdf::Prk,
+) -> (aead::quic::HeaderProtectionKey, PacketKey) {
+    (
+        header_key_from_secret(aead, secret),
+        PacketKey::new(aead, secret),
     )
 }
 
@@ -285,7 +259,7 @@ pub(crate) fn generate_key_pairs(
 mod test {
     use super::*;
     use crate::{
-        crypto::{HeaderKeys, Keys},
+        crypto::{HeaderKey, Key},
         MAX_CID_SIZE,
     };
     use hex_literal::hex;
@@ -297,12 +271,12 @@ mod test {
         let (_, server) = initial_keys(&conn, Side::Server);
 
         let mut buf = b"headerpayload".to_vec();
-        buf.resize(buf.len() + client.tag_len(), 0);
-        client.encrypt(0, &mut buf, 6);
+        buf.resize(buf.len() + client.local.tag_len(), 0);
+        client.local.encrypt(0, &mut buf, 6);
 
         let mut header = BytesMut::from(buf.as_slice());
         let mut payload = header.split_off(6);
-        server.decrypt(0, &header, &mut payload).unwrap();
+        server.remote.decrypt(0, &header, &mut payload).unwrap();
         assert_eq!(&*payload, b"payload");
     }
 
@@ -315,12 +289,12 @@ mod test {
 
         // Key secrets are opaque, so we cannot check them
         let client_secret = expanded_initial_secret(&initial_secret, b"client in");
-        let (_, client_iv) = Crypto::get_keys(cipher, &client_secret);
-        assert_eq!(&client_iv.0[..], hex!("8681359410a70bb9c92f0420"));
+        let key = PacketKey::new(cipher, &client_secret);
+        assert_eq!(&key.iv.0[..], hex!("8681359410a70bb9c92f0420"));
 
         let server_secret = expanded_initial_secret(&initial_secret, b"server in");
-        let (_, server_iv) = Crypto::get_keys(cipher, &server_secret);
-        assert_eq!(&server_iv.0[..], hex!("5e5ae651fd1e8495af13508b"));
+        let key = PacketKey::new(cipher, &server_secret);
+        assert_eq!(&key.iv.0[..], hex!("5e5ae651fd1e8495af13508b"));
     }
 
     #[test]
@@ -344,15 +318,15 @@ mod test {
              9a015c2b0ae33a485cfa0df39e8adcd8 2756"
         );
         let mut packet = plaintext.to_vec();
-        packet.resize(packet.len() + server.tag_len(), 0);
-        server.encrypt(0, &mut packet, HEADER_LEN);
-        server_header.encrypt(17, &mut packet);
+        packet.resize(packet.len() + server.local.tag_len(), 0);
+        server.local.encrypt(0, &mut packet, HEADER_LEN);
+        server_header.local.encrypt(17, &mut packet);
         assert_eq!(&packet[..], &protected[..]);
-        client_header.decrypt(17, &mut packet);
+        client_header.remote.decrypt(17, &mut packet);
         let (header, payload) = packet.split_at(HEADER_LEN);
         assert_eq!(header, &plaintext[0..HEADER_LEN]);
         let mut payload = BytesMut::from(payload);
-        client.decrypt(0, &header, &mut payload).unwrap();
+        client.remote.decrypt(0, &header, &mut payload).unwrap();
         assert_eq!(&payload, &plaintext[HEADER_LEN..]);
     }
 
@@ -378,14 +352,15 @@ mod test {
         );
 
         let cipher = &aead::AES_128_GCM;
-        let onertt = Crypto::new(Side::Client, cipher, client_secret, server_secret);
+        let onertt_client = PacketKey::new(cipher, &client_secret);
+        let onertt_server = PacketKey::new(cipher, &server_secret);
 
         assert_eq!(
-            &onertt.local_iv.0[..],
+            &onertt_client.iv.0[..],
             [0xd5, 0x1b, 0x16, 0x6a, 0x3e, 0xc4, 0x6f, 0x7e, 0x5f, 0x93, 0x27, 0x15]
         );
         assert_eq!(
-            &onertt.remote_iv.0[..],
+            &onertt_server.iv.0[..],
             [0x03, 0xda, 0x92, 0xa0, 0x91, 0x95, 0xe4, 0xbf, 0x87, 0x98, 0xd3, 0x78]
         );
     }
