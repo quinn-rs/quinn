@@ -143,6 +143,39 @@ async fn client_cancel_response() {
 }
 
 #[tokio::test]
+async fn server_cancel_response() {
+    let helper = Helper::new();
+
+    let mut incoming = helper.make_server();
+    let server_handle = tokio::spawn(async move {
+        let mut incoming_req = incoming
+            .next()
+            .await
+            .expect("connecting")
+            .await
+            .expect("accept");
+        let recv_req = incoming_req.next().await.expect("wait request");
+        let (_, mut sender) = recv_req.await.expect("recv_req");
+        let mut send_data = sender.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from("a".repeat(1024 * 1024 * 100).as_ref()))
+                .unwrap(),
+        );
+        send_data.cancel();
+    });
+
+    let conn = helper.make_connection().await;
+    let (req, resp) = conn.send_request(get("/"));
+    req.await.unwrap();
+    assert_matches!(
+        resp.await,
+        Err(Error::Http(HttpError::RequestCancelled, None))
+    );
+    timeout_join(server_handle).await;
+}
+
+#[tokio::test]
 async fn go_away() {
     let helper = Helper::new();
 
