@@ -390,6 +390,10 @@ fn zero_rtt_rejection() {
     let server_conn = pair.server.assert_accept();
     assert_matches!(
         pair.server_conn_mut(server_conn).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_conn).poll(),
         Some(Event::Connected)
     );
     assert_matches!(pair.server_conn_mut(server_conn).poll(), None);
@@ -422,6 +426,10 @@ fn zero_rtt_rejection() {
     let server_conn = pair.server.assert_accept();
     assert_matches!(
         pair.server_conn_mut(server_conn).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_conn).poll(),
         Some(Event::Connected)
     );
     assert_matches!(pair.server_conn_mut(server_conn).poll(), None);
@@ -451,6 +459,10 @@ fn alpn_success() {
     let client_conn = pair.begin_connect(client_config);
     pair.drive();
     let server_conn = pair.server.assert_accept();
+    assert_matches!(
+        pair.server_conn_mut(server_conn).poll(),
+        Some(Event::HandshakeDataReady)
+    );
     assert_matches!(
         pair.server_conn_mut(server_conn).poll(),
         Some(Event::Connected)
@@ -685,6 +697,10 @@ fn initial_retransmit() {
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
         Some(Event::Connected { .. })
     );
 }
@@ -731,6 +747,10 @@ fn instant_close_2() {
     pair.drive();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     let server_ch = pair.server.assert_accept();
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::ConnectionLost {
@@ -821,6 +841,10 @@ fn server_hs_retransmit() {
     assert!(!pair.client.inbound.is_empty()); // Initial + Handshakes
     pair.client.inbound.clear();
     pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
         Some(Event::Connected { .. })
@@ -1355,7 +1379,15 @@ fn large_initial() {
     let server_ch = pair.server.assert_accept();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
         Some(Event::Connected { .. })
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeDataReady)
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),

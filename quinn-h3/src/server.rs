@@ -419,8 +419,12 @@ impl Connecting {
     /// let (_, mut incoming) =
     ///     quic_builder.bind(&"[::]:443".parse().unwrap()).unwrap();
     ///
-    /// while let Some(connecting) = incoming.next().await {
-    ///     match &connecting.handshake_data().protocol.unwrap()[..] {
+    /// while let Some(mut connecting) = incoming.next().await {
+    ///     let data = match connecting.handshake_data().await {
+    ///         Err(_) => continue,
+    ///         Ok(x) => x,
+    ///     };
+    ///     match &data.protocol.unwrap()[..] {
     ///         b"teapotmq" => serve_tea(connecting).await,
     ///         quinn_h3::ALPN => {
     ///             let connecting =

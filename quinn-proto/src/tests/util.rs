@@ -130,7 +130,15 @@ impl Pair {
         let server_ch = self.server.assert_accept();
         assert_matches!(
             self.client_conn_mut(client_ch).poll(),
+            Some(Event::HandshakeDataReady)
+        );
+        assert_matches!(
+            self.client_conn_mut(client_ch).poll(),
             Some(Event::Connected { .. })
+        );
+        assert_matches!(
+            self.server_conn_mut(server_ch).poll(),
+            Some(Event::HandshakeDataReady)
         );
         assert_matches!(
             self.server_conn_mut(server_ch).poll(),

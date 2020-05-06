@@ -100,9 +100,12 @@ async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> 
     let (_, mut incoming) = endpoint_builder.bind(&addr)?;
 
     println!("server listening on {}", addr);
-    while let Some(connecting) = incoming.next().await {
+    while let Some(mut connecting) = incoming.next().await {
         tokio::spawn(async move {
-            let proto = connecting.handshake_data().unwrap().protocol.unwrap();
+            let proto = match connecting.handshake_data().await {
+                Err(_) => return,
+                Ok(x) => x.protocol.unwrap(),
+            };
             println!("server received connection");
 
             let result = match &proto[..] {
