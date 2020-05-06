@@ -34,6 +34,7 @@ where
 {
     conn: Option<ConnectionRef<S>>,
     connected: oneshot::Receiver<bool>,
+    handshake_data_ready: Option<oneshot::Receiver<()>>,
 }
 
 impl<S> Connecting<S>
@@ -46,12 +47,14 @@ where
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     ) -> Connecting<S> {
+        let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
         let conn = ConnectionRef::new(
             handle,
             conn,
             endpoint_events,
             conn_events,
+            on_handshake_data_send,
             on_connected_send,
         );
 
@@ -60,6 +63,7 @@ where
         Connecting {
             conn: Some(conn),
             connected: on_connected_recv,
+            handshake_data_ready: Some(on_handshake_data_recv),
         }
     }
 
@@ -103,16 +107,25 @@ where
     }
 
     /// Parameters negotiated during the handshake
-    pub fn handshake_data(&self) -> Option<S::HandshakeData> {
-        self.conn
-            .as_ref()
-            .unwrap()
-            .0
-            .lock()
-            .unwrap()
+    pub async fn handshake_data(&mut self) -> Result<S::HandshakeData, ConnectionError> {
+        // Taking &mut self allows us to use a single oneshot channel rather than dealing with
+        // potentially many tasks waiting on the same event. It's a bit of a hack, but keeps things
+        // simple.
+        if let Some(x) = self.handshake_data_ready.take() {
+            let _ = x.await;
+        }
+        let conn = self.conn.as_ref().unwrap();
+        let inner = conn.lock().unwrap();
+        inner
             .inner
             .crypto_session()
             .handshake_data()
+            .ok_or_else(|| {
+                inner
+                    .error
+                    .clone()
+                    .expect("spurious handshake data ready notification")
+            })
     }
 }
 
@@ -374,6 +387,9 @@ where
     }
 
     /// Parameters negotiated during the handshake
+    ///
+    /// Guaranteed to return `Some` on fully established connections or after
+    /// `Connecting::handshake_data` succeeds.
     pub fn handshake_data(&self) -> Option<S::HandshakeData> {
         self.0
             .lock()
@@ -580,12 +596,14 @@ where
         conn: proto::generic::Connection<S>,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
+        on_handshake_data: oneshot::Sender<()>,
         on_connected: oneshot::Sender<bool>,
     ) -> Self {
         Self(Arc::new(Mutex::new(ConnectionInner {
             inner: conn,
             driver: None,
             handle,
+            on_handshake_data: Some(on_handshake_data),
             on_connected: Some(on_connected),
             connected: false,
             timer: None,
@@ -652,6 +670,7 @@ where
     pub(crate) inner: proto::generic::Connection<S>,
     driver: Option<Waker>,
     handle: ConnectionHandle,
+    on_handshake_data: Option<oneshot::Sender<()>>,
     on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
     timer: Option<Delay>,
@@ -723,6 +742,11 @@ where
         while let Some(event) = self.inner.poll() {
             use proto::Event::*;
             match event {
+                HandshakeDataReady => {
+                    if let Some(x) = self.on_handshake_data.take() {
+                        let _ = x.send(());
+                    }
+                }
                 Connected => {
                     self.connected = true;
                     if let Some(x) = self.on_connected.take() {
