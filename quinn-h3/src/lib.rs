@@ -109,7 +109,7 @@ mod qpack;
 pub mod qpack;
 
 use err_derive::Error;
-use quinn::{ApplicationClose, ConnectionError, ReadError, WriteError};
+use quinn::{ApplicationClose, ConnectionError, ReadError, StoppedError, VarInt, WriteError};
 use std::{error::Error as StdError, io::ErrorKind};
 
 use proto::ErrorCode;
@@ -135,6 +135,9 @@ pub enum Error {
     /// A `QUIC`-specific write error occurred
     #[error(display = "QUIC write error: {}", _0)]
     Write(WriteError),
+    /// A `QUIC`-specific error occurred while polling for STOP_SENDING
+    #[error(display = "QUIC error while polling for STOP_SENDING: {}", _0)]
+    Stopped(StoppedError),
     /// Programming error within the crate's code
     #[error(display = "Internal error: {}", _0)]
     Internal(String),
@@ -235,6 +238,23 @@ impl From<WriteError> for Error {
                 Some(String::from_utf8_lossy(reason).to_string()),
             ),
             _ => Error::Write(err),
+        }
+    }
+}
+
+impl From<StoppedError> for Error {
+    fn from(err: StoppedError) -> Error {
+        match err {
+            StoppedError::ConnectionClosed(ConnectionError::ApplicationClosed(
+                ApplicationClose {
+                    error_code,
+                    ref reason,
+                },
+            )) => Error::Http(
+                ErrorCode::from(error_code).into(),
+                Some(String::from_utf8_lossy(reason).to_string()),
+            ),
+            _ => Error::Stopped(err),
         }
     }
 }
@@ -341,6 +361,12 @@ impl From<ErrorCode> for HttpError {
             ErrorCode::QPACK_DECODER_STREAM_ERROR => HttpError::QpackDecoderStreamError,
             _ => HttpError::Unknown(code.0),
         }
+    }
+}
+
+impl From<VarInt> for HttpError {
+    fn from(code: VarInt) -> Self {
+        ErrorCode::from(code).into()
     }
 }
 

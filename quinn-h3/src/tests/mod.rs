@@ -1,5 +1,5 @@
 use bytes::{BufMut, Bytes};
-use futures::StreamExt;
+use futures::{future, StreamExt};
 use http::{Response, StatusCode};
 use tokio::time::{delay_for, Duration};
 
@@ -173,6 +173,40 @@ async fn server_cancel_response() {
         Err(Error::Http(HttpError::RequestCancelled, None))
     );
     timeout_join(server_handle).await;
+}
+
+#[tokio::test]
+async fn poll_stopped() {
+    let helper = Helper::new();
+
+    let mut incoming = helper.make_server();
+    let server_handle = tokio::spawn(async move {
+        let mut incoming_req = incoming
+            .next()
+            .await
+            .expect("connecting")
+            .await
+            .expect("accept");
+        let recv_req = incoming_req.next().await.expect("wait request");
+        let (_, mut sender) = recv_req.await.expect("recv_req");
+        let mut send_data = sender.send_response(
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from("a".repeat(1024 * 1024 * 100).as_ref()))
+                .unwrap(),
+        );
+        future::poll_fn(|cx| send_data.poll_stopped(cx)).await
+    });
+
+    let conn = helper.make_connection().await;
+    let (req, mut resp) = conn.send_request(get("/"));
+    req.await.unwrap();
+    resp.cancel().await;
+
+    assert_matches!(
+        timeout_join(server_handle).await,
+        Ok(HttpError::RequestCancelled)
+    );
 }
 
 #[tokio::test]
