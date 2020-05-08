@@ -1013,7 +1013,7 @@ where
                     self.path.congestion_window += u64::from(info.size);
                 } else {
                     // Congestion avoidance.
-                    self.path.congestion_window += self.config.max_udp_payload_size
+                    self.path.congestion_window += self.endpoint_config.max_udp_payload_size
                         * u64::from(info.size)
                         / self.path.congestion_window;
                 }

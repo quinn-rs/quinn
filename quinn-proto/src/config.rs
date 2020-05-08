@@ -38,7 +38,6 @@ pub struct TransportConfig {
     pub(crate) time_threshold: f32,
     pub(crate) initial_rtt: Duration,
 
-    pub(crate) max_udp_payload_size: u64,
     pub(crate) initial_window: u64,
     pub(crate) minimum_window: u64,
     pub(crate) loss_reduction_factor: f32,
@@ -154,14 +153,6 @@ impl TransportConfig {
         self
     }
 
-    /// The sender’s maximum UDP payload size. Does not include UDP or IP overhead.
-    ///
-    /// Used for calculating initial and minimum congestion windows.
-    pub fn max_udp_payload_size(&mut self, value: u64) -> &mut Self {
-        self.max_udp_payload_size = value;
-        self
-    }
-
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_udp_payload_size, max(2 * max_udp_payload_size, 14720))`
@@ -247,8 +238,6 @@ impl Default for TransportConfig {
                                                         // Window size needed to avoid pipeline
                                                         // stalls
         const STREAM_RWND: u64 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
-        // Implied by a 1280 byte IP packet
-        const MAX_UDP_PAYLOAD_SIZE: u64 = 1232;
 
         TransportConfig {
             stream_window_bidi: 32,
@@ -263,7 +252,6 @@ impl Default for TransportConfig {
             time_threshold: 9.0 / 8.0,
             initial_rtt: Duration::from_millis(500), // per spec, intentionally distinct from EXPECTED_RTT
 
-            max_udp_payload_size: MAX_UDP_PAYLOAD_SIZE,
             initial_window: cmp::min(
                 10 * MAX_UDP_PAYLOAD_SIZE,
                 cmp::max(2 * MAX_UDP_PAYLOAD_SIZE, 14720),
@@ -289,6 +277,7 @@ where
 {
     pub(crate) local_cid_len: usize,
     pub(crate) reset_key: Arc<S::HmacKey>,
+    pub(crate) max_udp_payload_size: u64,
 }
 
 impl<S> EndpointConfig<S>
@@ -300,6 +289,7 @@ where
         Self {
             local_cid_len: 8,
             reset_key: Arc::new(reset_key),
+            max_udp_payload_size: MAX_UDP_PAYLOAD_SIZE,
         }
     }
 
@@ -323,6 +313,12 @@ where
         self.reset_key = Arc::new(S::HmacKey::new(value)?);
         Ok(self)
     }
+
+    /// Maximum UDP payload size accepted from peers. Excludes UDP and IP overhead.
+    pub fn max_udp_payload_size(&mut self, value: u64) -> &mut Self {
+        self.max_udp_payload_size = value;
+        self
+    }
 }
 
 impl<S: crypto::Session> fmt::Debug for EndpointConfig<S> {
@@ -330,6 +326,7 @@ impl<S: crypto::Session> fmt::Debug for EndpointConfig<S> {
         fmt.debug_struct("EndpointConfig")
             .field("local_cid_len", &self.local_cid_len)
             .field("reset_key", &"[ elided ]")
+            .field("max_udp_payload_size", &self.max_udp_payload_size)
             .finish()
     }
 }
@@ -350,6 +347,7 @@ impl<S: crypto::Session> Clone for EndpointConfig<S> {
         Self {
             local_cid_len: self.local_cid_len,
             reset_key: self.reset_key.clone(),
+            max_udp_payload_size: self.max_udp_payload_size,
         }
     }
 }
@@ -592,3 +590,6 @@ impl From<TryFromIntError> for ConfigError {
         ConfigError::OutOfBounds
     }
 }
+
+// Implied by a 1280 byte IP packet
+const MAX_UDP_PAYLOAD_SIZE: u64 = 1232;
