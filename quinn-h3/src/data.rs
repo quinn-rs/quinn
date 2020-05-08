@@ -22,7 +22,7 @@ use crate::{
         ErrorCode,
     },
     streams::Reset,
-    Error,
+    Error, HttpError,
 };
 
 /// Represent data transmission completion for a Request or a Response
@@ -84,6 +84,14 @@ where
     pub fn cancel(&mut self) {
         self.send.reset(ErrorCode::REQUEST_CANCELLED.into());
         self.state = SendDataState::Finished;
+    }
+
+    /// Monitor stop sending signal from the peer
+    ///
+    /// This will return `Ready` when a STOP_SENDING frame from the peer has
+    /// been received for this stream. Else, it will return `Pending` indefinitely.
+    pub fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<HttpError, Error>> {
+        Poll::Ready(Ok(ready!(self.send.poll_stopped(cx)?).into()))
     }
 }
 
