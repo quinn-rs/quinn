@@ -794,7 +794,6 @@ where
             - 4                 // worst-case packet number size
             - self.space(SpaceId::Data).crypto.as_ref().map_or_else(|| &self.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
             - Datagram::SIZE_BOUND;
-        self.config.datagram_receive_buffer_size?;
         let limit = self.params.max_datagram_frame_size?.into_inner();
         Some(limit.min(max_size as u64) as usize)
     }

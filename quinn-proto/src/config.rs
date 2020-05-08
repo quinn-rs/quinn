@@ -218,7 +218,7 @@ impl TransportConfig {
     }
 
     /// Maximum number of incoming application datagram bytes to buffer, or None to disable
-    /// datagrams
+    /// incoming datagrams
     ///
     /// The peer is forbidden to send single datagrams larger than this size. If the aggregate size
     /// of all datagrams that have been received from the peer but not consumed by the application
