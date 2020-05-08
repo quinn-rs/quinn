@@ -445,6 +445,7 @@ where
     S: proto::crypto::Session,
 {
     pub(crate) fn new(socket: UdpSocket, inner: proto::generic::Endpoint<S>, ipv6: bool) -> Self {
+        let recv_buf = vec![0; inner.config().get_max_udp_payload_size().min(64 * 1024) as usize];
         let (sender, events) = mpsc::unbounded();
         Self(Arc::new(Mutex::new(EndpointInner {
             socket,
@@ -461,7 +462,7 @@ where
             ref_count: 0,
             close: None,
             driver_lost: false,
-            recv_buf: vec![0; 64 * 1024].into(),
+            recv_buf: recv_buf.into(),
             idle: Broadcast::new(),
         })))
     }
