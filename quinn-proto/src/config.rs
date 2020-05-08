@@ -287,16 +287,7 @@ pub struct EndpointConfig<S>
 where
     S: crypto::Session,
 {
-    /// Length of connection IDs for the endpoint.
-    ///
-    /// This must be no greater than 20. If zero, incoming packets are mapped to connections only by
-    /// their source address. Otherwise, the connection ID field is used alone, allowing for source
-    /// address to change and for multiple connections from a single address. When local_cid_len >
-    /// 0, at most 3/4 * 2^(local_cid_len * 8) simultaneous connections can be supported.
     pub(crate) local_cid_len: usize,
-
-    /// Private key used to send authenticated connection resets to peers who were
-    /// communicating with a previous instance of this endpoint.
     pub(crate) reset_key: Arc<S::HmacKey>,
 }
 
