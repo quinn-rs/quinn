@@ -30,7 +30,7 @@ maintenance = { status = "experimental" }
 bytes = "0.5.2"
 err-derive = "0.2.3"
 futures = "0.3.1"
-libc = "0.2.67"
+libc = "0.2.69"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.6.1" }
 rustls = { version = "0.17", features = ["quic"], optional = true }
