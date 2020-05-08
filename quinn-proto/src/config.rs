@@ -38,7 +38,7 @@ pub struct TransportConfig {
     pub(crate) time_threshold: f32,
     pub(crate) initial_rtt: Duration,
 
-    pub(crate) max_datagram_size: u64,
+    pub(crate) max_udp_payload_size: u64,
     pub(crate) initial_window: u64,
     pub(crate) minimum_window: u64,
     pub(crate) loss_reduction_factor: f32,
@@ -157,14 +157,14 @@ impl TransportConfig {
     /// The sender’s maximum UDP payload size. Does not include UDP or IP overhead.
     ///
     /// Used for calculating initial and minimum congestion windows.
-    pub fn max_datagram_size(&mut self, value: u64) -> &mut Self {
-        self.max_datagram_size = value;
+    pub fn max_udp_payload_size(&mut self, value: u64) -> &mut Self {
+        self.max_udp_payload_size = value;
         self
     }
 
     /// Default limit on the amount of outstanding data in bytes.
     ///
-    /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
+    /// Recommended value: `min(10 * max_udp_payload_size, max(2 * max_udp_payload_size, 14720))`
     pub fn initial_window(&mut self, value: u64) -> &mut Self {
         self.initial_window = value;
         self
@@ -172,7 +172,7 @@ impl TransportConfig {
 
     /// Default minimum congestion window.
     ///
-    /// Recommended value: `2 * max_datagram_size`.
+    /// Recommended value: `2 * max_udp_payload_size`.
     pub fn minimum_window(&mut self, value: u64) -> &mut Self {
         self.minimum_window = value;
         self
@@ -247,7 +247,8 @@ impl Default for TransportConfig {
                                                         // Window size needed to avoid pipeline
                                                         // stalls
         const STREAM_RWND: u64 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
-        const MAX_DATAGRAM_SIZE: u64 = 1200;
+        // Implied by a 1280 byte IP packet
+        const MAX_UDP_PAYLOAD_SIZE: u64 = 1232;
 
         TransportConfig {
             stream_window_bidi: 32,
@@ -262,12 +263,12 @@ impl Default for TransportConfig {
             time_threshold: 9.0 / 8.0,
             initial_rtt: Duration::from_millis(500), // per spec, intentionally distinct from EXPECTED_RTT
 
-            max_datagram_size: MAX_DATAGRAM_SIZE,
+            max_udp_payload_size: MAX_UDP_PAYLOAD_SIZE,
             initial_window: cmp::min(
-                10 * MAX_DATAGRAM_SIZE,
-                cmp::max(2 * MAX_DATAGRAM_SIZE, 14720),
+                10 * MAX_UDP_PAYLOAD_SIZE,
+                cmp::max(2 * MAX_UDP_PAYLOAD_SIZE, 14720),
             ),
-            minimum_window: 2 * MAX_DATAGRAM_SIZE,
+            minimum_window: 2 * MAX_UDP_PAYLOAD_SIZE,
             loss_reduction_factor: 0.5,
             persistent_congestion_threshold: 3,
             keep_alive_interval: None,
