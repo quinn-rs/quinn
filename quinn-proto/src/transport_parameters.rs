@@ -119,6 +119,7 @@ impl TransportParameters {
             initial_max_stream_data_bidi_local: config.stream_receive_window,
             initial_max_stream_data_bidi_remote: config.stream_receive_window,
             initial_max_stream_data_uni: config.stream_receive_window,
+            max_udp_payload_size: config.max_udp_payload_size,
             max_idle_timeout: config.max_idle_timeout.map_or(0, |x| {
                 x.as_millis()
                     .try_into()
