@@ -55,17 +55,14 @@ impl super::UdpExt for UdpSocket {
         }
         #[cfg(target_os = "linux")]
         {
-            // TODO: Replace with constants from libc > 0.2.67
-            const IP_PMTUDISC_PROBE: libc::c_int = 2;
             if addr.is_ipv4() {
-                const IP_MTU_DISCOVER: libc::c_int = 10;
                 let rc = unsafe {
                     libc::setsockopt(
                         self.as_raw_fd(),
                         libc::IPPROTO_IP,
-                        IP_MTU_DISCOVER,
-                        &IP_PMTUDISC_PROBE as *const _ as _,
-                        mem::size_of_val(&IP_PMTUDISC_PROBE) as _,
+                        libc::IP_MTU_DISCOVER,
+                        &libc::IP_PMTUDISC_PROBE as *const _ as _,
+                        mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
                     )
                 };
                 if rc == -1 {
@@ -77,8 +74,8 @@ impl super::UdpExt for UdpSocket {
                         self.as_raw_fd(),
                         libc::IPPROTO_IPV6,
                         libc::IPV6_MTU_DISCOVER,
-                        &IP_PMTUDISC_PROBE as *const _ as _,
-                        mem::size_of_val(&IP_PMTUDISC_PROBE) as _,
+                        &libc::IP_PMTUDISC_PROBE as *const _ as _,
+                        mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
                     )
                 };
                 if rc == -1 {
