@@ -632,6 +632,11 @@ where
         self.reject_new_connections = true;
     }
 
+    /// Access the configuration used by this endpoint
+    pub fn config(&self) -> &EndpointConfig<S> {
+        &self.config
+    }
+
     #[cfg(test)]
     pub(crate) fn known_connections(&self) -> usize {
         let x = self.connections.len();

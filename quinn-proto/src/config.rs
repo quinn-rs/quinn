@@ -319,6 +319,19 @@ where
         self.max_udp_payload_size = value;
         self
     }
+
+    /// Get the current value of `max_udp_payload_size`
+    ///
+    /// While most parameters don't need to be readable, this must be exposed to allow higher-level
+    /// layers, e.g. the `quinn` crate, to determine how large a receive buffer to allocate to
+    /// support an externally-defined `EndpointConfig`.
+    ///
+    /// While `get_` accessors are typically unidiomatic in Rust, we favor concision for setters,
+    /// which will be used far more heavily.
+    #[doc(hidden)]
+    pub fn get_max_udp_payload_size(&self) -> u64 {
+        self.max_udp_payload_size
+    }
 }
 
 impl<S: crypto::Session> fmt::Debug for EndpointConfig<S> {
