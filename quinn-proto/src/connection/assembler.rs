@@ -2,14 +2,14 @@ use std::{cmp::Ordering, collections::BinaryHeap, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
 
+use crate::range_set::RangeSet;
+
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug, Default)]
 pub(crate) struct Assembler {
+    state: State,
     data: BinaryHeap<Chunk>,
     defragmented: usize,
-    /// Whether any unordered reads have been performed, making this assembler unusable for ordered
-    /// reads
-    unordered: bool,
     /// Number of bytes read by the application. When only ordered reads have been used, this is the
     /// length of the contiguous prefix of the stream which has been consumed by the application,
     /// aka the stream offset.
@@ -27,7 +27,7 @@ impl Assembler {
 
     pub(crate) fn read(&mut self, buf: &mut [u8]) -> usize {
         assert!(
-            !self.unordered,
+            matches!(self.state, State::Ordered),
             "cannot perform ordered reads following unordered reads on a stream"
         );
 
@@ -46,7 +46,15 @@ impl Assembler {
     }
 
     pub(crate) fn read_unordered(&mut self) -> Option<(u64, Bytes)> {
-        self.unordered = true;
+        if let State::Ordered = self.state {
+            // Enter unordered mode
+            let mut recvd = RangeSet::new();
+            recvd.insert(0..self.bytes_read);
+            for chunk in &self.data {
+                recvd.insert(chunk.offset..chunk.offset + chunk.bytes.len() as u64);
+            }
+            self.state = State::Unordered { recvd };
+        }
         let (n, data) = self.pop()?;
         self.bytes_read += data.len() as u64;
         Some((n, data))
@@ -144,8 +152,22 @@ impl Assembler {
         self.data.pop().map(|x| (x.offset, x.bytes))
     }
 
-    pub(crate) fn insert(&mut self, offset: u64, bytes: Bytes) {
+    pub(crate) fn insert(&mut self, mut offset: u64, mut bytes: Bytes) {
         self.limit = self.limit.max(offset + bytes.len() as u64);
+        if let State::Unordered { ref mut recvd } = self.state {
+            // Discard duplicate data
+            for duplicate in recvd.replace(offset..offset + bytes.len() as u64) {
+                if duplicate.start > offset {
+                    self.data.push(Chunk {
+                        offset,
+                        bytes: bytes.split_to((duplicate.start - offset) as usize),
+                    });
+                    offset = duplicate.start;
+                }
+                bytes.advance((duplicate.end - offset) as usize);
+                offset = duplicate.end;
+            }
+        }
         if bytes.is_empty() || self.stopped {
             return;
         }
@@ -220,6 +242,22 @@ impl PartialOrd for Chunk {
 impl PartialEq for Chunk {
     fn eq(&self, other: &Chunk) -> bool {
         (self.offset, self.bytes.len()) == (other.offset, other.bytes.len())
+    }
+}
+
+#[derive(Debug)]
+enum State {
+    Ordered,
+    Unordered {
+        /// The set of offsets that have been received from the peer, including portions not yet
+        /// read by the application.
+        recvd: RangeSet,
+    },
+}
+
+impl Default for State {
+    fn default() -> Self {
+        State::Ordered
     }
 }
 
@@ -390,5 +428,39 @@ mod test {
         x.insert(3, Bytes::from_static(b"def"));
         x.defragment();
         assert_eq!(x.pop(), Some((3, Bytes::from_static(b"def"))));
+    }
+
+    #[test]
+    fn unordered_happy_path() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"abc"));
+        assert_eq!(x.read_unordered(), Some((0, Bytes::from_static(b"abc"))));
+        assert_eq!(x.read_unordered(), None);
+        x.insert(3, Bytes::from_static(b"def"));
+        assert_eq!(x.read_unordered(), Some((3, Bytes::from_static(b"def"))));
+        assert_eq!(x.read_unordered(), None);
+    }
+
+    #[test]
+    fn unordered_dedup() {
+        let mut x = Assembler::new();
+        x.insert(3, Bytes::from_static(b"def"));
+        assert_eq!(x.read_unordered(), Some((3, Bytes::from_static(b"def"))));
+        assert_eq!(x.read_unordered(), None);
+        x.insert(0, Bytes::from_static(b"a"));
+        x.insert(0, Bytes::from_static(b"abcdefghi"));
+        x.insert(0, Bytes::from_static(b"abcd"));
+        assert_eq!(x.read_unordered(), Some((0, Bytes::from_static(b"a"))));
+        assert_eq!(x.read_unordered(), Some((1, Bytes::from_static(b"bc"))));
+        assert_eq!(x.read_unordered(), Some((6, Bytes::from_static(b"ghi"))));
+        assert_eq!(x.read_unordered(), None);
+        x.insert(8, Bytes::from_static(b"ijkl"));
+        assert_eq!(x.read_unordered(), Some((9, Bytes::from_static(b"jkl"))));
+        assert_eq!(x.read_unordered(), None);
+        x.insert(12, Bytes::from_static(b"mno"));
+        assert_eq!(x.read_unordered(), Some((12, Bytes::from_static(b"mno"))));
+        assert_eq!(x.read_unordered(), None);
+        x.insert(2, Bytes::from_static(b"cde"));
+        assert_eq!(x.read_unordered(), None);
     }
 }
