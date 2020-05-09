@@ -682,9 +682,10 @@ where
 
     /// Read from the given recv stream, in undefined order
     ///
-    /// While stream data is usually returned to the application in order, for some applications
-    /// it can make sense to leverage the reduced latency of unordered reads. For ordered reads,
-    /// the sibling `read()` method can be used.
+    /// While stream data is typically processed by applications in-order, unordered reads improve
+    /// performance when packet loss occurs and data cannot be retransmitted before the flow control
+    /// window is filled. When in-order delivery is required, the sibling `read()` method should be
+    /// used.
     ///
     /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
