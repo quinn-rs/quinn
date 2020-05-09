@@ -235,6 +235,8 @@ where
                 return Poll::Ready(());
             }
             conn.drive_transmit();
+            // If a timer expires, there might be more to transmit. When we transmit something, we
+            // might need to reset a timer. Hence, we must loop until neither happens.
             keep_going |= conn.drive_timer(cx);
             conn.forward_endpoint_events();
             conn.forward_app_events();
@@ -755,6 +757,8 @@ where
                     // stuck in an infinite loop resetting it.
                     self.inner.handle_timeout(Instant::now());
                     self.timer = None;
+                    // A timer expired, so the caller needs to check for new transmits, which might
+                    // cause new timers to be set.
                     keep_going = true;
                 }
             }
