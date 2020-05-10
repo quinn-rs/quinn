@@ -370,7 +370,6 @@ impl State {
             tls_config.key_log = Arc::new(rustls::KeyLogFile::new());
         }
         let mut transport = quinn::TransportConfig::default();
-        transport.initial_window(1024 * 1024 * 5);
         transport.send_window(1024 * 1024 * 2);
         transport.receive_window(1024 * 1024 * 2);
         transport

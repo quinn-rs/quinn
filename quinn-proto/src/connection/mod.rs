@@ -16,6 +16,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{EndpointConfig, ServerConfig, TransportConfig},
+    congestion,
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
@@ -137,9 +138,6 @@ where
     //
     /// Summary statistics of packets that have been sent, but not yet acked or deemed lost
     in_flight: InFlight,
-    /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
-    /// after this time is acknowledged, QUIC exits recovery.
-    recovery_start_time: Instant,
     /// Explicit congestion notification (ECN) counters
     ecn_counters: frame::EcnCounts,
     /// Whether the most recently received packet had an ECN codepoint set
@@ -202,9 +200,8 @@ where
             path: PathData {
                 remote,
                 rtt: RttEstimator::new(),
-                congestion_window: config.initial_window,
-                ssthresh: u64::max_value(),
                 sending_ecn: true,
+                congestion: config.congestion_controller_factory.build(now),
             },
             prev_path: None,
             side,
@@ -239,7 +236,6 @@ where
             pto_count: 0,
 
             in_flight: InFlight::new(),
-            recovery_start_time: now,
             ecn_counters: frame::EcnCounts::ZERO,
             receiving_ecn: false,
             remote_validated,
@@ -930,7 +926,7 @@ where
             if let Some(info) = self.space_mut(space).sent_packets.remove(&packet) {
                 self.space_mut(space).pending_acks.subtract(&info.acks);
                 ack_eliciting_acked |= info.ack_eliciting;
-                self.on_packet_acked(info);
+                self.on_packet_acked(now, info);
             }
         }
 
@@ -994,30 +990,28 @@ where
             }
             Ok(false) => {}
             Ok(true) => {
-                self.congestion_event(now, largest_sent_time);
+                self.path
+                    .congestion
+                    .on_congestion_event(now, largest_sent_time, false);
             }
         }
     }
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
-    fn on_packet_acked(&mut self, info: SentPacket) {
+    fn on_packet_acked(&mut self, now: Instant, info: SentPacket) {
         let was_congestion_blocked = self.congestion_blocked();
         self.in_flight.remove(&info);
         if info.ack_eliciting {
             // Congestion control
-            // Do not increase congestion window in recovery period or while migrating, or if we
-            // weren't sending at max rate.
-            if !self.in_recovery(info.time_sent) && !self.migrating() && was_congestion_blocked {
-                if self.path.congestion_window < self.path.ssthresh {
-                    // Slow start.
-                    self.path.congestion_window += u64::from(info.size);
-                } else {
-                    // Congestion avoidance.
-                    self.path.congestion_window += self.endpoint_config.max_udp_payload_size
-                        * u64::from(info.size)
-                        / self.path.congestion_window;
-                }
+            // Ignore ACKs that might be from an older path
+            if !self.migrating() {
+                self.path.congestion.on_ack(
+                    now,
+                    info.time_sent,
+                    info.size.into(),
+                    was_congestion_blocked,
+                );
             }
         }
 
@@ -1169,32 +1163,13 @@ where
                 < largest_lost_sent - congestion_period;
 
             if lost_ack_eliciting {
-                self.congestion_event(now, largest_lost_sent);
-                if in_persistent_congestion {
-                    self.path.congestion_window = self.config.minimum_window;
-                }
+                self.path.congestion.on_congestion_event(
+                    now,
+                    largest_lost_sent,
+                    in_persistent_congestion,
+                );
             }
         }
-    }
-
-    fn congestion_event(&mut self, now: Instant, sent_time: Instant) {
-        // Start a new recovery epoch if the lost packet is larger than the end of the
-        // previous recovery epoch.
-        if self.in_recovery(sent_time) {
-            return;
-        }
-        self.recovery_start_time = now;
-        // Converting a u64 to f32 risks some precision loss, but a modest amount of error in
-        // congestion window reductions is harmless.
-        self.path.congestion_window =
-            (self.path.congestion_window as f32 * self.config.loss_reduction_factor) as u64;
-        self.path.congestion_window =
-            cmp::max(self.path.congestion_window, self.config.minimum_window);
-        self.path.ssthresh = self.path.congestion_window;
-    }
-
-    fn in_recovery(&self, sent_time: Instant) -> bool {
-        sent_time <= self.recovery_start_time
     }
 
     fn earliest_time_and_space(
@@ -1757,7 +1732,7 @@ where
                         let space = self.space_mut(SpaceId::Initial);
                         if let Some(info) = space.sent_packets.remove(&0) {
                             space.pending_acks.subtract(&info.acks);
-                            self.on_packet_acked(info);
+                            self.on_packet_acked(now, info);
                         };
 
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
@@ -2295,15 +2270,10 @@ where
             } else {
                 RttEstimator::new()
             },
-            congestion_window: if maybe_rebinding {
-                self.path.congestion_window
+            congestion: if maybe_rebinding {
+                self.path.congestion.clone_box()
             } else {
-                self.config.initial_window
-            },
-            ssthresh: if maybe_rebinding {
-                self.path.ssthresh
-            } else {
-                u64::max_value()
+                self.config.congestion_controller_factory.build(now)
             },
             // Try ECN on the new path if it's probably not the same as an old broken path.
             sending_ecn: self.path.sending_ecn || !maybe_rebinding,
@@ -2598,7 +2568,7 @@ where
 
     /// Whether UDP transmits are currently blocked by link congestion
     fn congestion_blocked(&self) -> bool {
-        self.in_flight.bytes + u64::from(self.mtu) >= self.path.congestion_window
+        self.in_flight.bytes + u64::from(self.mtu) >= self.path.congestion.window()
     }
 
     fn decrypt_packet(
@@ -2717,7 +2687,8 @@ where
     #[cfg(test)]
     pub(crate) fn congestion_state(&self) -> u64 {
         self.path
-            .congestion_window
+            .congestion
+            .window()
             .saturating_sub(self.in_flight.bytes)
     }
 
@@ -3105,13 +3076,10 @@ const MIN_PACKET_SPACE: usize = 40;
 struct PathData {
     remote: SocketAddr,
     rtt: RttEstimator,
-    /// Maximum number of bytes in flight that may be sent.
-    congestion_window: u64,
-    /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
-    /// slow start and the window grows by the number of bytes acknowledged.
-    ssthresh: u64,
     /// Whether we're enabling ECN on outgoing packets
     sending_ecn: bool,
+    /// Congestion controller state
+    congestion: Box<dyn congestion::Controller>,
 }
 
 /// Errors that can arise when sending a datagram
