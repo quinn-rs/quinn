@@ -21,7 +21,7 @@ where
 {
     server_config: Option<ServerConfig<S>>,
     config: EndpointConfig<S>,
-    client_config: ClientConfig<S>,
+    default_client_config: ClientConfig<S>,
 }
 
 #[allow(missing_docs)]
@@ -30,12 +30,11 @@ where
     S: proto::crypto::Session + Send + 'static,
 {
     /// Start a builder with a specific initial low-level configuration.
-    pub fn new(config: EndpointConfig<S>) -> Self {
+    pub fn new(config: EndpointConfig<S>, default_client_config: ClientConfig<S>) -> Self {
         Self {
+            server_config: None,
             config,
-            // Pull in this crate's defaults rather than proto's
-            client_config: ClientConfigBuilder::default().build(),
-            ..Self::default()
+            default_client_config,
         }
     }
 
@@ -68,7 +67,7 @@ where
         Ok((
             Endpoint {
                 inner: rc.clone(),
-                default_client_config: self.client_config,
+                default_client_config: self.default_client_config,
             },
             Incoming::new(rc),
         ))
@@ -84,7 +83,7 @@ where
     ///
     /// The default can be overriden by using `Endpoint::connect_with`.
     pub fn default_client_config(&mut self, config: ClientConfig<S>) -> &mut Self {
-        self.client_config = config;
+        self.default_client_config = config;
         self
     }
 }
@@ -97,7 +96,7 @@ where
         Self {
             server_config: None,
             config: EndpointConfig::default(),
-            client_config: ClientConfig::default(),
+            default_client_config: ClientConfig::default(),
         }
     }
 }
