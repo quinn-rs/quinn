@@ -40,13 +40,17 @@ where
 
     /// Build an endpoint bound to `addr`
     ///
-    /// Must be called from within a tokio runtime context.
+    /// Must be called from within a tokio runtime context. To avoid consuming the
+    /// `EndpointBuilder`, call `clone()` first.
     pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint<S>, Incoming<S>), EndpointError> {
         let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
         self.with_socket(socket)
     }
 
-    /// Build an endpoint around a pre-configured socket.
+    /// Build an endpoint around a pre-configured socket
+    ///
+    /// Must be called from within a tokio runtime context. To avoid consuming the
+    /// `EndpointBuilder`, call `clone()` first.
     pub fn with_socket(
         self,
         socket: std::net::UdpSocket,
