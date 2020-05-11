@@ -502,18 +502,18 @@ where
                 Some((exact_number, packet_crypto)),
             );
 
-            if let Some((sent, acks, stream_frames)) = sent {
+            if let Some(sent) = sent {
                 // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
                 // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
                 // the need for subtler logic to avoid double-transmitting acks all the time.
-                space.permit_ack_only &= acks.is_empty();
+                space.permit_ack_only &= sent.acks.is_empty();
 
                 self.on_packet_sent(
                     now,
                     space_id,
                     exact_number,
                     SentPacket {
-                        acks,
+                        acks: sent.acks,
                         time_sent: now,
                         size: if padded || ack_eliciting {
                             (buf.len() - buf_start) as u16
@@ -521,8 +521,8 @@ where
                             0
                         },
                         ack_eliciting,
-                        retransmits: sent,
-                        stream_frames,
+                        retransmits: sent.retransmits,
+                        stream_frames: sent.stream_frames,
                     },
                 );
             }
@@ -2364,9 +2364,9 @@ where
         &mut self,
         space_id: SpaceId,
         buf: &mut Vec<u8>,
-    ) -> (Retransmits, RangeSet, Vec<frame::StreamMeta>) {
+    ) -> SentFrames {
+        let mut sent = SentFrames::default();
         let space = &mut self.spaces[space_id as usize];
-        let mut sent = Retransmits::default();
         let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
         let tag_len = space
             .crypto
@@ -2390,7 +2390,7 @@ where
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
             buf.write(frame::Type::HANDSHAKE_DONE);
-            sent.handshake_done = true;
+            sent.retransmits.handshake_done = true;
         }
 
         // PING
@@ -2401,7 +2401,7 @@ where
 
         // ACK
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
-        let acks = if !space.pending_acks.is_empty() {
+        if !space.pending_acks.is_empty() {
             debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
             trace!("ACK");
             let ecn = if self.receiving_ecn {
@@ -2410,10 +2410,8 @@ where
                 None
             };
             frame::Ack::encode(0, &space.pending_acks, ecn, buf);
-            space.pending_acks.clone()
-        } else {
-            RangeSet::new()
-        };
+            sent.acks = space.pending_acks.clone();
+        }
 
         // PATH_CHALLENGE
         if buf.len() + 9 < max_size && space_id == SpaceId::Data {
@@ -2457,7 +2455,7 @@ where
                 truncated.data.len()
             );
             truncated.encode(buf);
-            sent.crypto.push_back(truncated);
+            sent.retransmits.crypto.push_back(truncated);
             if !frame.data.is_empty() {
                 frame.offset += len as u64;
                 space.pending.crypto.push_front(frame);
@@ -2465,8 +2463,12 @@ where
         }
 
         if space_id == SpaceId::Data {
-            self.streams
-                .write_control_frames(buf, &mut space.pending, &mut sent, max_size);
+            self.streams.write_control_frames(
+                buf,
+                &mut space.pending,
+                &mut sent.retransmits,
+                max_size,
+            );
         }
 
         // NEW_CONNECTION_ID
@@ -2487,7 +2489,7 @@ where
                 reset_token: issued.reset_token,
             }
             .encode(buf);
-            sent.new_cids.push(issued);
+            sent.retransmits.new_cids.push(issued);
         }
 
         // RETIRE_CONNECTION_ID
@@ -2499,7 +2501,7 @@ where
             trace!(sequence = seq, "RETIRE_CONNECTION_ID");
             buf.write(frame::Type::RETIRE_CONNECTION_ID);
             buf.write_var(seq);
-            sent.retire_cids.push(seq);
+            sent.retransmits.retire_cids.push(seq);
         }
 
         // DATAGRAM
@@ -2519,13 +2521,11 @@ where
         }
 
         // STREAM
-        let stream_frames = if space_id == SpaceId::Data {
-            self.streams.write_stream_frames(buf, max_size)
-        } else {
-            Vec::new()
-        };
+        if space_id == SpaceId::Data {
+            sent.stream_frames = self.streams.write_stream_frames(buf, max_size);
+        }
 
-        (sent, acks, stream_frames)
+        sent
     }
 
     fn close_common(&mut self) {
@@ -3153,4 +3153,11 @@ impl DatagramState {
 struct ZeroRttCrypto<S: crypto::Session> {
     header: S::HeaderKey,
     packet: S::PacketKey,
+}
+
+#[derive(Default)]
+struct SentFrames {
+    retransmits: Retransmits,
+    acks: RangeSet,
+    stream_frames: Vec<frame::StreamMeta>,
 }
