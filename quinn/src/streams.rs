@@ -460,11 +460,17 @@ where
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadToEndError {
     /// An error occurred during reading
-    #[error(display = "read error")]
-    Read(#[source] ReadError),
+    #[error(display = "read error: {}", 0)]
+    Read(ReadError),
     /// The stream is larger than the user-supplied limit
     #[error(display = "stream too long")]
     TooLong,
+}
+
+impl From<ReadError> for ReadToEndError {
+    fn from(x: ReadError) -> Self {
+        ReadToEndError::Read(x)
+    }
 }
 
 impl<S> AsyncRead for RecvStream<S>
