@@ -64,6 +64,9 @@ impl<'a> Drop for Encoder<'a> {
     }
 }
 
+/// # Safety
+///
+/// `cmsg` must refer to a cmsg containing a payload of type `T`
 pub unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
     assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
     debug_assert_eq!(
@@ -81,8 +84,9 @@ pub struct Iter<'a> {
 impl<'a> Iter<'a> {
     /// # Safety
     ///
-    /// `hdr.msg_control` must point to mutable memory containing at least `hdr.msg_controllen`
-    /// bytes, which lives at least as long as `'a` and have at least the alignment of `cmsghdr`.
+    /// `hdr.msg_control` must point to memory outliving `'a` which can be soundly read for the
+    /// lifetime of the constructed `Iter` and contains a buffer of cmsgs, i.e. is aligned for
+    /// `cmsghdr`, is fully initialized, and has correct internal links.
     pub unsafe fn new(hdr: &'a libc::msghdr) -> Self {
         Self {
             hdr,
