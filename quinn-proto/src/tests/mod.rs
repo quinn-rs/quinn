@@ -641,7 +641,7 @@ fn initial_retransmit() {
 }
 
 #[test]
-fn instant_close() {
+fn instant_close_1() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     info!("connecting");
