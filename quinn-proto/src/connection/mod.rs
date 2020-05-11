@@ -429,12 +429,34 @@ where
             let partial_encode = header.encode(&mut buf);
             coalesce = coalesce && !header.is_short();
 
+            let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
+                (
+                    crypto.header.local.sample_size(),
+                    crypto.packet.local.tag_len(),
+                )
+            } else if space_id == SpaceId::Data {
+                let zero_rtt = self.zero_rtt_crypto.as_ref().unwrap();
+                (zero_rtt.header.sample_size(), zero_rtt.packet.tag_len())
+            } else {
+                unreachable!("tried to send {:?} packet without keys", space_id);
+            };
+            let min_size = if pad_space == Some(space_id) {
+                // Initial packet, must be padded to mitigate amplification attacks
+                MIN_INITIAL_SIZE - tag_len
+            } else {
+                // Regular packet, must be large enough for header protection sampling, i.e. the
+                // combined lengths of the encoded packet number and protected payload must be at
+                // least 4 bytes longer than the sample required for header protection
+
+                // pn_len + payload_len + tag_len >= sample_size + 4
+                // payload_len >= sample_size + 4 - pn_len - tag_len
+                buf.len() + (sample_size + 4).saturating_sub(number.len() + tag_len)
+            };
+
             let sent = if close {
                 trace!("sending CONNECTION_CLOSE");
-                let max_len = buf.capacity()
-                    - partial_encode.start
-                    - partial_encode.header_len
-                    - space.crypto.as_ref().unwrap().packet.local.tag_len();
+                let max_len =
+                    buf.capacity() - partial_encode.start - partial_encode.header_len - tag_len;
                 match self.state {
                     State::Closed(state::Closed { ref reason }) => reason.encode(&mut buf, max_len),
                     State::Draining => frame::ConnectionClose {
@@ -447,10 +469,14 @@ where
                         "tried to make a close packet when the connection wasn't closed"
                     ),
                 }
+                if buf.len() < min_size {
+                    trace!("PADDING * {}", min_size - buf.len());
+                    buf.resize(min_size, 0);
+                }
                 coalesce = false;
                 None
             } else {
-                Some(self.populate_packet(space_id, &mut buf))
+                Some(self.populate_packet(space_id, min_size, &mut buf))
             };
 
             let space = &mut self.spaces[space_id as usize];
@@ -463,33 +489,7 @@ where
                 unreachable!("tried to send {:?} packet without keys", space_id);
             };
 
-            let mut padded = if pad_space == Some(space_id)
-                && buf.len() < MIN_INITIAL_SIZE - packet_crypto.tag_len()
-            {
-                // Initial-bearing packets MUST be padded
-                buf.resize(MIN_INITIAL_SIZE - packet_crypto.tag_len(), 0);
-                true
-            } else {
-                false
-            };
-
-            let pn_len = number.len();
-            // To ensure that sufficient data is available for sampling, packets are padded so that the
-            // combined lengths of the encoded packet number and protected payload is at least 4 bytes
-            // longer than the sample required for header protection.
-            let protected_payload_len = (buf.len() + packet_crypto.tag_len())
-                - partial_encode.start
-                - partial_encode.header_len;
-            if let Some(padding_minus_one) =
-                (header_crypto.sample_size() + 3).checked_sub(pn_len + protected_payload_len)
-            {
-                let padding = padding_minus_one + 1;
-                padded = true;
-                trace!("PADDING * {}", padding);
-                buf.resize(buf.len() + padding, 0);
-            }
-
-            buf.resize(buf.len() + packet_crypto.tag_len(), 0);
+            buf.resize(buf.len() + tag_len, 0);
             debug_assert!(buf.len() < self.mtu as usize);
             let packet_buf = &mut buf[partial_encode.start..];
             partial_encode.finish(
@@ -511,7 +511,7 @@ where
                     SentPacket {
                         acks: sent.acks,
                         time_sent: now,
-                        size: if padded || ack_eliciting {
+                        size: if sent.padding || ack_eliciting {
                             (buf.len() - buf_start) as u16
                         } else {
                             0
@@ -2334,6 +2334,7 @@ where
     fn populate_packet(
         &mut self,
         space_id: SpaceId,
+        min_size: usize,
         buf: &mut Vec<u8>,
     ) -> SentFrames {
         let mut sent = SentFrames::default();
@@ -2494,6 +2495,13 @@ where
         // STREAM
         if space_id == SpaceId::Data {
             sent.stream_frames = self.streams.write_stream_frames(buf, max_size);
+        }
+
+        // PADDING
+        if buf.len() < min_size {
+            trace!("PADDING * {}", min_size - buf.len());
+            buf.resize(min_size, 0);
+            sent.padding = true;
         }
 
         sent
@@ -3129,4 +3137,5 @@ struct SentFrames {
     retransmits: Retransmits,
     acks: RangeSet,
     stream_frames: Vec<frame::StreamMeta>,
+    padding: bool,
 }
