@@ -487,15 +487,15 @@ impl Streams {
     pub fn write_stream_frames(
         &mut self,
         buf: &mut Vec<u8>,
-        max_frame_size: usize,
+        max_buf_size: usize,
     ) -> Vec<frame::StreamMeta> {
         let mut stream_frames = Vec::new();
-        while buf.len() + frame::Stream::SIZE_BOUND < max_frame_size {
-            let max_data_len =
-                match max_frame_size.checked_sub(buf.len() + frame::Stream::SIZE_BOUND) {
-                    Some(x) => x,
-                    None => break,
-                };
+        while buf.len() + frame::Stream::SIZE_BOUND < max_buf_size {
+            let max_data_len = match max_buf_size.checked_sub(buf.len() + frame::Stream::SIZE_BOUND)
+            {
+                Some(x) => x,
+                None => break,
+            };
             let id = match self.pending.pop() {
                 Some(x) => x,
                 None => break,
