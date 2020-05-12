@@ -483,9 +483,20 @@ impl Streams {
         }
     }
 
+    /// Whether `write_stream_frames` might write frames
+    ///
+    /// `false` guarantees no frames, but `true` does not guarantee frames.
+    pub fn has_stream_frames(&self) -> bool {
+        !self.pending.is_empty()
+    }
+
+    /// Append stream frames to `buf`
+    ///
+    /// Must be called after all frames save for padding have been added.
     pub fn write_stream_frames(
         &mut self,
         buf: &mut Vec<u8>,
+        min_buf_size: usize,
         max_buf_size: usize,
     ) -> Vec<frame::StreamMeta> {
         let mut stream_frames = Vec::new();
@@ -522,10 +533,23 @@ impl Streams {
             }
 
             let meta = frame::StreamMeta { id, offsets, fin };
-            trace!(id = %meta.id, off = meta.offsets.start, len = meta.offsets.end - meta.offsets.start, fin = meta.fin, "STREAM");
-            meta.encode(true, buf);
+            let len = (meta.offsets.end - meta.offsets.start) as usize;
+            trace!(id = %meta.id, off = meta.offsets.start, len, fin = meta.fin, "STREAM");
+            // This is the last frame, and can therefore omit the length tag, if there are no
+            // following stream frames or no room for them and no padding will be needed.
+            let is_last_frame = (self.pending.is_empty()
+                || buf.len()
+                    + meta.size(Some(VarInt::from_u64(len as u64).unwrap()))
+                    + len
+                    + frame::Stream::SIZE_BOUND
+                    > max_buf_size)
+                && buf.len() + meta.size(None) + len >= min_buf_size;
+            meta.encode(!is_last_frame, buf);
             buf.put_slice(stream.pending.get(meta.offsets.clone()));
             stream_frames.push(meta);
+            if is_last_frame {
+                break;
+            }
         }
 
         stream_frames

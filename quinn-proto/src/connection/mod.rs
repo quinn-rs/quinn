@@ -2482,19 +2482,37 @@ where
                 Some(x) => x,
                 None => break,
             };
-            if buf.len() + datagram.size(true) > max_size {
+            // This is the last frame, and can therefore omit the length tag, if there are no
+            // following datagrams that would fit, no following stream frames, and no padding will
+            // be needed.
+            let is_last_frame = self
+                .datagrams
+                .outgoing
+                .front()
+                .map_or(true, |next_datagram| {
+                    buf.len() + datagram.size(true) + next_datagram.size(false) > max_size
+                })
+                && !self.streams.has_stream_frames()
+                && buf.len() + datagram.size(false) >= min_size;
+            if buf.len() + datagram.size(!is_last_frame) > max_size {
                 // Future work: we could be more clever about cramming small datagrams into
                 // mostly-full packets when a larger one is queued first
                 self.datagrams.outgoing.push_front(datagram);
                 break;
             }
             self.datagrams.outgoing_total -= datagram.data.len();
-            datagram.encode(true, buf);
+            datagram.encode(!is_last_frame, buf);
+            if is_last_frame {
+                // There might be another datagram that's small enough to fit iff we omit the length
+                // tag, but without a length tag it's illegal to add any further frames, so we must
+                // explicitly ignore any remaining datagrams by breaking early here.
+                break;
+            }
         }
 
         // STREAM
         if space_id == SpaceId::Data {
-            sent.stream_frames = self.streams.write_stream_frames(buf, max_size);
+            sent.stream_frames = self.streams.write_stream_frames(buf, min_size, max_size);
         }
 
         // PADDING

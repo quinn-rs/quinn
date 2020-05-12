@@ -446,6 +446,20 @@ impl StreamMeta {
             out.write_var(self.offsets.end - self.offsets.start); // <=8 bytes
         }
     }
+
+    /// Length of the stream frame's header, with optional payload length field
+    pub fn size(&self, length: Option<VarInt>) -> usize {
+        let offset_size = if self.offsets.start != 0 {
+            VarInt::from_u64(self.offsets.end - self.offsets.start)
+                .unwrap()
+                .size()
+        } else {
+            0
+        };
+        1 + VarInt::from_u64(self.id.0).unwrap().size()
+            + offset_size
+            + length.map_or(0, |x| x.size())
+    }
 }
 
 #[derive(Debug, Clone)]
