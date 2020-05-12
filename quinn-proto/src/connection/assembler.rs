@@ -17,7 +17,7 @@ pub(crate) struct Assembler {
     /// Whether to discard data
     stopped: bool,
     /// First offset we haven't received any data at or after
-    limit: u64,
+    end: u64,
 }
 
 impl Assembler {
@@ -153,7 +153,8 @@ impl Assembler {
     }
 
     pub(crate) fn insert(&mut self, mut offset: u64, mut bytes: Bytes) {
-        self.limit = self.limit.max(offset + bytes.len() as u64);
+        self.end = self.end.max(offset + bytes.len() as u64);
+
         if let State::Unordered { ref mut recvd } = self.state {
             // Discard duplicate data
             for duplicate in recvd.replace(offset..offset + bytes.len() as u64) {
@@ -190,13 +191,13 @@ impl Assembler {
     }
 
     /// Offset after the largest byte received
-    pub(crate) fn limit(&self) -> u64 {
-        self.limit
+    pub(crate) fn end(&self) -> u64 {
+        self.end
     }
 
-    /// Whether all data prior to `self.limit()` has been read
+    /// Whether all data prior to `self.end()` has been read
     pub(crate) fn is_fully_read(&self) -> bool {
-        self.bytes_read == self.limit
+        self.bytes_read == self.end
     }
 
     /// Discard all buffered data
