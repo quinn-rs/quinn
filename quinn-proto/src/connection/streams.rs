@@ -304,14 +304,14 @@ impl Streams {
                 return Ok(false);
             }
         };
-        let limit = rs.assembler.limit();
+        let end = rs.assembler.end();
 
         // Validate final_offset
         if let Some(offset) = rs.final_offset() {
             if offset != final_offset {
                 return Err(TransportError::FINAL_SIZE_ERROR("inconsistent value"));
             }
-        } else if limit > final_offset {
+        } else if end > final_offset {
             return Err(TransportError::FINAL_SIZE_ERROR(
                 "lower than high water mark",
             ));
@@ -327,8 +327,8 @@ impl Streams {
 
         // Update flow control
         Ok(if bytes_read != final_offset {
-            // bytes_read is always <= limit, so this won't underflow.
-            self.data_recvd += final_offset - limit;
+            // bytes_read is always <= end, so this won't underflow.
+            self.data_recvd += final_offset - end;
             self.local_max_data += final_offset - bytes_read;
             true
         } else {
@@ -403,7 +403,7 @@ impl Streams {
         };
         stream.assembler.stop();
         // Issue flow control credit for unread data
-        self.local_max_data += stream.assembler.limit() - stream.assembler.bytes_read();
+        self.local_max_data += stream.assembler.end() - stream.assembler.bytes_read();
         Ok(!stream.is_finished())
     }
 
@@ -995,7 +995,7 @@ impl Recv {
             }
         }
 
-        let prev_end = self.assembler.limit();
+        let prev_end = self.assembler.end();
         let new_bytes = end.saturating_sub(prev_end);
         let stream_max_data = self.assembler.bytes_read() + receive_window;
         if end > stream_max_data || received + new_bytes > max_data {
@@ -1047,7 +1047,7 @@ impl Recv {
             }
             RecvState::Closed => panic!("tried to read from a closed stream"),
             RecvState::Recv { size } => {
-                if size == Some(self.assembler.limit()) && self.assembler.is_fully_read() {
+                if size == Some(self.assembler.end()) && self.assembler.is_fully_read() {
                     self.state = RecvState::Closed;
                     Ok(())
                 } else {
