@@ -1072,7 +1072,7 @@ impl Recv {
                 self.state = RecvState::Closed;
                 Err(ReadError::Reset(error_code))
             }
-            RecvState::Closed => panic!("tried to read from a closed stream"),
+            RecvState::Closed => Err(ReadError::UnknownStream),
             RecvState::Recv { size } => {
                 if size == Some(self.assembler.end()) && self.assembler.is_fully_read() {
                     self.state = RecvState::Closed;
