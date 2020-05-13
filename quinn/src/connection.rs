@@ -38,12 +38,28 @@ where
 
 impl<S> Connecting<S>
 where
-    S: proto::crypto::Session,
+    S: proto::crypto::Session + 'static,
 {
-    pub(crate) fn new(conn: ConnectionRef<S>, connected: oneshot::Receiver<bool>) -> Self {
-        Self {
+    pub(crate) fn new(
+        handle: ConnectionHandle,
+        conn: proto::generic::Connection<S>,
+        endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
+        conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
+    ) -> Connecting<S> {
+        let (on_connected_send, on_connected_recv) = oneshot::channel();
+        let conn = ConnectionRef::new(
+            handle,
+            conn,
+            endpoint_events,
+            conn_events,
+            on_connected_send,
+        );
+
+        tokio::spawn(ConnectionDriver(conn.clone()));
+
+        Connecting {
             conn: Some(conn),
-            connected,
+            connected: on_connected_recv,
         }
     }
 
@@ -215,7 +231,7 @@ where
 /// packets still in flight from the peer are handled gracefully.
 #[must_use = "connection drivers must be spawned for their connections to function"]
 #[derive(Debug)]
-pub(crate) struct ConnectionDriver<S: proto::crypto::Session>(pub(crate) ConnectionRef<S>);
+struct ConnectionDriver<S: proto::crypto::Session>(ConnectionRef<S>);
 
 impl<S> Future for ConnectionDriver<S>
 where
@@ -549,7 +565,7 @@ impl<S> ConnectionRef<S>
 where
     S: proto::crypto::Session,
 {
-    pub(crate) fn new(
+    fn new(
         handle: ConnectionHandle,
         conn: proto::generic::Connection<S>,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
