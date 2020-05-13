@@ -1426,7 +1426,7 @@ where
             .insert(crypto.offset, crypto.data.clone());
         let mut buf = [0; 8192];
         loop {
-            let n = space.crypto_stream.read(&mut buf);
+            let n = space.crypto_stream.read(&mut buf).unwrap();
             if n == 0 {
                 return Ok(());
             }

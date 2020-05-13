@@ -7,7 +7,11 @@ use bytes::{BufMut, Bytes};
 use err_derive::Error;
 use tracing::{debug, info, trace};
 
-use super::{assembler::Assembler, send_buffer::SendBuffer, spaces::Retransmits};
+use super::{
+    assembler::{Assembler, IllegalOrderedRead},
+    send_buffer::SendBuffer,
+    spaces::Retransmits,
+};
 use crate::{
     coding::BufMutExt,
     frame::{self, FrameStruct},
@@ -1022,7 +1026,7 @@ impl Recv {
         if self.assembler.is_stopped() {
             return Err(ReadError::UnknownStream);
         }
-        let read = self.assembler.read(buf);
+        let read = self.assembler.read(buf)?;
         if read > 0 {
             Ok(Some(read))
         } else {
@@ -1123,6 +1127,18 @@ pub enum ReadError {
     /// finished or reset.
     #[error(display = "unknown stream")]
     UnknownStream,
+    /// Attempted an ordered read following an unordered read
+    ///
+    /// Performing an unordered read allows discontinuities to arise in the receive buffer of a
+    /// stream which cannot be recovered, making further ordered reads impossible.
+    #[error(display = "ordered read after unordered read")]
+    IllegalOrderedRead,
+}
+
+impl From<IllegalOrderedRead> for ReadError {
+    fn from(_: IllegalOrderedRead) -> Self {
+        ReadError::IllegalOrderedRead
+    }
 }
 
 /// `stop_reason` below should be set iff the stream was stopped and application has not yet been
