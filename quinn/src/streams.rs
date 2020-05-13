@@ -363,6 +363,7 @@ where
                 Poll::Ready(Err(ReadError::Reset(error_code)))
             }
             Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
+            Err(IllegalOrderedRead) => Poll::Ready(Err(ReadError::IllegalOrderedRead)),
         }
     }
 
@@ -409,6 +410,7 @@ where
                 Poll::Ready(Err(ReadError::Reset(error_code)))
             }
             Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
+            Err(IllegalOrderedRead) => Poll::Ready(Err(ReadError::IllegalOrderedRead)),
         }
     }
 
@@ -584,6 +586,12 @@ pub enum ReadError {
     /// Unknown stream
     #[error(display = "unknown stream")]
     UnknownStream,
+    /// Attempted an ordered read following an unordered read
+    ///
+    /// Performing an unordered read allows discontinuities to arise in the receive buffer of a
+    /// stream which cannot be recovered, making further ordered reads impossible.
+    #[error(display = "ordered read after unordered read")]
+    IllegalOrderedRead,
     /// This was a 0-RTT stream and the server rejected it.
     ///
     /// Can only occur on clients for 0-RTT streams (opened using `Connecting::into_0rtt()`).
@@ -600,6 +608,7 @@ impl From<ReadError> for io::Error {
             }
             Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
             UnknownStream => io::ErrorKind::NotConnected,
+            IllegalOrderedRead => io::ErrorKind::InvalidInput,
         };
         io::Error::new(kind, x)
     }

@@ -25,11 +25,10 @@ impl Assembler {
         Self::default()
     }
 
-    pub(crate) fn read(&mut self, buf: &mut [u8]) -> usize {
-        assert!(
-            matches!(self.state, State::Ordered),
-            "cannot perform ordered reads following unordered reads on a stream"
-        );
+    pub(crate) fn read(&mut self, buf: &mut [u8]) -> Result<usize, IllegalOrderedRead> {
+        if let State::Unordered { .. } = self.state {
+            return Err(IllegalOrderedRead);
+        }
 
         let mut read = 0;
         loop {
@@ -42,7 +41,7 @@ impl Assembler {
                 break;
             }
         }
-        read
+        Ok(read)
     }
 
     pub(crate) fn read_unordered(&mut self) -> Option<(u64, Bytes)> {
@@ -138,7 +137,7 @@ impl Assembler {
     #[cfg(test)]
     fn next(&mut self, size: usize) -> Option<Box<[u8]>> {
         let mut buf = vec![0; size];
-        let read = self.read(&mut buf);
+        let read = self.read(&mut buf).unwrap();
         buf.resize(read, 0);
         if !buf.is_empty() {
             Some(buf.into())
@@ -261,6 +260,10 @@ impl Default for State {
         State::Ordered
     }
 }
+
+/// Error indicating that an ordered read was performed on a stream after an unordered read
+#[derive(Debug, Copy, Clone)]
+pub struct IllegalOrderedRead;
 
 #[cfg(test)]
 mod test {
