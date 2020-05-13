@@ -11,16 +11,13 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{
-    channel::{mpsc, oneshot},
-    StreamExt,
-};
+use futures::{channel::mpsc, StreamExt};
 use proto::{self as proto, generic::ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 
 use crate::{
     broadcast::{self, Broadcast},
     builders::EndpointBuilder,
-    connection::{Connecting, ConnectionDriver, ConnectionRef},
+    connection::Connecting,
     udp::UdpSocket,
     ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND,
 };
@@ -377,10 +374,7 @@ where
             .unwrap();
         }
         self.connections.insert(handle, send);
-        let (connected_send, connected_recv) = oneshot::channel();
-        let conn = ConnectionRef::new(handle, conn, self.sender.clone(), recv, connected_send);
-        tokio::spawn(ConnectionDriver(conn.clone()));
-        Connecting::new(conn, connected_recv)
+        Connecting::new(handle, conn, self.sender.clone(), recv)
     }
 }
 
