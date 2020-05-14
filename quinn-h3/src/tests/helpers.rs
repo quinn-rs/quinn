@@ -47,6 +47,8 @@ pub struct Helper {
 
 impl Helper {
     pub fn new() -> Self {
+        let _ = tracing_subscriber::fmt().try_init();
+
         let port = PORT_COUNT.fetch_add(1, Ordering::SeqCst);
 
         let Certs { chain, key, cert } = CERTS.clone();
