@@ -90,6 +90,11 @@ impl Decoder for FrameDecoder {
                     Ok(None)
                 }
             }
+            Err(frame::Error::UnknownFrame(_)) => {
+                src.advance(pos);
+                self.expected = None;
+                Ok(None)
+            }
             Err(frame::Error::Incomplete(min)) => {
                 self.expected = Some(min);
                 Ok(None)

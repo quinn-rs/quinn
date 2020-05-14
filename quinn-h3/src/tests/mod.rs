@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use futures::StreamExt;
 use http::{Response, StatusCode};
 use tokio::time::{delay_for, Duration};
@@ -355,6 +355,25 @@ async fn zero_rtt_server_accepts_non_idempotent_after_handshake() {
         .is_ok());
     assert_matches!(req.read().await, Some(Ok(_)));
 
+    conn.0.close();
+    assert!(timeout_join(server_handle).await.is_ok());
+}
+
+#[tokio::test]
+async fn unknown_frame_ignored() {
+    let mut helper = Helper::new();
+    let incoming = helper.make_server();
+    let server_handle = tokio::spawn(async move { serve_one(incoming).await });
+
+    let mut conn = helper.make_fake().await;
+    let mut req = conn.blank().await;
+    assert!(req
+        .write(|b| b.put(&[0x2f, 4, 0, 255, 128, 0][..]))
+        .await
+        .is_ok());
+    assert!(req.send_get().await.is_ok());
+    assert_matches!(req.read().await, Some(Ok(_)));
+    assert_matches!(req.read().await, None);
     conn.0.close();
     assert!(timeout_join(server_handle).await.is_ok());
 }

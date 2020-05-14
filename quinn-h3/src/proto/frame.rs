@@ -12,7 +12,8 @@ use super::settings::{Error as SettingsError, SettingId, SettingsFrame};
 #[derive(Debug, PartialEq)]
 pub enum Error {
     Malformed,
-    UnsupportedFrame(u64),
+    UnsupportedFrame(u64), // Known frames that should generate an error
+    UnknownFrame(u64),     // Unknown frames that should be ignored
     UnexpectedEnd,
     InvalidFrameValue,
     InvalidSettingId(u64),
@@ -87,7 +88,10 @@ impl HttpFrame {
                 buf.advance(len as usize);
                 Ok(HttpFrame::Reserved)
             }
-            _ => Err(Error::UnsupportedFrame(ty.0)),
+            _ => {
+                buf.advance(len as usize);
+                Err(Error::UnknownFrame(ty.0))
+            }
         };
         if let Ok(frame) = &frame {
             trace!(
@@ -320,9 +324,9 @@ mod tests {
 
     #[test]
     fn unknown_frame_type() {
-        let mut buf = Cursor::new(&[0x2f, 4, 0, 255, 128, 0]);
-        let decoded = HttpFrame::decode(&mut buf);
-        assert_eq!(decoded, Err(Error::UnsupportedFrame(47)));
+        let mut buf = Cursor::new(&[22, 4, 0, 255, 128, 0, 3, 1, 2]);
+        assert_eq!(HttpFrame::decode(&mut buf), Err(Error::UnknownFrame(22)));
+        assert_eq!(HttpFrame::decode(&mut buf), Ok(HttpFrame::CancelPush(2)));
     }
 
     #[test]
