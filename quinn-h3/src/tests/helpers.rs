@@ -6,7 +6,6 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use bytes::BufMut;
 use futures::stream::StreamExt;
 use http::{request, Request};
 use quinn::{Certificate, CertificateChain, PrivateKey, SendStream, WriteError};
@@ -15,12 +14,13 @@ use tokio::time::timeout;
 use crate::{
     body::Body,
     client::{self, Client},
+    connection::ConnectionRef,
     frame::{Error as FrameError, FrameDecoder, FrameStream},
     headers::SendHeaders,
     proto::frame::HttpFrame,
     proto::headers::Header,
     server::{self, IncomingConnection},
-    ZeroRttAccepted,
+    SendData, ZeroRttAccepted,
 };
 
 pub fn get(path: &str) -> Request<Body> {
@@ -99,6 +99,10 @@ impl Helper {
             .expect("connecting")
     }
 
+    pub async fn make_fake(&mut self) -> FakeConnection {
+        FakeConnection(self.make_connection().await)
+    }
+
     pub async fn make_fake_0rtt(&mut self) -> (FakeConnection, ZeroRttAccepted) {
         let (conn, z) = self.make_0rtt().await;
         (FakeConnection(conn), z)
@@ -132,6 +136,15 @@ impl Helper {
 pub struct FakeConnection(pub client::Connection);
 
 impl FakeConnection {
+    pub async fn blank(&mut self) -> FakeRequest {
+        let (send, recv) = self.0.inner().quic.open_bi().await.expect("open bi");
+        FakeRequest {
+            send: Some(send),
+            recv: FrameDecoder::stream(recv),
+            conn: self.0.inner().clone(),
+        }
+    }
+
     pub async fn post(&mut self) -> FakeRequest {
         let (request, _) = Request::post("https://localhost")
             .body(())
@@ -155,16 +168,19 @@ impl FakeConnection {
         .expect("bad headers")
         .await
         .expect("send header");
+
         FakeRequest {
-            send,
+            send: Some(send),
+            conn: self.0.inner().clone(),
             recv: FrameDecoder::stream(recv),
         }
     }
 }
 
 pub struct FakeRequest {
-    send: SendStream,
+    pub send: Option<SendStream>,
     recv: FrameStream,
+    conn: ConnectionRef,
 }
 
 impl FakeRequest {
@@ -173,11 +189,41 @@ impl FakeRequest {
     }
     pub async fn write<F>(&mut self, mut encode: F) -> Result<(), WriteError>
     where
-        F: FnMut(&mut dyn BufMut),
+        F: FnMut(&mut Vec<u8>),
     {
         let mut buf = Vec::with_capacity(20 * 1024);
         encode(&mut buf);
-        self.send.write_all(&buf).await.map(|_| ())
+        self.send
+            .as_mut()
+            .unwrap()
+            .write_all(&buf)
+            .await
+            .map(|_| ())
+    }
+
+    pub async fn send_get(&mut self) -> Result<()> {
+        let (request, body) = Request::get("https://localhost")
+            .body(Body::from(()))
+            .unwrap()
+            .into_parts();
+        let request::Parts {
+            method,
+            uri,
+            headers,
+            ..
+        } = request;
+
+        let send = self.send.take().expect("send stream");
+        SendData::new(
+            send,
+            self.conn.clone(),
+            Header::request(method, uri, headers),
+            body,
+            false,
+        )
+        .await?;
+
+        Ok(())
     }
 }
 
