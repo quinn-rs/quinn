@@ -283,10 +283,7 @@ impl ConnectionInner {
             self.pending_uni.remove(i - removed);
             match res {
                 Err(Error::UnknownStream(ty)) => {
-                    return Err(DriverError::peer(
-                        ErrorCode::STREAM_CREATION_ERROR,
-                        format!("unknown stream type {}", ty),
-                    ))
+                    trace!("unknown stream type {}", ty);
                 }
                 Err(e) => {
                     let msg = format!("{:?}", e);
