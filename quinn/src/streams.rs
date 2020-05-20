@@ -299,7 +299,11 @@ where
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
         match conn.inner.read(self.stream, buf) {
-            Ok(Some(n)) => Poll::Ready(Ok(Some(n))),
+            Ok(Some(n)) => {
+                // Flow control credit may have been issued
+                conn.wake();
+                Poll::Ready(Ok(Some(n)))
+            }
             Ok(None) => {
                 self.all_data_read = true;
                 Poll::Ready(Ok(None))
@@ -341,7 +345,11 @@ where
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
         match conn.inner.read_unordered(self.stream) {
-            Ok(Some((bytes, offset))) => Poll::Ready(Ok(Some((bytes, offset)))),
+            Ok(Some((bytes, offset))) => {
+                // Flow control credit may have been issued
+                conn.wake();
+                Poll::Ready(Ok(Some((bytes, offset))))
+            }
             Ok(None) => {
                 self.all_data_read = true;
                 Poll::Ready(Ok(None))
