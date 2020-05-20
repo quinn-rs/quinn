@@ -305,7 +305,10 @@ impl Streams {
         }
 
         // State transition
-        rs.reset(error_code, final_offset);
+        if !rs.reset(error_code, final_offset) {
+            // Redundant reset
+            return Ok(false);
+        }
         let bytes_read = rs.assembler.bytes_read();
         self.on_stream_frame(true, id);
 
@@ -1054,9 +1057,10 @@ impl Recv {
         }
     }
 
-    fn reset(&mut self, error_code: VarInt, final_offset: u64) {
-        if self.is_closed() {
-            return;
+    /// Returns `false` iff the reset was redundant
+    fn reset(&mut self, error_code: VarInt, final_offset: u64) -> bool {
+        if matches!(self.state, RecvState::ResetRecvd { .. } | RecvState::Closed) {
+            return false;
         }
         self.state = RecvState::ResetRecvd {
             size: final_offset,
@@ -1067,6 +1071,7 @@ impl Recv {
         // reset streams during read, but it's unclear if there's any benefit to retaining data for
         // reset streams.
         self.assembler.clear();
+        true
     }
 }
 
@@ -1198,16 +1203,13 @@ pub struct UnknownStream {
 mod tests {
     use super::*;
 
+    fn make(side: Side) -> Streams {
+        Streams::new(side, 128, 128, 1024 * 1024, 1024 * 1024, 1024 * 1024)
+    }
+
     #[test]
     fn reset_after_empty_frame_flow_control() {
-        let mut client = Streams::new(
-            Side::Client,
-            128,
-            128,
-            1024 * 1024,
-            1024 * 1024,
-            1024 * 1024,
-        );
+        let mut client = make(Side::Client);
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
         client
             .received(frame::Stream {
@@ -1215,6 +1217,28 @@ mod tests {
                 offset: 4096,
                 fin: false,
                 data: Bytes::from_static(&[0; 0]),
+            })
+            .unwrap();
+        assert_eq!(client.data_recvd, 4096);
+        client
+            .received_reset(frame::ResetStream {
+                id,
+                error_code: 0u32.into(),
+                final_offset: 4096,
+            })
+            .unwrap();
+        assert_eq!(client.data_recvd, 4096);
+    }
+
+    #[test]
+    fn duplicate_reset_flow_control() {
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        client
+            .received_reset(frame::ResetStream {
+                id,
+                error_code: 0u32.into(),
+                final_offset: 4096,
             })
             .unwrap();
         assert_eq!(client.data_recvd, 4096);
