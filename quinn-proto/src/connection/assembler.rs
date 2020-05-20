@@ -144,6 +144,9 @@ impl Assembler {
 
     pub(crate) fn insert(&mut self, offset: u64, bytes: Bytes) {
         self.recvd.insert(offset..(offset + bytes.len() as u64));
+        if bytes.is_empty() {
+            return;
+        }
         self.data.push(Chunk { offset, bytes });
         // Why 32: on the one hand, we want to defragment rarely, ideally never
         // in non-pathological scenarios. However, a pathological or malicious

@@ -56,6 +56,9 @@ impl RangeSet {
     }
 
     pub fn insert(&mut self, mut x: Range<u64>) -> bool {
+        if x.end == 0 {
+            return false;
+        }
         if let Some((start, end)) = self.pred(x.start) {
             if end >= x.end {
                 // Wholly contained

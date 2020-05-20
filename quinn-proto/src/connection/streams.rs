@@ -981,9 +981,7 @@ impl Recv {
             }
         }
 
-        if !frame.data.is_empty() {
-            self.assembler.insert(frame.offset, frame.data);
-        }
+        self.assembler.insert(frame.offset, frame.data);
 
         if let RecvState::Recv { size: Some(size) } = self.state {
             if self.assembler.is_complete_at(size) {
@@ -1194,4 +1192,39 @@ pub enum StreamEvent {
 #[derive(Debug)]
 pub struct UnknownStream {
     _private: (),
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn reset_after_empty_frame_flow_control() {
+        let mut client = Streams::new(
+            Side::Client,
+            128,
+            128,
+            1024 * 1024,
+            1024 * 1024,
+            1024 * 1024,
+        );
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        client
+            .received(frame::Stream {
+                id,
+                offset: 4096,
+                fin: false,
+                data: Bytes::from_static(&[0; 0]),
+            })
+            .unwrap();
+        assert_eq!(client.data_recvd, 4096);
+        client
+            .received_reset(frame::ResetStream {
+                id,
+                error_code: 0u32.into(),
+                final_offset: 4096,
+            })
+            .unwrap();
+        assert_eq!(client.data_recvd, 4096);
+    }
 }
