@@ -347,6 +347,11 @@ impl Streams {
             None => return,
         };
 
+        if matches!(stream.state, SendState::ResetSent { .. } | SendState::ResetRecvd { .. }) {
+            // Ignore redundant reset calls
+            return;
+        }
+
         // Restore the portion of the send window consumed by the data that we aren't about to
         // send. We leave flow control alone because the peer's responsible for issuing additional
         // credit based on the final offset communicated in the RESET_STREAM frame we send.
