@@ -564,6 +564,10 @@ impl Streams {
             None => return,
             Some(x) => x,
         };
+        if stream.is_reset() {
+            // We account for outstanding data on reset streams at time of reset
+            return;
+        }
         let id = frame.id;
         self.unacked_data -= frame.offsets.end - frame.offsets.start;
         stream.ack(frame);
