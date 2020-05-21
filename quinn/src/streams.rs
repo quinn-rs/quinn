@@ -136,10 +136,9 @@ where
 
     /// Close the send stream immediately.
     ///
-    /// No new data can be written after calling this method. Locally buffered data is dropped,
-    /// and previously transmitted data will no longer be retransmitted if lost. If `poll_finish`
-    /// was called previously and all data has already been transmitted at least once, the peer
-    /// may still receive all written data.
+    /// No new data can be written after calling this method. Locally buffered data is dropped, and
+    /// previously transmitted data will no longer be retransmitted if lost. If an attempt has
+    /// already been made to finish the stream, the peer may still receive all written data.
     pub fn reset(&mut self, error_code: VarInt) {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt && conn.check_0rtt().is_err() {
