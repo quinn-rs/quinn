@@ -1,13 +1,10 @@
 use std::{
-    future::Future,
     io,
-    pin::Pin,
     task::{Context, Poll},
 };
 
 use bytes::{Buf, BufMut, BytesMut};
 use futures::{ready, FutureExt};
-use pin_project::{pin_project, project};
 use quinn::{RecvStream, SendStream, VarInt};
 use tokio::io::AsyncRead;
 use tokio_util::codec::{Decoder, FramedRead};
@@ -109,11 +106,8 @@ impl Decoder for FrameDecoder {
     }
 }
 
-#[pin_project]
 pub(crate) struct WriteFrame<F> {
     state: WriteFrameState,
-    #[pin]
-    send: Option<SendStream>,
     frame: F,
     header: [u8; VarInt::MAX_SIZE * 2],
     header_len: usize,
@@ -129,7 +123,7 @@ impl<F> WriteFrame<F>
 where
     F: FrameHeader + IntoPayload,
 {
-    pub(crate) fn new(send: SendStream, frame: F) -> Self {
+    pub(crate) fn new(frame: F) -> Self {
         let mut buf = [0u8; VarInt::MAX_SIZE * 2];
         let remaining = {
             let mut cur = &mut buf[..];
@@ -139,67 +133,46 @@ where
 
         Self {
             frame,
-            send: Some(send),
             state: WriteFrameState::Header(0),
             header: buf,
             header_len: buf.len() - remaining,
         }
     }
 
-    pub fn reset(&mut self, err_code: ErrorCode) {
-        if let Some(ref mut s) = self.send {
-            s.reset(err_code.into());
-        }
-    }
-}
-
-impl<F> Future for WriteFrame<F>
-where
-    F: FrameHeader + IntoPayload,
-{
-    type Output = Result<SendStream, quinn::WriteError>;
-
-    #[project]
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let mut me = self.project();
+    pub(crate) fn poll_send(
+        &mut self,
+        send: &mut SendStream,
+        cx: &mut Context,
+    ) -> Poll<Result<(), quinn::WriteError>> {
         loop {
-            match me.state {
+            match self.state {
                 WriteFrameState::Finished => panic!("polled after finish"),
                 WriteFrameState::Header(mut start) => {
-                    let mut send = me.send.as_mut();
-                    let send = (*send).as_mut().unwrap();
                     let wrote = ready!(send
-                        .write(&me.header[start..*me.header_len])
+                        .write(&self.header[start..self.header_len])
                         .poll_unpin(cx)?);
                     start += wrote;
 
-                    if start < *me.header_len {
-                        *me.state = WriteFrameState::Header(start);
+                    if start < self.header_len {
+                        self.state = WriteFrameState::Header(start);
                         continue;
                     }
-                    *me.state = WriteFrameState::Payload;
+                    self.state = WriteFrameState::Payload;
                 }
                 WriteFrameState::Payload => {
-                    let mut send = me.send.as_mut().take().unwrap();
-                    let p = me.frame.into_payload();
-
-                    match send.write(p.bytes()).poll_unpin(cx) {
-                        Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
-                        Poll::Pending => {
-                            me.send.set(Some(send));
-                            return Poll::Pending;
-                        }
-                        Poll::Ready(Ok(wrote)) => {
+                    let p = self.frame.into_payload();
+                    match ready!(send.write(p.bytes()).poll_unpin(cx)) {
+                        Err(e) => return Poll::Ready(Err(e)),
+                        Ok(wrote) => {
                             p.advance(wrote);
                             if p.has_remaining() {
-                                me.send.set(Some(send));
                                 continue;
                             }
                         }
                     }
 
-                    *me.state = WriteFrameState::Finished;
-                    return Poll::Ready(Ok(send));
+                    self.state = WriteFrameState::Finished;
+                    return Poll::Ready(Ok(()));
                 }
             }
         }

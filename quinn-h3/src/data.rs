@@ -15,9 +15,9 @@ use crate::{
     body::RecvBody,
     connection::ConnectionRef,
     frame::{FrameStream, WriteFrame},
-    headers::{DecodeHeaders, SendHeaders},
+    headers::DecodeHeaders,
     proto::{
-        frame::{DataFrame, HttpFrame},
+        frame::{DataFrame, HeadersFrame, HttpFrame},
         headers::Header,
         ErrorCode,
     },
@@ -38,7 +38,7 @@ pub struct SendData<B, P> {
     #[pin]
     state: SendDataState<P>,
     conn: ConnectionRef,
-    send: Option<SendStream>,
+    send: SendStream,
     stream_id: StreamId,
     finish: bool,
 }
@@ -46,11 +46,11 @@ pub struct SendData<B, P> {
 #[pin_project]
 enum SendDataState<P> {
     Initial,
-    Headers(SendHeaders),
+    Headers(WriteFrame<HeadersFrame>),
     PollBody,
-    Write(#[pin] WriteFrame<DataFrame<P>>),
+    Write(WriteFrame<DataFrame<P>>),
     PollTrailers,
-    Trailers(SendHeaders),
+    Trailers(WriteFrame<HeadersFrame>),
     Closing,
     Finished,
 }
@@ -73,7 +73,7 @@ where
             finish,
             headers: Some(headers),
             stream_id: send.id(),
-            send: Some(send),
+            send,
             state: SendDataState::Initial,
         }
     }
@@ -82,20 +82,7 @@ where
     ///
     /// The peer will receive a request error with `REQUEST_CANCELLED` code.
     pub fn cancel(&mut self) {
-        self.state = SendDataState::Finished;
-        match self.state {
-            SendDataState::Write(ref mut w) => {
-                w.reset(ErrorCode::REQUEST_CANCELLED);
-            }
-            SendDataState::Trailers(ref mut w) => {
-                w.reset(ErrorCode::REQUEST_CANCELLED);
-            }
-            _ => {
-                if let Some(ref mut send) = self.send.take() {
-                    send.reset(ErrorCode::REQUEST_CANCELLED.into());
-                }
-            }
-        }
+        self.send.reset(ErrorCode::REQUEST_CANCELLED.into());
         self.state = SendDataState::Finished;
     }
 }
@@ -114,17 +101,13 @@ where
             #[project]
             match &mut me.state.as_mut().project() {
                 SendDataState::Initial => {
-                    // This initial computaion is done here to report its failability to Future::Output.
+                    // This initial computation is done here to report its failability to Future::Output.
                     let header = me.headers.take().expect("headers");
-                    me.state.set(SendDataState::Headers(SendHeaders::new(
-                        header,
-                        &me.conn,
-                        me.send.take().expect("send"),
-                        *me.stream_id,
-                    )?));
+                    let write = write_headers_frame(header, *me.stream_id, &me.conn)?;
+                    me.state.set(SendDataState::Headers(write));
                 }
-                SendDataState::Headers(ref mut send) => {
-                    *me.send = Some(ready!(Pin::new(send).poll(cx))?);
+                SendDataState::Headers(headers) => {
+                    ready!(headers.poll_send(&mut *me.send, cx))?;
                     me.state.set(SendDataState::PollBody);
                 }
                 SendDataState::PollBody => {
@@ -132,15 +115,13 @@ where
                         None => SendDataState::PollTrailers,
                         Some(Err(e)) => return Poll::Ready(Err(Error::body(e.into()))),
                         Some(Ok(d)) => {
-                            let send = me.send.take().expect("send");
-                            let data = DataFrame { payload: d };
-                            SendDataState::Write(WriteFrame::new(send, data))
+                            SendDataState::Write(WriteFrame::new(DataFrame { payload: d }))
                         }
                     };
                     me.state.set(next);
                 }
-                SendDataState::Write(ref mut write) => {
-                    *me.send = Some(ready!(Pin::new(write).poll(cx))?);
+                SendDataState::Write(write) => {
+                    ready!(write.poll_send(&mut *me.send, cx))?;
                     me.state.set(SendDataState::PollBody);
                 }
                 SendDataState::PollTrailers => {
@@ -150,21 +131,18 @@ where
                     {
                         None => me.state.set(SendDataState::Closing),
                         Some(h) => {
-                            me.state.set(SendDataState::Trailers(SendHeaders::new(
-                                Header::trailer(h),
-                                &me.conn,
-                                me.send.take().expect("send"),
-                                *me.stream_id,
-                            )?));
+                            let header = Header::trailer(h);
+                            let write = write_headers_frame(header, *me.stream_id, &me.conn)?;
+                            me.state.set(SendDataState::Trailers(write));
                         }
                     }
                 }
-                SendDataState::Trailers(send) => {
-                    *me.send = Some(ready!(Pin::new(send).poll(cx))?);
+                SendDataState::Trailers(trailers) => {
+                    ready!(trailers.poll_send(&mut *me.send, cx))?;
                     me.state.set(SendDataState::Closing);
                 }
                 SendDataState::Closing => {
-                    ready!(Pin::new(me.send.as_mut().unwrap()).poll_finish(cx))?;
+                    ready!(Pin::new(me.send).poll_finish(cx))?;
                     if *me.finish {
                         let mut conn = me.conn.h3.lock().unwrap();
                         conn.inner.request_finished(*me.stream_id);
@@ -175,6 +153,18 @@ where
             };
         }
     }
+}
+
+pub(crate) fn write_headers_frame(
+    header: Header,
+    stream: StreamId,
+    conn: &ConnectionRef,
+) -> Result<WriteFrame<HeadersFrame>, Error> {
+    let conn = &mut conn.h3.lock().unwrap();
+    let frame = conn.inner.encode_header(stream, header)?;
+    conn.wake();
+
+    Ok(WriteFrame::new(frame))
 }
 
 pub struct RecvData {
