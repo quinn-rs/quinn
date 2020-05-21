@@ -26,6 +26,7 @@ pub mod coding;
 mod constant_time;
 mod packet;
 mod range_set;
+mod retry_token;
 #[cfg(all(test, feature = "rustls"))]
 mod tests;
 pub mod transport_parameters;
