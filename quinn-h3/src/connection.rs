@@ -233,7 +233,7 @@ impl ConnectionInner {
                     }
                     Side::Server => {
                         if self.inner.is_closing() {
-                            send.reset(ErrorCode::REQUEST_REJECTED.into());
+                            let _ = send.reset(ErrorCode::REQUEST_REJECTED.into());
                             let _ = recv.stop(ErrorCode::REQUEST_REJECTED.into());
                         } else {
                             self.inner.request_initiated(send.id());

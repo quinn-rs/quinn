@@ -351,15 +351,19 @@ impl Streams {
     ///
     /// Does not cause the actual RESET_STREAM frame to be sent, just updates internal
     /// state.
-    pub fn reset(&mut self, id: StreamId, stop_reason: Option<VarInt>) {
+    pub fn reset(
+        &mut self,
+        id: StreamId,
+        stop_reason: Option<VarInt>,
+    ) -> Result<(), UnknownStream> {
         let stream = match self.send.get_mut(&id) {
             Some(ss) => ss,
-            None => return,
+            None => return Err(UnknownStream { _private: () }),
         };
 
         if matches!(stream.state, SendState::ResetSent { .. } | SendState::ResetRecvd { .. }) {
-            // Ignore redundant reset calls
-            return;
+            // Redundant reset call
+            return Err(UnknownStream { _private: () });
         }
 
         // Restore the portion of the send window consumed by the data that we aren't about to
@@ -374,6 +378,8 @@ impl Streams {
         if stop_reason.is_some() && !stream.is_closed() {
             self.on_stream_frame(false, id);
         }
+
+        Ok(())
     }
 
     pub fn reset_acked(&mut self, id: StreamId) {

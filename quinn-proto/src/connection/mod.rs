@@ -1307,24 +1307,30 @@ where
     ///
     /// # Panics
     /// - when applied to a receive stream or an unopened send stream
-    pub fn reset(&mut self, stream_id: StreamId, error_code: VarInt) {
-        self.reset_inner(stream_id, error_code, false);
+    pub fn reset(&mut self, stream_id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
+        self.reset_inner(stream_id, error_code, false)
     }
 
     /// `stopped` should be set iff this is an internal implicit reset due to `STOP_SENDING`
-    fn reset_inner(&mut self, stream_id: StreamId, error_code: VarInt, stopped: bool) {
+    fn reset_inner(
+        &mut self,
+        stream_id: StreamId,
+        error_code: VarInt,
+        stopped: bool,
+    ) -> Result<(), UnknownStream> {
         assert!(
             stream_id.dir() == Dir::Bi || stream_id.initiator() == self.side,
             "only streams supporting outgoing data may be reset"
         );
 
         let stop_reason = if stopped { Some(error_code) } else { None };
-        self.streams.reset(stream_id, stop_reason);
+        self.streams.reset(stream_id, stop_reason)?;
 
         self.spaces[SpaceId::Data as usize]
             .pending
             .reset_stream
             .push((stream_id, error_code));
+        Ok(())
     }
 
     /// Handle the already-decrypted first packet from the client
@@ -2109,7 +2115,8 @@ where
                             "STOP_SENDING on unopened stream",
                         ));
                     }
-                    self.reset_inner(id, error_code, true);
+                    // Ignore errors from the stream already being gone
+                    let _ = self.reset_inner(id, error_code, true);
                 }
                 Frame::RetireConnectionId { sequence } => {
                     if self.endpoint_config.local_cid_len == 0 {
