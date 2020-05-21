@@ -98,7 +98,6 @@ mod body;
 mod connection;
 mod data;
 mod frame;
-mod headers;
 mod proto;
 mod streams;
 
