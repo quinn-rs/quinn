@@ -465,7 +465,18 @@ where
                 let max_len =
                     buf.capacity() - partial_encode.start - partial_encode.header_len - tag_len;
                 match self.state {
-                    State::Closed(state::Closed { ref reason }) => reason.encode(&mut buf, max_len),
+                    State::Closed(state::Closed { ref reason }) => {
+                        if space_id == SpaceId::Data {
+                            reason.encode(&mut buf, max_len)
+                        } else {
+                            frame::ConnectionClose {
+                                error_code: TransportErrorCode::APPLICATION_ERROR,
+                                frame_type: None,
+                                reason: Bytes::new(),
+                            }
+                            .encode(&mut buf, max_len)
+                        }
+                    }
                     State::Draining => frame::ConnectionClose {
                         error_code: TransportErrorCode::NO_ERROR,
                         frame_type: None,
