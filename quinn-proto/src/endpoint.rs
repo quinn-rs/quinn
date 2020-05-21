@@ -8,7 +8,7 @@ use std::{
     time::{Duration, Instant, SystemTime},
 };
 
-use bytes::{BufMut, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use err_derive::Error;
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use slab::Slab;
@@ -17,19 +17,21 @@ use tracing::{debug, trace, warn};
 use crate::{
     coding::BufMutExt,
     config::{ClientConfig, ConfigError, EndpointConfig, ServerConfig},
-    connection::{initial_close, Connection, ConnectionError},
+    connection::{Connection, ConnectionError},
     crypto::{
         self, ClientConfig as ClientCryptoConfig, Keys, PacketKey,
         ServerConfig as ServerCryptoConfig,
     },
-    packet::{Header, Packet, PacketDecodeError, PartialDecode},
+    frame,
+    packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     retry_token,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
         EndpointEventInner, IssuedCid, ResetToken,
     },
     transport_parameters::TransportParameters,
-    Side, Transmit, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, VERSION,
+    Side, Transmit, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
+    VERSION,
 };
 
 /// The main entry point to the library
@@ -500,17 +502,13 @@ where
             || self.is_full()
         {
             debug!("rejecting connection due to full accept buffer");
-            self.transmits.push_back(Transmit {
-                destination: remote,
-                ecn: None,
-                contents: initial_close(
-                    crypto,
-                    &src_cid,
-                    &temp_loc_cid,
-                    0,
-                    TransportError::SERVER_BUSY(""),
-                ),
-            });
+            self.initial_close(
+                remote,
+                crypto,
+                &src_cid,
+                &temp_loc_cid,
+                TransportError::SERVER_BUSY(""),
+            );
             return None;
         }
 
@@ -521,17 +519,13 @@ where
                 "rejecting connection due to invalid DCID length {}",
                 dst_cid.len()
             );
-            self.transmits.push_back(Transmit {
-                destination: remote,
-                ecn: None,
-                contents: initial_close(
-                    crypto,
-                    &src_cid,
-                    &temp_loc_cid,
-                    0,
-                    TransportError::PROTOCOL_VIOLATION("invalid destination CID length"),
-                ),
-            });
+            self.initial_close(
+                remote,
+                crypto,
+                &src_cid,
+                &temp_loc_cid,
+                TransportError::PROTOCOL_VIOLATION("invalid destination CID length"),
+            );
             return None;
         }
 
@@ -575,17 +569,13 @@ where
                 }
                 _ => {
                     debug!("rejecting invalid stateless retry token");
-                    self.transmits.push_back(Transmit {
-                        destination: remote,
-                        ecn: None,
-                        contents: initial_close(
-                            crypto,
-                            &src_cid,
-                            &temp_loc_cid,
-                            0,
-                            TransportError::INVALID_TOKEN(""),
-                        ),
-                    });
+                    self.initial_close(
+                        remote,
+                        crypto,
+                        &src_cid,
+                        &temp_loc_cid,
+                        TransportError::INVALID_TOKEN(""),
+                    );
                     return None;
                 }
             }
@@ -618,15 +608,44 @@ where
                 debug!("handshake failed: {}", e);
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 if let ConnectionError::TransportError(e) = e {
-                    self.transmits.push_back(Transmit {
-                        destination: remote,
-                        ecn: None,
-                        contents: initial_close(crypto, &src_cid, &temp_loc_cid, 0, e),
-                    });
+                    self.initial_close(remote, crypto, &src_cid, &temp_loc_cid, e);
                 }
                 None
             }
         }
+    }
+
+    fn initial_close(
+        &mut self,
+        destination: SocketAddr,
+        crypto: &Keys<S>,
+        remote_id: &ConnectionId,
+        local_id: &ConnectionId,
+        reason: TransportError,
+    ) {
+        let number = PacketNumber::U8(0);
+        let header = Header::Initial {
+            dst_cid: *remote_id,
+            src_cid: *local_id,
+            number,
+            token: Bytes::new(),
+        };
+
+        let mut buf = Vec::<u8>::new();
+        let partial_encode = header.encode(&mut buf);
+        let max_len = MIN_MTU as usize - partial_encode.header_len - crypto.packet.local.tag_len();
+        frame::Close::from(reason).encode(&mut buf, max_len);
+        buf.resize(buf.len() + crypto.packet.local.tag_len(), 0);
+        partial_encode.finish(
+            &mut buf,
+            &crypto.header.local,
+            Some((0, &crypto.packet.local)),
+        );
+        self.transmits.push_back(Transmit {
+            destination,
+            ecn: None,
+            contents: buf.into(),
+        })
     }
 
     /// Free a handshake slot for reuse

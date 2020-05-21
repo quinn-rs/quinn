@@ -2792,38 +2792,6 @@ where
     }
 }
 
-pub fn initial_close<S, R>(
-    crypto: &Keys<S>,
-    remote_id: &ConnectionId,
-    local_id: &ConnectionId,
-    packet_number: u8,
-    reason: R,
-) -> Box<[u8]>
-where
-    S: crypto::Session,
-    R: Into<Close>,
-{
-    let number = PacketNumber::U8(packet_number);
-    let header = Header::Initial {
-        dst_cid: *remote_id,
-        src_cid: *local_id,
-        number,
-        token: Bytes::new(),
-    };
-
-    let mut buf = Vec::<u8>::new();
-    let partial_encode = header.encode(&mut buf);
-    let max_len = MIN_MTU as usize - partial_encode.header_len - crypto.packet.local.tag_len();
-    reason.into().encode(&mut buf, max_len);
-    buf.resize(buf.len() + crypto.packet.local.tag_len(), 0);
-    partial_encode.finish(
-        &mut buf,
-        &crypto.header.local,
-        Some((u64::from(packet_number), &crypto.packet.local)),
-    );
-    buf.into()
-}
-
 /// Reasons why a connection might be lost.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConnectionError {
