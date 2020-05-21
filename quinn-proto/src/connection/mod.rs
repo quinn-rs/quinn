@@ -84,7 +84,7 @@ where
     zero_rtt_crypto: Option<ZeroRttCrypto<S>>,
     key_phase: bool,
     /// Transport parameters set by the peer
-    params: TransportParameters,
+    peer_params: TransportParameters,
     /// Source ConnectionId of the first packet received from the peer
     orig_rem_cid: ConnectionId,
     /// Destination ConnectionId sent by the client on the first Initial
@@ -215,7 +215,7 @@ where
             zero_rtt_enabled: false,
             zero_rtt_crypto: None,
             key_phase: false,
-            params: TransportParameters::default(),
+            peer_params: TransportParameters::default(),
             orig_rem_cid: rem_cid,
             initial_dst_cid: init_cid,
             retry_src_cid: None,
@@ -670,7 +670,7 @@ where
             return None;
         }
         // TODO: Queue STREAM_ID_BLOCKED if this fails
-        let id = self.streams.open(&self.params, dir)?;
+        let id = self.streams.open(&self.peer_params, dir)?;
         Some(id)
     }
 
@@ -798,7 +798,7 @@ where
             - 4                 // worst-case packet number size
             - self.space(SpaceId::Data).crypto.as_ref().map_or_else(|| &self.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
             - Datagram::SIZE_BOUND;
-        let limit = self.params.max_datagram_frame_size?.into_inner();
+        let limit = self.peer_params.max_datagram_frame_size?.into_inner();
         Some(limit.min(max_size as u64) as usize)
     }
 
@@ -943,7 +943,7 @@ where
             } else {
                 cmp::min(
                     self.max_ack_delay(),
-                    Duration::from_micros(ack.delay << self.params.ack_delay_exponent),
+                    Duration::from_micros(ack.delay << self.peer_params.ack_delay_exponent),
                 )
             };
             let rtt = instant_saturating_sub(now, self.space(space).largest_acked_packet_sent);
@@ -1386,7 +1386,7 @@ where
                         max_ack_delay: TransportParameters::default().max_ack_delay,
                         ..params
                     };
-                    self.set_params(params);
+                    self.set_peer_params(params);
                 }
                 Err(e) => {
                     error!("session ticket has malformed transport parameters: {}", e);
@@ -1596,10 +1596,13 @@ where
 
         let was_closed = self.state.is_closed();
         let was_drained = self.state.is_drained();
-        let stateless_reset = self.params.stateless_reset_token.map_or(false, |token| {
-            packet.payload.len() >= RESET_TOKEN_SIZE
-                && packet.payload[packet.payload.len() - RESET_TOKEN_SIZE..] == token[..]
-        });
+        let stateless_reset = self
+            .peer_params
+            .stateless_reset_token
+            .map_or(false, |token| {
+                packet.payload.len() >= RESET_TOKEN_SIZE
+                    && packet.payload[packet.payload.len() - RESET_TOKEN_SIZE..] == token[..]
+            });
 
         let result = match self.decrypt_packet(now, &mut packet) {
             Err(Some(e)) => {
@@ -1819,7 +1822,7 @@ where
                                     self.reject_0rtt();
                                 } else {
                                     self.accepted_0rtt = true;
-                                    params.validate_0rtt(&self.params)?;
+                                    params.validate_0rtt(&self.peer_params)?;
                                 }
                             }
                             if let Some(token) = params.stateless_reset_token {
@@ -1829,8 +1832,8 @@ where
                                         token,
                                     ));
                             }
-                            self.validate_params(&params)?;
-                            self.set_params(params);
+                            self.validate_peer_params(&params)?;
+                            self.set_peer_params(params);
                             self.issue_cids();
                         } else {
                             // Server-only
@@ -1876,8 +1879,8 @@ where
                                     reason: "transport parameters missing".into(),
                                 }
                             })?;
-                            self.validate_params(&params)?;
-                            self.set_params(params);
+                            self.validate_peer_params(&params)?;
+                            self.set_peer_params(params);
                             self.issue_cids();
                             self.init_0rtt();
                         }
@@ -2180,7 +2183,7 @@ where
                         }
                     }
 
-                    if self.side.is_server() && self.params.stateless_reset_token.is_none() {
+                    if self.side.is_server() && self.peer_params.stateless_reset_token.is_none() {
                         // We're a server using the initial remote CID for the client, so let's
                         // switch immediately to enable clientside stateless resets.
                         debug_assert_eq!(self.rem_cid_seq, 0);
@@ -2321,7 +2324,7 @@ where
                 self.path.remote,
                 cid.reset_token,
             ));
-        self.params.stateless_reset_token = Some(cid.reset_token);
+        self.peer_params.stateless_reset_token = Some(cid.reset_token);
 
         // Reduce linkability
         self.spin = false;
@@ -2335,7 +2338,11 @@ where
         }
 
         // Subtract 1 to account for the CID we supplied while handshaking
-        let n = self.params.active_connection_id_limit.min(LOC_CID_COUNT) - 1;
+        let n = self
+            .peer_params
+            .active_connection_id_limit
+            .min(LOC_CID_COUNT)
+            - 1;
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(n));
         self.cids_issued += n;
@@ -2529,7 +2536,7 @@ where
     }
 
     /// Validate transport parameters received from the peer
-    fn validate_params(&mut self, params: &TransportParameters) -> Result<(), TransportError> {
+    fn validate_peer_params(&mut self, params: &TransportParameters) -> Result<(), TransportError> {
         if Some(self.orig_rem_cid) != params.initial_source_connection_id
             || (self.side.is_client()
                 && (Some(self.initial_dst_cid) != params.original_destination_connection_id
@@ -2550,7 +2557,7 @@ where
         Ok(())
     }
 
-    fn set_params(&mut self, params: TransportParameters) {
+    fn set_peer_params(&mut self, params: TransportParameters) {
         self.streams.set_params(&params);
         self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
             (None, 0) => None,
@@ -2558,7 +2565,7 @@ where
             (Some(x), 0) => Some(x),
             (Some(x), y) => Some(cmp::min(x, Duration::from_millis(y))),
         };
-        self.params = params;
+        self.peer_params = params;
     }
 
     /// Permit an additional remote `ty` stream.
@@ -2572,7 +2579,7 @@ where
                 space.pending.max_uni_stream_id = true;
             }
         }
-        self.streams.alloc_remote_stream(&self.params, dir);
+        self.streams.alloc_remote_stream(&self.peer_params, dir);
     }
 
     fn add_read_credits(&mut self, id: StreamId, more: bool) {
@@ -2734,7 +2741,7 @@ where
     }
 
     fn max_ack_delay(&self) -> Duration {
-        Duration::from_micros(self.params.max_ack_delay * 1000)
+        Duration::from_micros(self.peer_params.max_ack_delay * 1000)
     }
 
     fn space(&self, id: SpaceId) -> &PacketSpace<S> {
