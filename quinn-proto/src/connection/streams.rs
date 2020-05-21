@@ -347,12 +347,6 @@ impl Streams {
         Ok(())
     }
 
-    /// Check if the peer has finished sending data
-    pub fn is_peer_finished(&self, id: StreamId) -> Result<bool, UnknownStream> {
-        let stream = self.recv.get(&id).ok_or(UnknownStream { _private: () })?;
-        Ok(stream.is_finished())
-    }
-
     /// Abandon pending and future transmits
     ///
     /// Does not cause the actual RESET_STREAM frame to be sent, just updates internal
@@ -400,14 +394,17 @@ impl Streams {
     }
 
     /// Cease accepting data on a stream
-    pub fn stop(&mut self, id: StreamId) {
+    ///
+    /// Returns `true` iff the peer should be notified.
+    pub fn stop(&mut self, id: StreamId) -> Result<bool, UnknownStream> {
         let stream = match self.recv.get_mut(&id) {
             Some(s) => s,
-            None => return,
+            None => return Err(UnknownStream { _private: () }),
         };
         stream.assembler.stop();
         // Issue flow control credit for unread data
         self.local_max_data += stream.assembler.limit() - stream.assembler.bytes_read();
+        Ok(!stream.is_finished())
     }
 
     pub fn can_send(&self) -> bool {
@@ -1332,7 +1329,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(client.local_max_data, initial_max);
-        client.stop(id);
+        client.stop(id).unwrap();
         assert_eq!(client.local_max_data - initial_max, 32);
         client
             .received(frame::Stream {
