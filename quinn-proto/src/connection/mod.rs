@@ -1822,7 +1822,7 @@ where
                                     self.reject_0rtt();
                                 } else {
                                     self.accepted_0rtt = true;
-                                    params.validate_0rtt(&self.peer_params)?;
+                                    params.validate_resumption_from(&self.peer_params)?;
                                 }
                             }
                             if let Some(token) = params.stateless_reset_token {
