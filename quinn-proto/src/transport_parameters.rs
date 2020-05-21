@@ -179,10 +179,10 @@ impl TransportParameters {
 /// This is communicated as a transport parameter during TLS session establishment.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct PreferredAddress {
-    address_v4: Option<SocketAddrV4>,
-    address_v6: Option<SocketAddrV6>,
-    connection_id: ConnectionId,
-    stateless_reset_token: [u8; RESET_TOKEN_SIZE],
+    pub address_v4: Option<SocketAddrV4>,
+    pub address_v6: Option<SocketAddrV6>,
+    pub connection_id: ConnectionId,
+    pub stateless_reset_token: ResetToken,
 }
 
 impl PreferredAddress {
@@ -234,7 +234,7 @@ impl PreferredAddress {
             address_v4,
             address_v6,
             connection_id: cid,
-            stateless_reset_token: token,
+            stateless_reset_token: token.into(),
         })
     }
 }
@@ -461,7 +461,7 @@ mod test {
                 address_v4: Some(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 42)),
                 address_v6: None,
                 connection_id: ConnectionId::new(&[]),
-                stateless_reset_token: [0xab; RESET_TOKEN_SIZE],
+                stateless_reset_token: [0xab; RESET_TOKEN_SIZE].into(),
             }),
             ..TransportParameters::default()
         };
