@@ -2565,6 +2565,13 @@ where
             (Some(x), 0) => Some(x),
             (Some(x), y) => Some(cmp::min(x, Duration::from_millis(y))),
         };
+        if let Some(ref info) = params.preferred_address {
+            self.rem_cids.insert(IssuedCid {
+                sequence: 1,
+                id: info.connection_id,
+                reset_token: info.stateless_reset_token,
+            }).expect("preferred address CID is the first received, and hence is guaranteed to be legal");
+        }
         self.peer_params = params;
     }
 
