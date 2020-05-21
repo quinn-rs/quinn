@@ -4,13 +4,11 @@ use std::{
     task::{Context, Poll},
 };
 
-use quinn::SendStream;
 use quinn_proto::StreamId;
 
 use crate::{
     connection::ConnectionRef,
-    frame::WriteFrame,
-    proto::{frame::HeadersFrame, headers::Header, ErrorCode},
+    proto::{frame::HeadersFrame, headers::Header},
     Error,
 };
 
@@ -41,34 +39,5 @@ impl Future for DecodeHeaders {
                 conn.poll_decode(cx, self.stream_id, frame)
             }
         }
-    }
-}
-
-pub(crate) struct SendHeaders(WriteFrame<HeadersFrame>);
-
-impl SendHeaders {
-    pub fn new(
-        header: Header,
-        conn: &ConnectionRef,
-        send: SendStream,
-        stream_id: StreamId,
-    ) -> Result<Self, Error> {
-        let conn = &mut conn.h3.lock().unwrap();
-        let frame = conn.inner.encode_header(stream_id, header)?;
-        conn.wake();
-
-        Ok(Self(WriteFrame::new(send, frame)))
-    }
-
-    pub fn reset(&mut self, err_code: ErrorCode) {
-        self.0.reset(err_code);
-    }
-}
-
-impl<'a> Future for SendHeaders {
-    type Output = Result<SendStream, Error>;
-
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        Pin::new(&mut self.0).poll(cx).map_err(Into::into)
     }
 }

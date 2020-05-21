@@ -6,7 +6,7 @@ use std::{
 };
 
 use anyhow::{bail, Context, Result};
-use futures::stream::StreamExt;
+use futures::{future::poll_fn, stream::StreamExt};
 use http::{request, Request};
 use quinn::{Certificate, CertificateChain, PrivateKey, SendStream, WriteError};
 use tokio::time::timeout;
@@ -15,8 +15,8 @@ use crate::{
     body::Body,
     client::{self, Client},
     connection::ConnectionRef,
+    data::write_headers_frame,
     frame::{Error as FrameError, FrameDecoder, FrameStream},
-    headers::SendHeaders,
     proto::frame::HttpFrame,
     proto::headers::Header,
     server::{self, IncomingConnection},
@@ -157,18 +157,14 @@ impl FakeConnection {
             headers,
             ..
         } = request;
-        let (send, recv) = self.0.inner().quic.open_bi().await.expect("open bi");
+        let (mut send, recv) = self.0.inner().quic.open_bi().await.expect("open bi");
 
-        let stream_id = send.id();
-        let send = SendHeaders::new(
-            Header::request(method, uri, headers),
-            &self.0.inner().clone(),
-            send,
-            stream_id,
-        )
-        .expect("bad headers")
-        .await
-        .expect("send header");
+        let header = Header::request(method, uri, headers);
+        let mut write =
+            write_headers_frame(header, send.id(), &self.0.inner().clone()).expect("bad headers");
+        poll_fn(|cx| write.poll_send(&mut send, cx))
+            .await
+            .expect("send header");
 
         FakeRequest {
             send: Some(send),
