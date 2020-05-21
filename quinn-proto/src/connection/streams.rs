@@ -1243,9 +1243,38 @@ mod tests {
     }
 
     #[test]
+    fn reset_flow_control() {
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        let initial_max = client.local_max_data;
+        client
+            .received(frame::Stream {
+                id,
+                offset: 0,
+                fin: false,
+                data: Bytes::from_static(&[0; 2048]),
+            })
+            .unwrap();
+        assert_eq!(client.data_recvd, 2048);
+        assert_eq!(client.local_max_data - initial_max, 0);
+        client.read(id, &mut [0; 1024]).unwrap();
+        assert_eq!(client.local_max_data - initial_max, 1024);
+        client
+            .received_reset(frame::ResetStream {
+                id,
+                error_code: 0u32.into(),
+                final_offset: 4096,
+            })
+            .unwrap();
+        assert_eq!(client.data_recvd, 4096);
+        assert_eq!(client.local_max_data - initial_max, 4096);
+    }
+
+    #[test]
     fn reset_after_empty_frame_flow_control() {
         let mut client = make(Side::Client);
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        let initial_max = client.local_max_data;
         client
             .received(frame::Stream {
                 id,
@@ -1255,6 +1284,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(client.data_recvd, 4096);
+        assert_eq!(client.local_max_data - initial_max, 0);
         client
             .received_reset(frame::ResetStream {
                 id,
@@ -1263,6 +1293,7 @@ mod tests {
             })
             .unwrap();
         assert_eq!(client.data_recvd, 4096);
+        assert_eq!(client.local_max_data - initial_max, 4096);
     }
 
     #[test]
