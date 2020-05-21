@@ -153,15 +153,18 @@ impl TransportParameters {
 
     /// Check that these parameters are legal when resuming from
     /// certain cached parameters
-    pub(crate) fn validate_0rtt(&self, cached: &TransportParameters) -> Result<(), TransportError> {
-        if cached.active_connection_id_limit < self.active_connection_id_limit
-            || cached.initial_max_data < self.initial_max_data
-            || cached.initial_max_stream_data_bidi_local < self.initial_max_stream_data_bidi_local
-            || cached.initial_max_stream_data_bidi_remote < self.initial_max_stream_data_bidi_remote
-            || cached.initial_max_stream_data_uni < self.initial_max_stream_data_uni
-            || cached.initial_max_streams_bidi < self.initial_max_streams_bidi
-            || cached.initial_max_streams_uni < self.initial_max_streams_uni
-            || cached.max_datagram_frame_size < self.max_datagram_frame_size
+    pub(crate) fn validate_resumption_from(
+        &self,
+        cached: &TransportParameters,
+    ) -> Result<(), TransportError> {
+        if cached.active_connection_id_limit > self.active_connection_id_limit
+            || cached.initial_max_data > self.initial_max_data
+            || cached.initial_max_stream_data_bidi_local > self.initial_max_stream_data_bidi_local
+            || cached.initial_max_stream_data_bidi_remote > self.initial_max_stream_data_bidi_remote
+            || cached.initial_max_stream_data_uni > self.initial_max_stream_data_uni
+            || cached.initial_max_streams_bidi > self.initial_max_streams_bidi
+            || cached.initial_max_streams_uni > self.initial_max_streams_uni
+            || cached.max_datagram_frame_size > self.max_datagram_frame_size
         {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "0-RTT accepted with incompatible transport parameters",
@@ -467,5 +470,19 @@ mod test {
             TransportParameters::read(Side::Client, &mut buf.as_slice()).unwrap(),
             params
         );
+    }
+
+    #[test]
+    fn resumption_params_validation() {
+        let high_limit = TransportParameters {
+            initial_max_streams_uni: 32,
+            ..Default::default()
+        };
+        let low_limit = TransportParameters {
+            initial_max_streams_uni: 16,
+            ..Default::default()
+        };
+        high_limit.validate_resumption_from(&low_limit).unwrap();
+        low_limit.validate_resumption_from(&high_limit).unwrap_err();
     }
 }
