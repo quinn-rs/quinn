@@ -152,6 +152,8 @@ where
     remote_validated: bool,
     /// Total UDP datagram bytes received, tracked for handshake anti-amplification
     total_recvd: u64,
+    /// Number of packets authenticated
+    total_authed_packets: u64,
     total_sent: u64,
 
     streams: Streams,
@@ -247,6 +249,7 @@ where
             receiving_ecn: false,
             remote_validated,
             total_recvd: 0,
+            total_authed_packets: 0,
             total_sent: 0,
 
             streams: Streams::new(
@@ -1259,6 +1262,7 @@ where
         spin: bool,
         is_1rtt: bool,
     ) {
+        self.total_authed_packets += 1;
         self.reset_keep_alive(now);
         self.reset_idle_timeout(now);
         self.permit_idle_reset = true;
@@ -1727,7 +1731,7 @@ where
                             );
                         }
 
-                        if self.retry_src_cid.is_some()
+                        if self.total_authed_packets > 1
                             || packet.payload.len() <= 16 // token + 16 byte tag
                             || !S::is_valid_retry(
                                 &self.rem_cid,
