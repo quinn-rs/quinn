@@ -85,8 +85,13 @@ where
     key_phase: bool,
     /// Transport parameters set by the peer
     params: TransportParameters,
-    /// ConnectionId sent by this client on the first Initial, if a Retry was received.
-    orig_rem_cid: Option<ConnectionId>,
+    /// Source ConnectionId of the first packet received from the peer
+    orig_rem_cid: ConnectionId,
+    /// Destination ConnectionId sent by the client on the first Initial
+    initial_dst_cid: ConnectionId,
+    /// The value that the server included in the Source Connection ID field of a Retry packet, if
+    /// one was received
+    retry_src_cid: Option<ConnectionId>,
     /// Total number of outgoing packets that have been deemed lost
     lost_packets: u64,
     events: VecDeque<Event>,
@@ -211,7 +216,9 @@ where
             zero_rtt_crypto: None,
             key_phase: false,
             params: TransportParameters::default(),
-            orig_rem_cid: None,
+            orig_rem_cid: rem_cid,
+            initial_dst_cid: init_cid,
+            retry_src_cid: None,
             lost_packets: 0,
             events: VecDeque::new(),
             endpoint_events: VecDeque::new(),
@@ -1370,11 +1377,13 @@ where
                         .expect("crypto layer didn't supply transport parameters with ticket");
                     // Certain values must not be cached
                     let params = TransportParameters {
-                        original_connection_id: None,
+                        initial_source_connection_id: None,
+                        original_destination_connection_id: None,
                         preferred_address: None,
+                        retry_source_connection_id: None,
                         stateless_reset_token: None,
                         ack_delay_exponent: TransportParameters::default().ack_delay_exponent,
-                        active_connection_id_limit: 0,
+                        max_ack_delay: TransportParameters::default().max_ack_delay,
                         ..params
                     };
                     self.set_params(params);
@@ -1704,7 +1713,7 @@ where
                             );
                         }
 
-                        if self.orig_rem_cid.is_some()
+                        if self.retry_src_cid.is_some()
                             || packet.payload.len() <= 16 // token + 16 byte tag
                             || !S::is_valid_retry(
                                 &self.rem_cid,
@@ -1725,7 +1734,7 @@ where
 
                         trace!("retrying with CID {}", rem_cid);
                         let client_hello = state.client_hello.take().unwrap();
-                        self.orig_rem_cid = Some(self.rem_cid);
+                        self.retry_src_cid = Some(rem_cid);
                         self.rem_cid = rem_cid;
                         self.rem_handshake_cid = rem_cid;
 
@@ -1842,6 +1851,7 @@ where
                             let mut state = state.clone();
                             self.rem_cid = rem_cid;
                             self.rem_handshake_cid = rem_cid;
+                            self.orig_rem_cid = rem_cid;
                             state.rem_cid_set = true;
                             self.state = State::Handshake(state);
                         } else if rem_cid != self.rem_handshake_cid {
@@ -2520,13 +2530,13 @@ where
 
     /// Validate transport parameters received from the peer
     fn validate_params(&mut self, params: &TransportParameters) -> Result<(), TransportError> {
-        if self.side.is_client() && self.orig_rem_cid != params.original_connection_id {
-            debug!(
-                "original connection ID mismatch: expected {:x?}, actual {:x?}",
-                self.orig_rem_cid, params.original_connection_id
-            );
-            return Err(TransportError::TRANSPORT_PARAMETER_ERROR(
-                "original CID mismatch",
+        if Some(self.orig_rem_cid) != params.initial_source_connection_id
+            || (self.side.is_client()
+                && (Some(self.initial_dst_cid) != params.original_destination_connection_id
+                    || self.retry_src_cid != params.retry_source_connection_id))
+        {
+            return Err(TransportError::PROTOCOL_VIOLATION(
+                "CID authentication failure",
             ));
         }
         if params.initial_max_streams_bidi > MAX_STREAM_COUNT

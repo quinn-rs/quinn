@@ -390,20 +390,29 @@ where
                 config,
                 server_name,
             } => {
-                let params = TransportParameters::new::<S>(&config.transport, &self.config, None);
+                let params =
+                    TransportParameters::new::<S>(&config.transport, &self.config, loc_cid, None);
                 (
                     None,
                     config.crypto.start_session(&server_name, &params)?,
                     config.transport,
                 )
             }
-            ConnectionOpts::Server { orig_dst_cid } => {
+            ConnectionOpts::Server {
+                orig_dst_cid,
+                retry_src_cid,
+            } => {
                 let config = self.server_config.as_ref().unwrap();
-                let params =
-                    TransportParameters::new(&config.transport, &self.config, Some(config));
+                let params = TransportParameters::new(
+                    &config.transport,
+                    &self.config,
+                    loc_cid,
+                    Some(config),
+                );
                 let server_params = TransportParameters {
                     stateless_reset_token: Some(reset_token_for(&*self.config.reset_key, &loc_cid)),
-                    original_connection_id: orig_dst_cid,
+                    original_destination_connection_id: Some(orig_dst_cid),
+                    retry_source_connection_id: retry_src_cid,
                     ..params
                 };
                 (
@@ -525,12 +534,13 @@ where
             return None;
         }
 
-        let retry_cid = if server_config.use_stateless_retry {
+        let (retry_src_cid, orig_dst_cid) = if server_config.use_stateless_retry {
             if token.is_empty() {
                 // First Initial
                 let token = token::generate(
                     &*server_config.token_key,
                     &remote,
+                    &temp_loc_cid,
                     &dst_cid,
                     SystemTime::now(),
                 );
@@ -553,14 +563,14 @@ where
             }
 
             match token::check(&*server_config.token_key, &remote, &token) {
-                Some((cid, issued))
+                Some((src_cid, dst_cid, issued))
                     if issued
                         + Duration::from_micros(
                             self.server_config.as_ref().unwrap().retry_token_lifetime,
                         )
                         > SystemTime::now() =>
                 {
-                    Some(cid)
+                    (Some(src_cid), dst_cid)
                 }
                 _ => {
                     debug!("rejecting invalid stateless retry token");
@@ -579,7 +589,7 @@ where
                 }
             }
         } else {
-            None
+            (None, dst_cid)
         };
 
         let (ch, mut conn) = self
@@ -588,7 +598,8 @@ where
                 src_cid,
                 remote,
                 ConnectionOpts::Server {
-                    orig_dst_cid: retry_cid,
+                    retry_src_cid,
+                    orig_dst_cid,
                 },
                 now,
             )
@@ -738,6 +749,7 @@ mod token {
     pub fn generate<K>(
         key: &K,
         address: &SocketAddr,
+        src_cid: &ConnectionId,
         dst_cid: &ConnectionId,
         issued: SystemTime,
     ) -> Vec<u8>
@@ -745,8 +757,13 @@ mod token {
         K: HmacKey,
     {
         let mut buf = Vec::new();
+
+        buf.write(src_cid.len() as u8);
+        buf.put_slice(src_cid);
+
         buf.write(dst_cid.len() as u8);
         buf.put_slice(dst_cid);
+
         buf.write::<u64>(
             issued
                 .duration_since(UNIX_EPOCH)
@@ -770,17 +787,25 @@ mod token {
         key: &K,
         address: &SocketAddr,
         data: &[u8],
-    ) -> Option<(ConnectionId, SystemTime)>
+    ) -> Option<(ConnectionId, ConnectionId, SystemTime)>
     where
         K: HmacKey,
     {
         let mut reader = io::Cursor::new(data);
+        let src_cid_len = reader.get::<u8>().ok()? as usize;
+        if src_cid_len > reader.remaining() || src_cid_len > MAX_CID_SIZE {
+            return None;
+        }
+        let src_cid = ConnectionId::new(&reader.bytes()[..src_cid_len]);
+        reader.advance(src_cid_len);
+
         let dst_cid_len = reader.get::<u8>().ok()? as usize;
         if dst_cid_len > reader.remaining() || dst_cid_len > MAX_CID_SIZE {
             return None;
         }
-        let dst_cid = ConnectionId::new(&data[1..=dst_cid_len]);
+        let dst_cid = ConnectionId::new(&reader.bytes()[..dst_cid_len]);
         reader.advance(dst_cid_len);
+
         let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().ok()?, 0);
         let signature_start = reader.position() as usize;
 
@@ -793,7 +818,7 @@ mod token {
         buf.write(address.port());
 
         key.verify(&buf, &data[signature_start..]).ok()?;
-        Some((dst_cid, issued))
+        Some((src_cid, dst_cid, issued))
     }
 }
 
@@ -837,7 +862,8 @@ enum ConnectionOpts<S: crypto::Session> {
         server_name: String,
     },
     Server {
-        orig_dst_cid: Option<ConnectionId>,
+        retry_src_cid: Option<ConnectionId>,
+        orig_dst_cid: ConnectionId,
     },
 }
 
@@ -912,10 +938,13 @@ mod test {
         rand::thread_rng().fill_bytes(&mut key);
         let key = <hmac::Key as HmacKey>::new(&key).unwrap();
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
+        let src_cid = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
         let dst_cid = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
         let issued = UNIX_EPOCH + Duration::new(42, 0); // Fractional seconds would be lost
-        let token = token::generate(&key, &addr, &dst_cid, issued);
-        let (dst_cid2, issued2) = token::check(&key, &addr, &token).expect("token didn't validate");
+        let token = token::generate(&key, &addr, &src_cid, &dst_cid, issued);
+        let (src_cid2, dst_cid2, issued2) =
+            token::check(&key, &addr, &token).expect("token didn't validate");
+        assert_eq!(src_cid, src_cid2);
         assert_eq!(dst_cid, dst_cid2);
         assert_eq!(issued, issued2);
     }
