@@ -139,13 +139,14 @@ where
     /// No new data can be written after calling this method. Locally buffered data is dropped, and
     /// previously transmitted data will no longer be retransmitted if lost. If an attempt has
     /// already been made to finish the stream, the peer may still receive all written data.
-    pub fn reset(&mut self, error_code: VarInt) {
+    pub fn reset(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt && conn.check_0rtt().is_err() {
-            return;
+            return Ok(());
         }
-        conn.inner.reset(self.stream, error_code);
+        conn.inner.reset(self.stream, error_code)?;
         conn.wake();
+        Ok(())
     }
 
     #[doc(hidden)]

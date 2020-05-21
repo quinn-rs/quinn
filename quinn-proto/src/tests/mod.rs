@@ -231,7 +231,7 @@ fn reset_stream() {
 
     info!("resetting stream");
     const ERROR: VarInt = VarInt(42);
-    pair.client_conn_mut(client_ch).reset(s, ERROR);
+    pair.client_conn_mut(client_ch).reset(s, ERROR).unwrap();
     pair.drive();
 
     assert_matches!(
@@ -869,7 +869,9 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
         Err(WriteError::Blocked)
     );
     pair.drive();
-    pair.client_conn_mut(client_conn).reset(s, VarInt(42));
+    pair.client_conn_mut(client_conn)
+        .reset(s, VarInt(42))
+        .unwrap();
     pair.drive();
     assert_eq!(
         pair.server_conn_mut(server_conn).read(s, &mut buf),

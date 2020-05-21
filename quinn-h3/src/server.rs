@@ -573,7 +573,7 @@ impl RecvRequest {
             recv.reset(ErrorCode::REQUEST_REJECTED);
         }
         if let Some(mut send) = self.send.take() {
-            send.reset(ErrorCode::REQUEST_REJECTED.into());
+            let _ = send.reset(ErrorCode::REQUEST_REJECTED.into());
         }
     }
 
@@ -604,7 +604,7 @@ impl RecvRequest {
                 r.reset(ErrorCode::REQUEST_REJECTED);
             }
             if let Some(s) = &mut self.send {
-                s.reset(ErrorCode::REQUEST_REJECTED.into());
+                let _ = s.reset(ErrorCode::REQUEST_REJECTED.into());
             }
             return Err(Error::peer(format!(
                 "Tried an non indempotent method in 0-RTT: {}",
@@ -718,7 +718,8 @@ impl Sender {
     /// Cancelling a request means that some request data have been processed by the application, which
     /// decided to abandon the response.
     pub fn cancel(&mut self) {
-        self.send
+        let _ = self
+            .send
             .as_mut()
             .unwrap()
             .reset(ErrorCode::REQUEST_CANCELLED.into());

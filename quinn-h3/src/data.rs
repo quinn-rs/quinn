@@ -82,7 +82,7 @@ where
     ///
     /// The peer will receive a request error with `REQUEST_CANCELLED` code.
     pub fn cancel(&mut self) {
-        self.send.reset(ErrorCode::REQUEST_CANCELLED.into());
+        let _ = self.send.reset(ErrorCode::REQUEST_CANCELLED.into());
         self.state = SendDataState::Finished;
     }
 }
