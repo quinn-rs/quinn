@@ -73,10 +73,17 @@ macro_rules! make_struct {
             pub(crate) disable_active_migration: bool,
             /// Maximum size for datagram frames
             pub(crate) max_datagram_frame_size: Option<VarInt>,
+            /// The value that the endpoint included in the Source Connection ID field of the first
+            /// Initial packet it sends for the connection
+            pub(crate) initial_source_connection_id: Option<ConnectionId>,
 
             // Server-only
-            /// The DCID from the first Initial packet; must be included if a Retry packet was sent
-            pub(crate) original_connection_id: Option<ConnectionId>,
+            /// The value of the Destination Connection ID field from the first Initial packet sent
+            /// by the client
+            pub(crate) original_destination_connection_id: Option<ConnectionId>,
+            /// The value that the server included in the Source Connection ID field of a Retry
+            /// packet
+            pub(crate) retry_source_connection_id: Option<ConnectionId>,
             /// Token used by the client to verify a stateless reset from the server
             pub(crate) stateless_reset_token: Option<ResetToken>,
             /// The server's preferred address for communication after handshake completion
@@ -91,8 +98,10 @@ macro_rules! make_struct {
 
                     disable_active_migration: false,
                     max_datagram_frame_size: None,
+                    initial_source_connection_id: None,
 
-                    original_connection_id: None,
+                    original_destination_connection_id: None,
+                    retry_source_connection_id: None,
                     stateless_reset_token: None,
                     preferred_address: None,
                 }
@@ -107,12 +116,14 @@ impl TransportParameters {
     pub(crate) fn new<S>(
         config: &TransportConfig,
         endpoint_config: &EndpointConfig<S>,
+        initial_source_connection_id: ConnectionId,
         server_config: Option<&ServerConfig<S>>,
     ) -> Self
     where
         S: crypto::Session,
     {
         TransportParameters {
+            initial_source_connection_id: Some(initial_source_connection_id),
             initial_max_streams_bidi: config.stream_window_bidi,
             initial_max_streams_uni: config.stream_window_uni,
             initial_max_data: config.receive_window,
@@ -143,7 +154,8 @@ impl TransportParameters {
     /// Check that these parameters are legal when resuming from
     /// certain cached parameters
     pub(crate) fn validate_0rtt(&self, cached: &TransportParameters) -> Result<(), TransportError> {
-        if cached.initial_max_data < self.initial_max_data
+        if cached.active_connection_id_limit < self.active_connection_id_limit
+            || cached.initial_max_data < self.initial_max_data
             || cached.initial_max_stream_data_bidi_local < self.initial_max_stream_data_bidi_local
             || cached.initial_max_stream_data_bidi_remote < self.initial_max_stream_data_bidi_remote
             || cached.initial_max_stream_data_uni < self.initial_max_stream_data_uni
@@ -270,7 +282,7 @@ impl TransportParameters {
         w.write_var(31 * 5 + 27);
         w.write_var(0);
 
-        if let Some(ref x) = self.original_connection_id {
+        if let Some(ref x) = self.original_destination_connection_id {
             w.write_var(0x00);
             w.write_var(x.len() as u64);
             w.put_slice(x);
@@ -297,6 +309,18 @@ impl TransportParameters {
             w.write_var(0x000d);
             w.write_var(x.wire_size() as u64);
             x.write(w);
+        }
+
+        if let Some(ref x) = self.initial_source_connection_id {
+            w.write_var(0x0f);
+            w.write_var(x.len() as u64);
+            w.put_slice(x);
+        }
+
+        if let Some(ref x) = self.retry_source_connection_id {
+            w.write_var(0x10);
+            w.write_var(x.len() as u64);
+            w.put_slice(x);
         }
     }
 
@@ -328,12 +352,14 @@ impl TransportParameters {
 
             match id {
                 0x00 => {
-                    if len > MAX_CID_SIZE as u64 || params.original_connection_id.is_some() {
+                    if len > MAX_CID_SIZE as u64
+                        || params.original_destination_connection_id.is_some()
+                    {
                         return Err(Error::Malformed);
                     }
                     let mut staging = [0; MAX_CID_SIZE];
                     r.copy_to_slice(&mut staging[0..len as usize]);
-                    params.original_connection_id =
+                    params.original_destination_connection_id =
                         Some(ConnectionId::new(&staging[0..len as usize]));
                 }
                 0x02 => {
@@ -356,6 +382,24 @@ impl TransportParameters {
                     }
                     params.preferred_address =
                         Some(PreferredAddress::read(&mut r.take(len as usize))?);
+                }
+                0x0f => {
+                    if len > MAX_CID_SIZE as u64 || params.initial_source_connection_id.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    let mut staging = [0; MAX_CID_SIZE];
+                    r.copy_to_slice(&mut staging[0..len as usize]);
+                    params.initial_source_connection_id =
+                        Some(ConnectionId::new(&staging[0..len as usize]));
+                }
+                0x10 => {
+                    if len > MAX_CID_SIZE as u64 || params.retry_source_connection_id.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    let mut staging = [0; MAX_CID_SIZE];
+                    r.copy_to_slice(&mut staging[0..len as usize]);
+                    params.retry_source_connection_id =
+                        Some(ConnectionId::new(&staging[0..len as usize]));
                 }
                 0x20 => {
                     if len > 8 || params.max_datagram_frame_size.is_some() {
@@ -387,9 +431,7 @@ impl TransportParameters {
             || params.active_connection_id_limit < 2
             || params.max_udp_payload_size < 1200
             || (side.is_server()
-                && (params.original_connection_id.is_some()
-                    || params.stateless_reset_token.is_some()
-                    || params.preferred_address.is_some()))
+                && (params.stateless_reset_token.is_some() || params.preferred_address.is_some()))
         {
             return Err(Error::IllegalValue);
         }
@@ -406,6 +448,8 @@ mod test {
     fn coding() {
         let mut buf = Vec::new();
         let params = TransportParameters {
+            initial_source_connection_id: Some(ConnectionId::new(&[])),
+            original_destination_connection_id: Some(ConnectionId::new(&[])),
             initial_max_streams_bidi: 16,
             initial_max_streams_uni: 16,
             ack_delay_exponent: 2,
