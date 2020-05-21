@@ -654,11 +654,16 @@ fn instant_close_1() {
     pair.drive();
     let server_ch = pair.server.assert_accept();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
-    assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::ConnectionLost {
-        reason: ConnectionError::ApplicationClosed(
-            ApplicationClose { error_code: VarInt(0), ref reason }
-        )
-    }) if reason.is_empty());
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::ConnectionLost {
+            reason:
+                ConnectionError::ConnectionClosed(ConnectionClose {
+                    error_code: TransportErrorCode::APPLICATION_ERROR,
+                    ..
+                }),
+        })
+    );
 }
 
 #[test]
@@ -677,11 +682,16 @@ fn instant_close_2() {
     pair.drive();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     let server_ch = pair.server.assert_accept();
-    assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::ConnectionLost {
-        reason: ConnectionError::ApplicationClosed(
-            ApplicationClose { error_code: VarInt(42), ref reason }
-        )
-    }) if reason.is_empty());
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::ConnectionLost {
+            reason:
+                ConnectionError::ConnectionClosed(ConnectionClose {
+                    error_code: TransportErrorCode::APPLICATION_ERROR,
+                    ..
+                }),
+        })
+    );
 }
 
 #[test]
