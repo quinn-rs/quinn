@@ -1,6 +1,7 @@
 use std::{
     cmp,
     collections::{BTreeMap, VecDeque},
+    convert::TryInto,
     fmt, io, mem,
     net::SocketAddr,
     sync::Arc,
@@ -29,7 +30,7 @@ use crate::{
     transport_parameters::{self, TransportParameters},
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
     LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
-    TIMER_GRANULARITY,
+    TIMER_GRANULARITY, VERSION,
 };
 
 mod assembler;
@@ -1914,6 +1915,16 @@ where
                         Ok(())
                     }
                     Header::VersionNegotiate { .. } => {
+                        if self.total_authed_packets > 1 {
+                            return Ok(());
+                        }
+                        if packet
+                            .payload
+                            .chunks(4)
+                            .any(|chunk| u32::from_be_bytes(chunk.try_into().unwrap()) == VERSION)
+                        {
+                            return Ok(());
+                        }
                         debug!("remote doesn't support our version");
                         Err(ConnectionError::VersionMismatch)
                     }
