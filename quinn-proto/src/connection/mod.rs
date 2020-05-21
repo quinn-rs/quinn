@@ -711,12 +711,16 @@ where
         self.streams.write(stream, data)
     }
 
-    /// Signal to the peer that it should stop sending on the given recv stream
-    pub fn stop_sending(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
+    /// Stop accepting data on the given receive stream
+    ///
+    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, a stream
+    /// cannot be read from any further.
+    pub fn stop(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
         assert!(
             id.dir() == Dir::Bi || id.initiator() != self.side,
             "only streams supporting incoming data may be stopped"
         );
+        self.streams.stop(id);
         // Only bother if there's data we haven't received yet
         if !self.streams.is_peer_finished(id)? {
             let space = &mut self.spaces[SpaceId::Data as usize];
