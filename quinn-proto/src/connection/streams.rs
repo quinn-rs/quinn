@@ -262,13 +262,26 @@ impl Streams {
             return Ok(());
         }
 
-        self.data_recvd += rs.ingest(
+        let new_bytes = rs.ingest(
             frame,
             self.data_recvd,
             self.local_max_data,
             self.stream_receive_window,
         )?;
-        self.on_stream_frame(true, stream);
+        self.data_recvd += new_bytes;
+
+        if !rs.assembler.is_stopped() {
+            self.on_stream_frame(true, stream);
+            return Ok(());
+        }
+
+        // We don't buffer data on stopped streams, so issue flow control credit immediately
+        self.local_max_data += new_bytes;
+
+        // Stopped streams become closed instantly on FIN, so check whether we need to clean up
+        if rs.is_closed() {
+            self.recv.remove(&stream);
+        }
         Ok(())
     }
 
@@ -384,6 +397,17 @@ impl Streams {
                 self.maybe_cleanup(id);
             }
         }
+    }
+
+    /// Cease accepting data on a stream
+    pub fn stop(&mut self, id: StreamId) {
+        let stream = match self.recv.get_mut(&id) {
+            Some(s) => s,
+            None => return,
+        };
+        stream.assembler.stop();
+        // Issue flow control credit for unread data
+        self.local_max_data += stream.assembler.limit() - stream.assembler.bytes_read();
     }
 
     pub fn can_send(&self) -> bool {
@@ -991,7 +1015,11 @@ impl Recv {
         self.assembler.insert(frame.offset, frame.data);
 
         if let RecvState::Recv { size: Some(size) } = self.state {
-            if self.assembler.is_complete_at(size) {
+            if self.assembler.is_stopped() {
+                // Stopped streams don't need to wait for the actual data, they just need to know
+                // how much there was.
+                self.state = RecvState::Closed;
+            } else if self.assembler.is_complete_at(size) {
                 self.state = RecvState::DataRecvd { size };
             }
         }
@@ -1000,6 +1028,9 @@ impl Recv {
     }
 
     fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
+        if self.assembler.is_stopped() {
+            return Err(ReadError::UnknownStream);
+        }
         let read = self.assembler.read(buf);
         if read > 0 {
             Ok(Some(read))
@@ -1095,8 +1126,8 @@ pub enum ReadError {
     Reset(VarInt),
     /// Unknown stream
     ///
-    /// Occurs when attempting to access a stream after observing that it has been finished or
-    /// reset.
+    /// Occurs when attempting to access a stream after stopping it, or observing that it has been
+    /// finished or reset.
     #[error(display = "unknown stream")]
     UnknownStream,
 }
@@ -1254,5 +1285,33 @@ mod tests {
             })
             .unwrap();
         assert_eq!(client.data_recvd, 4096);
+    }
+
+    #[test]
+    fn stopped() {
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        let initial_max = client.local_max_data;
+        client
+            .received(frame::Stream {
+                id,
+                offset: 0,
+                fin: false,
+                data: Bytes::from_static(&[0; 32]),
+            })
+            .unwrap();
+        assert_eq!(client.local_max_data, initial_max);
+        client.stop(id);
+        assert_eq!(client.local_max_data - initial_max, 32);
+        client
+            .received(frame::Stream {
+                id,
+                offset: 32,
+                fin: true,
+                data: Bytes::from_static(&[0; 16]),
+            })
+            .unwrap();
+        assert_eq!(client.local_max_data - initial_max, 48);
+        assert!(!client.recv.contains_key(&id));
     }
 }

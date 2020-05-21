@@ -387,22 +387,16 @@ where
         }
     }
 
-    /// Close the receive stream immediately.
+    /// Stop accepting data
     ///
-    /// The peer is notified and will cease transmitting on this stream, as if it had reset the
-    /// stream itself. Further data may still be received on this stream if it was already in
-    /// flight. Once called, a `ReadError::Reset` should be expected soon, although a peer might
-    /// manage to finish the stream before it receives the reset, and a misbehaving peer might
-    /// ignore the request entirely and continue sending until halted by flow control.
-    ///
-    /// Has no effect if the incoming stream already finished, even if the local application hasn't
-    /// yet read all buffered data.
+    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, a stream
+    /// cannot be read from any further.
     pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return Ok(());
         }
-        conn.inner.stop_sending(self.stream, error_code)?;
+        conn.inner.stop(self.stream, error_code)?;
         conn.wake();
         self.all_data_read = true;
         Ok(())
@@ -527,7 +521,7 @@ where
         }
         if !self.all_data_read {
             // Ignore UnknownStream errors
-            let _ = conn.inner.stop_sending(self.stream, 0u32.into());
+            let _ = conn.inner.stop(self.stream, 0u32.into());
             conn.wake();
         }
     }

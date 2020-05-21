@@ -20,6 +20,8 @@ pub(crate) struct Assembler {
     bytes_read: u64,
     /// Offsets received so far
     recvd: RangeSet,
+    /// Whether to discard data
+    stopped: bool,
 }
 
 impl Assembler {
@@ -144,7 +146,7 @@ impl Assembler {
 
     pub(crate) fn insert(&mut self, offset: u64, bytes: Bytes) {
         self.recvd.insert(offset..(offset + bytes.len() as u64));
-        if bytes.is_empty() {
+        if bytes.is_empty() || self.stopped {
             return;
         }
         self.data.push(Chunk { offset, bytes });
@@ -183,6 +185,16 @@ impl Assembler {
     pub(crate) fn clear(&mut self) {
         self.data.clear();
         self.defragmented = 0;
+    }
+
+    /// Discard buffered data and do not buffer future data, but continue tracking offsets.
+    pub(crate) fn stop(&mut self) {
+        self.stopped = true;
+        self.data.clear();
+    }
+
+    pub(crate) fn is_stopped(&self) -> bool {
+        self.stopped
     }
 }
 
