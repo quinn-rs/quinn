@@ -1,16 +1,13 @@
-use std::{
-    io,
-    task::{Context, Poll},
-};
+use std::io;
 
-use bytes::{Buf, BufMut, BytesMut};
-use futures::{ready, FutureExt};
-use quinn::{RecvStream, SendStream, VarInt};
+use bytes::{Buf, BytesMut};
+use quinn::RecvStream;
 use tokio::io::AsyncRead;
 use tokio_util::codec::{Decoder, FramedRead};
 
-use super::proto::frame::{self, FrameHeader, HttpFrame, IntoPayload, PartialData};
+use super::proto::frame::{self, FrameHeader, HttpFrame, PartialData};
 use crate::{proto::ErrorCode, streams::Reset};
+
 pub type FrameStream = FramedRead<RecvStream, FrameDecoder>;
 
 impl Reset for FrameStream {
@@ -101,79 +98,6 @@ impl Decoder for FrameDecoder {
                 src.advance(pos);
                 self.expected = None;
                 Ok(Some(frame))
-            }
-        }
-    }
-}
-
-pub(crate) struct WriteFrame<F> {
-    state: WriteFrameState,
-    frame: F,
-    header: [u8; VarInt::MAX_SIZE * 2],
-    header_len: usize,
-}
-
-enum WriteFrameState {
-    Header(usize),
-    Payload,
-    Finished,
-}
-
-impl<F> WriteFrame<F>
-where
-    F: FrameHeader + IntoPayload,
-{
-    pub(crate) fn new(frame: F) -> Self {
-        let mut buf = [0u8; VarInt::MAX_SIZE * 2];
-        let remaining = {
-            let mut cur = &mut buf[..];
-            frame.encode_header(&mut cur);
-            cur.remaining_mut()
-        };
-
-        Self {
-            frame,
-            state: WriteFrameState::Header(0),
-            header: buf,
-            header_len: buf.len() - remaining,
-        }
-    }
-
-    pub(crate) fn poll_send(
-        &mut self,
-        send: &mut SendStream,
-        cx: &mut Context,
-    ) -> Poll<Result<(), quinn::WriteError>> {
-        loop {
-            match self.state {
-                WriteFrameState::Finished => panic!("polled after finish"),
-                WriteFrameState::Header(mut start) => {
-                    let wrote = ready!(send
-                        .write(&self.header[start..self.header_len])
-                        .poll_unpin(cx)?);
-                    start += wrote;
-
-                    if start < self.header_len {
-                        self.state = WriteFrameState::Header(start);
-                        continue;
-                    }
-                    self.state = WriteFrameState::Payload;
-                }
-                WriteFrameState::Payload => {
-                    let p = self.frame.into_payload();
-                    match ready!(send.write(p.bytes()).poll_unpin(cx)) {
-                        Err(e) => return Poll::Ready(Err(e)),
-                        Ok(wrote) => {
-                            p.advance(wrote);
-                            if p.has_remaining() {
-                                continue;
-                            }
-                        }
-                    }
-
-                    self.state = WriteFrameState::Finished;
-                    return Poll::Ready(Ok(()));
-                }
             }
         }
     }
