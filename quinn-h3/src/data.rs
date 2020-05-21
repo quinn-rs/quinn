@@ -16,7 +16,6 @@ use crate::{
     body::RecvBody,
     connection::ConnectionRef,
     frame::FrameStream,
-    headers::DecodeHeaders,
     proto::{
         frame::{DataFrame, FrameHeader, HeadersFrame, HttpFrame, IntoPayload},
         headers::Header,
@@ -313,6 +312,36 @@ impl Future for RecvData {
                     return Poll::Ready(Ok((headers, recv)));
                 }
                 RecvDataState::Finished => panic!("polled after finished"),
+            }
+        }
+    }
+}
+
+pub struct DecodeHeaders {
+    frame: Option<HeadersFrame>,
+    conn: ConnectionRef,
+    stream_id: StreamId,
+}
+
+impl DecodeHeaders {
+    pub(crate) fn new(frame: HeadersFrame, conn: ConnectionRef, stream_id: StreamId) -> Self {
+        Self {
+            conn,
+            stream_id,
+            frame: Some(frame),
+        }
+    }
+}
+
+impl Future for DecodeHeaders {
+    type Output = Result<Header, Error>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        match self.frame {
+            None => Poll::Ready(Err(crate::Error::internal("frame none"))),
+            Some(ref frame) => {
+                let mut conn = self.conn.h3.lock().unwrap();
+                conn.poll_decode(cx, self.stream_id, frame)
             }
         }
     }
