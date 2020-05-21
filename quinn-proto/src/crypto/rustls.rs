@@ -24,6 +24,7 @@ use crate::{
 
 /// A rustls TLS session
 pub struct TlsSession {
+    using_alpn: bool,
     inner: SessionKind,
 }
 
@@ -110,7 +111,17 @@ impl crypto::Session for TlsSession {
             } else {
                 TransportError::PROTOCOL_VIOLATION(format!("TLS error: {}", e))
             }
-        })
+        })?;
+        // Validate ALPN outcome. TODO: Do this as early as possible in the handshake once rustls
+        // makes it practical to.
+        if !self.is_handshaking() && self.using_alpn && self.get_alpn_protocol().is_none() {
+            return Err(TransportError {
+                code: TransportErrorCode::crypto(0x78),
+                frame: None,
+                reason: "ALPN negotiation failed".into(),
+            });
+        }
+        Ok(())
     }
 
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError> {
@@ -267,6 +278,7 @@ impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
         let pki_server_name = DNSNameRef::try_from_ascii_str(server_name)
             .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?;
         Ok(TlsSession {
+            using_alpn: !self.alpn_protocols.is_empty(),
             inner: SessionKind::Client(rustls::ClientSession::new_quic(
                 self,
                 pki_server_name,
@@ -286,6 +298,7 @@ impl crypto::ServerConfig<TlsSession> for Arc<rustls::ServerConfig> {
 
     fn start_session(&self, params: &TransportParameters) -> TlsSession {
         TlsSession {
+            using_alpn: !self.alpn_protocols.is_empty(),
             inner: SessionKind::Server(rustls::ServerSession::new_quic(self, to_vec(params))),
         }
     }

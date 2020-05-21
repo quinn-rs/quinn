@@ -470,6 +470,66 @@ fn alpn_success() {
 }
 
 #[test]
+fn server_alpn_unset() {
+    let _guard = subscribe();
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config());
+    let mut client_config = client_config();
+    Arc::get_mut(&mut client_config.crypto)
+        .unwrap()
+        .set_protocols(&["foo".into()]);
+
+    let client_conn = pair.begin_connect(client_config);
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_conn).poll(),
+        Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref err) }) if err.code == TransportErrorCode::crypto(0x78)
+    );
+}
+
+#[test]
+fn client_alpn_unset() {
+    let _guard = subscribe();
+    let mut server_config = server_config();
+    Arc::get_mut(&mut server_config.crypto)
+        .unwrap()
+        .set_protocols(&["foo".into(), "bar".into(), "baz".into()]);
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+
+    let client_conn = pair.begin_connect(client_config());
+    pair.drive();
+    // HACKITY HACK: The server *should* reject the connection immediately, but rustls doesn't yet
+    // make that practical.
+    assert_matches!(
+        pair.client_conn_mut(client_conn).poll(),
+        Some(Event::Connected)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_conn).poll(),
+        Some(Event::ConnectionLost { reason: ConnectionError::ConnectionClosed(err) }) if err.error_code == TransportErrorCode::crypto(0x78)
+    );
+}
+
+#[test]
+fn alpn_mismatch() {
+    let mut server_config = server_config();
+    Arc::get_mut(&mut server_config.crypto)
+        .unwrap()
+        .set_protocols(&["foo".into(), "bar".into(), "baz".into()]);
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    let mut client_config = client_config();
+    Arc::get_mut(&mut client_config.crypto)
+        .unwrap()
+        .set_protocols(&["quux".into(), "corge".into()]);
+
+    let client_conn = pair.begin_connect(client_config);
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_conn).poll(),
+        Some(Event::ConnectionLost { reason: ConnectionError::ConnectionClosed(err) }) if err.error_code == TransportErrorCode::crypto(0x78)
+    );
+}
+
+#[test]
 fn stream_id_backpressure() {
     let _guard = subscribe();
     let server = ServerConfig {
@@ -1275,7 +1335,11 @@ fn datagram_unsupported() {
 #[test]
 fn large_initial() {
     let _guard = subscribe();
-    let mut pair = Pair::default();
+    let mut server_config = server_config();
+    Arc::get_mut(&mut server_config.crypto)
+        .unwrap()
+        .set_protocols(&[vec![0, 0, 0, 42]]);
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
     let mut cfg = client_config();
     let protocols = (0..1000u32)
         .map(|x| x.to_be_bytes().to_vec())
