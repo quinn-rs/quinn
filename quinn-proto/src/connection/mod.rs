@@ -2127,6 +2127,11 @@ where
                     );
                 }
                 Frame::StreamsBlocked { dir, limit } => {
+                    if limit > MAX_STREAM_COUNT {
+                        return Err(TransportError::FRAME_ENCODING_ERROR(
+                            "unrepresentable stream limit",
+                        ));
+                    }
                     debug!(
                         "peer claims to be blocked opening more than {} {} streams",
                         limit, dir

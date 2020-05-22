@@ -615,7 +615,7 @@ impl Streams {
 
     pub fn received_max_streams(&mut self, dir: Dir, count: u64) -> Result<(), TransportError> {
         if count > MAX_STREAM_COUNT {
-            return Err(TransportError::STREAM_LIMIT_ERROR(
+            return Err(TransportError::FRAME_ENCODING_ERROR(
                 "unrepresentable stream limit",
             ));
         }
