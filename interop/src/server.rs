@@ -76,7 +76,7 @@ async fn main() -> Result<()> {
 
     let mut server_config = quinn::ServerConfigBuilder::default();
     server_config.certificate(cert_chain, key)?;
-    server_config.protocols(&[quinn_h3::ALPN, b"hq-27", b"siduck-00"]);
+    server_config.protocols(&[quinn_h3::ALPN, b"hq-28", b"siduck-00"]);
 
     let main = server(server_config.clone(), SocketAddr::new(opt.listen, 4433));
     let default = server(server_config.clone(), SocketAddr::new(opt.listen, 443));
@@ -107,7 +107,7 @@ async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> 
 
             let result = match &proto[..] {
                 quinn_h3::ALPN => h3_handle_connection(connecting).await,
-                b"hq-27" => hq_handle_connection(connecting).await,
+                b"hq-28" => hq_handle_connection(connecting).await,
                 b"siduck-00" => siduck_handle_connection(connecting).await,
                 _ => unreachable!("unsupported protocol"),
             };
@@ -320,7 +320,7 @@ fn parse_size(literal: &str) -> Result<usize> {
     Ok(num * scale)
 }
 
-const ALT_SVC: &str = "h3-27=\":443\"";
+const ALT_SVC: &str = "h3-28=\":443\"";
 
 fn h2_home() -> hyper::Response<hyper::Body> {
     Response::builder()
