@@ -133,9 +133,6 @@ where
     //
     // Loss Detection
     //
-    /// The number of times all unacknowledged CRYPTO data has been retransmitted without receiving
-    /// an ack.
-    crypto_count: u32,
     /// The number of times a PTO has been sent without receiving an ack.
     pto_count: u32,
 
@@ -242,7 +239,6 @@ where
             path_response: None,
             close: false,
 
-            crypto_count: 0,
             pto_count: 0,
 
             in_flight: InFlight::new(),
@@ -968,7 +964,6 @@ where
         // Must be called before crypto/pto_count are clobbered
         self.detect_lost_packets(now, space);
 
-        self.crypto_count = 0;
         self.pto_count = 0;
 
         // Explicit congestion notification
