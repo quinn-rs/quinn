@@ -964,7 +964,9 @@ where
         // Must be called before crypto/pto_count are clobbered
         self.detect_lost_packets(now, space);
 
-        self.pto_count = 0;
+        if self.peer_not_awaiting_address_validation() {
+            self.pto_count = 0;
+        }
 
         // Explicit congestion notification
         if self.path.sending_ecn {
