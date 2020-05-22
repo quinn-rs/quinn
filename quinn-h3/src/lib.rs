@@ -346,7 +346,7 @@ impl From<ErrorCode> for HttpError {
 }
 
 /// TLS ALPN value for the HTTP/3 protocol
-pub const ALPN: &[u8] = b"h3-27";
+pub const ALPN: &[u8] = b"h3-28";
 
 impl From<frame::Error> for (ErrorCode, String, Error) {
     fn from(err: frame::Error) -> Self {
