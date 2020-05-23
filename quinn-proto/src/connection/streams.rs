@@ -362,6 +362,11 @@ impl Streams {
             return;
         }
 
+        if let Some(error_code) = stop_reason {
+            self.events
+                .push_back(StreamEvent::Stopped { error_code, id });
+        }
+
         // Restore the portion of the send window consumed by the data that we aren't about to
         // send. We leave flow control alone because the peer's responsible for issuing additional
         // credit based on the final offset communicated in the RESET_STREAM frame we send.
@@ -405,6 +410,13 @@ impl Streams {
         // Issue flow control credit for unread data
         self.local_max_data += stream.assembler.limit() - stream.assembler.bytes_read();
         Ok(!stream.is_finished())
+    }
+
+    pub fn stop_reason(&self, id: StreamId) -> Result<Option<VarInt>, UnknownStream> {
+        match self.send.get(&id) {
+            Some(s) => Ok(s.stop_reason()),
+            None => Err(UnknownStream { _private: () }),
+        }
     }
 
     pub fn can_send(&self) -> bool {
@@ -849,6 +861,15 @@ impl Send {
         }
     }
 
+    fn stop_reason(&self) -> Option<VarInt> {
+        match self.state {
+            SendState::ResetSent { stop_reason } | SendState::ResetRecvd { stop_reason } => {
+                stop_reason
+            }
+            _ => None,
+        }
+    }
+
     fn take_stop_reason(&mut self) -> Option<VarInt> {
         match self.state {
             SendState::ResetSent {
@@ -1217,6 +1238,13 @@ pub enum StreamEvent {
         id: StreamId,
         /// Error code supplied by the peer if the stream was stopped
         stop_reason: Option<VarInt>,
+    },
+    /// The peer asked us to stop sending on an outgoing stream
+    Stopped {
+        /// Which stream has been stopped
+        id: StreamId,
+        /// Error code supplied by the peer
+        error_code: VarInt,
     },
     /// At least one new stream of a certain directionality may be opened
     Available {
