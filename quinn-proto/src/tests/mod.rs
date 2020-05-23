@@ -1010,6 +1010,13 @@ fn stop_opens_bidi() {
         Err(WriteError::Stopped(ERROR))
     );
     assert_eq!(pair.server_conn_mut(client_conn).send_streams(), 0);
+    assert_matches!(
+        pair.server_conn_mut(server_conn).poll(),
+        Some(Event::Stream(StreamEvent::Stopped {
+            id: _,
+            error_code: ERROR
+        }))
+    );
     assert_matches!(pair.server_conn_mut(server_conn).poll(), None);
 }
 
@@ -1199,6 +1206,10 @@ fn stop_during_finish() {
     pair.drive_server();
     pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive_client();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Stream(StreamEvent::Stopped { id, error_code: ERROR })) if id == s
+    );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
         Some(Event::Stream(StreamEvent::Finished { id, stop_reason: Some(ERROR) })) if id == s

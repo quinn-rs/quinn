@@ -149,6 +149,30 @@ where
         Ok(())
     }
 
+    /// Completes if/when the peer stops the stream, yielding the error code
+    pub fn stopped(&mut self) -> Stopped<'_, S> {
+        Stopped { stream: self }
+    }
+
+    #[doc(hidden)]
+    pub fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<VarInt, StoppedError>> {
+        let mut conn = self.conn.lock().unwrap();
+
+        if self.is_0rtt {
+            conn.check_0rtt()
+                .map_err(|()| StoppedError::ZeroRttRejected)?;
+        }
+
+        match conn.inner.stopped(self.stream) {
+            Err(_) => Poll::Ready(Err(StoppedError::UnknownStream)),
+            Ok(Some(error_code)) => Poll::Ready(Ok(error_code)),
+            Ok(None) => {
+                conn.stopped.insert(self.stream, cx.waker().clone());
+                Poll::Pending
+            }
+        }
+    }
+
     #[doc(hidden)]
     pub fn id(&self) -> StreamId {
         self.stream
@@ -227,6 +251,25 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.get_mut().stream.poll_finish(cx)
+    }
+}
+
+/// Future produced by `SendStream::stopped`
+pub struct Stopped<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut SendStream<S>,
+}
+
+impl<S> Future for Stopped<'_, S>
+where
+    S: proto::crypto::Session,
+{
+    type Output = Result<VarInt, StoppedError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.get_mut().stream.poll_stopped(cx)
     }
 }
 
@@ -570,6 +613,22 @@ pub enum WriteError {
     /// Carries an application-defined error code.
     #[error(display = "sending stopped by peer: error {}", 0)]
     Stopped(VarInt),
+    /// The connection was closed.
+    #[error(display = "connection closed: {}", _0)]
+    ConnectionClosed(ConnectionError),
+    /// Unknown stream
+    #[error(display = "unknown stream")]
+    UnknownStream,
+    /// This was a 0-RTT stream and the server rejected it.
+    ///
+    /// Can only occur on clients for 0-RTT streams (opened using `Connecting::into_0rtt()`).
+    #[error(display = "0-RTT rejected")]
+    ZeroRttRejected,
+}
+
+/// Errors that arise while monitoring for a send stream stop from the peer
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum StoppedError {
     /// The connection was closed.
     #[error(display = "connection closed: {}", _0)]
     ConnectionClosed(ConnectionError),

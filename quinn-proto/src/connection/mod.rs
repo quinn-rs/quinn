@@ -749,6 +749,11 @@ where
         Ok(())
     }
 
+    /// Check if this stream was stopped, get the reason if it was
+    pub fn stopped(&mut self, id: StreamId) -> Result<Option<VarInt>, UnknownStream> {
+        self.streams.stop_reason(id)
+    }
+
     /// Finish a send stream, signalling that no more data will be sent.
     ///
     /// If this fails, no [`Event::StreamFinished`] will be generated.

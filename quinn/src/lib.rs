@@ -65,7 +65,7 @@ pub use proto::{
 
 pub use crate::builders::EndpointError;
 pub use crate::connection::{SendDatagramError, ZeroRttAccepted};
-pub use crate::streams::{ReadError, ReadExactError, ReadToEndError, WriteError};
+pub use crate::streams::{ReadError, ReadExactError, ReadToEndError, StoppedError, WriteError};
 
 /// Types that are generic over the crypto protocol implementation
 pub mod generic {

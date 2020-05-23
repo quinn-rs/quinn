@@ -573,6 +573,7 @@ where
             incoming_bi_streams_reader: None,
             datagram_reader: None,
             finishing: HashMap::new(),
+            stopped: HashMap::new(),
             error: None,
             ref_count: 0,
         })))
@@ -638,6 +639,7 @@ where
     incoming_bi_streams_reader: Option<Waker>,
     datagram_reader: Option<Waker>,
     pub(crate) finishing: HashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
+    pub(crate) stopped: HashMap<StreamId, Waker>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
@@ -743,6 +745,11 @@ where
                         let _ = finishing.send(stop_reason.map(WriteError::Stopped));
                     }
                 }
+                Stream(StreamEvent::Stopped { id, .. }) => {
+                    if let Some(stopped) = self.stopped.remove(&id) {
+                        stopped.wake();
+                    }
+                }
             }
         }
     }
@@ -815,6 +822,9 @@ where
         }
         if let Some(x) = self.on_connected.take() {
             let _ = x.send(false);
+        }
+        for (_, waker) in self.stopped.drain() {
+            waker.wake();
         }
     }
 
