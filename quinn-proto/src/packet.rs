@@ -5,9 +5,7 @@ use err_derive::Error;
 
 use crate::{
     coding::{self, BufExt, BufMutExt},
-    crypto,
-    shared::ConnectionId,
-    MAX_CID_SIZE, VERSION,
+    crypto, ConnectionId, VERSION,
 };
 
 // Due to packet number encryption, it is impossible to fully decode a header
@@ -261,7 +259,8 @@ impl Header {
             } => {
                 w.write(u8::from(LongHeaderType::Initial) | number.tag());
                 w.write(VERSION);
-                Self::encode_cids(w, dst_cid, src_cid);
+                dst_cid.encode_long(w);
+                src_cid.encode_long(w);
                 w.write_var(token.len() as u64);
                 w.put_slice(token);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
@@ -280,7 +279,8 @@ impl Header {
             } => {
                 w.write(u8::from(LongHeaderType::Standard(ty)) | number.tag());
                 w.write(VERSION);
-                Self::encode_cids(w, dst_cid, src_cid);
+                dst_cid.encode_long(w);
+                src_cid.encode_long(w);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
                 number.encode(w);
                 PartialEncode {
@@ -295,7 +295,8 @@ impl Header {
             } => {
                 w.write(u8::from(LongHeaderType::Retry));
                 w.write(VERSION);
-                Self::encode_cids(w, dst_cid, src_cid);
+                dst_cid.encode_long(w);
+                src_cid.encode_long(w);
                 PartialEncode {
                     start,
                     header_len: w.len() - start,
@@ -329,7 +330,8 @@ impl Header {
             } => {
                 w.write(0x80u8 | random);
                 w.write::<u32>(0);
-                Self::encode_cids(w, dst_cid, src_cid);
+                dst_cid.encode_long(w);
+                src_cid.encode_long(w);
                 PartialEncode {
                     start,
                     header_len: w.len() - start,
@@ -337,13 +339,6 @@ impl Header {
                 }
             }
         }
-    }
-
-    fn encode_cids<W: BufMut>(w: &mut W, dst_cid: &ConnectionId, src_cid: &ConnectionId) {
-        w.put_u8(dst_cid.len() as u8);
-        w.put_slice(dst_cid);
-        w.put_u8(src_cid.len() as u8);
-        w.put_slice(src_cid);
     }
 
     /// Whether the packet is encrypted on the wire
@@ -519,7 +514,8 @@ impl PlainHeader {
         let first = buf.get::<u8>()?;
         if first & LONG_HEADER_FORM == 0 {
             let spin = first & SPIN_BIT != 0;
-            let dst_cid = Self::get_cid(buf, local_cid_len)?;
+            let dst_cid = ConnectionId::new(&buf.bytes()[..local_cid_len]);
+            buf.advance(local_cid_len);
 
             Ok(PlainHeader::Short {
                 first,
@@ -529,11 +525,10 @@ impl PlainHeader {
         } else {
             let version = buf.get::<u32>()?;
 
-            let dcil = buf.get::<u8>()? as usize;
-            let dst_cid = Self::get_cid(buf, dcil)?;
-
-            let scil = buf.get::<u8>()? as usize;
-            let src_cid = Self::get_cid(buf, scil)?;
+            let dst_cid = ConnectionId::decode_long(buf)
+                .ok_or(PacketDecodeError::InvalidHeader("malformed cid"))?;
+            let src_cid = ConnectionId::decode_long(buf)
+                .ok_or(PacketDecodeError::InvalidHeader("malformed cid"))?;
 
             // TODO: Support long CIDs for compatibility with future QUIC versions
             if version == 0 {
@@ -575,22 +570,6 @@ impl PlainHeader {
                 }),
             }
         }
-    }
-
-    fn get_cid<R: Buf>(buf: &mut R, len: usize) -> Result<ConnectionId, PacketDecodeError> {
-        if len > MAX_CID_SIZE {
-            return Err(PacketDecodeError::InvalidHeader(
-                "illegal connection ID length",
-            ));
-        }
-        if buf.remaining() < len {
-            return Err(PacketDecodeError::InvalidHeader(
-                "connection ID longer than packet",
-            ));
-        }
-        let cid = ConnectionId::new(&buf.bytes()[..len]);
-        buf.advance(len);
-        Ok(cid)
     }
 }
 

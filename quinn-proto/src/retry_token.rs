@@ -4,13 +4,12 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use bytes::{Buf, BufMut};
+use bytes::BufMut;
 
 use crate::{
     coding::{BufExt, BufMutExt},
     crypto::HmacKey,
     shared::ConnectionId,
-    MAX_CID_SIZE,
 };
 
 // TODO: Use AEAD to hide token details from clients for better stability guarantees:
@@ -29,18 +28,15 @@ impl RetryToken {
     pub fn encode(&self, key: &impl HmacKey, address: &SocketAddr) -> Vec<u8> {
         let mut buf = Vec::new();
 
-        buf.write(self.src_cid.len() as u8);
-        buf.put_slice(&self.src_cid);
-
-        buf.write(self.dst_cid.len() as u8);
-        buf.put_slice(&self.dst_cid);
-
+        self.src_cid.encode_long(&mut buf);
+        self.dst_cid.encode_long(&mut buf);
         buf.write::<u64>(
             self.issued
                 .duration_since(UNIX_EPOCH)
                 .map(|x| x.as_secs())
                 .unwrap_or(0),
         );
+
         let signature_pos = buf.len();
         match address.ip() {
             IpAddr::V4(x) => buf.put_slice(&x.octets()),
@@ -56,23 +52,12 @@ impl RetryToken {
 
     pub fn from_bytes(key: &impl HmacKey, address: &SocketAddr, data: &[u8]) -> Result<Self, ()> {
         let mut reader = io::Cursor::new(data);
-        let src_cid_len = reader.get::<u8>().map_err(|_| ())? as usize;
-        if src_cid_len > reader.remaining() || src_cid_len > MAX_CID_SIZE {
-            return Err(());
-        }
-        let src_cid = ConnectionId::new(&reader.bytes()[..src_cid_len]);
-        reader.advance(src_cid_len);
 
-        let dst_cid_len = reader.get::<u8>().map_err(|_| ())? as usize;
-        if dst_cid_len > reader.remaining() || dst_cid_len > MAX_CID_SIZE {
-            return Err(());
-        }
-        let dst_cid = ConnectionId::new(&reader.bytes()[..dst_cid_len]);
-        reader.advance(dst_cid_len);
-
+        let src_cid = ConnectionId::decode_long(&mut reader).ok_or(())?;
+        let dst_cid = ConnectionId::decode_long(&mut reader).ok_or(())?;
         let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().map_err(|_| ())?, 0);
-        let signature_start = reader.position() as usize;
 
+        let signature_start = reader.position() as usize;
         let mut buf = Vec::new();
         buf.put_slice(&data[0..signature_start]);
         match address.ip() {
@@ -96,6 +81,7 @@ mod test {
     #[test]
     fn token_sanity() {
         use super::*;
+        use crate::MAX_CID_SIZE;
         use rand::RngCore;
         use ring::hmac;
         use std::{

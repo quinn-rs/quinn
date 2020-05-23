@@ -1,9 +1,9 @@
 use std::{cmp, fmt, net::SocketAddr, time::Instant};
 
-use bytes::BytesMut;
+use bytes::{Buf, BufMut, BytesMut};
 use rand::Rng;
 
-use crate::{packet::PartialDecode, MAX_CID_SIZE, RESET_TOKEN_SIZE};
+use crate::{coding::BufExt, packet::PartialDecode, MAX_CID_SIZE, RESET_TOKEN_SIZE};
 
 /// Events sent from an Endpoint to a Connection
 #[derive(Debug)]
@@ -86,6 +86,23 @@ impl ConnectionId {
         rng.fill_bytes(&mut rng_bytes);
         res.bytes[..len].clone_from_slice(&rng_bytes[..len]);
         res
+    }
+
+    /// Decode from long header format
+    pub(crate) fn decode_long(buf: &mut impl Buf) -> Option<Self> {
+        let len = buf.get::<u8>().ok()? as usize;
+        if len > MAX_CID_SIZE || buf.remaining() < len {
+            return None;
+        }
+        let cid = ConnectionId::new(&buf.bytes()[..len]);
+        buf.advance(len);
+        Some(cid)
+    }
+
+    /// Encode in long header format
+    pub(crate) fn encode_long(&self, buf: &mut impl BufMut) {
+        buf.put_u8(self.len() as u8);
+        buf.put_slice(self);
     }
 }
 
