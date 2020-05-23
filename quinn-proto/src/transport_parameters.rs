@@ -384,8 +384,9 @@ impl TransportParameters {
                         {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
                             match id {
                                 $($code => {
-                                    params.$name = r.get_var()?;
-                                    if len != VarInt::from_u64(params.$name).unwrap().size() || got.$name { return Err(Error::Malformed); }
+                                    let value = r.get::<VarInt>()?;
+                                    if len != value.size() || got.$name { return Err(Error::Malformed); }
+                                    params.$name = value.into();
                                     got.$name = true;
                                 })*
                                 _ => r.advance(len as usize),
