@@ -285,12 +285,6 @@ impl TransportParameters {
         w.write_var(31 * 5 + 27);
         w.write_var(0);
 
-        if let Some(ref x) = self.original_destination_connection_id {
-            w.write_var(0x00);
-            w.write_var(x.len() as u64);
-            w.put_slice(x);
-        }
-
         if let Some(ref x) = self.stateless_reset_token {
             w.write_var(0x02);
             w.write_var(16);
@@ -314,16 +308,16 @@ impl TransportParameters {
             x.write(w);
         }
 
-        if let Some(ref x) = self.initial_source_connection_id {
-            w.write_var(0x0f);
-            w.write_var(x.len() as u64);
-            w.put_slice(x);
-        }
-
-        if let Some(ref x) = self.retry_source_connection_id {
-            w.write_var(0x10);
-            w.write_var(x.len() as u64);
-            w.put_slice(x);
+        for &(tag, cid) in &[
+            (0x00, &self.original_destination_connection_id),
+            (0x0f, &self.initial_source_connection_id),
+            (0x10, &self.retry_source_connection_id),
+        ] {
+            if let Some(ref cid) = *cid {
+                w.write_var(tag);
+                w.write_var(cid.len() as u64);
+                w.put_slice(cid);
+            }
         }
     }
 
@@ -352,19 +346,10 @@ impl TransportParameters {
             if (r.remaining() as u64) < len {
                 return Err(Error::Malformed);
             }
+            let len = len as usize;
 
             match id {
-                0x00 => {
-                    if len > MAX_CID_SIZE as u64
-                        || params.original_destination_connection_id.is_some()
-                    {
-                        return Err(Error::Malformed);
-                    }
-                    let mut staging = [0; MAX_CID_SIZE];
-                    r.copy_to_slice(&mut staging[0..len as usize]);
-                    params.original_destination_connection_id =
-                        Some(ConnectionId::new(&staging[0..len as usize]));
-                }
+                0x00 => decode_cid(len, &mut params.original_destination_connection_id, r)?,
                 0x02 => {
                     if len != 16 || params.stateless_reset_token.is_some() {
                         return Err(Error::Malformed);
@@ -386,24 +371,8 @@ impl TransportParameters {
                     params.preferred_address =
                         Some(PreferredAddress::read(&mut r.take(len as usize))?);
                 }
-                0x0f => {
-                    if len > MAX_CID_SIZE as u64 || params.initial_source_connection_id.is_some() {
-                        return Err(Error::Malformed);
-                    }
-                    let mut staging = [0; MAX_CID_SIZE];
-                    r.copy_to_slice(&mut staging[0..len as usize]);
-                    params.initial_source_connection_id =
-                        Some(ConnectionId::new(&staging[0..len as usize]));
-                }
-                0x10 => {
-                    if len > MAX_CID_SIZE as u64 || params.retry_source_connection_id.is_some() {
-                        return Err(Error::Malformed);
-                    }
-                    let mut staging = [0; MAX_CID_SIZE];
-                    r.copy_to_slice(&mut staging[0..len as usize]);
-                    params.retry_source_connection_id =
-                        Some(ConnectionId::new(&staging[0..len as usize]));
-                }
+                0x0f => decode_cid(len, &mut params.initial_source_connection_id, r)?,
+                0x10 => decode_cid(len, &mut params.retry_source_connection_id, r)?,
                 0x20 => {
                     if len > 8 || params.max_datagram_frame_size.is_some() {
                         return Err(Error::Malformed);
@@ -416,7 +385,7 @@ impl TransportParameters {
                             match id {
                                 $($code => {
                                     params.$name = r.get_var()?;
-                                    if len != VarInt::from_u64(params.$name).unwrap().size() as u64 || got.$name { return Err(Error::Malformed); }
+                                    if len != VarInt::from_u64(params.$name).unwrap().size() || got.$name { return Err(Error::Malformed); }
                                     got.$name = true;
                                 })*
                                 _ => r.advance(len as usize),
@@ -441,6 +410,15 @@ impl TransportParameters {
 
         Ok(params)
     }
+}
+
+fn decode_cid(len: usize, value: &mut Option<ConnectionId>, r: &mut impl Buf) -> Result<(), Error> {
+    if len > MAX_CID_SIZE || value.is_some() {
+        return Err(Error::Malformed);
+    }
+    *value = Some(ConnectionId::new(&r.bytes()[..len]));
+    r.advance(len);
+    Ok(())
 }
 
 #[cfg(test)]
