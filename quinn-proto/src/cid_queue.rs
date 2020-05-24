@@ -1,9 +1,6 @@
 use std::ops::Range;
 
-use crate::{
-    shared::{IssuedCid, ResetToken},
-    ConnectionId,
-};
+use crate::{shared::IssuedCid, ConnectionId, ResetToken};
 
 /// Sliding window of active Connection IDs
 ///

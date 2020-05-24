@@ -1,5 +1,5 @@
 use std::{
-    io,
+    fmt, io,
     net::{IpAddr, SocketAddr},
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
@@ -10,6 +10,7 @@ use crate::{
     coding::{BufExt, BufMutExt},
     crypto::HmacKey,
     shared::ConnectionId,
+    RESET_TOKEN_SIZE,
 };
 
 // TODO: Use AEAD to hide token details from clients for better stability guarantees:
@@ -83,6 +84,53 @@ impl RetryToken {
             orig_dst_cid,
             issued,
         })
+    }
+}
+
+/// Stateless reset token
+///
+/// Used for an endpoint to securely communicate that it has lost state for a connection.
+#[allow(clippy::derive_hash_xor_eq)] // Custom PartialEq impl matches derived semantics
+#[derive(Debug, Copy, Clone, Hash)]
+pub struct ResetToken([u8; RESET_TOKEN_SIZE]);
+
+impl ResetToken {
+    pub(crate) fn new(key: &impl HmacKey, id: &ConnectionId) -> Self {
+        let signature = key.sign(id);
+        // TODO: Server ID??
+        let mut result = [0; RESET_TOKEN_SIZE];
+        result.copy_from_slice(&signature.as_ref()[..RESET_TOKEN_SIZE]);
+        result.into()
+    }
+}
+
+impl PartialEq for ResetToken {
+    fn eq(&self, other: &ResetToken) -> bool {
+        crate::constant_time::eq(&self.0, &other.0)
+    }
+}
+
+impl Eq for ResetToken {}
+
+impl From<[u8; RESET_TOKEN_SIZE]> for ResetToken {
+    fn from(x: [u8; RESET_TOKEN_SIZE]) -> Self {
+        Self(x)
+    }
+}
+
+impl std::ops::Deref for ResetToken {
+    type Target = [u8];
+    fn deref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl fmt::Display for ResetToken {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.iter() {
+            write!(f, "{:02x}", byte)?;
+        }
+        Ok(())
     }
 }
 
