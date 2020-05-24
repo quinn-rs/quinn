@@ -414,8 +414,8 @@ where
                 );
                 let server_params = TransportParameters {
                     stateless_reset_token: Some(reset_token_for(&*self.config.reset_key, &loc_cid)),
-                    original_destination_connection_id: Some(orig_dst_cid),
-                    retry_source_connection_id: retry_src_cid,
+                    original_dst_cid: Some(orig_dst_cid),
+                    retry_src_cid,
                     ..params
                 };
                 (

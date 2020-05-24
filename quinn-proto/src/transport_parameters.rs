@@ -75,15 +75,15 @@ macro_rules! make_struct {
             pub(crate) max_datagram_frame_size: Option<VarInt>,
             /// The value that the endpoint included in the Source Connection ID field of the first
             /// Initial packet it sends for the connection
-            pub(crate) initial_source_connection_id: Option<ConnectionId>,
+            pub(crate) initial_src_cid: Option<ConnectionId>,
 
             // Server-only
             /// The value of the Destination Connection ID field from the first Initial packet sent
             /// by the client
-            pub(crate) original_destination_connection_id: Option<ConnectionId>,
+            pub(crate) original_dst_cid: Option<ConnectionId>,
             /// The value that the server included in the Source Connection ID field of a Retry
             /// packet
-            pub(crate) retry_source_connection_id: Option<ConnectionId>,
+            pub(crate) retry_src_cid: Option<ConnectionId>,
             /// Token used by the client to verify a stateless reset from the server
             pub(crate) stateless_reset_token: Option<ResetToken>,
             /// The server's preferred address for communication after handshake completion
@@ -98,10 +98,10 @@ macro_rules! make_struct {
 
                     disable_active_migration: false,
                     max_datagram_frame_size: None,
-                    initial_source_connection_id: None,
+                    initial_src_cid: None,
 
-                    original_destination_connection_id: None,
-                    retry_source_connection_id: None,
+                    original_dst_cid: None,
+                    retry_src_cid: None,
                     stateless_reset_token: None,
                     preferred_address: None,
                 }
@@ -116,14 +116,14 @@ impl TransportParameters {
     pub(crate) fn new<S>(
         config: &TransportConfig,
         endpoint_config: &EndpointConfig<S>,
-        initial_source_connection_id: ConnectionId,
+        initial_src_cid: ConnectionId,
         server_config: Option<&ServerConfig<S>>,
     ) -> Self
     where
         S: crypto::Session,
     {
         TransportParameters {
-            initial_source_connection_id: Some(initial_source_connection_id),
+            initial_src_cid: Some(initial_src_cid),
             initial_max_streams_bidi: config.stream_window_bidi,
             initial_max_streams_uni: config.stream_window_uni,
             initial_max_data: config.receive_window,
@@ -309,9 +309,9 @@ impl TransportParameters {
         }
 
         for &(tag, cid) in &[
-            (0x00, &self.original_destination_connection_id),
-            (0x0f, &self.initial_source_connection_id),
-            (0x10, &self.retry_source_connection_id),
+            (0x00, &self.original_dst_cid),
+            (0x0f, &self.initial_src_cid),
+            (0x10, &self.retry_src_cid),
         ] {
             if let Some(ref cid) = *cid {
                 w.write_var(tag);
@@ -349,7 +349,7 @@ impl TransportParameters {
             let len = len as usize;
 
             match id {
-                0x00 => decode_cid(len, &mut params.original_destination_connection_id, r)?,
+                0x00 => decode_cid(len, &mut params.original_dst_cid, r)?,
                 0x02 => {
                     if len != 16 || params.stateless_reset_token.is_some() {
                         return Err(Error::Malformed);
@@ -371,8 +371,8 @@ impl TransportParameters {
                     params.preferred_address =
                         Some(PreferredAddress::read(&mut r.take(len as usize))?);
                 }
-                0x0f => decode_cid(len, &mut params.initial_source_connection_id, r)?,
-                0x10 => decode_cid(len, &mut params.retry_source_connection_id, r)?,
+                0x0f => decode_cid(len, &mut params.initial_src_cid, r)?,
+                0x10 => decode_cid(len, &mut params.retry_src_cid, r)?,
                 0x20 => {
                     if len > 8 || params.max_datagram_frame_size.is_some() {
                         return Err(Error::Malformed);
@@ -430,8 +430,8 @@ mod test {
     fn coding() {
         let mut buf = Vec::new();
         let params = TransportParameters {
-            initial_source_connection_id: Some(ConnectionId::new(&[])),
-            original_destination_connection_id: Some(ConnectionId::new(&[])),
+            initial_src_cid: Some(ConnectionId::new(&[])),
+            original_dst_cid: Some(ConnectionId::new(&[])),
             initial_max_streams_bidi: 16,
             initial_max_streams_uni: 16,
             ack_delay_exponent: 2,
