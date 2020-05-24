@@ -533,7 +533,7 @@ where
             if token.is_empty() {
                 // First Initial
                 let token = RetryToken {
-                    dst_cid,
+                    orig_dst_cid: dst_cid,
                     issued: SystemTime::now(),
                 }
                 .encode(&*server_config.token_key, &remote, &temp_loc_cid);
@@ -563,7 +563,7 @@ where
                         )
                         > SystemTime::now() =>
                 {
-                    (Some(dst_cid), token.dst_cid)
+                    (Some(dst_cid), token.orig_dst_cid)
                 }
                 _ => {
                     debug!("rejecting invalid stateless retry token");
