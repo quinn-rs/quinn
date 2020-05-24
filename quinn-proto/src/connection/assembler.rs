@@ -104,7 +104,12 @@ impl Assembler {
     fn defragment(&mut self) {
         let buffered = self.data.iter().map(|c| c.bytes.len()).sum::<usize>();
         let mut buffer = BytesMut::with_capacity(buffered);
-        let mut offset = self.offset;
+        let mut offset = self
+            .data
+            .peek()
+            .as_ref()
+            .expect("defragment is only called when data is buffered")
+            .offset;
 
         let new = BinaryHeap::with_capacity(self.data.len());
         let old = mem::replace(&mut self.data, new);
@@ -386,5 +391,13 @@ mod test {
         x.defragment();
         assert_eq!(x.pop(), Some((0, Bytes::from_static(b"abcdef"))));
         assert_eq!(x.pop(), Some((9, Bytes::from_static(b"jklmno"))));
+    }
+
+    #[test]
+    fn defrag_with_missing_prefix() {
+        let mut x = Assembler::new();
+        x.insert(3, Bytes::from_static(b"def"));
+        x.defragment();
+        assert_eq!(x.pop(), Some((3, Bytes::from_static(b"def"))));
     }
 }
