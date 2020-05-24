@@ -1390,10 +1390,10 @@ where
                         .expect("crypto layer didn't supply transport parameters with ticket");
                     // Certain values must not be cached
                     let params = TransportParameters {
-                        initial_source_connection_id: None,
-                        original_destination_connection_id: None,
+                        initial_src_cid: None,
+                        original_dst_cid: None,
                         preferred_address: None,
-                        retry_source_connection_id: None,
+                        retry_src_cid: None,
                         stateless_reset_token: None,
                         ack_delay_exponent: TransportParameters::default().ack_delay_exponent,
                         max_ack_delay: TransportParameters::default().max_ack_delay,
@@ -2565,10 +2565,10 @@ where
 
     /// Validate transport parameters received from the peer
     fn validate_peer_params(&mut self, params: &TransportParameters) -> Result<(), TransportError> {
-        if Some(self.orig_rem_cid) != params.initial_source_connection_id
+        if Some(self.orig_rem_cid) != params.initial_src_cid
             || (self.side.is_client()
-                && (Some(self.initial_dst_cid) != params.original_destination_connection_id
-                    || self.retry_src_cid != params.retry_source_connection_id))
+                && (Some(self.initial_dst_cid) != params.original_dst_cid
+                    || self.retry_src_cid != params.retry_src_cid))
         {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "CID authentication failure",
