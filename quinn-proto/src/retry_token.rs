@@ -19,16 +19,19 @@ use crate::{
 // in other words, for each ticket, use different key derived from random using HKDF
 
 pub struct RetryToken {
-    pub src_cid: ConnectionId,
     pub dst_cid: ConnectionId,
     pub issued: SystemTime,
 }
 
 impl RetryToken {
-    pub fn encode(&self, key: &impl HmacKey, address: &SocketAddr) -> Vec<u8> {
+    pub fn encode(
+        &self,
+        key: &impl HmacKey,
+        address: &SocketAddr,
+        retry_src_cid: &ConnectionId,
+    ) -> Vec<u8> {
         let mut buf = Vec::new();
 
-        self.src_cid.encode_long(&mut buf);
         self.dst_cid.encode_long(&mut buf);
         buf.write::<u64>(
             self.issued
@@ -43,6 +46,8 @@ impl RetryToken {
             IpAddr::V6(x) => buf.put_slice(&x.octets()),
         }
         buf.write(address.port());
+        retry_src_cid.encode_long(&mut buf);
+
         let signature = key.sign(&buf);
         // No reason to actually encode the IP in the token, since we always have the remote addr for an incoming packet.
         buf.truncate(signature_pos);
@@ -50,10 +55,14 @@ impl RetryToken {
         buf
     }
 
-    pub fn from_bytes(key: &impl HmacKey, address: &SocketAddr, data: &[u8]) -> Result<Self, ()> {
+    pub fn from_bytes(
+        key: &impl HmacKey,
+        address: &SocketAddr,
+        retry_src_cid: &ConnectionId,
+        data: &[u8],
+    ) -> Result<Self, ()> {
         let mut reader = io::Cursor::new(data);
 
-        let src_cid = ConnectionId::decode_long(&mut reader).ok_or(())?;
         let dst_cid = ConnectionId::decode_long(&mut reader).ok_or(())?;
         let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().map_err(|_| ())?, 0);
 
@@ -65,13 +74,10 @@ impl RetryToken {
             IpAddr::V6(x) => buf.put_slice(&x.octets()),
         }
         buf.write(address.port());
+        retry_src_cid.encode_long(&mut buf);
 
         key.verify(&buf, &data[signature_start..]).map_err(|_| ())?;
-        Ok(Self {
-            src_cid,
-            dst_cid,
-            issued,
-        })
+        Ok(Self { dst_cid, issued })
     }
 }
 
@@ -93,14 +99,14 @@ mod test {
         rand::thread_rng().fill_bytes(&mut key);
         let key = <hmac::Key as HmacKey>::new(&key).unwrap();
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
+        let retry_src_cid = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
         let token = RetryToken {
-            src_cid: ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE),
             dst_cid: ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE),
             issued: UNIX_EPOCH + Duration::new(42, 0), // Fractional seconds would be lost
         };
-        let encoded = token.encode(&key, &addr);
-        let decoded = RetryToken::from_bytes(&key, &addr, &encoded).expect("token didn't validate");
-        assert_eq!(token.src_cid, decoded.src_cid);
+        let encoded = token.encode(&key, &addr, &retry_src_cid);
+        let decoded = RetryToken::from_bytes(&key, &addr, &retry_src_cid, &encoded)
+            .expect("token didn't validate");
         assert_eq!(token.dst_cid, decoded.dst_cid);
         assert_eq!(token.issued, decoded.issued);
     }
