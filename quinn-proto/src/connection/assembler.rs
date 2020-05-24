@@ -53,7 +53,7 @@ impl Assembler {
     pub(crate) fn read_unordered(&mut self) -> Option<(u64, Bytes)> {
         self.unordered = true;
         let (n, data) = self.pop()?;
-        self.bytes_read += n;
+        self.bytes_read += data.len() as u64;
         Some((n, data))
     }
 
