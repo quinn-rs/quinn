@@ -26,7 +26,6 @@ pub mod coding;
 mod constant_time;
 mod packet;
 mod range_set;
-mod retry_token;
 #[cfg(all(test, feature = "rustls"))]
 mod tests;
 pub mod transport_parameters;
@@ -59,6 +58,9 @@ mod transport_error;
 pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
 
 pub mod congestion;
+
+mod token;
+use token::{ResetToken, RetryToken};
 
 /// Types that are generic over the crypto protocol implementation
 pub mod generic {

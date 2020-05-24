@@ -24,14 +24,13 @@ use crate::{
     },
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
-    retry_token::RetryToken,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner, IssuedCid, ResetToken,
+        EndpointEventInner, IssuedCid,
     },
     transport_parameters::TransportParameters,
-    Side, Transmit, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
-    VERSION,
+    ResetToken, RetryToken, Side, Transmit, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
+    MIN_MTU, RESET_TOKEN_SIZE, VERSION,
 };
 
 /// The main entry point to the library
@@ -315,7 +314,7 @@ where
         buf.resize(padding_len, 0);
         self.rng.fill_bytes(&mut buf[0..padding_len]);
         buf[0] = 0b0100_0000 | buf[0] >> 2;
-        buf.extend_from_slice(&reset_token_for(&*self.config.reset_key, dst_cid));
+        buf.extend_from_slice(&ResetToken::new(&*self.config.reset_key, dst_cid));
 
         debug_assert!(buf.len() < inciting_dgram_len);
 
@@ -363,7 +362,7 @@ where
             ids.push(IssuedCid {
                 sequence,
                 id,
-                reset_token: reset_token_for(&*self.config.reset_key, &id),
+                reset_token: ResetToken::new(&*self.config.reset_key, &id),
             });
         }
         ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids))
@@ -413,7 +412,7 @@ where
                     Some(config),
                 );
                 let server_params = TransportParameters {
-                    stateless_reset_token: Some(reset_token_for(&*self.config.reset_key, &loc_cid)),
+                    stateless_reset_token: Some(ResetToken::new(&*self.config.reset_key, &loc_cid)),
                     original_dst_cid: Some(orig_dst_cid),
                     retry_src_cid,
                     ..params
@@ -729,17 +728,6 @@ pub(crate) struct ConnectionMeta {
     /// Reset token provided by the peer for the CID we're currently sending to, and the address
     /// being sent to
     reset_token: Option<(SocketAddr, ResetToken)>,
-}
-
-fn reset_token_for<H>(key: &H, id: &ConnectionId) -> ResetToken
-where
-    H: crypto::HmacKey,
-{
-    let signature = key.sign(id);
-    // TODO: Server ID??
-    let mut result = [0; RESET_TOKEN_SIZE];
-    result.copy_from_slice(&signature.as_ref()[..RESET_TOKEN_SIZE]);
-    result.into()
 }
 
 /// Internal identifier for a `Connection` currently associated with an endpoint

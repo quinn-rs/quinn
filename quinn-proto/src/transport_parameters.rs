@@ -19,8 +19,8 @@ use crate::{
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     config::{EndpointConfig, ServerConfig, TransportConfig},
     crypto,
-    shared::{ConnectionId, ResetToken},
-    Side, TransportError, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
+    shared::ConnectionId,
+    ResetToken, Side, TransportError, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
