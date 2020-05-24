@@ -19,7 +19,9 @@ use crate::{
 // in other words, for each ticket, use different key derived from random using HKDF
 
 pub struct RetryToken {
-    pub dst_cid: ConnectionId,
+    /// The destination connection ID set in the very first packet from the client
+    pub orig_dst_cid: ConnectionId,
+    /// The time at which this token was issued
     pub issued: SystemTime,
 }
 
@@ -32,7 +34,7 @@ impl RetryToken {
     ) -> Vec<u8> {
         let mut buf = Vec::new();
 
-        self.dst_cid.encode_long(&mut buf);
+        self.orig_dst_cid.encode_long(&mut buf);
         buf.write::<u64>(
             self.issued
                 .duration_since(UNIX_EPOCH)
@@ -63,7 +65,7 @@ impl RetryToken {
     ) -> Result<Self, ()> {
         let mut reader = io::Cursor::new(data);
 
-        let dst_cid = ConnectionId::decode_long(&mut reader).ok_or(())?;
+        let orig_dst_cid = ConnectionId::decode_long(&mut reader).ok_or(())?;
         let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().map_err(|_| ())?, 0);
 
         let signature_start = reader.position() as usize;
@@ -77,7 +79,10 @@ impl RetryToken {
         retry_src_cid.encode_long(&mut buf);
 
         key.verify(&buf, &data[signature_start..]).map_err(|_| ())?;
-        Ok(Self { dst_cid, issued })
+        Ok(Self {
+            orig_dst_cid,
+            issued,
+        })
     }
 }
 
@@ -101,13 +106,13 @@ mod test {
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let retry_src_cid = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
         let token = RetryToken {
-            dst_cid: ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE),
+            orig_dst_cid: ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE),
             issued: UNIX_EPOCH + Duration::new(42, 0), // Fractional seconds would be lost
         };
         let encoded = token.encode(&key, &addr, &retry_src_cid);
         let decoded = RetryToken::from_bytes(&key, &addr, &retry_src_cid, &encoded)
             .expect("token didn't validate");
-        assert_eq!(token.dst_cid, decoded.dst_cid);
+        assert_eq!(token.orig_dst_cid, decoded.orig_dst_cid);
         assert_eq!(token.issued, decoded.issued);
     }
 }
