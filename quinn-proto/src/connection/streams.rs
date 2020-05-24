@@ -1074,9 +1074,7 @@ impl Recv {
             }
             RecvState::Closed => panic!("tried to read from a closed stream"),
             RecvState::Recv { size } => {
-                if size == Some(self.assembler.limit())
-                    && self.assembler.is_complete_at(self.assembler.limit())
-                {
+                if size == Some(self.assembler.limit()) && self.assembler.is_fully_read() {
                     self.state = RecvState::Closed;
                     Ok(())
                 } else {

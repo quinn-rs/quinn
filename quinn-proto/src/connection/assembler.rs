@@ -2,26 +2,22 @@ use std::{cmp::Ordering, collections::BinaryHeap, mem};
 
 use bytes::{Buf, Bytes, BytesMut};
 
-use crate::range_set::RangeSet;
-
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug, Default)]
 pub(crate) struct Assembler {
-    /// Stream offset of the first byte unread by the application. Meaningless if `unordered` is
-    /// true.
-    offset: u64,
     data: BinaryHeap<Chunk>,
     defragmented: usize,
     /// Whether any unordered reads have been performed, making this assembler unusable for ordered
     /// reads
     unordered: bool,
-    /// Number of bytes read. Equal to offset when `unordered` is false, may or may not be
-    /// otherwise.
+    /// Number of bytes read by the application. When only ordered reads have been used, this is the
+    /// length of the contiguous prefix of the stream which has been consumed by the application,
+    /// aka the stream offset.
     bytes_read: u64,
-    /// Offsets received so far
-    recvd: RangeSet,
     /// Whether to discard data
     stopped: bool,
+    /// First offset we haven't received any data at or after
+    limit: u64,
 }
 
 impl Assembler {
@@ -46,7 +42,6 @@ impl Assembler {
                 break;
             }
         }
-        self.bytes_read += read as u64;
         read
     }
 
@@ -68,21 +63,21 @@ impl Assembler {
 
         // If this chunk is either after the current offset or fully before it,
         // return directly, indicating whether the chunk can be discarded.
-        if chunk.offset > self.offset {
+        if chunk.offset > self.bytes_read {
             return false;
-        } else if (chunk.offset + chunk.bytes.len() as u64) <= self.offset {
+        } else if (chunk.offset + chunk.bytes.len() as u64) <= self.bytes_read {
             return true;
         }
 
         // Determine `start` and `len` of slice to read from chunk
-        let start = (self.offset - chunk.offset) as usize;
+        let start = (self.bytes_read - chunk.offset) as usize;
         let left = buf.len() - *read;
         let len = left.min(chunk.bytes.len() - start) as usize;
 
         // Actually write into the buffer and update the related state
         (&mut buf[*read..*read + len]).copy_from_slice(&chunk.bytes[start..start + len]);
         *read += len;
-        self.offset += len as u64;
+        self.bytes_read += len as u64;
 
         if start + len == chunk.bytes.len() {
             // This chunk has been fully consumed and can be discarded
@@ -150,7 +145,7 @@ impl Assembler {
     }
 
     pub(crate) fn insert(&mut self, offset: u64, bytes: Bytes) {
-        self.recvd.insert(offset..(offset + bytes.len() as u64));
+        self.limit = self.limit.max(offset + bytes.len() as u64);
         if bytes.is_empty() || self.stopped {
             return;
         }
@@ -167,23 +162,19 @@ impl Assembler {
         }
     }
 
-    /// Current position in the stream
+    /// Number of bytes consumed by the application
     pub(crate) fn bytes_read(&self) -> u64 {
         self.bytes_read
     }
 
     /// Offset after the largest byte received
     pub(crate) fn limit(&self) -> u64 {
-        self.recvd.max().map_or(0, |x| x + 1)
+        self.limit
     }
 
-    /// Whether we've received all data below `final_offset`
-    ///
-    /// `final_offset` must be greater than the offset of any received data.
-    pub(crate) fn is_complete_at(&self, final_offset: u64) -> bool {
-        debug_assert!(final_offset >= self.limit());
-        (self.recvd.len() == 1 && self.recvd.iter().next().unwrap() == (0..final_offset))
-            || final_offset == 0
+    /// Whether all data prior to `self.limit()` has been read
+    pub(crate) fn is_fully_read(&self) -> bool {
+        self.bytes_read == self.limit
     }
 
     /// Discard all buffered data
