@@ -533,11 +533,10 @@ where
             if token.is_empty() {
                 // First Initial
                 let token = RetryToken {
-                    src_cid: temp_loc_cid,
                     dst_cid,
                     issued: SystemTime::now(),
                 }
-                .encode(&*server_config.token_key, &remote);
+                .encode(&*server_config.token_key, &remote, &temp_loc_cid);
                 let mut buf = Vec::new();
                 let header = Header::Retry {
                     src_cid: temp_loc_cid,
@@ -556,7 +555,7 @@ where
                 return None;
             }
 
-            match RetryToken::from_bytes(&*server_config.token_key, &remote, &token) {
+            match RetryToken::from_bytes(&*server_config.token_key, &remote, &dst_cid, &token) {
                 Ok(token)
                     if token.issued
                         + Duration::from_micros(
@@ -564,7 +563,7 @@ where
                         )
                         > SystemTime::now() =>
                 {
-                    (Some(token.src_cid), token.dst_cid)
+                    (Some(dst_cid), token.dst_cid)
                 }
                 _ => {
                     debug!("rejecting invalid stateless retry token");
