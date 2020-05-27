@@ -220,6 +220,12 @@ where
     /// If you want to trust the usual certificate authorities trusted by the system, use
     /// `ClientConfigBuilder::default()` with the `native-certs` and `ct-logs` features enabled
     /// instead.
+    ///
+    /// The `ClientConfigBuilder` provides a number of shortcuts to customize the TLS client
+    /// behavior. However, if you want to take full control over the client's behavior
+    /// (such as setting up TLS mutual authentication), you can use the associated `new()` function
+    /// to provide a `ClientConfig` with TLS configuration provided directly through its `crypto`
+    /// field).
     pub fn new(config: ClientConfig<S>) -> Self {
         Self { config }
     }
