@@ -626,5 +626,5 @@ impl From<TryFromIntError> for ConfigError {
     }
 }
 
-// Implied by a 1280 byte IP packet
-const MAX_UDP_PAYLOAD_SIZE: u64 = 1232;
+/// Largest theoretically possible UDP/IPv4 payload
+const MAX_UDP_PAYLOAD_SIZE: u64 = 64 * 1024 - 8 - 20;
