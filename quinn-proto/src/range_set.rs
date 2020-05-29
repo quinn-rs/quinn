@@ -64,25 +64,16 @@ impl RangeSet {
                 // Wholly contained
                 return false;
             } else if end >= x.start {
-                // Overlaps with pred
+                // Extend overlapping predecessor
                 self.0.remove(&start);
-                while let Some((next_start, next_end)) = self.succ(x.start) {
-                    if next_start > x.end {
-                        break;
-                    }
-                    // ..and succ
-                    self.0.remove(&next_start);
-                    x.end = cmp::max(next_end, x.end);
-                }
-                self.0.insert(start, x.end);
-                return true;
+                x.start = start;
             }
         }
         while let Some((next_start, next_end)) = self.succ(x.start) {
             if next_start > x.end {
                 break;
             }
-            // Overlaps with succ
+            // Overlaps with successor
             self.0.remove(&next_start);
             x.end = cmp::max(next_end, x.end);
         }
