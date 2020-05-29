@@ -90,6 +90,7 @@ impl RangeSet {
         true
     }
 
+    /// Find closest range to `x` that begins at or before it
     fn pred(&self, x: u64) -> Option<(u64, u64)> {
         self.0
             .range((Included(0), Included(x)))
@@ -98,6 +99,7 @@ impl RangeSet {
             .map(|(&x, &y)| (x, y))
     }
 
+    /// Find the closest range to `x` that begins after it
     fn succ(&self, x: u64) -> Option<(u64, u64)> {
         self.0
             .range((Excluded(x), Included(u64::max_value())))
