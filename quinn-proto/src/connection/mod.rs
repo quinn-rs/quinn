@@ -1048,7 +1048,7 @@ where
         }
 
         for frame in info.stream_frames {
-            self.streams.ack(frame);
+            self.streams.received_ack_of(frame);
         }
     }
 
