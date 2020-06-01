@@ -1331,25 +1331,14 @@ where
     /// Abandon transmitting data on a stream
     ///
     /// # Panics
-    /// - when applied to a receive stream or an unopened send stream
+    /// - when applied to a receive stream
     pub fn reset(&mut self, stream_id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
-        self.reset_inner(stream_id, error_code, false)
-    }
-
-    /// `stopped` should be set iff this is an internal implicit reset due to `STOP_SENDING`
-    fn reset_inner(
-        &mut self,
-        stream_id: StreamId,
-        error_code: VarInt,
-        stopped: bool,
-    ) -> Result<(), UnknownStream> {
         assert!(
             stream_id.dir() == Dir::Bi || stream_id.initiator() == self.side,
             "only streams supporting outgoing data may be reset"
         );
 
-        let stop_reason = if stopped { Some(error_code) } else { None };
-        self.streams.reset(stream_id, stop_reason)?;
+        self.streams.reset(stream_id)?;
 
         self.spaces[SpaceId::Data as usize]
             .pending
@@ -2161,8 +2150,9 @@ where
                             "STOP_SENDING on unopened stream",
                         ));
                     }
-                    // Ignore errors from the stream already being gone
-                    let _ = self.reset_inner(id, error_code, true);
+                    self.streams.received_stop_sending(id, error_code);
+                    // Implicitly reset. Ignore errors from the stream already being gone.
+                    let _ = self.reset(id, error_code);
                 }
                 Frame::RetireConnectionId { sequence } => {
                     if self.endpoint_config.local_cid_len == 0 {

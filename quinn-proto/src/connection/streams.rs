@@ -340,6 +340,22 @@ impl Streams {
         })
     }
 
+    /// Process incoming `STOP_SENDING` frame
+    pub fn received_stop_sending(&mut self, id: StreamId, error_code: VarInt) {
+        let stream = match self.send.get_mut(&id) {
+            Some(ss) => ss,
+            None => return,
+        };
+        self.events
+            .push_back(StreamEvent::Stopped { id, error_code });
+        if let Some(event) = stream.stop(id, error_code) {
+            self.events.push_back(event);
+        }
+        if !stream.is_closed() {
+            self.on_stream_frame(false, id);
+        }
+    }
+
     /// Set the FIN bit in the next stream frame, generating an empty one if necessary
     pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
         let stream = self.send.get_mut(&id).ok_or(FinishError::UnknownStream)?;
@@ -355,11 +371,7 @@ impl Streams {
     ///
     /// Does not cause the actual RESET_STREAM frame to be sent, just updates internal
     /// state.
-    pub fn reset(
-        &mut self,
-        id: StreamId,
-        stop_reason: Option<VarInt>,
-    ) -> Result<(), UnknownStream> {
+    pub fn reset(&mut self, id: StreamId) -> Result<(), UnknownStream> {
         let stream = match self.send.get_mut(&id) {
             Some(ss) => ss,
             None => return Err(UnknownStream { _private: () }),
@@ -370,24 +382,13 @@ impl Streams {
             return Err(UnknownStream { _private: () });
         }
 
-        if let Some(error_code) = stop_reason {
-            self.events
-                .push_back(StreamEvent::Stopped { error_code, id });
-        }
-
         // Restore the portion of the send window consumed by the data that we aren't about to
         // send. We leave flow control alone because the peer's responsible for issuing additional
         // credit based on the final offset communicated in the RESET_STREAM frame we send.
         self.unacked_data -= stream.pending.unacked();
-        if let Some(event) = stream.reset(id, stop_reason) {
-            self.events.push_back(event);
-        }
+        stream.reset();
 
         // Don't reopen an already-closed stream we haven't forgotten yet
-        if stop_reason.is_some() && !stream.is_closed() {
-            self.on_stream_frame(false, id);
-        }
-
         Ok(())
     }
 
@@ -887,34 +888,35 @@ impl Send {
         Ok(len)
     }
 
-    /// Update stream state to `ResetSent` if necessary
-    ///
-    /// If it is necessary to notify the application of the new state, return a `StreamEvent`.
-    fn reset(&mut self, id: StreamId, stop_reason: Option<VarInt>) -> Option<StreamEvent> {
+    /// Update stream state due to a reset sent by the local application
+    fn reset(&mut self) {
         use SendState::*;
-        let event = match self.state {
-            DataRecvd | ResetSent { .. } | ResetRecvd { .. } => None,
+        if let DataSent { .. } | Ready = self.state {
+            self.state = ResetSent;
+        }
+    }
+
+    /// Handle STOP_SENDING
+    fn stop(&mut self, id: StreamId, error_code: VarInt) -> Option<StreamEvent> {
+        use SendState::*;
+        match self.state {
+            DataRecvd | ResetSent | ResetRecvd => None,
             DataSent { .. } => {
-                self.state = ResetSent;
                 // We intentionally don't update stop_reason here, since the application will be
                 // notified directly
-                Some(StreamEvent::Finished { id, stop_reason })
+                Some(StreamEvent::Finished {
+                    id,
+                    stop_reason: Some(error_code),
+                })
             }
             Ready => {
-                self.state = ResetSent;
-                self.stop_reason = stop_reason;
+                self.stop_reason = Some(error_code);
                 if self.pending.offset() == self.max_data || self.connection_blocked {
                     Some(StreamEvent::Writable { id })
                 } else {
                     None
                 }
             }
-        };
-
-        if stop_reason.is_some() {
-            event
-        } else {
-            None
         }
     }
 
