@@ -365,7 +365,7 @@ impl Streams {
             None => return Err(UnknownStream { _private: () }),
         };
 
-        if matches!(stream.state, SendState::ResetSent { .. } | SendState::ResetRecvd { .. }) {
+        if matches!(stream.state, SendState::ResetSent | SendState::ResetRecvd) {
             // Redundant reset call
             return Err(UnknownStream { _private: () });
         }
@@ -400,9 +400,9 @@ impl Streams {
             }
         };
 
-        if let SendState::ResetSent { stop_reason } = send.state {
-            send.state = SendState::ResetRecvd { stop_reason };
-            if stop_reason.is_none() {
+        if let SendState::ResetSent = send.state {
+            send.state = SendState::ResetRecvd;
+            if send.stop_reason.is_none() {
                 self.maybe_cleanup(id);
             }
         }
@@ -424,7 +424,7 @@ impl Streams {
 
     pub fn stop_reason(&self, id: StreamId) -> Result<Option<VarInt>, UnknownStream> {
         match self.send.get(&id) {
-            Some(s) => Ok(s.stop_reason()),
+            Some(s) => Ok(s.stop_reason.clone()),
             None => Err(UnknownStream { _private: () }),
         }
     }
@@ -735,7 +735,7 @@ impl Streams {
             stream.connection_blocked = false;
             // If it's no longer sensible to write to a stream (even to detect an error) then don't
             // report it.
-            if stream.state.is_writable() {
+            if stream.is_writable() {
                 return Some(id);
             }
         }
@@ -830,6 +830,8 @@ struct Send {
     fin_pending: bool,
     /// Whether this stream is in the `connection_blocked` list of `Streams`
     connection_blocked: bool,
+    /// The reason the peer wants us to stop, if `STOP_SENDING` was received
+    stop_reason: Option<VarInt>,
 }
 
 impl Send {
@@ -840,6 +842,7 @@ impl Send {
             pending: SendBuffer::new(),
             fin_pending: false,
             connection_blocked: false,
+            stop_reason: None,
         }
     }
 
@@ -847,7 +850,7 @@ impl Send {
     fn is_closed(&self) -> bool {
         use self::SendState::*;
         match self.state {
-            DataRecvd | ResetRecvd { stop_reason: None } => true,
+            DataRecvd | ResetRecvd => self.stop_reason.is_none(),
             _ => false,
         }
     }
@@ -864,36 +867,15 @@ impl Send {
             };
             self.fin_pending = true;
             Ok(())
-        } else if let Some(error_code) = self.take_stop_reason() {
+        } else if let Some(error_code) = self.stop_reason.take() {
             Err(FinishError::Stopped(error_code))
         } else {
             Err(FinishError::UnknownStream)
         }
     }
 
-    fn stop_reason(&self) -> Option<VarInt> {
-        match self.state {
-            SendState::ResetSent { stop_reason } | SendState::ResetRecvd { stop_reason } => {
-                stop_reason
-            }
-            _ => None,
-        }
-    }
-
-    fn take_stop_reason(&mut self) -> Option<VarInt> {
-        match self.state {
-            SendState::ResetSent {
-                ref mut stop_reason,
-            }
-            | SendState::ResetRecvd {
-                ref mut stop_reason,
-            } => stop_reason.take(),
-            _ => None,
-        }
-    }
-
     fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        if let Some(error_code) = self.take_stop_reason() {
+        if let Some(error_code) = self.stop_reason.take() {
             return Err(WriteError::Stopped(error_code));
         }
         let budget = self.max_data - self.pending.offset();
@@ -913,11 +895,14 @@ impl Send {
         let event = match self.state {
             DataRecvd | ResetSent { .. } | ResetRecvd { .. } => None,
             DataSent { .. } => {
-                self.state = ResetSent { stop_reason: None };
+                self.state = ResetSent;
+                // We intentionally don't update stop_reason here, since the application will be
+                // notified directly
                 Some(StreamEvent::Finished { id, stop_reason })
             }
             Ready => {
-                self.state = ResetSent { stop_reason };
+                self.state = ResetSent;
+                self.stop_reason = stop_reason;
                 if self.pending.offset() == self.max_data || self.connection_blocked {
                     Some(StreamEvent::Writable { id })
                 } else {
@@ -964,6 +949,17 @@ impl Send {
 
     fn is_pending(&self) -> bool {
         self.pending.has_unsent_data() || self.fin_pending
+    }
+
+    fn is_writable(&self) -> bool {
+        use SendState::*;
+        // A stream is writable in Ready state or if it's been stopped and the stop hasn't been
+        // reported
+        match self.state {
+            SendState::Ready => true,
+            ResetSent | ResetRecvd => self.stop_reason.is_some(),
+            _ => false,
+        }
     }
 }
 
@@ -1168,8 +1164,6 @@ impl From<IllegalOrderedRead> for ReadError {
     }
 }
 
-/// `stop_reason` below should be set iff the stream was stopped and application has not yet been
-/// notified, as we never discard resources for a stream that has it set.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 enum SendState {
     /// Sending new data
@@ -1177,29 +1171,11 @@ enum SendState {
     /// Stream was finished; now sending retransmits only
     DataSent { finish_acked: bool },
     /// Sent RESET
-    ResetSent { stop_reason: Option<VarInt> },
+    ResetSent,
     /// All sent data acknowledged
     DataRecvd,
     /// Reset acknowledged
-    ResetRecvd { stop_reason: Option<VarInt> },
-}
-
-impl SendState {
-    fn is_writable(&self) -> bool {
-        use SendState::*;
-        // A stream is writable in Ready state or if it's been stopped and the stop hasn't been
-        // reported
-        match *self {
-            SendState::Ready
-            | ResetSent {
-                stop_reason: Some(_),
-            }
-            | ResetRecvd {
-                stop_reason: Some(_),
-            } => true,
-            _ => false,
-        }
-    }
+    ResetRecvd,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
