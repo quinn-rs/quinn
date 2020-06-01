@@ -14,7 +14,7 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready, FutureExt,
 };
-use proto::{ConnectionError, StreamId};
+use proto::{ConnectionError, FinishError, StreamId};
 
 use crate::{connection::ConnectionRef, VarInt};
 
@@ -103,8 +103,8 @@ where
         }
         if self.finishing.is_none() {
             conn.inner.finish(self.stream).map_err(|e| match e {
-                proto::FinishError::UnknownStream => WriteError::UnknownStream,
-                proto::FinishError::Stopped(error_code) => WriteError::Stopped(error_code),
+                FinishError::UnknownStream => WriteError::UnknownStream,
+                FinishError::Stopped(error_code) => WriteError::Stopped(error_code),
             })?;
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
@@ -229,13 +229,13 @@ where
         if self.finishing.is_none() {
             match conn.inner.finish(self.stream) {
                 Ok(()) => conn.wake(),
-                Err(proto::FinishError::Stopped(reason)) => {
+                Err(FinishError::Stopped(reason)) => {
                     if conn.inner.reset(self.stream, reason).is_ok() {
                         conn.wake();
                     }
                 }
                 // Already finished or reset, which is fine.
-                Err(proto::FinishError::UnknownStream) => {}
+                Err(FinishError::UnknownStream) => {}
             }
         }
     }
