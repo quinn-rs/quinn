@@ -601,7 +601,6 @@ impl Streams {
         }
     }
 
-    /// Returns whether the stream was finished
     pub fn ack(&mut self, frame: frame::StreamMeta) {
         let stream = match self.send.get_mut(&frame.id) {
             // ACK for a closed stream is a noop
