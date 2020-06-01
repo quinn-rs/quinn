@@ -2151,8 +2151,6 @@ where
                         ));
                     }
                     self.streams.received_stop_sending(id, error_code);
-                    // Implicitly reset. Ignore errors from the stream already being gone.
-                    let _ = self.reset(id, error_code);
                 }
                 Frame::RetireConnectionId { sequence } => {
                     if self.endpoint_config.local_cid_len == 0 {
