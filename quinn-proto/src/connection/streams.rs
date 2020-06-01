@@ -5,7 +5,7 @@ use std::{
 
 use bytes::{BufMut, Bytes};
 use err_derive::Error;
-use tracing::{debug, info, trace};
+use tracing::{debug, trace};
 
 use super::{
     assembler::{Assembler, IllegalOrderedRead},
@@ -172,18 +172,22 @@ impl Streams {
         id: StreamId,
         buf: &mut [u8],
     ) -> Result<Option<(usize, bool)>, ReadError> {
-        let rs = self.recv.get_mut(&id).ok_or(ReadError::UnknownStream)?;
+        let mut entry = match self.recv.entry(id) {
+            hash_map::Entry::Vacant(_) => return Err(ReadError::UnknownStream),
+            hash_map::Entry::Occupied(e) => e,
+        };
+        let rs = entry.get_mut();
         match rs.read(buf) {
             Ok(Some(len)) => {
                 self.local_max_data += len as u64;
                 Ok(Some((len, rs.receiving_unknown_size())))
             }
             Ok(None) => {
-                self.maybe_cleanup(id);
+                entry.remove_entry();
                 Ok(None)
             }
             Err(e @ ReadError::Reset { .. }) => {
-                self.maybe_cleanup(id);
+                entry.remove_entry();
                 Err(e)
             }
             Err(e) => Err(e),
@@ -194,18 +198,22 @@ impl Streams {
         &mut self,
         id: StreamId,
     ) -> Result<Option<(Bytes, u64, bool)>, ReadError> {
-        let rs = self.recv.get_mut(&id).ok_or(ReadError::UnknownStream)?;
+        let mut entry = match self.recv.entry(id) {
+            hash_map::Entry::Vacant(_) => return Err(ReadError::UnknownStream),
+            hash_map::Entry::Occupied(e) => e,
+        };
+        let rs = entry.get_mut();
         match rs.read_unordered() {
             Ok(Some((buf, offset))) => {
                 self.local_max_data += buf.len() as u64;
                 Ok(Some((buf, offset, rs.receiving_unknown_size())))
             }
             Ok(None) => {
-                self.maybe_cleanup(id);
+                entry.remove_entry();
                 Ok(None)
             }
             Err(e @ ReadError::Reset { .. }) => {
-                self.maybe_cleanup(id);
+                entry.remove_entry();
                 Err(e)
             }
             Err(e) => Err(e),
@@ -382,17 +390,14 @@ impl Streams {
     }
 
     pub fn reset_acked(&mut self, id: StreamId) {
-        let send = match self.send.get_mut(&id) {
-            Some(ss) => ss,
-            None => {
-                info!("no send stream found for acked reset: {:?}", id);
-                return;
+        match self.send.entry(id) {
+            hash_map::Entry::Vacant(_) => {}
+            hash_map::Entry::Occupied(e) => {
+                if let SendState::ResetSent = e.get().state {
+                    self.send_streams -= 1;
+                    e.remove_entry();
+                }
             }
-        };
-
-        if let SendState::ResetSent = send.state {
-            send.state = SendState::ResetRecvd;
-            self.maybe_cleanup(id);
         }
     }
 
@@ -589,11 +594,11 @@ impl Streams {
     }
 
     pub fn received_ack_of(&mut self, frame: frame::StreamMeta) {
-        let stream = match self.send.get_mut(&frame.id) {
-            // ACK for a closed stream is a noop
-            None => return,
-            Some(x) => x,
+        let mut entry = match self.send.entry(frame.id) {
+            hash_map::Entry::Vacant(_) => return,
+            hash_map::Entry::Occupied(e) => e,
         };
+        let stream = entry.get_mut();
         if stream.is_reset() {
             // We account for outstanding data on reset streams at time of reset
             return;
@@ -605,7 +610,8 @@ impl Streams {
             return;
         }
 
-        self.maybe_cleanup(id); // Guaranteed to succeed on the send side
+        self.send_streams -= 1;
+        entry.remove_entry();
         self.events.push_back(StreamEvent::Finished { id });
     }
 
@@ -750,29 +756,6 @@ impl Streams {
             }
         }
         Ok(())
-    }
-
-    /// Discard state for a stream if it's fully closed.
-    ///
-    /// Called when one side of a stream transitions to a closed state
-    fn maybe_cleanup(&mut self, id: StreamId) {
-        match self.send.entry(id) {
-            hash_map::Entry::Vacant(_) => {}
-            hash_map::Entry::Occupied(e) => {
-                if e.get().is_closed() {
-                    self.send_streams -= 1;
-                    e.remove_entry();
-                }
-            }
-        }
-        match self.recv.entry(id) {
-            hash_map::Entry::Vacant(_) => {}
-            hash_map::Entry::Occupied(e) => {
-                if e.get().is_closed() {
-                    e.remove_entry();
-                }
-            }
-        }
     }
 
     /// Whether a locally initiated stream has never been open
