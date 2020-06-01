@@ -739,15 +739,21 @@ where
                     };
                     tasks.wake();
                 }
-                Stream(StreamEvent::Finished { id, stop_reason }) => {
+                Stream(StreamEvent::Finished { id }) => {
                     if let Some(finishing) = self.finishing.remove(&id) {
                         // If the finishing stream was already dropped, there's nothing more to do.
-                        let _ = finishing.send(stop_reason.map(WriteError::Stopped));
+                        let _ = finishing.send(None);
                     }
                 }
-                Stream(StreamEvent::Stopped { id, .. }) => {
+                Stream(StreamEvent::Stopped { id, error_code }) => {
                     if let Some(stopped) = self.stopped.remove(&id) {
                         stopped.wake();
+                    }
+                    if let Some(finishing) = self.finishing.remove(&id) {
+                        let _ = finishing.send(Some(WriteError::Stopped(error_code)));
+                    }
+                    if let Some(writer) = self.blocked_writers.remove(&id) {
+                        writer.wake();
                     }
                 }
             }

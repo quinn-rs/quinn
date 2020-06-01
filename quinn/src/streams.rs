@@ -227,9 +227,15 @@ where
             return;
         }
         if self.finishing.is_none() {
-            // Errors indicate that the stream was already finished or reset, which is fine.
-            if conn.inner.finish(self.stream).is_ok() {
-                conn.wake();
+            match conn.inner.finish(self.stream) {
+                Ok(()) => conn.wake(),
+                Err(proto::FinishError::Stopped(reason)) => {
+                    if conn.inner.reset(self.stream, reason).is_ok() {
+                        conn.wake();
+                    }
+                }
+                // Already finished or reset, which is fine.
+                Err(proto::FinishError::UnknownStream) => {}
             }
         }
     }

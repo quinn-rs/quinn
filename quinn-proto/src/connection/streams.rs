@@ -227,14 +227,7 @@ impl Streams {
 
         let was_pending = stream.is_pending();
         let len = (data.len() as u64).min(limit) as usize;
-        let len = match stream.write(&data[0..len]) {
-            Ok(n) => n,
-            e @ Err(WriteError::Stopped { .. }) => {
-                self.maybe_cleanup(id);
-                return e;
-            }
-            e @ Err(_) => return e,
-        };
+        let len = stream.write(&data[0..len])?;
         self.data_sent += len as u64;
         self.unacked_data += len as u64;
         trace!(stream = %id, "wrote {} bytes", len);
@@ -348,12 +341,8 @@ impl Streams {
         };
         self.events
             .push_back(StreamEvent::Stopped { id, error_code });
-        if let Some(event) = stream.stop(id, error_code) {
-            self.events.push_back(event);
-        }
-        if !stream.is_closed() {
-            self.on_stream_frame(false, id);
-        }
+        stream.stop(error_code);
+        self.on_stream_frame(false, id);
     }
 
     /// Set the FIN bit in the next stream frame, generating an empty one if necessary
@@ -403,9 +392,7 @@ impl Streams {
 
         if let SendState::ResetSent = send.state {
             send.state = SendState::ResetRecvd;
-            if send.stop_reason.is_none() {
-                self.maybe_cleanup(id);
-            }
+            self.maybe_cleanup(id);
         }
     }
 
@@ -425,7 +412,7 @@ impl Streams {
 
     pub fn stop_reason(&self, id: StreamId) -> Result<Option<VarInt>, UnknownStream> {
         match self.send.get(&id) {
-            Some(s) => Ok(s.stop_reason.clone()),
+            Some(s) => Ok(s.stop_reason),
             None => Err(UnknownStream { _private: () }),
         }
     }
@@ -619,10 +606,7 @@ impl Streams {
         }
 
         self.maybe_cleanup(id); // Guaranteed to succeed on the send side
-        self.events.push_back(StreamEvent::Finished {
-            id,
-            stop_reason: None,
-        });
+        self.events.push_back(StreamEvent::Finished { id });
     }
 
     pub fn retransmit(&mut self, frame: frame::StreamMeta) {
@@ -846,36 +830,27 @@ impl Send {
         }
     }
 
-    /// All data acknowledged and STOP_SENDING error code, if any, processed by application
-    fn is_closed(&self) -> bool {
-        use self::SendState::*;
-        match self.state {
-            DataRecvd | ResetRecvd => self.stop_reason.is_none(),
-            _ => false,
-        }
-    }
-
     /// Whether the stream has been reset
     fn is_reset(&self) -> bool {
         matches!(self.state, SendState::ResetSent { .. } | SendState::ResetRecvd { .. })
     }
 
     fn finish(&mut self) -> Result<(), FinishError> {
-        if self.state == SendState::Ready {
+        if let Some(error_code) = self.stop_reason {
+            Err(FinishError::Stopped(error_code))
+        } else if self.state == SendState::Ready {
             self.state = SendState::DataSent {
                 finish_acked: false,
             };
             self.fin_pending = true;
             Ok(())
-        } else if let Some(error_code) = self.stop_reason.take() {
-            Err(FinishError::Stopped(error_code))
         } else {
             Err(FinishError::UnknownStream)
         }
     }
 
     fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        if let Some(error_code) = self.stop_reason.take() {
+        if let Some(error_code) = self.stop_reason {
             return Err(WriteError::Stopped(error_code));
         }
         let budget = self.max_data - self.pending.offset();
@@ -896,27 +871,8 @@ impl Send {
     }
 
     /// Handle STOP_SENDING
-    fn stop(&mut self, id: StreamId, error_code: VarInt) -> Option<StreamEvent> {
-        use SendState::*;
-        match self.state {
-            DataRecvd | ResetSent | ResetRecvd => None,
-            DataSent { .. } => {
-                // We intentionally don't update stop_reason here, since the application will be
-                // notified directly
-                Some(StreamEvent::Finished {
-                    id,
-                    stop_reason: Some(error_code),
-                })
-            }
-            Ready => {
-                self.stop_reason = Some(error_code);
-                if self.pending.offset() == self.max_data || self.connection_blocked {
-                    Some(StreamEvent::Writable { id })
-                } else {
-                    None
-                }
-            }
-        }
+    fn stop(&mut self, error_code: VarInt) {
+        self.stop_reason = Some(error_code);
     }
 
     fn ack(&mut self, frame: frame::StreamMeta) {
@@ -1230,8 +1186,6 @@ pub enum StreamEvent {
     Finished {
         /// Which stream has been finished
         id: StreamId,
-        /// Error code supplied by the peer if the stream was stopped
-        stop_reason: Option<VarInt>,
     },
     /// The peer asked us to stop sending on an outgoing stream
     Stopped {
