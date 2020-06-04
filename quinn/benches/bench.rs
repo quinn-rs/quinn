@@ -102,7 +102,7 @@ impl Context {
                         .await
                         .expect("connect");
                     while let Some(Ok(mut stream)) = uni_streams.next().await {
-                        while let Some(_) = stream.read_unordered().await.unwrap() {}
+                        while stream.read_unordered().await.unwrap().is_some() {}
                     }
                 }
                 .instrument(error_span!("server")),
