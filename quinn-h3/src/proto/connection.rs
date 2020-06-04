@@ -270,6 +270,10 @@ impl From<headers::Error> for Error {
             headers::Error::InvalidHeaderValue(s) => Error::InvalidHeaderValue(s),
             headers::Error::InvalidRequest(e) => Error::InvalidRequest(format!("{:?}", e)),
             headers::Error::MissingMethod => Error::InvalidRequest("missing method".into()),
+            headers::Error::MissingAuthority => Error::InvalidRequest("missing authority".into()),
+            headers::Error::ContradictedAuthority => {
+                Error::InvalidRequest(":authority and Host are different".into())
+            }
             headers::Error::MissingStatus => Error::InvalidResponse("missing status".into()),
         }
     }

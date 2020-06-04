@@ -55,8 +55,12 @@ impl Header {
             uri = uri.scheme(scheme.as_str().as_bytes());
         }
 
-        if let Some(authority) = self.pseudo.authority {
-            uri = uri.authority(authority.as_str().as_bytes());
+        match (self.pseudo.authority, self.fields.get("host")) {
+            (None, None) => return Err(Error::MissingAuthority),
+            (Some(a), None) => uri = uri.authority(a.as_str().as_bytes()),
+            (None, Some(h)) => uri = uri.authority(h.as_bytes()),
+            (Some(a), Some(h)) if a.as_str() != h => return Err(Error::ContradictedAuthority),
+            (Some(_), Some(h)) => uri = uri.authority(h.as_bytes()),
         }
 
         Ok((
@@ -76,6 +80,11 @@ impl Header {
 
     pub fn len(&self) -> usize {
         self.pseudo.len() + self.fields.len()
+    }
+
+    #[cfg(test)]
+    pub(crate) fn authory_mut(&mut self) -> &mut Option<Authority> {
+        &mut self.pseudo.authority
     }
 }
 
@@ -333,6 +342,8 @@ pub enum Error {
     InvalidRequest(http::Error),
     MissingMethod,
     MissingStatus,
+    MissingAuthority,
+    ContradictedAuthority,
 }
 
 impl Error {
@@ -353,5 +364,62 @@ impl Error {
             String::from_utf8_lossy(name.as_ref()),
             value.as_ref()
         ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn request_has_no_authority_nor_host() {
+        let headers = Header::try_from(vec![(b":method", Method::GET.as_str()).into()]).unwrap();
+        assert!(headers.pseudo.authority.is_none());
+        assert_matches!(headers.into_request_parts(), Err(Error::MissingAuthority));
+    }
+
+    #[test]
+    fn request_has_authority() {
+        let headers = Header::try_from(vec![
+            (b":method", Method::GET.as_str()).into(),
+            (b":authority", b"test.com").into(),
+        ])
+        .unwrap();
+        assert_matches!(headers.into_request_parts(), Ok(_));
+    }
+
+    #[test]
+    fn request_has_host() {
+        let headers = Header::try_from(vec![
+            (b":method", Method::GET.as_str()).into(),
+            (b"host", b"test.com").into(),
+        ])
+        .unwrap();
+        assert!(headers.pseudo.authority.is_none());
+        assert_matches!(headers.into_request_parts(), Ok(_));
+    }
+
+    #[test]
+    fn request_has_same_host_and_authority() {
+        let headers = Header::try_from(vec![
+            (b":method", Method::GET.as_str()).into(),
+            (b":authority", b"test.com").into(),
+            (b"host", b"test.com").into(),
+        ])
+        .unwrap();
+        assert_matches!(headers.into_request_parts(), Ok(_));
+    }
+    #[test]
+    fn request_has_different_host_and_authority() {
+        let headers = Header::try_from(vec![
+            (b":method", Method::GET.as_str()).into(),
+            (b":authority", b"authority.com").into(),
+            (b"host", b"host.com").into(),
+        ])
+        .unwrap();
+        assert_matches!(
+            headers.into_request_parts(),
+            Err(Error::ContradictedAuthority)
+        );
     }
 }

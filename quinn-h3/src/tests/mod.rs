@@ -1,9 +1,13 @@
 use bytes::{BufMut, Bytes};
 use futures::{future, StreamExt};
-use http::{Response, StatusCode};
+use http::{request, Request, Response, StatusCode};
 use tokio::time::{delay_for, Duration};
 
-use crate::{proto::frame::DataFrame, server::IncomingConnection, Body, Error, HttpError};
+use crate::{
+    proto::{frame::DataFrame, headers::Header},
+    server::IncomingConnection,
+    Body, Error, HttpError, SendData,
+};
 
 mod helpers;
 use helpers::{get, post, timeout_join, Helper};
@@ -410,4 +414,80 @@ async fn unknown_frame_ignored() {
     assert_matches!(req.read().await, None);
     conn.0.close();
     assert!(timeout_join(server_handle).await.is_ok());
+}
+
+#[tokio::test]
+async fn server_rejects_missing_authority() {
+    let mut helper = Helper::new();
+    let incoming = helper.make_server();
+    let server_handle = tokio::spawn(async move { serve_one(incoming).await });
+
+    let mut conn = helper.make_fake().await;
+    let mut req = conn.blank().await;
+    let (request, body) = get("/").into_parts();
+    let request::Parts {
+        method,
+        uri,
+        headers,
+        ..
+    } = request;
+
+    let mut headers = Header::request(method, uri, headers);
+    *headers.authory_mut() = None;
+    SendData::new(
+        req.send.take().expect("send stream"),
+        req.conn.clone(),
+        headers,
+        body,
+        false,
+    )
+    .await
+    .expect("send headers");
+
+    assert_matches!(
+        req.into_recv_data().await,
+        Err(Error::Http(HttpError::RequestRejected, None))
+    );
+    assert_matches!(
+        timeout_join(server_handle).await,
+        Err(Error::Peer(reason)) if reason == "invalid headers: MissingAuthority"
+    );
+}
+
+#[tokio::test]
+async fn server_accepts_host_as_authority() {
+    let mut helper = Helper::new();
+    let incoming = helper.make_server();
+    let server_handle = tokio::spawn(async move { serve_one(incoming).await });
+
+    let mut conn = helper.make_fake().await;
+    let mut req = conn.blank().await;
+    let (request, body) = Request::get("https://localhost")
+        .header("Host", "localhost")
+        .body(Body::from(()))
+        .unwrap()
+        .into_parts();
+    let request::Parts {
+        method,
+        uri,
+        headers,
+        ..
+    } = request;
+
+    let mut headers = Header::request(method, uri, headers);
+    *headers.authory_mut() = None;
+    dbg!(&headers);
+    SendData::new(
+        req.send.take().expect("send stream"),
+        req.conn.clone(),
+        headers,
+        body,
+        false,
+    )
+    .await
+    .expect("send headers");
+
+    assert_matches!(req.into_recv_data().await, Ok(_));
+    drop(conn);
+    assert_matches!(timeout_join(server_handle).await, Ok(()));
 }
