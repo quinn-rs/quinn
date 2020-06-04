@@ -133,6 +133,10 @@ impl RecvBody {
     pub fn cancel(&mut self) {
         self.recv.reset(ErrorCode::REQUEST_CANCELLED);
     }
+
+    pub(super) fn into_inner(self) -> FrameStream {
+        self.recv
+    }
 }
 
 impl HttpBody for RecvBody {
