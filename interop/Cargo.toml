@@ -24,7 +24,7 @@ structopt = "0.3.0"
 tokio = { version = "0.2.2", features = ["macros", "rt-core", "io-util"] }
 tokio-rustls = "0.13"
 tracing = "0.1.10"
-tracing-subscriber = { version = "0.2.3", default-features = false, features = ["env-filter", "fmt", "ansi", "chrono"]}
+tracing-subscriber = { version = "0.2.5", default-features = false, features = ["env-filter", "fmt", "ansi", "chrono"]}
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
 webpki = "0.21"
 
