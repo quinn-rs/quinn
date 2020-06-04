@@ -115,6 +115,7 @@ use quinn::{
 };
 use quinn_proto::Side;
 use rustls::TLSError;
+use tracing::trace;
 
 use crate::{
     body::RecvBody,
@@ -642,6 +643,7 @@ impl Future for RecvRequest {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let (header, body) = ready!(self.recv.as_mut().unwrap().poll_unpin(cx))?;
         let request = self.build_request(header, body)?;
+        trace!("Got {:?}", request);
         let sender = Sender {
             send: self.send.take(),
             conn: Some(self.conn.clone()),
