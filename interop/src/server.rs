@@ -402,7 +402,7 @@ impl hyper::server::accept::Accept for HyperAcceptor {
             match self.handshake {
                 Some(ref mut h) => {
                     let conn = ready!(Pin::new(h).poll(cx))?;
-                    std::mem::replace(&mut self.handshake, None);
+                    self.handshake = None;
                     return Poll::Ready(Some(Ok(conn)));
                 }
                 None => {
