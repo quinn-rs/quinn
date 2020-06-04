@@ -15,13 +15,14 @@ use crate::{
     body::Body,
     client::{self, Client},
     connection::ConnectionRef,
-    data::write_headers_frame,
+    data::{write_headers_frame, RecvData},
     frame::{Error as FrameError, FrameDecoder, FrameStream},
     proto::frame::HttpFrame,
     proto::headers::Header,
     server::{self, IncomingConnection},
     SendData, ZeroRttAccepted,
 };
+use quinn_proto::StreamId;
 
 pub fn get(path: &str) -> Request<Body> {
     Request::get(format!("https://localhost{}", path))
@@ -140,6 +141,7 @@ impl FakeConnection {
     pub async fn blank(&mut self) -> FakeRequest {
         let (send, recv) = self.0.inner().quic.open_bi().await.expect("open bi");
         FakeRequest {
+            stream_id: send.id(),
             send: Some(send),
             recv: FrameDecoder::stream(recv),
             conn: self.0.inner().clone(),
@@ -167,6 +169,7 @@ impl FakeConnection {
             .expect("send header");
 
         FakeRequest {
+            stream_id: send.id(),
             send: Some(send),
             conn: self.0.inner().clone(),
             recv: FrameDecoder::stream(recv),
@@ -176,14 +179,20 @@ impl FakeConnection {
 
 pub struct FakeRequest {
     pub send: Option<SendStream>,
+    stream_id: StreamId,
     recv: FrameStream,
-    conn: ConnectionRef,
+    pub(crate) conn: ConnectionRef,
 }
 
 impl FakeRequest {
     pub async fn read(&mut self) -> Option<Result<HttpFrame, FrameError>> {
         self.recv.next().await
     }
+
+    pub fn into_recv_data(self) -> RecvData {
+        RecvData::new(self.recv, self.conn.clone(), self.stream_id)
+    }
+
     pub async fn write<F>(&mut self, mut encode: F) -> Result<(), WriteError>
     where
         F: FnMut(&mut Vec<u8>),
