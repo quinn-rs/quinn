@@ -267,15 +267,12 @@ impl ConnectionInner {
             .pending_uni
             .iter_mut()
             .enumerate()
-            .filter_map(|(i, x)| {
-                let mut pending = x.take().unwrap();
-                match Pin::new(&mut pending).poll(cx) {
-                    Poll::Ready(y) => Some((i, y)),
-                    Poll::Pending => {
-                        std::mem::replace(x, Some(pending));
-                        None
-                    }
+            .filter_map(|(i, x)| match Pin::new(x.as_mut().unwrap()).poll(cx) {
+                Poll::Ready(y) => {
+                    *x = None;
+                    Some((i, y))
                 }
+                Poll::Pending => None,
             })
             .collect();
 
