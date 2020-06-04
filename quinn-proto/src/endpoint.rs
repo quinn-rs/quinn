@@ -157,6 +157,7 @@ where
             Err(PacketDecodeError::UnsupportedVersion {
                 source,
                 destination,
+                version,
             }) => {
                 if !self.is_server() {
                     debug!("dropping packet with unsupported version");
@@ -171,7 +172,12 @@ where
                     dst_cid: source,
                 }
                 .encode(&mut buf);
-                buf.write::<u32>(0x0a1a_2a3a); // reserved version
+                // Grease with a reserved version
+                if version != 0x0a1a_2a3a {
+                    buf.write::<u32>(0x0a1a_2a3a);
+                } else {
+                    buf.write::<u32>(0x0a1a_2a4a);
+                }
                 buf.write(VERSION); // supported version
                 self.transmits.push_back(Transmit {
                     destination: remote,
