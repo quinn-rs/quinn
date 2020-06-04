@@ -206,6 +206,7 @@ impl Default for Retransmits {
 }
 
 impl ::std::ops::AddAssign for Retransmits {
+    #[allow(clippy::suspicious_op_assign_impl)] // use of | to implement + is intended
     fn add_assign(&mut self, rhs: Self) {
         // We reduce in-stream head-of-line blocking by queueing retransmits before other data for
         // STREAM and CRYPTO frames.
