@@ -544,6 +544,7 @@ impl PlainHeader {
                 return Err(PacketDecodeError::UnsupportedVersion {
                     source: src_cid,
                     destination: dst_cid,
+                    version,
                 });
             }
 
@@ -722,10 +723,11 @@ pub(crate) enum LongType {
 
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) enum PacketDecodeError {
-    #[error(display = "unsupported version")]
+    #[error(display = "unsupported version {:x}", version)]
     UnsupportedVersion {
         source: ConnectionId,
         destination: ConnectionId,
+        version: u32,
     },
     #[error(display = "invalid header: {}", _0)]
     InvalidHeader(&'static str),
