@@ -1,4 +1,4 @@
-#![allow(clippy::mutex_atomic)]
+#![allow(clippy::mutex_atomic, clippy::eval_order_dependence)]
 
 use std::{
     env,
