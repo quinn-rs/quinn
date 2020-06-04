@@ -1122,7 +1122,7 @@ where
             if !packet.retransmits.is_empty() {
                 // Remove retransmitted data from the old packet so we don't end up retransmitting
                 // it *again* even if the copy we're sending now gets acknowledged.
-                space.pending += mem::take(&mut packet.retransmits);
+                space.pending |= mem::take(&mut packet.retransmits);
                 return;
             }
         }
@@ -1178,7 +1178,7 @@ where
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
                 }
-                self.space_mut(pn_space).pending += info.retransmits;
+                self.space_mut(pn_space).pending |= info.retransmits;
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_ack_eliciting = old_bytes_in_flight != self.in_flight.bytes;
@@ -1782,7 +1782,7 @@ where
                         );
                         for (_, info) in zero_rtt {
                             self.in_flight.remove(&info);
-                            self.space_mut(SpaceId::Data).pending += info.retransmits;
+                            self.space_mut(SpaceId::Data).pending |= info.retransmits;
                         }
                         self.streams.retransmit_all_for_0rtt();
 

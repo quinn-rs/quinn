@@ -205,8 +205,8 @@ impl Default for Retransmits {
     }
 }
 
-impl ::std::ops::AddAssign for Retransmits {
-    fn add_assign(&mut self, rhs: Self) {
+impl ::std::ops::BitOrAssign for Retransmits {
+    fn bitor_assign(&mut self, rhs: Self) {
         // We reduce in-stream head-of-line blocking by queueing retransmits before other data for
         // STREAM and CRYPTO frames.
         self.max_data |= rhs.max_data;
@@ -231,7 +231,7 @@ impl ::std::iter::FromIterator<Retransmits> for Retransmits {
     {
         let mut result = Retransmits::default();
         for packet in iter {
-            result += packet;
+            result |= packet;
         }
         result
     }
