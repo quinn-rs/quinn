@@ -122,6 +122,7 @@ use crate::{
     data::{RecvData, SendData},
     frame::FrameDecoder,
     proto::{headers::Header, ErrorCode},
+    streams::Reset,
     Error, Settings,
 };
 
@@ -597,7 +598,18 @@ impl RecvRequest {
         headers: Header,
         body: RecvBody,
     ) -> Result<Request<RecvBody>, Error> {
-        let (method, uri, headers) = headers.into_request_parts()?;
+        let (method, uri, headers) = match headers.into_request_parts() {
+            Ok(x) => x,
+            Err(e) => {
+                body.into_inner().reset(ErrorCode::REQUEST_REJECTED);
+                let _ = self
+                    .send
+                    .take()
+                    .unwrap()
+                    .reset(ErrorCode::REQUEST_REJECTED.into());
+                return Err(e.into());
+            }
+        };
 
         if self.is_0rtt && !method.is_idempotent() {
             if let Some(r) = &mut self.recv {
