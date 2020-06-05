@@ -30,7 +30,7 @@ async fn main() -> Result<()> {
             .finish(),
     )?;
     let Opt { uri, ca } = Opt::from_args();
-    let socket_addr = (uri.host().unwrap(), uri.port_u16().unwrap_or(4433))
+    let socket_addr = (uri.host().unwrap(), uri.port_u16().unwrap_or(443))
         .to_socket_addrs()?
         .next()
         .expect("socket addr");
