@@ -1,6 +1,6 @@
 use bytes::{BufMut, Bytes};
 use futures::{future, StreamExt};
-use http::{request, Request, Response, StatusCode};
+use http::{request, Request, Response, StatusCode, Uri};
 use tokio::time::{delay_for, Duration};
 
 use crate::{
@@ -488,6 +488,72 @@ async fn server_accepts_host_as_authority() {
     .expect("send headers");
 
     assert_matches!(req.into_recv_data().await, Ok(_));
+    drop(conn);
+    assert_matches!(timeout_join(server_handle).await, Ok(()));
+}
+
+#[tokio::test]
+async fn client_needs_authority() {
+    let helper = Helper::new();
+    let incoming = helper.make_server();
+    let server_handle = tokio::spawn(async move { serve_one(incoming).await });
+    let conn = helper.make_connection().await;
+
+    let request = Request::get(Uri::builder().path_and_query("/").build().unwrap())
+        .body(Body::from(()))
+        .unwrap();
+
+    let (send_req, _) = conn.send_request(request);
+    assert_matches!(send_req.await, Err(Error::Header("Missing authority")));
+    drop(conn);
+    assert_matches!(timeout_join(server_handle).await, Ok(()));
+}
+
+#[tokio::test]
+async fn client_accepts_host_as_authority() {
+    // Mostly usefull for proxying from HTTP/1
+    let helper = Helper::new();
+    let incoming = helper.make_server();
+    let server_handle = tokio::spawn(async move { serve_one(incoming).await });
+    let conn = helper.make_connection().await;
+
+    let request = Request::get(Uri::builder().path_and_query("/").build().unwrap())
+        .header("host", "test.com")
+        .body(Body::from(()))
+        .unwrap();
+
+    let (send_req, recv_resp) = conn.send_request(request);
+    send_req.await.unwrap();
+    assert_matches!(recv_resp.await, Ok(_));
+    drop(conn);
+    let _ = timeout_join(server_handle).await;
+}
+
+#[tokio::test]
+async fn client_rejects_contradicted_authority() {
+    // Mostly usefull for proxying from HTTP/1
+    let helper = Helper::new();
+    let incoming = helper.make_server();
+    let server_handle = tokio::spawn(async move { serve_one(incoming).await });
+    let conn = helper.make_connection().await;
+
+    let request = Request::get(
+        Uri::builder()
+            .scheme("http")
+            .path_and_query("/")
+            .authority("authority.com")
+            .build()
+            .unwrap(),
+    )
+    .header("host", "host.com")
+    .body(Body::from(()))
+    .unwrap();
+
+    let (send_req, _) = conn.send_request(request);
+    assert_matches!(
+        send_req.await,
+        Err(Error::Header("Host and :authority are in contradiction"))
+    );
     drop(conn);
     assert_matches!(timeout_join(server_handle).await, Ok(()));
 }

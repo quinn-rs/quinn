@@ -76,7 +76,7 @@ use std::{
 };
 
 use futures::{channel::oneshot, ready, FutureExt};
-use http::{request, Request, Response};
+use http::{request, HeaderMap, Method, Request, Response, Uri};
 use http_body::Body as HttpBody;
 use pin_project::{pin_project, project};
 use quinn::{Certificate, Endpoint, OpenBi, RecvStream};
@@ -540,6 +540,31 @@ where
     }
 }
 
+#[project]
+impl<B> SendRequest<B, B::Data>
+where
+    B: HttpBody + 'static,
+    B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
+{
+    fn take(&mut self) -> Result<(Method, Uri, HeaderMap, B), Error> {
+        let (parts, body) = self.request.take().expect("no request").into_parts();
+        let request::Parts {
+            method,
+            uri,
+            headers,
+            ..
+        } = parts;
+
+        match (uri.authority(), headers.get("host")) {
+            (None, None) => Err(Error::Header("Missing authority")),
+            (Some(a), Some(h)) if a.as_str() != h => {
+                Err(Error::Header("Host and :authority are in contradiction"))
+            }
+            _ => Ok((method, uri, headers, body)),
+        }
+    }
+}
+
 impl<B> Future for SendRequest<B, B::Data>
 where
     B: HttpBody + 'static,
@@ -560,13 +585,7 @@ where
                             return Poll::Ready(Err(e.into()));
                         }
                         Ok((send, recv)) => {
-                            let (parts, body) = me.request.take().unwrap().into_parts();
-                            let request::Parts {
-                                method,
-                                uri,
-                                headers,
-                                ..
-                            } = parts;
+                            let (method, uri, headers, body) = me.take()?;
 
                             if recv.is_0rtt() && !method.is_idempotent() {
                                 let err = Error::internal("non-idempotent method tried on 0RTT");
