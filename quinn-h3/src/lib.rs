@@ -159,6 +159,9 @@ pub enum Error {
     /// The peer issued an HTTP/3 error code and an optional text description
     #[error(display = "Http error: {:?}", _0)]
     Http(HttpError, Option<String>),
+    /// Header validity error from a client call
+    #[error(display = "Header error: {:?}", _0)]
+    Header(&'static str),
     /// Polling the issued body data yielded an error
     #[error(display = "Polling body error: {}", _0)]
     Body(Box<dyn StdError + Send + Sync>),
