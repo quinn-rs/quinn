@@ -36,6 +36,8 @@ where
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
     pub(crate) sent_packets: BTreeMap<u64, SentPacket>,
+    /// Number of explicit congestion notification codepoints seen on incoming packets
+    pub(crate) ecn_counters: frame::EcnCounts,
     /// Recent ECN counters sent by the peer in ACK frames
     ///
     /// Updated (and inspected) whenever we receive an ACK with a new highest acked packet
@@ -79,6 +81,7 @@ where
             largest_acked_packet: None,
             largest_acked_packet_sent: now,
             sent_packets: BTreeMap::new(),
+            ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
 
             crypto_stream: Assembler::new(),

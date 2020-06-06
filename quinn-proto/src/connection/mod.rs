@@ -141,8 +141,6 @@ where
     //
     /// Summary statistics of packets that have been sent, but not yet acked or deemed lost
     in_flight: InFlight,
-    /// Explicit congestion notification (ECN) counters
-    ecn_counters: frame::EcnCounts,
     /// Whether the most recently received packet had an ECN codepoint set
     receiving_ecn: bool,
     /// Whether the remote address used to initiate the connection has been validated. Not used for
@@ -242,7 +240,6 @@ where
             pto_count: 0,
 
             in_flight: InFlight::new(),
-            ecn_counters: frame::EcnCounts::ZERO,
             receiving_ecn: false,
             remote_validated,
             total_recvd: 0,
@@ -1274,7 +1271,7 @@ where
         self.permit_idle_reset = true;
         self.receiving_ecn |= ecn.is_some();
         if let Some(x) = ecn {
-            self.ecn_counters += x;
+            self.space_mut(space_id).ecn_counters += x;
         }
 
         let packet = match packet {
@@ -2425,7 +2422,7 @@ where
             debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
             trace!("ACK");
             let ecn = if self.receiving_ecn {
-                Some(&self.ecn_counters)
+                Some(&space.ecn_counters)
             } else {
                 None
             };
