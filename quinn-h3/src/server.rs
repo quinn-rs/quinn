@@ -395,12 +395,11 @@ impl Connecting {
     /// your needs.
     ///
     /// # Example: support multiple protocols over quic
-    /// ```
+    /// ```no_run
     /// # use quinn;
     /// # async fn serve_h3(conn: quinn_h3::server::Connecting) { unimplemented!() }
     /// # async fn serve_tea(conn: quinn::Connecting) { unimplemented!() }
     /// # fn main() {
-    /// # return ();
     /// # use quinn_h3::{server, Settings};
     /// # tokio::runtime::Runtime::new().unwrap().block_on(async {
     /// use std::net::ToSocketAddrs;
