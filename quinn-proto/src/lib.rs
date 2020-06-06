@@ -42,7 +42,7 @@ pub use config::{ConfigError, TransportConfig};
 
 pub mod crypto;
 #[cfg(feature = "rustls")]
-pub use crypto::{rustls::HandshakeData, types::*};
+pub use crypto::types::*;
 
 mod frame;
 use crate::frame::Frame;
