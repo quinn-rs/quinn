@@ -456,11 +456,12 @@ fn alpn_success() {
         Some(Event::Connected)
     );
 
-    let ad = pair
+    let hd = pair
         .client_conn_mut(client_conn)
         .crypto_session()
-        .authentication_data();
-    assert_eq!(ad.protocol.unwrap(), &b"bar"[..]);
+        .handshake_data()
+        .unwrap();
+    assert_eq!(hd.protocol.unwrap(), &b"bar"[..]);
 }
 
 #[test]
@@ -491,12 +492,6 @@ fn client_alpn_unset() {
 
     let client_conn = pair.begin_connect(client_config());
     pair.drive();
-    // HACKITY HACK: The server *should* reject the connection immediately, but rustls doesn't yet
-    // make that practical.
-    assert_matches!(
-        pair.client_conn_mut(client_conn).poll(),
-        Some(Event::Connected)
-    );
     assert_matches!(
         pair.client_conn_mut(client_conn).poll(),
         Some(Event::ConnectionLost { reason: ConnectionError::ConnectionClosed(err) }) if err.error_code == TransportErrorCode::crypto(0x78)
