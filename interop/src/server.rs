@@ -102,7 +102,7 @@ async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> 
     println!("server listening on {}", addr);
     while let Some(connecting) = incoming.next().await {
         tokio::spawn(async move {
-            let proto = connecting.authentication_data().protocol.unwrap();
+            let proto = connecting.handshake_data().unwrap().protocol.unwrap();
             println!("server received connection");
 
             let result = match &proto[..] {
@@ -214,7 +214,8 @@ async fn hq_handle_connection(conn: quinn::Connecting) -> Result<()> {
         "connection",
         remote = %connection.remote_address(),
         protocol = %connection
-            .authentication_data()
+            .handshake_data()
+            .unwrap()
             .protocol
             .map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
     );

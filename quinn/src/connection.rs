@@ -102,17 +102,17 @@ where
         }
     }
 
-    /// Data conveyed by the peer during the handshake, including cryptographic identity
-    ///
-    /// Since the handshake is incomplete at this point, the returned data is likely to be
-    /// incomplete as well.
-    pub fn authentication_data(&self) -> S::AuthenticationData {
-        (self.conn.as_ref().unwrap().0)
+    /// Parameters negotiated during the handshake
+    pub fn handshake_data(&self) -> Option<S::HandshakeData> {
+        self.conn
+            .as_ref()
+            .unwrap()
+            .0
             .lock()
             .unwrap()
             .inner
             .crypto_session()
-            .authentication_data()
+            .handshake_data()
     }
 }
 
@@ -373,14 +373,24 @@ where
         self.0.lock().unwrap().inner.remote_address()
     }
 
-    /// Data conveyed by the peer during the handshake, including cryptographic identity
-    pub fn authentication_data(&self) -> S::AuthenticationData {
+    /// Parameters negotiated during the handshake
+    pub fn handshake_data(&self) -> Option<S::HandshakeData> {
         self.0
             .lock()
             .unwrap()
             .inner
             .crypto_session()
-            .authentication_data()
+            .handshake_data()
+    }
+
+    /// Cryptographic identity of the peer
+    pub fn peer_identity(&self) -> Option<S::Identity> {
+        self.0
+            .lock()
+            .unwrap()
+            .inner
+            .crypto_session()
+            .peer_identity()
     }
 
     // Update traffic keys spontaneously for testing purposes.

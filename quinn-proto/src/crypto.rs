@@ -29,8 +29,11 @@ pub(crate) mod types;
 
 /// A cryptographic session (commonly TLS)
 pub trait Session: Send + Sized {
-    /// Data conveyed by the peer during the handshake, including cryptographic identity
-    type AuthenticationData: Sized;
+    /// Parameters determined when the handshake begins, e.g. server name and/or application
+    /// protocol
+    type HandshakeData;
+    /// Cryptographic identity of the peer
+    type Identity: Sized;
     /// Type used to hold configuration for client sessions
     type ClientConfig: ClientConfig<Self>;
     /// Type used to sign various values
@@ -45,12 +48,13 @@ pub trait Session: Send + Sized {
     /// Create the initial set of keys given the client's initial destination ConnectionId
     fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys<Self>;
 
-    /// Get the data agreed upon during the cryptographic handshake
+    /// Get data negotiated during the handshake, if available
     ///
-    /// For TLS, this includes the peer's certificates, the negotiated protocol and the hostname
-    /// indicated by the client. Note that this data may be incomplete while the handshake is still
-    /// in progress; only call it after the connection is established to get the full data.
-    fn authentication_data(&self) -> Self::AuthenticationData;
+    /// Returns `None` until the connection emits `HandshakeDataReady`.
+    fn handshake_data(&self) -> Option<Self::HandshakeData>;
+
+    /// Get the peer's identity, if available
+    fn peer_identity(&self) -> Option<Self::Identity>;
 
     /// Get the 0-RTT keys if available (clients only)
     ///
@@ -72,7 +76,9 @@ pub trait Session: Send + Sized {
     /// This should be called with the contents of `CRYPTO` frames. If it returns `Ok`, the
     /// caller should call `write_handshake()` to check if the crypto protocol has anything
     /// to send to the peer.
-    fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TransportError>;
+    ///
+    /// On success, returns `true` iff `self.handshake_data()` has been populated.
+    fn read_handshake(&mut self, buf: &[u8]) -> Result<bool, TransportError>;
 
     /// The peer's QUIC transport parameters
     ///

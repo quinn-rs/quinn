@@ -25,6 +25,7 @@ use crate::{
 /// A rustls TLS session
 pub struct TlsSession {
     using_alpn: bool,
+    got_handshake_data: bool,
     inner: SessionKind,
 }
 
@@ -43,7 +44,8 @@ impl TlsSession {
 }
 
 impl crypto::Session for TlsSession {
-    type AuthenticationData = AuthenticationData;
+    type HandshakeData = HandshakeData;
+    type Identity = CertificateChain;
     type ClientConfig = Arc<rustls::ClientConfig>;
     type HmacKey = hmac::Key;
     type PacketKey = PacketKey;
@@ -70,15 +72,21 @@ impl crypto::Session for TlsSession {
         }
     }
 
-    fn authentication_data(&self) -> AuthenticationData {
-        AuthenticationData {
-            peer_certificates: self.get_peer_certificates().map(|v| v.into()),
-            protocol: self.get_alpn_protocol().map(|p| p.into()),
+    fn handshake_data(&self) -> Option<HandshakeData> {
+        if !self.got_handshake_data {
+            return None;
+        }
+        Some(HandshakeData {
+            protocol: self.get_alpn_protocol().map(|x| x.into()),
             server_name: match self.inner {
                 SessionKind::Client(_) => None,
-                SessionKind::Server(ref session) => session.get_sni_hostname().map(|s| s.into()),
+                SessionKind::Server(ref session) => session.get_sni_hostname().map(|x| x.into()),
             },
-        }
+        })
+    }
+
+    fn peer_identity(&self) -> Option<CertificateChain> {
+        self.get_peer_certificates().map(|v| v.into())
     }
 
     fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::PacketKey)> {
@@ -100,7 +108,7 @@ impl crypto::Session for TlsSession {
         }
     }
 
-    fn read_handshake(&mut self, buf: &[u8]) -> Result<(), TransportError> {
+    fn read_handshake(&mut self, buf: &[u8]) -> Result<bool, TransportError> {
         self.read_hs(buf).map_err(|e| {
             if let Some(alert) = self.get_alert() {
                 TransportError {
@@ -112,16 +120,28 @@ impl crypto::Session for TlsSession {
                 TransportError::PROTOCOL_VIOLATION(format!("TLS error: {}", e))
             }
         })?;
-        // Validate ALPN outcome. TODO: Do this as early as possible in the handshake once rustls
-        // makes it practical to.
-        if !self.is_handshaking() && self.using_alpn && self.get_alpn_protocol().is_none() {
-            return Err(TransportError {
-                code: TransportErrorCode::crypto(0x78),
-                frame: None,
-                reason: "ALPN negotiation failed".into(),
-            });
+        if !self.got_handshake_data {
+            // Hack around the lack of an explicit signal from rustls to reflect ClientHello being
+            // ready on incoming connections, or ALPN negotiation completing on outgoing
+            // connections.
+            let have_server_name = match self.inner {
+                SessionKind::Client(_) => false,
+                SessionKind::Server(ref session) => session.get_sni_hostname().is_some(),
+            };
+            if self.get_alpn_protocol().is_some() || have_server_name || !self.is_handshaking() {
+                self.got_handshake_data = true;
+                if self.using_alpn && self.get_alpn_protocol().is_none() {
+                    // rustls ignores total ALPN failure for compat, but QUIC gets a fresh start
+                    return Err(TransportError {
+                        code: TransportErrorCode::crypto(0x78),
+                        frame: None,
+                        reason: "ALPN negotiation failed".into(),
+                    });
+                }
+                return Ok(true);
+            }
         }
-        Ok(())
+        Ok(false)
     }
 
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError> {
@@ -226,22 +246,14 @@ const RETRY_INTEGRITY_NONCE: [u8; 12] = [
 ];
 
 /// Authentication data for (rustls) TLS session
-pub struct AuthenticationData {
-    /// The certificate chain used by the peer to authenticate
+pub struct HandshakeData {
+    /// The negotiated application protocol, if ALPN is in use
     ///
-    /// For clients, this is the certificate chain of the server. For servers, this is the
-    /// certificate chain of the client, if client authentication was completed.
-    ///
-    /// `None` if this data was requested from the session before this value is available.
-    ///
-    /// If this is `None`, and `Connection::is_handshaking` returns `false`, the connection
-    /// will have already been closed.
-    pub peer_certificates: Option<CertificateChain>,
-    /// The negotiated application protocol
+    /// Guaranteed to be set if a nonempty list of protocols was specified for this connection.
     pub protocol: Option<Vec<u8>>,
-    /// The server name specified by the client
+    /// The server name specified by the client, if any
     ///
-    /// `None` for outgoing connections.
+    /// Always `None` for outgoing connections
     pub server_name: Option<String>,
 }
 
@@ -279,6 +291,7 @@ impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
             .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?;
         Ok(TlsSession {
             using_alpn: !self.alpn_protocols.is_empty(),
+            got_handshake_data: false,
             inner: SessionKind::Client(rustls::ClientSession::new_quic(
                 self,
                 pki_server_name,
@@ -299,6 +312,7 @@ impl crypto::ServerConfig<TlsSession> for Arc<rustls::ServerConfig> {
     fn start_session(&self, params: &TransportParameters) -> TlsSession {
         TlsSession {
             using_alpn: !self.alpn_protocols.is_empty(),
+            got_handshake_data: false,
             inner: SessionKind::Server(rustls::ServerSession::new_quic(self, to_vec(params))),
         }
     }
