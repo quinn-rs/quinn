@@ -2438,8 +2438,7 @@ where
             } else {
                 self.config.congestion_controller_factory.build(now)
             },
-            // Try ECN on the new path if it's probably not the same as an old broken path.
-            sending_ecn: self.path.sending_ecn || !maybe_rebinding,
+            sending_ecn: true,
             challenge: Some(self.rng.gen()),
             challenge_pending: true,
         };
