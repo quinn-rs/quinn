@@ -197,14 +197,11 @@ where
             rem_cid,
             rem_handshake_cid: rem_cid,
             rem_cid_seq: 0,
-            path: PathData {
+            path: PathData::new(
                 remote,
-                rtt: RttEstimator::new(config.initial_rtt),
-                sending_ecn: true,
-                congestion: config.congestion_controller_factory.build(now),
-                challenge: None,
-                challenge_pending: false,
-            },
+                config.initial_rtt,
+                config.congestion_controller_factory.build(now),
+            ),
             prev_path: None,
             side,
             state,
@@ -3237,6 +3234,23 @@ struct PathData {
     challenge: Option<u64>,
     /// Whether a `PATH_CHALLENGE` must be sent on this path
     challenge_pending: bool,
+}
+
+impl PathData {
+    pub fn new(
+        remote: SocketAddr,
+        initial_rtt: Duration,
+        congestion: Box<dyn congestion::Controller>,
+    ) -> Self {
+        PathData {
+            remote,
+            rtt: RttEstimator::new(initial_rtt),
+            sending_ecn: true,
+            congestion,
+            challenge: None,
+            challenge_pending: false,
+        }
+    }
 }
 
 /// Errors that can arise when sending a datagram
