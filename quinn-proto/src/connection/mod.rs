@@ -2417,25 +2417,20 @@ where
     fn migrate(&mut self, now: Instant, remote: SocketAddr) {
         trace!(%remote, "migration initiated");
         // Reset rtt/congestion state for new path unless it looks like a NAT rebinding.
-        let maybe_rebinding = remote.is_ipv4() && remote.ip() == self.path.remote.ip();
         // Note that the congestion window will not grow until validation terminates. Helps mitigate
         // amplification attacks performed by spoofing source addresses.
-        let new_path = PathData {
-            remote,
-            rtt: if maybe_rebinding {
-                self.path.rtt
-            } else {
-                RttEstimator::new(self.config.initial_rtt)
-            },
-            congestion: if maybe_rebinding {
-                self.path.congestion.clone_box()
-            } else {
-                self.config.congestion_controller_factory.build(now)
-            },
-            sending_ecn: true,
-            challenge: Some(self.rng.gen()),
-            challenge_pending: true,
+        let mut new_path = if remote.is_ipv4() && remote.ip() == self.path.remote.ip() {
+            PathData::from_previous(remote, &self.path)
+        } else {
+            PathData::new(
+                remote,
+                self.config.initial_rtt,
+                self.config.congestion_controller_factory.build(now),
+            )
         };
+        new_path.challenge = Some(self.rng.gen());
+        new_path.challenge_pending = true;
+
         let mut prev = mem::replace(&mut self.path, new_path);
         // Don't clobber the original path if the previous one hasn't been validated yet
         if prev.challenge.is_none() {
@@ -3247,6 +3242,17 @@ impl PathData {
             rtt: RttEstimator::new(initial_rtt),
             sending_ecn: true,
             congestion,
+            challenge: None,
+            challenge_pending: false,
+        }
+    }
+
+    pub fn from_previous(remote: SocketAddr, prev: &PathData) -> Self {
+        PathData {
+            remote,
+            rtt: prev.rtt,
+            congestion: prev.congestion.clone_box(),
+            sending_ecn: true,
             challenge: None,
             challenge_pending: false,
         }
