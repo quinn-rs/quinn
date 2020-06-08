@@ -1273,9 +1273,8 @@ where
     }
 
     fn pto_time_and_space(&self, now: Instant) -> Option<(Instant, SpaceId)> {
-        let srtt = self.path.rtt.get();
         let backoff = 2u32.pow(self.pto_count.min(MAX_BACKOFF_EXPONENT));
-        let mut duration = (srtt + TIMER_GRANULARITY.max(4 * self.path.rtt.var)) * backoff;
+        let mut duration = self.path.rtt.pto_base() * backoff;
 
         if self.in_flight.is_empty() {
             debug_assert!(!self.peer_completed_address_validation());
@@ -1356,9 +1355,7 @@ where
 
     /// Probe Timeout
     fn pto(&self) -> Duration {
-        self.path.rtt.get()
-            + cmp::max(4 * self.path.rtt.var, TIMER_GRANULARITY)
-            + self.max_ack_delay()
+        self.path.rtt.pto_base() + self.max_ack_delay()
     }
 
     fn on_packet_authenticated(
@@ -3168,6 +3165,10 @@ impl RttEstimator {
     /// Get current smoothed RTT estimate
     fn get(&self) -> Duration {
         self.smoothed.unwrap_or(self.latest)
+    }
+
+    pub fn pto_base(&self) -> Duration {
+        self.get() + cmp::max(4 * self.var, TIMER_GRANULARITY)
     }
 }
 
