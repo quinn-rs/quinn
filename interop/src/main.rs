@@ -158,8 +158,10 @@ lazy_static! {
             .name("ngx_quic")
             .h3()
             .port(443),
-        Peer::new("quic.aiortc.org").name("aioquic"),
+        Peer::new("quic.aiortc.org").name("aioquic").h3().port(443),
         Peer::new("quic.rocks").name("gQuic"),
+        Peer::new("mew.org").name("Haskell QUIC").h3(),
+        Peer::new("quic.examp1e.net").name("quicly").hq(),
     ];
 }
 
