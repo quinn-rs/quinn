@@ -2,12 +2,14 @@ use std::{
     cmp,
     collections::{BTreeMap, HashSet, VecDeque},
     mem,
+    ops::{Index, IndexMut},
     time::Instant,
 };
 
 use super::assembler::Assembler;
 use crate::{
-    crypto, crypto::Keys, frame, range_set::RangeSet, shared::IssuedCid, StreamId, VarInt,
+    crypto, crypto::Keys, frame, packet::SpaceId, range_set::RangeSet, shared::IssuedCid, StreamId,
+    VarInt,
 };
 
 pub(crate) struct PacketSpace<S>
@@ -139,6 +141,19 @@ where
         // congestion check obvious.
         self.ecn_feedback = ecn;
         Ok(ce_increase != 0)
+    }
+}
+
+impl<S: crypto::Session> Index<SpaceId> for [PacketSpace<S>; 3] {
+    type Output = PacketSpace<S>;
+    fn index(&self, space: SpaceId) -> &PacketSpace<S> {
+        &self.as_ref()[space as usize]
+    }
+}
+
+impl<S: crypto::Session> IndexMut<SpaceId> for [PacketSpace<S>; 3] {
+    fn index_mut(&mut self, space: SpaceId) -> &mut PacketSpace<S> {
+        &mut self.as_mut()[space as usize]
     }
 }
 
