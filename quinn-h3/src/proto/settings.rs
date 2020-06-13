@@ -19,6 +19,15 @@ macro_rules! setting_identifiers {
 
 impl SettingId {
     const NONE: SettingId = SettingId(0);
+
+    fn is_supported(self) -> bool {
+        match self {
+            SettingId::MAX_HEADER_LIST_SIZE
+            | SettingId::QPACK_MAX_TABLE_CAPACITY
+            | SettingId::QPACK_MAX_BLOCKED_STREAMS => true,
+            _ => false,
+        }
+    }
 }
 
 setting_identifiers! {
@@ -192,11 +201,8 @@ impl SettingsFrame {
             return Err(Error::Exceeded);
         }
 
-        match id {
-            SettingId::MAX_HEADER_LIST_SIZE
-            | SettingId::QPACK_MAX_TABLE_CAPACITY
-            | SettingId::QPACK_MAX_BLOCKED_STREAMS => (),
-            _ => return Ok(()),
+        if !id.is_supported() {
+            return Ok(());
         }
 
         if self.entries[..self.len].iter().any(|(i, _)| *i == id) {
@@ -223,10 +229,13 @@ impl SettingsFrame {
                 // remains less than 2 * minimum-size varint
                 return Err(Error::Malformed);
             }
+
             let identifier = SettingId::decode(buf).map_err(|_| Error::Malformed)?;
             let value = buf.get_var().map_err(|_| Error::Malformed)?;
 
-            settings.insert(identifier, value)?;
+            if identifier.is_supported() {
+                settings.insert(identifier, value)?;
+            }
         }
         Ok(settings)
     }
@@ -269,6 +278,8 @@ impl From<InvalidValue> for Error {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::io::Cursor;
+
     #[test]
     fn settings_from_frame() {
         let mut frame = SettingsFrame::default();
@@ -316,16 +327,12 @@ mod tests {
     }
 
     #[test]
-    fn settings_frame_no_more_than_3() {
-        let mut frame = SettingsFrame::default();
-        frame.insert(SettingId::MAX_HEADER_LIST_SIZE, 0).unwrap();
-        frame
-            .insert(SettingId::QPACK_MAX_TABLE_CAPACITY, 1)
-            .unwrap();
-        frame
-            .insert(SettingId::QPACK_MAX_BLOCKED_STREAMS, 2)
-            .unwrap();
-        assert_matches!(frame.insert(SettingId::NONE, 42), Err(Error::Exceeded));
+    fn settings_frame_any_number_of_uknown() {
+        let mut buf = Cursor::new(&[26, 1, 6, 1, 27, 0, 1, 2, 28, 0, 7, 3, 29, 0]);
+        let settings = Settings::from_frame(SettingsFrame::decode(&mut buf).unwrap()).unwrap();
+        assert_eq!(settings.max_header_list_size(), 0x1);
+        assert_eq!(settings.qpack_max_table_capacity(), 0x2);
+        assert_eq!(settings.qpack_max_blocked_streams(), 0x3);
     }
 
     #[test]
