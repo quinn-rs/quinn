@@ -318,7 +318,7 @@ where
 
         // If we need to send a probe, make sure we have something to send.
         for space in SpaceId::iter() {
-            if self.space(space).loss_probes != 0 {
+            if self.spaces[space].loss_probes != 0 {
                 self.ensure_probe_queued(space);
             }
         }
@@ -338,12 +338,12 @@ where
             _ => (
                 SpaceId::iter()
                     .filter(|&x| {
-                        (self.space(x).crypto.is_some() && self.space(x).can_send())
+                        (self.spaces[x].crypto.is_some() && self.spaces[x].can_send())
                             || (x == SpaceId::Data
-                                && ((self.space(x).crypto.is_some() && self.can_send_1rtt())
+                                && ((self.spaces[x].crypto.is_some() && self.can_send_1rtt())
                                     || (self.zero_rtt_crypto.is_some()
                                         && self.side.is_client()
-                                        && (self.space(x).can_send() || self.can_send_1rtt()))))
+                                        && (self.spaces[x].can_send() || self.can_send_1rtt()))))
                     })
                     .collect(),
                 false,
@@ -361,12 +361,12 @@ where
         for space_id in spaces {
             let buf_start = buf.len();
             let mut ack_eliciting =
-                !self.space(space_id).pending.is_empty() || self.space(space_id).ping_pending;
+                !self.spaces[space_id].pending.is_empty() || self.spaces[space_id].ping_pending;
             if space_id == SpaceId::Data {
                 ack_eliciting |= self.can_send_1rtt();
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
                 if ack_eliciting
-                    && self.space(space_id).loss_probes == 0
+                    && self.spaces[space_id].loss_probes == 0
                     && self.congestion_blocked()
                 {
                     continue;
@@ -377,7 +377,7 @@ where
             // From here on, we've determined that a packet will definitely be sent.
             //
 
-            if self.spaces[SpaceId::Initial as usize].crypto.is_some()
+            if self.spaces[SpaceId::Initial].crypto.is_some()
                 && space_id == SpaceId::Handshake
                 && self.side.is_client()
             {
@@ -389,7 +389,7 @@ where
                 prev.update_unacked = false;
             }
 
-            let space = &mut self.spaces[space_id as usize];
+            let space = &mut self.spaces[space_id];
             space.loss_probes = space.loss_probes.saturating_sub(1);
             let exact_number = space.get_tx_number();
             let span = trace_span!("send", space = ?space_id, pn = exact_number);
@@ -494,7 +494,7 @@ where
                 Some(self.populate_packet(space_id, min_size, &mut buf))
             };
 
-            let space = &mut self.spaces[space_id as usize];
+            let space = &mut self.spaces[space_id];
             let (header_crypto, packet_crypto) = if let Some(ref crypto) = space.crypto {
                 (&crypto.header.local, &crypto.packet.local)
             } else if space_id == SpaceId::Data {
@@ -595,7 +595,7 @@ where
             }
             NewIdentifiers(ids) => {
                 ids.into_iter().rev().for_each(|frame| {
-                    self.space_mut(SpaceId::Data).pending.new_cids.push(frame);
+                    self.spaces[SpaceId::Data].pending.new_cids.push(frame);
                 });
             }
         }
@@ -737,7 +737,7 @@ where
         );
         // Only bother if there's data we haven't received yet
         if self.streams.stop(id)? {
-            let space = &mut self.spaces[SpaceId::Data as usize];
+            let space = &mut self.spaces[SpaceId::Data];
             space
                 .pending
                 .stop_sending
@@ -812,7 +812,7 @@ where
             - 1                 // flags byte
             - self.rem_cid.len()
             - 4                 // worst-case packet number size
-            - self.space(SpaceId::Data).crypto.as_ref().map_or_else(|| &self.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
+            - self.spaces[SpaceId::Data].crypto.as_ref().map_or_else(|| &self.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
             - Datagram::SIZE_BOUND;
         let limit = self.peer_params.max_datagram_frame_size?.into_inner();
         Some(limit.min(max_size as u64) as usize)
@@ -822,7 +822,7 @@ where
     ///
     /// Causes an ACK-eliciting packet to be transmitted.
     pub fn ping(&mut self) {
-        self.spaces[self.highest_space as usize].ping_pending = true;
+        self.spaces[self.highest_space].ping_pending = true;
     }
 
     #[doc(hidden)]
@@ -891,13 +891,13 @@ where
         } = packet;
 
         self.in_flight.insert(&packet);
-        self.space_mut(space)
+        self.spaces[space]
             .sent_packets
             .insert(packet_number, packet);
         self.reset_keep_alive(now);
         if size != 0 {
             if ack_eliciting {
-                self.space_mut(space).time_of_last_sent_ack_eliciting_packet = Some(now);
+                self.spaces[space].time_of_last_sent_ack_eliciting_packet = Some(now);
                 if self.permit_idle_reset {
                     self.reset_idle_timeout(now);
                 }
@@ -913,11 +913,11 @@ where
         space: SpaceId,
         ack: frame::Ack,
     ) -> Result<(), TransportError> {
-        if ack.largest >= self.space(space).next_packet_number {
+        if ack.largest >= self.spaces[space].next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
         let new_largest = {
-            let space = self.space_mut(space);
+            let space = &mut self.spaces[space];
             if space
                 .largest_acked_packet
                 .map_or(true, |pn| ack.largest > pn)
@@ -938,7 +938,12 @@ where
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
         let newly_acked = ack
             .iter()
-            .flat_map(|range| self.space(space).sent_packets.range(range).map(|(&n, _)| n))
+            .flat_map(|range| {
+                self.spaces[space]
+                    .sent_packets
+                    .range(range)
+                    .map(|(&n, _)| n)
+            })
             .collect::<Vec<_>>();
         if newly_acked.is_empty() {
             return Ok(());
@@ -946,8 +951,8 @@ where
 
         let mut ack_eliciting_acked = false;
         for &packet in &newly_acked {
-            if let Some(info) = self.space_mut(space).sent_packets.remove(&packet) {
-                self.space_mut(space).pending_acks.subtract(&info.acks);
+            if let Some(info) = self.spaces[space].sent_packets.remove(&packet) {
+                self.spaces[space].pending_acks.subtract(&info.acks);
                 ack_eliciting_acked |= info.ack_eliciting;
                 self.on_packet_acked(now, info);
             }
@@ -962,7 +967,7 @@ where
                     Duration::from_micros(ack.delay << self.peer_params.ack_delay_exponent),
                 )
             };
-            let rtt = instant_saturating_sub(now, self.space(space).largest_acked_packet_sent);
+            let rtt = instant_saturating_sub(now, self.spaces[space].largest_acked_packet_sent);
             self.path.rtt.update(ack_delay, rtt);
         }
 
@@ -981,7 +986,7 @@ where
                 // of newly acked packets that remains well-defined in the presence of arbitrary packet
                 // reordering.
                 if new_largest {
-                    let sent = self.space(space).largest_acked_packet_sent;
+                    let sent = self.spaces[space].largest_acked_packet_sent;
                     self.process_ecn(now, space, newly_acked.len() as u64, ecn, sent);
                 }
             } else {
@@ -1004,13 +1009,13 @@ where
         ecn: frame::EcnCounts,
         largest_sent_time: Instant,
     ) {
-        match self.space_mut(space).detect_ecn(newly_acked, ecn) {
+        match self.spaces[space].detect_ecn(newly_acked, ecn) {
             Err(e) => {
                 debug!("halting ECN due to verification failure: {}", e);
                 self.path.sending_ecn = false;
                 // Wipe out the existing value because it might be garbage and could interfere with
                 // future attempts to use ECN on new paths.
-                self.space_mut(space).ecn_feedback = frame::EcnCounts::ZERO;
+                self.spaces[space].ecn_feedback = frame::EcnCounts::ZERO;
             }
             Ok(false) => {}
             Ok(true) => {
@@ -1091,7 +1096,7 @@ where
             ?space,
             "PTO fired"
         );
-        self.space_mut(space).loss_probes = self.space(space).loss_probes.saturating_add(2);
+        self.spaces[space].loss_probes = self.spaces[space].loss_probes.saturating_add(2);
         self.pto_count = self.pto_count.saturating_add(1);
         self.set_loss_detection_timer();
     }
@@ -1110,7 +1115,7 @@ where
     /// anti-amplification deadlock and we just make something up.
     fn ensure_probe_queued(&mut self, space: SpaceId) {
         // Retransmit the data of the oldest in-flight packet
-        let space = self.space_mut(space);
+        let space = &mut self.spaces[space];
         if !space.pending.is_empty() {
             // There's real data to send here, no need to make something up
             return;
@@ -1140,10 +1145,10 @@ where
 
         // Packets sent before this time are deemed lost.
         let lost_send_time = now - loss_delay;
-        let largest_acked_packet = self.space(pn_space).largest_acked_packet.unwrap();
+        let largest_acked_packet = self.spaces[pn_space].largest_acked_packet.unwrap();
         let packet_threshold = self.config.packet_threshold as u64;
 
-        let space = self.space_mut(pn_space);
+        let space = &mut self.spaces[pn_space];
         space.loss_time = None;
         for (&packet, info) in space.sent_packets.range(0..largest_acked_packet) {
             if info.time_sent <= lost_send_time || largest_acked_packet >= packet + packet_threshold
@@ -1162,20 +1167,16 @@ where
         // OnPacketsLost
         if let Some(largest_lost) = lost_packets.last().cloned() {
             let old_bytes_in_flight = self.in_flight.bytes;
-            let largest_lost_sent = self.space(pn_space).sent_packets[&largest_lost].time_sent;
+            let largest_lost_sent = self.spaces[pn_space].sent_packets[&largest_lost].time_sent;
             self.lost_packets += lost_packets.len() as u64;
             trace!("packets lost: {:?}", lost_packets);
             for packet in &lost_packets {
-                let info = self
-                    .space_mut(pn_space)
-                    .sent_packets
-                    .remove(&packet)
-                    .unwrap(); // safe: lost_packets is populated just above
+                let info = self.spaces[pn_space].sent_packets.remove(&packet).unwrap(); // safe: lost_packets is populated just above
                 self.in_flight.remove(&info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
                 }
-                self.space_mut(pn_space).pending |= info.retransmits;
+                self.spaces[pn_space].pending |= info.retransmits;
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_ack_eliciting = old_bytes_in_flight != self.in_flight.bytes;
@@ -1183,7 +1184,7 @@ where
             // InPersistentCongestion: Determine if all packets in the time period before the newest
             // lost packet, including the edges, are marked lost
             let congestion_period = self.pto() * self.config.persistent_congestion_threshold;
-            let in_persistent_congestion = self.space(pn_space).largest_acked_packet_sent
+            let in_persistent_congestion = self.spaces[pn_space].largest_acked_packet_sent
                 < largest_lost_sent - congestion_period;
 
             if lost_ack_eliciting {
@@ -1202,7 +1203,7 @@ where
     ) -> Option<(Instant, SpaceId)> {
         SpaceId::iter()
             .filter(|&id| id != SpaceId::Data || !self.is_handshaking())
-            .filter_map(|id| get(self.space(id)).map(|x| (x, id)))
+            .filter_map(|id| get(&self.spaces[id]).map(|x| (x, id)))
             .min_by_key(|&(time, _)| time)
     }
 
@@ -1212,12 +1213,12 @@ where
         }
         // The server is guaranteed to have validated our address if any of our handshake or 1-RTT
         // packets are acknowledged or we've seen HANDSHAKE_DONE and discarded handshake keys.
-        self.space(SpaceId::Handshake)
+        self.spaces[SpaceId::Handshake]
             .largest_acked_packet
             .is_some()
-            || self.space(SpaceId::Data).largest_acked_packet.is_some()
-            || (self.space(SpaceId::Data).crypto.is_some()
-                && self.space(SpaceId::Handshake).crypto.is_none())
+            || self.spaces[SpaceId::Data].largest_acked_packet.is_some()
+            || (self.spaces[SpaceId::Data].crypto.is_some()
+                && self.spaces[SpaceId::Handshake].crypto.is_none())
     }
 
     fn set_loss_detection_timer(&mut self) {
@@ -1271,7 +1272,7 @@ where
         self.permit_idle_reset = true;
         self.receiving_ecn |= ecn.is_some();
         if let Some(x) = ecn {
-            self.space_mut(space_id).ecn_counters += x;
+            self.spaces[space_id].ecn_counters += x;
         }
 
         let packet = match packet {
@@ -1280,9 +1281,7 @@ where
         };
         trace!("authenticated");
         if self.side.is_server() {
-            if self.spaces[SpaceId::Initial as usize].crypto.is_some()
-                && space_id == SpaceId::Handshake
-            {
+            if self.spaces[SpaceId::Initial].crypto.is_some() && space_id == SpaceId::Handshake {
                 // A server stops sending and processing Initial packets when it receives its first Handshake packet.
                 self.discard_space(SpaceId::Initial);
             }
@@ -1291,7 +1290,7 @@ where
                 self.set_key_discard_timer(now)
             }
         }
-        let space = &mut self.spaces[space_id as usize];
+        let space = &mut self.spaces[space_id];
         space.pending_acks.insert_one(packet);
         if space.pending_acks.len() > MAX_ACK_BLOCKS {
             space.pending_acks.pop_min();
@@ -1337,7 +1336,7 @@ where
 
         self.streams.reset(stream_id)?;
 
-        self.spaces[SpaceId::Data as usize]
+        self.spaces[SpaceId::Data]
             .pending
             .reset_stream
             .push((stream_id, error_code));
@@ -1425,7 +1424,7 @@ where
             SpaceId::Handshake
         };
         let end = crypto.offset + crypto.data.len() as u64;
-        if space < expected && end > self.space(space).crypto_stream.bytes_read() {
+        if space < expected && end > self.spaces[space].crypto_stream.bytes_read() {
             warn!(
                 "received new {:?} CRYPTO data when expecting {:?}",
                 space, expected
@@ -1435,7 +1434,7 @@ where
             ));
         }
 
-        let space = &mut self.spaces[space as usize];
+        let space = &mut self.spaces[space];
         let max = space.crypto_stream.bytes_read() + self.config.crypto_buffer_size as u64;
         if end > max {
             return Err(TransportError::CRYPTO_BUFFER_EXCEEDED(""));
@@ -1474,29 +1473,26 @@ where
             if outgoing.is_empty() {
                 break;
             }
-            let offset = self.space_mut(space).crypto_offset;
+            let offset = self.spaces[space].crypto_offset;
             let outgoing = Bytes::from(outgoing);
             if let State::Handshake(ref mut state) = self.state {
                 if space == SpaceId::Initial && offset == 0 && self.side.is_client() {
                     state.client_hello = Some(outgoing.clone());
                 }
             }
-            self.space_mut(space).crypto_offset += outgoing.len() as u64;
+            self.spaces[space].crypto_offset += outgoing.len() as u64;
             trace!("wrote {} {:?} CRYPTO bytes", outgoing.len(), space);
-            self.space_mut(space)
-                .pending
-                .crypto
-                .push_back(frame::Crypto {
-                    offset,
-                    data: outgoing,
-                });
+            self.spaces[space].pending.crypto.push_back(frame::Crypto {
+                offset,
+                data: outgoing,
+            });
         }
     }
 
     /// Switch to stronger cryptography during handshake
     fn upgrade_crypto(&mut self, space: SpaceId, crypto: Keys<S>) {
         debug_assert!(
-            self.spaces[space as usize].crypto.is_none(),
+            self.spaces[space].crypto.is_none(),
             "already reached packet space {:?}",
             space
         );
@@ -1505,7 +1501,7 @@ where
             // Precompute the first key update
             self.next_crypto = Some(self.crypto.next_1rtt_keys());
         }
-        self.spaces[space as usize].crypto = Some(crypto);
+        self.spaces[space].crypto = Some(crypto);
         debug_assert!(space as usize > self.highest_space as usize);
         self.highest_space = space;
         if space == SpaceId::Data && self.side.is_client() {
@@ -1517,7 +1513,7 @@ where
     fn discard_space(&mut self, space: SpaceId) {
         debug_assert!(space != SpaceId::Data);
         trace!("discarding {:?} keys", space);
-        let space = self.space_mut(space);
+        let space = &mut self.spaces[space];
         space.crypto = None;
         space.time_of_last_sent_ack_eliciting_packet = None;
         space.loss_time = None;
@@ -1566,7 +1562,7 @@ where
                 return;
             }
         } else if let Some(space) = partial_decode.space() {
-            if let Some(ref crypto) = self.spaces[space as usize].crypto {
+            if let Some(ref crypto) = self.spaces[space].crypto {
                 Some(&crypto.header.remote)
             } else {
                 debug!(
@@ -1640,7 +1636,7 @@ where
                 };
                 let _guard = span.enter();
 
-                let is_duplicate = |n| self.space_mut(packet.header.space()).dedup.insert(n);
+                let is_duplicate = |n| self.spaces[packet.header.space()].dedup.insert(n);
                 if number.map_or(false, is_duplicate) {
                     if stateless_reset {
                         Err(ConnectionError::Reset)
@@ -1756,32 +1752,35 @@ where
                         self.rem_cid = rem_cid;
                         self.rem_handshake_cid = rem_cid;
 
-                        let space = self.space_mut(SpaceId::Initial);
+                        let space = &mut self.spaces[SpaceId::Initial];
                         if let Some(info) = space.sent_packets.remove(&0) {
                             space.pending_acks.subtract(&info.acks);
                             self.on_packet_acked(now, info);
                         };
 
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
-                        self.spaces[0] = PacketSpace {
+                        self.spaces[SpaceId::Initial] = PacketSpace {
                             crypto: Some(S::initial_keys(&rem_cid, self.side)),
-                            next_packet_number: self.spaces[0].next_packet_number,
+                            next_packet_number: self.spaces[SpaceId::Initial].next_packet_number,
                             crypto_offset: client_hello.len() as u64,
                             ..PacketSpace::new(now)
                         };
-                        self.spaces[0].pending.crypto.push_back(frame::Crypto {
-                            offset: 0,
-                            data: client_hello,
-                        });
+                        self.spaces[SpaceId::Initial]
+                            .pending
+                            .crypto
+                            .push_back(frame::Crypto {
+                                offset: 0,
+                                data: client_hello,
+                            });
 
                         // Retransmit all 0-RTT data
                         let zero_rtt = mem::replace(
-                            &mut self.space_mut(SpaceId::Data).sent_packets,
+                            &mut self.spaces[SpaceId::Data].sent_packets,
                             BTreeMap::new(),
                         );
                         for (_, info) in zero_rtt {
                             self.in_flight.remove(&info);
-                            self.space_mut(SpaceId::Data).pending |= info.retransmits;
+                            self.spaces[SpaceId::Data].pending |= info.retransmits;
                         }
                         self.streams.retransmit_all_for_0rtt();
 
@@ -1852,7 +1851,7 @@ where
                             self.issue_cids();
                         } else {
                             // Server-only
-                            self.space_mut(SpaceId::Data).pending.handshake_done = true;
+                            self.spaces[SpaceId::Data].pending.handshake_done = true;
                             self.discard_space(SpaceId::Handshake);
                         }
 
@@ -1972,7 +1971,7 @@ where
             match frame {
                 Frame::Ack(_) | Frame::Padding | Frame::Close(Close::Connection(_)) => {}
                 _ => {
-                    self.space_mut(packet.header.space()).permit_ack_only = true;
+                    self.spaces[packet.header.space()].permit_ack_only = true;
                 }
             }
             // Process frames
@@ -2014,7 +2013,7 @@ where
         number: u64,
         payload: Bytes,
     ) -> Result<(), TransportError> {
-        let is_0rtt = self.space(SpaceId::Data).crypto.is_none();
+        let is_0rtt = self.spaces[SpaceId::Data].crypto.is_none();
         let mut is_probing_packet = true;
         let mut close = None;
         for frame in frame::Iter::new(payload) {
@@ -2039,7 +2038,7 @@ where
             match frame {
                 Frame::Ack(_) | Frame::Padding | Frame::Close(_) => {}
                 _ => {
-                    self.space_mut(SpaceId::Data).permit_ack_only = true;
+                    self.spaces[SpaceId::Data].permit_ack_only = true;
                 }
             }
             // Check whether this could be a probing packet
@@ -2107,7 +2106,7 @@ where
                 }
                 Frame::ResetStream(frame) => {
                     if self.streams.received_reset(frame)? {
-                        self.space_mut(SpaceId::Data).pending.max_data = true;
+                        self.spaces[SpaceId::Data].pending.max_data = true;
                     }
                 }
                 Frame::DataBlocked { offset } => {
@@ -2186,7 +2185,7 @@ where
                     }
 
                     let retired = self.rem_cids.retire_prior_to(frame.retire_prior_to);
-                    self.space_mut(SpaceId::Data)
+                    self.spaces[SpaceId::Data]
                         .pending
                         .retire_cids
                         .extend(retired);
@@ -2205,7 +2204,7 @@ where
                         }
                         Err(InsertError::Retired) => {
                             trace!("discarding already-retired");
-                            self.space_mut(SpaceId::Data)
+                            self.spaces[SpaceId::Data]
                                 .pending
                                 .retire_cids
                                 .push(frame.sequence);
@@ -2263,7 +2262,7 @@ where
                             "client sent HANDSHAKE_DONE",
                         ));
                     }
-                    if self.space(SpaceId::Handshake).crypto.is_some() {
+                    if self.spaces[SpaceId::Handshake].crypto.is_some() {
                         self.discard_space(SpaceId::Handshake);
                     }
                 }
@@ -2278,7 +2277,7 @@ where
 
         if remote != self.path.remote
             && !is_probing_packet
-            && number == self.space(SpaceId::Data).rx_packet
+            && number == self.spaces[SpaceId::Data].rx_packet
         {
             debug_assert!(
                 self.server_config
@@ -2342,7 +2341,7 @@ where
         trace!("switching to remote CID {}: {}", cid.sequence, cid.id);
 
         // Retire the current remote CID and any CIDs we had to skip.
-        let retire_cids = &mut self.spaces[SpaceId::Data as usize].pending.retire_cids;
+        let retire_cids = &mut self.spaces[SpaceId::Data].pending.retire_cids;
         retire_cids.push(self.rem_cid_seq);
         retire_cids.extend(retired);
 
@@ -2385,7 +2384,7 @@ where
         buf: &mut Vec<u8>,
     ) -> SentFrames {
         let mut sent = SentFrames::default();
-        let space = &mut self.spaces[space_id as usize];
+        let space = &mut self.spaces[space_id];
         let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
         let tag_len = space
             .crypto
@@ -2607,7 +2606,7 @@ where
 
     /// Permit an additional remote `ty` stream.
     fn alloc_remote_stream(&mut self, dir: Dir) {
-        let space = &mut self.spaces[SpaceId::Data as usize];
+        let space = &mut self.spaces[SpaceId::Data];
         match dir {
             Dir::Bi => {
                 space.pending.max_bi_stream_id = true;
@@ -2620,7 +2619,7 @@ where
     }
 
     fn add_read_credits(&mut self, id: StreamId, more: bool) {
-        let space = &mut self.spaces[SpaceId::Data as usize];
+        let space = &mut self.spaces[SpaceId::Data];
         space.pending.max_data = true;
         if more {
             // Only bother issuing stream credit if the peer wants to send more
@@ -2643,7 +2642,7 @@ where
             return Ok(None);
         }
         let space = packet.header.space();
-        let rx_packet = self.space(space).rx_packet;
+        let rx_packet = self.spaces[space].rx_packet;
         let number = packet.header.number().ok_or(None)?.expand(rx_packet + 1);
         let key_phase = packet.header.key_phase();
 
@@ -2651,12 +2650,7 @@ where
         let crypto = if packet.header.is_0rtt() {
             &self.zero_rtt_crypto.as_ref().unwrap().packet
         } else if key_phase == self.key_phase || space != SpaceId::Data {
-            &self.spaces[space as usize]
-                .crypto
-                .as_mut()
-                .unwrap()
-                .packet
-                .remote
+            &self.spaces[space].crypto.as_mut().unwrap().packet.remote
         } else if let Some(prev) = self.prev_crypto.as_ref().and_then(|crypto| {
             // If this packet comes prior to acknowledgment of the key update by the peer,
             if crypto.end_packet.map_or(true, |(pn, _)| number < pn) {
@@ -2723,7 +2717,7 @@ where
         // `prev_crypto`.
         let new = self.crypto.next_1rtt_keys();
         let old = mem::replace(
-            &mut self.spaces[SpaceId::Data as usize]
+            &mut self.spaces[SpaceId::Data]
                 .crypto
                 .as_mut()
                 .unwrap() // safe because update_keys() can only be triggered by short packets
@@ -2781,14 +2775,6 @@ where
         Duration::from_micros(self.peer_params.max_ack_delay * 1000)
     }
 
-    fn space(&self, id: SpaceId) -> &PacketSpace<S> {
-        &self.spaces[id as usize]
-    }
-
-    fn space_mut(&mut self, id: SpaceId) -> &mut PacketSpace<S> {
-        &mut self.spaces[id as usize]
-    }
-
     /// Whether we have 1-RTT data to send
     ///
     /// See also `self.space(SpaceId::Data).can_send()`
@@ -2806,10 +2792,10 @@ where
         self.accepted_0rtt = false;
         self.streams.zero_rtt_rejected();
         // Discard already-queued frames
-        self.space_mut(SpaceId::Data).pending = Retransmits::default();
+        self.spaces[SpaceId::Data].pending = Retransmits::default();
         // Discard 0-RTT packets
         let sent_packets = mem::replace(
-            &mut self.space_mut(SpaceId::Data).sent_packets,
+            &mut self.spaces[SpaceId::Data].sent_packets,
             BTreeMap::new(),
         );
         for (_, packet) in sent_packets {
