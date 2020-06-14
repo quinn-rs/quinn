@@ -8,7 +8,7 @@ use std::{
 use bytes::BufMut;
 use futures::{future::FutureExt, ready, Stream as _};
 use http_body::Body as HttpBody;
-use pin_project::{pin_project, project};
+use pin_project::pin_project;
 use quinn::{SendStream, VarInt};
 use quinn_proto::StreamId;
 
@@ -30,7 +30,7 @@ use crate::{
 /// This is yielded by [`SendRequest`] and [`SendResponse`]. It will encode and send
 /// the headers, then send the body if any data is polled from [`HttpBody::poll_data()`].
 /// It also encodes and sends the trailer a similar way, if any.
-#[pin_project]
+#[pin_project(project = SendDataProj)]
 pub struct SendData<B, P> {
     headers: Option<Header>,
     #[pin]
@@ -43,7 +43,7 @@ pub struct SendData<B, P> {
     finish: bool,
 }
 
-#[pin_project]
+#[pin_project(project = SendDataStateProj)]
 enum SendDataState<P> {
     Initial,
     Headers(WriteFrame<HeadersFrame>),
@@ -102,23 +102,21 @@ where
 {
     type Output = Result<(), Error>;
 
-    #[project]
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let mut me = self.project();
         loop {
-            #[project]
             match &mut me.state.as_mut().project() {
-                SendDataState::Initial => {
+                SendDataStateProj::Initial => {
                     // This initial computation is done here to report its failability to Future::Output.
                     let header = me.headers.take().expect("headers");
                     let write = write_headers_frame(header, *me.stream_id, &me.conn)?;
                     me.state.set(SendDataState::Headers(write));
                 }
-                SendDataState::Headers(headers) => {
+                SendDataStateProj::Headers(headers) => {
                     ready!(headers.poll_send(&mut *me.send, cx))?;
                     me.state.set(SendDataState::PollBody);
                 }
-                SendDataState::PollBody => {
+                SendDataStateProj::PollBody => {
                     let next = match ready!(Pin::new(&mut me.body).poll_data(cx)) {
                         None => SendDataState::PollTrailers,
                         Some(Err(e)) => return Poll::Ready(Err(Error::body(e.into()))),
@@ -128,11 +126,11 @@ where
                     };
                     me.state.set(next);
                 }
-                SendDataState::Write(write) => {
+                SendDataStateProj::Write(write) => {
                     ready!(write.poll_send(&mut *me.send, cx))?;
                     me.state.set(SendDataState::PollBody);
                 }
-                SendDataState::PollTrailers => {
+                SendDataStateProj::PollTrailers => {
                     match ready!(Pin::new(&mut me.body).poll_trailers(cx))
                         .map_err(|_| todo!())
                         .unwrap()
@@ -145,11 +143,11 @@ where
                         }
                     }
                 }
-                SendDataState::Trailers(trailers) => {
+                SendDataStateProj::Trailers(trailers) => {
                     ready!(trailers.poll_send(&mut *me.send, cx))?;
                     me.state.set(SendDataState::Closing);
                 }
-                SendDataState::Closing => {
+                SendDataStateProj::Closing => {
                     ready!(Pin::new(me.send).poll_finish(cx))?;
                     if *me.finish {
                         let mut conn = me.conn.h3.lock().unwrap();
@@ -157,7 +155,7 @@ where
                     }
                     return Poll::Ready(Ok(()));
                 }
-                SendDataState::Finished => return Poll::Ready(Ok(())),
+                SendDataStateProj::Finished => return Poll::Ready(Ok(())),
             };
         }
     }

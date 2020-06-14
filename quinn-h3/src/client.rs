@@ -78,7 +78,7 @@ use std::{
 use futures::{channel::oneshot, ready, FutureExt};
 use http::{request, HeaderMap, Method, Request, Response, Uri};
 use http_body::Body as HttpBody;
-use pin_project::{pin_project, project};
+use pin_project::pin_project;
 use quinn::{Certificate, Endpoint, OpenBi, RecvStream};
 use quinn_proto::{Side, StreamId};
 use tracing::trace;
@@ -500,7 +500,7 @@ impl Drop for Connection {
 }
 
 /// Send a request
-#[pin_project]
+#[pin_project(project = SendRequestProj)]
 pub struct SendRequest<B, D> {
     conn: ConnectionRef,
     request: Option<Request<B>>,
@@ -540,8 +540,7 @@ where
     }
 }
 
-#[project]
-impl<B> SendRequest<B, B::Data>
+impl<B> SendRequestProj<'_, B, B::Data>
 where
     B: HttpBody + 'static,
     B::Error: Into<Box<dyn StdError + Send + Sync>> + Send + Sync,
@@ -572,13 +571,11 @@ where
 {
     type Output = Result<(), Error>;
 
-    #[project]
     fn poll(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut me = self.project();
         loop {
-            #[project]
             match &mut me.state.as_mut().project() {
-                SendRequestState::Opening => {
+                SendRequestStateProj::Opening => {
                     match ready!(me.open.poll_unpin(cx)) {
                         Err(e) => {
                             me.chan.take().unwrap(); // drop it so RecvResponse fails
@@ -605,7 +602,7 @@ where
                         }
                     }
                 }
-                SendRequestState::Sending(send) => {
+                SendRequestStateProj::Sending(send) => {
                     ready!(Pin::new(send).poll(cx))?;
                     return Poll::Ready(Ok(()));
                 }
@@ -614,7 +611,7 @@ where
     }
 }
 
-#[pin_project]
+#[pin_project(project = SendRequestStateProj)]
 enum SendRequestState<B, D> {
     Opening,
     Sending(#[pin] SendData<B, D>),
