@@ -73,7 +73,7 @@ async fn run(options: Opt) -> Result<()> {
         client_config
             .add_certificate_authority(quinn::Certificate::from_der(&fs::read(&ca_path)?)?)?;
     } else {
-        let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
+        let dirs = directories_next::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
         match fs::read(dirs.data_local_dir().join("cert.der")) {
             Ok(cert) => {
                 client_config.add_certificate_authority(quinn::Certificate::from_der(&cert)?)?;
