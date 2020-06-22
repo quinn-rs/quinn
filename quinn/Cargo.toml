@@ -42,7 +42,7 @@ webpki = { version = "0.21", optional = true }
 anyhow = "1.0.22"
 crc = "1.8.1"
 bencher = "0.1.5"
-directories = "2.0.0"
+directories = "3.0.0"
 rand = "0.7"
 rcgen = "0.8"
 structopt = "0.3.0"
