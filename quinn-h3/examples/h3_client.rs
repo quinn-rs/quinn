@@ -81,7 +81,7 @@ fn read_cert(ca: &Option<PathBuf>) -> Option<quinn::Certificate> {
         return Some(quinn::Certificate::from_der(&fs::read(&ca_path).ok()?).ok()?);
     }
 
-    let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
+    let dirs = directories_next::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
     match fs::read(dirs.data_local_dir().join("cert.der")) {
         Ok(cert) => return Some(quinn::Certificate::from_der(&cert).ok()?),
         Err(ref e) if e.kind() == io::ErrorKind::NotFound => {

@@ -106,7 +106,7 @@ pub fn build_certs(
         let cert_chain = quinn::CertificateChain::from_certs(vec![cert]);
         Ok((cert_chain, key))
     } else {
-        let dirs = directories::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
+        let dirs = directories_next::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
         let path = dirs.data_local_dir();
         let cert_path = path.join("cert.der");
         let key_path = path.join("key.der");
