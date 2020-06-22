@@ -26,7 +26,7 @@ native-certs = ["rustls-native-certs"]
 
 [dependencies]
 bytes = "0.5.2"
-ct-logs = { version = "0.6", optional = true }
+ct-logs = { version = "0.7", optional = true }
 err-derive = "0.2.3"
 rand = "0.7"
 ring = { version = "0.16.7", optional = true }
