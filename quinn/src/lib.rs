@@ -60,7 +60,7 @@ mod udp;
 
 pub use proto::{
     crypto, ApplicationClose, Certificate, CertificateChain, ConnectError, ConnectionClose,
-    ConnectionError, ParseError, PrivateKey, Transmit, TransportConfig, VarInt,
+    ConnectionError, ParseError, PrivateKey, StreamId, Transmit, TransportConfig, VarInt,
 };
 
 pub use crate::builders::EndpointError;
