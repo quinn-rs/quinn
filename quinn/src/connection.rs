@@ -409,6 +409,14 @@ where
             .peer_identity()
     }
 
+    /// A stable identifier for this connection
+    ///
+    /// Peer addresses and connection IDs can change, but this value will remain
+    /// fixed for the lifetime of the connection.
+    pub fn stable_id(&self) -> usize {
+        self.0.stable_id()
+    }
+
     // Update traffic keys spontaneously for testing purposes.
     #[doc(hidden)]
     pub fn force_key_update(&self) {
@@ -621,6 +629,10 @@ where
             error: None,
             ref_count: 0,
         })))
+    }
+
+    fn stable_id(&self) -> usize {
+        &*self.0 as *const _ as usize
     }
 }
 
