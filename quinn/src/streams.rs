@@ -173,7 +173,7 @@ where
         }
     }
 
-    #[doc(hidden)]
+    /// Get the identity of this stream
     pub fn id(&self) -> StreamId {
         self.stream
     }
@@ -459,6 +459,11 @@ where
     /// level. Because read data is subject to replay attacks.
     pub fn is_0rtt(&self) -> bool {
         self.is_0rtt
+    }
+
+    /// Get the identity of this stream
+    pub fn id(&self) -> StreamId {
+        self.stream
     }
 }
 
