@@ -62,6 +62,8 @@ where
     /// Number of tail loss probes to send
     pub(crate) loss_probes: u32,
     pub(crate) ping_pending: bool,
+    /// Number of congestion control "in flight" bytes
+    pub(crate) in_flight: u64,
 }
 
 impl<S> PacketSpace<S>
@@ -93,6 +95,7 @@ where
             loss_time: None,
             loss_probes: 0,
             ping_pending: false,
+            in_flight: 0,
         }
     }
 
@@ -141,6 +144,11 @@ where
         // congestion check obvious.
         self.ecn_feedback = ecn;
         Ok(ce_increase != 0)
+    }
+
+    pub(crate) fn sent(&mut self, number: u64, packet: SentPacket) {
+        self.in_flight += u64::from(packet.size);
+        self.sent_packets.insert(number, packet);
     }
 }
 
