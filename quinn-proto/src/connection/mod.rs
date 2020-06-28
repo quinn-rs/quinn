@@ -1491,8 +1491,15 @@ where
         } else if self.highest_space == SpaceId::Initial {
             SpaceId::Initial
         } else {
+            // On the server, self.highest_space can be Data after receiving the client's first
+            // flight, but we expect Handshake CRYPTO until the handshake is complete.
             SpaceId::Handshake
         };
+        // We can't decrypt Handshake packets when highest_space is Initial, CRYPTO frames in 0-RTT
+        // packets are illegal, and we don't process 1-RTT packets until the handshake is
+        // complete. Therefore, we will never see CRYPTO data from a later-than-expected space.
+        debug_assert!(space <= expected, "received out-of-order CRYPTO data");
+
         let end = crypto.offset + crypto.data.len() as u64;
         if space < expected && end > self.spaces[space].crypto_stream.bytes_read() {
             warn!(
@@ -1518,7 +1525,7 @@ where
             if n == 0 {
                 return Ok(());
             }
-            trace!("read {} CRYPTO bytes", n);
+            trace!("consumed {} CRYPTO bytes", n);
             if self.crypto.read_handshake(&buf[..n])? {
                 self.events.push_back(Event::HandshakeDataReady);
             }
