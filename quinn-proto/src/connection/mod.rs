@@ -967,7 +967,7 @@ where
         self.reset_keep_alive(now);
         if size != 0 {
             if ack_eliciting {
-                self.spaces[space].time_of_last_sent_ack_eliciting_packet = Some(now);
+                self.spaces[space].time_of_last_ack_eliciting_packet = Some(now);
                 if self.permit_idle_reset {
                     self.reset_idle_timeout(now);
                 }
@@ -1044,7 +1044,7 @@ where
         // Must be called before crypto/pto_count are clobbered
         self.detect_lost_packets(now, space);
 
-        if self.peer_not_awaiting_address_validation() {
+        if self.peer_completed_address_validation() {
             self.pto_count = 0;
         }
 
@@ -1149,7 +1149,7 @@ where
 
         // Send two probes to improve odds of getting through under lossy conditions
         let space = self
-            .earliest_time_and_space(|x| x.time_of_last_sent_ack_eliciting_packet)
+            .earliest_time_and_space(|x| x.time_of_last_ack_eliciting_packet)
             .map(|(_, space)| space)
             .unwrap_or_else(|| {
                 // PTO expired with no sent ack-eliciting packets! This should only happen on a
@@ -1277,7 +1277,7 @@ where
             .min_by_key(|&(time, _)| time)
     }
 
-    fn peer_not_awaiting_address_validation(&self) -> bool {
+    fn peer_completed_address_validation(&self) -> bool {
         if self.side.is_server() {
             return true;
         }
@@ -1300,14 +1300,14 @@ where
 
         // Don't arm timer if there are no ack-eliciting packets
         // in flight and the handshake is complete.
-        if self.in_flight.ack_eliciting == 0 && self.peer_not_awaiting_address_validation() {
+        if self.in_flight.ack_eliciting == 0 && self.peer_completed_address_validation() {
             self.timers.stop(Timer::LossDetection);
             return;
         }
 
         // Calculate PTO duration
         if let Some((sent_time, _)) =
-            self.earliest_time_and_space(|x| x.time_of_last_sent_ack_eliciting_packet)
+            self.earliest_time_and_space(|x| x.time_of_last_ack_eliciting_packet)
         {
             let timeout = self.pto() * 2u32.pow(cmp::min(self.pto_count, MAX_BACKOFF_EXPONENT));
             self.timers.set(Timer::LossDetection, sent_time + timeout);
@@ -1592,7 +1592,7 @@ where
         trace!("discarding {:?} keys", space);
         let space = &mut self.spaces[space];
         space.crypto = None;
-        space.time_of_last_sent_ack_eliciting_packet = None;
+        space.time_of_last_ack_eliciting_packet = None;
         space.loss_time = None;
         let sent_packets = mem::replace(&mut space.sent_packets, BTreeMap::new());
         for (_, packet) in sent_packets.into_iter() {
