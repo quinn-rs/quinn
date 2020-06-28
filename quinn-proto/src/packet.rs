@@ -836,8 +836,8 @@ mod tests {
         assert_eq!(
             buf[..],
             hex!(
-                "c7ff00001c0806b858ec6f80452b0000402150
-                 540018670adb60eab8efbd35425c2d9b4bc7d1df5d8f2b894b9c49b026165097"
+                "ccff00001d0806b858ec6f80452b00004021b1
+                 b35cedb8ac6906c20c52b09ad2719228310d8f8a51746a75b853060a4e3c0e6e"
             )[..]
         );
 
@@ -846,7 +846,7 @@ mod tests {
         let mut packet = decode.finish(Some(&server.header.remote)).unwrap();
         assert_eq!(
             packet.header_data[..],
-            hex!("c0ff00001c0806b858ec6f80452b0000402100")[..]
+            hex!("c0ff00001d0806b858ec6f80452b0000402100")[..]
         );
         server
             .packet
