@@ -54,7 +54,7 @@ where
     pub(crate) crypto_offset: u64,
 
     /// The time the most recently sent retransmittable packet was sent.
-    pub(crate) time_of_last_sent_ack_eliciting_packet: Option<Instant>,
+    pub(crate) time_of_last_ack_eliciting_packet: Option<Instant>,
     /// The time at which the earliest sent packet in this space will be considered lost based on
     /// exceeding the reordering window in time. Only set for packets numbered prior to a packet
     /// that has been acknowledged.
@@ -89,7 +89,7 @@ where
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
 
-            time_of_last_sent_ack_eliciting_packet: None,
+            time_of_last_ack_eliciting_packet: None,
             loss_time: None,
             loss_probes: 0,
             ping_pending: false,
