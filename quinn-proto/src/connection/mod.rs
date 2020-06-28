@@ -961,9 +961,7 @@ where
         } = packet;
 
         self.in_flight.insert(&packet);
-        self.spaces[space]
-            .sent_packets
-            .insert(packet_number, packet);
+        self.spaces[space].sent(packet_number, packet);
         self.reset_keep_alive(now);
         if size != 0 {
             if ack_eliciting {
@@ -1024,7 +1022,7 @@ where
             if let Some(info) = self.spaces[space].sent_packets.remove(&packet) {
                 self.spaces[space].pending_acks.subtract(&info.acks);
                 ack_eliciting_acked |= info.ack_eliciting;
-                self.on_packet_acked(now, info);
+                self.on_packet_acked(now, space, info);
             }
         }
 
@@ -1098,9 +1096,9 @@ where
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
-    fn on_packet_acked(&mut self, now: Instant, info: SentPacket) {
+    fn on_packet_acked(&mut self, now: Instant, space: SpaceId, info: SentPacket) {
         let was_congestion_blocked = self.congestion_blocked();
-        self.in_flight.remove(&info);
+        self.remove_in_flight(space, &info);
         if info.ack_eliciting {
             // Congestion control
             // Ignore ACKs that might be from an older path
@@ -1242,7 +1240,7 @@ where
             trace!("packets lost: {:?}", lost_packets);
             for packet in &lost_packets {
                 let info = self.spaces[pn_space].sent_packets.remove(&packet).unwrap(); // safe: lost_packets is populated just above
-                self.in_flight.remove(&info);
+                self.remove_in_flight(pn_space, &info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
                 }
@@ -1587,16 +1585,16 @@ where
         }
     }
 
-    fn discard_space(&mut self, space: SpaceId) {
-        debug_assert!(space != SpaceId::Data);
-        trace!("discarding {:?} keys", space);
-        let space = &mut self.spaces[space];
+    fn discard_space(&mut self, space_id: SpaceId) {
+        debug_assert!(space_id != SpaceId::Data);
+        trace!("discarding {:?} keys", space_id);
+        let space = &mut self.spaces[space_id];
         space.crypto = None;
         space.time_of_last_ack_eliciting_packet = None;
         space.loss_time = None;
         let sent_packets = mem::replace(&mut space.sent_packets, BTreeMap::new());
         for (_, packet) in sent_packets.into_iter() {
-            self.in_flight.remove(&packet);
+            self.remove_in_flight(space_id, &packet);
         }
         self.set_loss_detection_timer()
     }
@@ -1832,7 +1830,7 @@ where
                         let space = &mut self.spaces[SpaceId::Initial];
                         if let Some(info) = space.sent_packets.remove(&0) {
                             space.pending_acks.subtract(&info.acks);
-                            self.on_packet_acked(now, info);
+                            self.on_packet_acked(now, SpaceId::Initial, info);
                         };
 
                         self.discard_space(SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
@@ -1856,7 +1854,7 @@ where
                             BTreeMap::new(),
                         );
                         for (_, info) in zero_rtt {
-                            self.in_flight.remove(&info);
+                            self.remove_in_flight(SpaceId::Data, &info);
                             self.spaces[SpaceId::Data].pending |= info.retransmits;
                         }
                         self.streams.retransmit_all_for_0rtt();
@@ -2879,8 +2877,15 @@ where
             BTreeMap::new(),
         );
         for (_, packet) in sent_packets {
-            self.in_flight.remove(&packet);
+            self.remove_in_flight(SpaceId::Data, &packet);
         }
+    }
+
+    /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
+    fn remove_in_flight(&mut self, space: SpaceId, packet: &SentPacket) {
+        self.in_flight.bytes -= u64::from(packet.size);
+        self.in_flight.ack_eliciting -= u64::from(packet.ack_eliciting);
+        self.spaces[space].in_flight -= u64::from(packet.size);
     }
 }
 
@@ -3070,12 +3075,6 @@ impl InFlight {
     fn insert(&mut self, packet: &SentPacket) {
         self.bytes += u64::from(packet.size);
         self.ack_eliciting += u64::from(packet.ack_eliciting);
-    }
-
-    /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
-    fn remove(&mut self, packet: &SentPacket) {
-        self.bytes -= u64::from(packet.size);
-        self.ack_eliciting -= u64::from(packet.ack_eliciting);
     }
 }
 
