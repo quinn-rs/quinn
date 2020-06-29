@@ -114,8 +114,6 @@ where
     /// These are generated in advance to prevent timing attacks and/or DoS by third-party attackers
     /// spoofing key updates.
     next_crypto: Option<KeyPair<S::PacketKey>>,
-    /// Latest PATH_CHALLENGE token issued to the peer along the current path
-    path_challenge: Option<u64>,
     accepted_0rtt: bool,
     /// Whether the idle timer should be reset the next time an ack-eliciting packet is transmitted.
     permit_idle_reset: bool,
@@ -126,7 +124,6 @@ where
     //
     // Queued non-retransmittable 1-RTT data
     //
-    path_challenge_pending: bool,
     path_response: Option<PathResponse>,
     close: bool,
 
@@ -205,6 +202,8 @@ where
                 rtt: RttEstimator::new(),
                 sending_ecn: true,
                 congestion: config.congestion_controller_factory.build(now),
+                challenge: None,
+                challenge_pending: false,
             },
             prev_path: None,
             side,
@@ -227,13 +226,11 @@ where
             highest_space: SpaceId::Initial,
             prev_crypto: None,
             next_crypto: None,
-            path_challenge: None,
             accepted_0rtt: false,
             permit_idle_reset: true,
             idle_timeout: config.max_idle_timeout,
             timers: TimerTable::default(),
 
-            path_challenge_pending: false,
             path_response: None,
             close: false,
 
@@ -314,6 +311,33 @@ where
         {
             trace!("blocked by anti-amplification");
             return None;
+        }
+
+        // Send PATH_CHALLENGE for a previous path if necessary
+        if let Some(ref mut prev_path) = self.prev_path {
+            if prev_path.challenge_pending {
+                prev_path.challenge_pending = false;
+                let token = prev_path
+                    .challenge
+                    .expect("previous path challenge pending without token");
+                let destination = prev_path.remote;
+                debug_assert_eq!(
+                    self.highest_space,
+                    SpaceId::Data,
+                    "PATH_CHALLENGE queued without 1-RTT keys"
+                );
+                let mut buf = Vec::with_capacity(self.mtu as usize);
+                let builder = self.begin_packet(SpaceId::Data, false, &mut buf);
+                trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
+                builder.buffer.write(frame::Type::PATH_CHALLENGE);
+                builder.buffer.write(token);
+                self.finish_packet(builder);
+                return Some(Transmit {
+                    destination,
+                    contents: buf.into(),
+                    ecn: None,
+                });
+            }
         }
 
         // If we need to send a probe, make sure we have something to send.
@@ -671,11 +695,11 @@ where
                 }
                 Timer::PathValidation => {
                     debug!("path validation failed");
-                    self.path_challenge = None;
-                    self.path_challenge_pending = false;
                     if let Some(prev) = self.prev_path.take() {
                         self.path = prev;
                     }
+                    self.path.challenge = None;
+                    self.path.challenge_pending = false;
                 }
             }
         }
@@ -2122,12 +2146,22 @@ where
                     }
                 }
                 Frame::PathResponse(token) => {
-                    if self.path_challenge != Some(token) || remote != self.path.remote {
-                        continue;
+                    if self.path.challenge == Some(token) && remote == self.path.remote {
+                        trace!("new path validated");
+                        self.timers.stop(Timer::PathValidation);
+                        self.path.challenge = None;
+                        if let Some(ref mut prev_path) = self.prev_path {
+                            prev_path.challenge = None;
+                            prev_path.challenge_pending = false;
+                        }
+                    } else if let Some(ref prev_path) = self.prev_path {
+                        if prev_path.challenge == Some(token) && remote == prev_path.remote {
+                            warn!("spurious migration detected");
+                            self.timers.stop(Timer::PathValidation);
+                            self.path = self.prev_path.take().unwrap();
+                            self.path.challenge = None;
+                        }
                     }
-                    trace!("path validated");
-                    self.timers.stop(Timer::PathValidation);
-                    self.path_challenge = None;
                 }
                 Frame::MaxData(bytes) => {
                     self.streams.received_max_data(bytes);
@@ -2330,7 +2364,7 @@ where
 
     /// Whether a migration has been initiated and the new path has not yet been validated
     fn migrating(&self) -> bool {
-        self.path_challenge.is_some()
+        self.path.challenge.is_some()
     }
 
     fn migrate(&mut self, now: Instant, remote: SocketAddr) {
@@ -2353,20 +2387,21 @@ where
             },
             // Try ECN on the new path if it's probably not the same as an old broken path.
             sending_ecn: self.path.sending_ecn || !maybe_rebinding,
+            challenge: Some(self.rng.gen()),
+            challenge_pending: true,
         };
-        let prev = Some(mem::replace(&mut self.path, new_path));
+        let mut prev = mem::replace(&mut self.path, new_path);
         // Don't clobber the original path if the previous one hasn't been validated yet
-        if !self.migrating() {
-            self.prev_path = prev;
+        if prev.challenge.is_none() {
+            prev.challenge = Some(self.rng.gen());
+            prev.challenge_pending = true;
+            self.prev_path = Some(prev);
         }
 
-        // Initiate path validation
         self.timers.set(
             Timer::PathValidation,
             now + 3 * cmp::max(self.pto(), 2 * self.config.initial_rtt),
         );
-        self.path_challenge = Some(self.rng.gen());
-        self.path_challenge_pending = true;
     }
 
     /// Returns Err(()) if no CIDs were available
@@ -2463,9 +2498,9 @@ where
         // PATH_CHALLENGE
         if buf.len() + 9 < max_size && space_id == SpaceId::Data {
             // Transmit challenges with every outgoing frame on an unvalidated path
-            if let Some(token) = self.path_challenge {
+            if let Some(token) = self.path.challenge {
                 // But only send a packet solely for that purpose at most once
-                self.path_challenge_pending = false;
+                self.path.challenge_pending = false;
                 trace!("PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::Type::PATH_CHALLENGE);
                 buf.write(token);
@@ -2802,7 +2837,11 @@ where
     /// See also `self.space(SpaceId::Data).can_send()`
     fn can_send_1rtt(&self) -> bool {
         self.streams.can_send()
-            || self.path_challenge_pending
+            || self.path.challenge_pending
+            || self
+                .prev_path
+                .as_ref()
+                .map_or(false, |x| x.challenge_pending)
             || self.path_response.is_some()
             || !self.datagrams.outgoing.is_empty()
     }
@@ -3120,6 +3159,10 @@ struct PathData {
     sending_ecn: bool,
     /// Congestion controller state
     congestion: Box<dyn congestion::Controller>,
+    /// The `PATH_CHALLENGE` frame sent for this path
+    challenge: Option<u64>,
+    /// Whether a `PATH_CHALLENGE` must be sent on this path
+    challenge_pending: bool,
 }
 
 /// Errors that can arise when sending a datagram
