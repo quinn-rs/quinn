@@ -842,7 +842,7 @@ fn idle_timeout() {
 }
 
 #[test]
-fn server_busy() {
+fn accept_buffer_full() {
     let _guard = subscribe();
     let mut pair = Pair::new(
         Default::default(),
@@ -858,7 +858,7 @@ fn server_busy() {
         Some(Event::ConnectionLost {
             reason:
                 ConnectionError::ConnectionClosed(frame::ConnectionClose {
-                    error_code: TransportErrorCode::SERVER_BUSY,
+                    error_code: TransportErrorCode::CONNECTION_REFUSED,
                     ..
                 }),
         })
