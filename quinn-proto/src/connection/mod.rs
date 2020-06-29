@@ -2686,7 +2686,7 @@ where
                 && (Some(self.initial_dst_cid) != params.original_dst_cid
                     || self.retry_src_cid != params.retry_src_cid))
         {
-            return Err(TransportError::PROTOCOL_VIOLATION(
+            return Err(TransportError::TRANSPORT_PARAMETER_ERROR(
                 "CID authentication failure",
             ));
         }
