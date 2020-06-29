@@ -512,7 +512,7 @@ where
                 crypto,
                 &src_cid,
                 &temp_loc_cid,
-                TransportError::SERVER_BUSY(""),
+                TransportError::CONNECTION_REFUSED(""),
             );
             return None;
         }

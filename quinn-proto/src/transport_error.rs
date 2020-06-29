@@ -114,7 +114,7 @@ macro_rules! errors {
 errors! {
     NO_ERROR(0x0) "the connection is being closed abruptly in the absence of any error";
     INTERNAL_ERROR(0x1) "the endpoint encountered an internal error and cannot continue with the connection";
-    SERVER_BUSY(0x2) "the server is currently busy and does not accept any new connections";
+    CONNECTION_REFUSED(0x2) "the server refused to accept a new connection";
     FLOW_CONTROL_ERROR(0x3) "received more data than permitted in advertised data limits";
     STREAM_LIMIT_ERROR(0x4) "received a frame for a stream identifier that exceeded advertised the stream limit for the corresponding stream type";
     STREAM_STATE_ERROR(0x5) "received a frame for a stream that was not in a state that permitted that frame";
