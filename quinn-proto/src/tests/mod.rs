@@ -279,7 +279,7 @@ fn stop_stream() {
 }
 
 #[test]
-fn reject_self_signed_cert() {
+fn reject_self_signed_server_cert() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     info!("connecting");
@@ -288,6 +288,42 @@ fn reject_self_signed_cert() {
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
                     if error.code == TransportErrorCode::crypto(AlertDescription::BadCertificate.get_u8()));
+}
+
+#[test]
+fn reject_missing_client_cert() {
+    let _guard = subscribe();
+    let mut server_config = server_config();
+    Arc::make_mut(&mut server_config.crypto).set_client_certificate_verifier(
+        rustls::AllowAnyAuthenticatedClient::new(rustls::RootCertStore::empty()),
+    );
+    let mut pair = Pair::new(Default::default(), server_config);
+    info!("connecting");
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive();
+
+    // The client completes the connection, but finds it immediately closed
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Connected)
+    );
+    assert_matches!(pair.client_conn_mut(client_ch).poll(),
+                    Some(Event::ConnectionLost { reason: ConnectionError::ConnectionClosed(ref close)})
+                    if close.error_code == TransportErrorCode::crypto(AlertDescription::CertificateRequired.get_u8()));
+
+    // The server never completes the connection
+    let server_ch = pair.server.assert_accept();
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(pair.server_conn_mut(server_ch).poll(),
+                    Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
+                    if error.code == TransportErrorCode::crypto(AlertDescription::CertificateRequired.get_u8()));
 }
 
 #[test]
