@@ -840,17 +840,29 @@ where
         self.streams.send_streams()
     }
 
-    /// If the connection is currently handshaking
+    /// Whether the connection is in the process of being established
+    ///
+    /// If this returns `false`, the connection may be either established or closed, signaled by the
+    /// emission of a `Connected` or `ConnectionLost` message respectively.
     pub fn is_handshaking(&self) -> bool {
         self.state.is_handshake()
     }
 
-    /// If the connection is closed
+    /// Whether the connection is closed
+    ///
+    /// Closed connections cannot transport any further data. A connection becomes closed when
+    /// either peer application intentionally closes it, or when either transport layer detects an
+    /// error such as a time-out or certificate validation failure.
+    ///
+    /// A `ConnectionLost` event is emitted with details when the connection becomes closed.
     pub fn is_closed(&self) -> bool {
         self.state.is_closed()
     }
 
-    /// If the connection is drained
+    /// Whether there is no longer any need to keep the connection around
+    ///
+    /// Closed connections become drained after a brief timeout to absorb any remaining in-flight
+    /// packets from the peer. All drained connections have been closed.
     pub fn is_drained(&self) -> bool {
         self.state.is_drained()
     }
