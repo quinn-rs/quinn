@@ -21,7 +21,7 @@ use crate::{
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
-    packet::{Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId},
+    packet::{Header, LongType, Packet, PacketNumber, PartialDecode, PartialEncode, SpaceId},
     range_set::RangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
@@ -389,89 +389,22 @@ where
                 prev.update_unacked = false;
             }
 
-            let space = &mut self.spaces[space_id];
-            space.loss_probes = space.loss_probes.saturating_sub(1);
-            let exact_number = space.get_tx_number();
-            let span = trace_span!("send", space = ?space_id, pn = exact_number);
-            let _guard = span.enter();
-            let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
-            let header = match space_id {
-                SpaceId::Data if space.crypto.is_some() => Header::Short {
-                    dst_cid: self.rem_cid,
-                    number,
-                    spin: if self.spin_enabled {
-                        self.spin
-                    } else {
-                        self.rng.gen()
-                    },
-                    key_phase: self.key_phase,
-                },
-                SpaceId::Data => Header::Long {
-                    ty: LongType::ZeroRtt,
-                    src_cid: self.handshake_cid,
-                    dst_cid: self.rem_cid,
-                    number,
-                },
-                SpaceId::Handshake => Header::Long {
-                    ty: LongType::Handshake,
-                    src_cid: self.handshake_cid,
-                    dst_cid: self.rem_cid,
-                    number,
-                },
-                SpaceId::Initial => Header::Initial {
-                    src_cid: self.handshake_cid,
-                    dst_cid: self.rem_cid,
-                    token: match self.state {
-                        State::Handshake(ref state) => {
-                            state.token.clone().unwrap_or_else(Bytes::new)
-                        }
-                        _ => Bytes::new(),
-                    },
-                    number,
-                },
-            };
-            let partial_encode = header.encode(&mut buf);
-            coalesce = coalesce && !header.is_short();
-
-            let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
-                (
-                    crypto.header.local.sample_size(),
-                    crypto.packet.local.tag_len(),
-                )
-            } else if space_id == SpaceId::Data {
-                let zero_rtt = self.zero_rtt_crypto.as_ref().unwrap();
-                (zero_rtt.header.sample_size(), zero_rtt.packet.tag_len())
-            } else {
-                unreachable!("tried to send {:?} packet without keys", space_id);
-            };
-            let min_size = if pad_space == Some(space_id) {
-                // Initial packet, must be padded to mitigate amplification attacks
-                MIN_INITIAL_SIZE - tag_len
-            } else {
-                // Regular packet, must be large enough for header protection sampling, i.e. the
-                // combined lengths of the encoded packet number and protected payload must be at
-                // least 4 bytes longer than the sample required for header protection
-
-                // pn_len + payload_len + tag_len >= sample_size + 4
-                // payload_len >= sample_size + 4 - pn_len - tag_len
-                buf.len() + (sample_size + 4).saturating_sub(number.len() + tag_len)
-            };
+            let mut builder = self.begin_packet(space_id, pad_space == Some(space_id), &mut buf);
+            coalesce = coalesce && !builder.short_header;
 
             let sent = if close {
                 trace!("sending CONNECTION_CLOSE");
-                let max_len =
-                    buf.capacity() - partial_encode.start - partial_encode.header_len - tag_len;
                 match self.state {
                     State::Closed(state::Closed { ref reason }) => {
                         if space_id == SpaceId::Data {
-                            reason.encode(&mut buf, max_len)
+                            reason.encode(&mut builder.buffer, builder.max_size)
                         } else {
                             frame::ConnectionClose {
                                 error_code: TransportErrorCode::APPLICATION_ERROR,
                                 frame_type: None,
                                 reason: Bytes::new(),
                             }
-                            .encode(&mut buf, max_len)
+                            .encode(&mut builder.buffer, builder.max_size)
                         }
                     }
                     State::Draining => frame::ConnectionClose {
@@ -479,45 +412,26 @@ where
                         frame_type: None,
                         reason: Bytes::new(),
                     }
-                    .encode(&mut buf, max_len),
+                    .encode(&mut builder.buffer, builder.max_size),
                     _ => unreachable!(
                         "tried to make a close packet when the connection wasn't closed"
                     ),
                 }
-                if buf.len() < min_size {
-                    trace!("PADDING * {}", min_size - buf.len());
-                    buf.resize(min_size, 0);
-                }
                 coalesce = false;
                 None
             } else {
-                Some(self.populate_packet(space_id, min_size, &mut buf))
+                Some(self.populate_packet(space_id, &mut builder.buffer))
             };
 
-            let space = &mut self.spaces[space_id];
-            let (header_crypto, packet_crypto) = if let Some(ref crypto) = space.crypto {
-                (&crypto.header.local, &crypto.packet.local)
-            } else if space_id == SpaceId::Data {
-                let zero_rtt = self.zero_rtt_crypto.as_ref().unwrap();
-                (&zero_rtt.header, &zero_rtt.packet)
-            } else {
-                unreachable!("tried to send {:?} packet without keys", space_id);
-            };
+            let exact_number = builder.exact_number;
+            let padded = self.finish_packet(builder);
 
-            buf.resize(buf.len() + tag_len, 0);
-            debug_assert!(buf.len() < self.mtu as usize);
-            let packet_buf = &mut buf[partial_encode.start..];
-            partial_encode.finish(
-                packet_buf,
-                header_crypto,
-                Some((exact_number, packet_crypto)),
-            );
-
-            if let Some(sent) = sent {
+            if let Some(mut sent) = sent {
+                sent.padding = padded;
                 // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
                 // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
                 // the need for subtler logic to avoid double-transmitting acks all the time.
-                space.permit_ack_only &= sent.acks.is_empty();
+                self.spaces[space_id].permit_ack_only &= sent.acks.is_empty();
 
                 self.on_packet_sent(
                     now,
@@ -559,6 +473,126 @@ where
                 None
             },
         })
+    }
+
+    /// Write a new packet header to `buffer` and determine the packet's properties
+    fn begin_packet<'a>(
+        &mut self,
+        space_id: SpaceId,
+        initial_padding: bool,
+        buffer: &'a mut Vec<u8>,
+    ) -> PacketBuilder<'a> {
+        let space = &mut self.spaces[space_id];
+        space.loss_probes = space.loss_probes.saturating_sub(1);
+        let exact_number = space.get_tx_number();
+
+        let span = trace_span!("send", space = ?space_id, pn = exact_number);
+        span.with_subscriber(|(id, dispatch)| dispatch.enter(id));
+
+        let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
+        let header = match space_id {
+            SpaceId::Data if space.crypto.is_some() => Header::Short {
+                dst_cid: self.rem_cid,
+                number,
+                spin: if self.spin_enabled {
+                    self.spin
+                } else {
+                    self.rng.gen()
+                },
+                key_phase: self.key_phase,
+            },
+            SpaceId::Data => Header::Long {
+                ty: LongType::ZeroRtt,
+                src_cid: self.handshake_cid,
+                dst_cid: self.rem_cid,
+                number,
+            },
+            SpaceId::Handshake => Header::Long {
+                ty: LongType::Handshake,
+                src_cid: self.handshake_cid,
+                dst_cid: self.rem_cid,
+                number,
+            },
+            SpaceId::Initial => Header::Initial {
+                src_cid: self.handshake_cid,
+                dst_cid: self.rem_cid,
+                token: match self.state {
+                    State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
+                    _ => Bytes::new(),
+                },
+                number,
+            },
+        };
+        let partial_encode = header.encode(buffer);
+        let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
+            (
+                crypto.header.local.sample_size(),
+                crypto.packet.local.tag_len(),
+            )
+        } else if space_id == SpaceId::Data {
+            let zero_rtt = self.zero_rtt_crypto.as_ref().unwrap();
+            (zero_rtt.header.sample_size(), zero_rtt.packet.tag_len())
+        } else {
+            unreachable!("tried to send {:?} packet without keys", space_id);
+        };
+        let min_size = if initial_padding {
+            // Initial packet, must be padded to mitigate amplification attacks
+            MIN_INITIAL_SIZE - tag_len
+        } else {
+            // Regular packet, must be large enough for header protection sampling, i.e. the
+            // combined lengths of the encoded packet number and protected payload must be at
+            // least 4 bytes longer than the sample required for header protection
+
+            // pn_len + payload_len + tag_len >= sample_size + 4
+            // payload_len >= sample_size + 4 - pn_len - tag_len
+            buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len)
+        };
+        let max_size =
+            buffer.capacity() - partial_encode.start - partial_encode.header_len - tag_len;
+        PacketBuilder {
+            buffer,
+            space: space_id,
+            partial_encode,
+            exact_number,
+            short_header: header.is_short(),
+            min_size,
+            max_size,
+            span,
+        }
+    }
+
+    /// Encrypt packet, returning whether padding was added
+    fn finish_packet(&self, builder: PacketBuilder<'_>) -> bool {
+        let pad = builder.buffer.len() < builder.min_size;
+        if pad {
+            trace!("PADDING * {}", builder.min_size - builder.buffer.len());
+            builder.buffer.resize(builder.min_size, 0);
+        }
+
+        let space = &self.spaces[builder.space];
+        let (header_crypto, packet_crypto) = if let Some(ref crypto) = space.crypto {
+            (&crypto.header.local, &crypto.packet.local)
+        } else if builder.space == SpaceId::Data {
+            let zero_rtt = self.zero_rtt_crypto.as_ref().unwrap();
+            (&zero_rtt.header, &zero_rtt.packet)
+        } else {
+            unreachable!("tried to send {:?} packet without keys", builder.space);
+        };
+
+        builder
+            .buffer
+            .resize(builder.buffer.len() + packet_crypto.tag_len(), 0);
+        debug_assert!(builder.buffer.len() < self.mtu as usize);
+        let packet_buf = &mut builder.buffer[builder.partial_encode.start..];
+        builder.partial_encode.finish(
+            packet_buf,
+            header_crypto,
+            Some((builder.exact_number, packet_crypto)),
+        );
+        builder
+            .span
+            .with_subscriber(|(id, dispatch)| dispatch.exit(id));
+        pad
     }
 
     /// Process `ConnectionEvent`s generated by the associated `Endpoint`
@@ -2377,12 +2411,7 @@ where
         self.cids_issued += n;
     }
 
-    fn populate_packet(
-        &mut self,
-        space_id: SpaceId,
-        min_size: usize,
-        buf: &mut Vec<u8>,
-    ) -> SentFrames {
+    fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> SentFrames {
         let mut sent = SentFrames::default();
         let space = &mut self.spaces[space_id];
         let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
@@ -2541,13 +2570,6 @@ where
         // STREAM
         if space_id == SpaceId::Data {
             sent.stream_frames = self.streams.write_stream_frames(buf, max_size);
-        }
-
-        // PADDING
-        if buf.len() < min_size {
-            trace!("PADDING * {}", min_size - buf.len());
-            buf.resize(min_size, 0);
-            sent.padding = true;
         }
 
         sent
@@ -3148,4 +3170,15 @@ struct SentFrames {
     acks: RangeSet,
     stream_frames: Vec<frame::StreamMeta>,
     padding: bool,
+}
+
+struct PacketBuilder<'a> {
+    buffer: &'a mut Vec<u8>,
+    space: SpaceId,
+    partial_encode: PartialEncode,
+    exact_number: u64,
+    short_header: bool,
+    min_size: usize,
+    max_size: usize,
+    span: tracing::Span,
 }
