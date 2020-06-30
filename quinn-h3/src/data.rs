@@ -25,11 +25,13 @@ use crate::{
     Error, HttpError,
 };
 
-/// Represent data transmission completion for a Request or a Response
+/// Represent data transmission completion for a Response
 ///
-/// This is yielded by [`SendRequest`] and [`SendResponse`]. It will encode and send
-/// the headers, then send the body if any data is polled from [`HttpBody::poll_data()`].
-/// It also encodes and sends the trailer a similar way, if any.
+/// This is yielded by [`Sender::send_response`]. It will encode and send the
+/// headers, then send the body if any data is polled from [`HttpBody::poll_data()`].  It also
+/// encodes and sends the trailer a similar way, if any.
+///
+/// [`Sender::send_response`]: crate::server::Sender::send_response()
 #[pin_project(project = SendDataProj)]
 pub struct SendData<B, P> {
     headers: Option<Header>,

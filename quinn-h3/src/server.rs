@@ -667,7 +667,7 @@ impl Future for RecvRequest {
 ///
 /// [`RecvRequest`]: struct.RecvRequest.html
 /// [`http::Response`]: https://docs.rs/http/*/http/response/struct.Response.html
-/// [`send_response()`]: #method.Response
+/// [`send_response()`]: #method.send_response
 /// [`BodyReader`]: ../body/struct.BodyReader.html
 /// [`cancel()`]: #method.cancel
 pub struct Sender {
