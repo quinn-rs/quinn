@@ -715,12 +715,12 @@ where
     /// This does not ensure delivery of outstanding data. It is the application's responsibility to
     /// call this only when all important communications have been completed, e.g. by calling
     /// [`Connection::finish`] on outstanding streams and waiting for the corresponding
-    /// [`StreamFinished`] event.
+    /// [`StreamEvent::Finished`] event.
     ///
     /// If [`Connection::send_streams`] returns 0, all outstanding stream data has been
     /// delivered. There may still be data from the peer that has not been received.
     ///
-    /// [`StreamFinished`]: Event::StreamFinished
+    /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
     pub fn close(&mut self, now: Instant, error_code: VarInt, reason: Bytes) {
         let was_closed = self.state.is_closed();
         if !was_closed {
@@ -816,7 +816,9 @@ where
 
     /// Finish a send stream, signalling that no more data will be sent.
     ///
-    /// If this fails, no [`Event::StreamFinished`] will be generated.
+    /// If this fails, no [`StreamEvent::Finished`] will be generated.
+    ///
+    /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
     pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
         self.streams.finish(id)?;
         Ok(())
