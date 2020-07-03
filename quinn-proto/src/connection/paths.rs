@@ -1,5 +1,6 @@
-use std::{cmp, net::SocketAddr, time::Duration};
+use std::{cmp, net::SocketAddr, time::Duration, time::Instant};
 
+use super::pacing::Pacer;
 use crate::{congestion, TIMER_GRANULARITY};
 
 /// Description of a particular network path
@@ -10,6 +11,8 @@ pub struct PathData {
     pub sending_ecn: bool,
     /// Congestion controller state
     pub congestion: Box<dyn congestion::Controller>,
+    /// Pacing state
+    pub pacing: Pacer,
     pub challenge: Option<u64>,
     pub challenge_pending: bool,
 }
@@ -19,23 +22,27 @@ impl PathData {
         remote: SocketAddr,
         initial_rtt: Duration,
         congestion: Box<dyn congestion::Controller>,
+        now: Instant,
     ) -> Self {
         PathData {
             remote,
             rtt: RttEstimator::new(initial_rtt),
             sending_ecn: true,
+            pacing: Pacer::new(congestion.window(), now),
             congestion,
             challenge: None,
             challenge_pending: false,
         }
     }
 
-    pub fn from_previous(remote: SocketAddr, prev: &PathData) -> Self {
+    pub fn from_previous(remote: SocketAddr, prev: &PathData, now: Instant) -> Self {
+        let congestion = prev.congestion.clone_box();
         PathData {
             remote,
             rtt: prev.rtt,
-            congestion: prev.congestion.clone_box(),
+            pacing: Pacer::new(congestion.window(), now),
             sending_ecn: true,
+            congestion,
             challenge: None,
             challenge_pending: false,
         }

@@ -33,6 +33,8 @@ use crate::{
 };
 
 mod assembler;
+
+mod pacing;
 mod paths;
 use paths::PathData;
 
@@ -203,6 +205,7 @@ where
                 remote,
                 config.initial_rtt,
                 config.congestion_controller_factory.build(now),
+                now,
             ),
             prev_path: None,
             side,
@@ -384,11 +387,17 @@ where
             if space_id == SpaceId::Data {
                 ack_eliciting |= self.can_send_1rtt();
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
-                if ack_eliciting
-                    && self.spaces[space_id].loss_probes == 0
-                    && self.congestion_blocked()
-                {
-                    continue;
+                if ack_eliciting && self.spaces[space_id].loss_probes == 0 {
+                    if self.congestion_blocked() {
+                        continue;
+                    }
+                    let smoothed_rtt = self.path.rtt.conservative();
+                    let window = self.path.congestion.window();
+                    if let Some(delay) = self.path.pacing.delay(smoothed_rtt, self.mtu, window, now)
+                    {
+                        self.timers.set(Timer::Pacing, delay);
+                        continue;
+                    }
                 }
             }
 
@@ -705,6 +714,7 @@ where
                     self.path.challenge = None;
                     self.path.challenge_pending = false;
                 }
+                Timer::Pacing => trace!("pacing timer expired"),
             }
         }
     }
@@ -978,6 +988,7 @@ where
                 self.permit_idle_reset = false;
             }
             self.set_loss_detection_timer(now);
+            self.path.pacing.on_transmit(size);
         }
     }
 
@@ -2422,12 +2433,13 @@ where
         // Note that the congestion window will not grow until validation terminates. Helps mitigate
         // amplification attacks performed by spoofing source addresses.
         let mut new_path = if remote.is_ipv4() && remote.ip() == self.path.remote.ip() {
-            PathData::from_previous(remote, &self.path)
+            PathData::from_previous(remote, &self.path, now)
         } else {
             PathData::new(
                 remote,
                 self.config.initial_rtt,
                 self.config.congestion_controller_factory.build(now),
+                now,
             )
         };
         new_path.challenge = Some(self.rng.gen());
