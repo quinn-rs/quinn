@@ -25,6 +25,9 @@ pub trait Controller: Send {
 
     /// Duplicate the controller's state
     fn clone_box(&self) -> Box<dyn Controller>;
+
+    /// Initial congestion window
+    fn initial_window(&self) -> u64;
 }
 
 /// Constructs controllers on demand

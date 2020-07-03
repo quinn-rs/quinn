@@ -65,6 +65,10 @@ impl Controller for NewReno {
     fn clone_box(&self) -> Box<dyn Controller> {
         Box::new(self.clone())
     }
+
+    fn initial_window(&self) -> u64 {
+        self.config.initial_window
+    }
 }
 
 /// Configuration for the `NewReno` congestion controller
