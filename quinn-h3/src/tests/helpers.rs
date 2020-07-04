@@ -23,6 +23,7 @@ use crate::{
     SendData, ZeroRttAccepted,
 };
 use quinn_proto::StreamId;
+use tracing_subscriber::EnvFilter;
 
 pub fn get(path: &str) -> Request<Body> {
     Request::get(format!("https://localhost{}", path))
@@ -48,7 +49,9 @@ pub struct Helper {
 
 impl Helper {
     pub fn new() -> Self {
-        let _ = tracing_subscriber::fmt().try_init();
+        let _ = tracing_subscriber::fmt()
+            .with_env_filter(EnvFilter::from_default_env())
+            .try_init();
 
         let port = PORT_COUNT.fetch_add(1, Ordering::SeqCst);
 
