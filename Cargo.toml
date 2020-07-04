@@ -6,6 +6,3 @@ debug = true
 
 [profile.release]
 debug = true
-
-[patch.crates-io]
-rustls = { git = "https://github.com/ctz/rustls", rev = "46c259bd8e28dcfca6c1934aabb58a0da0736cb7" }
