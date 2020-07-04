@@ -14,15 +14,15 @@ futures = "0.3.1"
 http = "0.2"
 http-body = "0.3"
 hyper = "0.13"
-hyper-rustls = "0.20"
+hyper-rustls = "0.21.0"
 lazy_static = "1"
 quinn = { path = "../quinn" }
 quinn-h3 = { path = "../quinn-h3", features = ["interop-test-accessors"] }
 quinn-proto = { path = "../quinn-proto" }
-rustls = { version = "0.17", features = ["dangerous_configuration"] }
+rustls = { version = "0.18.0", features = ["dangerous_configuration"] }
 structopt = "0.3.0"
 tokio = { version = "0.2.2", features = ["macros", "rt-core", "io-util"] }
-tokio-rustls = "0.13"
+tokio-rustls = "0.14.0"
 tracing = "0.1.10"
 tracing-subscriber = { version = "0.2.5", default-features = false, features = ["env-filter", "fmt", "ansi", "chrono"]}
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
