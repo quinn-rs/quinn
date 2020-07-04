@@ -37,8 +37,11 @@ impl Future for ConnectionDriver {
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let mut conn = self.0.h3.lock().unwrap();
         match conn.drive(cx) {
-            Ok(false) => Poll::Pending,
-            Ok(true) => Poll::Ready(()),
+            Ok(DriveState::Running) => Poll::Pending,
+            Ok(DriveState::Closed) => {
+                conn.terminate();
+                Poll::Ready(())
+            }
             Err(DriverError(err, code, msg)) => {
                 match err.try_into_quic() {
                     // Send CONNECTION_CLOSE and log only if it's pertinent:
@@ -104,6 +107,11 @@ impl ConnectionRef {
     }
 }
 
+enum DriveState {
+    Closed,
+    Running,
+}
+
 pub(crate) struct ConnectionInner {
     pub inner: Connection,
     requests: VecDeque<(SendStream, RecvStream)>,
@@ -122,7 +130,7 @@ pub(crate) struct ConnectionInner {
 }
 
 impl ConnectionInner {
-    fn drive(&mut self, cx: &mut Context) -> Result<bool, DriverError> {
+    fn drive(&mut self, cx: &mut Context) -> Result<DriveState, DriverError> {
         self.poll_incoming_uni(cx)?;
         self.poll_send(cx)?;
         self.poll_recv_control(cx)?;
@@ -133,7 +141,13 @@ impl ConnectionInner {
 
         self.reset_waker(cx);
 
-        Ok(self.inner.is_closing() && self.inner.requests_in_flight() == 0)
+        Ok(
+            if self.inner.is_closing() && self.inner.requests_in_flight() == 0 {
+                DriveState::Closed
+            } else {
+                DriveState::Running
+            },
+        )
     }
 
     pub fn next_request(
