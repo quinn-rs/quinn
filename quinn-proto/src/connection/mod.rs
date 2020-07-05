@@ -199,7 +199,7 @@ where
             rem_cid_seq: 0,
             path: PathData {
                 remote,
-                rtt: RttEstimator::new(),
+                rtt: RttEstimator::new(config.initial_rtt),
                 sending_ecn: true,
                 congestion: config.congestion_controller_factory.build(now),
                 challenge: None,
@@ -2438,7 +2438,7 @@ where
             rtt: if maybe_rebinding {
                 self.path.rtt
             } else {
-                RttEstimator::new()
+                RttEstimator::new(self.config.initial_rtt)
             },
             congestion: if maybe_rebinding {
                 self.path.congestion.clone_box()
@@ -3139,12 +3139,12 @@ struct RttEstimator {
 }
 
 impl RttEstimator {
-    fn new() -> Self {
+    fn new(initial_rtt: Duration) -> Self {
         Self {
-            latest: Duration::new(0, 0),
+            latest: initial_rtt,
             smoothed: None,
-            var: Duration::new(0, 0),
-            min: Duration::new(u64::max_value(), 0),
+            var: initial_rtt / 2,
+            min: initial_rtt,
         }
     }
 
@@ -3168,6 +3168,7 @@ impl RttEstimator {
         } else {
             self.smoothed = Some(self.latest);
             self.var = self.latest / 2;
+            self.min = self.latest;
         }
     }
 }
