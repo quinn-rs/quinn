@@ -3152,19 +3152,20 @@ impl RttEstimator {
         self.latest = rtt;
         // min_rtt ignores ack delay.
         self.min = cmp::min(self.min, self.latest);
-        // Adjust for ack delay if it's plausible.
-        if self.latest - self.min > ack_delay {
-            self.latest -= ack_delay;
-        }
         // Based on RFC6298.
         if let Some(smoothed) = self.smoothed {
-            let var_sample = if smoothed > self.latest {
-                smoothed - self.latest
+            let adjusted_rtt = if self.min + ack_delay < self.latest {
+                self.latest - ack_delay
             } else {
-                self.latest - smoothed
+                self.latest
+            };
+            let var_sample = if smoothed > adjusted_rtt {
+                smoothed - adjusted_rtt
+            } else {
+                adjusted_rtt - smoothed
             };
             self.var = (3 * self.var + var_sample) / 4;
-            self.smoothed = Some((7 * smoothed + self.latest) / 8);
+            self.smoothed = Some((7 * smoothed + adjusted_rtt) / 8);
         } else {
             self.smoothed = Some(self.latest);
             self.var = self.latest / 2;
