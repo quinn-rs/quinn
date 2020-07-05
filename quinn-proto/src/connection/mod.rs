@@ -1209,7 +1209,7 @@ where
 
     fn detect_lost_packets(&mut self, now: Instant, pn_space: SpaceId) {
         let mut lost_packets = Vec::<u64>::new();
-        let rtt = self.path.rtt.get().max(self.path.rtt.latest);
+        let rtt = self.path.rtt.conservative();
         let loss_delay = cmp::max(rtt.mul_f32(self.config.time_threshold), TIMER_GRANULARITY);
 
         // Packets sent before this time are deemed lost.
@@ -3165,6 +3165,14 @@ impl RttEstimator {
     /// Get current smoothed RTT estimate
     fn get(&self) -> Duration {
         self.smoothed.unwrap_or(self.latest)
+    }
+
+    /// Conservative estimate of RTT
+    ///
+    /// Takes the maximum of smoothed and latest RTT, as recommended
+    /// in 6.1.2 of the recovery spec (draft 29).
+    pub fn conservative(&self) -> Duration {
+        self.get().max(self.latest)
     }
 
     pub fn pto_base(&self) -> Duration {
