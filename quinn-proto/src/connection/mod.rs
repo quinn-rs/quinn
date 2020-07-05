@@ -1360,12 +1360,9 @@ where
 
     /// Probe Timeout
     fn pto(&self) -> Duration {
-        match self.path.rtt.smoothed {
-            None => 2 * self.config.initial_rtt,
-            Some(srtt) => {
-                srtt + cmp::max(4 * self.path.rtt.var, TIMER_GRANULARITY) + self.max_ack_delay()
-            }
-        }
+        self.path.rtt.get()
+            + cmp::max(4 * self.path.rtt.var, TIMER_GRANULARITY)
+            + self.max_ack_delay()
     }
 
     fn on_packet_authenticated(
@@ -3171,6 +3168,11 @@ impl RttEstimator {
             self.var = self.latest / 2;
             self.min = self.latest;
         }
+    }
+
+    /// Get current smoothed RTT estimate
+    fn get(&self) -> Duration {
+        self.smoothed.unwrap_or(self.latest)
     }
 }
 
