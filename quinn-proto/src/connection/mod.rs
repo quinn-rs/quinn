@@ -1209,11 +1209,7 @@ where
 
     fn detect_lost_packets(&mut self, now: Instant, pn_space: SpaceId) {
         let mut lost_packets = Vec::<u64>::new();
-        let rtt = self
-            .path
-            .rtt
-            .smoothed
-            .map_or(self.path.rtt.latest, |x| cmp::max(x, self.path.rtt.latest));
+        let rtt = self.path.rtt.get().max(self.path.rtt.latest);
         let loss_delay = cmp::max(rtt.mul_f32(self.config.time_threshold), TIMER_GRANULARITY);
 
         // Packets sent before this time are deemed lost.
@@ -1277,7 +1273,7 @@ where
     }
 
     fn pto_time_and_space(&self, now: Instant) -> Option<(Instant, SpaceId)> {
-        let srtt = self.path.rtt.smoothed.unwrap_or(self.config.initial_rtt);
+        let srtt = self.path.rtt.get();
         let backoff = 2u32.pow(self.pto_count.min(MAX_BACKOFF_EXPONENT));
         let mut duration = (srtt + TIMER_GRANULARITY.max(4 * self.path.rtt.var)) * backoff;
 
