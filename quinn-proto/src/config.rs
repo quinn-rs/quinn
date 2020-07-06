@@ -246,7 +246,7 @@ impl Default for TransportConfig {
             max_tlps: 2,
             packet_threshold: 3,
             time_threshold: 9.0 / 8.0,
-            initial_rtt: Duration::from_millis(500), // per spec, intentionally distinct from EXPECTED_RTT
+            initial_rtt: Duration::from_millis(333), // per spec, intentionally distinct from EXPECTED_RTT
 
             persistent_congestion_threshold: 3,
             keep_alive_interval: None,
