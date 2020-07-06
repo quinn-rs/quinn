@@ -11,9 +11,12 @@ use crate::{
 #[cfg(feature = "rustls")]
 use crate::{Certificate, CertificateChain, PrivateKey};
 
-/// A helper for constructing an `Endpoint`.
+/// A helper for constructing an [`Endpoint`].
 ///
-/// See `ClientConfigBuilder` for details on trust defaults.
+/// See [`ClientConfigBuilder`] for details on trust defaults.
+///
+/// [`Endpoint`]: crate::generic::Endpoint
+/// [`ClientConfigBuilder`]: crate::generic::ClientConfigBuilder
 #[derive(Clone, Debug)]
 pub struct EndpointBuilder<S>
 where
@@ -85,7 +88,9 @@ where
 
     /// Set the default configuration used for outgoing connections.
     ///
-    /// The default can be overriden by using `Endpoint::connect_with`.
+    /// The default can be overriden by using [`Endpoint::connect_with()`].
+    ///
+    /// [`Endpoint::connect_with()`]: crate::generic::Endpoint::connect_with
     pub fn default_client_config(&mut self, config: ClientConfig<S>) -> &mut Self {
         self.default_client_config = config;
         self
@@ -113,8 +118,11 @@ pub enum EndpointError {
     Socket(io::Error),
 }
 
-/// Helper for constructing a `ServerConfig` to be passed to `EndpointBuilder::listen` to enable
-/// incoming connections.
+/// Helper for constructing a [`ServerConfig`] to be passed to [`EndpointBuilder::listen()`] to
+/// enable incoming connections.
+///
+/// [`ServerConfig`]: crate::generic::ServerConfig
+/// [`EndpointBuilder::listen()`]: crate::generic::EndpointBuilder::listen
 pub struct ServerConfigBuilder<S>
 where
     S: proto::crypto::Session,
@@ -201,9 +209,11 @@ where
 
 /// Helper for creating new outgoing connections.
 ///
-/// If the `native-certs` and `ct-logs` features are enabled, `ClientConfigBuilder::default()` will
+/// If the `native-certs` and `ct-logs` features are enabled, [`ClientConfigBuilder::default()`] will
 /// construct a configuration that trusts the host OS certificate store and uses built-in
 /// certificate transparency logs respectively. These features are both enabled by default.
+///
+/// [`ClientConfigBuilder::default()`]: #method.default
 pub struct ClientConfigBuilder<S>
 where
     S: proto::crypto::Session,
@@ -218,19 +228,27 @@ where
     /// Construct a builder using `config` as the initial state.
     ///
     /// If you want to trust the usual certificate authorities trusted by the system, use
-    /// `ClientConfigBuilder::default()` with the `native-certs` and `ct-logs` features enabled
+    /// [`ClientConfigBuilder::default()`] with the `native-certs` and `ct-logs` features enabled
     /// instead.
     ///
     /// The `ClientConfigBuilder` provides a number of shortcuts to customize the TLS client
-    /// behavior. However, if you want to take full control over the client's behavior
-    /// (such as setting up TLS mutual authentication), you can use the associated `new()` function
-    /// to provide a `ClientConfig` with TLS configuration provided directly through its `crypto`
+    /// behavior. However, if you want to take full control over the client's behavior (such as
+    /// setting up TLS mutual authentication), you can use the associated [`new()`] function to
+    /// provide a [`ClientConfig`] with TLS configuration provided directly through its `crypto`
     /// field).
+    ///
+    /// [`ClientConfigBuilder::default()`]: #method.default
+    /// [`new()`]: ClientConfigBuilder::new
+    /// [`ClientConfig`]: crate::generic::ClientConfig
     pub fn new(config: ClientConfig<S>) -> Self {
         Self { config }
     }
 
-    /// Begin connecting from `endpoint` to `addr`.
+    /// Consume the builder and return the [`ClientConfig`], which can then be used to configure
+    /// outgoing connections from an [`Endpoint`].
+    ///
+    /// [`ClientConfig`]: crate::generic::ClientConfig
+    /// [`Endpoint`]: crate::generic::Endpoint
     pub fn build(self) -> ClientConfig<S> {
         self.config
     }
@@ -243,6 +261,8 @@ impl ClientConfigBuilder<proto::crypto::rustls::TlsSession> {
     /// For more advanced/less secure certificate verification, construct a [`ClientConfig`]
     /// manually and use rustls's `dangerous_configuration` feature to override the certificate
     /// verifier.
+    ///
+    /// [`ClientConfig`]: crate::generic::ClientConfig
     pub fn add_certificate_authority(
         &mut self,
         cert: Certificate,

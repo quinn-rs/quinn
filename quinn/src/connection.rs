@@ -197,7 +197,9 @@ let NewConnection { connection, .. } = { new_connection };
 ```"
 )]
 ///
-/// You can also explicitly invoke `Connection::close` at any time.
+/// You can also explicitly invoke [`Connection::close()`] at any time.
+///
+/// [`Connection::close()`]: crate::generic::Connection::close
 #[derive(Debug)]
 #[non_exhaustive]
 pub struct NewConnection<S>
@@ -209,8 +211,10 @@ where
     /// Unidirectional streams initiated by the peer, in the order they were opened
     ///
     /// Note that data for separate streams may be delivered in any order. In other words, reading
-    /// from streams in the order they're opened is not optimal. See `IncomingUniStreams` for
+    /// from streams in the order they're opened is not optimal. See [`IncomingUniStreams`] for
     /// details.
+    ///
+    /// [`IncomingUniStreams`]: crate::generic::IncomingUniStreams
     pub uni_streams: IncomingUniStreams<S>,
     /// Bidirectional streams initiated by the peer, in the order they were opened
     pub bi_streams: IncomingBiStreams<S>,
@@ -290,10 +294,13 @@ where
 ///
 /// If all references to a connection (including every clone of the `Connection` handle, streams of
 /// incoming streams, and the various stream types) other than the `ConnectionDriver` have been
-/// dropped, the the connection will be automatically closed with an `error_code` of 0 and an empty
-/// `reason`. You can also close the connection explicitly by calling `Connection::close()`.
+/// dropped, then the connection will be automatically closed with an `error_code` of 0 and an
+/// empty `reason`. You can also close the connection explicitly by calling
+/// [`Connection::close()`].
 ///
 /// May be cloned to obtain another handle to the same connection.
+///
+/// [`Connection::close()`]: Connection::close
 #[derive(Debug)]
 pub struct Connection<S: proto::crypto::Session>(ConnectionRef<S>);
 
@@ -327,15 +334,19 @@ where
 
     /// Close the connection immediately.
     ///
-    /// Pending operations will fail immediately with `ConnectionError::LocallyClosed`. Delivery of
-    /// data on unfinished streams is not guaranteed, so the application must call this only when
-    /// all important communications have been completed, e.g. by calling `finish` on outstanding
-    /// `SendStream`s and waiting for the resulting futures to complete.
+    /// Pending operations will fail immediately with [`ConnectionError::LocallyClosed`]. Delivery
+    /// of data on unfinished streams is not guaranteed, so the application must call this only
+    /// when all important communications have been completed, e.g. by calling [`finish`] on
+    /// outstanding [`SendStream`]s and waiting for the resulting futures to complete.
     ///
     /// `error_code` and `reason` are not interpreted, and are provided directly to the peer.
     ///
     /// `reason` will be truncated to fit in a single packet with overhead; to improve odds that it
     /// is preserved in full, it should be kept under 1KiB.
+    ///
+    /// [`ConnectionError::LocallyClosed`]: crate::ConnectionError::LocallyClosed
+    /// [`finish`]: crate::generic::SendStream::finish
+    /// [`SendStream`]: crate::generic::SendStream
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let conn = &mut *self.0.lock().unwrap();
         conn.close(error_code, Bytes::copy_from_slice(reason));
@@ -365,7 +376,7 @@ where
         }
     }
 
-    /// Compute the maximum size of datagrams that may passed to `send_datagram`
+    /// Compute the maximum size of datagrams that may be passed to [`send_datagram()`].
     ///
     /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
     ///
@@ -374,6 +385,8 @@ where
     /// limit is large this is guaranteed to be a little over a kilobyte at minimum.
     ///
     /// Not necessarily the maximum size of received datagrams.
+    ///
+    /// [`send_datagram()`]: Connection::send_datagram
     pub fn max_datagram_size(&self) -> Option<usize> {
         self.0.lock().unwrap().inner.max_datagram_size()
     }
@@ -389,7 +402,9 @@ where
     /// Parameters negotiated during the handshake
     ///
     /// Guaranteed to return `Some` on fully established connections or after
-    /// `Connecting::handshake_data` succeeds.
+    /// [`Connecting::handshake_data()`] succeeds.
+    ///
+    /// [`Connection::handshake_data()`]: crate::generic::Connecting::handshake_data
     pub fn handshake_data(&self) -> Option<S::HandshakeData> {
         self.0
             .lock()
