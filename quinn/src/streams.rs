@@ -20,8 +20,10 @@ use crate::{connection::ConnectionRef, VarInt};
 
 /// A stream that can only be used to send data
 ///
-/// If dropped, streams that haven't been explicitly `reset` will continue to (re)transmit
+/// If dropped, streams that haven't been explicitly [`reset()`] will continue to (re)transmit
 /// previously written data until it has been fully acknowledged or the connection is closed.
+///
+/// [`reset()`]: SendStream::reset
 #[derive(Debug)]
 pub struct SendStream<S>
 where
@@ -282,8 +284,14 @@ where
 /// A stream that can only be used to receive data
 ///
 /// `stop(0)` is implicitly called on drop unless:
-/// - `ReadError::Finished` has been emitted, or
-/// - `stop` was called explicitly
+/// - A variant of [`ReadError`] has been emitted by [`read()`], [`read_exact()`] or [`read_unordered()`]
+/// - [`stop()`] was called explicitly
+///
+/// [`ReadError`]: crate::ReadError
+/// [`read()`]: RecvStream::read
+/// [`read_exact()`]: RecvStream::read_exact
+/// [`read_unordered()`]: RecvStream::read_unordered
+/// [`stop()`]: RecvStream::stop
 #[derive(Debug)]
 pub struct RecvStream<S>
 where
@@ -318,16 +326,20 @@ where
     /// improved performance.
     ///
     /// # Panics
-    /// - If used after `read_unordered` on the same stream.
+    /// - If used after [`read_unordered()`] on the same stream.
     ///   This is forbidden because an unordered read could consume a segment of data from a
     ///   location other than the start of the receive buffer, making it impossible for future
+    ///
+    /// [`read_unordered()`]: RecvStream::read_unordered
     pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'a, S> {
         Read { stream: self, buf }
     }
 
     /// Read an exact number of bytes contiguously from the stream.
     ///
-    /// See `read` for details.
+    /// See [`read()`] for details.
+    ///
+    /// [`read()`]: RecvStream::read
     pub fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExact<'a, S> {
         ReadExact {
             stream: self,
@@ -422,12 +434,14 @@ where
 
     /// Convenience method to read all remaining data into a buffer
     ///
-    /// The returned future fails with `ReadToEnd::TooLong` if it's longer than `size_limit`
-    /// bytes. Uses unordered reads to be more efficient than using `AsyncRead` would
-    /// allow. `size_limit` should be set to limit worst-case memory use.
+    /// The returned future fails with [`ReadToEndError::TooLong`] if it's longer than `size_limit`
+    /// bytes. Uses unordered reads to be more efficient than using `AsyncRead` would allow.
+    /// `size_limit` should be set to limit worst-case memory use.
     ///
     /// If unordered reads have already been made, the resulting buffer may have gaps containing
     /// arbitrary data.
+    ///
+    /// [`ReadToEndError::TooLong`]: crate::ReadToEndError::TooLong
     pub fn read_to_end(self, size_limit: usize) -> ReadToEnd<S> {
         ReadToEnd {
             stream: self,
@@ -467,7 +481,9 @@ where
     }
 }
 
-/// Future produced by `read_to_end`
+/// Future produced by [`RecvStream::read_to_end()`].
+///
+/// [`RecvStream::read_to_end()`]: crate::generic::RecvStream::read_to_end
 pub struct ReadToEnd<S>
 where
     S: proto::crypto::Session,
@@ -514,7 +530,9 @@ where
     }
 }
 
-/// Error from the ReadToEnd future
+/// Error from the [`ReadToEnd`] future.
+///
+/// [`ReadToEnd`]: crate::generic::ReadToEnd
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadToEndError {
     /// An error occurred during reading
@@ -605,7 +623,10 @@ pub enum ReadError {
     IllegalOrderedRead,
     /// This was a 0-RTT stream and the server rejected it.
     ///
-    /// Can only occur on clients for 0-RTT streams (opened using `Connecting::into_0rtt()`).
+    /// Can only occur on clients for 0-RTT streams, which can be opened using
+    /// [`Connecting::into_0rtt()`].
+    ///
+    /// [`Connecting::into_0rtt()`]: crate::generic::Connecting::into_0rtt()
     #[error(display = "0-RTT rejected")]
     ZeroRttRejected,
 }
@@ -641,7 +662,10 @@ pub enum WriteError {
     UnknownStream,
     /// This was a 0-RTT stream and the server rejected it.
     ///
-    /// Can only occur on clients for 0-RTT streams (opened using `Connecting::into_0rtt()`).
+    /// Can only occur on clients for 0-RTT streams, which can be opened using
+    /// [`Connecting::into_0rtt()`].
+    ///
+    /// [`Connecting::into_0rtt()`]: crate::generic::Connecting::into_0rtt()
     #[error(display = "0-RTT rejected")]
     ZeroRttRejected,
 }
@@ -657,7 +681,10 @@ pub enum StoppedError {
     UnknownStream,
     /// This was a 0-RTT stream and the server rejected it.
     ///
-    /// Can only occur on clients for 0-RTT streams (opened using `Connecting::into_0rtt()`).
+    /// Can only occur on clients for 0-RTT streams, which can be opened using
+    /// [`Connecting::into_0rtt()`].
+    ///
+    /// [`Connecting::into_0rtt()`]: crate::generic::Connecting::into_0rtt()
     #[error(display = "0-RTT rejected")]
     ZeroRttRejected,
 }
@@ -676,7 +703,9 @@ impl From<WriteError> for io::Error {
     }
 }
 
-/// Future produced by `RecvStream::read`
+/// Future produced by [`RecvStream::read()`].
+///
+/// [`RecvStream::read()`]: crate::generic::RecvStream::read
 pub struct Read<'a, S>
 where
     S: proto::crypto::Session,
@@ -696,7 +725,9 @@ where
     }
 }
 
-/// Future produced by `RecvStream::read_exact`
+/// Future produced by [`RecvStream::read_exact()`].
+///
+/// [`RecvStream::read_exact()`]: crate::generic::RecvStream::read_exact
 pub struct ReadExact<'a, S>
 where
     S: proto::crypto::Session,
@@ -736,7 +767,9 @@ pub enum ReadExactError {
     ReadError(ReadError),
 }
 
-/// Future produced by `RecvStream::read_unordered`
+/// Future produced by [`RecvStream::read_unordered()`].
+///
+/// [`RecvStream::read_unordered()`]: crate::generic::RecvStream::read_unordered
 pub struct ReadUnordered<'a, S>
 where
     S: proto::crypto::Session,
@@ -754,7 +787,9 @@ where
     }
 }
 
-/// Future produced by `SendStream::write`
+/// Future produced by [`SendStream::write()`].
+///
+/// [`SendStream::write()`]: crate::generic::SendStream::write
 pub struct Write<'a, S>
 where
     S: proto::crypto::Session,
@@ -774,7 +809,9 @@ where
     }
 }
 
-/// Future produced by `SendStream::write_all`
+/// Future produced by [`SendStream::write_all()`].
+///
+/// [`SendStream::write_all()`]: crate::generic::SendStream::write_all
 pub struct WriteAll<'a, S>
 where
     S: proto::crypto::Session,

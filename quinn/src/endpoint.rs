@@ -64,7 +64,9 @@ where
 
     /// Connect to a remote endpoint using a custom configuration.
     ///
-    /// See `connect` for details.
+    /// See [`connect()`] for details.
+    ///
+    /// [`connect()`]: Endpoint::connect
     pub fn connect_with(
         &self,
         config: ClientConfig<S>,
@@ -106,7 +108,9 @@ where
 
     /// Close all of this endpoint's connections immediately and cease accepting new connections.
     ///
-    /// See `Connection::close` for details.
+    /// See [`Connection::close()`] for details.
+    ///
+    /// [`Connection::close()`]: crate::generic::Connection::close
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let reason = Bytes::copy_from_slice(reason);
         let mut endpoint = self.inner.lock().unwrap();
@@ -130,8 +134,11 @@ where
     /// the idle timeout period.
     ///
     /// Does not proactively close existing connections or cause incoming connections to be
-    /// rejected. Consider calling `Endpoint::close` and dropping the `Incoming` stream if that is
-    /// desired.
+    /// rejected. Consider calling [`close()`] and dropping the [`Incoming`] stream if
+    /// that is desired.
+    ///
+    /// [`close()`]: Endpoint::close
+    /// [`Incoming`]: crate::generic::Incoming
     pub async fn wait_idle(&self) {
         let mut state = broadcast::State::default();
         futures::future::poll_fn(|cx| {
