@@ -380,7 +380,7 @@ impl ConnectionInner {
                             trace!("Got Settings: {:#?}", s);
                             self.inner.set_remote_settings(Settings::from_frame(s)?)?;
                         }
-                        (true, Side::Client, HttpFrame::Goaway(id)) => {
+                        (true, _, HttpFrame::Goaway(id)) => {
                             trace!("Got Goaway({:?})", id);
                             self.inner.leave(StreamId(id));
                         }

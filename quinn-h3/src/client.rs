@@ -484,6 +484,14 @@ impl Connection {
             .close(ErrorCode::NO_ERROR.into(), b"Connection closed");
     }
 
+    /// Close the connection gracefully
+    ///
+    /// All ongoing requests will be completed, all new requests or server push will
+    /// be rejected.
+    pub fn go_away(&mut self) {
+        self.0.h3.lock().unwrap().inner.go_away();
+    }
+
     // Update traffic keys spontaneously for testing purposes.
     #[doc(hidden)]
     pub fn force_key_update(&self) {
