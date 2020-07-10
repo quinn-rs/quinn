@@ -81,7 +81,7 @@ use http_body::Body as HttpBody;
 use pin_project::pin_project;
 use quinn::{Certificate, Endpoint, OpenBi, RecvStream};
 use quinn_proto::{Side, StreamId};
-use tracing::trace;
+use tracing::{debug, trace};
 
 use crate::{
     body::RecvBody,
@@ -486,10 +486,11 @@ impl Connection {
 
     /// Close the connection gracefully
     ///
-    /// All ongoing requests will be completed, all new requests or server push will
-    /// be rejected.
-    pub fn go_away(&mut self) {
-        self.0.h3.lock().unwrap().inner.go_away();
+    /// All ongoing requests will be completed, all new requests will be aborted. And server pushes
+    /// will be rejected if there is more than `allow_pushes` in flight before the server recieves
+    /// the shutdown signal.
+    pub fn go_away(&mut self, allow_pushes: u64) {
+        self.0.h3.lock().unwrap().inner.go_away(allow_pushes);
     }
 
     // Update traffic keys spontaneously for testing purposes.
@@ -590,6 +591,7 @@ where
                             return Poll::Ready(Err(e.into()));
                         }
                         Ok((send, recv)) => {
+                            debug!(stream=%send.id(), "request");
                             let (method, uri, headers, body) = me.take()?;
 
                             if recv.is_0rtt() && !method.is_idempotent() {
