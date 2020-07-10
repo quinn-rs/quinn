@@ -153,7 +153,7 @@ where
                     ready!(Pin::new(me.send).poll_finish(cx))?;
                     if *me.finish {
                         let mut conn = me.conn.h3.lock().unwrap();
-                        conn.inner.request_finished(*me.stream_id);
+                        conn.inner.remote_stream_finished(*me.stream_id);
                     }
                     return Poll::Ready(Ok(()));
                 }

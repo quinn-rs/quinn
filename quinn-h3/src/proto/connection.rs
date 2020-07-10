@@ -1,9 +1,9 @@
 use std::collections::HashSet;
 
 use bytes::{Buf, Bytes, BytesMut};
-use quinn_proto::{Side, StreamId};
-use std::{cmp, convert::TryFrom};
-use tracing::trace;
+use quinn_proto::{Dir, Side, StreamId};
+use std::convert::TryFrom;
+use tracing::{debug, trace, warn};
 
 use crate::{
     proto::{
@@ -47,8 +47,8 @@ pub struct Connection {
     encoder_table: DynamicTable,
     pending_streams: [BytesMut; 3],
     requests_in_flight: HashSet<StreamId>,
-    max_id_in_flight: u64,
-    go_away: bool,
+    max_id_in_flight: StreamId,
+    go_away: Option<StreamId>,
 
     #[cfg(feature = "interop-test-accessors")]
     pub had_refs: bool,
@@ -72,6 +72,11 @@ impl Connection {
             BytesMut::with_capacity(2048),
         ];
 
+        let dir = match side {
+            Side::Server => Dir::Bi,
+            Side::Client => Dir::Uni,
+        };
+
         Self {
             side,
             decoder_table,
@@ -79,8 +84,8 @@ impl Connection {
             remote_settings: None,
             encoder_table: DynamicTable::new(),
             requests_in_flight: HashSet::with_capacity(32),
-            max_id_in_flight: 0,
-            go_away: false,
+            max_id_in_flight: StreamId::new(side, dir, 0),
+            go_away: None,
 
             #[cfg(feature = "interop-test-accessors")]
             had_refs: false,
@@ -189,34 +194,51 @@ impl Connection {
         self.pending_streams[ty as usize].reserve(capacity);
     }
 
-    pub fn request_initiated(&mut self, id: StreamId) {
-        if !self.go_away {
-            self.requests_in_flight.insert(id);
-            self.max_id_in_flight = cmp::max(id.0, self.max_id_in_flight);
+    // The remote peer initiated a stream: a request from client or a push from server
+    pub fn remote_stream_initiated(&mut self, id: StreamId) -> Result<()> {
+        if let Some(max_id) = self.go_away {
+            if id.index() > max_id.index() {
+                warn!(id=%id, "rejecting");
+                return Err(Error::Aborted);
+            }
         }
+        debug!(id=%id, "accepting");
+        self.requests_in_flight.insert(id);
+        if id.index() > self.max_id_in_flight.index() {
+            self.max_id_in_flight = id
+        };
+        Ok(())
     }
 
-    pub fn request_finished(&mut self, id: StreamId) {
-        if !self.go_away {
-            self.requests_in_flight.remove(&id);
-        }
+    // A stream initiated by the remote peer has finished
+    pub fn remote_stream_finished(&mut self, id: StreamId) {
+        trace!(id=%id, "finished");
+        self.requests_in_flight.remove(&id);
     }
 
-    pub fn requests_in_flight(&self) -> usize {
-        self.requests_in_flight.len()
+    // A graceful shutdown initiated locally, let `allow_streams` potentially in-flight
+    // incoming streams be processed.
+    pub fn go_away(&mut self, allow_streams: u64) {
+        let dir = match self.side {
+            Side::Server => Dir::Bi,
+            Side::Client => Dir::Uni,
+        };
+        let max_id = StreamId::new(
+            !self.side,
+            dir,
+            self.max_id_in_flight.index() + allow_streams,
+        );
+        debug!(last_stream=%max_id, "shutting down");
+        self.go_away = Some(max_id);
+        HttpFrame::Goaway(self.max_id_in_flight.0)
+            .encode(&mut self.pending_streams[PendingStreamType::Control as usize]);
     }
 
-    pub fn go_away(&mut self) {
-        if !self.go_away {
-            self.go_away = true;
-            HttpFrame::Goaway(self.max_id_in_flight)
-                .encode(&mut self.pending_streams[PendingStreamType::Control as usize]);
-        }
-    }
-
-    pub fn leave(&mut self, id: StreamId) {
-        self.go_away = true;
-        self.requests_in_flight.retain(|i| i.0 <= id.0);
+    // Remote peer initiated a graceful shutdown, any stream greater than `max_id`
+    // will be rejected.
+    pub fn leave(&mut self, max_id: StreamId) {
+        self.go_away = Some(max_id);
+        self.requests_in_flight.retain(|i| i.0 <= max_id.0);
     }
 
     pub fn stream_cancel(&mut self, stream_id: StreamId) {
@@ -226,8 +248,12 @@ impl Connection {
         );
     }
 
+    pub fn requests_in_flight(&self) -> usize {
+        self.requests_in_flight.len()
+    }
+
     pub fn is_closing(&self) -> bool {
-        self.go_away
+        self.go_away.is_some()
     }
 }
 
@@ -235,6 +261,7 @@ type Result<T> = std::result::Result<T, Error>;
 
 #[derive(Debug, PartialEq)]
 pub enum Error {
+    Aborted,
     HeaderListTooLarge,
     InvalidHeaderName(String),
     InvalidHeaderValue(String),

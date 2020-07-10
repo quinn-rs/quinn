@@ -245,18 +245,18 @@ impl ConnectionInner {
                             "client does not accept bidirectional streams",
                         ));
                     }
-                    Side::Server => {
-                        if self.inner.is_closing() {
+                    Side::Server => match self.inner.remote_stream_initiated(send.id()) {
+                        Err(_) => {
                             let _ = send.reset(ErrorCode::REQUEST_REJECTED.into());
                             let _ = recv.stop(ErrorCode::REQUEST_REJECTED.into());
-                        } else {
-                            self.inner.request_initiated(send.id());
+                        }
+                        _ => {
                             self.requests.push_back((send, recv));
                             if let Some(t) = self.requests_task.take() {
                                 t.wake();
                             }
                         }
-                    }
+                    },
                 },
             }
         }
@@ -575,7 +575,8 @@ impl From<ConnectionError> for DriverError {
                 DriverError::peer(ErrorCode::QPACK_ENCODER_STREAM_ERROR, format!("{}", reason))
             }
             // Those are excepted to happen on in Requests / Responses, just return internal error
-            ConnectionError::HeaderListTooLarge
+            ConnectionError::Aborted
+            | ConnectionError::HeaderListTooLarge
             | ConnectionError::InvalidHeaderName(_)
             | ConnectionError::InvalidHeaderValue(_)
             | ConnectionError::InvalidRequest(_)

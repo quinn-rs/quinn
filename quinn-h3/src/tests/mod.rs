@@ -219,40 +219,58 @@ async fn go_away() {
 
     let mut incoming = helper.make_server();
     let server_handle = tokio::spawn(async move {
+        let response = || {
+            Response::builder()
+                .status(StatusCode::OK)
+                .body(Body::from(()))
+                .unwrap()
+        };
         let mut incoming_req = incoming
             .next()
             .await
             .expect("connecting")
             .await
             .expect("accept");
+        // Accept a first request before shutting down
         let recv_req = incoming_req.next().await.expect("wait request");
-        incoming_req.go_away();
         let (_, mut sender) = recv_req.await.expect("recv_req");
-        sender
-            .send_response(
-                Response::builder()
-                    .status(StatusCode::OK)
-                    .body(Body::from(()))
-                    .unwrap(),
-            )
-            .await
-            .map(|_| ())
+        sender.send_response(response()).await.map(|_| ()).unwrap();
+        // Wait for the 2 other request to be issued
+        delay_for(Duration::from_millis(25)).await;
+        incoming_req.go_away(1);
+        let recv_req = incoming_req.next().await.expect("wait request");
+        let (_, mut sender) = recv_req.await.expect("recv_req");
+        sender.send_response(response()).await.map(|_| ()).unwrap();
+        incoming_req.next().await
     });
 
     let conn = helper.make_connection().await;
     let (req, resp) = conn.send_request(get("/"));
     req.await.unwrap();
-    assert!(resp.await.is_ok());
 
+    // This request will be counted in the grace interval of 1
+    let (req_graced, resp_graced) = conn.send_request(get("/"));
+    // This request will go beyond the grace interval and will be rejected
+    let (req_rejected, resp_rejected) = conn.send_request(get("/"));
+    // Wait for the GoAway frame to arrive
     delay_for(Duration::from_millis(50)).await;
-    let (req, resp) = conn.send_request(get("/"));
-    req.await.unwrap();
+    // Simulate the "in-flight" nature of these two
+    assert_matches!(tokio::join!(req_graced, req_rejected), (Ok(_), Ok(_)));
+
+    assert_matches!(resp.await, Ok(_));
+    assert_matches!(resp_graced.await, Ok(_));
     assert_matches!(
-        resp.await.map(|_| ()),
-        Err(Error::Http(HttpError::RequestRejected, None))
+        resp_rejected.await,
+        Err(Error::Http(HttpError::RequestRejected, _))
     );
 
-    assert!(timeout_join(server_handle).await.is_ok());
+    // GoAway has been received by the client: New requests are rejected locally because connetion
+    // is shutting down.
+    let (req_locally_aborted, _) = conn.send_request(get("/"));
+    assert_matches!(req_locally_aborted.await.map(|_| ()), Err(Error::Aborted));
+
+    // The server shutdown is complete, so incoming_request.next() returns None
+    assert_eq!(timeout_join(server_handle).await.map(|_| ()), None);
 }
 
 #[tokio::test]
@@ -269,7 +287,7 @@ async fn go_away_from_client() {
     // create a second request but do not start it
     let (req2, resp2) = conn.send_request(get("/"));
     // The goaway is issued as first request is in flight but not the second
-    conn.go_away();
+    conn.go_away(0);
     // First request succeed
     assert_matches!(tokio::join!(resp1, req2), (Ok(_), Ok(_)));
 
