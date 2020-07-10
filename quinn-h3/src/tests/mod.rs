@@ -255,6 +255,33 @@ async fn go_away() {
     assert!(timeout_join(server_handle).await.is_ok());
 }
 
+#[tokio::test]
+async fn go_away_from_client() {
+    let helper = Helper::new();
+
+    let incoming = helper.make_server();
+    let server_handle = tokio::spawn(async move { serve_one(incoming).await });
+    let mut conn = helper.make_connection().await;
+
+    // start the first request
+    let (req1, resp1) = conn.send_request(get("/"));
+    req1.await.unwrap();
+    // create a second request but do not start it
+    let (req2, resp2) = conn.send_request(get("/"));
+    // The goaway is issued as first request is in flight but not the second
+    conn.go_away();
+    // First request succeed
+    assert_matches!(tokio::join!(resp1, req2), (Ok(_), Ok(_)));
+
+    // second request is rejected as it was issued after go_away frame
+    assert_matches!(
+        resp2.await.map(|_| ()),
+        Err(Error::Http(HttpError::RequestRejected, None))
+    );
+
+    assert!(timeout_join(server_handle).await.is_ok());
+}
+
 async fn serve_n_0rtt(mut incoming: IncomingConnection, n: usize) -> Result<(), crate::Error> {
     for _ in 0..n {
         let (mut incoming_req, _) = incoming
