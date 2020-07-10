@@ -141,13 +141,10 @@ impl ConnectionInner {
 
         self.reset_waker(cx);
 
-        Ok(
-            if self.inner.is_closing() && self.inner.requests_in_flight() == 0 {
-                DriveState::Closed
-            } else {
-                DriveState::Running
-            },
-        )
+        Ok(match self.inner.shutdown_complete() {
+            true => DriveState::Closed,
+            false => DriveState::Running,
+        })
     }
 
     pub fn next_request(

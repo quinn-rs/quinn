@@ -248,8 +248,8 @@ impl Connection {
         );
     }
 
-    pub fn requests_in_flight(&self) -> usize {
-        self.requests_in_flight.len()
+    pub fn shutdown_complete(&self) -> bool {
+        self.go_away.is_some() && self.requests_in_flight.is_empty()
     }
 
     pub fn is_closing(&self) -> bool {
