@@ -515,7 +515,6 @@ pub struct SendRequest<B, D> {
     request: Option<Request<B>>,
     #[pin]
     state: SendRequestState<B, D>,
-    open: OpenBi,
     chan: Option<oneshot::Sender<(RecvStream, StreamId)>>,
 }
 
@@ -529,13 +528,21 @@ where
         conn: ConnectionRef,
         request: Request<B>,
     ) -> Self {
+        if conn.h3.lock().unwrap().inner.is_closing() {
+            return Self {
+                conn,
+                chan: None,
+                request: None,
+                state: SendRequestState::Aborted,
+            };
+        }
+
         let open = conn.quic.open_bi();
         Self {
             conn,
-            open,
             chan: Some(open_send),
             request: Some(request),
-            state: SendRequestState::Opening,
+            state: SendRequestState::Opening(open),
         }
     }
 
@@ -584,8 +591,11 @@ where
         let mut me = self.project();
         loop {
             match &mut me.state.as_mut().project() {
-                SendRequestStateProj::Opening => {
-                    match ready!(me.open.poll_unpin(cx)) {
+                SendRequestStateProj::Aborted => {
+                    return Poll::Ready(Err(Error::Aborted));
+                }
+                SendRequestStateProj::Opening(open) => {
+                    match ready!(open.poll_unpin(cx)) {
                         Err(e) => {
                             me.chan.take().unwrap(); // drop it so RecvResponse fails
                             return Poll::Ready(Err(e.into()));
@@ -623,8 +633,9 @@ where
 
 #[pin_project(project = SendRequestStateProj)]
 enum SendRequestState<B, D> {
-    Opening,
+    Opening(OpenBi),
     Sending(#[pin] SendData<B, D>),
+    Aborted,
 }
 
 /// Receive an HTTP/3 response
