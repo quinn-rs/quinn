@@ -202,9 +202,6 @@ impl ConnectionInner {
         stream_id: StreamId,
         header: &HeadersFrame,
     ) -> Poll<Result<Header, Error>> {
-        if self.closed {
-            return Poll::Ready(Err(Error::Aborted));
-        }
         let res = self
             .inner
             .decode_header(stream_id, header)
