@@ -89,7 +89,7 @@ impl ConnectionRef {
                 incoming_bi: bi_streams,
                 incoming_uni: uni_streams,
                 pending_uni: VecDeque::with_capacity(3),
-                inner: Connection::with_settings(settings),
+                inner: Connection::new(side, settings),
                 requests: VecDeque::with_capacity(16),
                 requests_task: None,
                 recv_control: None,
