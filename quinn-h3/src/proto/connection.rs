@@ -1,7 +1,7 @@
 use std::collections::HashSet;
 
 use bytes::{Buf, Bytes, BytesMut};
-use quinn_proto::StreamId;
+use quinn_proto::{Side, StreamId};
 use std::{cmp, convert::TryFrom};
 use tracing::trace;
 
@@ -41,6 +41,7 @@ impl PendingStreamType {
 }
 
 pub struct Connection {
+    side: Side,
     remote_settings: Option<Settings>,
     decoder_table: DynamicTable,
     encoder_table: DynamicTable,
@@ -54,7 +55,7 @@ pub struct Connection {
 }
 
 impl Connection {
-    pub fn with_settings(settings: Settings) -> Self {
+    pub fn new(side: Side, settings: Settings) -> Self {
         let mut decoder_table = DynamicTable::new();
         decoder_table
             .set_max_blocked(settings.qpack_max_blocked_streams() as usize)
@@ -72,6 +73,7 @@ impl Connection {
         ];
 
         Self {
+            side,
             decoder_table,
             pending_streams,
             remote_settings: None,
@@ -288,34 +290,13 @@ mod tests {
         Method,
     };
 
-    impl Default for Connection {
-        fn default() -> Self {
-            Self {
-                remote_settings: None,
-                decoder_table: DynamicTable::new(),
-                encoder_table: DynamicTable::new(),
-                pending_streams: [
-                    BytesMut::with_capacity(2048),
-                    BytesMut::with_capacity(2048),
-                    BytesMut::with_capacity(2048),
-                ],
-                requests_in_flight: HashSet::with_capacity(32),
-                max_id_in_flight: 0,
-                go_away: false,
-
-                #[cfg(feature = "interop-test-accessors")]
-                had_refs: false,
-            }
-        }
-    }
-
     #[test]
     fn encode_no_dynamic() {
         let mut header_map = HeaderMap::new();
         header_map.append("hello", HeaderValue::from_static("text/html"));
         let header = Header::request(Method::GET, Uri::default(), header_map);
 
-        let mut conn = Connection::default();
+        let mut conn = Connection::new(Side::Client, Settings::new());
         assert_matches!(conn.encode_header(StreamId(1), header), Ok(_));
         assert!(conn.pending_streams[PendingStreamType::Encoder as usize].is_empty());
     }
@@ -326,7 +307,7 @@ mod tests {
         header_map.append("hello", HeaderValue::from_static("text/html"));
         let header = Header::request(Method::GET, Uri::default(), header_map);
 
-        let mut conn = Connection::default();
+        let mut conn = Connection::new(Side::Client, Settings::new());
         conn.encoder_table
             .set_max_size(2048)
             .expect("set table size");
@@ -345,7 +326,7 @@ mod tests {
         }
         let header = Header::request(Method::GET, Uri::default(), header_map);
 
-        let mut conn = Connection::default();
+        let mut conn = Connection::new(Side::Client, Settings::new());
         let mut settings = Settings::new();
         settings.set_max_header_list_size(4).unwrap();
         conn.remote_settings = Some(settings);
@@ -367,12 +348,12 @@ mod tests {
             header_map,
         );
 
-        let mut client = Connection::default();
+        let mut client = Connection::new(Side::Client, Settings::new());
         let encoded = client
             .encode_header(StreamId(1), header.clone())
             .expect("encoding failed");
 
-        let mut server = Connection::default();
+        let mut server = Connection::new(Side::Client, Settings::new());
         assert_matches!(
             server.decode_header(StreamId(1), &encoded),
             Ok(DecodeResult::Decoded(decoded, false)) => {
@@ -388,7 +369,7 @@ mod tests {
         header_map.append("hello", HeaderValue::from_static("text/html"));
         let header = Header::request(Method::GET, Uri::default(), header_map);
 
-        let mut client = Connection::default();
+        let mut client = Connection::new(Side::Client, Settings::new());
         client
             .encoder_table
             .set_max_size(2048)
@@ -406,7 +387,7 @@ mod tests {
         let mut settings = Settings::new();
         settings.set_qpack_max_blocked_streams(42).unwrap();
         settings.set_qpack_max_table_capacity(2048).unwrap();
-        let mut server = Connection::with_settings(settings);
+        let mut server = Connection::new(Side::Server, settings);
 
         assert_matches!(
             server.decode_header(StreamId(1), &encoded),
