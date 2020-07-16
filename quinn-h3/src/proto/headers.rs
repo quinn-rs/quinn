@@ -203,9 +203,9 @@ impl Field {
 
         if name[0] != b':' {
             return Ok(Field::Header((
-                HeaderName::from_bytes(name).or_else(|_| Err(Error::invalid_name(name)))?,
+                HeaderName::from_bytes(name).map_err(|_| Error::invalid_name(name))?,
                 HeaderValue::from_bytes(value.as_ref())
-                    .or_else(|_| Err(Error::invalid_value(name, value)))?,
+                    .map_err(|_| Error::invalid_value(name, value))?,
             )));
         }
 
@@ -220,11 +220,11 @@ impl Field {
             PseudoType::PATH => Field::Path(try_value(name, value)?),
             PseudoType::METHOD => Field::Method(
                 Method::from_bytes(value.as_ref())
-                    .or_else(|_| Err(Error::invalid_value(name, value)))?,
+                    .map_err(|_| Error::invalid_value(name, value))?,
             ),
             PseudoType::STATUS => Field::Status(
                 StatusCode::from_bytes(value.as_ref())
-                    .or_else(|_| Err(Error::invalid_value(name, value)))?,
+                    .map_err(|_| Error::invalid_value(name, value))?,
             ),
         })
     }
