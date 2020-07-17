@@ -154,6 +154,7 @@ where
                     if *me.finish {
                         let mut conn = me.conn.h3.lock().unwrap();
                         conn.inner.remote_stream_finished(*me.stream_id);
+                        conn.wake();
                     }
                     return Poll::Ready(Ok(()));
                 }
