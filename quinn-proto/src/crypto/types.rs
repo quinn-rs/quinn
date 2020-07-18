@@ -18,8 +18,7 @@ impl Certificate {
 
     /// Parse a PEM-formatted certificate
     pub fn from_pem(pem: &[u8]) -> Result<Self, ParseError> {
-        let certs = pemfile::certs(&mut &pem[..])
-            .map_err(|()| ParseError("invalid pem cert"))?;
+        let certs = pemfile::certs(&mut &pem[..]).map_err(|()| ParseError("invalid pem cert"))?;
         if let Some(pem) = certs.into_iter().next() {
             return Ok(Self { inner: pem });
         }
