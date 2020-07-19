@@ -19,7 +19,7 @@ use crate::{
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
 };
 
-pub(crate) struct Streams {
+pub struct Streams {
     side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
     send: HashMap<StreamId, Send>,

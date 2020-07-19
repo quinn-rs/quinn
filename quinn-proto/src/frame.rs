@@ -13,6 +13,9 @@ use crate::{
     RESET_TOKEN_SIZE,
 };
 
+#[cfg(feature = "arbitrary")]
+use arbitrary::Arbitrary;
+
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Type(u64);
 
@@ -732,6 +735,7 @@ impl<'a> Iterator for AckIter<'a> {
     }
 }
 
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 #[derive(Debug, Copy, Clone)]
 pub struct ResetStream {
     pub id: StreamId,
