@@ -25,6 +25,7 @@ tls-rustls = ["rustls", "webpki", "ring"]
 native-certs = ["rustls-native-certs"]
 
 [dependencies]
+arbitrary = { version = "0.4.5", features = ["derive"], optional = true }
 bytes = "0.5.2"
 ct-logs = { version = "0.7", optional = true }
 err-derive = "0.2.3"

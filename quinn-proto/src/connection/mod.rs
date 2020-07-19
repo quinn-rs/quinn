@@ -42,7 +42,7 @@ mod spaces;
 use spaces::{PacketSpace, Retransmits, SentPacket};
 
 mod streams;
-use streams::Streams;
+pub use streams::Streams;
 pub use streams::{FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
 
 mod timer;

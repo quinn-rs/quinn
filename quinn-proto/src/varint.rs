@@ -5,11 +5,15 @@ use err_derive::Error;
 
 use crate::coding::{self, Codec, UnexpectedEnd};
 
+#[cfg(feature = "arbitrary")]
+use arbitrary::Arbitrary;
+
 /// An integer less than 2^62
 ///
 /// Values of this type are suitable for encoding as QUIC variable-length integer.
 // It would be neat if we could express to Rust that the top two bits are available for use as enum
 // discriminants
+#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 #[derive(Default, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct VarInt(pub(crate) u64);
 
