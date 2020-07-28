@@ -100,6 +100,7 @@ mod data;
 mod frame;
 mod proto;
 mod streams;
+mod tokio;
 
 #[cfg(not(feature = "interop-test-accessors"))]
 mod qpack;

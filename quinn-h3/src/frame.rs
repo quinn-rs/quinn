@@ -1,18 +1,18 @@
 use std::io;
 
 use bytes::{Buf, BytesMut};
+use futures_util::io::AsyncRead;
 use quinn::RecvStream;
-use tokio::io::AsyncRead;
 use tokio_util::codec::{Decoder, FramedRead};
 
 use super::proto::frame::{self, FrameHeader, HttpFrame, PartialData};
-use crate::{proto::ErrorCode, streams::Reset};
+use crate::{proto::ErrorCode, streams::Reset, tokio::Adapter};
 
-pub type FrameStream = FramedRead<RecvStream, FrameDecoder>;
+pub type FrameStream = Adapter<FramedRead<Adapter<RecvStream>, FrameDecoder>>;
 
 impl Reset for FrameStream {
     fn reset(&mut self, error_code: ErrorCode) {
-        let _ = self.get_mut().stop(error_code.0.into());
+        let _ = self.0.get_mut().0.stop(error_code.0.into());
     }
 }
 
@@ -23,15 +23,15 @@ pub struct FrameDecoder {
 }
 
 impl FrameDecoder {
-    pub fn stream<T: AsyncRead>(stream: T) -> FramedRead<T, Self> {
-        FramedRead::with_capacity(
-            stream,
+    pub fn stream<T: AsyncRead>(stream: T) -> Adapter<FramedRead<Adapter<T>, Self>> {
+        Adapter(FramedRead::with_capacity(
+            Adapter(stream),
             FrameDecoder {
                 expected: None,
                 partial: None,
             },
             65535,
-        )
+        ))
     }
 }
 

@@ -36,10 +36,10 @@ pin-project = "^0.4.21"
 quinn-proto = { path = "../quinn-proto", version = "0.6.0" }
 quinn = { path = "../quinn", version = "0.6.0", features = ["tls-rustls"] }
 rustls = { version = "0.18", features = ["quic"] }
-tokio = "0.2.6"
 tokio-util = { version = "0.3.0", features = ["codec"] }
 tracing = "0.1.10"
 webpki = "0.21"
+tokio = "0.2.22"
 
 [dev-dependencies]
 anyhow = "1.0.22"
