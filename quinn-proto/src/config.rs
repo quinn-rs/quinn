@@ -8,7 +8,7 @@ use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
-    crypto::{self, ClientConfig as _, HmacKey as _, ServerConfig as _},
+    crypto::{self, ClientConfig as _, HandshakeTokenKey as _, HmacKey as _, ServerConfig as _},
     VarInt, VarIntBoundsExceeded,
 };
 
@@ -413,8 +413,9 @@ where
     /// Must be set to use TLS 1.3 only.
     pub crypto: S::ServerConfig,
 
-    /// Private key used to authenticate data included in handshake tokens.
-    pub(crate) token_key: Arc<S::HmacKey>,
+    /// Used to generate one-time AEAD keys to protect handshake tokens
+    pub(crate) token_key: Arc<S::HandshakeTokenKey>,
+
     /// Whether to require clients to prove ownership of an address before committing resources.
     ///
     /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
@@ -438,13 +439,13 @@ impl<S> ServerConfig<S>
 where
     S: crypto::Session,
 {
-    /// Create a default config with a particular `token_key`
-    pub fn new(token_key: S::HmacKey) -> Self {
+    /// Create a default config with a particular `master_key`
+    pub fn new(prk: S::HandshakeTokenKey) -> Self {
         Self {
             transport: Arc::new(TransportConfig::default()),
             crypto: S::ServerConfig::new(),
 
-            token_key: Arc::new(token_key),
+            token_key: Arc::new(prk),
             use_stateless_retry: false,
             retry_token_lifetime: 15_000_000,
 
@@ -455,8 +456,8 @@ where
     }
 
     /// Private key used to authenticate data included in handshake tokens.
-    pub fn token_key(&mut self, value: &[u8]) -> Result<&mut Self, ConfigError> {
-        self.token_key = Arc::new(S::HmacKey::new(value)?);
+    pub fn token_key(&mut self, master_key: &[u8]) -> Result<&mut Self, ConfigError> {
+        self.token_key = Arc::new(S::HandshakeTokenKey::from_secret(&master_key));
         Ok(self)
     }
 
@@ -529,12 +530,10 @@ where
     fn default() -> Self {
         let rng = &mut rand::thread_rng();
 
-        let mut token_key = vec![0; S::HmacKey::KEY_LEN];
-        rng.fill_bytes(&mut token_key);
-        Self::new(
-            S::HmacKey::new(&token_key)
-                .expect("HMAC key rejected random bytes; use ServerConfig::new instead"),
-        )
+        let mut master_key = [0u8; 64];
+        rng.fill_bytes(&mut master_key);
+
+        Self::new(S::HandshakeTokenKey::from_secret(&master_key))
     }
 }
 
