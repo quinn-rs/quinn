@@ -38,6 +38,8 @@ pub trait Session: Send + Sized {
     type ClientConfig: ClientConfig<Self>;
     /// Type used to sign various values
     type HmacKey: HmacKey;
+    /// Key used to generate one-time-use handshake token keys
+    type HandshakeTokenKey: HandshakeTokenKey;
     /// Type of keys used to protect packet headers
     type HeaderKey: HeaderKey;
     /// Type used to represent packet protection keys
@@ -210,3 +212,26 @@ pub trait HmacKey: Send + Sized + Sync {
 /// This error occurs if the requested output length is too large.
 #[derive(Debug, PartialEq, Eq)]
 pub struct ExportKeyingMaterialError;
+
+/// A pseudo random key for HKDF
+pub trait HandshakeTokenKey: Send + Sized + Sync {
+    /// AEAD key type
+    type AeadKey: AeadKey;
+
+    /// Derive AEAD using hkdf
+    fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Self::AeadKey;
+    /// Method to build pseudo random key from existing bytes
+    fn from_secret(secret: &[u8]) -> Self;
+}
+
+/// A key for sealing data with AEAD-based algorithms
+pub trait AeadKey {
+    /// Length of AEAD Key
+    const KEY_LEN: usize;
+
+    // fn from_hkdf(master_key: &impl PseudoRandomKey, random_bytes: &[u8]) -> Self;
+    /// Method for sealing message `data`
+    fn seal(&self, data: &mut Vec<u8>, additional_data: &[u8]) -> Result<(), ()>;
+    /// Method for opening a sealed message `data`
+    fn open<'a>(&self, data: &'a mut [u8], additional_data: &[u8]) -> Result<&'a mut [u8], ()>;
+}
