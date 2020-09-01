@@ -23,12 +23,14 @@ use crate::{
 };
 
 /// A rustls TLS session
+#[derive(Debug)]
 pub struct TlsSession {
     using_alpn: bool,
     got_handshake_data: bool,
     inner: SessionKind,
 }
 
+#[derive(Debug)]
 enum SessionKind {
     Client(rustls::ClientSession),
     Server(rustls::ServerSession),
