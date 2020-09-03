@@ -137,11 +137,9 @@ async fn run(options: Opt) -> Result<()> {
         bail!("root path does not exist");
     }
 
-    let mut incoming = {
-        let (endpoint, incoming) = endpoint.bind(&options.listen)?;
-        info!("listening on {}", endpoint.local_addr()?);
-        incoming
-    };
+    let (endpoint, mut incoming) = endpoint.bind(&options.listen)?;
+    info!("listening on {}", endpoint.local_addr()?);
+    drop(endpoint);
 
     while let Some(conn) = incoming.next().await {
         info!("connection incoming");

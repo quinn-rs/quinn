@@ -184,7 +184,7 @@ where
     S: proto::crypto::Session + 'static,
 {
     type Output = Result<(), io::Error>;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());
@@ -410,7 +410,7 @@ where
     S: proto::crypto::Session,
 {
     type Item = Connecting<S>;
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver_lost {
             Poll::Ready(None)
