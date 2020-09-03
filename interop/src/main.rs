@@ -1,4 +1,5 @@
 #![allow(clippy::mutex_atomic, clippy::eval_order_dependence)]
+#![type_length_limit = "2121396"] // https://github.com/rust-lang/rust/issues/54540
 
 use std::{
     env,
