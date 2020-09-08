@@ -45,6 +45,23 @@ impl TlsSession {
     }
 }
 
+impl crypto::ExportKeyingMaterial for TlsSession {
+    type Error = TLSError;
+
+    fn export_keying_material(
+        &self,
+        output: &mut [u8],
+        label: &[u8],
+        context: Option<&[u8]>
+    ) -> Result<(), Self::Error> {
+        let session: &dyn rustls::Session = match &self.inner {
+            SessionKind::Client(s) => s,
+            SessionKind::Server(s) => s,
+        };
+        session.export_keying_material(output, label, context)
+    }
+}
+
 impl crypto::Session for TlsSession {
     type HandshakeData = HandshakeData;
     type Identity = CertificateChain;

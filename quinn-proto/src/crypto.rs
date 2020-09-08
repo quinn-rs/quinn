@@ -186,3 +186,22 @@ pub trait HmacKey: Send + Sized + Sync {
     /// Method for verifying a message
     fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), ()>;
 }
+
+/// A [Session] that can export keying material
+pub trait ExportKeyingMaterial: Session {
+    /// Error type returned when export_keying_mateiral fails
+    type Error;
+
+    /// Fill `output` with `output.len()` bytes of keying material derived
+    /// from the [Session]'s secrets, using `label` and `context` for domain
+    /// separation.
+    ///
+    /// This function will fail, returning `Self::Error`, if called before
+    /// the handshake with the peer is complete.
+    fn export_keying_material(
+        &self,
+        output: &mut [u8],
+        label: &[u8],
+        context: Option<&[u8]>
+    ) -> Result<(), Self::Error>;
+}
