@@ -1,4 +1,4 @@
-//! This example intends to use the smallest amout of code to make a simple QUIC connection.
+//! This example intends to use the smallest amount of code to make a simple QUIC connection.
 //!
 //! The server issues it's own certificate and passes it to the client to trust.
 //!
