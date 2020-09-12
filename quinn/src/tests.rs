@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use futures::{future, StreamExt};
+use futures::{channel::oneshot, future, StreamExt};
 use tokio::{
     runtime::{Builder, Runtime},
     time::{Duration, Instant},
@@ -98,11 +98,16 @@ fn local_addr() {
 }
 
 #[test]
-fn read_after_close() {
+fn read_after_close_and_export_keying_material() {
     let _guard = subscribe();
     let mut runtime = rt_basic();
     let (endpoint, mut incoming) = runtime.enter(endpoint);
     const MSG: &[u8] = b"goodbye!";
+
+    // compare key material
+    let (c_send, mut c_recv) = oneshot::channel();
+    let (s_send, mut s_recv) = oneshot::channel();
+
     runtime.spawn(async move {
         let new_conn = incoming
             .next()
@@ -111,6 +116,12 @@ fn read_after_close() {
             .await
             .expect("connection");
         let mut s = new_conn.connection.open_uni().await.unwrap();
+        let mut buf = [0u8; 64];
+        new_conn
+            .connection
+            .export_keying_material(&mut buf, b"asdf", Some(b"qwer"))
+            .unwrap();
+        s_send.send(buf).unwrap();
         s.write_all(MSG).await.unwrap();
         s.finish().await.unwrap();
     });
@@ -121,6 +132,12 @@ fn read_after_close() {
             .await
             .expect("connect");
         tokio::time::delay_until(Instant::now() + Duration::from_millis(100)).await;
+        let mut buf = [0u8; 64];
+        new_conn
+            .connection
+            .export_keying_material(&mut buf, b"asdf", Some(b"qwer"))
+            .unwrap();
+        c_send.send(buf).unwrap();
         let stream = new_conn
             .uni_streams
             .next()
@@ -133,6 +150,11 @@ fn read_after_close() {
             .expect("read_to_end");
         assert_eq!(msg, MSG);
     });
+
+    // prior block_on call guarantees that try_recv's will succeed here
+    let c_buf = c_recv.try_recv().unwrap().unwrap();
+    let s_buf = s_recv.try_recv().unwrap().unwrap();
+    assert_eq!(c_buf, s_buf);
 }
 
 #[tokio::test]
