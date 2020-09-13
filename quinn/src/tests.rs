@@ -121,7 +121,7 @@ fn read_after_close_and_export_keying_material() {
             .connection
             .export_keying_material(&mut buf, b"asdf", Some(b"qwer"))
             .unwrap();
-        s_send.send(buf).unwrap();
+        s_send.send(buf).map_err(|_| ()).unwrap();
         s.write_all(MSG).await.unwrap();
         s.finish().await.unwrap();
     });
@@ -137,7 +137,7 @@ fn read_after_close_and_export_keying_material() {
             .connection
             .export_keying_material(&mut buf, b"asdf", Some(b"qwer"))
             .unwrap();
-        c_send.send(buf).unwrap();
+        c_send.send(buf).map_err(|_| ()).unwrap();
         let stream = new_conn
             .uni_streams
             .next()
@@ -154,7 +154,7 @@ fn read_after_close_and_export_keying_material() {
     // prior block_on call guarantees that try_recv's will succeed here
     let c_buf = c_recv.try_recv().unwrap().unwrap();
     let s_buf = s_recv.try_recv().unwrap().unwrap();
-    assert_eq!(c_buf, s_buf);
+    assert_eq!(&c_buf[..], &s_buf[..]);
 }
 
 #[tokio::test]

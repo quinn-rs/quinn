@@ -206,7 +206,7 @@ fn export_keying_material() {
         .export_keying_material(&mut server_buf, LABEL, CONTEXT)
         .unwrap();
 
-    assert_eq!(client_buf, server_buf);
+    assert_eq!(&client_buf[..], &server_buf[..]);
 }
 
 #[test]
