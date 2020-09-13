@@ -45,23 +45,6 @@ impl TlsSession {
     }
 }
 
-impl crypto::ExportKeyingMaterial for TlsSession {
-    type Error = TLSError;
-
-    fn export_keying_material(
-        &self,
-        output: &mut [u8],
-        label: &[u8],
-        context: Option<&[u8]>
-    ) -> Result<(), Self::Error> {
-        let session: &dyn rustls::Session = match &self.inner {
-            SessionKind::Client(s) => s,
-            SessionKind::Server(s) => s,
-        };
-        session.export_keying_material(output, label, context)
-    }
-}
-
 impl crypto::Session for TlsSession {
     type HandshakeData = HandshakeData;
     type Identity = CertificateChain;
@@ -70,6 +53,7 @@ impl crypto::Session for TlsSession {
     type PacketKey = PacketKey;
     type HeaderKey = HeaderProtectionKey;
     type ServerConfig = Arc<rustls::ServerConfig>;
+    type ExportKeyingMaterialError = TLSError;
 
     fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys<Self> {
         const INITIAL_SALT: [u8; 20] = [
@@ -235,6 +219,19 @@ impl crypto::Session for TlsSession {
 
         let (aad, tag) = pseudo_packet.split_at_mut(tag_start);
         key.open_in_place(nonce, aead::Aad::from(aad), tag).is_ok()
+    }
+
+    fn export_keying_material(
+        &self,
+        output: &mut [u8],
+        label: &[u8],
+        context: Option<&[u8]>
+    ) -> Result<(), Self::ExportKeyingMaterialError> {
+        let session: &dyn rustls::Session = match &self.inner {
+            SessionKind::Client(s) => s,
+            SessionKind::Server(s) => s,
+        };
+        session.export_keying_material(output, label, context)
     }
 }
 

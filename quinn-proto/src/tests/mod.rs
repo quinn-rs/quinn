@@ -15,7 +15,6 @@ use tracing::info;
 
 use super::*;
 use crate::crypto::Session as _;
-use crate::crypto::ExportKeyingMaterial as _;
 mod util;
 use util::*;
 

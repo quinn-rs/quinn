@@ -44,6 +44,8 @@ pub trait Session: Send + Sized {
     type PacketKey: PacketKey;
     /// Type used to hold configuration for server sessions
     type ServerConfig: ServerConfig<Self>;
+    /// Type of error returned by [export_keying_material](Self::export_keying_material).
+    type ExportKeyingMaterialError;
 
     /// Create the initial set of keys given the client's initial destination ConnectionId
     fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys<Self>;
@@ -99,6 +101,19 @@ pub trait Session: Send + Sized {
 
     /// Verify the integrity of a retry packet
     fn is_valid_retry(orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool;
+
+    /// Fill `output` with `output.len()` bytes of keying material derived
+    /// from the [Session]'s secrets, using `label` and `context` for domain
+    /// separation.
+    ///
+    /// This function will fail, returning `Self::Error`, if called before
+    /// the handshake with the peer is complete.
+    fn export_keying_material(
+        &self,
+        output: &mut [u8],
+        label: &[u8],
+        context: Option<&[u8]>
+    ) -> Result<(), Self::ExportKeyingMaterialError>;
 }
 
 /// A pair of keys for bidirectional communication
@@ -185,23 +200,4 @@ pub trait HmacKey: Send + Sized + Sync {
     fn sign(&self, data: &[u8]) -> Self::Signature;
     /// Method for verifying a message
     fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), ()>;
-}
-
-/// A [Session] that can export keying material
-pub trait ExportKeyingMaterial: Session {
-    /// Error type returned when export_keying_mateiral fails
-    type Error;
-
-    /// Fill `output` with `output.len()` bytes of keying material derived
-    /// from the [Session]'s secrets, using `label` and `context` for domain
-    /// separation.
-    ///
-    /// This function will fail, returning `Self::Error`, if called before
-    /// the handshake with the peer is complete.
-    fn export_keying_material(
-        &self,
-        output: &mut [u8],
-        label: &[u8],
-        context: Option<&[u8]>
-    ) -> Result<(), Self::Error>;
 }

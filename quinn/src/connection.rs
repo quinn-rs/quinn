@@ -436,12 +436,7 @@ where
     pub fn force_key_update(&self) {
         self.0.lock().unwrap().inner.initiate_key_update()
     }
-}
 
-impl<S> Connection<S>
-where
-    S: proto::crypto::ExportKeyingMaterial,
-{
     /// Derive keying material from this connection's TLS session secrets.
     ///
     /// When both peers call this method with the same `label` and `context`
@@ -455,7 +450,7 @@ where
         output: &mut [u8],
         label: &[u8],
         context: Option<&[u8]>,
-    ) -> Result<(), <S as proto::crypto::ExportKeyingMaterial>::Error> {
+    ) -> Result<(), <S as proto::crypto::Session>::ExportKeyingMaterialError> {
         self.0
             .lock()
             .unwrap()
