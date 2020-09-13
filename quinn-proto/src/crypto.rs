@@ -106,8 +106,8 @@ pub trait Session: Send + Sized {
     /// from the [Session]'s secrets, using `label` and `context` for domain
     /// separation.
     ///
-    /// This function will fail, returning `Self::Error`, if called before
-    /// the handshake with the peer is complete.
+    /// This function will fail, returning [Self::ExportKeyingMaterialError],
+    /// if called before the handshake with the peer is complete.
     fn export_keying_material(
         &self,
         output: &mut [u8],
