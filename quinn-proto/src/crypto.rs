@@ -112,7 +112,7 @@ pub trait Session: Send + Sized {
         &self,
         output: &mut [u8],
         label: &[u8],
-        context: Option<&[u8]>
+        context: Option<&[u8]>,
     ) -> Result<(), Self::ExportKeyingMaterialError>;
 }
 
