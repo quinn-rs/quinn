@@ -19,7 +19,7 @@ use crate::{
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     config::{EndpointConfig, ServerConfig, TransportConfig},
     crypto,
-    shared::ConnectionId,
+    shared::{ConnectionId, ConnectionIdGenerator},
     ResetToken, Side, TransportError, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
@@ -116,6 +116,7 @@ impl TransportParameters {
     pub(crate) fn new<S>(
         config: &TransportConfig,
         endpoint_config: &EndpointConfig<S>,
+        cid_gen: &Box<dyn ConnectionIdGenerator>,
         initial_src_cid: ConnectionId,
         server_config: Option<&ServerConfig<S>>,
     ) -> Self
@@ -138,7 +139,7 @@ impl TransportParameters {
             }),
             max_ack_delay: 0,
             disable_active_migration: server_config.map_or(false, |c| !c.migration),
-            active_connection_id_limit: if endpoint_config.local_cid_len == 0 {
+            active_connection_id_limit: if cid_gen.cid_len() == 0 {
                 2 // i.e. default, i.e. unsent
             } else {
                 // + 1 to account for the currently used CID, which isn't kept in the queue
