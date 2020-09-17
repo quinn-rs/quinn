@@ -140,6 +140,7 @@ mod test {
     #[test]
     fn token_sanity() {
         use super::*;
+        use crate::shared::{ConnectionIdGenerator, RandomConnectionIdGenerator};
         use crate::MAX_CID_SIZE;
         use rand::RngCore;
         use ring::hmac;
@@ -152,9 +153,9 @@ mod test {
         rand::thread_rng().fill_bytes(&mut key);
         let key = <hmac::Key as HmacKey>::new(&key).unwrap();
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
-        let retry_src_cid = ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE);
+        let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         let token = RetryToken {
-            orig_dst_cid: ConnectionId::random(&mut rand::thread_rng(), MAX_CID_SIZE),
+            orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
             issued: UNIX_EPOCH + Duration::new(42, 0), // Fractional seconds would be lost
         };
         let encoded = token.encode(&key, &addr, &retry_src_cid);

@@ -25,8 +25,8 @@ use crate::{
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner, IssuedCid,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, ConnectionIdGenerator, EcnCodepoint,
+        EndpointEvent, EndpointEventInner, IssuedCid, RandomConnectionIdGenerator,
     },
     transport_parameters::TransportParameters,
     ResetToken, RetryToken, Side, Transmit, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
@@ -54,6 +54,7 @@ where
     /// recipient, if any.
     connection_reset_tokens: ResetTokenTable,
     connections: Slab<ConnectionMeta>,
+    local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig<S>>,
     server_config: Option<Arc<ServerConfig<S>>>,
     incoming_handshakes: usize,
@@ -82,6 +83,7 @@ where
             connection_remotes: HashMap::new(),
             connection_reset_tokens: ResetTokenTable::default(),
             connections: Slab::new(),
+            local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
             incoming_handshakes: 0,
             reject_new_connections: false,
             config,
@@ -152,45 +154,46 @@ where
         data: BytesMut,
     ) -> Option<(ConnectionHandle, DatagramEvent<S>)> {
         let datagram_len = data.len();
-        let (first_decode, remaining) = match PartialDecode::new(data, self.config.local_cid_len) {
-            Ok(x) => x,
-            Err(PacketDecodeError::UnsupportedVersion {
-                source,
-                destination,
-                version,
-            }) => {
-                if !self.is_server() {
-                    debug!("dropping packet with unsupported version");
+        let (first_decode, remaining) =
+            match PartialDecode::new(data, self.local_cid_generator.cid_len()) {
+                Ok(x) => x,
+                Err(PacketDecodeError::UnsupportedVersion {
+                    source,
+                    destination,
+                    version,
+                }) => {
+                    if !self.is_server() {
+                        debug!("dropping packet with unsupported version");
+                        return None;
+                    }
+                    trace!("sending version negotiation");
+                    // Negotiate versions
+                    let mut buf = Vec::<u8>::new();
+                    Header::VersionNegotiate {
+                        random: self.rng.gen::<u8>() | 0x40,
+                        src_cid: destination,
+                        dst_cid: source,
+                    }
+                    .encode(&mut buf);
+                    // Grease with a reserved version
+                    if version != 0x0a1a_2a3a {
+                        buf.write::<u32>(0x0a1a_2a3a);
+                    } else {
+                        buf.write::<u32>(0x0a1a_2a4a);
+                    }
+                    buf.write(VERSION); // supported version
+                    self.transmits.push_back(Transmit {
+                        destination: remote,
+                        ecn: None,
+                        contents: buf.into(),
+                    });
                     return None;
                 }
-                trace!("sending version negotiation");
-                // Negotiate versions
-                let mut buf = Vec::<u8>::new();
-                Header::VersionNegotiate {
-                    random: self.rng.gen::<u8>() | 0x40,
-                    src_cid: destination,
-                    dst_cid: source,
+                Err(e) => {
+                    trace!("malformed header: {}", e);
+                    return None;
                 }
-                .encode(&mut buf);
-                // Grease with a reserved version
-                if version != 0x0a1a_2a3a {
-                    buf.write::<u32>(0x0a1a_2a3a);
-                } else {
-                    buf.write::<u32>(0x0a1a_2a4a);
-                }
-                buf.write(VERSION); // supported version
-                self.transmits.push_back(Transmit {
-                    destination: remote,
-                    ecn: None,
-                    contents: buf.into(),
-                });
-                return None;
-            }
-            Err(e) => {
-                trace!("malformed header: {}", e);
-                return None;
-            }
-        };
+            };
 
         //
         // Handle packet on existing connection, if any
@@ -198,7 +201,9 @@ where
 
         let dst_cid = first_decode.dst_cid();
         let known_ch = {
-            let ch = if self.config.local_cid_len > 0 {
+            let ch = if self.local_cid_generator.cid_len() > 0
+                && self.local_cid_generator.validate_cid(&dst_cid)
+            {
                 self.connection_ids.get(&dst_cid)
             } else {
                 None
@@ -211,7 +216,7 @@ where
                 }
             })
             .or_else(|| {
-                if self.config.local_cid_len == 0 {
+                if self.local_cid_generator.cid_len() == 0 {
                     self.connection_remotes.get(&remote)
                 } else {
                     None
@@ -341,7 +346,7 @@ where
         if self.is_full() {
             return Err(ConnectError::TooManyConnections);
         }
-        let remote_id = ConnectionId::random(&mut self.rng, MAX_CID_SIZE);
+        let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
         let (ch, conn) = self.add_connection(
             remote_id,
@@ -376,11 +381,11 @@ where
 
     fn new_cid(&mut self) -> ConnectionId {
         loop {
-            let cid = ConnectionId::random(&mut self.rng, self.config.local_cid_len);
+            let cid = self.local_cid_generator.generate_cid();
             if !self.connection_ids.contains_key(&cid) {
                 break cid;
             }
-            assert!(self.config.local_cid_len > 0);
+            assert!(self.local_cid_generator.cid_len() > 0);
         }
     }
 
@@ -398,8 +403,13 @@ where
                 config,
                 server_name,
             } => {
-                let params =
-                    TransportParameters::new::<S>(&config.transport, &self.config, loc_cid, None);
+                let params = TransportParameters::new::<S>(
+                    &config.transport,
+                    &self.config,
+                    &self.local_cid_generator,
+                    loc_cid,
+                    None,
+                );
                 (
                     None,
                     config.crypto.start_session(&server_name, &params)?,
@@ -414,6 +424,7 @@ where
                 let params = TransportParameters::new(
                     &config.transport,
                     &self.config,
+                    &self.local_cid_generator,
                     loc_cid,
                     Some(config),
                 );
@@ -432,7 +443,6 @@ where
         };
 
         let conn = Connection::new(
-            Arc::clone(&self.config),
             server_config,
             transport_config,
             init_cid,
@@ -441,6 +451,7 @@ where
             remote,
             tls,
             now,
+            self.local_cid_generator.cid_len(),
         );
         let id = self.connections.insert(ConnectionMeta {
             init_cid,
@@ -451,7 +462,7 @@ where
         });
         let ch = ConnectionHandle(id);
 
-        if self.config.local_cid_len > 0 {
+        if self.local_cid_generator.cid_len() > 0 {
             self.connection_ids.insert(loc_cid, ch);
         } else {
             self.connection_remotes.insert(remote, ch);
@@ -518,7 +529,8 @@ where
         }
 
         if dst_cid.len() < 8
-            && (!server_config.use_stateless_retry || dst_cid.len() != self.config.local_cid_len)
+            && (!server_config.use_stateless_retry
+                || dst_cid.len() != self.local_cid_generator.cid_len())
         {
             debug!(
                 "rejecting connection due to invalid DCID length {}",
@@ -692,10 +704,11 @@ where
     /// We leave some space unused so that `new_cid` can be relied upon to finish quickly. We don't
     /// bother to check when CID longer than 4 bytes are used because 2^40 connections is a lot.
     fn is_full(&self) -> bool {
-        self.config.local_cid_len <= 4
-            && self.config.local_cid_len != 0
-            && (2usize.pow(self.config.local_cid_len as u32 * 8) - self.connection_ids.len())
-                < 2usize.pow(self.config.local_cid_len as u32 * 8 - 2)
+        self.local_cid_generator.cid_len() <= 4
+            && self.local_cid_generator.cid_len() != 0
+            && (2usize.pow(self.local_cid_generator.cid_len() as u32 * 8)
+                - self.connection_ids.len())
+                < 2usize.pow(self.local_cid_generator.cid_len() as u32 * 8 - 2)
     }
 }
 
@@ -793,7 +806,7 @@ pub enum ConnectError {
     EndpointStopping,
     /// The number of active connections on the local endpoint is at the limit
     ///
-    /// Try a larger `EndpointConfig::local_cid_len`.
+    /// Try a larger cid length.
     #[error(display = "too many connections")]
     TooManyConnections,
     /// The domain name supplied was malformed

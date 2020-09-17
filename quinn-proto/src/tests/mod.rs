@@ -15,6 +15,7 @@ use tracing::info;
 
 use super::*;
 use crate::crypto::Session as _;
+use crate::shared::{ConnectionIdGenerator, RandomConnectionIdGenerator};
 mod util;
 use util::*;
 
@@ -49,9 +50,11 @@ fn version_negotiate_server() {
 fn version_negotiate_client() {
     let _guard = subscribe();
     let server_addr = "[::2]:7890".parse().unwrap();
+    let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
+        || Box::new(RandomConnectionIdGenerator::new(0));
     let mut client = Endpoint::new(
         Arc::new(EndpointConfig {
-            local_cid_len: 0,
+            connection_id_generator_factory: Arc::new(cid_generator_factory),
             ..Default::default()
         }),
         None,
@@ -1119,9 +1122,11 @@ fn implicit_open() {
 #[test]
 fn zero_length_cid() {
     let _guard = subscribe();
+    let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
+        || Box::new(RandomConnectionIdGenerator::new(0));
     let mut pair = Pair::new(
         Arc::new(EndpointConfig {
-            local_cid_len: 0,
+            connection_id_generator_factory: Arc::new(cid_generator_factory),
             ..EndpointConfig::default()
         }),
         server_config(),

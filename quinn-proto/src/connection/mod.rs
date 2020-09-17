@@ -16,7 +16,7 @@ use tracing::{debug, error, trace, trace_span, warn};
 use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
-    config::{EndpointConfig, ServerConfig, TransportConfig},
+    config::{ServerConfig, TransportConfig},
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
@@ -60,7 +60,6 @@ pub struct Connection<S>
 where
     S: crypto::Session,
 {
-    endpoint_config: Arc<EndpointConfig<S>>,
     server_config: Option<Arc<ServerConfig<S>>>,
     config: Arc<TransportConfig>,
     rng: StdRng,
@@ -78,6 +77,8 @@ where
     /// Exactly one prior to `self.rem_cids.offset` except during processing of certain
     /// NEW_CONNECTION_ID frames.
     rem_cid_seq: u64,
+    /// cid length used to decode short packet
+    local_cid_len: usize,
     path: PathData,
     prev_path: Option<PathData>,
     state: State,
@@ -165,7 +166,6 @@ where
     S: crypto::Session,
 {
     pub(crate) fn new(
-        endpoint_config: Arc<EndpointConfig<S>>,
         server_config: Option<Arc<ServerConfig<S>>>,
         config: Arc<TransportConfig>,
         init_cid: ConnectionId,
@@ -174,6 +174,7 @@ where
         remote: SocketAddr,
         crypto: S,
         now: Instant,
+        local_cid_len: usize,
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
@@ -194,13 +195,13 @@ where
             .as_ref()
             .map_or(false, |c| c.use_stateless_retry);
         let mut this = Self {
-            endpoint_config,
             server_config,
             crypto,
             handshake_cid: loc_cid,
             rem_cid,
             rem_handshake_cid: rem_cid,
             rem_cid_seq: 0,
+            local_cid_len,
             path: PathData::new(
                 remote,
                 config.initial_rtt,
@@ -1652,7 +1653,7 @@ where
         self.total_recvd = self.total_recvd.wrapping_add(data.len() as u64);
         let mut remaining = Some(data);
         while let Some(data) = remaining {
-            match PartialDecode::new(data, self.endpoint_config.local_cid_len) {
+            match PartialDecode::new(data, self.local_cid_len) {
                 Ok((partial_decode, rest)) => {
                     remaining = rest;
                     self.handle_decode(now, remote, ecn, partial_decode);
@@ -2279,7 +2280,7 @@ where
                     self.streams.received_stop_sending(id, error_code);
                 }
                 Frame::RetireConnectionId { sequence } => {
-                    if self.endpoint_config.local_cid_len == 0 {
+                    if self.local_cid_len == 0 {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "RETIRE_CONNECTION_ID when CIDs aren't in use",
                         ));
@@ -2486,7 +2487,7 @@ where
 
     /// Issue an initial set of connection IDs to the peer
     fn issue_cids(&mut self) {
-        if self.endpoint_config.local_cid_len == 0 {
+        if self.local_cid_len == 0 {
             return;
         }
 

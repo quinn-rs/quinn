@@ -8,6 +8,7 @@ use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
 use crate::{
     congestion,
     crypto::{self, ClientConfig as _, HmacKey as _, ServerConfig as _},
+    shared::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     VarInt, MAX_CID_SIZE,
 };
 
@@ -297,9 +298,12 @@ pub struct EndpointConfig<S>
 where
     S: crypto::Session,
 {
-    pub(crate) local_cid_len: usize,
     pub(crate) reset_key: Arc<S::HmacKey>,
     pub(crate) max_udp_payload_size: u64,
+    /// cid generator factory
+    /// Create a cid generator for local cid in Endpoint struct
+    pub(crate) connection_id_generator_factory:
+        Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
 }
 
 impl<S> EndpointConfig<S>
@@ -308,25 +312,27 @@ where
 {
     /// Create a default config with a particular `reset_key`
     pub fn new(reset_key: S::HmacKey) -> Self {
-        Self {
-            local_cid_len: 8,
-            reset_key: Arc::new(reset_key),
-            max_udp_payload_size: MAX_UDP_PAYLOAD_SIZE,
-        }
+        let cid_factory: fn() -> Box<dyn ConnectionIdGenerator> =
+            || Box::new(RandomConnectionIdGenerator::default());
+        EndpointConfig::new_with_cid_generator(reset_key, cid_factory)
     }
 
-    /// Length of connection IDs for the endpoint.
+    /// new_with_cid_generator is designed for backward compatibility
     ///
-    /// This must be no greater than 20. If zero, incoming packets are mapped to connections only by
-    /// their source address. Otherwise, the connection ID field is used alone, allowing for source
-    /// address to change and for multiple connections from a single address. When local_cid_len >
-    /// 0, at most 3/4 * 2^(local_cid_len * 8) simultaneous connections can be supported.
-    pub fn local_cid_len(&mut self, value: usize) -> Result<&mut Self, ConfigError> {
-        if value > MAX_CID_SIZE {
-            return Err(ConfigError::OutOfBounds);
+    /// EndpointConfig can still call fn new() to use a random cid generator
+    /// new_with_cid_generator() can accept any customized cid generator that
+    /// implements ConnectionIdGenerator trait
+    pub fn new_with_cid_generator<
+        F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static,
+    >(
+        reset_key: S::HmacKey,
+        factory: F,
+    ) -> Self {
+        Self {
+            reset_key: Arc::new(reset_key),
+            max_udp_payload_size: MAX_UDP_PAYLOAD_SIZE,
+            connection_id_generator_factory: Arc::new(factory),
         }
-        self.local_cid_len = value;
-        Ok(self)
     }
 
     /// Private key used to send authenticated connection resets to peers who were
@@ -359,9 +365,9 @@ where
 impl<S: crypto::Session> fmt::Debug for EndpointConfig<S> {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("EndpointConfig")
-            .field("local_cid_len", &self.local_cid_len)
             .field("reset_key", &"[ elided ]")
             .field("max_udp_payload_size", &self.max_udp_payload_size)
+            .field("cid_generator_factory", &"[ elided ]")
             .finish()
     }
 }
@@ -380,9 +386,9 @@ impl<S: crypto::Session> Default for EndpointConfig<S> {
 impl<S: crypto::Session> Clone for EndpointConfig<S> {
     fn clone(&self) -> Self {
         Self {
-            local_cid_len: self.local_cid_len,
             reset_key: self.reset_key.clone(),
             max_udp_payload_size: self.max_udp_payload_size,
+            connection_id_generator_factory: self.connection_id_generator_factory.clone(),
         }
     }
 }
