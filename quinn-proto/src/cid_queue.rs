@@ -15,7 +15,7 @@ pub struct CidQueue {
     ///
     /// The CID sequenced immediately prior to this is the active CID, which this data structure is
     /// not responsible for retiring.
-    offset: u64,
+    pub(crate) offset: u64,
 }
 
 impl CidQueue {

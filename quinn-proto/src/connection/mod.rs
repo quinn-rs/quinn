@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     convert::TryInto,
     fmt, io, mem,
     net::SocketAddr,
@@ -27,7 +27,7 @@ use crate::{
         EndpointEventInner, IssuedCid,
     },
     transport_parameters::{self, TransportParameters},
-    Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
+    Dir, Frame, ResetToken, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
     LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
     TIMER_GRANULARITY, VERSION,
 };
@@ -77,6 +77,23 @@ where
     /// Exactly one prior to `self.rem_cids.offset` except during processing of certain
     /// NEW_CONNECTION_ID frames.
     rem_cid_seq: u64,
+    rem_cid_resettoken: Option<ResetToken>,
+
+    /// Cid rotation
+    ///
+    /// Expiration timestamp of local connection IDs
+    cids_timeline: VecDeque<CidTimeStamp>,
+    /// The lifetime of Local connection IDs
+    cids_timeout: Option<Duration>,
+    /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
+    cids_issued: u64,
+    /// The sequence number of active (not yet rotated/retired by peer) local connection IDs
+    cids_active_seq: HashSet<u64>,
+    /// Sequence number so far has been acked in RETIRE_CONNECTION_ID frame
+    ack_retire_prior_to: u64,
+    /// Sequence number to set in retire_prior_to field in NEW_CONNECTION_ID frame
+    retire_cid_seq: u64,
+
     /// cid length used to decode short packet
     local_cid_len: usize,
     path: PathData,
@@ -102,8 +119,6 @@ where
     lost_packets: u64,
     events: VecDeque<Event>,
     endpoint_events: VecDeque<EndpointEventInner>,
-    /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
-    cids_issued: u64,
     /// Whether the spin bit is in use for this connection
     spin_enabled: bool,
     /// Outgoing spin bit state
@@ -176,6 +191,7 @@ where
         remote: SocketAddr,
         crypto: S,
         now: Instant,
+        cids_timeout: Option<Duration>,
         local_cid_len: usize,
     ) -> Self {
         let side = if server_config.is_some() {
@@ -203,6 +219,12 @@ where
             rem_cid,
             rem_handshake_cid: rem_cid,
             rem_cid_seq: 0,
+            rem_cid_resettoken: None,
+            ack_retire_prior_to: 0,
+            retire_cid_seq: 0,
+            cids_timeline: VecDeque::new(),
+            cids_active_seq: HashSet::new(),
+            cids_timeout,
             local_cid_len,
             path: PathData::new(
                 remote,
@@ -704,10 +726,33 @@ where
                     self.handle_coalesced(now, remote, ecn, data);
                 }
             }
-            NewIdentifiers(ids) => {
-                ids.into_iter().rev().for_each(|frame| {
-                    self.spaces[SpaceId::Data].pending.new_cids.push(frame);
-                });
+            NewIdentifiers(ids, now) => {
+                let timeout = match self.cids_timeout {
+                    Some(t) => now.checked_add(t),
+                    _ => None,
+                };
+                // Record the timestamp of CID with the largest seq number
+                if let Some(last_cid) = ids.last() {
+                    if let Some(timestamp) = timeout {
+                        self.reset_cid_timer(Some(CidTimeStamp {
+                            sequence: last_cid.sequence,
+                            timestamp,
+                        }));
+                    }
+                    self.cids_issued += ids.len() as u64;
+                    ids.into_iter().rev().for_each(|frame| {
+                        self.spaces[SpaceId::Data].pending.new_cids.push(frame);
+                        self.cids_active_seq.insert(frame.sequence);
+                    });
+                } else {
+                    // Handle initial CID with active_connection_id_limit == 1
+                    if let Some(timestamp) = timeout {
+                        self.reset_cid_timer(Some(CidTimeStamp {
+                            sequence: 0,
+                            timestamp,
+                        }));
+                    }
+                }
             }
         }
     }
@@ -752,7 +797,104 @@ where
                     self.path.challenge_pending = false;
                 }
                 Timer::Pacing => trace!("pacing timer expired"),
+                Timer::PushNewCid => {
+                    let num_pushed_cids = 1;
+                    let mut ids_found = false;
+                    for id in self.ack_retire_prior_to..self.retire_cid_seq {
+                        ids_found = ids_found || self.cids_active_seq.contains(&id);
+                    }
+                    if !ids_found {
+                        self.ack_retire_prior_to = self.retire_cid_seq;
+                    }
+
+                    let next_checkpoint = self.cids_timeline.pop_front();
+                    let next_seq = next_checkpoint.unwrap().sequence + 1;
+                    let current_seq = self.retire_cid_seq;
+                    //  Endpoints SHOULD NOT issue updates of the Retire Prior To field
+                    //  before receiving RETIRE_CONNECTION_ID frames that retire all
+                    //  connection IDs indicated by the previous Retire Prior To value.
+                    // https://tools.ietf.org/html/draft-ietf-quic-transport-29#section-5.1.2
+                    if next_seq > self.retire_cid_seq && !ids_found {
+                        self.retire_cid_seq = next_seq;
+                    }
+                    // An endpoint MUST NOT
+                    // provide more connection IDs than the peer's limit.
+                    //
+                    // An endpoint MAY
+                    // send connection IDs that temporarily exceed a peer's limit if the
+                    // NEW_CONNECTION_ID frame also requires the retirement of any excess,
+                    // by including a sufficiently large value in the Retire Prior To field.
+                    // https://tools.ietf.org/html/draft-ietf-quic-transport-29#section-5.1.1
+                    // In this case, `retire prior to` must increase to accommodate new cid
+                    let must_increase_retire_cid = self.cids_active_seq.len() as u64
+                        >= self
+                            .peer_params
+                            .active_connection_id_limit
+                            .min(LOC_CID_COUNT);
+                    if must_increase_retire_cid
+                        && self.retire_cid_seq - current_seq < num_pushed_cids
+                    {
+                        self.retire_cid_seq = current_seq + num_pushed_cids;
+                    }
+
+                    // In case we already received RETIRE_CONNECTION_ID before
+                    let mut push_new_cid = false;
+                    for id in current_seq..self.retire_cid_seq {
+                        push_new_cid = push_new_cid || self.cids_active_seq.contains(&id);
+                    }
+
+                    if push_new_cid {
+                        if !self.state.is_closed() {
+                            trace!(
+                                "push a new cid to peer RETIRE_PRIOR_TO field {}",
+                                self.retire_cid_seq
+                            );
+                            self.endpoint_events
+                                .push_back(EndpointEventInner::NeedIdentifiers(
+                                    now,
+                                    num_pushed_cids,
+                                ));
+                        }
+                    } else {
+                        // We don't need to push new cid as peer has actively retired them already
+                        self.reset_cid_timer(None);
+                    }
+                }
             }
+        }
+    }
+
+    /// set timer for CID rotation
+    fn reset_cid_timer(&mut self, id: Option<CidTimeStamp>) {
+        // Remove any timestamp attached to a cid that is retired
+        while let Some(nc) = self.cids_timeline.front() {
+            if nc.sequence < self.retire_cid_seq {
+                self.cids_timeline.pop_front();
+            } else {
+                break;
+            }
+        }
+
+        if let Some(new_cid) = id {
+            if let Some(nc) = self.cids_timeline.front_mut() {
+                if new_cid.timestamp == nc.timestamp && new_cid.sequence > nc.sequence {
+                    nc.sequence = new_cid.sequence;
+                } else {
+                    self.cids_timeline.push_back(new_cid);
+                }
+            } else {
+                self.cids_timeline.push_back(new_cid);
+            }
+        }
+
+        if let Some(next_checkpoint) = self.cids_timeline.front() {
+            trace!(
+                "set up a timer at {:?} for cid {:?}",
+                next_checkpoint.timestamp,
+                next_checkpoint.sequence
+            );
+            self.timers
+                .set(Timer::PushNewCid, next_checkpoint.timestamp);
         }
     }
 
@@ -2024,7 +2166,7 @@ where
                             }
                             self.validate_peer_params(&params)?;
                             self.set_peer_params(params);
-                            self.issue_cids();
+                            self.issue_cids(now);
                         } else {
                             // Server-only
                             self.spaces[SpaceId::Data].pending.handshake_done = true;
@@ -2071,7 +2213,7 @@ where
                             })?;
                             self.validate_peer_params(&params)?;
                             self.set_peer_params(params);
-                            self.issue_cids();
+                            self.issue_cids(now);
                             self.init_0rtt();
                         }
                         Ok(())
@@ -2351,13 +2493,24 @@ where
                             "RETIRE_CONNECTION_ID for unissued sequence number",
                         ));
                     }
+                    self.cids_active_seq.remove(&sequence);
+                    let allow_more_cid = self
+                        .peer_params
+                        .active_connection_id_limit
+                        .min(LOC_CID_COUNT)
+                        > self.cids_active_seq.len() as u64;
                     self.endpoint_events
-                        .push_back(EndpointEventInner::RetireConnectionId(sequence));
+                        .push_back(EndpointEventInner::RetireConnectionId(
+                            now,
+                            sequence,
+                            allow_more_cid,
+                        ));
                 }
                 Frame::NewConnectionId(frame) => {
                     trace!(
                         sequence = frame.sequence,
                         id = %frame.id,
+                        retire_prior_to = frame.retire_prior_to,
                     );
                     if self.rem_cid.is_empty() {
                         return Err(TransportError::PROTOCOL_VIOLATION(
@@ -2376,25 +2529,51 @@ where
                         .retire_cids
                         .extend(retired);
 
+                    let mut valid_rem_cid = Ok(());
+                    if frame.retire_prior_to > self.rem_cid_seq {
+                        // If our current CID is earlier than the first unretired one we must not
+                        // have adopted the one we just got, so it must be stored in rem_cids, so
+                        // this unwrap is guaranteed to succeed.
+                        valid_rem_cid = self.update_rem_cid();
+                    }
+
                     // Must be after retire_prior_to processing in case this CID has the highest
                     // permitted sequence number
                     use crate::cid_queue::InsertError;
-                    match self.rem_cids.insert(IssuedCid {
+                    let mut new_rem_cid = IssuedCid {
                         sequence: frame.sequence,
                         id: frame.id,
                         reset_token: frame.reset_token,
-                    }) {
-                        Ok(()) => {}
-                        Err(InsertError::ExceedsLimit) => {
-                            return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
-                        }
-                        Err(InsertError::Retired) => {
-                            trace!("discarding already-retired");
-                            self.spaces[SpaceId::Data]
-                                .pending
-                                .retire_cids
-                                .push(frame.sequence);
-                            continue;
+                    };
+
+                    // Guarantee the cid sequence in active rem cid (self.rem_cid) is always smallest among active ones
+                    if valid_rem_cid.is_ok() && frame.sequence + 1 == self.rem_cids.offset {
+                        let swap_cid = new_rem_cid;
+                        new_rem_cid.sequence = self.rem_cid_seq;
+                        new_rem_cid.id = self.rem_cid;
+                        new_rem_cid.reset_token = self.rem_cid_resettoken.unwrap();
+                        self.apply_new_rem_cid(swap_cid);
+                    }
+
+                    match valid_rem_cid {
+                        Ok(_) => match self.rem_cids.insert(new_rem_cid) {
+                            Ok(()) => {}
+                            Err(InsertError::ExceedsLimit) => {
+                                return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
+                            }
+                            Err(InsertError::Retired) => {
+                                trace!("discarding already-retired");
+                                self.spaces[SpaceId::Data]
+                                    .pending
+                                    .retire_cids
+                                    .push(frame.sequence);
+                                continue;
+                            }
+                        },
+                        Err(_) => {
+                            self.rem_cids.offset = frame.retire_prior_to + 1;
+                            // We don't have other choice but to set the current rem cid as the active one
+                            self.apply_new_rem_cid(new_rem_cid)
                         }
                     }
 
@@ -2402,11 +2581,6 @@ where
                         // We're a server using the initial remote CID for the client, so let's
                         // switch immediately to enable clientside stateless resets.
                         debug_assert_eq!(self.rem_cid_seq, 0);
-                        self.update_rem_cid().unwrap();
-                    } else if frame.retire_prior_to > self.rem_cid_seq {
-                        // If our current CID is earlier than the first unretired one we must not
-                        // have adopted the one we just got, so it must be stored in rem_cids, so
-                        // this unwrap is guaranteed to succeed.
                         self.update_rem_cid().unwrap();
                     }
                 }
@@ -2519,17 +2693,29 @@ where
 
     /// Returns Err(()) if no CIDs were available
     fn update_rem_cid(&mut self) -> Result<(), ()> {
-        let (cid, retired) = self.rem_cids.next().ok_or(())?;
-        trace!("switching to remote CID {}: {}", cid.sequence, cid.id);
-
-        // Retire the current remote CID and any CIDs we had to skip.
+        // Retire the current remote CID
         let retire_cids = &mut self.spaces[SpaceId::Data].pending.retire_cids;
         retire_cids.push(self.rem_cid_seq);
-        retire_cids.extend(retired);
 
-        // Apply the new CID
+        match self.rem_cids.next() {
+            Some(cid) => {
+                trace!("switching to remote CID {}: {}", cid.0.sequence, cid.0.id);
+
+                // Retire any CIDs we had to skip.
+                retire_cids.extend(cid.1);
+
+                // Apply new remote CID
+                self.apply_new_rem_cid(cid.0);
+                Ok(())
+            }
+            None => Err(()),
+        }
+    }
+
+    fn apply_new_rem_cid(&mut self, cid: IssuedCid) {
         self.rem_cid = cid.id;
         self.rem_cid_seq = cid.sequence;
+        self.rem_cid_resettoken = Some(cid.reset_token);
         self.endpoint_events
             .push_back(EndpointEventInner::ResetToken(
                 self.path.remote,
@@ -2539,11 +2725,10 @@ where
 
         // Reduce linkability
         self.spin = false;
-        Ok(())
     }
 
     /// Issue an initial set of connection IDs to the peer
-    fn issue_cids(&mut self) {
+    fn issue_cids(&mut self, now: Instant) {
         if self.local_cid_len == 0 {
             return;
         }
@@ -2555,8 +2740,10 @@ where
             .min(LOC_CID_COUNT)
             - 1;
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(n));
-        self.cids_issued += n;
+            .push_back(EndpointEventInner::NeedIdentifiers(now, n));
+        // Only add one CID we supplied while handshaking to self.cids_issued. Rest will be added when we handle NewIdentifiers event
+        self.cids_issued += 1;
+        self.cids_active_seq.insert(0);
     }
 
     fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> SentFrames {
@@ -2679,7 +2866,7 @@ where
             );
             frame::NewConnectionId {
                 sequence: issued.sequence,
-                retire_prior_to: 0,
+                retire_prior_to: self.retire_cid_seq,
                 id: issued.id,
                 reset_token: issued.reset_token,
             }
@@ -2919,12 +3106,12 @@ where
             .saturating_sub(self.in_flight.bytes)
     }
 
-    /// Whether no timers but keepalive and idle are running
+    /// Whether no timers but keepalive, idle and pushnewcid are running
     #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
         Timer::VALUES
             .iter()
-            .filter(|&&t| t != Timer::KeepAlive)
+            .filter(|&&t| t != Timer::KeepAlive && t != Timer::PushNewCid)
             .filter_map(|&t| Some((t, self.timers.get(t)?)))
             .min_by_key(|&(_, time)| time)
             .map_or(true, |(timer, _)| timer == Timer::Idle)
@@ -2940,6 +3127,14 @@ where
     #[cfg(test)]
     pub(crate) fn using_ecn(&self) -> bool {
         self.path.sending_ecn
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_local_cid_seq(&self) -> (u64, u64) {
+        (
+            *self.cids_active_seq.iter().min().unwrap(),
+            *self.cids_active_seq.iter().max().unwrap(),
+        )
     }
 
     fn max_ack_delay(&self) -> Duration {
@@ -3298,3 +3493,10 @@ struct PacketBuilder<'a> {
 ///
 /// Chosen arbitrarily, intended to be large enough to prevent spurious connection loss.
 const KEY_UPDATE_MARGIN: u64 = 10000;
+
+/// Record the timestamp when each cid is created
+#[derive(Copy, Clone, Eq, PartialEq)]
+struct CidTimeStamp {
+    sequence: u64,
+    timestamp: Instant,
+}

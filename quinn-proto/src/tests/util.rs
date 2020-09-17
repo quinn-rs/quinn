@@ -51,6 +51,25 @@ impl Pair {
         }
     }
 
+    pub fn new_from_endpoint(client: Endpoint, server: Endpoint) -> Self {
+        let server_addr = SocketAddr::new(
+            Ipv6Addr::LOCALHOST.into(),
+            SERVER_PORTS.lock().unwrap().next().unwrap(),
+        );
+        let client_addr = SocketAddr::new(
+            Ipv6Addr::LOCALHOST.into(),
+            CLIENT_PORTS.lock().unwrap().next().unwrap(),
+        );
+        Self {
+            server: TestEndpoint::new(server, server_addr),
+            client: TestEndpoint::new(client, client_addr),
+            time: Instant::now(),
+            latency: Duration::new(0, 0),
+            spins: 0,
+            last_spin: false,
+        }
+    }
+
     /// Returns whether the connection is not idle
     pub fn step(&mut self) -> bool {
         self.drive_client();
