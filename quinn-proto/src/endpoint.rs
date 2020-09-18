@@ -407,7 +407,7 @@ where
                 let params = TransportParameters::new::<S>(
                     &config.transport,
                     &self.config,
-                    &self.local_cid_generator,
+                    self.local_cid_generator.as_ref(),
                     loc_cid,
                     None,
                 );
@@ -425,7 +425,7 @@ where
                 let params = TransportParameters::new(
                     &config.transport,
                     &self.config,
-                    &self.local_cid_generator,
+                    self.local_cid_generator.as_ref(),
                     loc_cid,
                     Some(config),
                 );
