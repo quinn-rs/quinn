@@ -9,7 +9,7 @@ use crate::{
     congestion,
     crypto::{self, ClientConfig as _, HmacKey as _, ServerConfig as _},
     shared::{ConnectionIdGenerator, RandomConnectionIdGenerator},
-    VarInt, MAX_CID_SIZE,
+    VarInt,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -314,7 +314,11 @@ where
     pub fn new(reset_key: S::HmacKey) -> Self {
         let cid_factory: fn() -> Box<dyn ConnectionIdGenerator> =
             || Box::new(RandomConnectionIdGenerator::default());
-        EndpointConfig::new_with_cid_generator(reset_key, cid_factory)
+        Self {
+            reset_key: Arc::new(reset_key),
+            max_udp_payload_size: MAX_UDP_PAYLOAD_SIZE,
+            connection_id_generator_factory: Arc::new(cid_factory),
+        }
     }
 
     /// new_with_cid_generator is designed for backward compatibility
@@ -322,17 +326,14 @@ where
     /// EndpointConfig can still call fn new() to use a random cid generator
     /// new_with_cid_generator() can accept any customized cid generator that
     /// implements ConnectionIdGenerator trait
-    pub fn new_with_cid_generator<
+    pub fn set_cid_generator<
         F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static,
     >(
-        reset_key: S::HmacKey,
+        &mut self,
         factory: F,
-    ) -> Self {
-        Self {
-            reset_key: Arc::new(reset_key),
-            max_udp_payload_size: MAX_UDP_PAYLOAD_SIZE,
-            connection_id_generator_factory: Arc::new(factory),
-        }
+    ) -> &mut Self {
+        self.connection_id_generator_factory = Arc::new(factory);
+        self
     }
 
     /// Private key used to send authenticated connection resets to peers who were
