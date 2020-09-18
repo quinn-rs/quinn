@@ -300,7 +300,8 @@ where
 {
     pub(crate) reset_key: Arc<S::HmacKey>,
     pub(crate) max_udp_payload_size: u64,
-    /// cid generator factory
+    /// CID generator factory
+    ///
     /// Create a cid generator for local cid in Endpoint struct
     pub(crate) connection_id_generator_factory:
         Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
@@ -321,10 +322,11 @@ where
         }
     }
 
-    /// new_with_cid_generator is designed for backward compatibility
+    /// assign a cid generator factory
     ///
-    /// EndpointConfig can still call fn new() to use a random cid generator
-    /// new_with_cid_generator() can accept any customized cid generator that
+    ///
+    /// EndpointConfig::new() applies a default random CID generator factory.
+    /// This functions accepts any customized CID generator to reset CID generator factory that
     /// implements ConnectionIdGenerator trait
     pub fn set_cid_generator<F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static>(
         &mut self,

@@ -59,7 +59,9 @@ pub(crate) enum EndpointEventInner {
 /// Mainly useful for identifying this connection's packets on the wire with tools like Wireshark.
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ConnectionId {
+    /// length of CID
     pub len: u8,
+    /// CID in byte array
     pub bytes: [u8; MAX_CID_SIZE],
 }
 
