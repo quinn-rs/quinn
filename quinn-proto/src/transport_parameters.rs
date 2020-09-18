@@ -15,11 +15,12 @@ use bytes::{buf::ext::BufExt as _, Buf, BufMut};
 use err_derive::Error;
 
 use crate::{
+    cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     config::{EndpointConfig, ServerConfig, TransportConfig},
     crypto,
-    shared::{ConnectionId, ConnectionIdGenerator},
+    shared::ConnectionId,
     ResetToken, Side, TransportError, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
 };
 

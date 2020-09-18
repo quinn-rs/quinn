@@ -14,8 +14,8 @@ use rustls::internal::msgs::enums::AlertDescription;
 use tracing::info;
 
 use super::*;
+use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
 use crate::crypto::Session as _;
-use crate::shared::{ConnectionIdGenerator, RandomConnectionIdGenerator};
 mod util;
 use util::*;
 

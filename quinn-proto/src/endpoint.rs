@@ -15,6 +15,7 @@ use slab::Slab;
 use tracing::{debug, trace, warn};
 
 use crate::{
+    cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     coding::BufMutExt,
     config::{ClientConfig, ConfigError, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionError},
@@ -25,8 +26,8 @@ use crate::{
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, ConnectionIdGenerator, EcnCodepoint,
-        EndpointEvent, EndpointEventInner, IssuedCid, RandomConnectionIdGenerator,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
+        EndpointEventInner, IssuedCid,
     },
     transport_parameters::TransportParameters,
     ResetToken, RetryToken, Side, Transmit, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,

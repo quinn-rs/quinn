@@ -6,9 +6,9 @@ use rand::RngCore;
 #[cfg(feature = "rustls")]
 use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
 use crate::{
+    cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
     crypto::{self, ClientConfig as _, HmacKey as _, ServerConfig as _},
-    shared::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     VarInt,
 };
 
@@ -326,9 +326,7 @@ where
     /// EndpointConfig can still call fn new() to use a random cid generator
     /// new_with_cid_generator() can accept any customized cid generator that
     /// implements ConnectionIdGenerator trait
-    pub fn set_cid_generator<
-        F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static,
-    >(
+    pub fn set_cid_generator<F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static>(
         &mut self,
         factory: F,
     ) -> &mut Self {
