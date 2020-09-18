@@ -5,14 +5,17 @@ use crate::MAX_CID_SIZE;
 
 /// Generates connection IDs for incoming connections
 pub trait ConnectionIdGenerator: Send {
-    /// Generates a connection ID for a new connection
+    /// Generates a new CID
     fn generate_cid(&mut self) -> ConnectionId;
-    /// Performs any validation it needs (e.g. HMAC, etc)
+    /// Performs any validation if it is needed (e.g. HMAC, etc)
     fn validate_cid(&mut self, cid: &ConnectionId) -> bool;
-    /// Returns the length of a connection id for cononections created by this generator
+    /// Returns the length of a CID for cononections created by this generator
     fn cid_len(&self) -> usize;
 }
 
+/// CID filled with random number/byte
+///
+/// This struct generates random CID with a customized length.
 #[derive(Debug, Clone, Copy)]
 pub struct RandomConnectionIdGenerator {
     cid_len: usize,
@@ -23,6 +26,7 @@ impl Default for RandomConnectionIdGenerator {
     }
 }
 impl RandomConnectionIdGenerator {
+    /// Initialize Random CID generator with a fixed CID length (which must be less or equal to MAX_CID_SIZE)
     pub fn new(cid_len: usize) -> Self {
         debug_assert!(cid_len <= MAX_CID_SIZE);
         Self { cid_len }
