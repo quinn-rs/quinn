@@ -117,7 +117,7 @@ impl TransportParameters {
     pub(crate) fn new<S>(
         config: &TransportConfig,
         endpoint_config: &EndpointConfig<S>,
-        cid_gen: &Box<dyn ConnectionIdGenerator>,
+        cid_gen: &dyn ConnectionIdGenerator,
         initial_src_cid: ConnectionId,
         server_config: Option<&ServerConfig<S>>,
     ) -> Self
