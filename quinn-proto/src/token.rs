@@ -140,7 +140,7 @@ mod test {
     #[test]
     fn token_sanity() {
         use super::*;
-        use crate::shared::{ConnectionIdGenerator, RandomConnectionIdGenerator};
+        use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
         use crate::MAX_CID_SIZE;
         use rand::RngCore;
         use ring::hmac;
