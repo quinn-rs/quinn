@@ -119,7 +119,7 @@ fn read_after_close_and_export_keying_material() {
         let mut buf = [0u8; 64];
         new_conn
             .connection
-            .export_keying_material(&mut buf, b"asdf", Some(b"qwer"))
+            .export_keying_material(&mut buf, b"asdf", b"qwer")
             .unwrap();
         s_send.send(buf).map_err(|_| ()).unwrap();
         s.write_all(MSG).await.unwrap();
@@ -135,7 +135,7 @@ fn read_after_close_and_export_keying_material() {
         let mut buf = [0u8; 64];
         new_conn
             .connection
-            .export_keying_material(&mut buf, b"asdf", Some(b"qwer"))
+            .export_keying_material(&mut buf, b"asdf", b"qwer")
             .unwrap();
         c_send.send(buf).map_err(|_| ()).unwrap();
         let stream = new_conn
