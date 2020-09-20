@@ -230,7 +230,8 @@ impl crypto::Session for TlsSession {
             SessionKind::Client(s) => s,
             SessionKind::Server(s) => s,
         };
-        session.export_keying_material(output, label, Some(context))
+        session
+            .export_keying_material(output, label, Some(context))
             .map_err(|_| ExportKeyingMaterialError)
     }
 }
