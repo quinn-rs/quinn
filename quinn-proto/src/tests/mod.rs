@@ -188,11 +188,10 @@ fn export_keying_material() {
     let (client_ch, server_ch) = pair.connect();
 
     const LABEL: &[u8] = b"test_label";
-    const CONTEXT: Option<&[u8]> = Some(b"test_context");
+    const CONTEXT: &[u8] = b"test_context";
 
     // client keying material
     let mut client_buf = [0u8; 64];
-    assert!(!pair.client_conn_mut(client_ch).is_handshaking());
     pair.client_conn_mut(client_ch)
         .crypto_session()
         .export_keying_material(&mut client_buf, LABEL, CONTEXT)
@@ -200,7 +199,6 @@ fn export_keying_material() {
 
     // server keying material
     let mut server_buf = [0u8; 64];
-    assert!(!pair.server_conn_mut(server_ch).is_handshaking());
     pair.server_conn_mut(server_ch)
         .crypto_session()
         .export_keying_material(&mut server_buf, LABEL, CONTEXT)

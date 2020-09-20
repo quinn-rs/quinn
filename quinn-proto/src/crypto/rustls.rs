@@ -225,13 +225,13 @@ impl crypto::Session for TlsSession {
         &self,
         output: &mut [u8],
         label: &[u8],
-        context: Option<&[u8]>,
+        context: &[u8],
     ) -> Result<(), Self::ExportKeyingMaterialError> {
         let session: &dyn rustls::Session = match &self.inner {
             SessionKind::Client(s) => s,
             SessionKind::Server(s) => s,
         };
-        session.export_keying_material(output, label, context)
+        session.export_keying_material(output, label, Some(context))
     }
 }
 

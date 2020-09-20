@@ -449,7 +449,7 @@ where
         &self,
         output: &mut [u8],
         label: &[u8],
-        context: Option<&[u8]>,
+        context: &[u8],
     ) -> Result<(), <S as proto::crypto::Session>::ExportKeyingMaterialError> {
         self.0
             .lock()
