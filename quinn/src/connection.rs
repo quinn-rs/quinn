@@ -450,7 +450,7 @@ where
         output: &mut [u8],
         label: &[u8],
         context: &[u8],
-    ) -> Result<(), <S as proto::crypto::Session>::ExportKeyingMaterialError> {
+    ) -> Result<(), proto::crypto::ExportKeyingMaterialError> {
         self.0
             .lock()
             .unwrap()

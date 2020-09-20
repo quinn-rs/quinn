@@ -44,8 +44,6 @@ pub trait Session: Send + Sized {
     type PacketKey: PacketKey;
     /// Type used to hold configuration for server sessions
     type ServerConfig: ServerConfig<Self>;
-    /// Type of error returned by [export_keying_material](Self::export_keying_material).
-    type ExportKeyingMaterialError;
 
     /// Create the initial set of keys given the client's initial destination ConnectionId
     fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys<Self>;
@@ -106,14 +104,14 @@ pub trait Session: Send + Sized {
     /// from the [Session]'s secrets, using `label` and `context` for domain
     /// separation.
     ///
-    /// This function will fail, returning [Self::ExportKeyingMaterialError],
-    /// if called before the handshake with the peer is complete.
+    /// This function will fail, returning [ExportKeyingMaterialError],
+    /// if the requested output length is too large.
     fn export_keying_material(
         &self,
         output: &mut [u8],
         label: &[u8],
         context: &[u8],
-    ) -> Result<(), Self::ExportKeyingMaterialError>;
+    ) -> Result<(), ExportKeyingMaterialError>;
 }
 
 /// A pair of keys for bidirectional communication
@@ -201,3 +199,9 @@ pub trait HmacKey: Send + Sized + Sync {
     /// Method for verifying a message
     fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), ()>;
 }
+
+/// Error returned by [Session::export_keying_material].
+///
+/// This error occurs if the requested output length is too large.
+#[derive(Debug, PartialEq, Eq)]
+pub struct ExportKeyingMaterialError;

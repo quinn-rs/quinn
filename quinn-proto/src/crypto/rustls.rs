@@ -17,7 +17,7 @@ use webpki::DNSNameRef;
 
 use crate::{
     crypto,
-    crypto::{KeyPair, Keys},
+    crypto::{ExportKeyingMaterialError, KeyPair, Keys},
     transport_parameters::TransportParameters,
     CertificateChain, ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
 };
@@ -53,7 +53,6 @@ impl crypto::Session for TlsSession {
     type PacketKey = PacketKey;
     type HeaderKey = HeaderProtectionKey;
     type ServerConfig = Arc<rustls::ServerConfig>;
-    type ExportKeyingMaterialError = TLSError;
 
     fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys<Self> {
         const INITIAL_SALT: [u8; 20] = [
@@ -226,12 +225,13 @@ impl crypto::Session for TlsSession {
         output: &mut [u8],
         label: &[u8],
         context: &[u8],
-    ) -> Result<(), Self::ExportKeyingMaterialError> {
+    ) -> Result<(), ExportKeyingMaterialError> {
         let session: &dyn rustls::Session = match &self.inner {
             SessionKind::Client(s) => s,
             SessionKind::Server(s) => s,
         };
         session.export_keying_material(output, label, Some(context))
+            .map_err(|_| ExportKeyingMaterialError)
     }
 }
 
