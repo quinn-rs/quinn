@@ -63,7 +63,6 @@ mod cid_generator;
 pub use crate::cid_generator::ConnectionIdGenerator;
 
 mod token;
-
 use token::{ResetToken, RetryToken};
 
 /// Types that are generic over the crypto protocol implementation

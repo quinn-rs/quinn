@@ -1,7 +1,8 @@
 use std::{fmt, net::SocketAddr, time::Instant};
 
-use crate::{coding::BufExt, packet::PartialDecode, ResetToken, MAX_CID_SIZE};
 use bytes::{Buf, BufMut, BytesMut};
+
+use crate::{coding::BufExt, packet::PartialDecode, ResetToken, MAX_CID_SIZE};
 
 /// Events sent from an Endpoint to a Connection
 #[derive(Debug)]
@@ -60,9 +61,9 @@ pub(crate) enum EndpointEventInner {
 #[derive(Clone, Copy, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct ConnectionId {
     /// length of CID
-    pub len: u8,
+    len: u8,
     /// CID in byte array
-    pub bytes: [u8; MAX_CID_SIZE],
+    bytes: [u8; MAX_CID_SIZE],
 }
 
 impl ConnectionId {
