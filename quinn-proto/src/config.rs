@@ -322,7 +322,12 @@ where
         }
     }
 
-    /// assign a cid generator factory
+    /// Supply a custom connection ID generator factory
+    ///
+    /// Called once by each `Endpoint` constructed from this configuration to obtain the CID generator which will
+    /// be used to generate the CIDs used for incoming packets on all connections involving that  `Endpoint`. A
+    /// custom CID generator allows applications to embed information in local connection IDs, e.g. to support
+    /// stateless packet-level load balancers.
     ///
     ///
     /// EndpointConfig::new() applies a default random CID generator factory.
