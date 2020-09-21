@@ -807,7 +807,7 @@ pub enum ConnectError {
     EndpointStopping,
     /// The number of active connections on the local endpoint is at the limit
     ///
-    /// Try a larger cid length.
+    /// Try using longer connection IDs.
     #[error(display = "too many connections")]
     TooManyConnections,
     /// The domain name supplied was malformed
