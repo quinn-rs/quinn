@@ -6,9 +6,22 @@ use crate::MAX_CID_SIZE;
 /// Generates connection IDs for incoming connections
 pub trait ConnectionIdGenerator: Send {
     /// Generates a new CID
+    ///
+    /// Connection IDs MUST NOT contain any information that can be used by
+    //    an external observer (that is, one that does not cooperate with the
+    //    issuer) to correlate them with other connection IDs for the same
+    //    connection.
     fn generate_cid(&mut self) -> ConnectionId;
     /// Performs any validation if it is needed (e.g. HMAC, etc)
-    fn validate_cid(&mut self, cid: &ConnectionId) -> bool;
+    ///
+    /// Apply validation check on those CIDs that may still exist in hash table
+    ///   but considered invalid by application-layer logic.
+    /// e.g., We may want to limit the amount of time for which a CID is valid
+    ///   in order to reduce the number of valid IDs that could be accumulated
+    ///   by an attacker.
+    fn validate_cid(&mut self, _cid: &ConnectionId) -> bool {
+        true
+    }
     /// Returns the length of a CID for cononections created by this generator
     fn cid_len(&self) -> usize;
 }
@@ -34,17 +47,10 @@ impl RandomConnectionIdGenerator {
 }
 impl ConnectionIdGenerator for RandomConnectionIdGenerator {
     fn generate_cid(&mut self) -> ConnectionId {
-        let mut res = ConnectionId {
-            len: self.cid_len as u8,
-            bytes: [0; MAX_CID_SIZE],
-        };
-        rand::thread_rng().fill_bytes(&mut res.bytes[..self.cid_len]);
-        res
-    }
+        let mut bytes_arr = vec![0; self.cid_len];
+        rand::thread_rng().fill_bytes(&mut bytes_arr);
 
-    /// Cid is an array of random bytes. We only verify the length
-    fn validate_cid(&mut self, cid: &ConnectionId) -> bool {
-        cid.len as usize == self.cid_len
+        ConnectionId::new(&bytes_arr)
     }
 
     /// Provide the length of dst_cid in short header packet
