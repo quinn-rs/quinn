@@ -333,7 +333,7 @@ where
     /// EndpointConfig::new() applies a default random CID generator factory.
     /// This functions accepts any customized CID generator to reset CID generator factory that
     /// implements ConnectionIdGenerator trait
-    pub fn set_cid_generator<F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static>(
+    pub fn cid_generator<F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static>(
         &mut self,
         factory: F,
     ) -> &mut Self {
