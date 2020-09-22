@@ -15,10 +15,10 @@ pub trait ConnectionIdGenerator: Send {
     /// Performs any validation if it is needed (e.g. HMAC, etc)
     ///
     /// Apply validation check on those CIDs that may still exist in hash table
-    ///   but considered invalid by application-layer logic.
-    /// e.g., We may want to limit the amount of time for which a CID is valid
-    ///   in order to reduce the number of valid IDs that could be accumulated
-    ///   by an attacker.
+    /// but considered invalid by application-layer logic.
+    /// e.g. we may want to limit the amount of time for which a CID is valid
+    /// in order to reduce the number of valid IDs that could be accumulated
+    /// by an attacker.
     fn validate_cid(&mut self, _cid: &ConnectionId) -> bool {
         true
     }
