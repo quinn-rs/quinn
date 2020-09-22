@@ -60,7 +60,7 @@ pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportE
 pub mod congestion;
 
 mod cid_generator;
-pub use crate::cid_generator::ConnectionIdGenerator;
+pub use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
 
 mod token;
 use token::{ResetToken, RetryToken};
