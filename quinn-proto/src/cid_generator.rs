@@ -8,9 +8,9 @@ pub trait ConnectionIdGenerator: Send {
     /// Generates a new CID
     ///
     /// Connection IDs MUST NOT contain any information that can be used by
-    //    an external observer (that is, one that does not cooperate with the
-    //    issuer) to correlate them with other connection IDs for the same
-    //    connection.
+    /// an external observer (that is, one that does not cooperate with the
+    /// issuer) to correlate them with other connection IDs for the same
+    /// connection.
     fn generate_cid(&mut self) -> ConnectionId;
     /// Performs any validation if it is needed (e.g. HMAC, etc)
     ///
