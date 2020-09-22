@@ -26,9 +26,7 @@ pub trait ConnectionIdGenerator: Send {
     fn cid_len(&self) -> usize;
 }
 
-/// CID filled with random number/byte
-///
-/// This struct generates random CID with a customized length.
+/// Generates purely random connection IDs of a certain length
 #[derive(Debug, Clone, Copy)]
 pub struct RandomConnectionIdGenerator {
     cid_len: usize,
