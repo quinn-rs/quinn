@@ -45,10 +45,10 @@ impl RandomConnectionIdGenerator {
 }
 impl ConnectionIdGenerator for RandomConnectionIdGenerator {
     fn generate_cid(&mut self) -> ConnectionId {
-        let mut bytes_arr = vec![0; self.cid_len];
-        rand::thread_rng().fill_bytes(&mut bytes_arr);
+        let mut bytes_arr = [0; MAX_CID_SIZE];
+        rand::thread_rng().fill_bytes(&mut bytes_arr[..self.cid_len]);
 
-        ConnectionId::new(&bytes_arr)
+        ConnectionId::new(&bytes_arr[..self.cid_len])
     }
 
     /// Provide the length of dst_cid in short header packet
