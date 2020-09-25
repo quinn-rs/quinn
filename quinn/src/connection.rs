@@ -293,10 +293,9 @@ where
 /// A QUIC connection.
 ///
 /// If all references to a connection (including every clone of the `Connection` handle, streams of
-/// incoming streams, and the various stream types) other than the `ConnectionDriver` have been
-/// dropped, then the connection will be automatically closed with an `error_code` of 0 and an
-/// empty `reason`. You can also close the connection explicitly by calling
-/// [`Connection::close()`].
+/// incoming streams, and the various stream types) have been dropped, then the connection will be
+/// automatically closed with an `error_code` of 0 and an empty `reason`. You can also close the
+/// connection explicitly by calling [`Connection::close()`].
 ///
 /// May be cloned to obtain another handle to the same connection.
 ///
