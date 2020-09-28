@@ -202,9 +202,7 @@ where
 
         let dst_cid = first_decode.dst_cid();
         let known_ch = {
-            let ch = if self.local_cid_generator.cid_len() > 0
-                && self.local_cid_generator.validate_cid(&dst_cid)
-            {
+            let ch = if self.local_cid_generator.cid_len() > 0 {
                 self.connection_ids.get(&dst_cid)
             } else {
                 None
