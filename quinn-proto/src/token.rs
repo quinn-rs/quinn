@@ -153,9 +153,11 @@ mod test {
         rand::thread_rng().fill_bytes(&mut key);
         let key = <hmac::Key as HmacKey>::new(&key).unwrap();
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
-        let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
+        let (retry_src_cid, _) = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         let token = RetryToken {
-            orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
+            orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE)
+                .generate_cid()
+                .0,
             issued: UNIX_EPOCH + Duration::new(42, 0), // Fractional seconds would be lost
         };
         let encoded = token.encode(&key, &addr, &retry_src_cid);
