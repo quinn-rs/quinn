@@ -67,7 +67,7 @@ pub struct ConnectionId {
 }
 
 impl ConnectionId {
-    pub(crate) fn new(bytes: &[u8]) -> Self {
+    pub fn new(bytes: &[u8]) -> Self {
         debug_assert!(bytes.len() <= MAX_CID_SIZE);
         let mut res = Self {
             len: bytes.len() as u8,
