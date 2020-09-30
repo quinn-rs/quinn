@@ -14,7 +14,7 @@ pub trait ConnectionIdGenerator: Send {
     /// issuer) to correlate them with other connection IDs for the same
     /// connection.
     ///
-    /// Connection IDs will be proactively retired if lifetime is given (under development).
+    /// In the future, connection IDs will be retired after the returned `Duration`, if any.
     fn generate_cid(&mut self) -> (ConnectionId, Option<Duration>);
     /// Returns the length of a CID for cononections created by this generator
     fn cid_len(&self) -> usize;
