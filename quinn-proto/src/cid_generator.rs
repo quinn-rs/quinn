@@ -26,6 +26,7 @@ pub struct RandomConnectionIdGenerator {
     cid_len: usize,
     lifetime: Option<Duration>,
 }
+
 impl Default for RandomConnectionIdGenerator {
     fn default() -> Self {
         Self {
@@ -34,8 +35,11 @@ impl Default for RandomConnectionIdGenerator {
         }
     }
 }
+
 impl RandomConnectionIdGenerator {
-    /// Initialize Random CID generator with a fixed CID length (which must be less or equal to MAX_CID_SIZE)
+    /// Initialize Random CID generator with a fixed CID length
+    ///
+    /// The given length must be less than or equal to MAX_CID_SIZE.
     pub fn new(cid_len: usize) -> Self {
         debug_assert!(cid_len <= MAX_CID_SIZE);
         Self {
@@ -50,6 +54,7 @@ impl RandomConnectionIdGenerator {
         self
     }
 }
+
 impl ConnectionIdGenerator for RandomConnectionIdGenerator {
     fn generate_cid(&mut self) -> (ConnectionId, Option<Duration>) {
         let mut bytes_arr = [0; MAX_CID_SIZE];
