@@ -329,7 +329,7 @@ where
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
                 let mut buf = Vec::with_capacity(self.mtu as usize);
-                let builder = self.begin_packet(SpaceId::Data, false, &mut buf);
+                let builder = self.begin_packet(SpaceId::Data, false, &mut buf)?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 builder.buffer.write(frame::Type::PATH_CHALLENGE);
                 builder.buffer.write(token);
@@ -421,7 +421,7 @@ where
                 prev.update_unacked = false;
             }
 
-            let mut builder = self.begin_packet(space_id, pad_space == Some(space_id), &mut buf);
+            let mut builder = self.begin_packet(space_id, pad_space == Some(space_id), &mut buf)?;
             coalesce = coalesce && !builder.short_header;
 
             let sent = if close {
@@ -508,13 +508,37 @@ where
     }
 
     /// Write a new packet header to `buffer` and determine the packet's properties
+    ///
+    /// Marks the connection drained and returns `None` if the confidentiality limit would be
+    /// violated.
     fn begin_packet<'a>(
         &mut self,
         space_id: SpaceId,
         initial_padding: bool,
         buffer: &'a mut Vec<u8>,
-    ) -> PacketBuilder<'a> {
+    ) -> Option<PacketBuilder<'a>> {
+        // Initiate key update if we're approaching the confidentiality limit
+        let confidentiality_limit = self.spaces[space_id]
+            .crypto
+            .as_ref()
+            .map_or_else(
+                || &self.zero_rtt_crypto.as_ref().unwrap().packet,
+                |keys| &keys.packet.local,
+            )
+            .confidentiality_limit();
+        let sent_with_keys = self.spaces[space_id].sent_with_keys;
+        if space_id == SpaceId::Data {
+            if sent_with_keys.saturating_add(KEY_UPDATE_MARGIN) >= confidentiality_limit {
+                self.initiate_key_update();
+            }
+        } else if sent_with_keys > confidentiality_limit {
+            // Confidentiality limited violated and there's nothing we can do
+            self.kill(TransportError::AEAD_LIMIT_REACHED("confidentiality limit reached").into());
+            return None;
+        }
+
         let space = &mut self.spaces[space_id];
+
         space.loss_probes = space.loss_probes.saturating_sub(1);
         let exact_number = space.get_tx_number();
 
@@ -581,7 +605,7 @@ where
         };
         let max_size =
             buffer.capacity() - partial_encode.start - partial_encode.header_len - tag_len;
-        PacketBuilder {
+        Some(PacketBuilder {
             buffer,
             space: space_id,
             partial_encode,
@@ -590,7 +614,7 @@ where
             min_size,
             max_size,
             span,
-        }
+        })
     }
 
     /// Encrypt packet, returning whether padding was added
@@ -2853,6 +2877,7 @@ where
                 .packet,
             mem::replace(self.next_crypto.as_mut().unwrap(), new),
         );
+        self.spaces[SpaceId::Data].sent_with_keys = 0;
         self.prev_crypto = Some(PrevCrypto {
             crypto: old,
             end_packet,
@@ -3251,3 +3276,8 @@ struct PacketBuilder<'a> {
     max_size: usize,
     span: tracing::Span,
 }
+
+/// Perform key updates this many packets before the AEAD confidentiality limit.
+///
+/// Chosen arbitrarily, intended to be large enough to prevent spurious connection loss.
+const KEY_UPDATE_MARGIN: u64 = 10000;

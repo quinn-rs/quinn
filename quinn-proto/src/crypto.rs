@@ -173,6 +173,8 @@ pub trait PacketKey: Send {
     fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()>;
     /// The length of the AEAD tag appended to packets on encryption
     fn tag_len(&self) -> usize;
+    /// Maximum number of packets that may be sent using a single key
+    fn confidentiality_limit(&self) -> u64;
     /// Maximum number of incoming packets that may fail decryption before the connection must be
     /// abandoned
     fn integrity_limit(&self) -> u64;
