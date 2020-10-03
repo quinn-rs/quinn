@@ -373,4 +373,15 @@ impl crypto::PacketKey for PacketKey {
     fn tag_len(&self) -> usize {
         self.key.algorithm().tag_len()
     }
+
+    fn integrity_limit(&self) -> u64 {
+        let cipher = self.key.algorithm();
+        if cipher == &aead::AES_128_GCM || cipher == &aead::AES_256_GCM {
+            2u64.pow(54)
+        } else if cipher == &aead::CHACHA20_POLY1305 {
+            2u64.pow(36)
+        } else {
+            panic!("unknown cipher")
+        }
+    }
 }
