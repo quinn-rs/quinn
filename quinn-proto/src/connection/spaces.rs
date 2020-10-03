@@ -64,6 +64,8 @@ where
     pub(crate) ping_pending: bool,
     /// Number of congestion control "in flight" bytes
     pub(crate) in_flight: u64,
+    /// Number of packets sent in the current key phase
+    pub(crate) sent_with_keys: u64,
 }
 
 impl<S> PacketSpace<S>
@@ -96,6 +98,7 @@ where
             loss_probes: 0,
             ping_pending: false,
             in_flight: 0,
+            sent_with_keys: 0,
         }
     }
 
@@ -104,6 +107,7 @@ where
         assert!(self.next_packet_number < 2u64.pow(62));
         let x = self.next_packet_number;
         self.next_packet_number += 1;
+        self.sent_with_keys += 1;
         x
     }
 
