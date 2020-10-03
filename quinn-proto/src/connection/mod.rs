@@ -694,10 +694,7 @@ where
                     self.endpoint_events.push_back(EndpointEventInner::Drained);
                 }
                 Timer::Idle => {
-                    self.close_common();
-                    self.events.push_back(ConnectionError::TimedOut.into());
-                    self.state = State::Drained;
-                    self.endpoint_events.push_back(EndpointEventInner::Drained);
+                    self.kill(ConnectionError::TimedOut);
                 }
                 Timer::KeepAlive => {
                     trace!("sending keep-alive");
@@ -2944,6 +2941,14 @@ where
         self.in_flight.bytes -= u64::from(packet.size);
         self.in_flight.ack_eliciting -= u64::from(packet.ack_eliciting);
         self.spaces[space].in_flight -= u64::from(packet.size);
+    }
+
+    /// Terminate the connection instantly, without sending a close packet
+    fn kill(&mut self, reason: ConnectionError) {
+        self.close_common();
+        self.events.push_back(reason.into());
+        self.state = State::Drained;
+        self.endpoint_events.push_back(EndpointEventInner::Drained);
     }
 }
 
