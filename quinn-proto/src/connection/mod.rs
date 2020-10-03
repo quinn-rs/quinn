@@ -329,7 +329,7 @@ where
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
                 let mut buf = Vec::with_capacity(self.mtu as usize);
-                let builder = self.begin_packet(SpaceId::Data, false, &mut buf)?;
+                let builder = self.begin_packet(now, SpaceId::Data, false, &mut buf)?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 builder.buffer.write(frame::Type::PATH_CHALLENGE);
                 builder.buffer.write(token);
@@ -421,7 +421,8 @@ where
                 prev.update_unacked = false;
             }
 
-            let mut builder = self.begin_packet(space_id, pad_space == Some(space_id), &mut buf)?;
+            let mut builder =
+                self.begin_packet(now, space_id, pad_space == Some(space_id), &mut buf)?;
             coalesce = coalesce && !builder.short_header;
 
             let sent = if close {
@@ -513,6 +514,7 @@ where
     /// violated.
     fn begin_packet<'a>(
         &mut self,
+        now: Instant,
         space_id: SpaceId,
         initial_padding: bool,
         buffer: &'a mut Vec<u8>,
@@ -531,6 +533,16 @@ where
             if sent_with_keys.saturating_add(KEY_UPDATE_MARGIN) >= confidentiality_limit {
                 self.initiate_key_update();
             }
+        } else if sent_with_keys.saturating_add(1) == confidentiality_limit {
+            // We still have time to attempt a graceful close
+            self.close_inner(
+                now,
+                Close::Connection(frame::ConnectionClose {
+                    error_code: TransportErrorCode::AEAD_LIMIT_REACHED,
+                    frame_type: None,
+                    reason: Bytes::from_static(b"confidentiality limit reached"),
+                }),
+            )
         } else if sent_with_keys > confidentiality_limit {
             // Confidentiality limited violated and there's nothing we can do
             self.kill(TransportError::AEAD_LIMIT_REACHED("confidentiality limit reached").into());
@@ -756,14 +768,19 @@ where
     ///
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
     pub fn close(&mut self, now: Instant, error_code: VarInt, reason: Bytes) {
+        self.close_inner(
+            now,
+            Close::Application(frame::ApplicationClose { error_code, reason }),
+        )
+    }
+
+    fn close_inner(&mut self, now: Instant, reason: Close) {
         let was_closed = self.state.is_closed();
         if !was_closed {
             self.close_common();
             self.set_close_timer(now);
             self.close = true;
-            self.state = State::Closed(state::Closed {
-                reason: Close::Application(frame::ApplicationClose { error_code, reason }),
-            });
+            self.state = State::Closed(state::Closed { reason });
         }
     }
 
