@@ -127,4 +127,5 @@ errors! {
     APPLICATION_ERROR(0xC) "the application or application protocol caused the connection to be closed during the handshake";
     CRYPTO_BUFFER_EXCEEDED(0xD) "received more data in CRYPTO frames than can be buffered";
     KEY_UPDATE_ERROR(0xE) "key update error";
+    AEAD_LIMIT_REACHED(0xF) "the endpoint has reached the confidentiality or integrity limit for the AEAD algorithm";
 }
