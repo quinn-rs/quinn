@@ -1025,18 +1025,12 @@ impl Recv {
     }
 
     fn receiving_unknown_size(&self) -> bool {
-        match self.state {
-            RecvState::Recv { size: None } => true,
-            _ => false,
-        }
+        matches!(self.state, RecvState::Recv { size: None })
     }
 
     /// No more data expected from peer
     fn is_finished(&self) -> bool {
-        match self.state {
-            RecvState::Recv { .. } => false,
-            _ => true,
-        }
+        !matches!(self.state, RecvState::Recv { .. })
     }
 
     /// All data read by application

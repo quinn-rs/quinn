@@ -21,12 +21,12 @@ impl SettingId {
     const NONE: SettingId = SettingId(0);
 
     fn is_supported(self) -> bool {
-        match self {
+        matches!(
+            self,
             SettingId::MAX_HEADER_LIST_SIZE
-            | SettingId::QPACK_MAX_TABLE_CAPACITY
-            | SettingId::QPACK_MAX_BLOCKED_STREAMS => true,
-            _ => false,
-        }
+                | SettingId::QPACK_MAX_TABLE_CAPACITY
+                | SettingId::QPACK_MAX_BLOCKED_STREAMS
+        )
     }
 }
 
