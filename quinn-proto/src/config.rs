@@ -241,7 +241,7 @@ impl Default for TransportConfig {
             stream_window_uni: 32u32.into(),
             max_idle_timeout: Some(Duration::from_millis(10_000)),
             stream_receive_window: STREAM_RWND.into(),
-            receive_window: (8 * STREAM_RWND).into(),
+            receive_window: VarInt::MAX,
             send_window: (8 * STREAM_RWND).into(),
 
             max_tlps: 2,
