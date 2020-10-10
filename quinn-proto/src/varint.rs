@@ -13,7 +13,6 @@ use arbitrary::Arbitrary;
 /// Values of this type are suitable for encoding as QUIC variable-length integer.
 // It would be neat if we could express to Rust that the top two bits are available for use as enum
 // discriminants
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 #[derive(Default, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct VarInt(pub(crate) u64);
 
@@ -122,6 +121,13 @@ impl fmt::Debug for VarInt {
 impl fmt::Display for VarInt {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         self.0.fmt(f)
+    }
+}
+
+#[cfg(feature = "arbitrary")]
+impl Arbitrary for VarInt {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
+        Ok(VarInt(u.int_in_range(0..=VarInt::MAX.0)?))
     }
 }
 
