@@ -475,7 +475,9 @@ impl DynamicTable {
     }
 
     fn is_tracked(&self, reference: usize) -> bool {
-        matches!(self.track_map.get(&reference), Some(count) if *count > 0)
+        self.track_map
+            .get(&reference)
+            .map_or(false, |count| *count > 0)
     }
 
     fn track_block(&mut self, stream_id: u64, refs: HashMap<usize, usize>) {
