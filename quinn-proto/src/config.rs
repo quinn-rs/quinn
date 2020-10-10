@@ -1,4 +1,4 @@
-use std::{fmt, num::TryFromIntError, sync::Arc, time::Duration};
+use std::{convert::TryInto, fmt, num::TryFromIntError, sync::Arc, time::Duration};
 
 use err_derive::Error;
 use rand::RngCore;
@@ -9,7 +9,7 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
     crypto::{self, ClientConfig as _, HmacKey as _, ServerConfig as _},
-    VarInt,
+    VarInt, VarIntBoundsExceeded,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -27,11 +27,11 @@ use crate::{
 /// link with a 100ms round trip time, with remote endpoints opening at most 320 new streams per
 /// second.
 pub struct TransportConfig {
-    pub(crate) stream_window_bidi: u64,
-    pub(crate) stream_window_uni: u64,
+    pub(crate) stream_window_bidi: VarInt,
+    pub(crate) stream_window_uni: VarInt,
     pub(crate) max_idle_timeout: Option<Duration>,
-    pub(crate) stream_receive_window: u64,
-    pub(crate) receive_window: u64,
+    pub(crate) stream_receive_window: VarInt,
+    pub(crate) receive_window: VarInt,
     pub(crate) send_window: u64,
 
     pub(crate) max_tlps: u32,
@@ -66,15 +66,15 @@ impl TransportConfig {
     ///
     /// Note that worst-case memory use is directly proportional to `stream_window_bidi *
     /// stream_receive_window`, with an upper bound proportional to `receive_window`.
-    pub fn stream_window_bidi(&mut self, value: u64) -> &mut Self {
-        self.stream_window_bidi = value;
-        self
+    pub fn stream_window_bidi(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
+        self.stream_window_bidi = value.try_into()?;
+        Ok(self)
     }
 
     /// Variant of `stream_window_bidi` affecting unidirectional streams
-    pub fn stream_window_uni(&mut self, value: u64) -> &mut Self {
-        self.stream_window_uni = value;
-        self
+    pub fn stream_window_uni(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
+        self.stream_window_uni = value.try_into()?;
+        Ok(self)
     }
 
     /// Maximum duration of inactivity to accept before timing out the connection.
@@ -100,9 +100,9 @@ impl TransportConfig {
     /// stream doesn't monopolize receive buffers, which may otherwise occur if the application
     /// chooses not to read from a large stream for a time while still requiring data on other
     /// streams.
-    pub fn stream_receive_window(&mut self, value: u64) -> &mut Self {
-        self.stream_receive_window = value;
-        self
+    pub fn stream_receive_window(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
+        self.stream_receive_window = value.try_into()?;
+        Ok(self)
     }
 
     /// Maximum number of bytes the peer may transmit across all streams of a connection before
@@ -111,9 +111,9 @@ impl TransportConfig {
     /// This should be set to at least the expected connection latency multiplied by the maximum
     /// desired throughput. Larger values can be useful to allow maximum throughput within a
     /// stream while another is blocked.
-    pub fn receive_window(&mut self, value: u64) -> &mut Self {
-        self.receive_window = value;
-        self
+    pub fn receive_window(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
+        self.receive_window = value.try_into()?;
+        Ok(self)
     }
 
     /// Maximum number of bytes to transmit to a peer without acknowledgment
@@ -230,19 +230,19 @@ impl TransportConfig {
 
 impl Default for TransportConfig {
     fn default() -> Self {
-        const EXPECTED_RTT: u64 = 100; // ms
-        const MAX_STREAM_BANDWIDTH: u64 = 12500 * 1000; // bytes/s
+        const EXPECTED_RTT: u32 = 100; // ms
+        const MAX_STREAM_BANDWIDTH: u32 = 12500 * 1000; // bytes/s
                                                         // Window size needed to avoid pipeline
                                                         // stalls
-        const STREAM_RWND: u64 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
+        const STREAM_RWND: u32 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
 
         TransportConfig {
-            stream_window_bidi: 32,
-            stream_window_uni: 32,
+            stream_window_bidi: 32u32.into(),
+            stream_window_uni: 32u32.into(),
             max_idle_timeout: Some(Duration::from_millis(10_000)),
-            stream_receive_window: STREAM_RWND,
-            receive_window: 8 * STREAM_RWND,
-            send_window: 8 * STREAM_RWND,
+            stream_receive_window: STREAM_RWND.into(),
+            receive_window: (8 * STREAM_RWND).into(),
+            send_window: (8 * STREAM_RWND).into(),
 
             max_tlps: 2,
             packet_threshold: 3,
@@ -299,7 +299,7 @@ where
     S: crypto::Session,
 {
     pub(crate) reset_key: Arc<S::HmacKey>,
-    pub(crate) max_udp_payload_size: u64,
+    pub(crate) max_udp_payload_size: VarInt,
     /// CID generator factory
     ///
     /// Create a cid generator for local cid in Endpoint struct
@@ -317,7 +317,7 @@ where
             || Box::new(RandomConnectionIdGenerator::default());
         Self {
             reset_key: Arc::new(reset_key),
-            max_udp_payload_size: MAX_UDP_PAYLOAD_SIZE,
+            max_udp_payload_size: MAX_UDP_PAYLOAD_SIZE.into(),
             connection_id_generator_factory: Arc::new(cid_factory),
         }
     }
@@ -348,9 +348,9 @@ where
     }
 
     /// Maximum UDP payload size accepted from peers. Excludes UDP and IP overhead.
-    pub fn max_udp_payload_size(&mut self, value: u64) -> &mut Self {
-        self.max_udp_payload_size = value;
-        self
+    pub fn max_udp_payload_size(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
+        self.max_udp_payload_size = value.try_into()?;
+        Ok(self)
     }
 
     /// Get the current value of `max_udp_payload_size`
@@ -363,7 +363,7 @@ where
     /// which will be used far more heavily.
     #[doc(hidden)]
     pub fn get_max_udp_payload_size(&self) -> u64 {
-        self.max_udp_payload_size
+        self.max_udp_payload_size.into()
     }
 }
 
@@ -637,5 +637,11 @@ impl From<TryFromIntError> for ConfigError {
     }
 }
 
+impl From<VarIntBoundsExceeded> for ConfigError {
+    fn from(_: VarIntBoundsExceeded) -> Self {
+        ConfigError::OutOfBounds
+    }
+}
+
 /// Largest theoretically possible UDP/IPv4 payload
-const MAX_UDP_PAYLOAD_SIZE: u64 = 64 * 1024 - 8 - 20;
+const MAX_UDP_PAYLOAD_SIZE: u32 = 64 * 1024 - 8 - 20;

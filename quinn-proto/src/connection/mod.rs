@@ -254,8 +254,8 @@ where
                 config.stream_window_uni,
                 config.stream_window_bidi,
                 config.send_window,
-                config.receive_window as u64,
-                config.stream_receive_window as u64,
+                config.receive_window,
+                config.stream_receive_window,
             ),
             datagrams: DatagramState::new(),
             config,
@@ -1091,7 +1091,7 @@ where
             } else {
                 cmp::min(
                     self.max_ack_delay(),
-                    Duration::from_micros(ack.delay << self.peer_params.ack_delay_exponent),
+                    Duration::from_micros(ack.delay << self.peer_params.ack_delay_exponent.0),
                 )
             };
             let rtt = instant_saturating_sub(now, self.spaces[space].largest_acked_packet_sent);
@@ -2552,6 +2552,7 @@ where
         let n = self
             .peer_params
             .active_connection_id_limit
+            .0
             .min(LOC_CID_COUNT)
             - 1;
         self.endpoint_events
@@ -2745,8 +2746,8 @@ where
                 "CID authentication failure",
             ));
         }
-        if params.initial_max_streams_bidi > MAX_STREAM_COUNT
-            || params.initial_max_streams_uni > MAX_STREAM_COUNT
+        if params.initial_max_streams_bidi.0 > MAX_STREAM_COUNT
+            || params.initial_max_streams_uni.0 > MAX_STREAM_COUNT
         {
             return Err(TransportError::STREAM_LIMIT_ERROR(
                 "unrepresentable initial stream limit",
@@ -2758,7 +2759,7 @@ where
 
     fn set_peer_params(&mut self, params: TransportParameters) {
         self.streams.set_params(&params);
-        self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
+        self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout.0) {
             (None, 0) => None,
             (None, x) => Some(Duration::from_millis(x)),
             (Some(x), 0) => Some(x),
@@ -2943,7 +2944,7 @@ where
     }
 
     fn max_ack_delay(&self) -> Duration {
-        Duration::from_micros(self.peer_params.max_ack_delay * 1000)
+        Duration::from_micros(self.peer_params.max_ack_delay.0 * 1000)
     }
 
     /// Whether we have 1-RTT data to send

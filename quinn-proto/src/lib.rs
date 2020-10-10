@@ -106,13 +106,11 @@ pub mod fuzzing {
 
     impl Arbitrary for TransportParameters {
         fn arbitrary(u: &mut Unstructured<'_>) -> Result<Self> {
-            let (a, b, c, d): (u64, u64, u64, u64) = u.arbitrary()?;
-
             Ok(TransportParameters {
-                initial_max_streams_bidi: a,
-                initial_max_streams_uni: b,
-                ack_delay_exponent: c,
-                max_udp_payload_size: d,
+                initial_max_streams_bidi: u.arbitrary()?,
+                initial_max_streams_uni: u.arbitrary()?,
+                ack_delay_exponent: u.arbitrary()?,
+                max_udp_payload_size: u.arbitrary()?,
                 ..TransportParameters::default()
             })
         }
