@@ -3079,34 +3079,19 @@ impl State {
     }
 
     fn is_handshake(&self) -> bool {
-        match *self {
-            State::Handshake(_) => true,
-            _ => false,
-        }
+        matches!(*self, State::Handshake(_))
     }
 
     fn is_established(&self) -> bool {
-        match *self {
-            State::Established => true,
-            _ => false,
-        }
+        matches!(*self, State::Established)
     }
 
     fn is_closed(&self) -> bool {
-        match *self {
-            State::Closed(_) => true,
-            State::Draining => true,
-            State::Drained => true,
-            _ => false,
-        }
+        matches!(*self, State::Closed(_) | State::Draining | State::Drained)
     }
 
     fn is_drained(&self) -> bool {
-        if let State::Drained = *self {
-            true
-        } else {
-            false
-        }
+        matches!(*self, State::Drained)
     }
 }
 

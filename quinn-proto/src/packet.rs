@@ -54,11 +54,7 @@ impl PartialDecode {
     }
 
     pub(crate) fn has_long_header(&self) -> bool {
-        use self::PlainHeader::*;
-        match self.plain_header {
-            Short { .. } => false,
-            _ => true,
-        }
+        !matches!(self.plain_header, PlainHeader::Short { .. })
     }
 
     pub(crate) fn is_initial(&self) -> bool {
@@ -343,10 +339,7 @@ impl Header {
 
     /// Whether the packet is encrypted on the wire
     pub(crate) fn is_protected(&self) -> bool {
-        match *self {
-            Header::Retry { .. } | Header::VersionNegotiate { .. } => false,
-            _ => true,
-        }
+        !matches!(*self, Header::Retry { .. } | Header::VersionNegotiate { .. })
     }
 
     pub(crate) fn number(&self) -> Option<PacketNumber> {
@@ -385,10 +378,7 @@ impl Header {
     }
 
     pub(crate) fn is_short(&self) -> bool {
-        match *self {
-            Header::Short { .. } => true,
-            _ => false,
-        }
+        matches!(*self, Header::Short { .. })
     }
 
     pub(crate) fn is_1rtt(&self) -> bool {
@@ -396,13 +386,7 @@ impl Header {
     }
 
     pub(crate) fn is_0rtt(&self) -> bool {
-        match *self {
-            Header::Long {
-                ty: LongType::ZeroRtt,
-                ..
-            } => true,
-            _ => false,
-        }
+        matches!(*self, Header::Long { ty: LongType::ZeroRtt, .. })
     }
 
     pub(crate) fn dst_cid(&self) -> &ConnectionId {
