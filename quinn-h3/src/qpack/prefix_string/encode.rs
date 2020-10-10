@@ -1,3 +1,5 @@
+use std::iter;
+
 use super::BitWindow;
 
 #[derive(Debug, PartialEq)]
@@ -45,11 +47,8 @@ impl HuffmanEncoder {
 
         let forward =
             end_range.byte as usize - self.buffer.len() + if end_range.bit > 0 { 1 } else { 0 };
-        for _ in 0..forward {
-            // push filler value that will ends huffman decoding if not
-            // modified
-            self.buffer.push(255);
-        }
+        // push filler value that will ends huffman decoding if not modified
+        self.buffer.extend(iter::repeat(255).take(forward));
     }
 
     fn put(&mut self, code: u8) -> Result<(), Error> {
