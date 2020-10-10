@@ -68,11 +68,11 @@ pub struct Streams {
 impl Streams {
     pub fn new(
         side: Side,
-        max_remote_uni: u64,
-        max_remote_bi: u64,
+        max_remote_uni: VarInt,
+        max_remote_bi: VarInt,
         send_window: u64,
-        receive_window: u64,
-        stream_receive_window: u64,
+        receive_window: VarInt,
+        stream_receive_window: VarInt,
     ) -> Self {
         let mut this = Self {
             side,
@@ -80,7 +80,7 @@ impl Streams {
             recv: HashMap::default(),
             next: [0, 0],
             max: [0, 0],
-            max_remote: [max_remote_bi, max_remote_uni],
+            max_remote: [max_remote_bi.into(), max_remote_uni.into()],
             next_remote: [0, 0],
             opened: [false, false],
             next_reported_remote: [0, 0],
@@ -89,12 +89,12 @@ impl Streams {
             events: VecDeque::new(),
             connection_blocked: Vec::new(),
             max_data: 0,
-            local_max_data: receive_window,
+            local_max_data: receive_window.into(),
             data_sent: 0,
             data_recvd: 0,
             unacked_data: 0,
             send_window,
-            stream_receive_window,
+            stream_receive_window: stream_receive_window.into(),
         };
 
         for dir in Dir::iter() {
@@ -119,13 +119,13 @@ impl Streams {
     }
 
     pub fn set_params(&mut self, params: &TransportParameters) {
-        self.max[Dir::Bi as usize] = params.initial_max_streams_bidi;
-        self.max[Dir::Uni as usize] = params.initial_max_streams_uni;
+        self.max[Dir::Bi as usize] = params.initial_max_streams_bidi.into();
+        self.max[Dir::Uni as usize] = params.initial_max_streams_uni.into();
         self.received_max_data(params.initial_max_data);
         for i in 0..self.max_remote[Dir::Bi as usize] {
             let id = StreamId::new(!self.side, Dir::Bi, i as u64);
             self.send.get_mut(&id).unwrap().max_data =
-                params.initial_max_stream_data_bidi_local as u64;
+                params.initial_max_stream_data_bidi_local.into();
         }
     }
 
@@ -673,8 +673,8 @@ impl Streams {
     }
 
     /// Handle increase to connection-level flow control limit
-    pub fn received_max_data(&mut self, n: u64) {
-        self.max_data = self.max_data.max(n);
+    pub fn received_max_data(&mut self, n: VarInt) {
+        self.max_data = self.max_data.max(n.into());
     }
 
     pub fn received_max_stream_data(
@@ -776,7 +776,7 @@ impl Streams {
     fn insert(&mut self, params: Option<&TransportParameters>, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
         if bi || !remote {
-            let max_data = params.map_or(0, |params| match id.dir() {
+            let max_data = params.map_or(0u32.into(), |params| match id.dir() {
                 Dir::Uni => params.initial_max_stream_data_uni,
                 // Remote/local appear reversed here because the transport parameters are named from
                 // the perspective of the peer.
@@ -812,9 +812,9 @@ struct Send {
 }
 
 impl Send {
-    fn new(max_data: u64) -> Self {
+    fn new(max_data: VarInt) -> Self {
         Self {
-            max_data,
+            max_data: max_data.into(),
             state: SendState::Ready,
             pending: SendBuffer::new(),
             fin_pending: false,
@@ -1207,7 +1207,14 @@ mod tests {
     use super::*;
 
     fn make(side: Side) -> Streams {
-        Streams::new(side, 128, 128, 1024 * 1024, 1024 * 1024, 1024 * 1024)
+        Streams::new(
+            side,
+            128u32.into(),
+            128u32.into(),
+            1024 * 1024,
+            (1024 * 1024u32).into(),
+            (1024 * 1024u32).into(),
+        )
     }
 
     #[test]

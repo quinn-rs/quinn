@@ -600,7 +600,7 @@ fn stream_id_backpressure() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_uni: 1,
+            stream_window_uni: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -1041,7 +1041,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
 fn stream_flow_control() {
     test_flow_control(
         TransportConfig {
-            stream_receive_window: 2000,
+            stream_receive_window: 2000u32.into(),
             ..TransportConfig::default()
         },
         2000,
@@ -1052,7 +1052,7 @@ fn stream_flow_control() {
 fn conn_flow_control() {
     test_flow_control(
         TransportConfig {
-            receive_window: 2000,
+            receive_window: 2000u32.into(),
             ..TransportConfig::default()
         },
         2000,
@@ -1565,7 +1565,7 @@ fn repeated_request_response() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_bidi: 1,
+            stream_window_bidi: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()

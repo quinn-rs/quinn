@@ -104,6 +104,14 @@ impl std::convert::TryFrom<u64> for VarInt {
     }
 }
 
+impl std::convert::TryFrom<u128> for VarInt {
+    type Error = VarIntBoundsExceeded;
+    /// Succeeds iff `x` < 2^62
+    fn try_from(x: u128) -> Result<Self, VarIntBoundsExceeded> {
+        VarInt::from_u64(x.try_into().map_err(|_| VarIntBoundsExceeded)?)
+    }
+}
+
 impl std::convert::TryFrom<usize> for VarInt {
     type Error = VarIntBoundsExceeded;
     /// Succeeds iff `x` < 2^62
