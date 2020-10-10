@@ -179,7 +179,7 @@ impl Streams {
         let rs = entry.get_mut();
         match rs.read(buf) {
             Ok(Some(len)) => {
-                self.local_max_data += len as u64;
+                self.local_max_data = self.local_max_data.saturating_add(len as u64);
                 Ok(Some((len, rs.receiving_unknown_size())))
             }
             Ok(None) => {
@@ -205,7 +205,7 @@ impl Streams {
         let rs = entry.get_mut();
         match rs.read_unordered() {
             Ok(Some((buf, offset))) => {
-                self.local_max_data += buf.len() as u64;
+                self.local_max_data = self.local_max_data.saturating_add(buf.len() as u64);
                 Ok(Some((buf, offset, rs.receiving_unknown_size())))
             }
             Ok(None) => {
@@ -281,7 +281,7 @@ impl Streams {
         }
 
         // We don't buffer data on stopped streams, so issue flow control credit immediately
-        self.local_max_data += new_bytes;
+        self.local_max_data = self.local_max_data.saturating_add(new_bytes);
 
         // Stopped streams become closed instantly on FIN, so check whether we need to clean up
         if rs.is_closed() {
@@ -334,7 +334,9 @@ impl Streams {
         Ok(if bytes_read != final_offset {
             // bytes_read is always <= end, so this won't underflow.
             self.data_recvd += final_offset - end;
-            self.local_max_data += final_offset - bytes_read;
+            self.local_max_data = self
+                .local_max_data
+                .saturating_add(final_offset - bytes_read);
             true
         } else {
             false
@@ -411,7 +413,9 @@ impl Streams {
         };
         stream.assembler.stop();
         // Issue flow control credit for unread data
-        self.local_max_data += stream.assembler.end() - stream.assembler.bytes_read();
+        self.local_max_data = self
+            .local_max_data
+            .saturating_add(stream.assembler.end() - stream.assembler.bytes_read());
         Ok(!stream.is_finished())
     }
 
@@ -473,11 +477,17 @@ impl Streams {
 
         // MAX_DATA
         if pending.max_data && buf.len() + 9 < max_size {
-            trace!(value = self.local_max_data, "MAX_DATA");
             pending.max_data = false;
-            sent.max_data = true;
-            buf.write(frame::Type::MAX_DATA);
-            buf.write_var(self.local_max_data);
+            // We assume that if local_max_data is > VarInt::MAX, it must be due to an
+            // astronomically high configured initial credit, so we don't need to worry about the
+            // sender actually getting blocked somewhere between the initial credit and the current
+            // one.
+            if let Ok(max) = VarInt::from_u64(self.local_max_data) {
+                trace!(value = self.local_max_data, "MAX_DATA");
+                sent.max_data = true;
+                buf.write(frame::Type::MAX_DATA);
+                buf.write(max);
+            }
         }
 
         // MAX_STREAM_DATA
