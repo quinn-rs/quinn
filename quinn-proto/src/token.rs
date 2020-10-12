@@ -13,12 +13,6 @@ use crate::{
     RESET_TOKEN_SIZE,
 };
 
-// TODO: Use AEAD to hide token details from clients for better stability guarantees:
-// - ticket consists of (random, aead-encrypted-data)
-// - AEAD encryption key is HKDF(master-key, random)
-// - AEAD nonce is always set to 0
-// in other words, for each ticket, use different key derived from random using HKDF
-
 pub struct RetryToken<'a> {
     /// The destination connection ID set in the very first packet from the client
     pub orig_dst_cid: ConnectionId,
