@@ -27,6 +27,7 @@ quinn = "0.6"
 </details>
 <p></p>
 
+**Links**
 - Talk at [RustFest Paris (May 2018) presentation][talk]; [slides][slides]; [YouTube][youtube]
 - Usage [Examples][examples]
 - In progress [Documentation][documentation]
