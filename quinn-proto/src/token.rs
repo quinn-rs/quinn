@@ -38,7 +38,6 @@ impl<'a> RetryToken<'a> {
         let aead_key = key.aead_from_hkdf(self.random_bytes);
 
         let mut buf = Vec::new();
-
         self.orig_dst_cid.encode_long(&mut buf);
         buf.write::<u64>(
             self.issued
@@ -77,8 +76,8 @@ impl<'a> RetryToken<'a> {
         let additional_data =
             Self::put_additional_data(address, retry_src_cid, &mut additional_data);
         let data = aead_key.open(&mut sealed_token, additional_data)?;
-        let mut reader = io::Cursor::new(data);
 
+        let mut reader = io::Cursor::new(data);
         let orig_dst_cid = ConnectionId::decode_long(&mut reader).ok_or(())?;
         let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().map_err(|_| ())?, 0);
 
