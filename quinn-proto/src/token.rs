@@ -29,26 +29,6 @@ pub struct RetryToken<'a> {
 }
 
 impl<'a> RetryToken<'a> {
-    const MAX_ADDITIONAL_DATA_SIZE: usize = 39; // max(ipv4, ipv6) + port + retry_src_cid
-    pub const RANDOM_BYTES_LEN: usize = 32;
-
-    fn put_additional_data<'b>(
-        address: &SocketAddr,
-        retry_src_cid: &ConnectionId,
-        additional_data: &'b mut [u8],
-    ) -> &'b [u8] {
-        let mut cursor = &mut additional_data[..];
-        match address.ip() {
-            IpAddr::V4(x) => cursor.put_slice(&x.octets()),
-            IpAddr::V6(x) => cursor.put_slice(&x.octets()),
-        }
-        cursor.write(address.port());
-        retry_src_cid.encode_long(&mut cursor);
-
-        let size = Self::MAX_ADDITIONAL_DATA_SIZE - cursor.len();
-        &additional_data[..size]
-    }
-
     pub fn encode(
         &self,
         key: &impl HandshakeTokenKey,
@@ -108,6 +88,26 @@ impl<'a> RetryToken<'a> {
             random_bytes,
         })
     }
+
+    fn put_additional_data<'b>(
+        address: &SocketAddr,
+        retry_src_cid: &ConnectionId,
+        additional_data: &'b mut [u8],
+    ) -> &'b [u8] {
+        let mut cursor = &mut additional_data[..];
+        match address.ip() {
+            IpAddr::V4(x) => cursor.put_slice(&x.octets()),
+            IpAddr::V6(x) => cursor.put_slice(&x.octets()),
+        }
+        cursor.write(address.port());
+        retry_src_cid.encode_long(&mut cursor);
+
+        let size = Self::MAX_ADDITIONAL_DATA_SIZE - cursor.len();
+        &additional_data[..size]
+    }
+
+    const MAX_ADDITIONAL_DATA_SIZE: usize = 39; // max(ipv4, ipv6) + port + retry_src_cid
+    pub const RANDOM_BYTES_LEN: usize = 32;
 }
 
 /// Stateless reset token
