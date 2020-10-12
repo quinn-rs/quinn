@@ -91,7 +91,7 @@ async fn main() -> Result<()> {
 async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> Result<()> {
     let mut transport = quinn::TransportConfig::default();
     transport.send_window(1024 * 1024 * 3);
-    transport.receive_window(1024 * 1024);
+    transport.receive_window(1024 * 1024).unwrap();
     let mut server_config = server_config.build();
     server_config.transport = Arc::new(transport);
 

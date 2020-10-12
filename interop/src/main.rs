@@ -373,7 +373,7 @@ impl State {
         }
         let mut transport = quinn::TransportConfig::default();
         transport.send_window(1024 * 1024 * 2);
-        transport.receive_window(1024 * 1024 * 2);
+        transport.receive_window(1024 * 1024 * 2).unwrap();
         transport
             .max_idle_timeout(Some(Duration::from_secs(1)))
             .unwrap();

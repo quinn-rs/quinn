@@ -61,7 +61,7 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let priv_key = PrivateKey::from_der(&priv_key)?;
 
     let mut transport_config = TransportConfig::default();
-    transport_config.stream_window_uni(0);
+    transport_config.stream_window_uni(0).unwrap();
     let mut server_config = ServerConfig::default();
     server_config.transport = Arc::new(transport_config);
     let mut cfg_builder = ServerConfigBuilder::new(server_config);

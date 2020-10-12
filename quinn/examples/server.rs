@@ -75,7 +75,7 @@ fn main() {
 #[tokio::main]
 async fn run(options: Opt) -> Result<()> {
     let mut transport_config = quinn::TransportConfig::default();
-    transport_config.stream_window_uni(0);
+    transport_config.stream_window_uni(0).unwrap();
     let mut server_config = quinn::ServerConfig::default();
     server_config.transport = Arc::new(transport_config);
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);
