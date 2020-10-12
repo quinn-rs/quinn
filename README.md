@@ -10,22 +10,10 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
 # Pure-rust QUIC protocol implementation 
-Quinn is a pure-rust implementation of the [QUIC][quic] transport protocol undergoing standardization by the IETF.
- It is suitable for experimental use. 
+Quinn is a pure-rust implementation of the [QUIC][quic] transport protocol undergoing standardization by the IETF. 
+This library is at [draft 29][current-draft].
 
 # Getting Started
-<details>
-<summary>
-Click to show Cargo.toml.
-</summary>
-
-```toml
-[dependencies]
-quinn = "0.6"
-```
-
-</details>
-<p></p>
 
 **Links**
 - Talk at [RustFest Paris (May 2018) presentation][talk]; [slides][slides]; [YouTube][youtube]
@@ -54,8 +42,49 @@ client will automatically find and trust it.
 | `interop` | tooling that helps to run interoperability tests. |
 | `fuzz` | fuzz tests |
 
+## Usage Notes
+<details>
+<summary>
+Click to show the notes
+</summary>
+
+### Buffers
+
+A Quinn endpoint corresponds to a single UDP socket, no matter how many
+connections are in use. Handling high aggregate data rates on a single endpoint
+can require a larger UDP buffer than is configured by default in most
+environments. If you observe erratic latency and/or throughput over a stable
+network link, consider increasing the buffer sizes used. For example, you could
+adjust the `SO_SNDBUF` and `SO_RCVBUF` options of the UDP socket to be used
+before passing it in to Quinn. Note that some platforms (e.g. Linux) require
+elevated privileges or modified system configuration for a process to increase
+its UDP buffer sizes.
+
+### Certificates
+
+By default, Quinn clients validate the cryptographic identity of servers they
+connect to. This prevents an active, on-path attacker from intercepting
+messages, but requires trusting some certificate authority. For many purposes,
+this can be accomplished by using certificates from [Let's Encrypt][letsencrypt]
+for servers, and relying on the default configuration for clients.
+
+For some cases, including peer-to-peer, trust-on-first-use, deliberately
+insecure applications, or any case where servers are not identified by domain
+name, this isn't practical. Arbitrary certificate validation logic can be
+implemented by enabling the `dangerous_configuration` feature of `rustls` and
+constructing a Quinn `ClientConfig` with an overridden certificate verifier by
+hand.
+
+When operating your own certificate authority doesn't make sense, [rcgen][rcgen]
+can be used to generate self-signed certificates on demand. To support
+trust-on-first-use, servers that automatically generate self-signed certificates
+should write their generated certificate to persistent storage and reuse it on
+future runs.
+
+</details>
+<p></p>
+
 ## Features
-- [x] QUIC draft 27 with TLS 1.3
 - [x] Cryptographic handshake
 - [x] Stream data w/ flow control and congestion control
 - [x] Connection close
@@ -105,4 +134,4 @@ This project is licensed under [License-MIT][license-mit] and [LICENSE-APACHE][l
 [license-apache]: https://github.com/djc/quinn/blob/main/LICENSE-APACHE
 [examples]: https://github.com/djc/quinn/tree/master/quinn/examples
 [documentation]: https://github.com/djc/quinn/issues/865
-
+[current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/29/
