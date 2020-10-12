@@ -557,11 +557,13 @@ where
                     random_bytes: &random_bytes,
                 }
                 .encode(&*server_config.token_key, &remote, &temp_loc_cid);
-                let mut buf = Vec::new();
+
                 let header = Header::Retry {
                     src_cid: temp_loc_cid,
                     dst_cid: src_cid,
                 };
+
+                let mut buf = Vec::new();
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
                 buf.extend_from_slice(&S::retry_tag(&dst_cid, &buf));
