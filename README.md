@@ -85,21 +85,13 @@ future runs.
 <p></p>
 
 ## Features
-- [x] Cryptographic handshake
-- [x] Stream data w/ flow control and congestion control
-- [x] Connection close
-- [x] Stateless retry
-- [x] Explicit congestion notification
-- [x] Migration
-- [x] 0-RTT data
-- [x] Session resumption
 - [x] Simultaneous client/server operation
 - [x] Ordered and unordered stream reads for improved performance
 - [x] Works on stable Rust, tested on Linux, macOS and Windows
 - [x] Pluggable cryptography, with a standard implementation backed by
   [rustls][rustls] and [*ring*][ring]
 - [x] Application-layer datagrams for small, unreliable messages
-- [ ] HTTP over QUIC
+- [X] Experimental HTTP over QUIC
 
 ## Contribution
 - All feedback welcome. Feel free to file bugs, requests for documentation and
