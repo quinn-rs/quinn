@@ -85,13 +85,13 @@ future runs.
 <p></p>
 
 ## Features
-- [x] Simultaneous client/server operation
-- [x] Ordered and unordered stream reads for improved performance
-- [x] Works on stable Rust, tested on Linux, macOS and Windows
-- [x] Pluggable cryptography, with a standard implementation backed by
+- Simultaneous client/server operation
+- Ordered and unordered stream reads for improved performance
+- Works on stable Rust, tested on Linux, macOS and Windows
+- Pluggable cryptography, with a standard implementation backed by
   [rustls][rustls] and [*ring*][ring]
-- [x] Application-layer datagrams for small, unreliable messages
-- [X] Experimental HTTP over QUIC
+- Application-layer datagrams for small, unreliable messages
+- Experimental HTTP over QUIC
 
 ## Contribution
 - All feedback welcome. Feel free to file bugs, requests for documentation and
