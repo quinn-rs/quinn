@@ -14,13 +14,13 @@ Quinn is a pure-rust, future-based implementation of the [QUIC][quic] transport 
 This library is at [draft 29][current-draft].
 
 ## Features
-- Simultaneous client/server operation
-- Ordered and unordered stream reads for improved performance
-- Works on stable Rust, tested on Linux, macOS and Windows
+- Simultaneous client/server operation.
+- Ordered and unordered stream reads for improved performance.
+- Works on stable Rust, tested on Linux, macOS and Windows.
 - Pluggable cryptography, with a standard implementation backed by
-  [rustls][rustls] and [*ring*][ring]
-- Application-layer datagrams for small, unreliable messages
-- Experimental HTTP over QUIC
+  [rustls][rustls] and [*ring*][ring].
+- Application-layer datagrams for small, unreliable messages.
+- Experimental HTTP over QUIC.
 
 ## Overview
 | name | description |
@@ -47,9 +47,9 @@ server generates a self-signed certificate and stores it to disk, where the
 client will automatically find and trust it.
 
 **Links**
-- Talk at [RustFest Paris (May 2018) presentation][talk]; [slides][slides]; [YouTube][youtube]
-- Usage [Examples][examples]
-- Guide [Book][documentation]
+- Talk at [RustFest Paris (May 2018) presentation][talk]; [slides][slides]; [YouTube][youtube].
+- Usage [Examples][examples].
+- Guide [Book][documentation].
 
 ## Usage Notes
 <details>
