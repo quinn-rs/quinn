@@ -20,6 +20,7 @@ This library is at [draft 29][current-draft].
 - Pluggable cryptography, with a standard implementation backed by
   [rustls][rustls] and [*ring*][ring].
 - Application-layer datagrams for small, unreliable messages.
+- Future-based async API.
 - Experimental HTTP over QUIC.
 
 ## Overview
@@ -119,8 +120,6 @@ the variable.
 [youtube]: https://www.youtube.com/watch?v=EHgyY5DNdvI
 [letsencrypt]: https://letsencrypt.org/
 [rcgen]: https://crates.io/crates/rcgen
-[license-mit]: https://github.com/djc/quinn/blob/main/LICENSE-MIT
-[license-apache]: https://github.com/djc/quinn/blob/main/LICENSE-APACHE
 [examples]: https://github.com/djc/quinn/tree/master/quinn/examples
 [documentation]: https://github.com/djc/quinn/issues/865
 [current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/29/
