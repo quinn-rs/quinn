@@ -548,16 +548,22 @@ where
         let (retry_src_cid, orig_dst_cid) = if server_config.use_stateless_retry {
             if token.is_empty() {
                 // First Initial
+                let mut random_bytes = vec![0u8; RetryToken::RANDOM_BYTES_LEN];
+                self.rng.fill_bytes(&mut random_bytes);
+
                 let token = RetryToken {
                     orig_dst_cid: dst_cid,
                     issued: SystemTime::now(),
+                    random_bytes: &random_bytes,
                 }
                 .encode(&*server_config.token_key, &remote, &temp_loc_cid);
-                let mut buf = Vec::new();
+
                 let header = Header::Retry {
                     src_cid: temp_loc_cid,
                     dst_cid: src_cid,
                 };
+
+                let mut buf = Vec::new();
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
                 buf.extend_from_slice(&S::retry_tag(&dst_cid, &buf));

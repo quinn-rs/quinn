@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::BytesMut;
-use ring::{aead, aead::quic::HeaderProtectionKey, hmac};
+use ring::{aead, aead::quic::HeaderProtectionKey, hkdf, hmac};
 pub use rustls::TLSError;
 use rustls::{
     self,
@@ -50,6 +50,7 @@ impl crypto::Session for TlsSession {
     type Identity = CertificateChain;
     type ClientConfig = Arc<rustls::ClientConfig>;
     type HmacKey = hmac::Key;
+    type HandshakeTokenKey = hkdf::Prk;
     type PacketKey = PacketKey;
     type HeaderKey = HeaderProtectionKey;
     type ServerConfig = Arc<rustls::ServerConfig>;

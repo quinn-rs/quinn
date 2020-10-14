@@ -68,11 +68,11 @@ pub struct Streams {
 impl Streams {
     pub fn new(
         side: Side,
-        max_remote_uni: u64,
-        max_remote_bi: u64,
+        max_remote_uni: VarInt,
+        max_remote_bi: VarInt,
         send_window: u64,
-        receive_window: u64,
-        stream_receive_window: u64,
+        receive_window: VarInt,
+        stream_receive_window: VarInt,
     ) -> Self {
         let mut this = Self {
             side,
@@ -80,7 +80,7 @@ impl Streams {
             recv: HashMap::default(),
             next: [0, 0],
             max: [0, 0],
-            max_remote: [max_remote_bi, max_remote_uni],
+            max_remote: [max_remote_bi.into(), max_remote_uni.into()],
             next_remote: [0, 0],
             opened: [false, false],
             next_reported_remote: [0, 0],
@@ -89,12 +89,12 @@ impl Streams {
             events: VecDeque::new(),
             connection_blocked: Vec::new(),
             max_data: 0,
-            local_max_data: receive_window,
+            local_max_data: receive_window.into(),
             data_sent: 0,
             data_recvd: 0,
             unacked_data: 0,
             send_window,
-            stream_receive_window,
+            stream_receive_window: stream_receive_window.into(),
         };
 
         for dir in Dir::iter() {
@@ -119,13 +119,13 @@ impl Streams {
     }
 
     pub fn set_params(&mut self, params: &TransportParameters) {
-        self.max[Dir::Bi as usize] = params.initial_max_streams_bidi;
-        self.max[Dir::Uni as usize] = params.initial_max_streams_uni;
+        self.max[Dir::Bi as usize] = params.initial_max_streams_bidi.into();
+        self.max[Dir::Uni as usize] = params.initial_max_streams_uni.into();
         self.received_max_data(params.initial_max_data);
         for i in 0..self.max_remote[Dir::Bi as usize] {
             let id = StreamId::new(!self.side, Dir::Bi, i as u64);
             self.send.get_mut(&id).unwrap().max_data =
-                params.initial_max_stream_data_bidi_local as u64;
+                params.initial_max_stream_data_bidi_local.into();
         }
     }
 
@@ -179,7 +179,7 @@ impl Streams {
         let rs = entry.get_mut();
         match rs.read(buf) {
             Ok(Some(len)) => {
-                self.local_max_data += len as u64;
+                self.local_max_data = self.local_max_data.saturating_add(len as u64);
                 Ok(Some((len, rs.receiving_unknown_size())))
             }
             Ok(None) => {
@@ -205,7 +205,7 @@ impl Streams {
         let rs = entry.get_mut();
         match rs.read_unordered() {
             Ok(Some((buf, offset))) => {
-                self.local_max_data += buf.len() as u64;
+                self.local_max_data = self.local_max_data.saturating_add(buf.len() as u64);
                 Ok(Some((buf, offset, rs.receiving_unknown_size())))
             }
             Ok(None) => {
@@ -281,7 +281,7 @@ impl Streams {
         }
 
         // We don't buffer data on stopped streams, so issue flow control credit immediately
-        self.local_max_data += new_bytes;
+        self.local_max_data = self.local_max_data.saturating_add(new_bytes);
 
         // Stopped streams become closed instantly on FIN, so check whether we need to clean up
         if rs.is_closed() {
@@ -334,7 +334,9 @@ impl Streams {
         Ok(if bytes_read != final_offset {
             // bytes_read is always <= end, so this won't underflow.
             self.data_recvd += final_offset - end;
-            self.local_max_data += final_offset - bytes_read;
+            self.local_max_data = self
+                .local_max_data
+                .saturating_add(final_offset - bytes_read);
             true
         } else {
             false
@@ -411,7 +413,9 @@ impl Streams {
         };
         stream.assembler.stop();
         // Issue flow control credit for unread data
-        self.local_max_data += stream.assembler.end() - stream.assembler.bytes_read();
+        self.local_max_data = self
+            .local_max_data
+            .saturating_add(stream.assembler.end() - stream.assembler.bytes_read());
         Ok(!stream.is_finished())
     }
 
@@ -473,11 +477,17 @@ impl Streams {
 
         // MAX_DATA
         if pending.max_data && buf.len() + 9 < max_size {
-            trace!(value = self.local_max_data, "MAX_DATA");
             pending.max_data = false;
-            sent.max_data = true;
-            buf.write(frame::Type::MAX_DATA);
-            buf.write_var(self.local_max_data);
+            // We assume that if local_max_data is > VarInt::MAX, it must be due to an
+            // astronomically high configured initial credit, so we don't need to worry about the
+            // sender actually getting blocked somewhere between the initial credit and the current
+            // one.
+            if let Ok(max) = VarInt::from_u64(self.local_max_data) {
+                trace!(value = self.local_max_data, "MAX_DATA");
+                sent.max_data = true;
+                buf.write(frame::Type::MAX_DATA);
+                buf.write(max);
+            }
         }
 
         // MAX_STREAM_DATA
@@ -663,8 +673,8 @@ impl Streams {
     }
 
     /// Handle increase to connection-level flow control limit
-    pub fn received_max_data(&mut self, n: u64) {
-        self.max_data = self.max_data.max(n);
+    pub fn received_max_data(&mut self, n: VarInt) {
+        self.max_data = self.max_data.max(n.into());
     }
 
     pub fn received_max_stream_data(
@@ -766,7 +776,7 @@ impl Streams {
     fn insert(&mut self, params: Option<&TransportParameters>, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
         if bi || !remote {
-            let max_data = params.map_or(0, |params| match id.dir() {
+            let max_data = params.map_or(0u32.into(), |params| match id.dir() {
                 Dir::Uni => params.initial_max_stream_data_uni,
                 // Remote/local appear reversed here because the transport parameters are named from
                 // the perspective of the peer.
@@ -802,9 +812,9 @@ struct Send {
 }
 
 impl Send {
-    fn new(max_data: u64) -> Self {
+    fn new(max_data: VarInt) -> Self {
         Self {
-            max_data,
+            max_data: max_data.into(),
             state: SendState::Ready,
             pending: SendBuffer::new(),
             fin_pending: false,
@@ -1025,18 +1035,12 @@ impl Recv {
     }
 
     fn receiving_unknown_size(&self) -> bool {
-        match self.state {
-            RecvState::Recv { size: None } => true,
-            _ => false,
-        }
+        matches!(self.state, RecvState::Recv { size: None })
     }
 
     /// No more data expected from peer
     fn is_finished(&self) -> bool {
-        match self.state {
-            RecvState::Recv { .. } => false,
-            _ => true,
-        }
+        !matches!(self.state, RecvState::Recv { .. })
     }
 
     /// All data read by application
@@ -1197,7 +1201,14 @@ mod tests {
     use super::*;
 
     fn make(side: Side) -> Streams {
-        Streams::new(side, 128, 128, 1024 * 1024, 1024 * 1024, 1024 * 1024)
+        Streams::new(
+            side,
+            128u32.into(),
+            128u32.into(),
+            1024 * 1024,
+            (1024 * 1024u32).into(),
+            (1024 * 1024u32).into(),
+        )
     }
 
     #[test]

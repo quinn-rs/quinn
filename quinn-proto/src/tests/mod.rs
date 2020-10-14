@@ -600,7 +600,7 @@ fn stream_id_backpressure() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_uni: 1,
+            stream_window_uni: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -620,20 +620,22 @@ fn stream_id_backpressure() {
         None,
         "only one stream is permitted at a time"
     );
-    // Close the first stream to make room for the second
-    pair.client_conn_mut(client_ch).finish(s).unwrap();
+    // Generate some activity to allow the server to see the stream
+    const MSG: &[u8] = b"hello";
+    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive();
-    assert_matches!(
-        pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Stream(StreamEvent::Finished { id })) if id == s
-    );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_eq!(
+        pair.client_conn_mut(client_ch).open(Dir::Uni),
+        None,
+        "server does not immediately grant additional credit"
+    );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(Some((msg, 0))) if msg == MSG);
     // Server will only send MAX_STREAM_ID now that the application's been notified
     pair.drive();
     assert_matches!(
@@ -1039,7 +1041,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
 fn stream_flow_control() {
     test_flow_control(
         TransportConfig {
-            stream_receive_window: 2000,
+            stream_receive_window: 2000u32.into(),
             ..TransportConfig::default()
         },
         2000,
@@ -1050,7 +1052,7 @@ fn stream_flow_control() {
 fn conn_flow_control() {
     test_flow_control(
         TransportConfig {
-            receive_window: 2000,
+            receive_window: 2000u32.into(),
             ..TransportConfig::default()
         },
         2000,
@@ -1563,7 +1565,7 @@ fn repeated_request_response() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_bidi: 1,
+            stream_window_bidi: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
