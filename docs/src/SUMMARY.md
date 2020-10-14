@@ -1,4 +1,4 @@
 # Summary
 
-- [Quinn](quinn.md)
-- [Quick](quic.md)
+- [QUINN Introduction](quinn.md)
+- [QUICK Introduction](quic.md)
