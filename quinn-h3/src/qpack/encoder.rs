@@ -166,8 +166,8 @@ fn parse_instruction<R: Buf>(read: &mut R) -> Result<Option<Instruction>, Error>
         return Ok(None);
     }
 
-    let mut buf = Cursor::new(read.bytes());
-    let first = buf.bytes()[0];
+    let mut buf = Cursor::new(read.chunk());
+    let first = buf.chunk()[0];
     let instruction = match DecoderInstruction::decode(first) {
         DecoderInstruction::Unknown => return Err(Error::UnknownPrefix),
         DecoderInstruction::InsertCountIncrement => {

@@ -27,15 +27,15 @@ codecov = { repository = "djc/quinn" }
 maintenance = { status = "experimental" }
 
 [dependencies]
-bytes = "0.5.2"
+bytes = "1"
 futures = "0.3.8"
 libc = "0.2.69"
-mio = "0.6"
+mio = { version = "0.7.7", features = ["net"] }
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.6.1" }
-rustls = { git = "https://github.com/ctz/rustls", rev = "fee894f7e030", features = ["quic"], optional = true }
+rustls = { version = "0.19", features = ["quic"], optional = true }
 thiserror = "1.0.21"
 tracing = "0.1.10"
-tokio = { version = "0.2.6", features = ["rt-core", "io-driver", "time"] }
+tokio = { version = "1.0.1", features = ["net", "rt", "rt-multi-thread", "time"] }
 webpki = { version = "0.21", optional = true }
 
 [target.'cfg(unix)'.dependencies]
@@ -49,7 +49,7 @@ directories-next = "2"
 rand = "0.8"
 rcgen = "0.8"
 structopt = "0.3.0"
-tokio = { version = "0.2.6", features = ["rt-threaded", "time", "macros"] }
+tokio = { version = "1.0.1", features = ["rt", "time", "macros"] }
 tracing-subscriber = { version = "0.2.5", default-features = false, features = ["env-filter", "fmt", "ansi", "chrono"]}
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
 unwrap = "1.2.1"

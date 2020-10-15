@@ -17,7 +17,7 @@ use futures::{
 };
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use thiserror::Error;
-use tokio::time::{delay_until, Delay, Instant as TokioInstant};
+use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use tracing::info_span;
 
 use crate::{
@@ -770,7 +770,7 @@ where
     on_handshake_data: Option<oneshot::Sender<()>>,
     on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
-    timer: Option<Delay>,
+    timer: Option<Pin<Box<Sleep>>>,
     timer_deadline: Option<TokioInstant>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
@@ -922,10 +922,10 @@ where
                         .map(|current_deadline| current_deadline != deadline)
                         .unwrap_or(true)
                     {
-                        delay.reset(deadline);
+                        delay.as_mut().reset(deadline);
                     }
                 } else {
-                    self.timer = Some(delay_until(deadline));
+                    self.timer = Some(Box::pin(sleep_until(deadline)));
                 }
                 // Store the actual expiration time of the timer
                 self.timer_deadline = Some(deadline);
@@ -940,8 +940,12 @@ where
             return false;
         }
 
-        let delay = self.timer.as_mut().expect("timer must exist in this state");
-        if delay.poll_unpin(cx).is_pending() {
+        let delay = self
+            .timer
+            .as_mut()
+            .expect("timer must exist in this state")
+            .as_mut();
+        if delay.poll(cx).is_pending() {
             // Since there wasn't a timeout event, there is nothing new
             // for the connection to do
             return false;

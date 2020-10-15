@@ -12,9 +12,9 @@ futures = "0.3.8"
 hdrhistogram = "7.2"
 quinn = { path = "../quinn" }
 rcgen = "0.8"
-rustls = { git = "https://github.com/ctz/rustls", rev = "fee894f7e030" }
+rustls = "0.19"
 structopt = "0.3"
-tokio = { version = "0.2.13", features = ["rt-core"] }
+tokio = { version = "1.0.1", features = ["rt"] }
 tracing = "0.1.10"
 tracing-subscriber = { version = "0.2.5", default-features = false, features = ["env-filter", "fmt", "ansi", "chrono"]}
 

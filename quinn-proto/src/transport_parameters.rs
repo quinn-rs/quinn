@@ -11,7 +11,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
 };
 
-use bytes::{buf::ext::BufExt as _, Buf, BufMut};
+use bytes::{Buf, BufMut};
 use thiserror::Error;
 
 use crate::{
@@ -427,11 +427,11 @@ impl TransportParameters {
 }
 
 fn decode_cid(len: usize, value: &mut Option<ConnectionId>, r: &mut impl Buf) -> Result<(), Error> {
-    if len > MAX_CID_SIZE || value.is_some() {
+    if len > MAX_CID_SIZE || value.is_some() || r.remaining() < len {
         return Err(Error::Malformed);
     }
-    *value = Some(ConnectionId::new(&r.bytes()[..len]));
-    r.advance(len);
+
+    *value = Some(ConnectionId::new(&r.copy_to_bytes(len)));
     Ok(())
 }
 

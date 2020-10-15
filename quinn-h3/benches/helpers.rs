@@ -81,7 +81,7 @@ impl Bench {
         self.stop_server = Some(stop_server);
 
         let handle = thread::spawn(move || {
-            let mut runtime = rt();
+            let runtime = rt();
             runtime.block_on(async {
                 let incoming_conn = server.with_socket(socket).unwrap();
                 service(incoming_conn, stop_recv)
@@ -100,7 +100,7 @@ impl Bench {
     }
 
     pub fn make_client(&self, server_addr: SocketAddr) -> (client::Connection, Runtime) {
-        let mut runtime = rt();
+        let runtime = rt();
         let my_span = span!(Level::TRACE, "client");
         let _enter = my_span.enter();
         let connection = runtime.block_on(async {
@@ -118,11 +118,7 @@ impl Bench {
 }
 
 pub fn rt() -> Runtime {
-    Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap()
+    Builder::new_current_thread().enable_all().build().unwrap()
 }
 
 pub struct BenchBody {

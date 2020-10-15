@@ -26,12 +26,12 @@ native-certs = ["rustls-native-certs"]
 
 [dependencies]
 arbitrary = { version = "0.4.5", features = ["derive"], optional = true }
-bytes = "0.5.2"
-ct-logs = { version = "0.7", optional = true }
+bytes = "1"
+ct-logs = { version = "0.8", optional = true }
 rand = "0.8"
 ring = { version = "0.16.7", optional = true }
-rustls = { git = "https://github.com/ctz/rustls", rev = "fee894f7e030", features = ["quic"], optional = true }
-rustls-native-certs = { git = "https://github.com/kwantam/rustls-native-certs", rev = "52fc75ad4430", optional = true }
+rustls = { version = "0.19", features = ["quic"], optional = true }
+rustls-native-certs = { version = "0.5", optional = true }
 slab = "0.4"
 thiserror = "1.0.21"
 tracing = "0.1.10"

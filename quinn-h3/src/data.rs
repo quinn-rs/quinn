@@ -231,7 +231,7 @@ where
                 }
                 WriteFrameState::Payload => {
                     let p = self.frame.into_payload();
-                    match ready!(send.write(p.bytes()).poll_unpin(cx)) {
+                    match ready!(send.write(p.chunk()).poll_unpin(cx)) {
                         Err(e) => return Poll::Ready(Err(e)),
                         Ok(wrote) => {
                             p.advance(wrote);

@@ -82,12 +82,10 @@ impl ConnectionId {
     /// Decode from long header format
     pub(crate) fn decode_long(buf: &mut impl Buf) -> Option<Self> {
         let len = buf.get::<u8>().ok()? as usize;
-        if len > MAX_CID_SIZE || buf.remaining() < len {
-            return None;
+        match len > MAX_CID_SIZE || buf.remaining() < len {
+            false => Some(ConnectionId::new(&buf.copy_to_bytes(len))),
+            true => None,
         }
-        let cid = ConnectionId::new(&buf.bytes()[..len]);
-        buf.advance(len);
-        Some(cid)
     }
 
     /// Encode in long header format

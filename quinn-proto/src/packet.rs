@@ -499,17 +499,14 @@ impl PlainHeader {
         let first = buf.get::<u8>()?;
         if first & LONG_HEADER_FORM == 0 {
             let spin = first & SPIN_BIT != 0;
-            let dst_cid = ConnectionId::new(
-                &buf.bytes()
-                    .get(..local_cid_len)
-                    .ok_or(PacketDecodeError::InvalidHeader("cid out of bounds"))?,
-            );
-            buf.advance(local_cid_len);
+            if buf.remaining() < local_cid_len {
+                return Err(PacketDecodeError::InvalidHeader("cid out of bounds"));
+            }
 
             Ok(PlainHeader::Short {
                 first,
                 spin,
-                dst_cid,
+                dst_cid: ConnectionId::new(&buf.copy_to_bytes(local_cid_len)),
             })
         } else {
             let version = buf.get::<u32>()?;

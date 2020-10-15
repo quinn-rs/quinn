@@ -23,12 +23,13 @@ use super::{
 #[test]
 fn handshake_timeout() {
     let _guard = subscribe();
-    let mut runtime = rt_threaded();
-    let (client, _) = runtime.enter(|| {
+    let runtime = rt_threaded();
+    let (client, _) = {
+        let _guard = runtime.enter();
         Endpoint::builder()
             .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
             .unwrap()
-    });
+    };
 
     let mut client_config = crate::ClientConfig::default();
     const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
@@ -89,7 +90,10 @@ fn local_addr() {
     let socket = UdpSocket::bind("[::1]:0").unwrap();
     let addr = socket.local_addr().unwrap();
     let runtime = rt_basic();
-    let (ep, _) = runtime.enter(|| Endpoint::builder().with_socket(socket).unwrap());
+    let (ep, _) = {
+        let _guard = runtime.enter();
+        Endpoint::builder().with_socket(socket).unwrap()
+    };
     assert_eq!(
         addr,
         ep.local_addr()
@@ -100,8 +104,12 @@ fn local_addr() {
 #[test]
 fn read_after_close() {
     let _guard = subscribe();
-    let mut runtime = rt_basic();
-    let (endpoint, mut incoming) = runtime.enter(endpoint);
+    let runtime = rt_basic();
+    let (endpoint, mut incoming) = {
+        let _guard = runtime.enter();
+        endpoint()
+    };
+
     const MSG: &[u8] = b"goodbye!";
     runtime.spawn(async move {
         let new_conn = incoming
@@ -120,7 +128,7 @@ fn read_after_close() {
             .unwrap()
             .await
             .expect("connect");
-        tokio::time::delay_until(Instant::now() + Duration::from_millis(100)).await;
+        tokio::time::sleep_until(Instant::now() + Duration::from_millis(100)).await;
         let stream = new_conn
             .uni_streams
             .next()
@@ -138,8 +146,12 @@ fn read_after_close() {
 #[test]
 fn export_keying_material() {
     let _guard = subscribe();
-    let mut runtime = rt_basic();
-    let (endpoint, mut incoming) = runtime.enter(endpoint);
+    let runtime = rt_basic();
+    let (endpoint, mut incoming) = {
+        let _guard = runtime.enter();
+        endpoint()
+    };
+
     runtime.block_on(async move {
         let outgoing_conn = endpoint
             .connect(&endpoint.local_addr().unwrap(), "localhost")
@@ -185,7 +197,7 @@ async fn accept_after_close() {
     sender.close(0u32.into(), b"");
 
     // Allow some time for the close to be sent and processed
-    tokio::time::delay_for(Duration::from_millis(100)).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Despite the connection having closed, we should be able to accept it...
     let mut receiver = incoming
@@ -270,7 +282,7 @@ async fn zero_rtt() {
 
     tokio::spawn(async move {
         // Buy time for the driver to process the server's NewSessionTicket
-        tokio::time::delay_until(Instant::now() + Duration::from_millis(100)).await;
+        tokio::time::sleep_until(Instant::now() + Duration::from_millis(100)).await;
         let stream = uni_streams
             .next()
             .await
@@ -349,7 +361,7 @@ fn echo_dualstack() {
 
 fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     let _guard = subscribe();
-    let mut runtime = rt_basic();
+    let runtime = rt_basic();
     let handle = {
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
@@ -364,15 +376,20 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         server.listen(server_config.build());
         let server_sock = UdpSocket::bind(server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
-        let (server, mut server_incoming) =
-            runtime.enter(|| server.with_socket(server_sock).unwrap());
+        let (server, mut server_incoming) = {
+            let _guard = runtime.enter();
+            server.with_socket(server_sock).unwrap()
+        };
 
         let mut client_config = ClientConfigBuilder::default();
         client_config.add_certificate_authority(cert).unwrap();
         client_config.enable_keylog();
         let mut client = Endpoint::builder();
         client.default_client_config(client_config.build());
-        let (client, _) = runtime.enter(|| client.bind(&client_addr).unwrap());
+        let (client, _) = {
+            let _guard = runtime.enter();
+            client.bind(&client_addr).unwrap()
+        };
 
         let handle = runtime.spawn(async move {
             let incoming = server_incoming.next().await.unwrap();
@@ -452,17 +469,9 @@ impl std::io::Write for TestWriter {
 }
 
 fn rt_basic() -> Runtime {
-    Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap()
+    Builder::new_current_thread().enable_all().build().unwrap()
 }
 
 fn rt_threaded() -> Runtime {
-    Builder::new()
-        .threaded_scheduler()
-        .enable_all()
-        .build()
-        .unwrap()
+    Builder::new_multi_thread().enable_all().build().unwrap()
 }
