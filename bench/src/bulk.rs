@@ -34,12 +34,13 @@ fn main() {
 
     let mut endpoint = quinn::EndpointBuilder::default();
     endpoint.listen(server_config);
-    let mut runtime = rt();
-    let (endpoint, incoming) = runtime.enter(|| {
+    let runtime = rt();
+    let (endpoint, incoming) = {
+        let _guard = runtime.enter();
         endpoint
             .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
             .unwrap()
-    });
+    };
     let server_addr = endpoint.local_addr().unwrap();
     drop(endpoint); // Ensure server shuts down when finished
     let thread = std::thread::spawn(move || {
@@ -48,7 +49,7 @@ fn main() {
         }
     });
 
-    let mut runtime = rt();
+    let runtime = rt();
     if let Err(e) = runtime.block_on(client(server_addr, cert, opt)) {
         eprintln!("client failed: {:#}", e);
     }
@@ -237,11 +238,7 @@ fn throughput_bps(duration: Duration, size: u64) -> f64 {
 }
 
 fn rt() -> Runtime {
-    Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap()
+    Builder::new_current_thread().enable_all().build().unwrap()
 }
 
 fn transport_config(opt: &Opt) -> quinn::TransportConfig {

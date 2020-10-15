@@ -5,10 +5,10 @@ use std::{
 };
 
 use futures::ready;
-use tokio::io::PollEvented;
+use proto::Transmit;
+use tokio::io::ReadBuf;
 
 use super::RecvMeta;
-use proto::Transmit;
 
 /// Tokio-compatible UDP socket with some useful specializations.
 ///
@@ -16,13 +16,14 @@ use proto::Transmit;
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocket {
-    io: PollEvented<mio::net::UdpSocket>,
+    io: tokio::net::UdpSocket,
 }
 
 impl UdpSocket {
     pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
+        socket.set_nonblocking(true)?;
         Ok(UdpSocket {
-            io: PollEvented::new(mio::net::UdpSocket::from_socket(socket)?)?,
+            io: tokio::net::UdpSocket::from_std(socket)?,
         })
     }
 
@@ -31,15 +32,24 @@ impl UdpSocket {
         cx: &mut Context,
         transmits: &[Transmit],
     ) -> Poll<Result<usize, io::Error>> {
-        ready!(self.io.poll_write_ready(cx))?;
-        match send(self.io.get_ref(), transmits) {
-            Ok(n) => Poll::Ready(Ok(n)),
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                self.io.clear_write_ready(cx)?;
-                Poll::Pending
+        let mut sent = 0;
+        for transmit in transmits {
+            match self
+                .io
+                .poll_send_to(cx, &transmit.contents, transmit.destination)
+            {
+                Poll::Ready(Ok(_)) => {
+                    sent += 1;
+                }
+                // We need to report that some packets were sent in this case, so we rely on
+                // errors being either harmlessly transient (in the case of WouldBlock) or
+                // recurring on the next call.
+                Poll::Ready(Err(_)) | Poll::Pending if sent != 0 => return Poll::Ready(Ok(sent)),
+                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Pending => return Poll::Pending,
             }
-            Err(e) => Poll::Ready(Err(e)),
         }
+        Poll::Ready(Ok(sent))
     }
 
     pub fn poll_recv(
@@ -49,56 +59,20 @@ impl UdpSocket {
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
         debug_assert!(!bufs.is_empty());
-        ready!(self.io.poll_read_ready(cx, mio::Ready::readable()))?;
-        match recv(self.io.get_ref(), bufs, meta) {
-            Ok(n) => Poll::Ready(Ok(n)),
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                self.io.clear_read_ready(cx, mio::Ready::readable())?;
-                Poll::Pending
-            }
-            Err(e) => Poll::Ready(Err(e)),
-        }
+        let mut buf = ReadBuf::new(&mut bufs[0]);
+        let addr = ready!(self.io.poll_recv_from(cx, &mut buf))?;
+        meta[0] = RecvMeta {
+            len: buf.filled().len(),
+            addr,
+            ecn: None,
+            dst_ip: None,
+        };
+        Poll::Ready(Ok(1))
     }
 
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.io.get_ref().local_addr()
+        self.io.local_addr()
     }
-}
-
-fn send(io: &mio::net::UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
-    let mut sent = 0;
-    for transmit in transmits {
-        match io.send_to(&transmit.contents, &transmit.destination) {
-            Ok(_) => {
-                sent += 1;
-            }
-            Err(_) if sent != 0 => {
-                // We need to report that some packets were sent in this case, so we rely on
-                // errors being either harmlessly transient (in the case of WouldBlock) or
-                // recurring on the next call.
-                return Ok(sent);
-            }
-            Err(e) => {
-                return Err(e);
-            }
-        }
-    }
-    Ok(sent)
-}
-
-fn recv(
-    io: &mio::net::UdpSocket,
-    bufs: &mut [IoSliceMut<'_>],
-    meta: &mut [RecvMeta],
-) -> io::Result<usize> {
-    let (len, addr) = io.recv_from(&mut bufs[0])?;
-    meta[0] = RecvMeta {
-        len,
-        addr,
-        ecn: None,
-        dst_ip: None,
-    };
-    Ok(1)
 }
 
 /// Returns the platforms UDP socket capabilities

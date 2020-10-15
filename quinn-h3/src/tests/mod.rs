@@ -1,7 +1,7 @@
 use bytes::{BufMut, Bytes};
 use futures::{future, StreamExt};
 use http::{request, Request, Response, StatusCode, Uri};
-use tokio::time::{delay_for, Duration};
+use tokio::time::{sleep, Duration};
 
 use crate::{
     proto::{frame::DataFrame, headers::Header},
@@ -29,7 +29,7 @@ async fn serve_one(mut incoming: IncomingConnection) -> Result<(), crate::Error>
     Ok(())
 }
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn incoming_request_stream_ends_on_client_closure() {
     let helper = Helper::new();
     let incoming = helper.make_server();
@@ -42,7 +42,7 @@ async fn incoming_request_stream_ends_on_client_closure() {
     timeout_join(server_handle).await.unwrap();
 }
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn incoming_request_stream_closed_on_client_drop() {
     let helper = Helper::new();
     let incoming = helper.make_server();
@@ -78,7 +78,7 @@ async fn serve_one_request_client_body(mut incoming: IncomingConnection) -> Stri
     String::from_utf8_lossy(&body).to_string()
 }
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn client_send_body() {
     let helper = Helper::new();
 
@@ -94,7 +94,7 @@ async fn client_send_body() {
     assert_eq!(timeout_join(server_handle).await, "the body");
 }
 
-#[tokio::test(threaded_scheduler)]
+#[tokio::test(flavor = "multi_thread")]
 async fn client_send_stream_body() {
     let helper = Helper::new();
 
@@ -236,7 +236,7 @@ async fn go_away() {
         let (_, mut sender) = recv_req.await.expect("recv_req");
         sender.send_response(response()).await.map(|_| ()).unwrap();
         // Wait for the 2 other request to be issued
-        delay_for(Duration::from_millis(25)).await;
+        sleep(Duration::from_millis(25)).await;
         incoming_req.go_away(1);
         let recv_req = incoming_req.next().await.expect("wait request");
         let (_, mut sender) = recv_req.await.expect("recv_req");
@@ -253,7 +253,7 @@ async fn go_away() {
     // This request will go beyond the grace interval and will be rejected
     let (req_rejected, resp_rejected) = conn.send_request(get("/"));
     // Wait for the GoAway frame to arrive
-    delay_for(Duration::from_millis(50)).await;
+    sleep(Duration::from_millis(50)).await;
     // Simulate the "in-flight" nature of these two
     assert_matches!(tokio::join!(req_graced, req_rejected), (Ok(_), Ok(_)));
 

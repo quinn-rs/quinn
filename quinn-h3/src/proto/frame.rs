@@ -1,6 +1,6 @@
 use std::fmt;
 
-use bytes::{buf::ext::BufExt as _, Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes};
 use quinn_proto::{
     coding::{BufExt, BufMutExt, Codec, UnexpectedEnd},
     VarInt,
@@ -70,7 +70,7 @@ impl HttpFrame {
         let mut payload = buf.take(len as usize);
         let frame = match ty {
             Type::DATA => Ok(HttpFrame::Data(DataFrame {
-                payload: payload.to_bytes(),
+                payload: payload.copy_to_bytes(payload.remaining()),
             })),
             Type::HEADERS => Ok(HttpFrame::Headers(HeadersFrame::decode(&mut payload)?)),
             Type::SETTINGS => Ok(HttpFrame::Settings(SettingsFrame::decode(&mut payload)?)),
@@ -179,7 +179,7 @@ where
 {
     pub fn encode<B: BufMut>(&self, buf: &mut B) {
         self.encode_header(buf);
-        buf.put(self.payload.bytes());
+        buf.put(self.payload.chunk());
     }
 }
 
@@ -213,7 +213,7 @@ impl PartialData {
         }
 
         let len = buf.get_var()? as usize;
-        let payload = buf.to_bytes();
+        let payload = buf.copy_to_bytes(buf.remaining());
 
         Ok((
             Self {
@@ -224,7 +224,7 @@ impl PartialData {
     }
 
     pub fn decode_data<B: Buf>(&mut self, buf: &mut B) -> DataFrame<Bytes> {
-        let payload = buf.take(self.remaining).to_bytes();
+        let payload = buf.copy_to_bytes(self.remaining);
         self.remaining -= payload.len();
         DataFrame { payload }
     }
@@ -249,7 +249,7 @@ impl FrameHeader for HeadersFrame {
 impl HeadersFrame {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
         Ok(HeadersFrame {
-            encoded: buf.to_bytes(),
+            encoded: buf.copy_to_bytes(buf.remaining()),
         })
     }
 
@@ -282,7 +282,7 @@ impl PushPromiseFrame {
     fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
         Ok(PushPromiseFrame {
             id: buf.get_var()?,
-            encoded: buf.to_bytes(),
+            encoded: buf.copy_to_bytes(buf.remaining()),
         })
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {

@@ -165,7 +165,7 @@ fn request<Fut>(
     let mut ctx = Bench::with_settings(settings);
 
     let (addr, server) = ctx.spawn_server(service);
-    let (client, mut runtime) = ctx.make_client(addr);
+    let (client, runtime) = ctx.make_client(addr);
 
     bench.iter(|| {
         runtime.block_on(async {

@@ -11,7 +11,7 @@ use std::{
 use futures::ready;
 use lazy_static::lazy_static;
 use proto::{EcnCodepoint, Transmit};
-use tokio::io::PollEvented;
+use tokio::io::unix::AsyncFd;
 
 use super::{cmsg, RecvMeta, UdpCapabilities};
 
@@ -26,15 +26,16 @@ type IpTosTy = libc::c_int;
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocket {
-    io: PollEvented<mio::net::UdpSocket>,
+    io: AsyncFd<mio::net::UdpSocket>,
 }
 
 impl UdpSocket {
     pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
-        let io = mio::net::UdpSocket::from_socket(socket)?;
+        socket.set_nonblocking(true)?;
+        let io = mio::net::UdpSocket::from_std(socket);
         init(&io)?;
         Ok(UdpSocket {
-            io: PollEvented::new(io)?,
+            io: AsyncFd::new(io)?,
         })
     }
 
@@ -43,14 +44,11 @@ impl UdpSocket {
         cx: &mut Context,
         transmits: &[Transmit],
     ) -> Poll<Result<usize, io::Error>> {
-        ready!(self.io.poll_write_ready(cx))?;
-        match send(self.io.get_ref(), transmits) {
-            Ok(n) => Poll::Ready(Ok(n)),
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                self.io.clear_write_ready(cx)?;
-                Poll::Pending
+        loop {
+            let mut guard = ready!(self.io.poll_write_ready(cx))?;
+            if let Ok(res) = guard.try_io(|io| send(io.get_ref(), transmits)) {
+                return Poll::Ready(res);
             }
-            Err(e) => Poll::Ready(Err(e)),
         }
     }
 
@@ -61,14 +59,11 @@ impl UdpSocket {
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
         debug_assert!(!bufs.is_empty());
-        ready!(self.io.poll_read_ready(cx, mio::Ready::readable()))?;
-        match recv(self.io.get_ref(), bufs, meta) {
-            Ok(n) => Poll::Ready(Ok(n)),
-            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                self.io.clear_read_ready(cx, mio::Ready::readable())?;
-                Poll::Pending
+        loop {
+            let mut guard = ready!(self.io.poll_read_ready(cx))?;
+            if let Ok(res) = guard.try_io(|io| recv(io.get_ref(), bufs, meta)) {
+                return Poll::Ready(res);
             }
-            Err(e) => Poll::Ready(Err(e)),
         }
     }
 

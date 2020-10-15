@@ -42,7 +42,7 @@ fn send_data(bench: &mut Bencher, data: &'static [u8], concurrent_streams: usize
 
     let ctx = Context::new();
     let (addr, thread) = ctx.spawn_server();
-    let (endpoint, client, mut runtime) = ctx.make_client(addr);
+    let (endpoint, client, runtime) = ctx.make_client(addr);
     let client = Arc::new(client);
 
     bench.bytes = (data.len() as u64) * (concurrent_streams as u64);
@@ -105,8 +105,11 @@ impl Context {
         let handle = thread::spawn(move || {
             let mut endpoint = Endpoint::builder();
             endpoint.listen(config);
-            let mut runtime = rt();
-            let (_, mut incoming) = runtime.enter(|| endpoint.with_socket(sock).unwrap());
+            let runtime = rt();
+            let (_, mut incoming) = {
+                let _guard = runtime.enter();
+                endpoint.with_socket(sock).unwrap()
+            };
             let handle = runtime.spawn(
                 async move {
                     let quinn::NewConnection {
@@ -135,30 +138,28 @@ impl Context {
         &self,
         server_addr: SocketAddr,
     ) -> (quinn::Endpoint, quinn::Connection, Runtime) {
-        let mut runtime = rt();
-        let (endpoint, _) = runtime.enter(|| {
+        let runtime = rt();
+        let (endpoint, _) = {
+            let _guard = runtime.enter();
             Endpoint::builder()
                 .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
                 .unwrap()
-        });
+        };
         let quinn::NewConnection { connection, .. } = runtime
-            .block_on(runtime.enter(|| {
+            .block_on({
+                runtime.enter();
                 endpoint
                     .connect_with(self.client_config.clone(), &server_addr, "localhost")
                     .unwrap()
                     .instrument(error_span!("client"))
-            }))
+            })
             .unwrap();
         (endpoint, connection, runtime)
     }
 }
 
 fn rt() -> Runtime {
-    Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap()
+    Builder::new_current_thread().enable_all().build().unwrap()
 }
 
 const LARGE_DATA: &[u8] = &[0xAB; 1024 * 1024];

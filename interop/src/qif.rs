@@ -33,14 +33,16 @@
 ///
 /// See https://github.com/quicwg/base-drafts/wiki/QPACK-Offline-Interop to know more about
 /// file name formats and codec parameters.
-use anyhow::{anyhow, Result};
-use bytes::Buf;
-use quinn_h3::qpack;
-use quinn_proto::coding::Codec;
 use std::ffi::OsStr;
 use std::path::{Path, PathBuf};
 use std::{fs, mem};
+
+use anyhow::{anyhow, Result};
+use bytes::{Buf, Bytes};
 use structopt::StructOpt;
+
+use quinn_h3::qpack;
+use quinn_proto::coding::Codec;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "interop")]
@@ -176,7 +178,7 @@ fn main() -> Result<()> {
     }
 }
 
-struct Block<'a>(std::io::Cursor<&'a [u8]>, u64);
+struct Block(std::io::Cursor<Bytes>, u64);
 
 struct BlockIterator<R: Buf> {
     buf: R,
@@ -191,7 +193,7 @@ impl<R: Buf> BlockIterator<R> {
         }
     }
 
-    fn next(&mut self) -> Result<Option<Block<'_>>> {
+    fn next(&mut self) -> Result<Option<Block>> {
         self.buf.advance(self.last_block_len);
         if self.buf.remaining() < mem::size_of::<u64>() + mem::size_of::<u32>() {
             if self.buf.remaining() > 0 {
@@ -210,7 +212,7 @@ impl<R: Buf> BlockIterator<R> {
             Err(anyhow!("Unexpectedly reached end"))
         } else {
             self.last_block_len = length;
-            let block = std::io::Cursor::new(&self.buf.bytes()[..length]);
+            let block = std::io::Cursor::new(self.buf.copy_to_bytes(length));
 
             Ok(Some(Block(block, current)))
         }
@@ -296,7 +298,7 @@ impl EncodedFile {
         table.inserter().set_max_size(self.table_size)?;
         let mut blocks = BlockIterator::new(std::io::Cursor::new(&encoded));
         let mut count = 0;
-        let mut blocked: Vec<Vec<u8>> = vec![];
+        let mut blocked = vec![];
         let mut decoder = vec![];
         let mut decoded = vec![];
 
@@ -331,14 +333,14 @@ impl EncodedFile {
                 break;
             }
 
-            let mut cur = std::io::Cursor::new(&buf.bytes()[..]);
+            let mut cur = std::io::Cursor::new(buf.copy_to_bytes(buf.remaining()));
             match qpack::decode_header(&table, &mut cur) {
                 Ok((d, _)) => decoded.push(d),
                 Err(qpack::DecoderError::MissingRefs { .. }) => {
                     if blocked.len() >= self.max_blocked {
                         return Err(anyhow!("Max blocked streams exceeded"));
                     }
-                    blocked.push(buf.bytes().into());
+                    blocked.push(buf.copy_to_bytes(buf.remaining()));
                 }
                 Err(e) => return Err(e.into()),
             }
