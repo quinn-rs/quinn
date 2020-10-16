@@ -77,6 +77,9 @@ where
     /// Exactly one prior to `self.rem_cids.offset` except during processing of certain
     /// NEW_CONNECTION_ID frames.
     rem_cid_seq: u64,
+    /// Sequence number to set in retire_prior_to field in NEW_CONNECTION_ID frame
+    retire_cid_seq: u64,
+
     /// cid length used to decode short packet
     local_cid_len: usize,
     path: PathData,
@@ -203,6 +206,7 @@ where
             rem_cid,
             rem_handshake_cid: rem_cid,
             rem_cid_seq: 0,
+            retire_cid_seq: 0,
             local_cid_len,
             path: PathData::new(
                 remote,
@@ -2680,7 +2684,7 @@ where
             );
             frame::NewConnectionId {
                 sequence: issued.sequence,
-                retire_prior_to: 0,
+                retire_prior_to: self.retire_cid_seq,
                 id: issued.id,
                 reset_token: issued.reset_token,
             }
@@ -2941,6 +2945,21 @@ where
     #[cfg(test)]
     pub(crate) fn using_ecn(&self) -> bool {
         self.path.sending_ecn
+    }
+
+    /// Mock updating retire_prior_to field in NEW_CONNECTION_ID frame
+    #[cfg(test)]
+    pub(crate) fn mock_retire_cid(&mut self, v: u64, n: u64) {
+        self.retire_cid_seq = v;
+        self.cids_issued += n;
+        self.endpoint_events
+            .push_back(EndpointEventInner::NeedIdentifiers(n));
+    }
+
+    /// Check the current active remote CID sequence
+    #[cfg(test)]
+    pub(crate) fn active_rem_cid_seq(&self) ->u64 {
+        self.rem_cid_seq
     }
 
     fn max_ack_delay(&self) -> Duration {
