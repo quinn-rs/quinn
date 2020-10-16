@@ -122,11 +122,13 @@ where
                     warn!("duplicate reset token");
                 }
             }
-            RetireConnectionId(seq) => {
+            RetireConnectionId(seq, allow_more_cid) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
                     trace!("peer retired CID {}: {}", seq, cid);
                     self.connection_ids.remove(&cid);
-                    return Some(self.send_new_identifiers(ch, 1));
+                    if allow_more_cid {
+                        return Some(self.send_new_identifiers(ch, 1));
+                    }
                 }
             }
             Drained => {

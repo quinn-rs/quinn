@@ -52,7 +52,7 @@ pub(crate) enum EndpointEventInner {
     /// The connection needs connection identifiers
     NeedIdentifiers(u64),
     /// Stop routing connection ID for this sequence number to the connection
-    RetireConnectionId(u64),
+    RetireConnectionId(u64, bool),
 }
 
 /// Protocol-level identifier for a connection.

@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     convert::TryInto,
     fmt, io, mem,
     net::SocketAddr,
@@ -77,6 +77,8 @@ where
     /// Exactly one prior to `self.rem_cids.offset` except during processing of certain
     /// NEW_CONNECTION_ID frames.
     rem_cid_seq: u64,
+    /// The sequence number of active (not yet rotated/retired by peer) local connection IDs
+    cids_active_seq: HashSet<u64>,
     /// Sequence number to set in retire_prior_to field in NEW_CONNECTION_ID frame
     retire_cid_seq: u64,
 
@@ -207,6 +209,7 @@ where
             rem_handshake_cid: rem_cid,
             rem_cid_seq: 0,
             retire_cid_seq: 0,
+            cids_active_seq: HashSet::new(),
             local_cid_len,
             path: PathData::new(
                 remote,
@@ -709,8 +712,10 @@ where
                 }
             }
             NewIdentifiers(ids) => {
+                self.cids_issued += ids.len() as u64;
                 ids.into_iter().rev().for_each(|frame| {
                     self.spaces[SpaceId::Data].pending.new_cids.push(frame);
+                    self.cids_active_seq.insert(frame.sequence);
                 });
             }
         }
@@ -2355,8 +2360,18 @@ where
                             "RETIRE_CONNECTION_ID for unissued sequence number",
                         ));
                     }
+                    self.cids_active_seq.remove(&sequence);
+                    let allow_more_cid = self
+                        .peer_params
+                        .active_connection_id_limit
+                        .0
+                        .min(LOC_CID_COUNT)
+                        > self.cids_active_seq.len() as u64;
                     self.endpoint_events
-                        .push_back(EndpointEventInner::RetireConnectionId(sequence));
+                        .push_back(EndpointEventInner::RetireConnectionId(
+                            sequence,
+                            allow_more_cid,
+                        ));
                 }
                 Frame::NewConnectionId(frame) => {
                     trace!(
@@ -2597,7 +2612,9 @@ where
             - 1;
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(n));
-        self.cids_issued += n;
+        // Only add one CID we supplied while handshaking to self.cids_issued. Rest will be added when we handle NewIdentifiers event
+        self.cids_issued += 1;
+        self.cids_active_seq.insert(0);
     }
 
     fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> SentFrames {
@@ -2987,7 +3004,6 @@ where
     #[cfg(test)]
     pub(crate) fn mock_retire_cid(&mut self, v: u64, n: u64) {
         self.retire_cid_seq = v;
-        self.cids_issued += n;
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(n));
     }
