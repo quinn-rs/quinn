@@ -2362,6 +2362,7 @@ where
                     trace!(
                         sequence = frame.sequence,
                         id = %frame.id,
+                        retire_prior_to = frame.retire_prior_to,
                     );
                     if self.rem_cid.is_empty() {
                         return Err(TransportError::PROTOCOL_VIOLATION(
@@ -2380,38 +2381,67 @@ where
                         .retire_cids
                         .extend(retired);
 
-                    // Must be after retire_prior_to processing in case this CID has the highest
-                    // permitted sequence number
+                    let mut valid_rem_cid = true;
+                    if frame.retire_prior_to > self.rem_cid_seq {
+                        // If self.rem_cid_seq is earlier than RETIRE_PRIOR_TO, we must retire the current active remote CID.
+                        // Try to find one valid remote CID that is not retired yet.
+                        match self.retire_rem_cid() {
+                            Some(cid) => self.apply_new_rem_cid(cid),
+                            None => valid_rem_cid = false,
+                        };
+                    }
+
                     use crate::cid_queue::InsertError;
-                    match self.rem_cids.insert(IssuedCid {
+                    let mut new_rem_cid = IssuedCid {
                         sequence: frame.sequence,
                         id: frame.id,
                         reset_token: frame.reset_token,
-                    }) {
-                        Ok(()) => {}
-                        Err(InsertError::ExceedsLimit) => {
-                            return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
+                    };
+
+                    // Guarantee active remote cid (self.rem_cid) always has the smallest sequence number among valid ones in CidQueue
+                    if valid_rem_cid && self.rem_cids.read_offset() == frame.sequence + 1 {
+                        let swap_cid = new_rem_cid;
+                        new_rem_cid.sequence = self.rem_cid_seq;
+                        new_rem_cid.id = self.rem_cid;
+                        new_rem_cid.reset_token = self.peer_params.stateless_reset_token.unwrap();
+                        self.apply_new_rem_cid(swap_cid);
+                    }
+
+                    if valid_rem_cid {
+                        match self.rem_cids.insert(new_rem_cid) {
+                            Ok(()) => {}
+                            Err(InsertError::ExceedsLimit) => {
+                                return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
+                            }
+                            Err(InsertError::Retired) => {
+                                trace!("discarding already-retired");
+                                self.spaces[SpaceId::Data]
+                                    .pending
+                                    .retire_cids
+                                    .push(frame.sequence);
+                                continue;
+                            }
                         }
-                        Err(InsertError::Retired) => {
-                            trace!("discarding already-retired");
-                            self.spaces[SpaceId::Data]
-                                .pending
-                                .retire_cids
-                                .push(frame.sequence);
-                            continue;
-                        }
+                    } else {
+                        // There is no valid CIDs in CidQueue and active CID self.rem_cid_seq is before retire_prior_to. We must
+                        // 1. Reset offset in CidQueue
+                        self.rem_cids.assign_offset(frame.retire_prior_to + 1);
+                        // 2. Retire active remote cid
+                        self.spaces[SpaceId::Data]
+                            .pending
+                            .retire_cids
+                            .push(self.rem_cid_seq);
+                        // 3. Accept current cid in the frame as the active one
+                        self.apply_new_rem_cid(new_rem_cid);
                     }
 
                     if self.side.is_server() && self.peer_params.stateless_reset_token.is_none() {
                         // We're a server using the initial remote CID for the client, so let's
                         // switch immediately to enable clientside stateless resets.
                         debug_assert_eq!(self.rem_cid_seq, 0);
-                        self.update_rem_cid().unwrap();
-                    } else if frame.retire_prior_to > self.rem_cid_seq {
-                        // If our current CID is earlier than the first unretired one we must not
-                        // have adopted the one we just got, so it must be stored in rem_cids, so
-                        // this unwrap is guaranteed to succeed.
-                        self.update_rem_cid().unwrap();
+                        if let Some(cid) = self.retire_rem_cid() {
+                            self.apply_new_rem_cid(cid);
+                        }
                     }
                 }
                 Frame::NewToken { token } => {
@@ -2478,7 +2508,9 @@ where
             );
             self.migrate(now, remote);
             // Break linkability, if possible
-            let _ = self.update_rem_cid();
+            if let Some(cid) = self.retire_rem_cid() {
+                self.apply_new_rem_cid(cid);
+            }
         }
 
         Ok(())
@@ -2521,29 +2553,33 @@ where
         );
     }
 
-    /// Returns Err(()) if no CIDs were available
-    fn update_rem_cid(&mut self) -> Result<(), ()> {
-        let (cid, retired) = self.rem_cids.next().ok_or(())?;
-        trace!("switching to remote CID {}: {}", cid.sequence, cid.id);
+    /// Return None if no CIDs were available
+    fn retire_rem_cid(&mut self) -> Option<IssuedCid> {
+        let (cid, retired) = self.rem_cids.next()?;
 
-        // Retire the current remote CID and any CIDs we had to skip.
+        // Retire the current remote CID
         let retire_cids = &mut self.spaces[SpaceId::Data].pending.retire_cids;
         retire_cids.push(self.rem_cid_seq);
+
+        // Retire any CIDs we had to skip.
         retire_cids.extend(retired);
 
-        // Apply the new CID
+        Some(cid)
+    }
+
+    /// Apply new remote CID
+    fn apply_new_rem_cid(&mut self, cid: IssuedCid) {
+        trace!("switching to remote CID {}: {}", cid.sequence, cid.id);
         self.rem_cid = cid.id;
         self.rem_cid_seq = cid.sequence;
+        self.peer_params.stateless_reset_token = Some(cid.reset_token);
         self.endpoint_events
             .push_back(EndpointEventInner::ResetToken(
                 self.path.remote,
                 cid.reset_token,
             ));
-        self.peer_params.stateless_reset_token = Some(cid.reset_token);
-
         // Reduce linkability
         self.spin = false;
-        Ok(())
     }
 
     /// Issue an initial set of connection IDs to the peer
@@ -2958,7 +2994,7 @@ where
 
     /// Check the current active remote CID sequence
     #[cfg(test)]
-    pub(crate) fn active_rem_cid_seq(&self) ->u64 {
+    pub(crate) fn active_rem_cid_seq(&self) -> u64 {
         self.rem_cid_seq
     }
 
