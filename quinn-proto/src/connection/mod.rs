@@ -2573,7 +2573,10 @@ where
                         // 1. Reset offset in CidQueue
                         self.rem_cids.assign_offset(frame.retire_prior_to + 1);
                         // 2. Retire active remote cid
-                        self.spaces[SpaceId::Data].pending.retire_cids.push(self.rem_cid_seq);
+                        self.spaces[SpaceId::Data]
+                            .pending
+                            .retire_cids
+                            .push(self.rem_cid_seq);
                         // 3. Accept current cid in the frame as the active one
                         self.apply_new_rem_cid(new_rem_cid);
                     }
