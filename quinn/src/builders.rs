@@ -45,6 +45,11 @@ where
     ///
     /// Must be called from within a tokio runtime context. To avoid consuming the
     /// `EndpointBuilder`, call `clone()` first.
+    ///
+    /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
+    /// IPv6 address on Windows will not by default be able to communicate with IPv4
+    /// addresses. Portable applications should bind an address that matches the family they wish to
+    /// communicate within.
     pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint<S>, Incoming<S>), EndpointError> {
         let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
         self.with_socket(socket)
