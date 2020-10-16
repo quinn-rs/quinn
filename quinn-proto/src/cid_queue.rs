@@ -15,7 +15,7 @@ pub struct CidQueue {
     ///
     /// The CID sequenced immediately prior to this is the active CID, which this data structure is
     /// not responsible for retiring.
-    pub(crate) offset: u64,
+    offset: u64,
 }
 
 impl CidQueue {
@@ -83,6 +83,16 @@ impl CidQueue {
             return Some((cid, orig_offset..sequence));
         }
         None
+    }
+
+    /// Reset offset field and guarantee the smallest sequence of active CID is prior to this value
+    pub fn assign_offset(&mut self, v: u64) {
+        self.offset = v;
+    }
+
+    /// Read the current offset value
+    pub fn read_offset(&self) -> u64 {
+        self.offset
     }
 }
 
