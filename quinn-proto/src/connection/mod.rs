@@ -2361,6 +2361,11 @@ where
                         ));
                     }
                     self.cids_active_seq.remove(&sequence);
+                    // Consider a scenario where peer A has active remote cid 0,1,2.
+                    // Peer B first send a NEW_CONNECTION_ID with cid 3 and retire_prior_to set to 0.
+                    // Peer A processes this NEW_CONNECTION_ID frame; update remote cid to 1,2,3
+                    // and meanwhile send a RETIRE_CONNECTION_ID to retire cid 0 to peer B.
+                    // If peer B doesn't check the cid limit here and send a new cid again, peer A will then face CONNECTION_ID_LIMIT_ERROR
                     let allow_more_cid = self
                         .peer_params
                         .active_connection_id_limit
