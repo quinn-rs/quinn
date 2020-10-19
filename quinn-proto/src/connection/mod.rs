@@ -2573,7 +2573,7 @@ where
         );
     }
 
-    /// Return None if no CIDs were available
+    /// Does nothing and returns None if no unused CIDs were available
     fn retire_rem_cid(&mut self) -> Option<IssuedCid> {
         let (cid, retired) = self.rem_cids.next()?;
 
