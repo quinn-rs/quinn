@@ -77,7 +77,7 @@ where
     /// Exactly one prior to `self.rem_cids.offset` except during processing of certain
     /// NEW_CONNECTION_ID frames.
     rem_cid_seq: u64,
-    /// The sequence number of active (not yet rotated/retired by peer) local connection IDs
+    /// The sequence numbers of local connection IDs not yet retired by the peer
     cids_active_seq: HashSet<u64>,
     /// Sequence number to set in retire_prior_to field in NEW_CONNECTION_ID frame
     retire_cid_seq: u64,
