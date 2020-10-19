@@ -90,8 +90,8 @@ impl CidQueue {
         self.offset = v;
     }
 
-    /// Read the current offset value
-    pub fn read_offset(&self) -> u64 {
+    /// Lowest queued sequence number
+    pub fn offset(&self) -> u64 {
         self.offset
     }
 }
