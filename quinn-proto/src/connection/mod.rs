@@ -28,8 +28,7 @@ use crate::{
     },
     transport_parameters::{self, TransportParameters},
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
-    LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
-    TIMER_GRANULARITY, VERSION,
+    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY, VERSION,
 };
 
 mod assembler;
@@ -231,7 +230,7 @@ where
             lost_packets: 0,
             events: VecDeque::new(),
             endpoint_events: VecDeque::new(),
-            cids_issued: 0,
+            cids_issued: 1, // One CID is already supplied during handshaking
             spin_enabled: config.allow_spin && rng.gen_ratio(7, 8),
             spin: false,
             spaces: [initial_space, PacketSpace::new(now), PacketSpace::new(now)],
@@ -269,6 +268,8 @@ where
             rem_cids: CidQueue::new(1),
             rng,
         };
+        // Add sequence number of CID used in handshaking into tracking set
+        this.cids_active_seq.insert(0);
         if side.is_client() {
             // Kick off the connection
             this.write_crypto();
@@ -2366,12 +2367,8 @@ where
                     // Peer A processes this NEW_CONNECTION_ID frame; update remote cid to 1,2,3
                     // and meanwhile send a RETIRE_CONNECTION_ID to retire cid 0 to peer B.
                     // If peer B doesn't check the cid limit here and send a new cid again, peer A will then face CONNECTION_ID_LIMIT_ERROR
-                    let allow_more_cid = self
-                        .peer_params
-                        .active_connection_id_limit
-                        .0
-                        .min(LOC_CID_COUNT)
-                        > self.cids_active_seq.len() as u64;
+                    let allow_more_cid =
+                        self.peer_params.issue_cids_limit() > self.cids_active_seq.len() as u64;
                     self.endpoint_events
                         .push_back(EndpointEventInner::RetireConnectionId(
                             sequence,
@@ -2419,7 +2416,7 @@ where
                     };
 
                     // Guarantee active remote cid (self.rem_cid) always has the smallest sequence number among valid ones in CidQueue
-                    if valid_rem_cid && self.rem_cids.read_offset() == frame.sequence + 1 {
+                    if valid_rem_cid && self.rem_cids.offset() == frame.sequence + 1 {
                         let swap_cid = new_rem_cid;
                         new_rem_cid.sequence = self.rem_cid_seq;
                         new_rem_cid.id = self.rem_cid;
@@ -2609,17 +2606,9 @@ where
         }
 
         // Subtract 1 to account for the CID we supplied while handshaking
-        let n = self
-            .peer_params
-            .active_connection_id_limit
-            .0
-            .min(LOC_CID_COUNT)
-            - 1;
+        let n = self.peer_params.issue_cids_limit() - 1;
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(n));
-        // Only add one CID we supplied while handshaking to self.cids_issued. Rest will be added when we handle NewIdentifiers event
-        self.cids_issued += 1;
-        self.cids_active_seq.insert(0);
     }
 
     fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> SentFrames {
@@ -3005,9 +2994,11 @@ where
         self.path.sending_ecn
     }
 
-    /// Mock updating retire_prior_to field in NEW_CONNECTION_ID frame
+    /// Instruct the peer to retire the next `n` connection IDs, and issue replacements
     #[cfg(test)]
-    pub(crate) fn mock_retire_cid(&mut self, v: u64, n: u64) {
+    pub(crate) fn rotate_rem_cid(&mut self, v: u64, n: u64) {
+        // Cannot retire more CIDs than what have been issued
+        debug_assert!(v <= *self.cids_active_seq.iter().max().unwrap() + 1);
         self.retire_cid_seq = v;
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(n));

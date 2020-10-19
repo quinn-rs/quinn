@@ -21,7 +21,7 @@ use crate::{
     config::{EndpointConfig, ServerConfig, TransportConfig},
     crypto,
     shared::ConnectionId,
-    ResetToken, Side, TransportError, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
+    ResetToken, Side, TransportError, VarInt, LOC_CID_COUNT, MAX_CID_SIZE, RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -174,6 +174,13 @@ impl TransportParameters {
             ));
         }
         Ok(())
+    }
+
+    /// Calculate the maximum number of CIDs that a peer is willing to issue
+    /// Consider both a) the active_connection_id_limit from the other end; and
+    /// b) LOC_CID_COUNT used locally
+    pub(crate) fn issue_cids_limit(&self) -> u64 {
+        self.active_connection_id_limit.0.min(LOC_CID_COUNT)
     }
 }
 

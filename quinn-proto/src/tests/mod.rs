@@ -1184,7 +1184,7 @@ fn cid_retirement() {
     let (client_ch, server_ch) = pair.connect();
 
     // Server retires current active remote CIDs
-    pair.server_conn_mut(server_ch).mock_retire_cid(1, 1);
+    pair.server_conn_mut(server_ch).rotate_rem_cid(1, 1);
     pair.drive();
     // Any unexpected behavior may trigger TransportError::CONNECTION_ID_LIMIT_ERROR
     assert!(!pair.client_conn_mut(client_ch).is_closed());
@@ -1200,7 +1200,7 @@ fn cid_retirement() {
     pair.client_conn_mut(client_ch).ping();
     // Server retires all valid remote CIDs
     pair.server_conn_mut(server_ch)
-        .mock_retire_cid(_next_retire_prior_to, 1);
+        .rotate_rem_cid(_next_retire_prior_to, 1);
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(server_ch).is_closed());
