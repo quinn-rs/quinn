@@ -1,0 +1,275 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title> Problems of TCP - Quinn</title>
+        
+        
+
+
+        <!-- Custom HTML head -->
+        
+
+
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        
+        <link rel="icon" href="../favicon.svg">
+        
+        
+        <link rel="shortcut icon" href="../favicon.png">
+        
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
+        <link rel="stylesheet" href="../css/print.css" media="print">
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
+        
+        <link rel="stylesheet" href="../fonts/fonts.css">
+        
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        
+
+        
+    </head>
+    <body>
+        <!-- Provide site root to javascript -->
+        <script type="text/javascript">
+            var path_to_root = "../";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script type="text/javascript">
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var html = document.querySelector('html');
+            var sidebar = 'hidden';
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="../quinn.html"><strong aria-hidden="true">1.</strong> QUINN Introduction</a></li><li class="chapter-item expanded "><a href="../quic.html"><strong aria-hidden="true">2.</strong> QUICK Introduction</a></li><li class="chapter-item expanded "><a href="../protocols/transport-guarantees.html"><strong aria-hidden="true">3.</strong> Protocols</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../protocols/transport-guarantees.html"><strong aria-hidden="true">3.1.</strong> Transport Guarantees</a></li><li class="chapter-item expanded "><a href="../protocols/transport-protocols.html"><strong aria-hidden="true">3.2.</strong> Transport Protocols</a></li><li class="chapter-item expanded "><a href="../protocols/tcp-problems.html" class="active"><strong aria-hidden="true">3.3.</strong> Problems of TCP</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                        
+                    </div>
+
+                    <h1 class="menu-title">Quinn</h1>
+
+                    <div class="right-buttons">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        
+                    </div>
+                </div>
+
+                
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" name="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+                
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script type="text/javascript">
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1><a class="header" href="#problems-of-tcp" id="problems-of-tcp">Problems of TCP</a></h1>
+<p>In <a href="./transport-protocols.html">the previous section</a> we compared TCP with UDP, now the golden question: Why should we prefer one over the other? 
+One might ask: &quot;Why choose so much uncertainty with UDP when TCP is so reliable and safe?&quot;. 
+That's a good question to ask yourself. 
+To answer that question we will have to delve a little deeper into how TCP works. </p>
+<h2><a class="header" href="#head-of-line-blocking" id="head-of-line-blocking">Head-of-line blocking</a></h2>
+<p>One of the biggest problem/feature in the TCP protocol is the Head-of-line blocking. 
+It is a convenient feature because it ensures that all packages are sent in <a href="./transport-guarantees.html#ordering-vs-sequencing">order</a>. 
+However, in areas of high throughput this can cause problems.<br />
+One of those areas is a multiplayer fast-phases FPS game.</p>
+<p>Lets check this animation out <a href="https://dirkjan.ochtman.nl/files/head-of-line-blocking.html">animation</a> to demonstrate the issue that we are facing.<br />
+This animation shows that if a certain packet drops in transmission, all packets have to wait before it is resent and acknowledged by the other end.</p>
+<p>Multiplayer action games are based on a constant stream of packets sent at a speed of 10 to 30 packets per second, and for the most part, 
+the data in these packages are so time-sensitive that in most cases only the most recent data is useful.
+You can think of the input of the player, the position of the player, the orientation and speed, and the state of the physical objects in the world.</p>
+<p>Take, for example, a scenario in which 30 packets per second are sent with player positions.
+If a single packet drops, we should ignore it and look for the next packet with player input that arrives 2 milliseconds later, we only care about the latest input, right?
+But with TCP if there is a latency of 100 milliseconds and a single packet drops all packets sent during the retransmission (retransmission request (100 ms) + retransmission (100 ms)) will be queued until the lost packet is retransmitted. 
+After 200ms this would mean 100 packets (200/2) are queue. 
+A fast phased game can not afford those numbers. </p>
+<p>Gamenetworking is not the only area were this head-of-line blocking plays creates some problems. 
+HTTP-2 uses multiplexing to attack this issue. </p>
+<p><strong>Solutions</strong></p>
+<p>There are various solutions that fix this head-of-line blocking problem. </p>
+<ul>
+<li>Multiplexing</li>
+<li>Rebuild a variation of TCP ontop of UDP (laminar, networksockets, netcode)</li>
+</ul>
+<p>QUIC uses both multiplexing but also rebuild a reliability layer ontop of UDP. </p>
+<h2><a class="header" href="#connection-setup" id="connection-setup">Connection Setup</a></h2>
+<p>In standard HTTP+TLS+TCP, TCP needs a handshake to establish a session between server and client, and TLS needs its own handshake to ensure that the session is secured.</p>
+<p><img src="../../images/tcp-handshake.svg.png" alt="TCP-handshake" /></p>
+<p>First, the source sends an SYN “initial request” packet to the target server in order to start the dialogue. 
+Then the target server then sends a SYN-ACK packet to agree to the process.
+Lastly, the source sends an ACK packet to the target to confirm the process, after which the message contents can be sent. </p>
+<p>Now if we want to secure the TCP connection, we have to use TLS on top of that. If we use an older TLS version then 1.3 then there are three more handshakes that are required.</p>
+<p>You can see how expensive it is to create a TCP connection. In a scenario of TCP and TLS 1.2 with a 100ms latancy we need to wait 6 x 100ms = 600ms for our website to be able to load. 
+If the website is big in size, then an additional load time can bring the load time over one second. Which is of course disturbing for our short attention spans. </p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                        
+                            <a rel="prev" href="../protocols/transport-protocols.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                                <i class="fa fa-angle-left"></i>
+                            </a>
+                        
+
+                        
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                
+                    <a rel="prev" href="../protocols/transport-protocols.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                        <i class="fa fa-angle-left"></i>
+                    </a>
+                
+
+                
+            </nav>
+
+        </div>
+
+        
+        <!-- Livereload script (if served using the cli tool) -->
+        <script type="text/javascript">
+            var socket = new WebSocket("ws://localhost:3000/__livereload");
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
+        
+
+        
+
+        
+
+        
+        <script type="text/javascript">
+            window.playground_copyable = true;
+        </script>
+        
+
+        
+
+        
+        <script src="../elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../mark.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../searcher.js" type="text/javascript" charset="utf-8"></script>
+        
+
+        <script src="../clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../book.js" type="text/javascript" charset="utf-8"></script>
+
+        <!-- Custom JS scripts -->
+        
+
+        
+
+    </body>
+</html>

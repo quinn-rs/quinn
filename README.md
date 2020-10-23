@@ -10,10 +10,12 @@
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
 # Pure-rust QUIC protocol implementation 
+
 Quinn is a pure-rust, future-based implementation of the [QUIC][quic] transport protocol undergoing standardization by the IETF. 
 This library is at [draft 29][current-draft].
 
 ## Features
+
 - Simultaneous client/server operation.
 - Ordered and unordered stream reads for improved performance.
 - Works on stable Rust, tested on Linux, macOS and Windows.
@@ -24,14 +26,13 @@ This library is at [draft 29][current-draft].
 - Experimental HTTP over QUIC.
 
 ## Overview
-| name | description |
-| :-----: | :----- |
-| `quinn` | High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.) |
-| `quinn-proto` | Deterministic state machine of the protocol which performs **no** I/O internally and is suitable for use with custom event loops (and potentially a C or C++ API). |
-| `quinn-h3` | Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API. |
-| `bench` | Benchmarks without any framework. |
-| `interop` | Tooling that helps to run interoperability tests. |
-| `fuzz` | Fuzz tests. |
+
+- **quinn:** High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.) 
+- **quinn-proto:** Deterministic state machine of the protocol which performs **no** I/O internally and is suitable for use with custom event loops (and potentially a C or C++ API). 
+- **quinn-h3:** Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API. 
+- **bench:** Benchmarks without any framework. 
+- **interop:** Tooling that helps to run interoperability tests. 
+- **fuzz:** Fuzz tests. 
 
 # Getting Started
 
@@ -48,11 +49,13 @@ server generates a self-signed certificate and stores it to disk, where the
 client will automatically find and trust it.
 
 **Links**
-- Talk at [RustFest Paris (May 2018) presentation][talk]; [slides][slides]; [YouTube][youtube].
-- Usage [Examples][examples].
-- Guide [Book][documentation].
+
+- Talk at [RustFest Paris (May 2018) presentation][talk]; [slides][slides]; [YouTube][youtube]
+- Usage [examples][examples]
+- Guide [book][documentation]
 
 ## Usage Notes
+
 <details>
 <summary>
 Click to show the notes
@@ -95,6 +98,7 @@ future runs.
 <p></p>
 
 ## Contribution
+
 - All feedback welcome. Feel free to file bugs, requests for documentation and
   any other feedback to the [issue tracker][issues].
 - The quinn-proto test suite uses simulated IO for reproducibility and to avoid
@@ -106,9 +110,9 @@ the variable.
 
 ## Authors
 
-* **Dirkjan Ochtman** - *Project Owner & creator*
-* **Benjamin Saunders** - *Project Owner & creator*
-* **Jean-Christophe BEGUE** - *Project collaborator, author of the HTTP/3 implementation*
+* **Dirkjan Ochtman** - *Project Owner & Creator*
+* **Benjamin Saunders** - *Project Owner & Creator*
+* **Jean-Christophe Begue** - *Project Collaborator, Author of the HTTP/3 Implementation*
 
 [quic]: https://quicwg.github.io/
 [issues]: https://github.com/djc/quinn/issues
