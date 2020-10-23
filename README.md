@@ -110,8 +110,8 @@ the variable.
 
 ## Authors
 
-* **Dirkjan Ochtman** - *Project Owner & Creator*
-* **Benjamin Saunders** - *Project Owner & Creator*
+* **Dirkjan Ochtman** - *Project Owner & Founder*
+* **Benjamin Saunders** - *Project Owner & Founder*
 * **Jean-Christophe Begue** - *Project Collaborator, Author of the HTTP/3 Implementation*
 
 [quic]: https://quicwg.github.io/
