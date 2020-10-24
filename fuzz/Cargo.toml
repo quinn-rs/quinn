@@ -33,3 +33,9 @@ name = "streamid"
 path = "fuzz_targets/streamid.rs"
 test = false
 doc = false
+
+[[bin]]
+name = "packet"
+path = "fuzz_targets/packet.rs"
+test = false
+doc = false
