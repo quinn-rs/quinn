@@ -282,11 +282,10 @@ where
             conn.driver = Some(cx.waker().clone());
             return Poll::Pending;
         }
-        match conn.error {
-            Some(ConnectionError::LocallyClosed) => Poll::Ready(()),
-            Some(_) => Poll::Ready(()),
-            None => unreachable!("drained connections always have an error"),
+        if conn.error.is_none() {
+            unreachable!("drained connections always have an error");
         }
+        Poll::Ready(())
     }
 }
 
