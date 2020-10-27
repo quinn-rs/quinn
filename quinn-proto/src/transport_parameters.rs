@@ -143,8 +143,7 @@ impl TransportParameters {
             active_connection_id_limit: if cid_gen.cid_len() == 0 {
                 2 // i.e. default, i.e. unsent
             } else {
-                // + 1 to account for the currently used CID, which isn't kept in the queue
-                CidQueue::LEN as u32 + 1
+                CidQueue::LEN as u32
             }
             .into(),
             max_datagram_frame_size: config
