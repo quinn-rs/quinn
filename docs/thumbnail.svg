@@ -6,19 +6,13 @@
 		tspan { white-space:pre }
 		.shp0 { fill: #25455b } 
 		.shp1 { fill: #ffffff } 
-		.txt2 { font-size: 119px;fill: #25455a;font-weight: 400;font-family: "LucidStreamsLaminar", "Lucid Streams Laminar" } 
-		.txt3 { font-size: 169px;fill: #25455b;font-weight: 400;font-family: "LucidStreamsLaminar", "Lucid Streams Laminar" } 
 	</style>
 	<g id="thumbnail">
 		<use id="Layer 1" href="#img1" x="0" y="0" />
 		<path id="Shape 3" class="shp0" d="M146.45 198.39C92.28 198.39 48.5 154.61 48.5 100.45C48.5 46.28 92.28 2.5 146.45 2.5C200.61 2.5 244.39 46.28 244.39 100.45C244.39 154.61 200.61 198.39 146.45 198.39Z" />
 		<path id="Shape 3 copy" class="shp1" d="M146.45 178.89C103.07 178.89 68 143.83 68 100.45C68 57.07 103.07 22 146.45 22C189.83 22 224.89 57.07 224.89 100.45C224.89 143.83 189.83 178.89 146.45 178.89Z" />
-		<text id="UINN " style="transform: matrix(1,0,0,1,386,140)" >
-			<tspan x="0" y="0" class="txt2">UINN</tspan>
-		</text>
-		<text id="Q " style="transform: matrix(1,0,0,1,273,156)" >
-			<tspan x="0" y="0" class="txt3">Q</tspan>
-		</text>
+		<path id="UINN " fill="#25455a" d="M409.24 58.65L409.24 140L386 140L386 58.65L409.24 58.65ZM415.05 140L415.05 116.76L438.29 116.76L438.29 58.65L461.54 58.65L461.54 140L415.05 140ZM490.59 140L467.35 140L467.35 58.65L490.59 58.65L490.59 140ZM519.64 140L496.4 140L496.4 58.65L571.94 58.65L571.94 140L548.7 140L548.7 81.89L519.64 81.89L519.64 140ZM600.99 140L577.75 140L577.75 58.65L653.29 58.65L653.29 140L630.04 140L630.04 81.89L600.99 81.89L600.99 140Z" />
+		<path id="Q " fill="#25455b" d="M306.01 156L273 156L273 40.47L380.28 40.47L380.28 156L405.03 180.76L355.52 180.76L330.76 156L314.26 156L314.26 122.99L347.27 122.99L347.27 73.48L306.01 73.48L306.01 156Z" />
 		<path id="Shape 2" class="shp1" d="M259 82L657 82L657 87L259 87L259 82Z" />
 	</g>
 	<g id="logo">
