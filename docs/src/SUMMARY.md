@@ -1,4 +1,4 @@
 # Summary
 
 - [QUINN Introduction](quinn.md)
-- [QUICK Introduction](quic.md)
+- [The QUIC protocol](quic.md)
