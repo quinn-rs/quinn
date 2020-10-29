@@ -649,7 +649,7 @@ pub enum WriteError {
     Stopped(VarInt),
     /// The connection was closed.
     #[error("connection closed: {0}")]
-    ConnectionClosed(ConnectionError),
+    ConnectionClosed(#[source] ConnectionError),
     /// Unknown stream
     #[error("unknown stream")]
     UnknownStream,
@@ -668,7 +668,7 @@ pub enum WriteError {
 pub enum StoppedError {
     /// The connection was closed.
     #[error("connection closed: {0}")]
-    ConnectionClosed(ConnectionError),
+    ConnectionClosed(#[source] ConnectionError),
     /// Unknown stream
     #[error("unknown stream")]
     UnknownStream,
@@ -757,7 +757,7 @@ pub enum ReadExactError {
     FinishedEarly,
     /// A read error occurred
     #[error("{0}")]
-    ReadError(ReadError),
+    ReadError(#[source] ReadError),
 }
 
 /// Future produced by [`RecvStream::read_unordered()`].

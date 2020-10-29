@@ -128,16 +128,16 @@ pub enum Error {
     Proto(proto::connection::Error),
     /// Error occurred at the `QUIC` level
     #[error("QUIC protocol error: {0}")]
-    Quic(quinn::ConnectionError),
+    Quic(#[from] quinn::ConnectionError),
     /// A `QUIC`-specific read error occurred
     #[error("QUIC read error: {0}")]
-    Read(ReadError),
+    Read(#[source] ReadError),
     /// A `QUIC`-specific write error occurred
     #[error("QUIC write error: {0}")]
-    Write(WriteError),
+    Write(#[source] WriteError),
     /// A `QUIC`-specific error occurred while polling for STOP_SENDING
     #[error("QUIC error while polling for STOP_SENDING: {0}")]
-    Stopped(StoppedError),
+    Stopped(#[source] StoppedError),
     /// Programming error within the crate's code
     #[error("Internal error: {0}")]
     Internal(String),
@@ -149,7 +149,7 @@ pub enum Error {
     UnknownStream(u64),
     /// An IO error occurred
     #[error("IO error: {0}")]
-    Io(std::io::Error),
+    Io(#[source] std::io::Error),
     /// An overflow occurred into the `QPACK` decoder
     #[error("Overflow max data size")]
     Overflow,
@@ -203,12 +203,6 @@ impl Error {
 impl From<proto::connection::Error> for Error {
     fn from(err: proto::connection::Error) -> Error {
         Error::Proto(err)
-    }
-}
-
-impl From<quinn::ConnectionError> for Error {
-    fn from(err: quinn::ConnectionError) -> Error {
-        Error::Quic(err)
     }
 }
 

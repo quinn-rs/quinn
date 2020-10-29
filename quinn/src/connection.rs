@@ -997,5 +997,5 @@ pub enum SendDatagramError {
     TooLarge,
     /// The connection was closed
     #[error("connection closed: {0}")]
-    ConnectionClosed(ConnectionError),
+    ConnectionClosed(#[source] ConnectionError),
 }
