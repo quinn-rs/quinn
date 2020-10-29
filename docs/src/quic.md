@@ -4,11 +4,17 @@ The protocol is still under development and standardized by the IETF.
 Quinn strives to implement the latest draft but may lag a bit behind.  
 Although QUIC is still in a draft phase, the protocol is used for all connections from Chrome web browsers to the Google servers. 
  
-The goal of QUIC is to provide the same functionalities as TCP while fixing many problems and adding additional features. 
-QUIC's goals include reduced connection and transport latency, and bandwidth estimation in each direction to avoid congestion. 
-It also moves congestion control algorithms into the user space at both endpoints, rather than the kernel space.
-Additionally, the protocol can be extended with forward error correction (FEC) to further improve performance when errors are expected.
+QUIC solves a number of transport-layer and application-layer problems experienced by modern web applications. 
+It is very similar to TCP+TLS+HTTP2, but implemented on top of UDP. 
+Having QUIC as a self-contained protocol allows innovations which aren’t possible with existing protocols as they are hampered by legacy clients and middleboxes.
 
+Key advantages of QUIC over TCP+TLS+HTTP2 include:
+* Improved connection establishment speed (0-rtt).
+* Improved congestion control by moving congestion control algorithms into the user space at both endpoints.
+* Improved bandwidth estimation in each direction to avoid congestion. 
+* Improved multiplexing without head-of-line blocking.
+* Contains forward error correction (FEC). 
+ 
 While QUIC's intentions are originally web-oriented, it offers interesting opportunities in other areas like game networking.
 One thing is for sure, QUIC has many great potentials and will serve us in the future with HTTP/3.
 
