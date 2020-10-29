@@ -1,4 +1,4 @@
-# QUIC Introduction
+# The QUIC protocol
 QUIC is a general-purpose network protocol built on top of UDP.
 The protocol is still under development and standardized by the IETF. 
 Quinn strives to implement the latest draft but may lag a bit behind.  
