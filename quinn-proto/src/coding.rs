@@ -1,12 +1,12 @@
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use bytes::{Buf, BufMut};
-use err_derive::Error;
+use thiserror::Error;
 
 use crate::VarInt;
 
 #[derive(Error, Debug, Copy, Clone, Eq, PartialEq)]
-#[error(display = "unexpected end of buffer")]
+#[error("unexpected end of buffer")]
 pub struct UnexpectedEnd;
 
 pub type Result<T> = ::std::result::Result<T, UnexpectedEnd>;

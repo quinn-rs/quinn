@@ -4,7 +4,7 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes};
-use err_derive::Error;
+use thiserror::Error;
 use tracing::{debug, trace};
 
 use super::{
@@ -922,7 +922,7 @@ pub enum WriteError {
     /// be generated, indicating that retrying the write might succeed.
     ///
     /// [`StreamEvent::Writable`]: crate::StreamEvent::Writable
-    #[error(display = "unable to accept further writes")]
+    #[error("unable to accept further writes")]
     Blocked,
     /// The peer is no longer accepting data on this stream, and it has been implicitly reset. The
     /// stream cannot be finished or further written to.
@@ -930,13 +930,13 @@ pub enum WriteError {
     /// Carries an application-defined error code.
     ///
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
-    #[error(display = "stopped by peer: code {}", 0)]
+    #[error("stopped by peer: code {}", 0)]
     Stopped(VarInt),
     /// Unknown stream
     ///
     /// Occurs when attempting to access a stream after finishing it or observing that it has been
     /// stopped.
-    #[error(display = "unknown stream")]
+    #[error("unknown stream")]
     UnknownStream,
 }
 
@@ -1081,24 +1081,24 @@ pub enum ReadError {
     ///
     /// If more data on this stream is received from the peer, an `Event::StreamReadable` will be
     /// generated for this stream, indicating that retrying the read might succeed.
-    #[error(display = "blocked")]
+    #[error("blocked")]
     Blocked,
     /// The peer abandoned transmitting data on this stream.
     ///
     /// Carries an application-defined error code.
-    #[error(display = "reset by peer: code {}", 0)]
+    #[error("reset by peer: code {}", 0)]
     Reset(VarInt),
     /// Unknown stream
     ///
     /// Occurs when attempting to access a stream after stopping it, or observing that it has been
     /// finished or reset.
-    #[error(display = "unknown stream")]
+    #[error("unknown stream")]
     UnknownStream,
     /// Attempted an ordered read following an unordered read
     ///
     /// Performing an unordered read allows discontinuities to arise in the receive buffer of a
     /// stream which cannot be recovered, making further ordered reads impossible.
-    #[error(display = "ordered read after unordered read")]
+    #[error("ordered read after unordered read")]
     IllegalOrderedRead,
 }
 
@@ -1144,10 +1144,10 @@ pub enum FinishError {
     /// Carries an application-defined error code.
     ///
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
-    #[error(display = "stopped by peer: code {}", 0)]
+    #[error("stopped by peer: code {}", 0)]
     Stopped(VarInt),
     /// The stream has not yet been created or was already finished or stopped.
-    #[error(display = "unknown stream")]
+    #[error("unknown stream")]
     UnknownStream,
 }
 

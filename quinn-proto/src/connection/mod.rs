@@ -9,8 +9,8 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use err_derive::Error;
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
@@ -26,7 +26,7 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
         EndpointEventInner, IssuedCid,
     },
-    transport_parameters::{self, TransportParameters},
+    transport_parameters::TransportParameters,
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
     LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
     TIMER_GRANULARITY, VERSION,
@@ -3010,25 +3010,25 @@ where
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConnectionError {
     /// The peer doesn't implement any supported version.
-    #[error(display = "peer doesn't implement any supported version")]
+    #[error("peer doesn't implement any supported version")]
     VersionMismatch,
     /// The peer violated the QUIC specification as understood by this implementation.
-    #[error(display = "{}", _0)]
-    TransportError(#[source] TransportError),
+    #[error("{0}")]
+    TransportError(#[from] TransportError),
     /// The peer's QUIC stack aborted the connection automatically.
-    #[error(display = "aborted by peer: {}", 0)]
+    #[error("aborted by peer: {}", 0)]
     ConnectionClosed(frame::ConnectionClose),
     /// The peer closed the connection.
-    #[error(display = "closed by peer: {}", 0)]
+    #[error("closed by peer: {}", 0)]
     ApplicationClosed(frame::ApplicationClose),
     /// The peer is unable to continue processing this connection, usually due to having restarted.
-    #[error(display = "reset by peer")]
+    #[error("reset by peer")]
     Reset,
     /// The peer has become unreachable.
-    #[error(display = "timed out")]
+    #[error("timed out")]
     TimedOut,
     /// The local application closed the connection.
-    #[error(display = "closed")]
+    #[error("closed")]
     LocallyClosed,
 }
 
@@ -3052,12 +3052,6 @@ impl From<ConnectionError> for io::Error {
             TransportError(_) | VersionMismatch | LocallyClosed => io::ErrorKind::Other,
         };
         io::Error::new(kind, x)
-    }
-}
-
-impl From<transport_parameters::Error> for ConnectionError {
-    fn from(e: transport_parameters::Error) -> Self {
-        TransportError::from(e).into()
     }
 }
 
@@ -3223,16 +3217,16 @@ const MIN_PACKET_SPACE: usize = 40;
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum SendDatagramError {
     /// The peer does not support receiving datagram frames
-    #[error(display = "datagrams not supported by peer")]
+    #[error("datagrams not supported by peer")]
     UnsupportedByPeer,
     /// Datagram support is disabled locally
-    #[error(display = "datagram support disabled")]
+    #[error("datagram support disabled")]
     Disabled,
     /// The datagram is larger than the connection can currently accommodate
     ///
     /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
     /// exceeded.
-    #[error(display = "datagram too large")]
+    #[error("datagram too large")]
     TooLarge,
 }
 

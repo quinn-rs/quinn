@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, io, ops::Range, str};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use err_derive::Error;
+use thiserror::Error;
 
 use crate::{
     coding::{self, BufExt, BufMutExt},
@@ -711,13 +711,13 @@ pub(crate) enum LongType {
 
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) enum PacketDecodeError {
-    #[error(display = "unsupported version {:x}", version)]
+    #[error("unsupported version {version:x}")]
     UnsupportedVersion {
         src_cid: ConnectionId,
         dst_cid: ConnectionId,
         version: u32,
     },
-    #[error(display = "invalid header: {}", _0)]
+    #[error("invalid header: {0}")]
     InvalidHeader(&'static str),
 }
 
