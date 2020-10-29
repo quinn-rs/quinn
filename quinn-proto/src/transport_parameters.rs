@@ -12,7 +12,7 @@ use std::{
 };
 
 use bytes::{buf::ext::BufExt as _, Buf, BufMut};
-use err_derive::Error;
+use thiserror::Error;
 
 use crate::{
     cid_generator::ConnectionIdGenerator,
@@ -246,10 +246,10 @@ impl PreferredAddress {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
 pub enum Error {
     /// Parameters that are semantically invalid
-    #[error(display = "parameter had illegal value")]
+    #[error("parameter had illegal value")]
     IllegalValue,
     /// Catch-all error for problems while decoding transport parameters
-    #[error(display = "parameters were malformed")]
+    #[error("parameters were malformed")]
     Malformed,
 }
 

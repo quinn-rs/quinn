@@ -1,7 +1,7 @@
-use std::{io, net::SocketAddr, str, sync::Arc};
+use std::{io, net::SocketAddr, sync::Arc};
 
-use err_derive::Error;
 use proto::generic::{ClientConfig, EndpointConfig, ServerConfig};
+use thiserror::Error;
 use tracing::error;
 
 use crate::{
@@ -114,7 +114,7 @@ where
 #[derive(Debug, Error)]
 pub enum EndpointError {
     /// An error during setup of the underlying UDP socket.
-    #[error(display = "failed to set up UDP socket: {}", _0)]
+    #[error("failed to set up UDP socket: {0}")]
     Socket(io::Error),
 }
 

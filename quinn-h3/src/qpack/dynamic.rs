@@ -3,7 +3,7 @@ use std::{
     collections::{btree_map::Entry as BTEntry, hash_map::Entry, BTreeMap, HashMap, VecDeque},
 };
 
-use err_derive::Error;
+use thiserror::Error;
 
 use super::{field::HeaderField, static_::StaticTable};
 use crate::qpack::vas::{self, VirtualAddressSpace};
@@ -16,26 +16,23 @@ const SETTINGS_MAX_BLOCKED_STREAMS_MAX: usize = 65_535; // 2^16 - 1
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
-    #[error(display = "bad relative index: {}", _0)]
+    #[error("bad relative index: {0}")]
     BadRelativeIndex(usize),
-    #[error(display = "bad post base index: {}", _0)]
+    #[error("bad post base index: {0}")]
     BadPostbaseIndex(usize),
-    #[error(display = "decoded index out of bounds: {}", _0)]
+    #[error("decoded index out of bounds: {0}")]
     BadIndex(usize),
-    #[error(display = "tried to insert a field greater than dynamic table available size")]
+    #[error("tried to insert a field greater than dynamic table available size")]
     MaxTableSizeReached,
-    #[error(display = "table size setting is greater than maximum authorized")]
+    #[error("table size setting is greater than maximum authorized")]
     MaximumTableSizeTooLarge,
-    #[error(display = "max blocked stream setting is greater than maximum authorized")]
+    #[error("max blocked stream setting is greater than maximum authorized")]
     MaxBlockedStreamsTooLarge,
-    #[error(
-        display = "stream id '{}' is unknown or has already been acknowledged or canceled",
-        _0
-    )]
+    #[error("stream id '{0}' is unknown or has already been acknowledged or canceled")]
     UnknownStreamId(u64),
-    #[error(display = "tried to acknowledge encoder stream but no encoder data has been sent")]
+    #[error("tried to acknowledge encoder stream but no encoder data has been sent")]
     NoTrackingData,
-    #[error(display = "internal reference tracking error")]
+    #[error("internal reference tracking error")]
     InvalidTrackingCount,
 }
 
