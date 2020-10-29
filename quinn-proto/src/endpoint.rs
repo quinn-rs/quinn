@@ -159,8 +159,8 @@ where
             match PartialDecode::new(data, self.local_cid_generator.cid_len()) {
                 Ok(x) => x,
                 Err(PacketDecodeError::UnsupportedVersion {
-                    source,
-                    destination,
+                    src_cid,
+                    dst_cid,
                     version,
                 }) => {
                     if !self.is_server() {
@@ -172,8 +172,8 @@ where
                     let mut buf = Vec::<u8>::new();
                     Header::VersionNegotiate {
                         random: self.rng.gen::<u8>() | 0x40,
-                        src_cid: destination,
-                        dst_cid: source,
+                        src_cid: dst_cid,
+                        dst_cid: src_cid,
                     }
                     .encode(&mut buf);
                     // Grease with a reserved version
