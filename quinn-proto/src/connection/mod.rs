@@ -1,7 +1,6 @@
 use std::{
     cmp,
     collections::{BTreeMap, VecDeque},
-    convert::TryInto,
     fmt, io, mem,
     net::SocketAddr,
     sync::Arc,
@@ -20,6 +19,7 @@ use crate::{
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
+    is_supported_version,
     packet::{Header, LongType, Packet, PacketNumber, PartialDecode, PartialEncode, SpaceId},
     range_set::RangeSet,
     shared::{
@@ -29,7 +29,7 @@ use crate::{
     transport_parameters::TransportParameters,
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
     LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
-    TIMER_GRANULARITY, VERSION,
+    TIMER_GRANULARITY,
 };
 
 mod assembler;
@@ -2092,11 +2092,7 @@ where
                         if self.total_authed_packets > 1 {
                             return Ok(());
                         }
-                        if packet
-                            .payload
-                            .chunks(4)
-                            .any(|chunk| u32::from_be_bytes(chunk.try_into().unwrap()) == VERSION)
-                        {
+                        if packet.payload.chunks(4).any(is_supported_version) {
                             return Ok(());
                         }
                         debug!("remote doesn't support our version");

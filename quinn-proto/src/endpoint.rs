@@ -182,7 +182,7 @@ where
                     } else {
                         buf.write::<u32>(0x0a1a_2a4a);
                     }
-                    buf.write(VERSION); // supported version
+                    buf.write(*VERSION.start()); // supported version
                     self.transmits.push_back(Transmit {
                         destination: remote,
                         ecn: None,
