@@ -814,18 +814,24 @@ where
     ///
     /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
-        Ok(self.streams.read_unordered(id)?.map(|(buf, offset, more)| {
-            self.add_read_credits(id, more);
-            (buf, offset)
-        }))
+        Ok(self
+            .streams
+            .read_unordered(id)?
+            .map(|(buf, offset, transmit_max_stream_data)| {
+                self.add_read_credits(id, transmit_max_stream_data);
+                (buf, offset)
+            }))
     }
 
     /// Read from the given recv stream
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
-        Ok(self.streams.read(id, buf)?.map(|(len, more)| {
-            self.add_read_credits(id, more);
-            len
-        }))
+        Ok(self
+            .streams
+            .read(id, buf)?
+            .map(|(len, transmit_max_stream_data)| {
+                self.add_read_credits(id, transmit_max_stream_data);
+                len
+            }))
     }
 
     /// Send data on the given stream
@@ -2789,10 +2795,10 @@ where
         self.streams.alloc_remote_stream(&self.peer_params, dir);
     }
 
-    fn add_read_credits(&mut self, id: StreamId, more: bool) {
+    fn add_read_credits(&mut self, id: StreamId, transmit_max_stream_data: bool) {
         let space = &mut self.spaces[SpaceId::Data];
         space.pending.max_data = true;
-        if more {
+        if transmit_max_stream_data {
             // Only bother issuing stream credit if the peer wants to send more
             space.pending.max_stream_data.insert(id);
         }
