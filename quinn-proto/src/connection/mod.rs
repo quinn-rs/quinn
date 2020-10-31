@@ -336,7 +336,7 @@ where
                 self.finish_packet(builder);
                 return Some(Transmit {
                     destination,
-                    contents: buf.into(),
+                    contents: buf,
                     ecn: None,
                 });
             }
@@ -499,7 +499,7 @@ where
 
         Some(Transmit {
             destination: self.path.remote,
-            contents: buf.into(),
+            contents: buf,
             ecn: if self.path.sending_ecn {
                 Some(EcnCodepoint::ECT0)
             } else {
