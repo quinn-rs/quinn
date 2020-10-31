@@ -21,7 +21,7 @@ use crate::{
     config::{EndpointConfig, ServerConfig, TransportConfig},
     crypto,
     shared::ConnectionId,
-    ResetToken, Side, TransportError, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
+    ResetToken, Side, TransportError, VarInt, MAX_CID_SIZE, MAX_STREAM_COUNT, RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -406,6 +406,8 @@ impl TransportParameters {
             || params.max_ack_delay.0 >= 1 << 14
             || params.active_connection_id_limit.0 < 2
             || params.max_udp_payload_size.0 < 1200
+            || params.initial_max_streams_bidi.0 > MAX_STREAM_COUNT
+            || params.initial_max_streams_uni.0 > MAX_STREAM_COUNT
             || (side.is_server()
                 && (params.stateless_reset_token.is_some() || params.preferred_address.is_some()))
         {
