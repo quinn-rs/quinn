@@ -180,7 +180,8 @@ impl Streams {
         match rs.read(buf) {
             Ok(Some(len)) => {
                 self.local_max_data = self.local_max_data.saturating_add(len as u64);
-                Ok(Some((len, rs.receiving_unknown_size())))
+                let (_, transmit_max_stream_data) = rs.max_stream_data(self.stream_receive_window);
+                Ok(Some((len, transmit_max_stream_data)))
             }
             Ok(None) => {
                 entry.remove_entry();
@@ -206,7 +207,8 @@ impl Streams {
         match rs.read_unordered() {
             Ok(Some((buf, offset))) => {
                 self.local_max_data = self.local_max_data.saturating_add(buf.len() as u64);
-                Ok(Some((buf, offset, rs.receiving_unknown_size())))
+                let (_, transmit_max_stream_data) = rs.max_stream_data(self.stream_receive_window);
+                Ok(Some((buf, offset, transmit_max_stream_data)))
             }
             Ok(None) => {
                 entry.remove_entry();
@@ -505,7 +507,10 @@ impl Streams {
                 continue;
             }
             sent.max_stream_data.insert(id);
-            let max = rs.assembler.bytes_read() + self.stream_receive_window;
+
+            let (max, _) = rs.max_stream_data(self.stream_receive_window);
+            rs.record_sent_max_stream_data(max);
+
             trace!(stream = %id, max = max, "MAX_STREAM_DATA");
             buf.write(frame::Type::MAX_STREAM_DATA);
             buf.write(id);
@@ -944,6 +949,7 @@ pub enum WriteError {
 struct Recv {
     state: RecvState,
     assembler: Assembler,
+    sent_max_stream_data: u64,
 }
 
 impl Recv {
@@ -1031,6 +1037,39 @@ impl Recv {
                     Err(ReadError::Blocked)
                 }
             }
+        }
+    }
+
+    /// Returns the window that should be advertised in a `MAX_STREAM_DATA` frame
+    ///
+    /// The method returns a tuple which consists of the window that should be
+    /// announced, as well as a boolean parameter which indicates if a new
+    /// transmission of the value is recommended. If the boolean value is
+    /// `false` the new window should only be transmitted if a previous transmission
+    /// had failed.
+    fn max_stream_data(&mut self, stream_receive_window: u64) -> (u64, bool) {
+        let max_stream_data = self.assembler.bytes_read() + stream_receive_window;
+
+        // Only announce a window update if it's significant enough
+        // to make it worthwhile sending a MAX_STREAM_DATA frame.
+        // We use here a fraction of the configured stream receive window to make
+        // the decision, and accomodate for streams using bigger windows requring
+        // less updates. A fixed size would also work - but it would need to be
+        // smaller than `stream_receive_window` in order to make sure the stream
+        // does not get stuck.
+        let diff = max_stream_data - self.sent_max_stream_data;
+        let transmit = self.receiving_unknown_size() && diff >= (stream_receive_window / 8);
+        (max_stream_data, transmit)
+    }
+
+    /// Records that a `MAX_STREAM_DATA` announcing a certain window was sent
+    ///
+    /// This will suppress enqueuing further `MAX_STREAM_DATA` frames unless
+    /// either the previous transmission was not acknowledged or the window
+    /// further increased.
+    pub fn record_sent_max_stream_data(&mut self, sent_value: u64) {
+        if sent_value > self.sent_max_stream_data {
+            self.sent_max_stream_data = sent_value;
         }
     }
 
