@@ -226,7 +226,7 @@ impl TestEndpoint {
             let (_, ecn, packet) = self.inbound.pop_front().unwrap();
             if let Some((ch, event)) =
                 self.endpoint
-                    .handle(now, remote, ecn, Vec::from(packet).as_slice().into())
+                    .handle(now, remote, ecn, packet.as_slice().into())
             {
                 match event {
                     DatagramEvent::NewConnection(conn) => {
