@@ -254,7 +254,7 @@ impl Header {
                 number,
             } => {
                 w.write(u8::from(LongHeaderType::Initial) | number.tag());
-                w.write(VERSION);
+                w.write(*VERSION.start());
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 w.write_var(token.len() as u64);
@@ -274,7 +274,7 @@ impl Header {
                 number,
             } => {
                 w.write(u8::from(LongHeaderType::Standard(ty)) | number.tag());
-                w.write(VERSION);
+                w.write(*VERSION.start());
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
@@ -290,7 +290,7 @@ impl Header {
                 ref src_cid,
             } => {
                 w.write(u8::from(LongHeaderType::Retry));
-                w.write(VERSION);
+                w.write(*VERSION.start());
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 PartialEncode {
@@ -528,7 +528,7 @@ impl PlainHeader {
                 });
             }
 
-            if version != VERSION {
+            if !VERSION.contains(&version) {
                 return Err(PacketDecodeError::UnsupportedVersion {
                     src_cid,
                     dst_cid,
