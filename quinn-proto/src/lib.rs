@@ -248,7 +248,7 @@ pub struct Transmit {
     /// Explicit congestion notification bits to set on the packet
     pub ecn: Option<EcnCodepoint>,
     /// Contents of the datagram
-    pub contents: Box<[u8]>,
+    pub contents: Vec<u8>,
 }
 
 //
