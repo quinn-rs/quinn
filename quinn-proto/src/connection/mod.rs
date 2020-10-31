@@ -2746,13 +2746,6 @@ where
                 "CID authentication failure",
             ));
         }
-        if params.initial_max_streams_bidi.0 > MAX_STREAM_COUNT
-            || params.initial_max_streams_uni.0 > MAX_STREAM_COUNT
-        {
-            return Err(TransportError::STREAM_LIMIT_ERROR(
-                "unrepresentable initial stream limit",
-            ));
-        }
 
         Ok(())
     }
