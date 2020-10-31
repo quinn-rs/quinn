@@ -358,6 +358,9 @@ where
                         }
                     }
                     Transmit(t) => self.outgoing.push_back(t),
+                    EndpointEvent::TransmitMultiple(t) => {
+                        self.outgoing.extend(t);
+                    }
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {

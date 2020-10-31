@@ -151,6 +151,7 @@ enum ConnectionEvent {
 enum EndpointEvent {
     Proto(proto::EndpointEvent),
     Transmit(proto::Transmit),
+    TransmitMultiple(Vec<proto::Transmit>),
 }
 
 /// Maximum number of send/recv calls to make before moving on to other processing

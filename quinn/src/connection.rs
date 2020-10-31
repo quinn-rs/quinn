@@ -744,11 +744,29 @@ where
 {
     fn drive_transmit(&mut self) {
         let now = Instant::now();
+
+        let mut single = None;
+        let mut multiple = Vec::new();
+
         while let Some(t) = self.inner.poll_transmit(now) {
+            if multiple.is_empty() && single.is_none() {
+                single = Some(t);
+            } else {
+                if let Some(single) = single.take() {
+                    multiple.push(single);
+                }
+                multiple.push(t);
+            }
+        }
+
+        if let Some(ev) = match (single.is_some(), !multiple.is_empty()) {
+            (true, false) => Some(EndpointEvent::Transmit(single.unwrap())),
+            (false, true) => Some(EndpointEvent::TransmitMultiple(multiple)),
+            (true, true) => panic!("Invalid state"),
+            (false, false) => None,
+        } {
             // If the endpoint driver is gone, noop.
-            let _ = self
-                .endpoint_events
-                .unbounded_send((self.handle, EndpointEvent::Transmit(t)));
+            let _ = self.endpoint_events.unbounded_send((self.handle, ev));
         }
     }
 
