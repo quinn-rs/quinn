@@ -215,7 +215,6 @@ async fn handle_request(
         error!("failed: {}", e);
         format!("failed to process request: {}\n", e)
             .into_bytes()
-            .into()
     });
     // Write the response
     send.write_all(&resp)
