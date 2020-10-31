@@ -378,14 +378,11 @@ where
 
         let mut buf = Vec::with_capacity(self.mtu as usize);
         let mut coalesce = spaces.len() > 1;
-        let pad_space = if self.side.is_client() && spaces.first() == Some(&SpaceId::Initial)
-            || self.path.challenge.is_some()
-            || self.path_response.is_some()
-        {
-            spaces.last().cloned()
-        } else {
-            None
-        };
+        let pad_space = spaces.last().cloned().filter(|_| {
+            self.side.is_client() && spaces.first() == Some(&SpaceId::Initial)
+                || self.path.challenge.is_some()
+                || self.path_response.is_some()
+        });
 
         for space_id in spaces {
             let buf_start = buf.len();
