@@ -214,7 +214,7 @@ async fn handle_request(
     Ok(())
 }
 
-fn process_get(root: &Path, x: &[u8]) -> Result<Box<[u8]>> {
+fn process_get(root: &Path, x: &[u8]) -> Result<Vec<u8>> {
     if x.len() < 4 || &x[0..4] != b"GET " {
         bail!("missing GET");
     }
@@ -244,5 +244,5 @@ fn process_get(root: &Path, x: &[u8]) -> Result<Box<[u8]>> {
         }
     }
     let data = fs::read(&real_path).context("failed reading file")?;
-    Ok(data.into())
+    Ok(data)
 }

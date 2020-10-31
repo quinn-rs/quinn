@@ -2358,7 +2358,7 @@ where
 
         Some(Transmit {
             destination: self.path.remote,
-            contents: buf.into(),
+            contents: buf,
             ecn: if self.path.sending_ecn {
                 Some(EcnCodepoint::ECT0)
             } else {
@@ -3197,7 +3197,7 @@ pub fn initial_close<K, R>(
     local_id: &ConnectionId,
     packet_number: u8,
     reason: R,
-) -> Box<[u8]>
+) -> Vec<u8>
 where
     K: crypto::Keys,
     R: Into<Close>,
@@ -3220,7 +3220,7 @@ where
         header_crypto,
         Some((u64::from(packet_number), crypto)),
     );
-    buf.into()
+    buf
 }
 
 /// Reasons why a connection might be lost.
