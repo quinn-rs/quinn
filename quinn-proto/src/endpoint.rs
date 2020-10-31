@@ -186,7 +186,7 @@ where
                     self.transmits.push_back(Transmit {
                         destination: remote,
                         ecn: None,
-                        contents: buf.into(),
+                        contents: buf,
                     });
                     return None;
                 }
@@ -331,7 +331,7 @@ where
         self.transmits.push_back(Transmit {
             destination: remote,
             ecn: None,
-            contents: buf.into(),
+            contents: buf,
         });
     }
 
@@ -572,7 +572,7 @@ where
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
-                    contents: buf.into(),
+                    contents: buf,
                 });
                 return None;
             }
@@ -664,7 +664,7 @@ where
         self.transmits.push_back(Transmit {
             destination,
             ecn: None,
-            contents: buf.into(),
+            contents: buf,
         })
     }
 
