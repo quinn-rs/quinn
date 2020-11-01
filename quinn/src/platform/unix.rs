@@ -1,5 +1,6 @@
 use std::{
     io,
+    io::IoSliceMut,
     mem::{self, MaybeUninit},
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
@@ -10,6 +11,7 @@ use mio::net::UdpSocket;
 use proto::{EcnCodepoint, Transmit};
 
 use super::cmsg;
+use crate::udp::RecvMeta;
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
@@ -165,17 +167,13 @@ impl super::UdpExt for UdpSocket {
         Ok(sent)
     }
 
-    fn recv_ext(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr, Option<EcnCodepoint>)> {
+    fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
         let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
-        let mut iov = libc::iovec {
-            iov_base: buf.as_ptr() as *mut _,
-            iov_len: buf.len(),
-        };
         let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
         let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
         hdr.msg_name = name.as_mut_ptr() as _;
         hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
-        hdr.msg_iov = &mut iov;
+        hdr.msg_iov = &mut bufs[0] as *mut IoSliceMut as *mut libc::iovec;
         hdr.msg_iovlen = 1;
         hdr.msg_control = ctrl.0.as_mut_ptr() as _;
         hdr.msg_controllen = CMSG_LEN as _;
@@ -222,7 +220,12 @@ impl super::UdpExt for UdpSocket {
             libc::AF_INET6 => unsafe { SocketAddr::V6(ptr::read(&name as *const _ as _)) },
             _ => unreachable!(),
         };
-        Ok((n as usize, addr, EcnCodepoint::from_bits(ecn_bits)))
+        meta[0] = RecvMeta {
+            len: n as usize,
+            addr,
+            ecn: EcnCodepoint::from_bits(ecn_bits),
+        };
+        Ok(1)
     }
 }
 

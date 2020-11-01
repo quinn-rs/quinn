@@ -1,8 +1,10 @@
-use std::{io, net::SocketAddr};
+use std::{io, io::IoSliceMut};
 
 use mio::net::UdpSocket;
 
-use proto::{EcnCodepoint, Transmit};
+use proto::Transmit;
+
+use crate::udp::RecvMeta;
 
 impl super::UdpExt for UdpSocket {
     fn init_ext(&self) -> io::Result<()> {
@@ -30,7 +32,13 @@ impl super::UdpExt for UdpSocket {
         Ok(sent)
     }
 
-    fn recv_ext(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr, Option<EcnCodepoint>)> {
-        self.recv_from(buf).map(|(x, y)| (x, y, None))
+    fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
+        let (len, addr) = self.recv_from(&mut bufs[0])?;
+        meta[0] = RecvMeta {
+            len,
+            addr,
+            ecn: None,
+        };
+        Ok(1)
     }
 }
