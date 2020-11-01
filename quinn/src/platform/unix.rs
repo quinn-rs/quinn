@@ -167,6 +167,47 @@ impl super::UdpExt for UdpSocket {
         Ok(sent)
     }
 
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
+        use crate::udp::BATCH_SIZE;
+        let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
+        let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
+        let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
+        let max_msg_count = bufs.len().min(BATCH_SIZE);
+        for i in 0..max_msg_count {
+            prepare_recv(
+                &mut bufs[i],
+                &mut names[i],
+                &mut ctrls[i],
+                &mut hdrs[i].msg_hdr,
+            );
+        }
+        let msg_count = loop {
+            let n = unsafe {
+                libc::recvmmsg(
+                    self.as_raw_fd(),
+                    hdrs.as_mut_ptr(),
+                    bufs.len().min(BATCH_SIZE) as libc::c_uint,
+                    0,
+                    ptr::null_mut(),
+                )
+            };
+            if n == -1 {
+                let e = io::Error::last_os_error();
+                if e.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(e);
+            }
+            break n;
+        };
+        for i in 0..(msg_count as usize) {
+            meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize);
+        }
+        Ok(msg_count as usize)
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
     fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
         let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
         let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
