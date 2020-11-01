@@ -84,7 +84,7 @@ where
             *addr
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
-        Ok(endpoint.create_connection(ch, conn))
+        Ok(endpoint.connections.insert(ch, conn))
     }
 
     /// Switch to a new UDP socket
@@ -115,8 +115,8 @@ where
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let reason = Bytes::copy_from_slice(reason);
         let mut endpoint = self.inner.lock().unwrap();
-        endpoint.close = Some((error_code, reason.clone()));
-        for sender in endpoint.connections.values() {
+        endpoint.connections.close = Some((error_code, reason.clone()));
+        for sender in endpoint.connections.senders.values() {
             // Ignoring errors from dropped connections
             let _ = sender.unbounded_send(ConnectionEvent::Close {
                 error_code,
@@ -220,7 +220,7 @@ where
         }
         // Drop all outgoing channels, signaling the termination of the endpoint to the associated
         // connections.
-        endpoint.connections.clear();
+        endpoint.connections.senders.clear();
     }
 }
 
@@ -238,14 +238,10 @@ where
     incoming_live: bool,
     driver: Option<Waker>,
     ipv6: bool,
-    connections: HashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
-    // Stored to give out clones to new ConnectionInners
-    sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
+    connections: ConnectionSet,
     events: mpsc::UnboundedReceiver<(ConnectionHandle, EndpointEvent)>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
-    /// Set if the endpoint has been manually closed
-    close: Option<(VarInt, Bytes)>,
     driver_lost: bool,
     recv_buf: Box<[u8]>,
     idle: Broadcast,
@@ -266,7 +262,7 @@ where
                     let data = (&self.recv_buf[0..meta[0].len]).into();
                     match self.inner.handle(now, meta[0].addr, meta[0].ecn, data) {
                         Some((handle, DatagramEvent::NewConnection(conn))) => {
-                            let conn = self.create_connection(handle, conn);
+                            let conn = self.connections.insert(handle, conn);
                             if self.incoming_live {
                                 self.incoming.push_back(conn);
                                 if let Some(task) = self.incoming_reader.take() {
@@ -278,6 +274,7 @@ where
                             // Ignoring errors from dropped connections that haven't yet been cleaned up
                             let _ = self
                                 .connections
+                                .senders
                                 .get_mut(&handle)
                                 .unwrap()
                                 .unbounded_send(ConnectionEvent::Proto(event));
@@ -345,7 +342,7 @@ where
                 Poll::Ready(Some((ch, event))) => match event {
                     Proto(e) => {
                         if e.is_drained() {
-                            self.connections.remove(&ch);
+                            self.connections.senders.remove(&ch);
                             if self.connections.is_empty() {
                                 self.idle.wake();
                             }
@@ -354,6 +351,7 @@ where
                             // Ignoring errors from dropped connections that haven't yet been cleaned up
                             let _ = self
                                 .connections
+                                .senders
                                 .get_mut(&ch)
                                 .unwrap()
                                 .unbounded_send(ConnectionEvent::Proto(event));
@@ -368,8 +366,19 @@ where
             }
         }
     }
+}
 
-    fn create_connection(
+#[derive(Debug)]
+struct ConnectionSet {
+    senders: HashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
+    /// Stored to give out clones to new ConnectionInners
+    sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
+    /// Set if the endpoint has been manually closed
+    close: Option<(VarInt, Bytes)>,
+}
+
+impl ConnectionSet {
+    fn insert<S: proto::crypto::Session + 'static>(
         &mut self,
         handle: ConnectionHandle,
         conn: proto::generic::Connection<S>,
@@ -382,8 +391,12 @@ where
             })
             .unwrap();
         }
-        self.connections.insert(handle, send);
+        self.senders.insert(handle, send);
         Connecting::new(handle, conn, self.sender.clone(), recv)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.senders.is_empty()
     }
 }
 
@@ -419,7 +432,7 @@ where
         } else if let Some(conn) = endpoint.incoming.pop_front() {
             endpoint.inner.accept();
             Poll::Ready(Some(conn))
-        } else if endpoint.close.is_some() {
+        } else if endpoint.connections.close.is_some() {
             Poll::Ready(None)
         } else {
             endpoint.incoming_reader = Some(cx.waker().clone());
@@ -454,16 +467,18 @@ where
             socket,
             inner,
             ipv6,
-            sender,
             events,
             outgoing: VecDeque::new(),
             incoming: VecDeque::new(),
             incoming_live: true,
             incoming_reader: None,
             driver: None,
-            connections: HashMap::new(),
+            connections: ConnectionSet {
+                senders: HashMap::new(),
+                sender,
+                close: None,
+            },
             ref_count: 0,
-            close: None,
             driver_lost: false,
             recv_buf: recv_buf.into(),
             idle: Broadcast::new(),
