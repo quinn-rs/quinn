@@ -14,6 +14,7 @@ use super::{
 };
 use crate::{
     coding::BufMutExt,
+    connection::stats::FrameStats,
     frame::{self, FrameStruct},
     transport_parameters::TransportParameters,
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
@@ -437,6 +438,7 @@ impl Streams {
         buf: &mut Vec<u8>,
         pending: &mut Retransmits,
         sent: &mut Retransmits,
+        stats: &mut FrameStats,
         max_size: usize,
     ) {
         // RESET_STREAM
@@ -457,6 +459,7 @@ impl Streams {
                 final_offset: stream.offset(),
             }
             .encode(buf);
+            stats.reset_stream += 1;
         }
 
         // STOP_SENDING
@@ -475,6 +478,7 @@ impl Streams {
             trace!(stream = %frame.id, "STOP_SENDING");
             frame.encode(buf);
             sent.stop_sending.push(frame);
+            stats.stop_sending += 1;
         }
 
         // MAX_DATA
@@ -489,6 +493,7 @@ impl Streams {
                 sent.max_data = true;
                 buf.write(frame::Type::MAX_DATA);
                 buf.write(max);
+                stats.max_data += 1;
             }
         }
 
@@ -515,6 +520,7 @@ impl Streams {
             buf.write(frame::Type::MAX_STREAM_DATA);
             buf.write(id);
             buf.write_var(max);
+            stats.max_stream_data += 1;
         }
 
         // MAX_STREAMS_UNI
@@ -527,6 +533,7 @@ impl Streams {
             );
             buf.write(frame::Type::MAX_STREAMS_UNI);
             buf.write_var(self.max_remote[Dir::Uni as usize]);
+            stats.max_streams_uni += 1;
         }
 
         // MAX_STREAMS_BIDI
@@ -539,6 +546,7 @@ impl Streams {
             );
             buf.write(frame::Type::MAX_STREAMS_BIDI);
             buf.write_var(self.max_remote[Dir::Bi as usize]);
+            stats.max_streams_bidi += 1;
         }
     }
 

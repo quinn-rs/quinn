@@ -43,6 +43,9 @@ mod send_buffer;
 mod spaces;
 use spaces::{PacketSpace, Retransmits, SentPacket};
 
+mod stats;
+use stats::ConnectionStats;
+
 mod streams;
 pub use streams::Streams;
 pub use streams::{FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
@@ -161,6 +164,8 @@ where
     rem_cids: CidQueue,
     /// State of the unreliable datagram extension
     datagrams: DatagramState,
+    /// Connection level statistics
+    stats: ConnectionStats,
 }
 
 impl<S> Connection<S>
@@ -261,6 +266,7 @@ where
             config,
             rem_cids: CidQueue::new(1),
             rng,
+            stats: ConnectionStats::default(),
         };
         if side.is_client() {
             // Kick off the connection
@@ -496,6 +502,9 @@ where
 
         trace!("sending {} byte datagram", buf.len());
         self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
+
+        self.stats.packet_tx.packets += 1;
+        self.stats.packet_tx.bytes += buf.len() as u64;
 
         Some(Transmit {
             destination: self.path.remote,
@@ -2594,12 +2603,16 @@ where
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
             buf.write(frame::Type::HANDSHAKE_DONE);
             sent.retransmits.handshake_done = true;
+            // This is just a u8 counter and the frame is typically just sent once
+            self.stats.frame_tx.handshake_done =
+                self.stats.frame_tx.handshake_done.saturating_add(1);
         }
 
         // PING
         if mem::replace(&mut space.ping_pending, false) {
             trace!("PING");
             buf.write(frame::Type::PING);
+            self.stats.frame_tx.ping += 1;
         }
 
         // ACK
@@ -2614,6 +2627,7 @@ where
             };
             frame::Ack::encode(0, &space.pending_acks, ecn, buf);
             sent.acks = space.pending_acks.clone();
+            self.stats.frame_tx.acks += 1;
         }
 
         // PATH_CHALLENGE
@@ -2625,6 +2639,7 @@ where
                 trace!("PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::Type::PATH_CHALLENGE);
                 buf.write(token);
+                self.stats.frame_tx.path_challenge += 1;
             }
         }
 
@@ -2634,6 +2649,7 @@ where
                 trace!("PATH_RESPONSE {:08x}", response.token);
                 buf.write(frame::Type::PATH_RESPONSE);
                 buf.write(response.token);
+                self.stats.frame_tx.path_response += 1;
             }
         }
 
@@ -2658,6 +2674,7 @@ where
                 truncated.data.len()
             );
             truncated.encode(buf);
+            self.stats.frame_tx.crypto += 1;
             sent.retransmits.crypto.push_back(truncated);
             if !frame.data.is_empty() {
                 frame.offset += len as u64;
@@ -2670,6 +2687,7 @@ where
                 buf,
                 &mut space.pending,
                 &mut sent.retransmits,
+                &mut self.stats.frame_tx,
                 max_size,
             );
         }
@@ -2693,6 +2711,7 @@ where
             }
             .encode(buf);
             sent.retransmits.new_cids.push(issued);
+            self.stats.frame_tx.new_connection_id += 1;
         }
 
         // RETIRE_CONNECTION_ID
@@ -2705,6 +2724,7 @@ where
             buf.write(frame::Type::RETIRE_CONNECTION_ID);
             buf.write_var(seq);
             sent.retransmits.retire_cids.push(seq);
+            self.stats.frame_tx.retire_connection_id += 1;
         }
 
         // DATAGRAM
@@ -2721,11 +2741,13 @@ where
             }
             self.datagrams.outgoing_total -= datagram.data.len();
             datagram.encode(true, buf);
+            self.stats.frame_tx.datagram += 1;
         }
 
         // STREAM
         if space_id == SpaceId::Data {
             sent.stream_frames = self.streams.write_stream_frames(buf, max_size);
+            self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 
         sent
