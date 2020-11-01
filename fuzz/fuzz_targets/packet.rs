@@ -5,5 +5,8 @@ extern crate proto;
 use proto::fuzzing::{PacketParams, PartialDecode};
 
 fuzz_target!(|data: PacketParams| {
-    let decode = PartialDecode::new(data.buf, data.cid).unwrap();
+    let len = data.buf.len();
+    if let Ok(decoded) = PartialDecode::new(data.buf, data.local_cid_len) {
+        assert_eq!(len, decoded.0.len());
+    }
 });

@@ -90,7 +90,7 @@ impl PartialDecode {
     }
 
     /// Length of QUIC packet being decoded
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.buf.get_ref().len()
     }
 
