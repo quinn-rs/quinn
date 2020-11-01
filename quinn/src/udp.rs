@@ -1,6 +1,7 @@
 use std::{
     io,
-    net::SocketAddr,
+    io::IoSliceMut,
+    net::{Ipv6Addr, SocketAddr},
     task::{Context, Poll},
 };
 
@@ -48,10 +49,12 @@ impl UdpSocket {
     pub fn poll_recv(
         &self,
         cx: &mut Context,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<(usize, SocketAddr, Option<EcnCodepoint>)>> {
+        bufs: &mut [IoSliceMut<'_>],
+        meta: &mut [RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        debug_assert!(!bufs.is_empty());
         ready!(self.io.poll_read_ready(cx, mio::Ready::readable()))?;
-        match self.io.get_ref().recv_ext(buf) {
+        match self.io.get_ref().recv_ext(bufs, meta) {
             Ok(n) => Poll::Ready(Ok(n)),
             Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
                 self.io.clear_read_ready(cx, mio::Ready::readable())?;
@@ -66,7 +69,25 @@ impl UdpSocket {
     }
 }
 
-/// Number of UDP packets to send at a time
+/// Number of UDP packets to send/receive at a time
 ///
 /// Chosen somewhat arbitrarily; might benefit from additional tuning.
 pub const BATCH_SIZE: usize = 32;
+
+#[derive(Debug, Copy, Clone)]
+pub struct RecvMeta {
+    pub addr: SocketAddr,
+    pub len: usize,
+    pub ecn: Option<EcnCodepoint>,
+}
+
+impl Default for RecvMeta {
+    /// Constructs a value with arbitrary fields, intended to be overwritten
+    fn default() -> Self {
+        Self {
+            addr: SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0),
+            len: 0,
+            ecn: None,
+        }
+    }
+}
