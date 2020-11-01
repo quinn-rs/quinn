@@ -61,7 +61,13 @@ async fn server(mut incoming: quinn::Incoming) -> Result<()> {
     while let Some((data, offset)) = stream.read_unordered().await? {
         n = n.max(offset + data.len() as u64);
     }
-    println!("recvd {} bytes in {:?}", n, start.elapsed());
+    let dt = start.elapsed();
+    println!(
+        "recvd {} bytes in {:?} ({} MiB/s)",
+        n,
+        dt,
+        n as f32 / (dt.as_secs_f32() * 1024.0 * 1024.0)
+    );
     Ok(())
 }
 
