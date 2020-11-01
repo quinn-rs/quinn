@@ -13,7 +13,7 @@ pub struct CidQueue {
     cursor: usize,
     /// Sequence number of `self.buffer[cursor]`
     ///
-    /// The sequence of active (in use) CID. This sequence is also the smallest among CIDs in `buffer`.
+    /// The sequence number of the active CID; must be the smallest among CIDs in `buffer`.
     offset: u64,
 }
 
@@ -90,17 +90,17 @@ impl CidQueue {
     }
 
     /// Return active remote CID itself
-    pub fn rem_cid(&self) -> ConnectionId {
+    pub fn active(&self) -> ConnectionId {
         self.buffer[self.cursor].unwrap().0
     }
 
     /// Check whether self.offset points to a valid CID in CidQueue
-    pub fn validate_rem_cid(&mut self) -> bool {
-        self.buffer[self.cursor].as_ref().is_some()
+    pub fn is_active_retired(&mut self) -> bool {
+        self.buffer[self.cursor].is_none()
     }
 
     /// Return the sequence number of active remote CID
-    pub fn rem_cid_seq(&self) -> u64 {
+    pub fn active_seq(&self) -> u64 {
         self.offset
     }
 }

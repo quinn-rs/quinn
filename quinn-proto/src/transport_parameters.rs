@@ -175,7 +175,8 @@ impl TransportParameters {
         Ok(())
     }
 
-    /// Calculate the maximum number of CIDs that a peer is willing to issue
+    /// Maximum number of CIDs to issue to this peer
+    ///
     /// Consider both a) the active_connection_id_limit from the other end; and
     /// b) LOC_CID_COUNT used locally
     pub(crate) fn issue_cids_limit(&self) -> u64 {

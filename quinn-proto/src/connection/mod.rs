@@ -2415,7 +2415,7 @@ where
                         // switch immediately to enable clientside stateless resets.
                         debug_assert_eq!(self.rem_cids.rem_cid_seq(), 0);
                         self.update_rem_cid().unwrap();
-                    } else if update_reset_token && !self.rem_cids.validate_rem_cid() {
+                    } else if !self.rem_cids.validate_rem_cid() {
                         // If our current CID is meant to be retired; or
                         // active remote CID is invalid (due to packet loss or reordering),
                         // we must switch to next valid CID

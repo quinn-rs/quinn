@@ -1196,7 +1196,7 @@ fn cid_retirement() {
     let mut active_cid_num = CidQueue::LEN as u64;
     active_cid_num = active_cid_num.min(LOC_CID_COUNT);
 
-    let _next_retire_prior_to = active_cid_num + 1;
+    let next_retire_prior_to = active_cid_num + 1;
     pair.client_conn_mut(client_ch).ping();
     // Server retires all valid remote CIDs
     pair.server_conn_mut(server_ch)
