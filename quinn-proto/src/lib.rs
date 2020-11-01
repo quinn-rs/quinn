@@ -99,12 +99,12 @@ use arbitrary::Arbitrary;
 #[doc(hidden)]
 #[cfg(fuzzing)]
 pub mod fuzzing {
-    pub use bytes::{BytesMut, BufMut};
     pub use crate::connection::Streams;
     pub use crate::frame::ResetStream;
     pub use crate::packet::PartialDecode;
     pub use crate::transport_parameters::TransportParameters;
     use arbitrary::{Arbitrary, Result, Unstructured};
+    pub use bytes::{BufMut, BytesMut};
 
     impl Arbitrary for TransportParameters {
         fn arbitrary(u: &mut Unstructured<'_>) -> Result<Self> {
@@ -121,7 +121,7 @@ pub mod fuzzing {
     #[derive(Debug)]
     pub struct PacketParams {
         pub local_cid_len: usize,
-        pub buf: BytesMut
+        pub buf: BytesMut,
     }
 
     impl Arbitrary for PacketParams {
@@ -130,10 +130,7 @@ pub mod fuzzing {
             let bytes: Vec<u8> = Vec::arbitrary(u)?;
             let mut buf = BytesMut::with_capacity(bytes.len());
             buf.put_slice(&bytes[..]);
-            Ok(PacketParams {
-                local_cid_len,
-                buf
-            })
+            Ok(PacketParams { local_cid_len, buf })
         }
     }
 }
