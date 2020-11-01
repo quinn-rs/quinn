@@ -3,6 +3,7 @@ use std::{
     future::Future,
     io,
     io::IoSliceMut,
+    mem::MaybeUninit,
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
@@ -19,7 +20,7 @@ use crate::{
     broadcast::{self, Broadcast},
     builders::EndpointBuilder,
     connection::Connecting,
-    udp::{RecvMeta, UdpSocket},
+    udp::{RecvMeta, UdpSocket, BATCH_SIZE},
     ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND,
 };
 
@@ -251,35 +252,47 @@ impl<S> EndpointInner<S>
 where
     S: proto::crypto::Session + 'static,
 {
-    fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
         let mut recvd = 0;
+        let mut metas = [RecvMeta::default(); BATCH_SIZE];
+        let mut iovs = MaybeUninit::<[IoSliceMut<'a>; BATCH_SIZE]>::uninit();
+        self.recv_buf
+            .chunks_mut(self.recv_buf.len() / BATCH_SIZE)
+            .enumerate()
+            .for_each(|(i, buf)| unsafe {
+                iovs.as_mut_ptr()
+                    .cast::<IoSliceMut>()
+                    .add(i)
+                    .write(IoSliceMut::<'a>::new(buf));
+            });
+        let mut iovs = unsafe { iovs.assume_init() };
         loop {
-            let mut meta = [RecvMeta::default()];
-            let mut iov = [IoSliceMut::new(&mut self.recv_buf)];
-            match self.socket.poll_recv(cx, &mut iov, &mut meta) {
+            match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
-                    debug_assert_eq!(msgs, 1);
-                    let data = (&self.recv_buf[0..meta[0].len]).into();
-                    match self.inner.handle(now, meta[0].addr, meta[0].ecn, data) {
-                        Some((handle, DatagramEvent::NewConnection(conn))) => {
-                            let conn = self.connections.insert(handle, conn);
-                            if self.incoming_live {
-                                self.incoming.push_back(conn);
-                                if let Some(task) = self.incoming_reader.take() {
-                                    task.wake();
+                    recvd += msgs;
+                    for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
+                        let data = buf[0..meta.len].into();
+                        match self.inner.handle(now, meta.addr, meta.ecn, data) {
+                            Some((handle, DatagramEvent::NewConnection(conn))) => {
+                                let conn = self.connections.insert(handle, conn);
+                                if self.incoming_live {
+                                    self.incoming.push_back(conn);
+                                    if let Some(task) = self.incoming_reader.take() {
+                                        task.wake();
+                                    }
                                 }
                             }
+                            Some((handle, DatagramEvent::ConnectionEvent(event))) => {
+                                // Ignoring errors from dropped connections that haven't yet been cleaned up
+                                let _ = self
+                                    .connections
+                                    .senders
+                                    .get_mut(&handle)
+                                    .unwrap()
+                                    .unbounded_send(ConnectionEvent::Proto(event));
+                            }
+                            None => {}
                         }
-                        Some((handle, DatagramEvent::ConnectionEvent(event))) => {
-                            // Ignoring errors from dropped connections that haven't yet been cleaned up
-                            let _ = self
-                                .connections
-                                .senders
-                                .get_mut(&handle)
-                                .unwrap()
-                                .unbounded_send(ConnectionEvent::Proto(event));
-                        }
-                        None => {}
                     }
                 }
                 Poll::Pending => {
@@ -294,7 +307,6 @@ where
                     return Err(e);
                 }
             }
-            recvd += 1;
             if recvd >= IO_LOOP_BOUND {
                 return Ok(true);
             }
@@ -305,7 +317,7 @@ where
     fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
         let mut calls = 0;
         loop {
-            while self.outgoing.len() < crate::udp::BATCH_SIZE {
+            while self.outgoing.len() < BATCH_SIZE {
                 match self.inner.poll_transmit() {
                     Some(x) => self.outgoing.push_back(x),
                     None => break,
@@ -370,6 +382,7 @@ where
 
 #[derive(Debug)]
 struct ConnectionSet {
+    /// Senders for communicating with the endpoint's connections
     senders: HashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
     /// Stored to give out clones to new ConnectionInners
     sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
@@ -461,7 +474,8 @@ where
     S: proto::crypto::Session,
 {
     pub(crate) fn new(socket: UdpSocket, inner: proto::generic::Endpoint<S>, ipv6: bool) -> Self {
-        let recv_buf = vec![0; inner.config().get_max_udp_payload_size().min(64 * 1024) as usize];
+        let recv_buf =
+            vec![0; inner.config().get_max_udp_payload_size().min(64 * 1024) as usize * BATCH_SIZE];
         let (sender, events) = mpsc::unbounded();
         Self(Arc::new(Mutex::new(EndpointInner {
             socket,
