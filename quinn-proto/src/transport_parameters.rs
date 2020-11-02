@@ -21,7 +21,8 @@ use crate::{
     config::{EndpointConfig, ServerConfig, TransportConfig},
     crypto,
     shared::ConnectionId,
-    ResetToken, Side, TransportError, VarInt, MAX_CID_SIZE, MAX_STREAM_COUNT, RESET_TOKEN_SIZE,
+    ResetToken, Side, TransportError, VarInt, LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT,
+    RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
