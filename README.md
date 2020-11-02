@@ -12,7 +12,7 @@
 # Pure-rust QUIC protocol implementation 
 
 Quinn is a pure-rust, future-based implementation of the [QUIC][quic] transport protocol undergoing standardization by the IETF. 
-This library is at [draft 29][current-draft].
+This library is at [draft 32][current-draft].
 
 ## Features
 

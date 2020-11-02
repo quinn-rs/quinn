@@ -1,7 +1,7 @@
 use bytes::{Buf, BufMut};
 use std::{fmt, io::Cursor};
 
-use err_derive::Error;
+use thiserror::Error;
 use tracing::trace;
 
 use super::{
@@ -25,23 +25,23 @@ use super::{prefix_int, prefix_string};
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
-    #[error(display = "failed to parse integer: {:?}", _0)]
+    #[error("failed to parse integer: {0:?}")]
     InvalidInteger(prefix_int::Error),
-    #[error(display = "failed to parse string: {:?}", _0)]
+    #[error("failed to parse string: {0:?}")]
     InvalidString(prefix_string::Error),
-    #[error(display = "index is out of dynamic table bounds: {:?}", _0)]
+    #[error("index is out of dynamic table bounds: {0:?}")]
     InvalidIndex(vas::Error),
-    #[error(display = "dynamic table error: {}", _0)]
+    #[error("dynamic table error: {0}")]
     DynamicTableError(DynamicTableError),
-    #[error(display = "index '{}' is out of static table bounds", _0)]
+    #[error("index '{}' is out of static table bounds", _0)]
     InvalidStaticIndex(usize),
-    #[error(display = "invalid data prefix")]
+    #[error("invalid data prefix")]
     UnknownPrefix,
-    #[error(display = "missing references from dynamic table to decode header block")]
+    #[error("missing references from dynamic table to decode header block")]
     MissingRefs(usize),
-    #[error(display = "header prefix contains invalid base index: {:?}", _0)]
+    #[error("header prefix contains invalid base index: {0:?}")]
     BadBaseIndex(isize),
-    #[error(display = "data is unexpectedly truncated")]
+    #[error("data is unexpectedly truncated")]
     UnexpectedEnd,
 }
 

@@ -34,6 +34,7 @@ ring = { version = "0.16.7", optional = true }
 rustls = { git = "https://github.com/ctz/rustls", rev = "fee894f7e030", features = ["quic"], optional = true }
 rustls-native-certs = { git = "https://github.com/kwantam/rustls-native-certs", rev = "52fc75ad4430", optional = true }
 slab = "0.4"
+thiserror = "1.0.21"
 tracing = "0.1.10"
 webpki = { version = "0.21", optional = true }
 

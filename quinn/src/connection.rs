@@ -11,12 +11,12 @@ use std::{
 };
 
 use bytes::Bytes;
-use err_derive::Error;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
 use proto::{ConnectionError, ConnectionHandle, Dir, StreamEvent, StreamId};
+use thiserror::Error;
 use tokio::time::{delay_until, Delay, Instant as TokioInstant};
 use tracing::info_span;
 
@@ -282,11 +282,10 @@ where
             conn.driver = Some(cx.waker().clone());
             return Poll::Pending;
         }
-        match conn.error {
-            Some(ConnectionError::LocallyClosed) => Poll::Ready(()),
-            Some(_) => Poll::Ready(()),
-            None => unreachable!("drained connections always have an error"),
+        if conn.error.is_none() {
+            unreachable!("drained connections always have an error");
         }
+        Poll::Ready(())
     }
 }
 
@@ -985,18 +984,18 @@ where
 #[derive(Debug, Error, Clone, Eq, PartialEq)]
 pub enum SendDatagramError {
     /// The peer does not support receiving datagram frames
-    #[error(display = "datagrams not supported by peer")]
+    #[error("datagrams not supported by peer")]
     UnsupportedByPeer,
     /// Datagram support is disabled locally
-    #[error(display = "datagram support disabled")]
+    #[error("datagram support disabled")]
     Disabled,
     /// The datagram is larger than the connection can currently accommodate
     ///
     /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
     /// exceeded.
-    #[error(display = "datagram too large")]
+    #[error("datagram too large")]
     TooLarge,
     /// The connection was closed
-    #[error(display = "connection closed: {}", _0)]
-    ConnectionClosed(ConnectionError),
+    #[error("connection closed: {0}")]
+    ConnectionClosed(#[source] ConnectionError),
 }
