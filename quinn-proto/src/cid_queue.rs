@@ -196,11 +196,20 @@ mod tests {
             q.insert(cid(i)).unwrap();
         }
 
-        assert_eq!(q.retire_prior_to(4), 0..4);
-        let r = q.retire_prior_to(4);
+        assert_eq!(q.retire_prior_to(2), 0..2);
+        let r = q.retire_prior_to(2);
         assert_eq!(r.end - r.start, 0);
 
+        for i in 2..(CidQueue::LEN as u64 - 1) {
+            let _ = q.next().unwrap();
+            assert_eq!(q.active_seq(), i + 1);
+            let retire = q.retire_prior_to(i + 1);
+            assert_eq!(retire.end - retire.start, 0);
+            assert!(!q.is_active_retired());
+        }
+
         assert!(q.next().is_none());
+        assert!(!q.is_active_retired());
     }
 
     #[test]
