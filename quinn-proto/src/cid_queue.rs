@@ -2,13 +2,16 @@ use std::ops::Range;
 
 use crate::{shared::IssuedCid, ConnectionId, ResetToken};
 
+/// DataType stored in CidQueue buffer
+type CidData = (ConnectionId, Option<ResetToken>);
+
 /// Sliding window of active Connection IDs
 ///
 /// May contain gaps due to packet loss or reordering
 #[derive(Debug)]
 pub struct CidQueue {
     /// Ring buffer indexed by `self.cursor`
-    buffer: [Option<(ConnectionId, Option<ResetToken>)>; Self::LEN],
+    buffer: [Option<CidData>; Self::LEN],
     /// Index at which circular buffer addressing is based
     cursor: usize,
     /// Sequence number of `self.buffer[cursor]`
@@ -18,7 +21,6 @@ pub struct CidQueue {
 }
 
 impl CidQueue {
-
     pub fn new(cid: ConnectionId) -> Self {
         let mut buffer = [None; Self::LEN];
         buffer[0] = Some((cid, None));
@@ -66,21 +68,25 @@ impl CidQueue {
     /// Switch to next active CID if possible, return
     /// 1) the corresponding ResetToken and 2) a possibly-empty range preceding it to retire
     pub fn next(&mut self) -> Option<(ResetToken, Range<u64>)> {
-        for i in 1..Self::LEN {
-            let index = (self.cursor + i) % Self::LEN;
-            let reset_token = match self.buffer[index].as_ref() {
-                None => continue,
-                Some((_, token)) => *token,
-            };
-            self.buffer[self.cursor] = None;
+        let (i, cid_data) = self.iter().next()?;
+        self.buffer[self.cursor] = None;
 
-            let orig_offset = self.offset;
-            self.offset += i as u64;
-            self.cursor = (self.cursor + i) % Self::LEN;
-            let sequence = orig_offset + i as u64;
-            return Some((reset_token.unwrap(), orig_offset..sequence));
-        }
-        None
+        let orig_offset = self.offset;
+        self.offset += i as u64;
+        self.cursor = (self.cursor + i) % Self::LEN;
+        let sequence = orig_offset + i as u64;
+        Some((cid_data.1.unwrap(), orig_offset..sequence))
+    }
+
+    /// Iterate inactive CIDs in CidQueue that are not `None`
+    fn iter(&self) -> impl Iterator<Item = (usize, CidData)> + '_ {
+        (1..Self::LEN).filter_map(move |step| {
+            let index = (self.cursor + step) % Self::LEN;
+            match self.buffer[index] {
+                Some(cid_data) => Some((step, cid_data)),
+                None => None,
+            }
+        })
     }
 
     pub fn update_cid(&mut self, cid: ConnectionId) {
