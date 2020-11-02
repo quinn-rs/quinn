@@ -557,7 +557,7 @@ where
         let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
         let header = match space_id {
             SpaceId::Data if space.crypto.is_some() => Header::Short {
-                dst_cid: self.rem_cids.rem_cid(),
+                dst_cid: self.rem_cids.active(),
                 number,
                 spin: if self.spin_enabled {
                     self.spin
@@ -569,18 +569,18 @@ where
             SpaceId::Data => Header::Long {
                 ty: LongType::ZeroRtt,
                 src_cid: self.handshake_cid,
-                dst_cid: self.rem_cids.rem_cid(),
+                dst_cid: self.rem_cids.active(),
                 number,
             },
             SpaceId::Handshake => Header::Long {
                 ty: LongType::Handshake,
                 src_cid: self.handshake_cid,
-                dst_cid: self.rem_cids.rem_cid(),
+                dst_cid: self.rem_cids.active(),
                 number,
             },
             SpaceId::Initial => Header::Initial {
                 src_cid: self.handshake_cid,
-                dst_cid: self.rem_cids.rem_cid(),
+                dst_cid: self.rem_cids.active(),
                 token: match self.state {
                     State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
                     _ => Bytes::new(),
@@ -925,7 +925,7 @@ where
         // This is usually 1182 bytes, but we shouldn't document that without a doctest.
         let max_size = self.mtu as usize
             - 1                 // flags byte
-            - self.rem_cids.rem_cid().len()
+            - self.rem_cids.active().len()
             - 4                 // worst-case packet number size
             - self.spaces[SpaceId::Data].crypto.as_ref().map_or_else(|| &self.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
             - Datagram::SIZE_BOUND;
@@ -1905,7 +1905,7 @@ where
                         if self.total_authed_packets > 1
                             || packet.payload.len() <= 16 // token + 16 byte tag
                             || !S::is_valid_retry(
-                                &self.rem_cids.rem_cid(),
+                                &self.rem_cids.active(),
                                 &packet.header_data,
                                 &packet.payload,
                             )
@@ -2356,12 +2356,12 @@ where
                     // Peer A processes this NEW_CONNECTION_ID frame; update remote cid to 1,2,3
                     // and meanwhile send a RETIRE_CONNECTION_ID to retire cid 0 to peer B.
                     // If peer B doesn't check the cid limit here and send a new cid again, peer A will then face CONNECTION_ID_LIMIT_ERROR
-                    let allow_more_cid =
+                    let allow_more_cids =
                         self.peer_params.issue_cids_limit() > self.cids_active_seq.len() as u64;
                     self.endpoint_events
                         .push_back(EndpointEventInner::RetireConnectionId(
                             sequence,
-                            allow_more_cid,
+                            allow_more_cids,
                         ));
                 }
                 Frame::NewConnectionId(frame) => {
@@ -2370,7 +2370,7 @@ where
                         id = %frame.id,
                         retire_prior_to = frame.retire_prior_to,
                     );
-                    if self.rem_cids.rem_cid().is_empty() {
+                    if self.rem_cids.active().is_empty() {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "NEW_CONNECTION_ID when CIDs aren't in use",
                         ));
@@ -2382,7 +2382,6 @@ where
                     }
 
                     let retired = self.rem_cids.retire_prior_to(frame.retire_prior_to);
-                    let update_reset_token = !retired.is_empty();
                     self.spaces[SpaceId::Data]
                         .pending
                         .retire_cids
@@ -2413,9 +2412,9 @@ where
                     if self.side.is_server() && self.peer_params.stateless_reset_token.is_none() {
                         // We're a server using the initial remote CID for the client, so let's
                         // switch immediately to enable clientside stateless resets.
-                        debug_assert_eq!(self.rem_cids.rem_cid_seq(), 0);
+                        debug_assert_eq!(self.rem_cids.active_seq(), 0);
                         self.update_rem_cid().unwrap();
-                    } else if !self.rem_cids.validate_rem_cid() {
+                    } else if self.rem_cids.is_active_retired() {
                         // If our current CID is meant to be retired; or
                         // active remote CID is invalid (due to packet loss or reordering),
                         // we must switch to next valid CID
@@ -2486,7 +2485,7 @@ where
             );
             self.migrate(now, remote);
             // Break linkability, if possible
-            self.update_rem_cid().unwrap();
+            let _ = self.update_rem_cid();
         }
 
         Ok(())
@@ -2944,7 +2943,8 @@ where
         self.path.sending_ecn
     }
 
-    /// Instruct the peer to retire the next `n` connection IDs, and issue replacements
+    /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
+    /// with updated `retire_prior_to` field set to `v`
     #[cfg(test)]
     pub(crate) fn rotate_local_cid(&mut self, v: u64) {
         // Cannot retire more CIDs than what have been issued
@@ -2958,7 +2958,7 @@ where
     /// Check the current active remote CID sequence
     #[cfg(test)]
     pub(crate) fn active_rem_cid_seq(&self) -> u64 {
-        self.rem_cids.rem_cid_seq()
+        self.rem_cids.active_seq()
     }
 
     fn max_ack_delay(&self) -> Duration {

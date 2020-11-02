@@ -18,16 +18,15 @@ pub struct CidQueue {
 }
 
 impl CidQueue {
-    pub const LEN: usize = 5;
 
     pub fn new(cid: ConnectionId) -> Self {
-        let mut this = Self {
-            buffer: [None; Self::LEN],
+        let mut buffer = [None; Self::LEN];
+        buffer[0] = Some((cid, None));
+        Self {
+            buffer,
             cursor: 0,
             offset: 0,
-        };
-        this.buffer[this.cursor] = Some((cid, None));
-        this
+        }
     }
 
     pub fn insert(&mut self, cid: IssuedCid) -> Result<(), InsertError> {
@@ -103,6 +102,8 @@ impl CidQueue {
     pub fn active_seq(&self) -> u64 {
         self.offset
     }
+
+    pub const LEN: usize = 5;
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -140,7 +141,7 @@ mod tests {
         }
         for i in 1..CidQueue::LEN as u64 {
             let (_, retire) = q.next().unwrap();
-            assert_eq!(q.rem_cid_seq(), i);
+            assert_eq!(q.active_seq(), i);
             assert_eq!(retire.end - retire.start, 1);
         }
         assert!(q.next().is_none());
@@ -155,8 +156,8 @@ mod tests {
         for i in seqs {
             let (_, retire) = q.next().unwrap();
             dbg!(&retire);
-            assert_eq!(q.rem_cid_seq(), i);
-            assert_eq!(retire, (q.rem_cid_seq().saturating_sub(2))..q.rem_cid_seq());
+            assert_eq!(q.active_seq(), i);
+            assert_eq!(retire, (q.active_seq().saturating_sub(2))..q.active_seq());
         }
         assert!(q.next().is_none());
     }
@@ -176,7 +177,7 @@ mod tests {
         }
         for i in (CidQueue::LEN as u64 - 1)..(CidQueue::LEN as u64 + 3) {
             q.next().unwrap();
-            assert_eq!(q.rem_cid_seq(), i);
+            assert_eq!(q.active_seq(), i);
         }
         assert!(q.next().is_none());
     }
@@ -245,7 +246,7 @@ mod tests {
     fn always_valid() {
         let mut q = CidQueue::new(initial_cid());
         assert!(q.next().is_none());
-        assert_eq!(q.rem_cid(), initial_cid());
-        assert_eq!(q.rem_cid_seq(), 0);
+        assert_eq!(q.active(), initial_cid());
+        assert_eq!(q.active_seq(), 0);
     }
 }

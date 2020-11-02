@@ -1200,7 +1200,7 @@ fn cid_retirement() {
     pair.client_conn_mut(client_ch).ping();
     // Server retires all valid remote CIDs
     pair.server_conn_mut(server_ch)
-        .rotate_local_cid(_next_retire_prior_to);
+        .rotate_local_cid(next_retire_prior_to);
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(server_ch).is_closed());
