@@ -3,18 +3,17 @@ use std::{
     io,
     mem::MaybeUninit,
     pin::Pin,
-    str,
     task::{Context, Poll},
 };
 
 use bytes::Bytes;
-use err_derive::Error;
 use futures::{
     channel::oneshot,
     io::{AsyncRead, AsyncWrite},
     ready, FutureExt,
 };
 use proto::{ConnectionError, FinishError, StreamId};
+use thiserror::Error;
 
 use crate::{connection::ConnectionRef, VarInt};
 
@@ -536,17 +535,11 @@ where
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadToEndError {
     /// An error occurred during reading
-    #[error(display = "read error: {}", 0)]
-    Read(ReadError),
+    #[error("read error: {0}")]
+    Read(#[from] ReadError),
     /// The stream is larger than the user-supplied limit
-    #[error(display = "stream too long")]
+    #[error("stream too long")]
     TooLong,
-}
-
-impl From<ReadError> for ReadToEndError {
-    fn from(x: ReadError) -> Self {
-        ReadToEndError::Read(x)
-    }
 }
 
 impl<S> AsyncRead for RecvStream<S>
@@ -607,19 +600,19 @@ pub enum ReadError {
     /// The peer abandoned transmitting data on this stream.
     ///
     /// Carries an application-defined error code.
-    #[error(display = "stream reset by peer: error {}", 0)]
+    #[error("stream reset by peer: error {0}")]
     Reset(VarInt),
     /// The connection was closed.
-    #[error(display = "connection closed: {}", _0)]
+    #[error("connection closed: {0}")]
     ConnectionClosed(ConnectionError),
     /// Unknown stream
-    #[error(display = "unknown stream")]
+    #[error("unknown stream")]
     UnknownStream,
     /// Attempted an ordered read following an unordered read
     ///
     /// Performing an unordered read allows discontinuities to arise in the receive buffer of a
     /// stream which cannot be recovered, making further ordered reads impossible.
-    #[error(display = "ordered read after unordered read")]
+    #[error("ordered read after unordered read")]
     IllegalOrderedRead,
     /// This was a 0-RTT stream and the server rejected it.
     ///
@@ -627,7 +620,7 @@ pub enum ReadError {
     /// [`Connecting::into_0rtt()`].
     ///
     /// [`Connecting::into_0rtt()`]: crate::generic::Connecting::into_0rtt()
-    #[error(display = "0-RTT rejected")]
+    #[error("0-RTT rejected")]
     ZeroRttRejected,
 }
 
@@ -652,13 +645,13 @@ pub enum WriteError {
     /// The peer is no longer accepting data on this stream.
     ///
     /// Carries an application-defined error code.
-    #[error(display = "sending stopped by peer: error {}", 0)]
+    #[error("sending stopped by peer: error {0}")]
     Stopped(VarInt),
     /// The connection was closed.
-    #[error(display = "connection closed: {}", _0)]
-    ConnectionClosed(ConnectionError),
+    #[error("connection closed: {0}")]
+    ConnectionClosed(#[source] ConnectionError),
     /// Unknown stream
-    #[error(display = "unknown stream")]
+    #[error("unknown stream")]
     UnknownStream,
     /// This was a 0-RTT stream and the server rejected it.
     ///
@@ -666,7 +659,7 @@ pub enum WriteError {
     /// [`Connecting::into_0rtt()`].
     ///
     /// [`Connecting::into_0rtt()`]: crate::generic::Connecting::into_0rtt()
-    #[error(display = "0-RTT rejected")]
+    #[error("0-RTT rejected")]
     ZeroRttRejected,
 }
 
@@ -674,10 +667,10 @@ pub enum WriteError {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum StoppedError {
     /// The connection was closed.
-    #[error(display = "connection closed: {}", _0)]
-    ConnectionClosed(ConnectionError),
+    #[error("connection closed: {0}")]
+    ConnectionClosed(#[source] ConnectionError),
     /// Unknown stream
-    #[error(display = "unknown stream")]
+    #[error("unknown stream")]
     UnknownStream,
     /// This was a 0-RTT stream and the server rejected it.
     ///
@@ -685,7 +678,7 @@ pub enum StoppedError {
     /// [`Connecting::into_0rtt()`].
     ///
     /// [`Connecting::into_0rtt()`]: crate::generic::Connecting::into_0rtt()
-    #[error(display = "0-RTT rejected")]
+    #[error("0-RTT rejected")]
     ZeroRttRejected,
 }
 
@@ -760,11 +753,11 @@ where
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadExactError {
     /// The stream finished before all bytes were read
-    #[error(display = "stream finished early")]
+    #[error("stream finished early")]
     FinishedEarly,
     /// A read error occurred
-    #[error(display = "{}", 0)]
-    ReadError(ReadError),
+    #[error("{0}")]
+    ReadError(#[source] ReadError),
 }
 
 /// Future produced by [`RecvStream::read_unordered()`].

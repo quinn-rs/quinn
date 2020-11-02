@@ -135,12 +135,12 @@ impl Assembler {
     }
 
     #[cfg(test)]
-    fn next(&mut self, size: usize) -> Option<Box<[u8]>> {
+    fn next(&mut self, size: usize) -> Option<Vec<u8>> {
         let mut buf = vec![0; size];
         let read = self.read(&mut buf).unwrap();
         buf.resize(read, 0);
         if !buf.is_empty() {
-            Some(buf.into())
+            Some(buf)
         } else {
             None
         }

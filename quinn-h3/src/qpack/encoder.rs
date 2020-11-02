@@ -2,7 +2,7 @@ use std::{cmp, io::Cursor};
 
 use bytes::{Buf, BufMut};
 
-use err_derive::Error;
+use thiserror::Error;
 
 use super::{
     block::{
@@ -26,13 +26,13 @@ use super::{
 
 #[derive(Debug, PartialEq, Error)]
 pub enum Error {
-    #[error(display = "failed to insert in dynamic table: {}", _0)]
+    #[error("failed to insert in dynamic table: {0}")]
     Insertion(DynamicTableError),
-    #[error(display = "prefixed string: {:?}", _0)]
+    #[error("prefixed string: {0:?}")]
     InvalidString(StringError),
-    #[error(display = "prefixed integer: {:?}", _0)]
+    #[error("prefixed integer: {0:?}")]
     InvalidInteger(IntError),
-    #[error(display = "invalid data prefix")]
+    #[error("invalid data prefix")]
     UnknownPrefix,
 }
 

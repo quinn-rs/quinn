@@ -108,9 +108,9 @@ mod qpack;
 #[doc(hidden)]
 pub mod qpack;
 
-use err_derive::Error;
 use quinn::{ApplicationClose, ConnectionError, ReadError, StoppedError, VarInt, WriteError};
 use std::{error::Error as StdError, io::ErrorKind};
+use thiserror::Error;
 
 use proto::ErrorCode;
 
@@ -121,49 +121,49 @@ pub type ZeroRttAccepted = quinn::ZeroRttAccepted;
 #[derive(Debug, Error)]
 pub enum Error {
     /// Cannot make a new request, bescause the connection is closing
-    #[error(display = "Connection is closing, resquest aborted")]
+    #[error("Connection is closing, resquest aborted")]
     Aborted,
     /// Protocol violation detected by the internal HTTP/3 protocol state machine
-    #[error(display = "H3 protocol error: {:?}", _0)]
+    #[error("H3 protocol error: {0:?}")]
     Proto(proto::connection::Error),
     /// Error occurred at the `QUIC` level
-    #[error(display = "QUIC protocol error: {}", _0)]
-    Quic(quinn::ConnectionError),
+    #[error("QUIC protocol error: {0}")]
+    Quic(#[from] quinn::ConnectionError),
     /// A `QUIC`-specific read error occurred
-    #[error(display = "QUIC read error: {}", _0)]
-    Read(ReadError),
+    #[error("QUIC read error: {0}")]
+    Read(#[source] ReadError),
     /// A `QUIC`-specific write error occurred
-    #[error(display = "QUIC write error: {}", _0)]
-    Write(WriteError),
+    #[error("QUIC write error: {0}")]
+    Write(#[source] WriteError),
     /// A `QUIC`-specific error occurred while polling for STOP_SENDING
-    #[error(display = "QUIC error while polling for STOP_SENDING: {}", _0)]
-    Stopped(StoppedError),
+    #[error("QUIC error while polling for STOP_SENDING: {0}")]
+    Stopped(#[source] StoppedError),
     /// Programming error within the crate's code
-    #[error(display = "Internal error: {}", _0)]
+    #[error("Internal error: {0}")]
     Internal(String),
     /// The peer's behavior was detected as incorrect or malicious
-    #[error(display = "Incorrect peer behavior: {}", _0)]
+    #[error("Incorrect peer behavior: {0}")]
     Peer(String),
     /// The peer tried to open an unidirectional stream with an unknown type code
-    #[error(display = "unknown stream type {}", _0)]
+    #[error("unknown stream type {0}")]
     UnknownStream(u64),
     /// An IO error occurred
-    #[error(display = "IO error: {}", _0)]
-    Io(std::io::Error),
+    #[error("IO error: {0}")]
+    Io(#[source] std::io::Error),
     /// An overflow occurred into the `QPACK` decoder
-    #[error(display = "Overflow max data size")]
+    #[error("Overflow max data size")]
     Overflow,
     /// A future has been polled after it was already finished
-    #[error(display = "Polled after finished")]
+    #[error("Polled after finished")]
     Poll,
     /// The peer issued an HTTP/3 error code and an optional text description
-    #[error(display = "Http error: {:?}", _0)]
+    #[error("Http error: {0:?}")]
     Http(HttpError, Option<String>),
     /// Header validity error from a client call
-    #[error(display = "Header error: {:?}", _0)]
+    #[error("Header error: {0:?}")]
     Header(&'static str),
     /// Polling the issued body data yielded an error
-    #[error(display = "Polling body error: {}", _0)]
+    #[error("Polling body error: {0}")]
     Body(Box<dyn StdError + Send + Sync>),
 }
 
@@ -203,12 +203,6 @@ impl Error {
 impl From<proto::connection::Error> for Error {
     fn from(err: proto::connection::Error) -> Error {
         Error::Proto(err)
-    }
-}
-
-impl From<quinn::ConnectionError> for Error {
-    fn from(err: quinn::ConnectionError) -> Error {
-        Error::Quic(err)
     }
 }
 

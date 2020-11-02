@@ -181,7 +181,7 @@ pub struct TestEndpoint {
     timeout: Option<Instant>,
     pub outbound: VecDeque<Transmit>,
     delayed: VecDeque<Transmit>,
-    pub inbound: VecDeque<(Instant, Option<EcnCodepoint>, Box<[u8]>)>,
+    pub inbound: VecDeque<(Instant, Option<EcnCodepoint>, Vec<u8>)>,
     accepted: Option<ConnectionHandle>,
     pub connections: HashMap<ConnectionHandle, Connection>,
     conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
@@ -226,7 +226,7 @@ impl TestEndpoint {
             let (_, ecn, packet) = self.inbound.pop_front().unwrap();
             if let Some((ch, event)) =
                 self.endpoint
-                    .handle(now, remote, ecn, Vec::from(packet).as_slice().into())
+                    .handle(now, remote, ecn, packet.as_slice().into())
             {
                 match event {
                     DatagramEvent::NewConnection(conn) => {

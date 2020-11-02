@@ -18,7 +18,7 @@
 #![allow(clippy::cognitive_complexity)]
 #![allow(clippy::too_many_arguments)]
 
-use std::{fmt, net::SocketAddr, ops, time::Duration};
+use std::{convert::TryInto, fmt, net::SocketAddr, ops, time::Duration};
 
 mod cid_queue;
 #[doc(hidden)]
@@ -116,8 +116,14 @@ pub mod fuzzing {
         }
     }
 }
+
 /// The QUIC protocol version implemented
-const VERSION: u32 = 0xff00_001d;
+const VERSION: std::ops::RangeInclusive<u32> = 0xff00_001d..=0xff00_0020;
+
+/// Whether a 4-byte slice represents a supported version number
+fn is_supported_version(x: &[u8]) -> bool {
+    VERSION.contains(&u32::from_be_bytes(x.try_into().unwrap()))
+}
 
 /// Whether an endpoint was the initiator of a connection
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
@@ -248,7 +254,7 @@ pub struct Transmit {
     /// Explicit congestion notification bits to set on the packet
     pub ecn: Option<EcnCodepoint>,
     /// Contents of the datagram
-    pub contents: Box<[u8]>,
+    pub contents: Vec<u8>,
 }
 
 //
