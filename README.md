@@ -27,12 +27,12 @@ This library is at [draft 32][current-draft].
 
 ## Overview
 
-**quinn:** High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)  <br />
-**quinn-proto:** Deterministic state machine of the protocol which performs **no** I/O internally and is suitable for use with custom event loops (and potentially a C or C++ API). <br />
-**quinn-h3:** Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.  <br />
-**bench:** Benchmarks without any framework. <br />
-**interop:** Tooling that helps to run interoperability tests. <br />
-**fuzz:** Fuzz tests. <br />
+- **quinn:** High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)  
+- **quinn-proto:** Deterministic state machine of the protocol which performs **no** I/O internally and is suitable for use with custom event loops (and potentially a C or C++ API). 
+- **quinn-h3:** Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.  
+- **bench:** Benchmarks without any framework. 
+- **interop:** Tooling that helps to run interoperability tests. 
+- **fuzz:** Fuzz tests. 
 
 # Getting Started
 
@@ -99,9 +99,10 @@ future runs.
 
 ## Contribution
 
-- All feedback welcome. Feel free to file bugs, requests for documentation and
-  any other feedback to the [issue tracker][issues].
-- The quinn-proto test suite uses simulated IO for reproducibility and to avoid
+All feedback welcome. Feel free to file bugs, requests for documentation and
+any other feedback to the [issue tracker][issues]. 
+
+The quinn-proto test suite uses simulated IO for reproducibility and to avoid
 long sleeps in certain timing-sensitive tests. If the `SSLKEYLOGFILE`
 environment variable is set, the tests will emit UDP packets for inspection
 using external protocol analyzers like Wireshark, and NSS-compatible key logs
