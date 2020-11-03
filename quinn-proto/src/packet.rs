@@ -18,6 +18,7 @@ use crate::{
 // across QUIC versions), which gives us the destination CID and allows us
 // to inspect the version and packet type (which depends on the version).
 // This information allows us to fully decode and decrypt the packet.
+#[doc(hidden)]
 #[derive(Debug)]
 pub struct PartialDecode {
     plain_header: PlainHeader,
@@ -25,6 +26,7 @@ pub struct PartialDecode {
 }
 
 impl PartialDecode {
+    #[doc(hidden)]
     pub fn new(
         bytes: BytesMut,
         local_cid_len: usize,
@@ -90,6 +92,7 @@ impl PartialDecode {
     }
 
     /// Length of QUIC packet being decoded
+    #[doc(hidden)]
     pub fn len(&self) -> usize {
         self.buf.get_ref().len()
     }
