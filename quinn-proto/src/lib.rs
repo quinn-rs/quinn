@@ -126,7 +126,7 @@ pub mod fuzzing {
 
     impl Arbitrary for PacketParams {
         fn arbitrary(u: &mut Unstructured<'_>) -> Result<Self> {
-            let local_cid_len: usize = usize::arbitrary(u)?;
+            let local_cid_len = usize::arbitrary(u)?;
             let bytes: Vec<u8> = Vec::arbitrary(u)?;
             let mut buf = BytesMut::new();
             buf.put_slice(&bytes[..]);
