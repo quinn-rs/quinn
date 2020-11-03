@@ -128,7 +128,7 @@ pub mod fuzzing {
         fn arbitrary(u: &mut Unstructured<'_>) -> Result<Self> {
             let local_cid_len: usize = usize::arbitrary(u)?;
             let bytes: Vec<u8> = Vec::arbitrary(u)?;
-            let mut buf = BytesMut::with_capacity(bytes.len());
+            let mut buf = BytesMut::new();
             buf.put_slice(&bytes[..]);
             Ok(PacketParams { local_cid_len, buf })
         }
