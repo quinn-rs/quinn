@@ -1,5 +1,5 @@
 [workspace]
-members = ["quinn", "quinn-proto", "quinn-h3", "interop", "bench"]
+members = ["quinn", "quinn-proto", "quinn-h3", "interop", "bench", "fuzz"]
 
 [profile.bench]
 debug = true
