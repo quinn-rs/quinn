@@ -6,7 +6,7 @@ the protocol is used for all connections from Chrome web browsers to the Google 
  
 QUIC solves a number of transport-layer and application-layer problems experienced by modern web applications. 
 It is very similar to TCP+TLS+HTTP2, but implemented on top of UDP. 
-Having QUIC as a self-contained protocol it allows innovations which aren’t 
+Having QUIC as a self-contained protocol allows innovations which aren’t 
 possible with existing protocols as they are hampered by legacy clients and middleboxes.
 
 Key advantages of QUIC over TCP+TLS+HTTP2 include:
@@ -17,7 +17,9 @@ Key advantages of QUIC over TCP+TLS+HTTP2 include:
 * Contains forward error correction (FEC). 
  
 While QUIC's intentions are originally web-oriented, it offers interesting opportunities in other areas like game networking.
-One thing is for sure, QUIC has many great potentials and will serve us in the future with HTTP/3.
+One thing is for sure, QUIC has many great potentials and will serve us in the future with HTTP/3. 
+
+In the upcomming chapter we will be discussing various aspects of QUIC also in relation to Quinn. 
 
 [draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/
 [IETF]: https://www.ietf.org/
