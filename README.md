@@ -1,4 +1,4 @@
-# Quinn
+<h1 align="center"><img width="500" src="./docs/thumbnail.svg" /></h1>
 
 [![Documentation](https://docs.rs/quinn/badge.svg)](https://docs.rs/quinn/)
 [![Crates.io](https://img.shields.io/crates/v/quinn.svg)](https://crates.io/crates/quinn)
@@ -9,54 +9,57 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
-Quinn is an implementation of the [QUIC][quic] transport protocol undergoing
-standardization by the IETF. It is suitable for experimental use. This repository
-contains the following crates:
+# Pure-rust QUIC protocol implementation 
 
-* `quinn` contains a high-level async API based on tokio, see
-[quinn/examples/](https://github.com/djc/quinn/tree/master/quinn/examples) for
-usage. This will be used by most Rust developers. (Basic benchmarks are included.)
-* `quinn-proto` contains a deterministic state machine of the protocol which performs
-no I/O internally and is suitable for use with custom event loops (and potentially
-a C or C++ API).
-* `quinn-h3` contains an implementation of HTTP 3 and QPACK. It is split internally
-in a deterministatic state machine and a tokio-based high-level async API.
-* `bench` contains some extra benchmarks without any framework.
-* `interop` contains tooling that helps the Quinn team run interoperability tests.
-
-Quinn is the subject of a [RustFest Paris (May 2018) presentation][talk]; you can
-also get the [slides][slides] (and the [animation][animation] about head-of-line
-blocking). Video of the talk is available [on YouTube][youtube]. Since this
-presentation, Quinn has been merged with quicr, another Rust implementation.
-
-All feedback welcome. Feel free to file bugs, requests for documentation and
-any other feedback to the [issue tracker][issues].
-
-Quinn was created and is maintained by Dirkjan Ochtman and Benjamin Saunders.
+Quinn is a pure-rust, future-based implementation of the [QUIC][quic] transport protocol undergoing standardization by the IETF. 
+This library is at [draft 32][current-draft].
 
 ## Features
 
-* Simultaneous client/server operation
-* Ordered and unordered stream reads for improved performance
-* Works on stable Rust, tested on Linux, macOS and Windows
-* Pluggable cryptography, with a standard implementation backed by
-  [rustls][rustls] and [*ring*][ring]
-* Application-layer datagrams for small, unreliable messages
+- Simultaneous client/server operation.
+- Ordered and unordered stream reads for improved performance.
+- Works on stable Rust, tested on Linux, macOS and Windows.
+- Pluggable cryptography, with a standard implementation backed by
+  [rustls][rustls] and [*ring*][ring].
+- Application-layer datagrams for small, unreliable messages.
+- Future-based async API.
+- Experimental HTTP over QUIC.
 
-## Status
+## Overview
 
-- [x] QUIC draft 32 with TLS 1.3
-- [x] Cryptographic handshake
-- [x] Stream data w/ flow control and congestion control
-- [x] Connection close
-- [x] Stateless retry
-- [x] Explicit congestion notification
-- [x] Migration
-- [x] 0-RTT data
-- [x] Session resumption
-- [ ] HTTP over QUIC
+- **quinn:** High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)  
+- **quinn-proto:** Deterministic state machine of the protocol which performs **no** I/O internally and is suitable for use with custom event loops (and potentially a C or C++ API). 
+- **quinn-h3:** Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.  
+- **bench:** Benchmarks without any framework. 
+- **interop:** Tooling that helps to run interoperability tests. 
+- **fuzz:** Fuzz tests. 
+
+# Getting Started
+
+**Examples**
+
+```sh
+$ cargo run --example server ./
+$ cargo run --example client https://localhost:4433/Cargo.toml
+```
+
+This launches an HTTP 0.9 server on the loopback address serving the current
+working directory, with the client fetching `./Cargo.toml`. By default, the
+server generates a self-signed certificate and stores it to disk, where the
+client will automatically find and trust it.
+
+**Links**
+
+- Talk at [RustFest Paris (May 2018) presentation][talk]; [slides][slides]; [YouTube][youtube]
+- Usage [examples][examples]
+- Guide [book][documentation]
 
 ## Usage Notes
+
+<details>
+<summary>
+Click to show the notes
+</summary>
 
 ### Buffers
 
@@ -91,19 +94,13 @@ trust-on-first-use, servers that automatically generate self-signed certificates
 should write their generated certificate to persistent storage and reuse it on
 future runs.
 
-## Running the Examples
+</details>
+<p></p>
 
-```sh
-$ cargo run --example server ./
-$ cargo run --example client https://localhost:4433/Cargo.toml
-```
+## Contribution
 
-This launches a HTTP 0.9 server on the loopback address serving the current
-working directory, with the client fetching `./Cargo.toml`. By default, the
-server generates a self-signed certificate and stores it to disk, where the
-client will automatically find and trust it.
-
-## Development
+All feedback welcome. Feel free to file bugs, requests for documentation and
+any other feedback to the [issue tracker][issues]. 
 
 The quinn-proto test suite uses simulated IO for reproducibility and to avoid
 long sleeps in certain timing-sensitive tests. If the `SSLKEYLOGFILE`
@@ -111,6 +108,12 @@ environment variable is set, the tests will emit UDP packets for inspection
 using external protocol analyzers like Wireshark, and NSS-compatible key logs
 for the client side of each connection will be written to the path specified in
 the variable.
+
+## Authors
+
+* **Dirkjan Ochtman** - *Project owner & founder*
+* **Benjamin Saunders** - *Project owner & founder*
+* **Jean-Christophe Begue** - *Project collaborator, author of the HTTP/3 Implementation*
 
 [quic]: https://quicwg.github.io/
 [issues]: https://github.com/djc/quinn/issues
@@ -122,3 +125,6 @@ the variable.
 [youtube]: https://www.youtube.com/watch?v=EHgyY5DNdvI
 [letsencrypt]: https://letsencrypt.org/
 [rcgen]: https://crates.io/crates/rcgen
+[examples]: https://github.com/djc/quinn/tree/master/quinn/examples
+[documentation]: https://github.com/djc/quinn/issues/865
+[current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/29/
