@@ -7,7 +7,7 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
@@ -395,6 +395,11 @@ where
     /// switching to a cellular internet connection.
     pub fn remote_address(&self) -> SocketAddr {
         self.0.lock().unwrap().inner.remote_address()
+    }
+
+    /// Current best estimate of this connection's latency (round-trip-time)
+    pub fn rtt(&self) -> Duration {
+        self.0.lock().unwrap().inner.rtt()
     }
 
     /// Parameters negotiated during the handshake

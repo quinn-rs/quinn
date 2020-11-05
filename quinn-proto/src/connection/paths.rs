@@ -96,7 +96,7 @@ impl RttEstimator {
         }
     }
 
-    fn get(&self) -> Duration {
+    pub fn get(&self) -> Duration {
         self.smoothed.unwrap_or(self.latest)
     }
 

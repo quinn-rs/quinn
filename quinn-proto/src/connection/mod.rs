@@ -1011,6 +1011,11 @@ where
         self.path.remote
     }
 
+    /// Current best estimate of this connection's latency (round-trip-time)
+    pub fn rtt(&self) -> Duration {
+        self.path.rtt.get()
+    }
+
     fn on_packet_sent(
         &mut self,
         now: Instant,
