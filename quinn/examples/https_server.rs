@@ -41,7 +41,7 @@ struct Opt {
 }
 
 fn main() {
-    // Setup logger with enviroment arguments.
+    // Setup logger with environment arguments.
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -68,7 +68,7 @@ fn main() {
 
 #[tokio::main]
 async fn run(options: Opt) -> anyhow::Result<()> {
-    let server_config = setup_configuration(&options)?;
+    let server_config = initialize_configuration(&options)?;
 
     // Setup endpoint and initialize it to the configuration listening settings.
     let mut endpoint = quinn::Endpoint::builder();
@@ -100,7 +100,7 @@ async fn run(options: Opt) -> anyhow::Result<()> {
 }
 
 /// Try to find certificate files in the given paths.
-fn setup_certificate_from_path(key_path: &PathBuf, cert_path: &PathBuf) ->  anyhow::Result<(CertificateChain, quinn::PrivateKey)> {
+fn certificate_from_path(key_path: &PathBuf, cert_path: &PathBuf) ->  anyhow::Result<(CertificateChain, quinn::PrivateKey)> {
     let key = fs::read(key_path).context("failed to read private key")?;
     let key = if key_path.extension().map_or(false, |x| x == "der") {
         quinn::PrivateKey::from_der(&key)?
@@ -119,7 +119,7 @@ fn setup_certificate_from_path(key_path: &PathBuf, cert_path: &PathBuf) ->  anyh
 
 /// Try to find certificate files in the directory.
 /// A self-signed certificate will be auto-generated if they do not exist in the project folder.
-fn find_and_setup_certificate_from_directory() ->   anyhow::Result<(Certificate, quinn::PrivateKey)> {
+fn try_find_certificate_in_project_directory() ->   anyhow::Result<(Certificate, quinn::PrivateKey)> {
     let dirs = directories_next::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
     let path = dirs.data_local_dir();
     let cert_path = path.join("cert.der");
@@ -149,8 +149,8 @@ fn find_and_setup_certificate_from_directory() ->   anyhow::Result<(Certificate,
     Ok((cert, key))
 }
 
-/// Sets up the configuration for the server with the commandline arguments.
-fn setup_configuration(options: &Opt) -> Result<ServerConfig> {
+/// Initializes the server based on the commandline arguments.
+fn initialize_configuration(options: &Opt) -> Result<ServerConfig> {
     // First, setup the configuration builder.
     let mut transport_config = TransportConfig::default();
     transport_config.stream_window_uni(0).unwrap();
@@ -159,12 +159,12 @@ fn setup_configuration(options: &Opt) -> Result<ServerConfig> {
     let mut server_config = ServerConfigBuilder::new(server_config);
     server_config.protocols(common::ALPN_QUIC_HTTP);
 
-    // If the user entered a custom path use that, otherwise traverse project directory and look for certificate files.
+    // If the user entered a custom path use that, otherwise look in the project directory for certificate files.
     if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
-        let (cert_chain, key) = setup_certificate_from_path(&key_path, &cert_path)?;
+        let (cert_chain, key) = certificate_from_path(&key_path, &cert_path)?;
         server_config.certificate(cert_chain, key)?;
     } else {
-        let (cert, key) = find_and_setup_certificate_from_directory()? ;
+        let (cert, key) = try_find_certificate_in_project_directory()? ;
         server_config.certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
     }
 

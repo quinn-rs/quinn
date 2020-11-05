@@ -14,7 +14,6 @@ use quinn::{NewConnection, Connection, Endpoint};
 
 mod common;
 
-/// HTTP/0.9 over QUIC client
 #[derive(StructOpt, Debug)]
 #[structopt(name = "client")]
 struct Opt {
@@ -38,7 +37,7 @@ struct Opt {
 }
 
 fn main() {
-    // Initiate the client logger.
+    // Setup logger with environment arguments.
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -65,11 +64,11 @@ fn main() {
 #[tokio::main]
 async fn run(options: Opt) -> Result<()> {
     let url = options.url.clone();
-    let mut endpoint = setup_endpoint(&options)?;
+    let mut endpoint = initialize_endpoint(&options)?;
 
     let quinn::NewConnection {
         connection: mut conn, ..
-    } = setup_connection(&options, &endpoint, url.clone()).await?;
+    } = initialize_connection(&options, &endpoint, url.clone()).await?;
 
     if options.rebind {
         let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
@@ -87,8 +86,8 @@ async fn run(options: Opt) -> Result<()> {
     Ok(())
 }
 
-/// Sets the client configuration up.
-fn setup_client_configuration(options: &Opt) -> Result<quinn::ClientConfig> {
+/// Initializes the client configuration.
+fn initialize_client_configuration(options: &Opt) -> Result<quinn::ClientConfig> {
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(common::ALPN_QUIC_HTTP);
 
@@ -119,16 +118,16 @@ fn setup_client_configuration(options: &Opt) -> Result<quinn::ClientConfig> {
     Ok(client_config.build())
 }
 
-// Sets an endpoint up with configuration build from commandline arguments.
-fn setup_endpoint(options: &Opt) -> Result<Endpoint> {
+// Initializes an endpoint with the commandline arguments.
+fn initialize_endpoint(options: &Opt) -> Result<Endpoint> {
     let mut endpoint = quinn::Endpoint::builder();
-    endpoint.default_client_config(setup_client_configuration(options)?);
+    endpoint.default_client_config(initialize_client_configuration(options)?);
     let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
     Ok(endpoint)
 }
 
-/// Sets an connection up and connects with the given endpoint.
-async fn setup_connection(options: &Opt, endpoint: &Endpoint, url: Url) -> Result<NewConnection> {
+/// Initializes a connection and connects with the given endpoint.
+async fn initialize_connection(options: &Opt, endpoint: &Endpoint, url: Url) -> Result<NewConnection> {
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
         .next()
