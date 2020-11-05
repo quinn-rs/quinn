@@ -1,7 +1,7 @@
 use std::{convert::TryInto, fmt, num::TryFromIntError, sync::Arc, time::Duration};
 
-use err_derive::Error;
 use rand::RngCore;
+use thiserror::Error;
 
 #[cfg(feature = "rustls")]
 use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
@@ -626,7 +626,7 @@ where
 #[non_exhaustive]
 pub enum ConfigError {
     /// Value exceeds supported bounds
-    #[error(display = "value exceeds supported bounds")]
+    #[error("value exceeds supported bounds")]
     OutOfBounds,
 }
 

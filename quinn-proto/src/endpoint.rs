@@ -9,9 +9,9 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use err_derive::Error;
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use slab::Slab;
+use thiserror::Error;
 use tracing::{debug, trace, warn};
 
 use crate::{
@@ -159,8 +159,8 @@ where
             match PartialDecode::new(data, self.local_cid_generator.cid_len()) {
                 Ok(x) => x,
                 Err(PacketDecodeError::UnsupportedVersion {
-                    source,
-                    destination,
+                    src_cid,
+                    dst_cid,
                     version,
                 }) => {
                     if !self.is_server() {
@@ -172,8 +172,8 @@ where
                     let mut buf = Vec::<u8>::new();
                     Header::VersionNegotiate {
                         random: self.rng.gen::<u8>() | 0x40,
-                        src_cid: destination,
-                        dst_cid: source,
+                        src_cid: dst_cid,
+                        dst_cid: src_cid,
                     }
                     .encode(&mut buf);
                     // Grease with a reserved version
@@ -182,11 +182,11 @@ where
                     } else {
                         buf.write::<u32>(0x0a1a_2a4a);
                     }
-                    buf.write(VERSION); // supported version
+                    buf.write(*VERSION.start()); // supported version
                     self.transmits.push_back(Transmit {
                         destination: remote,
                         ecn: None,
-                        contents: buf.into(),
+                        contents: buf,
                     });
                     return None;
                 }
@@ -331,7 +331,7 @@ where
         self.transmits.push_back(Transmit {
             destination: remote,
             ecn: None,
-            contents: buf.into(),
+            contents: buf,
         });
     }
 
@@ -572,7 +572,7 @@ where
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
-                    contents: buf.into(),
+                    contents: buf,
                 });
                 return None;
             }
@@ -664,7 +664,7 @@ where
         self.transmits.push_back(Transmit {
             destination,
             ecn: None,
-            contents: buf.into(),
+            contents: buf,
         })
     }
 
@@ -807,18 +807,18 @@ pub enum ConnectError {
     /// The endpoint can no longer create new connections
     ///
     /// Indicates that a necessary component of the endpoint has been dropped or otherwise disabled.
-    #[error(display = "endpoint stopping")]
+    #[error("endpoint stopping")]
     EndpointStopping,
     /// The number of active connections on the local endpoint is at the limit
     ///
     /// Try using longer connection IDs.
-    #[error(display = "too many connections")]
+    #[error("too many connections")]
     TooManyConnections,
     /// The domain name supplied was malformed
-    #[error(display = "invalid DNS name: {}", _0)]
+    #[error("invalid DNS name: {0}")]
     InvalidDnsName(String),
     /// The transport configuration was invalid
-    #[error(display = "transport configuration error: {}", _0)]
+    #[error("transport configuration error: {0}")]
     Config(#[source] ConfigError),
 }
 

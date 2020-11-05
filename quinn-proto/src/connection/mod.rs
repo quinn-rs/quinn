@@ -1,7 +1,6 @@
 use std::{
     cmp,
     collections::{BTreeMap, VecDeque},
-    convert::TryInto,
     fmt, io, mem,
     net::SocketAddr,
     sync::Arc,
@@ -9,8 +8,8 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use err_derive::Error;
 use rand::{rngs::StdRng, Rng, SeedableRng};
+use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
@@ -20,16 +19,17 @@ use crate::{
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
+    is_supported_version,
     packet::{Header, LongType, Packet, PacketNumber, PartialDecode, PartialEncode, SpaceId},
     range_set::RangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
         EndpointEventInner, IssuedCid,
     },
-    transport_parameters::{self, TransportParameters},
+    transport_parameters::TransportParameters,
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
     LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
-    TIMER_GRANULARITY, VERSION,
+    TIMER_GRANULARITY,
 };
 
 mod assembler;
@@ -336,7 +336,7 @@ where
                 self.finish_packet(builder);
                 return Some(Transmit {
                     destination,
-                    contents: buf.into(),
+                    contents: buf,
                     ecn: None,
                 });
             }
@@ -378,11 +378,11 @@ where
 
         let mut buf = Vec::with_capacity(self.mtu as usize);
         let mut coalesce = spaces.len() > 1;
-        let pad_space = if self.side.is_client() && spaces.first() == Some(&SpaceId::Initial) {
-            spaces.last().cloned()
-        } else {
-            None
-        };
+        let pad_space = spaces.last().cloned().filter(|_| {
+            self.side.is_client() && spaces.first() == Some(&SpaceId::Initial)
+                || self.path.challenge.is_some()
+                || self.path_response.is_some()
+        });
 
         for space_id in spaces {
             let buf_start = buf.len();
@@ -499,7 +499,7 @@ where
 
         Some(Transmit {
             destination: self.path.remote,
-            contents: buf.into(),
+            contents: buf,
             ecn: if self.path.sending_ecn {
                 Some(EcnCodepoint::ECT0)
             } else {
@@ -814,18 +814,24 @@ where
     ///
     /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
-        Ok(self.streams.read_unordered(id)?.map(|(buf, offset, more)| {
-            self.add_read_credits(id, more);
-            (buf, offset)
-        }))
+        Ok(self
+            .streams
+            .read_unordered(id)?
+            .map(|(buf, offset, transmit_max_stream_data)| {
+                self.add_read_credits(id, transmit_max_stream_data);
+                (buf, offset)
+            }))
     }
 
     /// Read from the given recv stream
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
-        Ok(self.streams.read(id, buf)?.map(|(len, more)| {
-            self.add_read_credits(id, more);
-            len
-        }))
+        Ok(self
+            .streams
+            .read(id, buf)?
+            .map(|(len, transmit_max_stream_data)| {
+                self.add_read_credits(id, transmit_max_stream_data);
+                len
+            }))
     }
 
     /// Send data on the given stream
@@ -2092,11 +2098,7 @@ where
                         if self.total_authed_packets > 1 {
                             return Ok(());
                         }
-                        if packet
-                            .payload
-                            .chunks(4)
-                            .any(|chunk| u32::from_be_bytes(chunk.try_into().unwrap()) == VERSION)
-                        {
+                        if packet.payload.chunks(4).any(is_supported_version) {
                             return Ok(());
                         }
                         debug!("remote doesn't support our version");
@@ -2746,13 +2748,6 @@ where
                 "CID authentication failure",
             ));
         }
-        if params.initial_max_streams_bidi.0 > MAX_STREAM_COUNT
-            || params.initial_max_streams_uni.0 > MAX_STREAM_COUNT
-        {
-            return Err(TransportError::STREAM_LIMIT_ERROR(
-                "unrepresentable initial stream limit",
-            ));
-        }
 
         Ok(())
     }
@@ -2789,10 +2784,10 @@ where
         self.streams.alloc_remote_stream(&self.peer_params, dir);
     }
 
-    fn add_read_credits(&mut self, id: StreamId, more: bool) {
+    fn add_read_credits(&mut self, id: StreamId, transmit_max_stream_data: bool) {
         let space = &mut self.spaces[SpaceId::Data];
         space.pending.max_data = true;
-        if more {
+        if transmit_max_stream_data {
             // Only bother issuing stream credit if the peer wants to send more
             space.pending.max_stream_data.insert(id);
         }
@@ -3010,25 +3005,25 @@ where
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConnectionError {
     /// The peer doesn't implement any supported version.
-    #[error(display = "peer doesn't implement any supported version")]
+    #[error("peer doesn't implement any supported version")]
     VersionMismatch,
     /// The peer violated the QUIC specification as understood by this implementation.
-    #[error(display = "{}", _0)]
-    TransportError(#[source] TransportError),
+    #[error("{0}")]
+    TransportError(#[from] TransportError),
     /// The peer's QUIC stack aborted the connection automatically.
-    #[error(display = "aborted by peer: {}", 0)]
+    #[error("aborted by peer: {}", 0)]
     ConnectionClosed(frame::ConnectionClose),
     /// The peer closed the connection.
-    #[error(display = "closed by peer: {}", 0)]
+    #[error("closed by peer: {}", 0)]
     ApplicationClosed(frame::ApplicationClose),
     /// The peer is unable to continue processing this connection, usually due to having restarted.
-    #[error(display = "reset by peer")]
+    #[error("reset by peer")]
     Reset,
     /// The peer has become unreachable.
-    #[error(display = "timed out")]
+    #[error("timed out")]
     TimedOut,
     /// The local application closed the connection.
-    #[error(display = "closed")]
+    #[error("closed")]
     LocallyClosed,
 }
 
@@ -3052,12 +3047,6 @@ impl From<ConnectionError> for io::Error {
             TransportError(_) | VersionMismatch | LocallyClosed => io::ErrorKind::Other,
         };
         io::Error::new(kind, x)
-    }
-}
-
-impl From<transport_parameters::Error> for ConnectionError {
-    fn from(e: transport_parameters::Error) -> Self {
-        TransportError::from(e).into()
     }
 }
 
@@ -3223,16 +3212,16 @@ const MIN_PACKET_SPACE: usize = 40;
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum SendDatagramError {
     /// The peer does not support receiving datagram frames
-    #[error(display = "datagrams not supported by peer")]
+    #[error("datagrams not supported by peer")]
     UnsupportedByPeer,
     /// Datagram support is disabled locally
-    #[error(display = "datagram support disabled")]
+    #[error("datagram support disabled")]
     Disabled,
     /// The datagram is larger than the connection can currently accommodate
     ///
     /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
     /// exceeded.
-    #[error(display = "datagram too large")]
+    #[error("datagram too large")]
     TooLarge,
 }
 

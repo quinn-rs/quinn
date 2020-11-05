@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, io, ops::Range, str};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use err_derive::Error;
+use thiserror::Error;
 
 use crate::{
     coding::{self, BufExt, BufMutExt},
@@ -254,7 +254,7 @@ impl Header {
                 number,
             } => {
                 w.write(u8::from(LongHeaderType::Initial) | number.tag());
-                w.write(VERSION);
+                w.write(*VERSION.start());
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 w.write_var(token.len() as u64);
@@ -274,7 +274,7 @@ impl Header {
                 number,
             } => {
                 w.write(u8::from(LongHeaderType::Standard(ty)) | number.tag());
-                w.write(VERSION);
+                w.write(*VERSION.start());
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
@@ -290,7 +290,7 @@ impl Header {
                 ref src_cid,
             } => {
                 w.write(u8::from(LongHeaderType::Retry));
-                w.write(VERSION);
+                w.write(*VERSION.start());
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 PartialEncode {
@@ -528,10 +528,10 @@ impl PlainHeader {
                 });
             }
 
-            if version != VERSION {
+            if !VERSION.contains(&version) {
                 return Err(PacketDecodeError::UnsupportedVersion {
-                    source: src_cid,
-                    destination: dst_cid,
+                    src_cid,
+                    dst_cid,
                     version,
                 });
             }
@@ -711,13 +711,13 @@ pub(crate) enum LongType {
 
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) enum PacketDecodeError {
-    #[error(display = "unsupported version {:x}", version)]
+    #[error("unsupported version {version:x}")]
     UnsupportedVersion {
-        source: ConnectionId,
-        destination: ConnectionId,
+        src_cid: ConnectionId,
+        dst_cid: ConnectionId,
         version: u32,
     },
-    #[error(display = "invalid header: {}", _0)]
+    #[error("invalid header: {0}")]
     InvalidHeader(&'static str),
 }
 
