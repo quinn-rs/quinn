@@ -1013,7 +1013,7 @@ where
 
     /// Current best estimate of this connection's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
-        self.path.rtt.conservative()
+        self.path.rtt.get()
     }
 
     fn on_packet_sent(
