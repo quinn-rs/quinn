@@ -81,13 +81,13 @@ async fn run(options: Opt) -> Result<()> {
     // Perform a GET request with the filename.
     perform_request(url, &mut conn).await;
 
-    // Clean up some resources.
+    // Close connection.
     conn.close(0u32.into(), b"done");
 
     Ok(())
 }
 
-/// Initializes the client configuration.
+/// Initializes the client configuration from the command-line arguments.
 fn initialize_client_configuration(options: &Opt) -> Result<quinn::ClientConfig> {
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(common::ALPN_QUIC_HTTP);
@@ -96,7 +96,7 @@ fn initialize_client_configuration(options: &Opt) -> Result<quinn::ClientConfig>
         client_config.enable_keylog();
     }
 
-    // If the user entered a certificate authority path, use it, otherwise search for an certificate in the project folder.
+    // If the user entered a certificate authority path, use it, otherwise search for a certificate in the project folder.
     if let Some(ref ca_path) = &options.ca {
         client_config
             .add_certificate_authority(quinn::Certificate::from_der(&fs::read(&ca_path)?)?)?;
@@ -119,7 +119,7 @@ fn initialize_client_configuration(options: &Opt) -> Result<quinn::ClientConfig>
     Ok(client_config.build())
 }
 
-// Initializes an endpoint with the commandline arguments.
+// Initializes an endpoint with the command-line arguments.
 fn initialize_endpoint(options: &Opt) -> Result<Endpoint> {
     let mut endpoint = quinn::Endpoint::builder();
     endpoint.default_client_config(initialize_client_configuration(options)?);
@@ -136,7 +136,7 @@ async fn initialize_connection(options: &Opt, endpoint: &Endpoint, url: Url) -> 
 
     let start = Instant::now();
 
-    // Try get server host address.
+    // Try get the server host address.
     let host = options
         .host
         .as_ref()
@@ -154,7 +154,7 @@ async fn initialize_connection(options: &Opt, endpoint: &Endpoint, url: Url) -> 
     Ok(new_conn)
 }
 
-/// Opens up an bidirectional stream to the server, requests a file, waits for the response, and print it to the terminal.
+/// Opens up a bidirectional stream to the server, requests a file, waits for the response, and prints it to the terminal.
 async fn perform_request(url: Url, conn: &mut Connection) -> Result<()> {
     let (mut send, recv) = conn
         .open_bi()
@@ -171,9 +171,9 @@ async fn perform_request(url: Url, conn: &mut Connection) -> Result<()> {
         .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
 
     let response_start = Instant::now();
-    eprintln!("request sent at {:?}", response_start);
+    eprintln!("request sent");
 
-    // Wait for server file response.
+    // Wait for server response with requested file bytes.
     let response = recv
         .read_to_end(usize::max_value())
         .await

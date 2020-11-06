@@ -21,10 +21,10 @@ mod common;
 #[derive(StructOpt, Debug)]
 #[structopt(name = "server")]
 struct Opt {
-    /// file to log TLS keys to for debugging
+    /// File to log TLS keys to for debugging
     #[structopt(long = "keylog")]
     keylog: bool,
-    /// directory to serve files from
+    /// Directory to serve files from
     #[structopt(parse(from_os_str))]
     root: PathBuf,
     /// TLS private key in PEM format
@@ -63,7 +63,7 @@ fn main() {
         }
     };
 
-    // Close program with given exit code.
+    // Close program with the given exit code.
     ::std::process::exit(code);
 }
 
@@ -150,7 +150,7 @@ fn try_find_certificate_in_project_directory() -> anyhow::Result<(Certificate, q
     Ok((cert, key))
 }
 
-/// Initializes the server based on the commandline arguments.
+/// Initializes the server based on the command-line arguments.
 fn initialize_configuration(options: &Opt) -> Result<ServerConfig> {
     // First, setup the configuration builder.
     let mut transport_config = TransportConfig::default();
@@ -228,7 +228,7 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
     Ok(())
 }
 
-/// Handles the file requests and sends the file as respond.
+/// Handles the file requests and sends the file as a response.
 async fn handle_request(
     root: Arc<Path>,
     (mut send, buffer): (quinn::SendStream, quinn::RecvStream),

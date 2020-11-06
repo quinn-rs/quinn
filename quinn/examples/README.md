@@ -1,11 +1,10 @@
 ## HTTPS File Serving Example
 
-The `https` example shows how to serve files from an directory over HTTPS. 
-It exists out of two parts, namely a server and a client:
+The `https` example shows how to request a file on the `server` from the `client` over HTTPS. 
 
 1. HTTPS Server (`http_server.rs`)
 
-The server, listens for any client requesting a file. 
+The server listens for any client requesting a file. 
 If the file path is valid and allowed, it returns the contents. 
 
 Open up a terminal and execute:
@@ -14,9 +13,11 @@ Open up a terminal and execute:
 $ cargo run --example https_server ./
 ```
 
+*additional arguments can be passed, see the `Opt` struct in the example.*
+
 2. HTTP Client (`http_client.rs`)
 
-The client requests a file. 
+The client requests a file and prints it to the console. 
 If the file is on the server, it will receive the response. 
 
 In a new terminal execute:
@@ -25,20 +26,22 @@ In a new terminal execute:
 $ cargo run --example https_client https://localhost:4433/README.MD
 ```
 
+*additional arguments can be passed, see the `Opt` struct in the example.*
+
 **Result:**
 
-The output will be the contents of the README.
+The output will be the contents of this README.
 
 ## Minimal Example
 The `connection.rs` example intends to use the smallest amount of code to make a simple QUIC connection.
 The server issues it's own certificate and passes it to the client to trust.
-
 
 ```text
 $ cargo run --example connection
 ```
 
 This example will make a QUIC connection on localhost, and you should see output like:
+
 ```text
 [server] incoming connection: id=3680c7d3b3ebd250 addr=127.0.0.1:50469
 [client] connected: id=61a2df1548935aeb, addr=127.0.0.1:5000
@@ -53,12 +56,13 @@ $ cargo run --example insecure_connection --features="rustls/dangerous_configura
 ```
 
 ## Single Socket Example
+
 You can have multiple QUIC connections over a single UDP socket. This is especially
 useful, if you are building a peer-to-peer system where you potentially need to communicate with
 thousands of peers or if you have a
 [hole punched](https://en.wikipedia.org/wiki/UDP_hole_punching) UDP socket.
-In addition, QUIC servers and clients can both operate on the same UDP socket.
-This example demonstrate how to make multiple outgoing connections on a single UDP socket.
+Besides, QUIC servers and clients can both operate on the same UDP socket.
+This example demonstrates how to make multiple outgoing connections on a single UDP socket.
 
 ```text 
 $ cargo run --example single_socket
@@ -75,5 +79,5 @@ The expected output should be something like:
 [client] connected: id=621265b108a59fad, addr=127.0.0.1:5002
 ```
 
-Notice how server sees multiple incoming connections with different IDs coming from the same
+Notice how the server sees multiple incoming connections with different IDs coming from the same
 endpoint.
