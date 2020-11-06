@@ -10,7 +10,8 @@ use anyhow::{anyhow, Result};
 use structopt::StructOpt;
 use tracing::{error, info};
 use url::Url;
-use quinn::{NewConnection, Connection, Endpoint};
+
+use quinn::{Connection, Endpoint, NewConnection};
 
 mod common;
 
@@ -43,7 +44,7 @@ fn main() {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .finish(),
     )
-    .unwrap();
+        .unwrap();
 
     // Read command line arguments.
     let opt = Opt::from_args();

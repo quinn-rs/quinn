@@ -8,11 +8,12 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{StreamExt, TryFutureExt};
+use rustls::internal::msgs::handshake::ServerExtension::RenegotiationInfo;
 use structopt::{self, StructOpt};
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
-use quinn::{ServerConfig, TransportConfig, ServerConfigBuilder, CertificateChain, Certificate, PrivateKey, ParseError};
-use rustls::internal::msgs::handshake::ServerExtension::RenegotiationInfo;
+
+use quinn::{Certificate, CertificateChain, ParseError, PrivateKey, ServerConfig, ServerConfigBuilder, TransportConfig};
 use quinn::crypto::KeyPair;
 
 mod common;
@@ -47,7 +48,7 @@ fn main() {
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
             .finish(),
     )
-    .unwrap();
+        .unwrap();
 
     // Read command line arguments.
     let opt = Opt::from_args();
@@ -100,7 +101,7 @@ async fn run(options: Opt) -> anyhow::Result<()> {
 }
 
 /// Try to find certificate files in the given paths.
-fn certificate_from_path(key_path: &PathBuf, cert_path: &PathBuf) ->  anyhow::Result<(CertificateChain, quinn::PrivateKey)> {
+fn certificate_from_path(key_path: &PathBuf, cert_path: &PathBuf) -> anyhow::Result<(CertificateChain, quinn::PrivateKey)> {
     let key = fs::read(key_path).context("failed to read private key")?;
     let key = if key_path.extension().map_or(false, |x| x == "der") {
         quinn::PrivateKey::from_der(&key)?
@@ -119,7 +120,7 @@ fn certificate_from_path(key_path: &PathBuf, cert_path: &PathBuf) ->  anyhow::Re
 
 /// Try to find certificate files in the directory.
 /// A self-signed certificate will be auto-generated if they do not exist in the project folder.
-fn try_find_certificate_in_project_directory() ->   anyhow::Result<(Certificate, quinn::PrivateKey)> {
+fn try_find_certificate_in_project_directory() -> anyhow::Result<(Certificate, quinn::PrivateKey)> {
     let dirs = directories_next::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
     let path = dirs.data_local_dir();
     let cert_path = path.join("cert.der");
@@ -164,7 +165,7 @@ fn initialize_configuration(options: &Opt) -> Result<ServerConfig> {
         let (cert_chain, key) = certificate_from_path(&key_path, &cert_path)?;
         server_config.certificate(cert_chain, key)?;
     } else {
-        let (cert, key) = try_find_certificate_in_project_directory()? ;
+        let (cert, key) = try_find_certificate_in_project_directory()?;
         server_config.certificate(quinn::CertificateChain::from_certs(vec![cert]), key)?;
     }
 
@@ -222,8 +223,8 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
         }
         Ok(())
     }
-    .instrument(span)
-    .await?;
+        .instrument(span)
+        .await?;
     Ok(())
 }
 
