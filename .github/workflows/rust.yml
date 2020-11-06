@@ -55,7 +55,17 @@ jobs:
         if: always()
         with:
           command: clippy
-          args: --workspace --all-targets -- -D warnings
+          args: --workspace --exclude fuzz --all-targets -- -D warnings
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+      - name: lint fuzz
+        run: |
+          cd fuzz
+          cargo clippy -- -D warnings
 
   audit:
     runs-on: ubuntu-latest
