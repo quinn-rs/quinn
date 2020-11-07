@@ -1,0 +1,714 @@
+<!DOCTYPE HTML>
+<html lang="en" class="sidebar-visible no-js light">
+    <head>
+        <!-- Book generated using mdBook -->
+        <meta charset="UTF-8">
+        <title>Quinn</title>
+        
+        <meta name="robots" content="noindex" />
+        
+        
+
+
+        <!-- Custom HTML head -->
+        
+
+
+        <meta content="text/html; charset=utf-8" http-equiv="Content-Type">
+        <meta name="description" content="">
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <meta name="theme-color" content="#ffffff" />
+
+        
+        <link rel="icon" href="favicon.svg">
+        
+        
+        <link rel="shortcut icon" href="favicon.png">
+        
+        <link rel="stylesheet" href="css/variables.css">
+        <link rel="stylesheet" href="css/general.css">
+        <link rel="stylesheet" href="css/chrome.css">
+        
+        <link rel="stylesheet" href="css/print.css" media="print">
+        
+
+        <!-- Fonts -->
+        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        
+        <link rel="stylesheet" href="fonts/fonts.css">
+        
+
+        <!-- Highlight.js Stylesheets -->
+        <link rel="stylesheet" href="highlight.css">
+        <link rel="stylesheet" href="tomorrow-night.css">
+        <link rel="stylesheet" href="ayu-highlight.css">
+
+        <!-- Custom theme stylesheets -->
+        
+
+        
+    </head>
+    <body>
+        <!-- Provide site root to javascript -->
+        <script type="text/javascript">
+            var path_to_root = "";
+            var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
+        </script>
+
+        <!-- Work around some values being stored in localStorage wrapped in quotes -->
+        <script type="text/javascript">
+            try {
+                var theme = localStorage.getItem('mdbook-theme');
+                var sidebar = localStorage.getItem('mdbook-sidebar');
+
+                if (theme.startsWith('"') && theme.endsWith('"')) {
+                    localStorage.setItem('mdbook-theme', theme.slice(1, theme.length - 1));
+                }
+
+                if (sidebar.startsWith('"') && sidebar.endsWith('"')) {
+                    localStorage.setItem('mdbook-sidebar', sidebar.slice(1, sidebar.length - 1));
+                }
+            } catch (e) { }
+        </script>
+
+        <!-- Set the theme before any content is loaded, prevents flash -->
+        <script type="text/javascript">
+            var theme;
+            try { theme = localStorage.getItem('mdbook-theme'); } catch(e) { }
+            if (theme === null || theme === undefined) { theme = default_theme; }
+            var html = document.querySelector('html');
+            html.classList.remove('no-js')
+            html.classList.remove('light')
+            html.classList.add(theme);
+            html.classList.add('js');
+        </script>
+
+        <!-- Hide / unhide sidebar before it is displayed -->
+        <script type="text/javascript">
+            var html = document.querySelector('html');
+            var sidebar = 'hidden';
+            if (document.body.clientWidth >= 1080) {
+                try { sidebar = localStorage.getItem('mdbook-sidebar'); } catch(e) { }
+                sidebar = sidebar || 'visible';
+            }
+            html.classList.remove('sidebar-visible');
+            html.classList.add("sidebar-" + sidebar);
+        </script>
+
+        <nav id="sidebar" class="sidebar" aria-label="Table of contents">
+            <div class="sidebar-scrollbox">
+                <ol class="chapter"><li class="chapter-item expanded "><a href="quinn.html"><strong aria-hidden="true">1.</strong> QUINN Introduction</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="quin/certificate.html"><strong aria-hidden="true">1.1.</strong> Cryptography Setup</a></li><li class="chapter-item expanded "><a href="quin/set-up-connection.html"><strong aria-hidden="true">1.2.</strong> Connection Setup</a></li><li class="chapter-item expanded "><a href="quin/data-transfer.html"><strong aria-hidden="true">1.3.</strong> Data Transfer</a></li></ol></li><li class="chapter-item expanded "><a href="quic.html"><strong aria-hidden="true">2.</strong> QUICK Introduction</a></li><li class="chapter-item expanded "><a href="network-introduction.html"><strong aria-hidden="true">3.</strong> Network Introduction</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="network-introduction/transport-guarantees.html"><strong aria-hidden="true">3.1.</strong> Transport Guarantees</a></li><li class="chapter-item expanded "><a href="network-introduction/transport-protocols.html"><strong aria-hidden="true">3.2.</strong> Transport Protocols</a></li><li class="chapter-item expanded "><a href="network-introduction/tcp-problems.html"><strong aria-hidden="true">3.3.</strong> Problems of TCP</a></li></ol></li></ol>
+            </div>
+            <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
+        </nav>
+
+        <div id="page-wrapper" class="page-wrapper">
+
+            <div class="page">
+                
+                <div id="menu-bar-hover-placeholder"></div>
+                <div id="menu-bar" class="menu-bar sticky bordered">
+                    <div class="left-buttons">
+                        <button id="sidebar-toggle" class="icon-button" type="button" title="Toggle Table of Contents" aria-label="Toggle Table of Contents" aria-controls="sidebar">
+                            <i class="fa fa-bars"></i>
+                        </button>
+                        <button id="theme-toggle" class="icon-button" type="button" title="Change theme" aria-label="Change theme" aria-haspopup="true" aria-expanded="false" aria-controls="theme-list">
+                            <i class="fa fa-paint-brush"></i>
+                        </button>
+                        <ul id="theme-list" class="theme-popup" aria-label="Themes" role="menu">
+                            <li role="none"><button role="menuitem" class="theme" id="light">Light (default)</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="rust">Rust</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="coal">Coal</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="navy">Navy</button></li>
+                            <li role="none"><button role="menuitem" class="theme" id="ayu">Ayu</button></li>
+                        </ul>
+                        
+                        <button id="search-toggle" class="icon-button" type="button" title="Search. (Shortkey: s)" aria-label="Toggle Searchbar" aria-expanded="false" aria-keyshortcuts="S" aria-controls="searchbar">
+                            <i class="fa fa-search"></i>
+                        </button>
+                        
+                    </div>
+
+                    <h1 class="menu-title">Quinn</h1>
+
+                    <div class="right-buttons">
+                        
+                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                            <i id="print-button" class="fa fa-print"></i>
+                        </a>
+                        
+                        
+                    </div>
+                </div>
+
+                
+                <div id="search-wrapper" class="hidden">
+                    <form id="searchbar-outer" class="searchbar-outer">
+                        <input type="search" name="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                    </form>
+                    <div id="searchresults-outer" class="searchresults-outer hidden">
+                        <div id="searchresults-header" class="searchresults-header"></div>
+                        <ul id="searchresults">
+                        </ul>
+                    </div>
+                </div>
+                
+
+                <!-- Apply ARIA attributes after the sidebar and the sidebar toggle button are added to the DOM -->
+                <script type="text/javascript">
+                    document.getElementById('sidebar-toggle').setAttribute('aria-expanded', sidebar === 'visible');
+                    document.getElementById('sidebar').setAttribute('aria-hidden', sidebar !== 'visible');
+                    Array.from(document.querySelectorAll('#sidebar a')).forEach(function(link) {
+                        link.setAttribute('tabIndex', sidebar === 'visible' ? 0 : -1);
+                    });
+                </script>
+
+                <div id="content" class="content">
+                    <main>
+                        <h1 align="center"><img width="500" src="./docs/thumbnail.svg" /></h1>
+<p><a href="https://docs.rs/quinn/"><img src="https://docs.rs/quinn/badge.svg" alt="Documentation" /></a>
+<a href="https://crates.io/crates/quinn"><img src="https://img.shields.io/crates/v/quinn.svg" alt="Crates.io" /></a>
+<a href="https://github.com/djc/quinn/actions?query=workflow%3ACI"><img src="https://github.com/djc/quinn/workflows/CI/badge.svg" alt="Build status" /></a>
+<a href="https://codecov.io/gh/djc/quinn"><img src="https://codecov.io/gh/djc/quinn/branch/master/graph/badge.svg" alt="codecov" /></a>
+<a href="https://matrix.to/#/#quinn:matrix.org"><img src="https://img.shields.io/badge/chat-%23quinn:matrix.org-%2346BC99?logo=matrix" alt="Chat" /></a>
+<a href="https://gitter.im/djc/quinn"><img src="https://badges.gitter.im/gitterHQ/gitter.svg" alt="Chat" /></a>
+<a href="LICENSE-MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
+<a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0" /></a></p>
+<h1><a class="header" href="#pure-rust-quic-protocol-implementation" id="pure-rust-quic-protocol-implementation">Pure-rust QUIC protocol implementation</a></h1>
+<p>Quinn is a pure-rust, future-based implementation of the <a href="https://quicwg.github.io/">QUIC</a> transport protocol undergoing standardization by the IETF. 
+This library is at <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-transport/29/">draft 32</a>.</p>
+<h2><a class="header" href="#features" id="features">Features</a></h2>
+<ul>
+<li>Simultaneous client/server operation.</li>
+<li>Ordered and unordered stream reads for improved performance.</li>
+<li>Works on stable Rust, tested on Linux, macOS and Windows.</li>
+<li>Pluggable cryptography, with a standard implementation backed by
+<a href="https://github.com/ctz/rustls">rustls</a> and <a href="https://github.com/briansmith/ring"><em>ring</em></a>.</li>
+<li>Application-layer datagrams for small, unreliable messages.</li>
+<li>Future-based async API.</li>
+<li>Experimental HTTP over QUIC.</li>
+</ul>
+<h2><a class="header" href="#overview" id="overview">Overview</a></h2>
+<ul>
+<li><strong>quinn:</strong> High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)</li>
+<li><strong>quinn-proto:</strong> Deterministic state machine of the protocol which performs <strong>no</strong> I/O internally and is suitable for use with custom event loops (and potentially a C or C++ API). </li>
+<li><strong>quinn-h3:</strong> Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.</li>
+<li><strong>bench:</strong> Benchmarks without any framework. </li>
+<li><strong>interop:</strong> Tooling that helps to run interoperability tests. </li>
+<li><strong>fuzz:</strong> Fuzz tests. </li>
+</ul>
+<h1><a class="header" href="#getting-started" id="getting-started">Getting Started</a></h1>
+<p><strong>Examples</strong></p>
+<pre><code class="language-sh">$ cargo run --example server ./
+$ cargo run --example client https://localhost:4433/Cargo.toml
+</code></pre>
+<p>This launches an HTTP 0.9 server on the loopback address serving the current
+working directory, with the client fetching <code>./Cargo.toml</code>. By default, the
+server generates a self-signed certificate and stores it to disk, where the
+client will automatically find and trust it.</p>
+<p><strong>Links</strong></p>
+<ul>
+<li>Talk at <a href="https://paris.rustfest.eu/sessions/a-quic-future-in-rust">RustFest Paris (May 2018) presentation</a>; <a href="https://dirkjan.ochtman.nl/files/quic-future-in-rust.pdf">slides</a>; <a href="https://www.youtube.com/watch?v=EHgyY5DNdvI">YouTube</a></li>
+<li>Usage <a href="https://github.com/djc/quinn/tree/master/quinn/examples">examples</a></li>
+<li>Guide <a href="https://github.com/djc/quinn/issues/865">book</a></li>
+</ul>
+<h2><a class="header" href="#usage-notes" id="usage-notes">Usage Notes</a></h2>
+<details>
+<summary>
+Click to show the notes
+</summary>
+<h3><a class="header" href="#buffers" id="buffers">Buffers</a></h3>
+<p>A Quinn endpoint corresponds to a single UDP socket, no matter how many
+connections are in use. Handling high aggregate data rates on a single endpoint
+can require a larger UDP buffer than is configured by default in most
+environments. If you observe erratic latency and/or throughput over a stable
+network link, consider increasing the buffer sizes used. For example, you could
+adjust the <code>SO_SNDBUF</code> and <code>SO_RCVBUF</code> options of the UDP socket to be used
+before passing it in to Quinn. Note that some platforms (e.g. Linux) require
+elevated privileges or modified system configuration for a process to increase
+its UDP buffer sizes.</p>
+<h3><a class="header" href="#certificates" id="certificates">Certificates</a></h3>
+</details>
+<p></p>
+<h2><a class="header" href="#contribution" id="contribution">Contribution</a></h2>
+<p>All feedback welcome. Feel free to file bugs, requests for documentation and
+any other feedback to the <a href="https://github.com/djc/quinn/issues">issue tracker</a>. </p>
+<p>The quinn-proto test suite uses simulated IO for reproducibility and to avoid
+long sleeps in certain timing-sensitive tests. If the <code>SSLKEYLOGFILE</code>
+environment variable is set, the tests will emit UDP packets for inspection
+using external protocol analyzers like Wireshark, and NSS-compatible key logs
+for the client side of each connection will be written to the path specified in
+the variable.</p>
+<h2><a class="header" href="#authors" id="authors">Authors</a></h2>
+<ul>
+<li><strong>Dirkjan Ochtman</strong> - <em>Project owner &amp; founder</em></li>
+<li><strong>Benjamin Saunders</strong> - <em>Project owner &amp; founder</em></li>
+<li><strong>Jean-Christophe Begue</strong> - <em>Project collaborator, author of the HTTP/3 Implementation</em></li>
+</ul>
+<h3><a class="header" href="#certificates-1" id="certificates-1">Certificates</a></h3>
+<p>By default, Quinn clients validate the cryptographic identity of servers they
+connect to. This prevents an active, on-path attacker from intercepting
+messages, but requires trusting some certificate authority. For many purposes,
+this can be accomplished by using certificates from [Let's Encrypt][letsencrypt]
+for servers, and relying on the default configuration for clients.</p>
+<p>For some cases, including peer-to-peer, trust-on-first-use, deliberately
+insecure applications, or any case where servers are not identified by domain
+name, this isn't practical. Arbitrary certificate validation logic can be
+implemented by enabling the <code>dangerous_configuration</code> feature of <code>rustls</code> and
+constructing a Quinn <code>ClientConfig</code> with an overridden certificate verifier by
+hand.</p>
+<p>When operating your own certificate authority doesn't make sense, [rcgen][rcgen]
+can be used to generate self-signed certificates on demand. To support
+trust-on-first-use, servers that automatically generate self-signed certificates
+should write their generated certificate to persistent storage and reuse it on
+future runs.</p>
+<h3><a class="header" href="#insecure-connection" id="insecure-connection">Insecure Connection</a></h3>
+<p>Since many users probably want to have a 'QUIC' up and running 'QUIC' exmaple we will start of with how to setup an connection without certificates. </p>
+<h1><a class="header" href="#connection-setup" id="connection-setup">Connection Setup</a></h1>
+<p>Het opzetten van een quin connectie is het begin van een grote stap naar een betere wereld, echter moet je hier wel wat voor doen.
+Het begint bij de <code>Endpoint</code> struct, dit is tevens de entry van de library.<br />
+Vanaf uit hier kan je verbindingen opzetten naar andere peers. 
+Om een verbinding op te kunnen zetten moet je een aantal configuraties door voeren. 
+Configuraties zoals cryptografie en transport instellingen. 
+Echter valt dit buiten de scope van dit hoofstuk en wordt daarom hier niet besproken. 
+Hoe je een <code>Endpoint</code> configureerd kan je in [dit][LINK] hoofstuk vinden.
+Omdat we geen configuratie gebruiken zullen de komende voorbeelden dus niet out-of-the box werken.
+Als je een <code>Endpoint</code> heb opgezet kan je beginnen met het versturen en ontvangen van data, ziet <a href="quin/./data-transfer.html">het volgende hoofdstuk</a> voor meer informatie.</p>
+<h2><a class="header" href="#example" id="example">Example</a></h2>
+<p>Laten we beginnen met het defineren van wat constanten. </p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>static SERVER_NAME: &amp;str = &quot;localhost&quot;;
+
+fn client_addr() -&gt; SocketAddr {
+    &quot;127.0.0.1:5000&quot;.parse::&lt;SocketAddr&gt;().unwrap()
+}
+
+fn server_addr() -&gt; SocketAddr {
+    &quot;127.0.0.1:5001&quot;.parse::&lt;SocketAddr&gt;().unwrap()
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p>Voor zowel een server als client kunnen we gebruik maken van de <code>EndpointBuilder</code>. 
+Hiermee kunnen we onze endpoint configuren als een server of client. 
+Het is van belang om je endpoint aan een address te koppelen.
+Dit doe je doormiddel van <code>EndpointBuider::bind(address)</code>. 
+Deze functie initializeerd een UDP-socket die door QUIC gebruikt wordt. 
+Het is ook mogelijk om vanaf een bestaande socket QUIC te initialiseren. 
+Gebruik hier voor <code>EndpointBuider::with_socket</code>.</p>
+<p><strong>Client</strong></p>
+<p>In het geval van een client endpoint dien je <code>connect()</code> op de endpoint aan te roepen. 
+De servernaam staat als het goed is in je certificaat. </p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn client() -&gt; anyhow::Result&lt;()&gt; {
+    let mut endpoint_builder = Endpoint::builder();
+
+    // Bind this endpoint to a UDP socket on the given client address.
+    let (endpoint, _) = endpoint_builder.bind(&amp;client_addr())?;
+
+    // Connect to the server passing in the server name which is supposed to be in the server certificate.
+    let connection: NewConnection = endpoint
+        .connect(&amp;server_addr(), SERVER_NAME)?
+        .await?;
+
+    // Start transferring, receiving data, see DataTransfer tutorial.
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p><strong>Server</strong></p>
+<p>In het geval van een server dien je <code>EndpointBuilder::listen()</code> aan te roepen met de <code>ServerConfiguration</code>. 
+Let er op dat dit niets anders is dan het instellen van configuratie en dus geen lusiter logica uitvoert. </p>
+<p>De twee</p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn server() -&gt; anyhow::Result&lt;()&gt; {
+    let mut endpoint_builder = Endpoint::builder();
+    // Configure this endpoint as a server by passing in `ServerConfig`.
+    endpoint_builder.listen(ServerConfig::default());
+
+    // Bind this endpoint to a UDP socket on the given server address. 
+    let (endpoint, mut incoming) = endpoint_builder.bind(&amp;server_addr())?;
+
+    // Start iterating over incoming connections.
+    while let Some(conn) = incoming.next().await {
+        let mut connection: NewConnection = conn.await?;
+
+        // Save connection somewhere, start transferring, receiving data, see DataTransfer tutorial.
+    }
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<h1><a class="header" href="#data-transfer" id="data-transfer">Data Transfer</a></h1>
+<p>In het <a href="quin/set-up-connection.html">vorige hoofdstuk</a> hebben we gekenen hoe je een <code>Endpoint</code> kan opzetten 
+en vervolgens toegang kan krijgen tot een <code>NewConnectie</code> instantie.
+Nu gaan we kijken hoe je data over deze verbinding kan sturen. </p>
+<h2><a class="header" href="#multiplexing" id="multiplexing">Multiplexing</a></h2>
+<p>Alhoewel QUIC op UDP is gebouwd onderstuend het streams.
+A QUIC stream is similar to a TCP stream, but you are not limited to a single stream.
+You can open multiple streams between two peers. 
+This is also called 'multiplexing'.</p>
+<p>Stream multiplexing can have a significant positive effect on the performance of applications if the resources assigned to streams are properly prioritized.
+Multiplexing is also used in the HTTP/2 protocol, but in QUIC it is not handled automatically.
+It is entirely in the hands of the user to deal efficiently with multiplexing.</p>
+<h2><a class="header" href="#stream-types" id="stream-types">Stream Types</a></h2>
+<p>Quinn offers three ways to send your data. 
+Two stream-based and one message-based.</p>
+<table><thead><tr><th align="left">Type</th><th align="left">Description</th><th align="left">Reference</th></tr></thead><tbody>
+<tr><td align="left"><strong>Bidirectional Stream</strong></td><td align="left">two way communication.</td><td align="left">see <code>open_bi</code></td></tr>
+<tr><td align="left"><strong>Unidirectional Stream</strong></td><td align="left">one way communication.</td><td align="left">see <code>open_uni</code></td></tr>
+<tr><td align="left"><strong>Unreliable Messaging</strong></td><td align="left">message based unreliable communication.</td><td align="left">see <code>send_datagram</code></td></tr>
+</tbody></table>
+<p>Soon we will discuss this in more detail with a few more people.</p>
+<h2><a class="header" href="#how-to-use" id="how-to-use">How to Use</a></h2>
+<p>You can open a new stream or read from an existing stream.
+New streams can be created with the methods <code>open_bi</code>, <code>open_uni</code> in <code>NewConnection::connection</code>.
+Existing streams can be found in <code>NewConnection</code>. 
+Both the client and the server are able to open a stream and start sending and receing constrained by the stream type. </p>
+<p><em>Iterate over various opened streams</em></p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn iterate_streams(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
+    // Iterate unidirectional streams with only the receiving side.
+    while let Some(Ok(recv)) = connection.uni_streams.next().await { }
+    // Iterate bidirectional streams with both sent and receiving side.
+    while let Some(Ok((sent, recv))) = connection.bi_streams.next().await { }
+    // Iterate arrived datagrams.
+    while let Some(Ok(bytes)) = connection.datagrams.next().await { }
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p><em>Open different type of streams</em></p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn open_streams(mut connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    // Open unidirectional stream.
+    let mut send = connection.
+        open_uni()
+        .await?;
+
+    // Open bidirectional stream.
+    let (send, recv) = connection.
+        open_bi()
+        .await?;
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<h2><a class="header" href="#bidirectional-streams" id="bidirectional-streams">Bidirectional Streams</a></h2>
+<p>With bidirectional streams you can carry data in both directions, for example, client to server and server to client.</p>
+<p><em>open bidirectional stream</em></p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn open_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    let (mut send, recv) = connection.
+        open_bi()
+        .await?;
+
+    send.write_all(b&quot;test&quot;).await?;
+    send.finish().await?;
+    
+    let received = recv.read_to_end(10).await?;
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p><em>iterate bidirectional stream(s)</em></p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn receive_bidirectional_stream(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
+    while let Some(Ok((sent, recv))) = connection.bi_streams.next().await {
+        // Because it is a bidirectional stream, we can both sent and recieve.
+        println!(&quot;request: {:?}&quot;, recv.read_to_end(50).await?);
+
+        send.write_all(b&quot;response&quot;).await?;
+        send.finish().await?;
+    }
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<h2><a class="header" href="#unidirectional-streams" id="unidirectional-streams">Unidirectional Streams</a></h2>
+<p>With unidirectional streams, you can carry data only in one direction, for example, from the initiator of the stream to its peer.</p>
+<p><em>open unidirectional stream</em></p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn open_unidirectional_stream(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
+    let mut send = connection.
+        open_uni()
+        .await?;
+
+    send.write_all(b&quot;test&quot;).await.unwrap();
+    send.finish().await?;
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p><em>iterating unidirectional stream(s)</em></p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn receive_unidirectional_stream(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
+    while let Some(Ok(recv)) = connection.uni_streams.next().await {
+        // Because it is a unidirectional stream, we can only receive not sent back.
+        println!(&quot;{:?}&quot;, recv.read_to_end(50).await?);
+    }
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<h2><a class="header" href="#unreliable-messaging" id="unreliable-messaging">Unreliable Messaging</a></h2>
+<p>With unreliable messaging you can transfer data <a href="quin/../network-introduction/transport-guarantees.html#unreliable">unreliable</a> over bare UDP.</p>
+<p><em>send datagram</em></p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn sent_unreliable(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
+    connection.
+        send_datagram(b&quot;test&quot;.into())
+        .await?;
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p><em>iterating datagram stream(s)</em></p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn receive_datagram(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
+    while let Some(Ok(receivedBytes)) = connection.datagrams.next().await {
+        // Because it is a unidirectional stream, we can only receive not sent back.
+        println!(&quot;request: {:?}&quot;, received);
+    }
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<h1><a class="header" href="#quic-introduction" id="quic-introduction">QUIC Introduction</a></h1>
+<p>QUIC is a general-purpose, transport layer, network protocol, built on top of UDP.
+It is still an internet <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-transport/">draft</a> undergoing standardization by the IETF.
+This indicates that it is not yet stabilized. 
+Quinn focuses on satisfying the latest draft but may lag some drafts behind. 
+The fact that it is a draft does not detract from the fact that QUIC is already used by more than half of 
+all connections from Chrome web browsers to Google's servers with increasing adoption in the overall market. </p>
+<p>QUIC aims to be nearly equivalent to a TCP connection. With the goals to improve the performance of connection-oriented web applications, 
+reduce connection and transport latency, and estimate bandwidth for better congestion control. 
+While the intentions of QUIC were original web-oriented, it suits other areas like the game-networking industry very well.</p>
+<h1><a class="header" href="#networking-introduction" id="networking-introduction">Networking Introduction</a></h1>
+<p>The Internet is unreliable, it changes every second, cables can be cut, network congestion can occur, packets can become corrupted, etc. 
+As soon as we send a packet, it can take any road to reach its destination. 
+To assure the end-user of certain transmission guarantees, such as the arrival of parcels, specific protocols are defined.</p>
+<p>There are some established protocols such as TCP, UDP which are supported by all routers, firewalls, servers, and operating systems. 
+Although these protocols are well accepted, this does not mean that they are perfect or serve all areas of interest. 
+QUIC is being created to solve the problems of the modern Internet and the TCP protocol.</p>
+<p>In the next chapter we will take a closer look at the various protocols, their transmission guarantees, and areas of interest. </p>
+<h1><a class="header" href="#transport-guarantees" id="transport-guarantees">Transport Guarantees</a></h1>
+<p>Before diving into any protocol specifics, lets define some terminology that is often used while talking about protocols.
+The protocols that we will be discussing share some combinations of 'transport guarantees'. 
+In your protocol selection you must clearly have in mind what it that you need.</p>
+<h2><a class="header" href="#ordering-vs-sequencing" id="ordering-vs-sequencing">Ordering VS Sequencing</a></h2>
+<p>Packet arrival is possible in two ways. 
+They can arrive in sequence and in order. </p>
+<p>Let's define two concepts here:</p>
+<ul>
+<li>&quot;Sequencing: this is the process of only caring about the newest items.&quot;_ <a href="https://dictionary.cambridge.org/dictionary/english/sequencing">1</a></li>
+<li>&quot;Ordering: this is the process of putting something in a particular order.&quot;_ <a href="https://dictionary.cambridge.org/dictionary/english/ordering">2</a></li>
+</ul>
+<p><strong>Example</strong></p>
+<ul>
+<li>Sequencing: Only the newest items will be passed trough e.g. <code>1,3,2,5,4</code> which results in <code>1,3,5</code>.</li>
+<li>Ordering: All items are returned in order <code>1,3,2,5,4</code> which results in <code>1,2,3,4,5</code>.</li>
+</ul>
+<p>Now, lets discuss those different transport guarantees a protocol can have. </p>
+<h2><a class="header" href="#the-5-transport-guarantees" id="the-5-transport-guarantees">The 5 Transport Guarantees</a></h2>
+<p>There are 5 main different ways you can transfer data:</p>
+<table><thead><tr><th align="center">Transport Guarantees</th><th align="center">Packet Drop <a href="https://en.wikipedia.org/wiki/Packet_loss">(1)</a></th><th align="center">Packet Duplication <a href="https://observersupport.viavisolutions.com/html_doc/current/index.html#page/gigastor_hw/packet_deduplicating.html">(2)</a></th><th align="center">Packet Order <a href="network-introduction/transport-guarantees.html#ordering-vs-sequencing">(3)</a></th><th align="center">Packet Delivery</th></tr></thead><tbody>
+<tr><td align="center"><strong>Unreliable Unordered</strong></td><td align="center">Any</td><td align="center">Yes</td><td align="center">No</td><td align="center">No</td></tr>
+<tr><td align="center"><strong>Unreliable Sequenced</strong></td><td align="center">Any + old</td><td align="center">No</td><td align="center">Sequenced</td><td align="center">No</td></tr>
+<tr><td align="center"><strong>Reliable Unordered</strong></td><td align="center">No</td><td align="center">No</td><td align="center">No</td><td align="center">Yes</td></tr>
+<tr><td align="center"><strong>Reliable Ordered</strong></td><td align="center">No</td><td align="center">No</td><td align="center">Ordered</td><td align="center">Yes</td></tr>
+<tr><td align="center"><strong>Reliable Sequenced</strong></td><td align="center">Only old</td><td align="center">No</td><td align="center">Sequenced</td><td align="center">Only newest</td></tr>
+</tbody></table>
+<p>UDP is unreliable, while TCP is reliable.
+Reliability gives great uncertainty with a lot of freedom, while reliability gives great certainty with costs in speed and freedom.
+That is why protocols such as QUIC, RUDP, SCTP, QUIC, netcode, laminar build on UDP instead of TCP. 
+UDP has far fewer limitations that give the end user more control over the transmission. 
+A big factor for to consider are the required transport guarantees needed for your usecases. </p>
+<h1><a class="header" href="#transport-protocols" id="transport-protocols">Transport Protocols</a></h1>
+<p>It is an excellent question to ask what protocol suits your project the most. 
+Different protocols serve different use cases and the wrong protocol can be catastrophic. 
+Before jumping directly into the meat of QUIC, it can be useful to understand its underlying motivations. 
+For those motivations we have to inspect the flaws of TCP and nature of UDP, 
+because QUIC tries to improve the flaws of TCP ontop of UDP.</p>
+<p>If your already familiar with terminologies as IP/TCP/UDP and their <a href="network-introduction/./transport-guarantees.html">transport guarantees</a> and differences feel free to skipp this section. 
+For this section we will be using the <a href="https://en.wikipedia.org/wiki/Internet_protocol_suite">Internet protocol suite</a> as a guidance. </p>
+<p><img src="network-introduction/../images/osi-model.png" alt="OSI model" /></p>
+<p>Different layers serve different use cases. 
+For example, the application layer is not responsible for the data transfer while the transport layer is. 
+Both TCP and UDP work on the transport layer while a protocol like QUIC works on the application layer.<br />
+The advantage of this is that routers and firewalls see these protocols as a UDP or TCP instead of QUIC.
+Because no special hardware software is needed, it follows that development can be faster and that adoption can occur in parallel.</p>
+<h2><a class="header" href="#ip---internet-layer" id="ip---internet-layer">IP - Internet Layer</a></h2>
+<p>All communication over the internet is happening ontop of IP (Internet Protocol). 
+The internet protocol works by splitting data into little chunks called datagrams or packets. 
+The chunks are then sent across the internet from one IP address to another.
+However, this protocol transfers packets across the network without any guarantee and it is by nature <a href="network-introduction/./transport-guarantees.html#unreliable">unreliable</a>.
+Therefore we need certain specific guarantees. 
+This is exactly were transport protocols, like TCP, UPD, and application protocols, like QUIC, HTTP, come in. </p>
+<h2><a class="header" href="#tcpip-and-udp-comparison---transport-layer" id="tcpip-and-udp-comparison---transport-layer">TCP/IP and UDP Comparison - Transport layer</a></h2>
+<p><strong>TCP:</strong> stands for 'transmission control protocol' and adds certain guarantees ontop of <a href="network-introduction/transport-protocols.html#ip">IP</a>. 
+It forms the backbone for almost everything you do online, from web browsing to IRC to email to file transfer.</p>
+<p><strong>UDP</strong> stands for 'user datagram protocol'  and adds certain guarantees ontop of <a href="network-introduction/transport-protocols.html#ip">IP</a>, but unlike TCP, 
+instead of adding lots of features and complexity, UDP is a very thin layer over IP and is also <a href="network-introduction/./transport-guarantees.html#unreliable">unreliable</a> in nature.</p>
+<table><thead><tr><th align="center">Feature</th><th align="center">TCP</th><th align="center">UDP</th></tr></thead><tbody>
+<tr><td align="center"><a href="https://en.wikipedia.org/wiki/Connection-oriented_communication">Connection-Oriented</a></td><td align="center">Yes</td><td align="center">No</td></tr>
+<tr><td align="center"><a href="network-introduction/./transport-guarantees.html">Transport Guarantees</a></td><td align="center"><a href="network-introduction/./transport-guarantees.html#reliable-ordered">Reliable Ordered</a></td><td align="center"><a href="network-introduction/./transport-guarantees.html#unreliable">Unreliable</a></td></tr>
+<tr><td align="center">Packet Transfer</td><td align="center"><a href="https://en.wikipedia.org/wiki/Stream_(computing)">Stream-based</a></td><td align="center">Message based</td></tr>
+<tr><td align="center">Automatic <a href="https://en.wikipedia.org/wiki/IP_fragmentation">fragmentation</a></td><td align="center">Yes</td><td align="center">Yes, but better is to stay below datagram size limit</td></tr>
+<tr><td align="center">Header Size</td><td align="center">20 bytes</td><td align="center">8 bytes</td></tr>
+<tr><td align="center"><a href="https://en.wikipedia.org/wiki/TCP_congestion_control">Control Flow, Congestion Avoidance/Control</a></td><td align="center">Yes</td><td align="center">No</td></tr>
+</tbody></table>
+<h1><a class="header" href="#problems-of-tcp" id="problems-of-tcp">Problems of TCP</a></h1>
+<p>In <a href="network-introduction/./transport-protocols.html">the previous section</a> we compared TCP with UDP, now the golden question: Why should we prefer one over the other? 
+One might ask: &quot;Why choose so much uncertainty with UDP when TCP is so reliable and safe?&quot;. 
+That's a good question to ask yourself. 
+To answer that question we will have to delve a little deeper into how TCP works. </p>
+<h2><a class="header" href="#head-of-line-blocking" id="head-of-line-blocking">Head-of-line Blocking</a></h2>
+<p>One of the biggest problem/feature in the TCP protocol is the Head-of-line blocking. 
+It is a convenient feature because it ensures that all packages are sent and arrive in <a href="network-introduction/./transport-guarantees.html#ordering-vs-sequencing">order</a>. 
+However, in cases of high throughput (multiplayer game networking) and big load in short time (web page load) this can be catastrophic to your application performance.</p>
+<p>Lets check this animation out to demonstrate the issue:</p>
+<p><img src="network-introduction/../images/hol.gif" alt="Head of line blocking" /> </p>
+<p>This animation shows that if a certain packet drops in transmission, all packets have to wait at the transport layer until it is resent by the other end.
+If the dropped packet is resent and arrived then all packets are freed from the transport layer. </p>
+<p><strong>Multiplayer Game Networking</strong></p>
+<p>Multiplayer action games are based on a constant stream of packets sent at a speed of 10 to 30 packets per second, and for the most part, 
+the data in these packages are so time-sensitive that in most cases only the most recent data is useful.
+You can think of the input of the player, the position of the player, the orientation and speed, and the state of the physical objects in the world.
+If a single packet drops out we can not afford to queue up 10-30 packets a second until the lost packet arrives. 
+This could cause annoying lag behaviour and bad user experience. </p>
+<p><strong>Web Networking</strong></p>
+<p>Gamenetworking is not the only area were this head-of-line blocking plays is a big problem.
+The World Wide Web is a place were quick web-page load speeds are very important (who wants to wait 200ms to long right?).
+As websites grow in size and attention span decreases we need faster loading times for the websites.</p>
+<p>HTTP-2 introduced technique called multiplexing. 
+In short, multiple TCP streams will be setup to communicate with the server if a website loads. 
+Then If one of them blocks the whole website can continue to load seemingly while that single stream is retransmitting.</p>
+<p>We will take a deeper dive into this subject when looking at QUIC multiplexing.</p>
+<h2><a class="header" href="#connection-setup-duration" id="connection-setup-duration">Connection Setup Duration</a></h2>
+<p>In standard HTTP+TLS+TCP, TCP needs a handshake to establish a session between server and client, and TLS needs its own handshake to ensure that the session is secured.</p>
+<p><img src="network-introduction/../images/tcp-handshake.svg.png" alt="TCP-handshake" /></p>
+<p>First, the source sends an SYN “initial request” packet to the target server in order to start the dialogue. 
+Then the target server sends a SYN-ACK packet to agree to the process.
+Lastly, the source sends an ACK packet to the target to confirm the process, after which the message contents can be sent. </p>
+<p>Now if we want to secure the TCP connection, we have to use a protocol like TLS on top of it. 
+If we use an older TLS version &lt; 1.3 then there are three more handshakes that are required.</p>
+<p>You can see how expensive it is to create a TCP connection. In a scenario of TCP and TLS 1.2 with a 100ms latency we need to wait 6 x 100ms = 600ms to set up a connection. 
+If the website is big in size, an additional load time can make the website load over a second into seconds. 
+Which is of course disturbing for our short attention spans. </p>
+<h2><a class="header" href="#requests-in-segment" id="requests-in-segment">Requests in Segment</a></h2>
+<p>TCP segment can only carry a single HTTP/1.1 Request/Response. 
+Consequently it is possible that a large number of small segments are sent within
+an HTTP/1.1 session. This can lead to a large overhead.</p>
+<h2><a class="header" href="#client-connection-initiation" id="client-connection-initiation">Client Connection Initiation</a></h2>
+<p>HTTP/1.1 transfers are always initiated by the client. 
+This decreases the performance of HTTP/1.1 significantly when loading embedded files, because a server has to
+wait for a request from the client, even if the server knows
+that the client needs a specific resource.</p>
+
+                    </main>
+
+                    <nav class="nav-wrapper" aria-label="Page navigation">
+                        <!-- Mobile navigation buttons -->
+                        
+
+                        
+
+                        <div style="clear: both"></div>
+                    </nav>
+                </div>
+            </div>
+
+            <nav class="nav-wide-wrapper" aria-label="Page navigation">
+                
+
+                
+            </nav>
+
+        </div>
+
+        
+        <!-- Livereload script (if served using the cli tool) -->
+        <script type="text/javascript">
+            var socket = new WebSocket("ws://localhost:3000/__livereload");
+            socket.onmessage = function (event) {
+                if (event.data === "reload") {
+                    socket.close();
+                    location.reload();
+                }
+            };
+
+            window.onbeforeunload = function() {
+                socket.close();
+            }
+        </script>
+        
+
+        
+
+        
+
+        
+        <script type="text/javascript">
+            window.playground_copyable = true;
+        </script>
+        
+
+        
+
+        
+        <script src="elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="mark.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="searcher.js" type="text/javascript" charset="utf-8"></script>
+        
+
+        <script src="clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="book.js" type="text/javascript" charset="utf-8"></script>
+
+        <!-- Custom JS scripts -->
+        
+
+        
+        
+        <script type="text/javascript">
+        window.addEventListener('load', function() {
+            window.setTimeout(window.print, 100);
+        });
+        </script>
+        
+        
+
+    </body>
+</html>

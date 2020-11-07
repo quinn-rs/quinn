@@ -53,11 +53,11 @@ unwrap = "1.2.1"
 url = "2"
 
 [[example]]
-name = "https_server"
+name = "http_server"
 required-features = ["tls-rustls"]
 
 [[example]]
-name = "https_client"
+name = "http_client"
 required-features = ["tls-rustls"]
 
 [[example]]
