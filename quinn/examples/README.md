@@ -1,6 +1,7 @@
 ## HTTPS File Serving Example
 
 The `https` example shows how to request a file on the `server` from the `client` over HTTPS. 
+This is HTTP/0.9, which is a toy protocol that's much simpler than real HTTP, especially HTTP/3.
 
 1. HTTPS Server (`http_server.rs`)
 
@@ -13,8 +14,6 @@ Open up a terminal and execute:
 $ cargo run --example https_server ./
 ```
 
-*additional arguments can be passed, see the `Opt` struct in the example.*
-
 2. HTTP Client (`http_client.rs`)
 
 The client requests a file and prints it to the console. 
@@ -25,8 +24,6 @@ In a new terminal execute:
 ```test
 $ cargo run --example https_client https://localhost:4433/README.MD
 ```
-
-*additional arguments can be passed, see the `Opt` struct in the example.*
 
 **Result:**
 

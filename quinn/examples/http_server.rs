@@ -18,6 +18,7 @@ use quinn::crypto::KeyPair;
 
 mod common;
 
+/// HTTP/0.9 over QUIC server.
 #[derive(StructOpt, Debug)]
 #[structopt(name = "server")]
 struct Opt {
@@ -69,7 +70,7 @@ fn main() {
 
 #[tokio::main]
 async fn run(options: Opt) -> anyhow::Result<()> {
-    let server_config = initialize_configuration(&options)?;
+    let server_config = make_server_configuration(&options)?;
 
     // Setup endpoint and initialize it to the configuration listening settings.
     let mut endpoint = quinn::Endpoint::builder();
@@ -151,7 +152,7 @@ fn try_find_certificate_in_project_directory() -> anyhow::Result<(Certificate, q
 }
 
 /// Initializes the server based on the command-line arguments.
-fn initialize_configuration(options: &Opt) -> Result<ServerConfig> {
+fn make_server_configuration(options: &Opt) -> Result<ServerConfig> {
     // First, setup the configuration builder.
     let mut transport_config = TransportConfig::default();
     transport_config.stream_window_uni(0).unwrap();
@@ -246,7 +247,7 @@ async fn handle_request(
 
     info!(content = %escaped);
 
-    // Handle the file request
+    // Handle the file request.
     let request_handler = GetFileRequestHandler { request: &request };
 
     let resp = request_handler.process_get(&root).unwrap_or_else(|e| {
@@ -254,12 +255,12 @@ async fn handle_request(
         format!("failed to process request: {}\n", e).into_bytes()
     });
 
-    // Write the response
+    // Write the response.
     send.write_all(&resp)
         .await
         .map_err(|e| anyhow!("failed to send response: {}", e))?;
 
-    // Gracefully terminate the stream
+    // Gracefully terminate the stream.
     send.finish()
         .await
         .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
@@ -268,7 +269,7 @@ async fn handle_request(
     Ok(())
 }
 
-/// Simple struct to handle the file GET request.
+/// Simple struct abstraction to handle the file GET request.
 struct GetFileRequestHandler<'a> {
     request: &'a [u8]
 }

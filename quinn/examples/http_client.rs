@@ -15,6 +15,7 @@ use quinn::{Connection, Endpoint, NewConnection};
 
 mod common;
 
+/// HTTP/0.9 over QUIC client
 #[derive(StructOpt, Debug)]
 #[structopt(name = "client")]
 struct Opt {
@@ -65,11 +66,11 @@ fn main() {
 #[tokio::main]
 async fn run(options: Opt) -> Result<()> {
     let url = options.url.clone();
-    let mut endpoint = initialize_endpoint(&options)?;
+    let mut endpoint = make_endpoint(&options)?;
 
     let quinn::NewConnection {
         connection: mut conn, ..
-    } = initialize_connection(&options, &endpoint, url.clone()).await?;
+    } = make_connection(&options, &endpoint, url.clone()).await?;
 
     if options.rebind {
         let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
@@ -88,7 +89,7 @@ async fn run(options: Opt) -> Result<()> {
 }
 
 /// Initializes the client configuration from the command-line arguments.
-fn initialize_client_configuration(options: &Opt) -> Result<quinn::ClientConfig> {
+fn make_client_configuration(options: &Opt) -> Result<quinn::ClientConfig> {
     let mut client_config = quinn::ClientConfigBuilder::default();
     client_config.protocols(common::ALPN_QUIC_HTTP);
 
@@ -120,15 +121,15 @@ fn initialize_client_configuration(options: &Opt) -> Result<quinn::ClientConfig>
 }
 
 // Initializes an endpoint with the command-line arguments.
-fn initialize_endpoint(options: &Opt) -> Result<Endpoint> {
+fn make_endpoint(options: &Opt) -> Result<Endpoint> {
     let mut endpoint = quinn::Endpoint::builder();
-    endpoint.default_client_config(initialize_client_configuration(options)?);
+    endpoint.default_client_config(make_client_configuration(options)?);
     let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
     Ok(endpoint)
 }
 
 /// Initializes a connection and connects with the given endpoint.
-async fn initialize_connection(options: &Opt, endpoint: &Endpoint, url: Url) -> Result<NewConnection> {
+async fn make_connection(options: &Opt, endpoint: &Endpoint, url: Url) -> Result<NewConnection> {
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
         .to_socket_addrs()?
         .next()

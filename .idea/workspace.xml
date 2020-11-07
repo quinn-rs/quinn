@@ -47,7 +47,10 @@
   </component>
   <component name="ChangeListManager">
     <list default="true" id="ca3fcb47-bbae-45d4-b725-f93b0b257dc7" name="Default Changelist" comment="">
-      <change beforePath="$PROJECT_DIR$/quinn/Cargo.toml" beforeDir="false" afterPath="$PROJECT_DIR$/quinn/Cargo.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/quinn/examples/README.md" beforeDir="false" afterPath="$PROJECT_DIR$/quinn/examples/README.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/quinn/examples/https_client.rs" beforeDir="false" afterPath="$PROJECT_DIR$/quinn/examples/https_client.rs" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/quinn/examples/https_server.rs" beforeDir="false" afterPath="$PROJECT_DIR$/quinn/examples/https_server.rs" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -103,7 +106,7 @@
       <option name="presentableId" value="Default" />
       <updated>1604658796238</updated>
       <workItem from="1604658797994" duration="13385000" />
-      <workItem from="1604759288977" duration="9044000" />
+      <workItem from="1604759288977" duration="9393000" />
     </task>
     <servers />
   </component>
