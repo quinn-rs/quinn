@@ -1,10 +1,10 @@
 #![no_main]
 
-use arbitrary::{Arbitrary, Unstructured};
+use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 extern crate proto;
-use proto::fuzzing::{ResetStream, Streams, TransportParameters};
+use proto::fuzzing::{FinishError, ResetStream, Streams, TransportParameters};
 use proto::{Dir, Side, StreamId, VarInt};
 
 #[derive(Arbitrary, Debug)]
@@ -16,7 +16,7 @@ struct StreamParams {
     receive_window: u16,
     stream_receive_window: u16,
     dir: Dir,
-    transport_params: TransportParameters
+    transport_params: TransportParameters,
 }
 
 #[derive(Arbitrary, Debug)]
@@ -48,9 +48,10 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
             Operation::Accept(dir) => {
                 stream.accept(dir);
             }
-            Operation::Finish(id) => {
-                stream.finish(id);
-            }
+            Operation::Finish(id) => match stream.finish(id) {
+                Ok(x) => x,
+                Err(e) => assert_eq!(e, FinishError::UnknownStream),
+            },
             Operation::ReceivedStopSending(sid, err_code) => {
                 stream.received_stop_sending(sid, err_code);
             }
