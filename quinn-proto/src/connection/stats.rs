@@ -1,24 +1,15 @@
-/// Statistics about packets transmitted on a connection
-#[derive(Default)]
+/// Statistics about UDP datagrams transmitted or received on a connection
+#[derive(Default, Debug, Copy, Clone)]
 #[non_exhaustive]
-pub struct PacketTransmissionStats {
-    /// The amount of packets transmitted on a connection
-    pub packets: u64,
-    /// The total amount of bytes transmitted on a connection
+pub struct UdpStats {
+    /// The amount of UDP datagrams observed
+    pub datagrams: u64,
+    /// The total amount of bytes which have been transferred inside UDP datagrams
     pub bytes: u64,
 }
 
-impl std::fmt::Debug for PacketTransmissionStats {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("PacketTransmissionStats")
-            .field("packets", &self.packets)
-            .field("bytes", &self.bytes)
-            .finish()
-    }
-}
-
 /// Statistics about frames transmitted or received on a connection
-#[derive(Default)]
+#[derive(Default, Copy, Clone)]
 #[non_exhaustive]
 pub struct FrameStats {
     pub acks: u64,
@@ -63,9 +54,13 @@ impl std::fmt::Debug for FrameStats {
 }
 
 /// Connection statistics
-#[derive(Debug, Default)]
+#[derive(Debug, Default, Copy, Clone)]
 #[non_exhaustive]
 pub struct ConnectionStats {
-    pub packet_tx: PacketTransmissionStats,
+    /// Statistics about UDP datagrams transmitted on a connection
+    pub udp_tx: UdpStats,
+    /// Statistics about UDP datagrams received on a connection
+    pub udp_rx: UdpStats,
+    /// Statistics about frames transmitted on a connection
     pub frame_tx: FrameStats,
 }

@@ -500,8 +500,8 @@ where
         trace!("sending {} byte datagram", buf.len());
         self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
 
-        self.stats.packet_tx.packets += 1;
-        self.stats.packet_tx.bytes += buf.len() as u64;
+        self.stats.udp_tx.datagrams += 1;
+        self.stats.udp_tx.bytes += buf.len() as u64;
 
         Some(Transmit {
             destination: self.path.remote,
@@ -703,10 +703,13 @@ where
                     return;
                 }
 
+                self.stats.udp_rx.datagrams += 1;
+                self.stats.udp_rx.bytes += first_decode.len() as u64;
                 self.total_recvd = self.total_recvd.wrapping_add(first_decode.len() as u64);
 
                 self.handle_decode(now, remote, ecn, first_decode);
                 if let Some(data) = remaining {
+                    self.stats.udp_rx.bytes += data.len() as u64;
                     self.handle_coalesced(now, remote, ecn, data);
                 }
             }
