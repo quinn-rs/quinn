@@ -1175,6 +1175,39 @@ fn keep_alive() {
 }
 
 #[test]
+fn cid_retirement() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    // Server retires current active remote CIDs
+    pair.server_conn_mut(server_ch).rotate_local_cid(1);
+    pair.drive();
+    // Any unexpected behavior may trigger TransportError::CONNECTION_ID_LIMIT_ERROR
+    assert!(!pair.client_conn_mut(client_ch).is_closed());
+    assert!(!pair.server_conn_mut(server_ch).is_closed());
+    assert_matches!(pair.client_conn_mut(client_ch).active_rem_cid_seq(), 1);
+
+    use crate::cid_queue::CidQueue;
+    use crate::LOC_CID_COUNT;
+    let mut active_cid_num = CidQueue::LEN as u64;
+    active_cid_num = active_cid_num.min(LOC_CID_COUNT);
+
+    let next_retire_prior_to = active_cid_num + 1;
+    pair.client_conn_mut(client_ch).ping();
+    // Server retires all valid remote CIDs
+    pair.server_conn_mut(server_ch)
+        .rotate_local_cid(next_retire_prior_to);
+    pair.drive();
+    assert!(!pair.client_conn_mut(client_ch).is_closed());
+    assert!(!pair.server_conn_mut(server_ch).is_closed());
+    assert_matches!(
+        pair.client_conn_mut(client_ch).active_rem_cid_seq(),
+        _next_retire_prior_to
+    );
+}
+
+#[test]
 fn finish_stream_flow_control_reordered() {
     let _guard = subscribe();
     let mut pair = Pair::default();

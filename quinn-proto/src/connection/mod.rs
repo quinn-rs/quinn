@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, HashSet, VecDeque},
     fmt, io, mem,
     net::SocketAddr,
     sync::Arc,
@@ -28,8 +28,7 @@ use crate::{
     },
     transport_parameters::TransportParameters,
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
-    LOC_CID_COUNT, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE,
-    TIMER_GRANULARITY,
+    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 mod assembler;
@@ -69,17 +68,13 @@ where
     crypto: S,
     /// The CID we initially chose, for use during the handshake
     handshake_cid: ConnectionId,
-    /// The destination CID we're currently sending to
-    ///
-    /// The earliest value in a sliding window of CIDs issued by the peer.
-    rem_cid: ConnectionId,
     /// The CID the peer initially chose, for use during the handshake
     rem_handshake_cid: ConnectionId,
-    /// Sequence number of `rem_cid`
-    ///
-    /// Exactly one prior to `self.rem_cids.offset` except during processing of certain
-    /// NEW_CONNECTION_ID frames.
-    rem_cid_seq: u64,
+    /// The sequence numbers of local connection IDs not yet retired by the peer
+    cids_active_seq: HashSet<u64>,
+    /// Sequence number to set in retire_prior_to field in NEW_CONNECTION_ID frame
+    retire_cid_seq: u64,
+
     /// cid length used to decode short packet
     local_cid_len: usize,
     path: PathData,
@@ -205,9 +200,9 @@ where
             server_config,
             crypto,
             handshake_cid: loc_cid,
-            rem_cid,
             rem_handshake_cid: rem_cid,
-            rem_cid_seq: 0,
+            retire_cid_seq: 0,
+            cids_active_seq: HashSet::new(),
             local_cid_len,
             path: PathData::new(
                 remote,
@@ -229,7 +224,7 @@ where
             lost_packets: 0,
             events: VecDeque::new(),
             endpoint_events: VecDeque::new(),
-            cids_issued: 0,
+            cids_issued: 1, // One CID is already supplied during handshaking
             spin_enabled: config.allow_spin && rng.gen_ratio(7, 8),
             spin: false,
             spaces: [initial_space, PacketSpace::new(now), PacketSpace::new(now)],
@@ -264,10 +259,12 @@ where
             ),
             datagrams: DatagramState::new(),
             config,
-            rem_cids: CidQueue::new(1),
+            rem_cids: CidQueue::new(rem_cid),
             rng,
             stats: ConnectionStats::default(),
         };
+        // Add sequence number of CID used in handshaking into tracking set
+        this.cids_active_seq.insert(0);
         if side.is_client() {
             // Kick off the connection
             this.write_crypto();
@@ -569,7 +566,7 @@ where
         let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
         let header = match space_id {
             SpaceId::Data if space.crypto.is_some() => Header::Short {
-                dst_cid: self.rem_cid,
+                dst_cid: self.rem_cids.active(),
                 number,
                 spin: if self.spin_enabled {
                     self.spin
@@ -581,18 +578,18 @@ where
             SpaceId::Data => Header::Long {
                 ty: LongType::ZeroRtt,
                 src_cid: self.handshake_cid,
-                dst_cid: self.rem_cid,
+                dst_cid: self.rem_cids.active(),
                 number,
             },
             SpaceId::Handshake => Header::Long {
                 ty: LongType::Handshake,
                 src_cid: self.handshake_cid,
-                dst_cid: self.rem_cid,
+                dst_cid: self.rem_cids.active(),
                 number,
             },
             SpaceId::Initial => Header::Initial {
                 src_cid: self.handshake_cid,
-                dst_cid: self.rem_cid,
+                dst_cid: self.rem_cids.active(),
                 token: match self.state {
                     State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
                     _ => Bytes::new(),
@@ -714,8 +711,10 @@ where
                 }
             }
             NewIdentifiers(ids) => {
+                self.cids_issued += ids.len() as u64;
                 ids.into_iter().rev().for_each(|frame| {
                     self.spaces[SpaceId::Data].pending.new_cids.push(frame);
+                    self.cids_active_seq.insert(frame.sequence);
                 });
             }
         }
@@ -941,7 +940,7 @@ where
         // This is usually 1182 bytes, but we shouldn't document that without a doctest.
         let max_size = self.mtu as usize
             - 1                 // flags byte
-            - self.rem_cid.len()
+            - self.rem_cids.active().len()
             - 4                 // worst-case packet number size
             - self.spaces[SpaceId::Data].crypto.as_ref().map_or_else(|| &self.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
             - Datagram::SIZE_BOUND;
@@ -1926,7 +1925,7 @@ where
                         if self.total_authed_packets > 1
                             || packet.payload.len() <= 16 // token + 16 byte tag
                             || !S::is_valid_retry(
-                                &self.rem_cid,
+                                &self.rem_cids.active(),
                                 &packet.header_data,
                                 &packet.payload,
                             )
@@ -1945,7 +1944,7 @@ where
                         trace!("retrying with CID {}", rem_cid);
                         let client_hello = state.client_hello.take().unwrap();
                         self.retry_src_cid = Some(rem_cid);
-                        self.rem_cid = rem_cid;
+                        self.rem_cids.update_cid(rem_cid);
                         self.rem_handshake_cid = rem_cid;
 
                         let space = &mut self.spaces[SpaceId::Initial];
@@ -2062,7 +2061,7 @@ where
                         if !state.rem_cid_set {
                             trace!("switching remote CID to {}", rem_cid);
                             let mut state = state.clone();
-                            self.rem_cid = rem_cid;
+                            self.rem_cids.update_cid(rem_cid);
                             self.rem_handshake_cid = rem_cid;
                             self.orig_rem_cid = rem_cid;
                             state.rem_cid_set = true;
@@ -2367,15 +2366,27 @@ where
                             "RETIRE_CONNECTION_ID for unissued sequence number",
                         ));
                     }
+                    self.cids_active_seq.remove(&sequence);
+                    // Consider a scenario where peer A has active remote cid 0,1,2.
+                    // Peer B first send a NEW_CONNECTION_ID with cid 3 and retire_prior_to set to 1.
+                    // Peer A processes this NEW_CONNECTION_ID frame; update remote cid to 1,2,3
+                    // and meanwhile send a RETIRE_CONNECTION_ID to retire cid 0 to peer B.
+                    // If peer B doesn't check the cid limit here and send a new cid again, peer A will then face CONNECTION_ID_LIMIT_ERROR
+                    let allow_more_cids =
+                        self.peer_params.issue_cids_limit() > self.cids_active_seq.len() as u64;
                     self.endpoint_events
-                        .push_back(EndpointEventInner::RetireConnectionId(sequence));
+                        .push_back(EndpointEventInner::RetireConnectionId(
+                            sequence,
+                            allow_more_cids,
+                        ));
                 }
                 Frame::NewConnectionId(frame) => {
                     trace!(
                         sequence = frame.sequence,
                         id = %frame.id,
+                        retire_prior_to = frame.retire_prior_to,
                     );
-                    if self.rem_cid.is_empty() {
+                    if self.rem_cids.active().is_empty() {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "NEW_CONNECTION_ID when CIDs aren't in use",
                         ));
@@ -2392,14 +2403,14 @@ where
                         .retire_cids
                         .extend(retired);
 
-                    // Must be after retire_prior_to processing in case this CID has the highest
-                    // permitted sequence number
                     use crate::cid_queue::InsertError;
-                    match self.rem_cids.insert(IssuedCid {
+                    let new_rem_cid = IssuedCid {
                         sequence: frame.sequence,
                         id: frame.id,
                         reset_token: frame.reset_token,
-                    }) {
+                    };
+
+                    match self.rem_cids.insert(new_rem_cid) {
                         Ok(()) => {}
                         Err(InsertError::ExceedsLimit) => {
                             return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
@@ -2417,12 +2428,12 @@ where
                     if self.side.is_server() && self.peer_params.stateless_reset_token.is_none() {
                         // We're a server using the initial remote CID for the client, so let's
                         // switch immediately to enable clientside stateless resets.
-                        debug_assert_eq!(self.rem_cid_seq, 0);
+                        debug_assert_eq!(self.rem_cids.active_seq(), 0);
                         self.update_rem_cid().unwrap();
-                    } else if frame.retire_prior_to > self.rem_cid_seq {
-                        // If our current CID is earlier than the first unretired one we must not
-                        // have adopted the one we just got, so it must be stored in rem_cids, so
-                        // this unwrap is guaranteed to succeed.
+                    } else if self.rem_cids.is_active_retired() {
+                        // If our current CID is meant to be retired; or
+                        // active remote CID is invalid (due to packet loss or reordering),
+                        // we must switch to next valid CID
                         self.update_rem_cid().unwrap();
                     }
                 }
@@ -2535,23 +2546,18 @@ where
 
     /// Returns Err(()) if no CIDs were available
     fn update_rem_cid(&mut self) -> Result<(), ()> {
-        let (cid, retired) = self.rem_cids.next().ok_or(())?;
-        trace!("switching to remote CID {}: {}", cid.sequence, cid.id);
+        let (reset_token, retired) = self.rem_cids.next().ok_or(())?;
 
         // Retire the current remote CID and any CIDs we had to skip.
         let retire_cids = &mut self.spaces[SpaceId::Data].pending.retire_cids;
-        retire_cids.push(self.rem_cid_seq);
         retire_cids.extend(retired);
 
-        // Apply the new CID
-        self.rem_cid = cid.id;
-        self.rem_cid_seq = cid.sequence;
         self.endpoint_events
             .push_back(EndpointEventInner::ResetToken(
                 self.path.remote,
-                cid.reset_token,
+                reset_token,
             ));
-        self.peer_params.stateless_reset_token = Some(cid.reset_token);
+        self.peer_params.stateless_reset_token = Some(reset_token);
 
         // Reduce linkability
         self.spin = false;
@@ -2565,15 +2571,9 @@ where
         }
 
         // Subtract 1 to account for the CID we supplied while handshaking
-        let n = self
-            .peer_params
-            .active_connection_id_limit
-            .0
-            .min(LOC_CID_COUNT)
-            - 1;
+        let n = self.peer_params.issue_cids_limit() - 1;
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(n));
-        self.cids_issued += n;
     }
 
     fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> SentFrames {
@@ -2705,7 +2705,7 @@ where
             );
             frame::NewConnectionId {
                 sequence: issued.sequence,
-                retire_prior_to: 0,
+                retire_prior_to: self.retire_cid_seq,
                 id: issued.id,
                 reset_token: issued.reset_token,
             }
@@ -2963,6 +2963,24 @@ where
     #[cfg(test)]
     pub(crate) fn using_ecn(&self) -> bool {
         self.path.sending_ecn
+    }
+
+    /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
+    /// with updated `retire_prior_to` field set to `v`
+    #[cfg(test)]
+    pub(crate) fn rotate_local_cid(&mut self, v: u64) {
+        // Cannot retire more CIDs than what have been issued
+        debug_assert!(v <= *self.cids_active_seq.iter().max().unwrap() + 1);
+        let n = v.checked_sub(self.retire_cid_seq).unwrap();
+        self.retire_cid_seq = v;
+        self.endpoint_events
+            .push_back(EndpointEventInner::NeedIdentifiers(n));
+    }
+
+    /// Check the current active remote CID sequence
+    #[cfg(test)]
+    pub(crate) fn active_rem_cid_seq(&self) -> u64 {
+        self.rem_cids.active_seq()
     }
 
     fn max_ack_delay(&self) -> Duration {
