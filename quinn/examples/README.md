@@ -61,7 +61,7 @@ You can have multiple QUIC connections over a single UDP socket. This is especia
 useful, if you are building a peer-to-peer system where you potentially need to communicate with
 thousands of peers or if you have a
 [hole punched](https://en.wikipedia.org/wiki/UDP_hole_punching) UDP socket.
-Besides, QUIC servers and clients can both operate on the same UDP socket.
+Additionally, QUIC servers and clients can both operate on the same UDP socket.
 This example demonstrates how to make multiple outgoing connections on a single UDP socket.
 
 ```text 
