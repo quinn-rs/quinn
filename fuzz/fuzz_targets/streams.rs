@@ -4,7 +4,7 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 extern crate proto;
-use proto::fuzzing::{FinishError, ResetStream, Streams, TransportParameters};
+use proto::fuzzing::{ResetStream, Streams, TransportParameters};
 use proto::{Dir, Side, StreamId, VarInt};
 
 #[derive(Arbitrary, Debug)]
@@ -48,18 +48,23 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
             Operation::Accept(dir) => {
                 stream.accept(dir);
             }
-            Operation::Finish(id) => match stream.finish(id) {
-                Ok(x) => x,
-                Err(e) => assert_eq!(e, FinishError::UnknownStream),
-            },
+            Operation::Finish(id) => {
+                if let Ok(x) = stream.finish(id) {
+                    x
+                }
+            }
             Operation::ReceivedStopSending(sid, err_code) => {
                 stream.received_stop_sending(sid, err_code);
             }
             Operation::ReceivedReset(rs) => {
-                stream.received_reset(rs);
+                if let Ok(x) = stream.received_reset(rs) {
+                    assert!(x & true | true);
+                }
             }
             Operation::Reset(id) => {
-                stream.reset(id);
+                if let Ok(x) = stream.reset(id) {
+                    x
+                }
             }
         }
     }
