@@ -20,7 +20,8 @@ use crate::{
     broadcast::{self, Broadcast},
     builders::EndpointBuilder,
     connection::Connecting,
-    udp::{RecvMeta, UdpSocket, BATCH_SIZE},
+    platform::BATCH_SIZE,
+    udp::{RecvMeta, UdpSocket},
     ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND,
 };
 
