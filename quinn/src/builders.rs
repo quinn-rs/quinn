@@ -1,7 +1,7 @@
-use std::{io, net::SocketAddr, str, sync::Arc};
+use std::{io, net::SocketAddr, sync::Arc};
 
-use err_derive::Error;
 use proto::generic::{ClientConfig, EndpointConfig, ServerConfig};
+use thiserror::Error;
 use tracing::error;
 
 use crate::{
@@ -45,6 +45,11 @@ where
     ///
     /// Must be called from within a tokio runtime context. To avoid consuming the
     /// `EndpointBuilder`, call `clone()` first.
+    ///
+    /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
+    /// IPv6 address on Windows will not by default be able to communicate with IPv4
+    /// addresses. Portable applications should bind an address that matches the family they wish to
+    /// communicate within.
     pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint<S>, Incoming<S>), EndpointError> {
         let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
         self.with_socket(socket)
@@ -114,7 +119,7 @@ where
 #[derive(Debug, Error)]
 pub enum EndpointError {
     /// An error during setup of the underlying UDP socket.
-    #[error(display = "failed to set up UDP socket: {}", _0)]
+    #[error("failed to set up UDP socket: {0}")]
     Socket(io::Error),
 }
 

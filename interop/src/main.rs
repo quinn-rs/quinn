@@ -1,5 +1,4 @@
 #![allow(clippy::mutex_atomic, clippy::eval_order_dependence)]
-#![type_length_limit = "2121396"] // https://github.com/rust-lang/rust/issues/54540
 
 use std::{
     env,
@@ -374,7 +373,7 @@ impl State {
         }
         let mut transport = quinn::TransportConfig::default();
         transport.send_window(1024 * 1024 * 2);
-        transport.receive_window(1024 * 1024 * 2);
+        transport.receive_window(1024 * 1024 * 2).unwrap();
         transport
             .max_idle_timeout(Some(Duration::from_secs(1)))
             .unwrap();

@@ -7,12 +7,12 @@
 //! implementations of the `crypto::Session` trait.
 
 use std::{
-    convert::TryInto,
+    convert::{TryFrom, TryInto},
     net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
 };
 
 use bytes::{buf::ext::BufExt as _, Buf, BufMut};
-use err_derive::Error;
+use thiserror::Error;
 
 use crate::{
     cid_generator::ConnectionIdGenerator,
@@ -21,7 +21,8 @@ use crate::{
     config::{EndpointConfig, ServerConfig, TransportConfig},
     crypto,
     shared::ConnectionId,
-    ResetToken, Side, TransportError, VarInt, MAX_CID_SIZE, RESET_TOKEN_SIZE,
+    ResetToken, Side, TransportError, VarInt, LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT,
+    RESET_TOKEN_SIZE,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -68,7 +69,7 @@ macro_rules! make_struct {
         /// Transport parameters used to negotiate connection-level preferences between peers
         #[derive(Debug, Copy, Clone, Eq, PartialEq)]
         pub struct TransportParameters {
-            $($(#[$doc])* pub(crate) $name : u64,)*
+            $($(#[$doc])* pub(crate) $name : VarInt,)*
 
             /// Does the endpoint support active connection migration
             pub(crate) disable_active_migration: bool,
@@ -95,7 +96,7 @@ macro_rules! make_struct {
             /// Standard defaults, used if the peer does not supply a given parameter.
             fn default() -> Self {
                 Self {
-                    $($name: $default,)*
+                    $($name: VarInt::from_u32($default),)*
 
                     disable_active_migration: false,
                     max_datagram_frame_size: None,
@@ -133,19 +134,19 @@ impl TransportParameters {
             initial_max_stream_data_bidi_remote: config.stream_receive_window,
             initial_max_stream_data_uni: config.stream_receive_window,
             max_udp_payload_size: endpoint_config.max_udp_payload_size,
-            max_idle_timeout: config.max_idle_timeout.map_or(0, |x| {
+            max_idle_timeout: config.max_idle_timeout.map_or(0u32.into(), |x| {
                 x.as_millis()
                     .try_into()
                     .expect("setter guarantees this is in-bounds")
             }),
-            max_ack_delay: 0,
+            max_ack_delay: 0u32.into(),
             disable_active_migration: server_config.map_or(false, |c| !c.migration),
             active_connection_id_limit: if cid_gen.cid_len() == 0 {
                 2 // i.e. default, i.e. unsent
             } else {
-                // + 1 to account for the currently used CID, which isn't kept in the queue
-                CidQueue::LEN as u64 + 1
-            },
+                CidQueue::LEN as u32
+            }
+            .into(),
             max_datagram_frame_size: config
                 .datagram_receive_buffer_size
                 .map(|x| (x.min(u16::max_value().into()) as u16).into()),
@@ -173,6 +174,14 @@ impl TransportParameters {
             ));
         }
         Ok(())
+    }
+
+    /// Maximum number of CIDs to issue to this peer
+    ///
+    /// Consider both a) the active_connection_id_limit from the other end; and
+    /// b) LOC_CID_COUNT used locally
+    pub(crate) fn issue_cids_limit(&self) -> u64 {
+        self.active_connection_id_limit.0.min(LOC_CID_COUNT)
     }
 }
 
@@ -245,10 +254,10 @@ impl PreferredAddress {
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
 pub enum Error {
     /// Parameters that are semantically invalid
-    #[error(display = "parameter had illegal value")]
+    #[error("parameter had illegal value")]
     IllegalValue,
     /// Catch-all error for problems while decoding transport parameters
-    #[error(display = "parameters were malformed")]
+    #[error("parameters were malformed")]
     Malformed,
 }
 
@@ -273,10 +282,10 @@ impl TransportParameters {
         macro_rules! write_params {
             {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
                 $(
-                    if self.$name != $default {
+                    if self.$name.0 != $default {
                         w.write_var($code);
-                        w.write_var(VarInt::from_u64(self.$name).expect("value too large").size() as u64);
-                        w.write_var(self.$name);
+                        w.write(VarInt::try_from(self.$name.size()).unwrap());
+                        w.write(self.$name);
                     }
                 )*
             }
@@ -401,10 +410,12 @@ impl TransportParameters {
         }
 
         // Semantic validation
-        if params.ack_delay_exponent > 20
-            || params.max_ack_delay >= 1 << 14
-            || params.active_connection_id_limit < 2
-            || params.max_udp_payload_size < 1200
+        if params.ack_delay_exponent.0 > 20
+            || params.max_ack_delay.0 >= 1 << 14
+            || params.active_connection_id_limit.0 < 2
+            || params.max_udp_payload_size.0 < 1200
+            || params.initial_max_streams_bidi.0 > MAX_STREAM_COUNT
+            || params.initial_max_streams_uni.0 > MAX_STREAM_COUNT
             || (side.is_server()
                 && (params.stateless_reset_token.is_some() || params.preferred_address.is_some()))
         {
@@ -434,10 +445,10 @@ mod test {
         let params = TransportParameters {
             initial_src_cid: Some(ConnectionId::new(&[])),
             original_dst_cid: Some(ConnectionId::new(&[])),
-            initial_max_streams_bidi: 16,
-            initial_max_streams_uni: 16,
-            ack_delay_exponent: 2,
-            max_udp_payload_size: 1200,
+            initial_max_streams_bidi: 16u32.into(),
+            initial_max_streams_uni: 16u32.into(),
+            ack_delay_exponent: 2u32.into(),
+            max_udp_payload_size: 1200u32.into(),
             preferred_address: Some(PreferredAddress {
                 address_v4: Some(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 42)),
                 address_v6: None,
@@ -456,11 +467,11 @@ mod test {
     #[test]
     fn resumption_params_validation() {
         let high_limit = TransportParameters {
-            initial_max_streams_uni: 32,
+            initial_max_streams_uni: 32u32.into(),
             ..Default::default()
         };
         let low_limit = TransportParameters {
-            initial_max_streams_uni: 16,
+            initial_max_streams_uni: 16u32.into(),
             ..Default::default()
         };
         high_limit.validate_resumption_from(&low_limit).unwrap();

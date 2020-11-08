@@ -6,7 +6,7 @@ use std::{
 };
 
 use bytes::BytesMut;
-use ring::{aead, aead::quic::HeaderProtectionKey, hmac};
+use ring::{aead, aead::quic::HeaderProtectionKey, hkdf, hmac};
 pub use rustls::TLSError;
 use rustls::{
     self,
@@ -50,6 +50,7 @@ impl crypto::Session for TlsSession {
     type Identity = CertificateChain;
     type ClientConfig = Arc<rustls::ClientConfig>;
     type HmacKey = hmac::Key;
+    type HandshakeTokenKey = hkdf::Prk;
     type PacketKey = PacketKey;
     type HeaderKey = HeaderProtectionKey;
     type ServerConfig = Arc<rustls::ServerConfig>;
@@ -377,7 +378,7 @@ impl crypto::PacketKey for PacketKey {
     fn confidentiality_limit(&self) -> u64 {
         let cipher = self.key.algorithm();
         if cipher == &aead::AES_128_GCM || cipher == &aead::AES_256_GCM {
-            2u64.pow(25)
+            2u64.pow(23)
         } else if cipher == &aead::CHACHA20_POLY1305 {
             u64::MAX
         } else {
@@ -388,7 +389,7 @@ impl crypto::PacketKey for PacketKey {
     fn integrity_limit(&self) -> u64 {
         let cipher = self.key.algorithm();
         if cipher == &aead::AES_128_GCM || cipher == &aead::AES_256_GCM {
-            2u64.pow(54)
+            2u64.pow(52)
         } else if cipher == &aead::CHACHA20_POLY1305 {
             2u64.pow(36)
         } else {

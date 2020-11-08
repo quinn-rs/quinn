@@ -1,7 +1,7 @@
 use std::{convert::TryInto, fmt};
 
 use bytes::{Buf, BufMut};
-use err_derive::Error;
+use thiserror::Error;
 
 use crate::coding::{self, Codec, UnexpectedEnd};
 
@@ -13,7 +13,6 @@ use arbitrary::Arbitrary;
 /// Values of this type are suitable for encoding as QUIC variable-length integer.
 // It would be neat if we could express to Rust that the top two bits are available for use as enum
 // discriminants
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 #[derive(Default, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct VarInt(pub(crate) u64);
 
@@ -105,6 +104,14 @@ impl std::convert::TryFrom<u64> for VarInt {
     }
 }
 
+impl std::convert::TryFrom<u128> for VarInt {
+    type Error = VarIntBoundsExceeded;
+    /// Succeeds iff `x` < 2^62
+    fn try_from(x: u128) -> Result<Self, VarIntBoundsExceeded> {
+        VarInt::from_u64(x.try_into().map_err(|_| VarIntBoundsExceeded)?)
+    }
+}
+
 impl std::convert::TryFrom<usize> for VarInt {
     type Error = VarIntBoundsExceeded;
     /// Succeeds iff `x` < 2^62
@@ -125,9 +132,16 @@ impl fmt::Display for VarInt {
     }
 }
 
+#[cfg(feature = "arbitrary")]
+impl Arbitrary for VarInt {
+    fn arbitrary(u: &mut arbitrary::Unstructured<'_>) -> arbitrary::Result<Self> {
+        Ok(VarInt(u.int_in_range(0..=VarInt::MAX.0)?))
+    }
+}
+
 /// Error returned when constructing a `VarInt` from a value >= 2^62
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Error)]
-#[error(display = "value too large for varint encoding")]
+#[error("value too large for varint encoding")]
 pub struct VarIntBoundsExceeded;
 
 impl Codec for VarInt {

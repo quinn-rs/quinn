@@ -7,16 +7,16 @@ use std::{
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
-use err_derive::Error;
 use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
 use proto::{ConnectionError, ConnectionHandle, Dir, StreamEvent, StreamId};
+use thiserror::Error;
 use tokio::time::{delay_until, Delay, Instant as TokioInstant};
 use tracing::info_span;
 
@@ -282,11 +282,10 @@ where
             conn.driver = Some(cx.waker().clone());
             return Poll::Pending;
         }
-        match conn.error {
-            Some(ConnectionError::LocallyClosed) => Poll::Ready(()),
-            Some(_) => Poll::Ready(()),
-            None => unreachable!("drained connections always have an error"),
+        if conn.error.is_none() {
+            unreachable!("drained connections always have an error");
         }
+        Poll::Ready(())
     }
 }
 
@@ -396,6 +395,11 @@ where
     /// switching to a cellular internet connection.
     pub fn remote_address(&self) -> SocketAddr {
         self.0.lock().unwrap().inner.remote_address()
+    }
+
+    /// Current best estimate of this connection's latency (round-trip-time)
+    pub fn rtt(&self) -> Duration {
+        self.0.lock().unwrap().inner.rtt()
     }
 
     /// Parameters negotiated during the handshake
@@ -651,6 +655,7 @@ where
             on_connected: Some(on_connected),
             connected: false,
             timer: None,
+            timer_deadline: None,
             conn_events,
             endpoint_events,
             blocked_writers: HashMap::new(),
@@ -722,6 +727,7 @@ where
     on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
     timer: Option<Delay>,
+    timer_deadline: Option<TokioInstant>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: HashMap<StreamId, Waker>,
@@ -859,39 +865,49 @@ where
     }
 
     fn drive_timer(&mut self, cx: &mut Context) -> bool {
-        let mut keep_going = false;
-        loop {
-            if let Some(ref mut delay) = self.timer {
-                if delay.poll_unpin(cx) == Poll::Ready(()) {
-                    // We must get a fresh `now` each iteration. If the value were cached and tokio
-                    // deems a timer for a later time than the cached value to be expired, we'd get
-                    // stuck in an infinite loop resetting it.
-                    self.inner.handle_timeout(Instant::now());
-                    self.timer = None;
-                    // A timer expired, so the caller needs to check for new transmits, which might
-                    // cause new timers to be set.
-                    keep_going = true;
+        // Check whether we need to (re)set the timer. If so, we must poll again to ensure the
+        // timer is registered with the runtime (and check whether it's already
+        // expired).
+        match self.inner.poll_timeout().map(TokioInstant::from_std) {
+            Some(deadline) => {
+                if let Some(delay) = &mut self.timer {
+                    // There is no need to reset the tokio timer if the deadline
+                    // did not change
+                    if self
+                        .timer_deadline
+                        .map(|current_deadline| current_deadline != deadline)
+                        .unwrap_or(true)
+                    {
+                        delay.reset(deadline);
+                    }
+                } else {
+                    self.timer = Some(delay_until(deadline));
                 }
+                // Store the actual expiration time of the timer
+                self.timer_deadline = Some(deadline);
             }
-            // Check whether we need to (re)set the timer. If so, we must poll again to ensure the
-            // timer is registered with the runtime (and check whether it's already
-            // expired). Otherwise, exit the loop.
-            match (
-                self.inner.poll_timeout().map(TokioInstant::from_std),
-                &mut self.timer,
-            ) {
-                (Some(timeout), &mut None) => self.timer = Some(delay_until(timeout)),
-                (Some(timeout), &mut Some(ref mut delay)) if delay.deadline() != timeout => {
-                    delay.reset(timeout);
-                }
-                (None, _) => {
-                    self.timer = None;
-                    break;
-                }
-                _ => break,
+            None => {
+                self.timer_deadline = None;
+                return false;
             }
         }
-        keep_going
+
+        if self.timer_deadline.is_none() {
+            return false;
+        }
+
+        let delay = self.timer.as_mut().expect("timer must exist in this state");
+        if delay.poll_unpin(cx).is_pending() {
+            // Since there wasn't a timeout event, there is nothing new
+            // for the connection to do
+            return false;
+        }
+
+        // A timer expired, so the caller needs to check for
+        // new transmits, which might cause new timers to be set.
+        self.inner.handle_timeout(Instant::now());
+        self.timer_deadline = None;
+        true
     }
 
     /// Wake up a blocked `Driver` task to process I/O
@@ -985,18 +1001,18 @@ where
 #[derive(Debug, Error, Clone, Eq, PartialEq)]
 pub enum SendDatagramError {
     /// The peer does not support receiving datagram frames
-    #[error(display = "datagrams not supported by peer")]
+    #[error("datagrams not supported by peer")]
     UnsupportedByPeer,
     /// Datagram support is disabled locally
-    #[error(display = "datagram support disabled")]
+    #[error("datagram support disabled")]
     Disabled,
     /// The datagram is larger than the connection can currently accommodate
     ///
     /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
     /// exceeded.
-    #[error(display = "datagram too large")]
+    #[error("datagram too large")]
     TooLarge,
     /// The connection was closed
-    #[error(display = "connection closed: {}", _0)]
-    ConnectionClosed(ConnectionError),
+    #[error("connection closed: {0}")]
+    ConnectionClosed(#[source] ConnectionError),
 }

@@ -1,7 +1,7 @@
 use std::{cmp::Ordering, io, ops::Range, str};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
-use err_derive::Error;
+use thiserror::Error;
 
 use crate::{
     coding::{self, BufExt, BufMutExt},
@@ -54,11 +54,7 @@ impl PartialDecode {
     }
 
     pub(crate) fn has_long_header(&self) -> bool {
-        use self::PlainHeader::*;
-        match self.plain_header {
-            Short { .. } => false,
-            _ => true,
-        }
+        !matches!(self.plain_header, PlainHeader::Short { .. })
     }
 
     pub(crate) fn is_initial(&self) -> bool {
@@ -258,7 +254,7 @@ impl Header {
                 number,
             } => {
                 w.write(u8::from(LongHeaderType::Initial) | number.tag());
-                w.write(VERSION);
+                w.write(*VERSION.start());
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 w.write_var(token.len() as u64);
@@ -278,7 +274,7 @@ impl Header {
                 number,
             } => {
                 w.write(u8::from(LongHeaderType::Standard(ty)) | number.tag());
-                w.write(VERSION);
+                w.write(*VERSION.start());
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
@@ -294,7 +290,7 @@ impl Header {
                 ref src_cid,
             } => {
                 w.write(u8::from(LongHeaderType::Retry));
-                w.write(VERSION);
+                w.write(*VERSION.start());
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 PartialEncode {
@@ -343,10 +339,7 @@ impl Header {
 
     /// Whether the packet is encrypted on the wire
     pub(crate) fn is_protected(&self) -> bool {
-        match *self {
-            Header::Retry { .. } | Header::VersionNegotiate { .. } => false,
-            _ => true,
-        }
+        !matches!(*self, Header::Retry { .. } | Header::VersionNegotiate { .. })
     }
 
     pub(crate) fn number(&self) -> Option<PacketNumber> {
@@ -385,10 +378,7 @@ impl Header {
     }
 
     pub(crate) fn is_short(&self) -> bool {
-        match *self {
-            Header::Short { .. } => true,
-            _ => false,
-        }
+        matches!(*self, Header::Short { .. })
     }
 
     pub(crate) fn is_1rtt(&self) -> bool {
@@ -396,13 +386,7 @@ impl Header {
     }
 
     pub(crate) fn is_0rtt(&self) -> bool {
-        match *self {
-            Header::Long {
-                ty: LongType::ZeroRtt,
-                ..
-            } => true,
-            _ => false,
-        }
+        matches!(*self, Header::Long { ty: LongType::ZeroRtt, .. })
     }
 
     pub(crate) fn dst_cid(&self) -> &ConnectionId {
@@ -544,10 +528,10 @@ impl PlainHeader {
                 });
             }
 
-            if version != VERSION {
+            if !VERSION.contains(&version) {
                 return Err(PacketDecodeError::UnsupportedVersion {
-                    source: src_cid,
-                    destination: dst_cid,
+                    src_cid,
+                    dst_cid,
                     version,
                 });
             }
@@ -727,13 +711,13 @@ pub(crate) enum LongType {
 
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub(crate) enum PacketDecodeError {
-    #[error(display = "unsupported version {:x}", version)]
+    #[error("unsupported version {version:x}")]
     UnsupportedVersion {
-        source: ConnectionId,
-        destination: ConnectionId,
+        src_cid: ConnectionId,
+        dst_cid: ConnectionId,
         version: u32,
     },
-    #[error(display = "invalid header: {}", _0)]
+    #[error("invalid header: {0}")]
     InvalidHeader(&'static str),
 }
 

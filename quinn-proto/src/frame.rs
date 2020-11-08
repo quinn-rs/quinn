@@ -143,7 +143,7 @@ pub enum Frame {
     Crypto(Crypto),
     NewToken { token: Bytes },
     Stream(Stream),
-    MaxData(u64),
+    MaxData(VarInt),
     MaxStreamData { id: StreamId, offset: u64 },
     MaxStreams { dir: Dir, count: u64 },
     DataBlocked { offset: u64 },
@@ -542,7 +542,7 @@ impl Iter {
                 error_code: self.bytes.get()?,
                 reason: self.take_len()?,
             })),
-            Type::MAX_DATA => Frame::MaxData(self.bytes.get_var()?),
+            Type::MAX_DATA => Frame::MaxData(self.bytes.get()?),
             Type::MAX_STREAM_DATA => Frame::MaxStreamData {
                 id: self.bytes.get()?,
                 offset: self.bytes.get_var()?,

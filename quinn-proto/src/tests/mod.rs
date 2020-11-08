@@ -1,5 +1,4 @@
 use std::{
-    convert::TryInto,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
@@ -39,9 +38,7 @@ fn version_negotiate_server() {
     if let Some(Transmit { contents, .. }) = io {
         assert_ne!(contents[0] & 0x80, 0);
         assert_eq!(&contents[1..15], hex!("00000000 04 00000000 04 00000000"));
-        assert!(contents[15..]
-            .chunks(4)
-            .any(|x| u32::from_be_bytes(x.try_into().unwrap()) == VERSION));
+        assert!(contents[15..].chunks(4).any(is_supported_version));
     }
     assert_matches!(server.poll_transmit(), None);
 }
@@ -600,7 +597,7 @@ fn stream_id_backpressure() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_uni: 1,
+            stream_window_uni: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -620,20 +617,22 @@ fn stream_id_backpressure() {
         None,
         "only one stream is permitted at a time"
     );
-    // Close the first stream to make room for the second
-    pair.client_conn_mut(client_ch).finish(s).unwrap();
+    // Generate some activity to allow the server to see the stream
+    const MSG: &[u8] = b"hello";
+    pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
     pair.drive();
-    assert_matches!(
-        pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Stream(StreamEvent::Finished { id })) if id == s
-    );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_eq!(
+        pair.client_conn_mut(client_ch).open(Dir::Uni),
+        None,
+        "server does not immediately grant additional credit"
+    );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(Some((msg, 0))) if msg == MSG);
     // Server will only send MAX_STREAM_ID now that the application's been notified
     pair.drive();
     assert_matches!(
@@ -1039,7 +1038,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
 fn stream_flow_control() {
     test_flow_control(
         TransportConfig {
-            stream_receive_window: 2000,
+            stream_receive_window: 2000u32.into(),
             ..TransportConfig::default()
         },
         2000,
@@ -1050,7 +1049,7 @@ fn stream_flow_control() {
 fn conn_flow_control() {
     test_flow_control(
         TransportConfig {
-            receive_window: 2000,
+            receive_window: 2000u32.into(),
             ..TransportConfig::default()
         },
         2000,
@@ -1231,6 +1230,39 @@ fn cid_rotation() {
         right_bound += active_cid_num;
         pair.drive_server();
     }
+}
+
+#[test]
+fn cid_retirement() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    // Server retires current active remote CIDs
+    pair.server_conn_mut(server_ch).rotate_local_cid(1);
+    pair.drive();
+    // Any unexpected behavior may trigger TransportError::CONNECTION_ID_LIMIT_ERROR
+    assert!(!pair.client_conn_mut(client_ch).is_closed());
+    assert!(!pair.server_conn_mut(server_ch).is_closed());
+    assert_matches!(pair.client_conn_mut(client_ch).active_rem_cid_seq(), 1);
+
+    use crate::cid_queue::CidQueue;
+    use crate::LOC_CID_COUNT;
+    let mut active_cid_num = CidQueue::LEN as u64;
+    active_cid_num = active_cid_num.min(LOC_CID_COUNT);
+
+    let next_retire_prior_to = active_cid_num + 1;
+    pair.client_conn_mut(client_ch).ping();
+    // Server retires all valid remote CIDs
+    pair.server_conn_mut(server_ch)
+        .rotate_local_cid(next_retire_prior_to);
+    pair.drive();
+    assert!(!pair.client_conn_mut(client_ch).is_closed());
+    assert!(!pair.server_conn_mut(server_ch).is_closed());
+    assert_matches!(
+        pair.client_conn_mut(client_ch).active_rem_cid_seq(),
+        _next_retire_prior_to
+    );
 }
 
 #[test]
@@ -1621,7 +1653,7 @@ fn repeated_request_response() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_bidi: 1,
+            stream_window_bidi: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
