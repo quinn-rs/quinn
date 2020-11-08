@@ -201,7 +201,7 @@ where
                 break;
             }
         }
-        if !endpoint.incoming.is_empty() && endpoint.incoming_live {
+        if !endpoint.incoming.is_empty() {
             if let Some(task) = endpoint.incoming_reader.take() {
                 task.wake();
             }
@@ -240,8 +240,6 @@ where
     outgoing: VecDeque<proto::Transmit>,
     incoming: VecDeque<Connecting<S>>,
     incoming_reader: Option<Waker>,
-    /// Whether the `Incoming` stream has not yet been dropped
-    incoming_live: bool,
     driver: Option<Waker>,
     ipv6: bool,
     connections: ConnectionSet,
@@ -461,7 +459,6 @@ where
     fn drop(&mut self) {
         let endpoint = &mut *self.0.lock().unwrap();
         endpoint.inner.reject_new_connections();
-        endpoint.incoming_live = false;
         endpoint.incoming_reader = None;
     }
 }
@@ -484,7 +481,6 @@ where
             events,
             outgoing: VecDeque::new(),
             incoming: VecDeque::new(),
-            incoming_live: true,
             incoming_reader: None,
             driver: None,
             connections: ConnectionSet {
