@@ -201,6 +201,11 @@ where
                 break;
             }
         }
+        if !endpoint.incoming.is_empty() && endpoint.incoming_live {
+            if let Some(task) = endpoint.incoming_reader.take() {
+                task.wake();
+            }
+        }
         if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
             Poll::Ready(Ok(()))
         } else {
@@ -275,12 +280,7 @@ where
                         match self.inner.handle(now, meta.addr, meta.ecn, data) {
                             Some((handle, DatagramEvent::NewConnection(conn))) => {
                                 let conn = self.connections.insert(handle, conn);
-                                if self.incoming_live {
-                                    self.incoming.push_back(conn);
-                                    if let Some(task) = self.incoming_reader.take() {
-                                        task.wake();
-                                    }
-                                }
+                                self.incoming.push_back(conn);
                             }
                             Some((handle, DatagramEvent::ConnectionEvent(event))) => {
                                 // Ignoring errors from dropped connections that haven't yet been cleaned up
