@@ -871,6 +871,9 @@ where
                 .stop_sending
                 .push(frame::StopSending { id, error_code });
         }
+        if self.streams.want_send_max_data() {
+            self.spaces[SpaceId::Data].pending.max_data = true;
+        }
         Ok(())
     }
 
@@ -2253,6 +2256,9 @@ where
                 }
                 Frame::Stream(frame) => {
                     self.streams.received(frame)?;
+                    if self.streams.want_send_max_data() {
+                        self.spaces[SpaceId::Data].pending.max_data = true;
+                    }
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, ack)?;
@@ -2813,7 +2819,9 @@ where
 
     fn add_read_credits(&mut self, id: StreamId, transmit_max_stream_data: bool) {
         let space = &mut self.spaces[SpaceId::Data];
-        space.pending.max_data = true;
+        if self.streams.want_send_max_data() {
+            space.pending.max_data = true;
+        }
         if transmit_max_stream_data {
             // Only bother issuing stream credit if the peer wants to send more
             space.pending.max_stream_data.insert(id);
