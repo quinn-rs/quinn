@@ -1254,8 +1254,7 @@ fn cid_retirement() {
     let next_retire_prior_to = active_cid_num + 1;
     pair.client_conn_mut(client_ch).ping();
     // Server retires all valid remote CIDs
-    pair.server_conn_mut(server_ch)
-        .rotate_local_cid(next_retire_prior_to, Instant::now());
+    pair.server_conn_mut(server_ch).rotate_local_cid(next_retire_prior_to, Instant::now());
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(server_ch).is_closed());
