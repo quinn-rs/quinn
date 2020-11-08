@@ -748,7 +748,7 @@ where
                             timestamp,
                         }));
                     }
-                
+                }
             }
         }
     }
@@ -822,11 +822,8 @@ where
                     // by including a sufficiently large value in the Retire Prior To field.
                     // https://tools.ietf.org/html/draft-ietf-quic-transport-29#section-5.1.1
                     // In this case, `retire prior to` must increase to accommodate new cid
-                    let must_increase_retire_cid = self.cids_active_seq.len() as u64
-                        >= self
-                            .peer_params
-                            .active_connection_id_limit
-                            .min(LOC_CID_COUNT);
+                    let must_increase_retire_cid =
+                        self.cids_active_seq.len() as u64 >= self.peer_params.issue_cids_limit();
                     if must_increase_retire_cid
                         && self.retire_cid_seq - current_seq < num_pushed_cids
                     {
@@ -2554,17 +2551,6 @@ where
                                 .push(frame.sequence);
                             continue;
                         }
-                    } else {
-                        // There is no valid CIDs in CidQueue and active CID self.rem_cid_seq is before retire_prior_to. We must
-                        // 1. Reset offset in CidQueue
-                        self.rem_cids.assign_offset(frame.retire_prior_to + 1);
-                        // 2. Retire active remote cid
-                        self.spaces[SpaceId::Data]
-                            .pending
-                            .retire_cids
-                            .push(self.rem_cid_seq);
-                        // 3. Accept current cid in the frame as the active one
-                        self.apply_new_rem_cid(new_rem_cid);
                     }
 
                     if self.side.is_server() && self.peer_params.stateless_reset_token.is_none() {
@@ -2643,9 +2629,7 @@ where
             );
             self.migrate(now, remote);
             // Break linkability, if possible
-            if let Some(cid) = self.retire_rem_cid() {
-                self.apply_new_rem_cid(cid);
-            }
+            let _ = self.update_rem_cid();
         }
 
         Ok(())
@@ -2692,7 +2676,7 @@ where
     fn update_rem_cid(&mut self) -> Result<(), ()> {
         let (reset_token, retired) = self.rem_cids.next().ok_or(())?;
 
-        // Retire the current remote CID
+        // Retire the current remote CID and any CIDs we had to skip.
         let retire_cids = &mut self.spaces[SpaceId::Data].pending.retire_cids;
         retire_cids.extend(retired);
 
@@ -2705,6 +2689,7 @@ where
 
         // Reduce linkability
         self.spin = false;
+        Ok(())
     }
 
     /// Issue an initial set of connection IDs to the peer
@@ -3117,17 +3102,17 @@ where
             *self.cids_active_seq.iter().max().unwrap(),
         )
     }
-      
+
     /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
     /// with updated `retire_prior_to` field set to `v`
     #[cfg(test)]
-    pub(crate) fn rotate_local_cid(&mut self, v: u64) {
+    pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant) {
         // Cannot retire more CIDs than what have been issued
         debug_assert!(v <= *self.cids_active_seq.iter().max().unwrap() + 1);
         let n = v.checked_sub(self.retire_cid_seq).unwrap();
         self.retire_cid_seq = v;
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(n));
+            .push_back(EndpointEventInner::NeedIdentifiers(now, n));
     }
 
     /// Check the current active remote CID sequence
