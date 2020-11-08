@@ -107,7 +107,6 @@ impl super::UdpExt for UdpSocket {
 
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
-        use crate::udp::BATCH_SIZE;
         let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
         let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
         let mut cmsgs = [cmsg::Aligned(MaybeUninit::uninit()); BATCH_SIZE];
@@ -124,7 +123,7 @@ impl super::UdpExt for UdpSocket {
                 libc::sendmmsg(
                     self.as_raw_fd(),
                     msgs.as_mut_ptr(),
-                    transmits.len().min(crate::udp::BATCH_SIZE) as _,
+                    transmits.len().min(BATCH_SIZE) as _,
                     0,
                 )
             };
@@ -169,7 +168,6 @@ impl super::UdpExt for UdpSocket {
 
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
-        use crate::udp::BATCH_SIZE;
         let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
         let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
         let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
@@ -317,3 +315,10 @@ fn decode_recv(
         ecn: EcnCodepoint::from_bits(ecn_bits),
     }
 }
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+// Chosen somewhat arbitrarily; might benefit from additional tuning.
+pub const BATCH_SIZE: usize = 32;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub const BATCH_SIZE: usize = 1;

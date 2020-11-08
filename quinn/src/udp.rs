@@ -69,11 +69,6 @@ impl UdpSocket {
     }
 }
 
-/// Number of UDP packets to send/receive at a time
-///
-/// Chosen somewhat arbitrarily; might benefit from additional tuning.
-pub const BATCH_SIZE: usize = 32;
-
 #[derive(Debug, Copy, Clone)]
 pub struct RecvMeta {
     pub addr: SocketAddr,

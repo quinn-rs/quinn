@@ -42,3 +42,5 @@ impl super::UdpExt for UdpSocket {
         Ok(1)
     }
 }
+
+pub const BATCH_SIZE: usize = 1;
