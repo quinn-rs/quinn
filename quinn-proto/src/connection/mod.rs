@@ -18,7 +18,7 @@ use crate::{
     config::{ServerConfig, TransportConfig},
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
-    frame::{Close, Datagram, FrameStruct},
+    frame::{Close, Datagram, FrameStruct, ShouldTransmit},
     is_supported_version,
     packet::{Header, LongType, Packet, PacketNumber, PartialDecode, PartialEncode, SpaceId},
     range_set::RangeSet,
@@ -825,24 +825,18 @@ where
     ///
     /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
-        Ok(self
-            .streams
-            .read_unordered(id)?
-            .map(|(buf, offset, transmit_max_stream_data)| {
-                self.add_read_credits(id, transmit_max_stream_data);
-                (buf, offset)
-            }))
+        Ok(self.streams.read_unordered(id)?.map(|result| {
+            self.add_read_credits(id, result.max_stream_data, result.max_data);
+            (result.buf, result.offset)
+        }))
     }
 
     /// Read from the given recv stream
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
-        Ok(self
-            .streams
-            .read(id, buf)?
-            .map(|(len, transmit_max_stream_data)| {
-                self.add_read_credits(id, transmit_max_stream_data);
-                len
-            }))
+        Ok(self.streams.read(id, buf)?.map(|result| {
+            self.add_read_credits(id, result.max_stream_data, result.max_data);
+            result.len
+        }))
     }
 
     /// Send data on the given stream
@@ -867,14 +861,15 @@ where
             "only streams supporting incoming data may be stopped"
         );
         // Only bother if there's data we haven't received yet
-        if self.streams.stop(id)? {
+        let result = self.streams.stop(id)?;
+        if result.stop_sending.should_transmit() {
             let space = &mut self.spaces[SpaceId::Data];
             space
                 .pending
                 .stop_sending
                 .push(frame::StopSending { id, error_code });
         }
-        if self.streams.want_send_max_data() {
+        if result.max_data.should_transmit() {
             self.spaces[SpaceId::Data].pending.max_data = true;
         }
         Ok(())
@@ -2258,8 +2253,7 @@ where
                     self.read_crypto(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
-                    self.streams.received(frame)?;
-                    if self.streams.want_send_max_data() {
+                    if self.streams.received(frame)?.should_transmit() {
                         self.spaces[SpaceId::Data].pending.max_data = true;
                     }
                 }
@@ -2315,7 +2309,7 @@ where
                     self.streams.received_max_streams(dir, count)?;
                 }
                 Frame::ResetStream(frame) => {
-                    if self.streams.received_reset(frame)? {
+                    if self.streams.received_reset(frame)?.should_transmit() {
                         self.spaces[SpaceId::Data].pending.max_data = true;
                     }
                 }
@@ -2820,12 +2814,17 @@ where
         self.streams.alloc_remote_stream(&self.peer_params, dir);
     }
 
-    fn add_read_credits(&mut self, id: StreamId, transmit_max_stream_data: bool) {
+    fn add_read_credits(
+        &mut self,
+        id: StreamId,
+        transmit_max_stream_data: ShouldTransmit,
+        transmit_max_data: ShouldTransmit,
+    ) {
         let space = &mut self.spaces[SpaceId::Data];
-        if self.streams.want_send_max_data() {
+        if transmit_max_data.should_transmit() {
             space.pending.max_data = true;
         }
-        if transmit_max_stream_data {
+        if transmit_max_stream_data.should_transmit() {
             // Only bother issuing stream credit if the peer wants to send more
             space.pending.max_stream_data.insert(id);
         }
