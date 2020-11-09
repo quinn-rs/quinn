@@ -16,7 +16,7 @@ use super::{
 use crate::{
     coding::BufMutExt,
     connection::stats::FrameStats,
-    frame::{self, FrameStruct},
+    frame::{self, FrameStruct, ShouldTransmit},
     transport_parameters::TransportParameters,
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
 };
@@ -176,11 +176,7 @@ impl Streams {
         self.connection_blocked.clear();
     }
 
-    pub fn read(
-        &mut self,
-        id: StreamId,
-        buf: &mut [u8],
-    ) -> Result<Option<(usize, bool)>, ReadError> {
+    pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<ReadResult>, ReadError> {
         let mut entry = match self.recv.entry(id) {
             hash_map::Entry::Vacant(_) => return Err(ReadError::UnknownStream),
             hash_map::Entry::Occupied(e) => e,
@@ -188,9 +184,13 @@ impl Streams {
         let rs = entry.get_mut();
         match rs.read(buf) {
             Ok(Some(len)) => {
-                self.local_max_data = self.local_max_data.saturating_add(len as u64);
                 let (_, transmit_max_stream_data) = rs.max_stream_data(self.stream_receive_window);
-                Ok(Some((len, transmit_max_stream_data)))
+                let transmit_max_data = self.add_read_credits(len as u64);
+                Ok(Some(ReadResult {
+                    len,
+                    max_stream_data: transmit_max_stream_data,
+                    max_data: transmit_max_data,
+                }))
             }
             Ok(None) => {
                 entry.remove_entry();
@@ -207,7 +207,7 @@ impl Streams {
     pub fn read_unordered(
         &mut self,
         id: StreamId,
-    ) -> Result<Option<(Bytes, u64, bool)>, ReadError> {
+    ) -> Result<Option<ReadUnorderedResult>, ReadError> {
         let mut entry = match self.recv.entry(id) {
             hash_map::Entry::Vacant(_) => return Err(ReadError::UnknownStream),
             hash_map::Entry::Occupied(e) => e,
@@ -215,9 +215,14 @@ impl Streams {
         let rs = entry.get_mut();
         match rs.read_unordered() {
             Ok(Some((buf, offset))) => {
-                self.local_max_data = self.local_max_data.saturating_add(buf.len() as u64);
                 let (_, transmit_max_stream_data) = rs.max_stream_data(self.stream_receive_window);
-                Ok(Some((buf, offset, transmit_max_stream_data)))
+                let transmit_max_data = self.add_read_credits(buf.len() as u64);
+                Ok(Some(ReadUnorderedResult {
+                    buf,
+                    offset,
+                    max_stream_data: transmit_max_stream_data,
+                    max_data: transmit_max_data,
+                }))
             }
             Ok(None) => {
                 entry.remove_entry();
@@ -257,7 +262,9 @@ impl Streams {
     }
 
     /// Process incoming stream frame
-    pub fn received(&mut self, frame: frame::Stream) -> Result<(), TransportError> {
+    ///
+    /// If successful, returns whether a `MAX_DATA` frame needs to be transmitted
+    pub fn received(&mut self, frame: frame::Stream) -> Result<ShouldTransmit, TransportError> {
         trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
         let stream = frame.id;
         self.validate_receive_id(stream).map_err(|e| {
@@ -269,13 +276,13 @@ impl Streams {
             Some(rs) => rs,
             None => {
                 trace!("dropping frame for closed stream");
-                return Ok(());
+                return Ok(ShouldTransmit::new(false));
             }
         };
 
         if rs.is_finished() {
             trace!("dropping frame for finished stream");
-            return Ok(());
+            return Ok(ShouldTransmit::new(false));
         }
 
         let new_bytes = rs.ingest(
@@ -288,21 +295,25 @@ impl Streams {
 
         if !rs.assembler.is_stopped() {
             self.on_stream_frame(true, stream);
-            return Ok(());
+            return Ok(ShouldTransmit::new(false));
         }
-
-        // We don't buffer data on stopped streams, so issue flow control credit immediately
-        self.local_max_data = self.local_max_data.saturating_add(new_bytes);
 
         // Stopped streams become closed instantly on FIN, so check whether we need to clean up
         if rs.is_closed() {
             self.recv.remove(&stream);
         }
-        Ok(())
+
+        // We don't buffer data on stopped streams, so issue flow control credit immediately
+        Ok(self.add_read_credits(new_bytes))
     }
 
     /// Process incoming RESET_STREAM frame
-    pub fn received_reset(&mut self, frame: frame::ResetStream) -> Result<bool, TransportError> {
+    ///
+    /// If successful, returns whether a `MAX_DATA` frame needs to be transmitted
+    pub fn received_reset(
+        &mut self,
+        frame: frame::ResetStream,
+    ) -> Result<ShouldTransmit, TransportError> {
         let frame::ResetStream {
             id,
             error_code,
@@ -317,7 +328,7 @@ impl Streams {
             Some(stream) => stream,
             None => {
                 trace!("received RESET_STREAM on closed stream");
-                return Ok(false);
+                return Ok(ShouldTransmit::new(false));
             }
         };
         let end = rs.assembler.end();
@@ -336,7 +347,7 @@ impl Streams {
         // State transition
         if !rs.reset(error_code, final_offset) {
             // Redundant reset
-            return Ok(false);
+            return Ok(ShouldTransmit::new(false));
         }
         let bytes_read = rs.assembler.bytes_read();
         self.on_stream_frame(true, id);
@@ -345,12 +356,9 @@ impl Streams {
         Ok(if bytes_read != final_offset {
             // bytes_read is always <= end, so this won't underflow.
             self.data_recvd += final_offset - end;
-            self.local_max_data = self
-                .local_max_data
-                .saturating_add(final_offset - bytes_read);
-            self.want_send_max_data()
+            self.add_read_credits(final_offset - bytes_read)
         } else {
-            false
+            ShouldTransmit::new(false)
         })
     }
 
@@ -416,18 +424,23 @@ impl Streams {
 
     /// Cease accepting data on a stream
     ///
-    /// Returns `true` iff the peer should be notified.
-    pub fn stop(&mut self, id: StreamId) -> Result<bool, UnknownStream> {
+    /// Returns a structure which indicates whether this action
+    /// requires transmitting any frames.
+    pub fn stop(&mut self, id: StreamId) -> Result<StopResult, UnknownStream> {
         let stream = match self.recv.get_mut(&id) {
             Some(s) => s,
             None => return Err(UnknownStream { _private: () }),
         };
         stream.assembler.stop();
+        let stop_sending = ShouldTransmit::new(!stream.is_finished());
+
         // Issue flow control credit for unread data
-        self.local_max_data = self
-            .local_max_data
-            .saturating_add(stream.assembler.end() - stream.assembler.bytes_read());
-        Ok(!stream.is_finished())
+        let read_credits = stream.assembler.end() - stream.assembler.bytes_read();
+        let max_data = self.add_read_credits(read_credits);
+        Ok(StopResult {
+            stop_sending,
+            max_data,
+        })
     }
 
     pub fn stop_reason(&self, id: StreamId) -> Result<Option<VarInt>, UnknownStream> {
@@ -819,18 +832,19 @@ impl Streams {
         self.data_sent >= self.max_data || self.unacked_data >= self.send_window
     }
 
-    /// Returns whether a `MAX_DATA` frame should be emitted
+    /// Adds credits to the connection flow control window
     ///
-    /// If `true`, a `MAX_DATA` frame should be enqueued as soon as possible.
+    /// Returns whether a `MAX_DATA` frame should be enqueued as soon as possible.
     /// This will only be the case if the window update would is significant
     /// enough. As soon as a window update with a `MAX_DATA` frame has been
     /// queued, the [`record_sent_max_data`] function should be called to
     /// suppress sending further updates until the window increases significantly
     /// again.
-    pub fn want_send_max_data(&mut self) -> bool {
-        // We never need to send invalid windows
+    fn add_read_credits(&mut self, credits: u64) -> ShouldTransmit {
+        self.local_max_data = self.local_max_data.saturating_add(credits);
+
         if self.local_max_data > VarInt::MAX.into_inner() {
-            return false;
+            return ShouldTransmit::new(false);
         }
 
         // Only announce a window update if it's significant enough
@@ -839,7 +853,7 @@ impl Streams {
         // the decision, to accomodate for connection using bigger windows requring
         // less updates.
         let diff = self.local_max_data - self.sent_max_data.into_inner();
-        diff >= (self.receive_window / 8)
+        ShouldTransmit::new(diff >= (self.receive_window / 8))
     }
 
     /// Records that a `MAX_DATA` announcing a certain window was sent
@@ -967,6 +981,33 @@ impl Send {
             _ => false,
         }
     }
+}
+
+/// Result of a `Streams::read_unordered` call in case the stream had not ended yet
+#[derive(Debug, Eq, PartialEq)]
+#[must_use = "A frame might need to be enqueued"]
+pub struct ReadUnorderedResult {
+    pub buf: Bytes,
+    pub offset: u64,
+    pub max_stream_data: ShouldTransmit,
+    pub max_data: ShouldTransmit,
+}
+
+/// Result of a `Streams::read` call in case the stream had not ended yet
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[must_use = "A frame might need to be enqueued"]
+pub struct ReadResult {
+    pub len: usize,
+    pub max_stream_data: ShouldTransmit,
+    pub max_data: ShouldTransmit,
+}
+
+/// Result of a successful `Streams::stop` call
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[must_use = "A frame might need to be enqueued"]
+pub struct StopResult {
+    pub stop_sending: ShouldTransmit,
+    pub max_data: ShouldTransmit,
 }
 
 /// Errors triggered while writing to a send stream
@@ -1098,7 +1139,7 @@ impl Recv {
     /// transmission of the value is recommended. If the boolean value is
     /// `false` the new window should only be transmitted if a previous transmission
     /// had failed.
-    fn max_stream_data(&mut self, stream_receive_window: u64) -> (u64, bool) {
+    fn max_stream_data(&mut self, stream_receive_window: u64) -> (u64, ShouldTransmit) {
         let max_stream_data = self.assembler.bytes_read() + stream_receive_window;
 
         // Only announce a window update if it's significant enough
@@ -1110,7 +1151,7 @@ impl Recv {
         // does not get stuck.
         let diff = max_stream_data - self.sent_max_stream_data;
         let transmit = self.receiving_unknown_size() && diff >= (stream_receive_window / 8);
-        (max_stream_data, transmit)
+        (max_stream_data, ShouldTransmit::new(transmit))
     }
 
     /// Records that a `MAX_STREAM_DATA` announcing a certain window was sent
@@ -1306,25 +1347,31 @@ mod tests {
         let mut client = make(Side::Client);
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
         let initial_max = client.local_max_data;
-        client
-            .received(frame::Stream {
-                id,
-                offset: 0,
-                fin: false,
-                data: Bytes::from_static(&[0; 2048]),
-            })
-            .unwrap();
+        assert_eq!(
+            client
+                .received(frame::Stream {
+                    id,
+                    offset: 0,
+                    fin: false,
+                    data: Bytes::from_static(&[0; 2048]),
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
         assert_eq!(client.data_recvd, 2048);
         assert_eq!(client.local_max_data - initial_max, 0);
         client.read(id, &mut [0; 1024]).unwrap();
         assert_eq!(client.local_max_data - initial_max, 1024);
-        client
-            .received_reset(frame::ResetStream {
-                id,
-                error_code: 0u32.into(),
-                final_offset: 4096,
-            })
-            .unwrap();
+        assert_eq!(
+            client
+                .received_reset(frame::ResetStream {
+                    id,
+                    error_code: 0u32.into(),
+                    final_offset: 4096,
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
         assert_eq!(client.data_recvd, 4096);
         assert_eq!(client.local_max_data - initial_max, 4096);
     }
@@ -1334,23 +1381,29 @@ mod tests {
         let mut client = make(Side::Client);
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
         let initial_max = client.local_max_data;
-        client
-            .received(frame::Stream {
-                id,
-                offset: 4096,
-                fin: false,
-                data: Bytes::from_static(&[0; 0]),
-            })
-            .unwrap();
+        assert_eq!(
+            client
+                .received(frame::Stream {
+                    id,
+                    offset: 4096,
+                    fin: false,
+                    data: Bytes::from_static(&[0; 0]),
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
         assert_eq!(client.data_recvd, 4096);
         assert_eq!(client.local_max_data - initial_max, 0);
-        client
-            .received_reset(frame::ResetStream {
-                id,
-                error_code: 0u32.into(),
-                final_offset: 4096,
-            })
-            .unwrap();
+        assert_eq!(
+            client
+                .received_reset(frame::ResetStream {
+                    id,
+                    error_code: 0u32.into(),
+                    final_offset: 4096,
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
         assert_eq!(client.data_recvd, 4096);
         assert_eq!(client.local_max_data - initial_max, 4096);
     }
@@ -1359,21 +1412,27 @@ mod tests {
     fn duplicate_reset_flow_control() {
         let mut client = make(Side::Client);
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
-        client
-            .received_reset(frame::ResetStream {
-                id,
-                error_code: 0u32.into(),
-                final_offset: 4096,
-            })
-            .unwrap();
+        assert_eq!(
+            client
+                .received_reset(frame::ResetStream {
+                    id,
+                    error_code: 0u32.into(),
+                    final_offset: 4096,
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
         assert_eq!(client.data_recvd, 4096);
-        client
-            .received_reset(frame::ResetStream {
-                id,
-                error_code: 0u32.into(),
-                final_offset: 4096,
-            })
-            .unwrap();
+        assert_eq!(
+            client
+                .received_reset(frame::ResetStream {
+                    id,
+                    error_code: 0u32.into(),
+                    final_offset: 4096,
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
         assert_eq!(client.data_recvd, 4096);
     }
 
@@ -1382,25 +1441,37 @@ mod tests {
         let mut client = make(Side::Client);
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
         let initial_max = client.local_max_data;
-        client
-            .received(frame::Stream {
-                id,
-                offset: 0,
-                fin: false,
-                data: Bytes::from_static(&[0; 32]),
-            })
-            .unwrap();
+        assert_eq!(
+            client
+                .received(frame::Stream {
+                    id,
+                    offset: 0,
+                    fin: false,
+                    data: Bytes::from_static(&[0; 32]),
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
         assert_eq!(client.local_max_data, initial_max);
-        client.stop(id).unwrap();
+        assert_eq!(
+            client.stop(id).unwrap(),
+            StopResult {
+                max_data: ShouldTransmit::new(false),
+                stop_sending: ShouldTransmit::new(true),
+            }
+        );
         assert_eq!(client.local_max_data - initial_max, 32);
-        client
-            .received(frame::Stream {
-                id,
-                offset: 32,
-                fin: true,
-                data: Bytes::from_static(&[0; 16]),
-            })
-            .unwrap();
+        assert_eq!(
+            client
+                .received(frame::Stream {
+                    id,
+                    offset: 32,
+                    fin: true,
+                    data: Bytes::from_static(&[0; 16]),
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
         assert_eq!(client.local_max_data - initial_max, 48);
         assert!(!client.recv.contains_key(&id));
     }
