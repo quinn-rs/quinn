@@ -3,7 +3,7 @@
 [![Documentation](https://docs.rs/quinn/badge.svg)](https://docs.rs/quinn/)
 [![Crates.io](https://img.shields.io/crates/v/quinn.svg)](https://crates.io/crates/quinn)
 [![Build status](https://github.com/djc/quinn/workflows/CI/badge.svg)](https://github.com/djc/quinn/actions?query=workflow%3ACI)
-[![codecov](https://codecov.io/gh/djc/quinn/branch/master/graph/badge.svg)](https://codecov.io/gh/djc/quinn)
+[![codecov](https://codecov.io/gh/djc/quinn/branch/main/graph/badge.svg)](https://codecov.io/gh/djc/quinn)
 [![Chat](https://img.shields.io/badge/chat-%23quinn:matrix.org-%2346BC99?logo=matrix)](https://matrix.to/#/#quinn:matrix.org)
 [![Chat](https://badges.gitter.im/gitterHQ/gitter.svg)](https://gitter.im/djc/quinn)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
@@ -125,6 +125,6 @@ the variable.
 [youtube]: https://www.youtube.com/watch?v=EHgyY5DNdvI
 [letsencrypt]: https://letsencrypt.org/
 [rcgen]: https://crates.io/crates/rcgen
-[examples]: https://github.com/djc/quinn/tree/master/quinn/examples
+[examples]: https://github.com/djc/quinn/tree/main/quinn/examples
 [documentation]: https://github.com/djc/quinn/issues/865
 [current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/29/
