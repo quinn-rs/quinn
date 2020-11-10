@@ -33,22 +33,7 @@ impl Pair {
         let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)));
         let client = Endpoint::new(endpoint_config, None);
 
-        let server_addr = SocketAddr::new(
-            Ipv6Addr::LOCALHOST.into(),
-            SERVER_PORTS.lock().unwrap().next().unwrap(),
-        );
-        let client_addr = SocketAddr::new(
-            Ipv6Addr::LOCALHOST.into(),
-            CLIENT_PORTS.lock().unwrap().next().unwrap(),
-        );
-        Self {
-            server: TestEndpoint::new(server, server_addr),
-            client: TestEndpoint::new(client, client_addr),
-            time: Instant::now(),
-            latency: Duration::new(0, 0),
-            spins: 0,
-            last_spin: false,
-        }
+        Pair::new_from_endpoint(client, server)
     }
 
     pub fn new_from_endpoint(client: Endpoint, server: Endpoint) -> Self {

@@ -727,20 +727,19 @@ where
                 let mut sequence = 0;
                 if let Some(last_cid) = ids.last() {
                     self.cids_issued += ids.len() as u64;
+                    sequence = last_cid.sequence;
                     ids.into_iter().rev().for_each(|frame| {
                         self.spaces[SpaceId::Data].pending.new_cids.push(frame);
                         self.cids_active_seq.insert(frame.sequence);
                     });
-                    sequence = last_cid.sequence;
                 }
-                
+
                 if let Some(timestamp) = self.cids_timeout.and_then(|t| now.checked_add(t)) {
                     self.reset_cid_timer(Some(CidTimeStamp {
                         sequence,
                         timestamp,
                     }));
                 }
-            }
             }
         }
     }
