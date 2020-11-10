@@ -1,8 +1,9 @@
-name: Build book
+name: Build Book
 
 on:
   push:
     branches: ['main']
+  pull_request:
 
 jobs:
   deploy:
