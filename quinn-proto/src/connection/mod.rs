@@ -723,32 +723,24 @@ where
                 }
             }
             NewIdentifiers(ids, now) => {
-                let timeout = match self.cids_timeout {
-                    Some(t) => now.checked_add(t),
-                    _ => None,
-                };
                 // Record the timestamp of CID with the largest seq number
+                let mut sequence = 0;
                 if let Some(last_cid) = ids.last() {
-                    if let Some(timestamp) = timeout {
-                        self.reset_cid_timer(Some(CidTimeStamp {
-                            sequence: last_cid.sequence,
-                            timestamp,
-                        }));
-                    }
                     self.cids_issued += ids.len() as u64;
                     ids.into_iter().rev().for_each(|frame| {
                         self.spaces[SpaceId::Data].pending.new_cids.push(frame);
                         self.cids_active_seq.insert(frame.sequence);
                     });
-                } else {
-                    // Handle initial CID with active_connection_id_limit == 1
-                    if let Some(timestamp) = timeout {
-                        self.reset_cid_timer(Some(CidTimeStamp {
-                            sequence: 0,
-                            timestamp,
-                        }));
-                    }
+                    sequence = last_cid.sequence;
                 }
+                
+                if let Some(timestamp) = self.cids_timeout.and_then(|t| now.checked_add(t)) {
+                    self.reset_cid_timer(Some(CidTimeStamp {
+                        sequence,
+                        timestamp,
+                    }));
+                }
+            }
             }
         }
     }
