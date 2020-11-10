@@ -49,6 +49,7 @@
     <list default="true" id="ca3fcb47-bbae-45d4-b725-f93b0b257dc7" name="Default Changelist" comment="">
       <change beforePath="$PROJECT_DIR$/.github/workflows/book.yml" beforeDir="false" afterPath="$PROJECT_DIR$/.github/workflows/book.yml" afterDir="false" />
       <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/book/src/quinn.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/book/src/quinn.md" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -113,7 +114,7 @@
       <workItem from="1604840210416" duration="463000" />
       <workItem from="1604840686251" duration="8871000" />
       <workItem from="1604937794896" duration="9838000" />
-      <workItem from="1604994190129" duration="1313000" />
+      <workItem from="1604994190129" duration="1772000" />
     </task>
     <servers />
   </component>
