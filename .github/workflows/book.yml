@@ -1,4 +1,4 @@
-name: Build Book
+name: Build book
 
 on:
   push:
