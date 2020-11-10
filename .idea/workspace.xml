@@ -48,6 +48,12 @@
   <component name="ChangeListManager">
     <list default="true" id="ca3fcb47-bbae-45d4-b725-f93b0b257dc7" name="Default Changelist" comment="">
       <change beforePath="$PROJECT_DIR$/.github/workflows/book.yml" beforeDir="false" afterPath="$PROJECT_DIR$/.github/workflows/book.yml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/.idea/workspace.xml" beforeDir="false" afterPath="$PROJECT_DIR$/.idea/workspace.xml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/.gitignore" beforeDir="false" afterPath="$PROJECT_DIR$/docs/book/.gitignore" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/book.toml" beforeDir="false" afterPath="$PROJECT_DIR$/docs/book/book.toml" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/src/SUMMARY.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/book/src/SUMMARY.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/src/quic.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/book/src/quic.md" afterDir="false" />
+      <change beforePath="$PROJECT_DIR$/docs/src/quinn.md" beforeDir="false" afterPath="$PROJECT_DIR$/docs/book/src/quinn.md" afterDir="false" />
     </list>
     <option name="SHOW_DIALOG" value="false" />
     <option name="HIGHLIGHT_CONFLICTS" value="true" />
@@ -83,6 +89,11 @@
     <property name="nodejs_package_manager_path" value="npm" />
     <property name="org.rust.cargo.project.model.PROJECT_DISCOVERY" value="true" />
   </component>
+  <component name="RecentsManager">
+    <key name="MoveFile.RECENT_KEYS">
+      <recent name="E:\unreal\programming\git\quinn\docs\book" />
+    </key>
+  </component>
   <component name="RunManager">
     <configuration default="true" type="GradleAppRunConfiguration" factoryName="Application" REDIRECT_INPUT="false" PASS_PARENT_ENVS_2="true">
       <method v="2">
@@ -107,7 +118,7 @@
       <workItem from="1604840210416" duration="463000" />
       <workItem from="1604840686251" duration="8871000" />
       <workItem from="1604937794896" duration="9838000" />
-      <workItem from="1604994190129" duration="865000" />
+      <workItem from="1604994190129" duration="1096000" />
     </task>
     <servers />
   </component>

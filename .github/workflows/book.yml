@@ -15,7 +15,8 @@ jobs:
         uses: peaceiris/actions-mdbook@v1
         with:
           mdbook-version: 'latest'
-      - run: cd ./docs
+      - run: cd ./docs/book
+      - run: ls
       - run: mdbook build book
       - name: Deploy
         uses: peaceiris/actions-gh-pages@v3
