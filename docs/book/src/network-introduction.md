@@ -9,8 +9,8 @@ However, this does not mean that they are perfect or flawless.
 One of the reasons to build QUIC is to solve those problems.  
 
 Before jumping directly into the meat of QUIC, it can be useful to understand its underlying motivations. 
-For those motivations we have to inspect the flaws of TCP and nature of UDP, 
-because QUIC tries to improve the flaws of TCP ontop of UDP.
+For those motivations, we have to inspect the flaws of TCP and the nature of UDP, 
+because QUIC tries to improve the flaws of TCP on top of UDP.
 
 1. [Transport Guarantees](network-introduction/transport-guarantees.md) (what guarantees for transmission exists)
 2. [Transport Protocols](network-introduction/transport-protocols.md) (analyse of UDP and TCP internals)
