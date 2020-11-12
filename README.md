@@ -127,4 +127,4 @@ the variable.
 [rcgen]: https://crates.io/crates/rcgen
 [examples]: https://github.com/djc/quinn/tree/main/quinn/examples
 [documentation]: https://github.com/djc/quinn/issues/865
-[current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/29/
+[current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/32/
