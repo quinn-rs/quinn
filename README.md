@@ -1,4 +1,4 @@
-<h1 align="center"><img width="500" src="./docs/thumbnail.svg" /></h1>
+<h1 align="center"><img width="500" src="https://raw.githubusercontent.com/quinn-rs/quinn/51a3cea225670757cb844a342428e4e1341d9f13/docs/thumbnail.svg" /></h1>
 
 [![Documentation](https://docs.rs/quinn/badge.svg)](https://docs.rs/quinn/)
 [![Crates.io](https://img.shields.io/crates/v/quinn.svg)](https://crates.io/crates/quinn)
@@ -36,20 +36,7 @@ This library is at [draft 32][current-draft].
 
 # Getting Started
 
-**Examples**
-
-```sh
-$ cargo run --example server ./
-$ cargo run --example client https://localhost:4433/Cargo.toml
-```
-
-This launches an HTTP 0.9 server on the loopback address serving the current
-working directory, with the client fetching `./Cargo.toml`. By default, the
-server generates a self-signed certificate and stores it to disk, where the
-client will automatically find and trust it.
-
-**Links**
-
+- Detailed [examples][examples-readme]
 - Talk at [RustFest Paris (May 2018) presentation][talk]; [slides][slides]; [YouTube][youtube]
 - Usage [examples][examples]
 - Guide [book][documentation]
@@ -128,3 +115,4 @@ the variable.
 [examples]: https://github.com/djc/quinn/tree/main/quinn/examples
 [documentation]: https://github.com/djc/quinn/issues/865
 [current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/29/
+[examples-readme]: https://github.com/djc/quinn/tree/main/quinn/examples/README.md
