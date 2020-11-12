@@ -1,5 +1,6 @@
 use std::{
     collections::{hash_map, HashMap, VecDeque},
+    convert::TryFrom,
     mem,
 };
 
@@ -52,8 +53,13 @@ pub struct Streams {
     connection_blocked: Vec<StreamId>,
     /// Connection-level flow control budget dictated by the peer
     max_data: u64,
-    /// Limit on incoming data
+    /// The initial receive window
+    receive_window: u64,
+    /// Limit on incoming data, which is transmitted through `MAX_DATA` frames
     local_max_data: u64,
+    /// The last value of `MAX_DATA` which had been queued for transmission in
+    /// an outgoing `MAX_DATA` frame
+    sent_max_data: VarInt,
     /// Sum of current offsets of all send streams.
     data_sent: u64,
     /// Sum of end offsets of all receive streams. Includes gaps, so it's an upper bound.
@@ -90,7 +96,9 @@ impl Streams {
             events: VecDeque::new(),
             connection_blocked: Vec::new(),
             max_data: 0,
+            receive_window: receive_window.into(),
             local_max_data: receive_window.into(),
+            sent_max_data: receive_window,
             data_sent: 0,
             data_recvd: 0,
             unacked_data: 0,
@@ -340,7 +348,7 @@ impl Streams {
             self.local_max_data = self
                 .local_max_data
                 .saturating_add(final_offset - bytes_read);
-            true
+            self.want_send_max_data()
         } else {
             false
         })
@@ -484,17 +492,18 @@ impl Streams {
         // MAX_DATA
         if pending.max_data && buf.len() + 9 < max_size {
             pending.max_data = false;
-            // We assume that if local_max_data is > VarInt::MAX, it must be due to an
-            // astronomically high configured initial credit, so we don't need to worry about the
-            // sender actually getting blocked somewhere between the initial credit and the current
-            // one.
-            if let Ok(max) = VarInt::from_u64(self.local_max_data) {
-                trace!(value = self.local_max_data, "MAX_DATA");
-                sent.max_data = true;
-                buf.write(frame::Type::MAX_DATA);
-                buf.write(max);
-                stats.max_data += 1;
-            }
+
+            // `local_max_data` can grow bigger than `VarInt`.
+            // For transmission inside QUIC frames we need to clamp it to the
+            // maximum allowed `VarInt` size.
+            let max = VarInt::try_from(self.local_max_data).unwrap_or(VarInt::MAX);
+
+            trace!(value = max.into_inner(), "MAX_DATA");
+            self.record_sent_max_data(max);
+            sent.max_data = true;
+            buf.write(frame::Type::MAX_DATA);
+            buf.write(max);
+            stats.max_data += 1;
         }
 
         // MAX_STREAM_DATA
@@ -808,6 +817,40 @@ impl Streams {
     /// the send window
     fn flow_blocked(&self) -> bool {
         self.data_sent >= self.max_data || self.unacked_data >= self.send_window
+    }
+
+    /// Returns whether a `MAX_DATA` frame should be emitted
+    ///
+    /// If `true`, a `MAX_DATA` frame should be enqueued as soon as possible.
+    /// This will only be the case if the window update would is significant
+    /// enough. As soon as a window update with a `MAX_DATA` frame has been
+    /// queued, the [`record_sent_max_data`] function should be called to
+    /// suppress sending further updates until the window increases significantly
+    /// again.
+    pub fn want_send_max_data(&mut self) -> bool {
+        // We never need to send invalid windows
+        if self.local_max_data > VarInt::MAX.into_inner() {
+            return false;
+        }
+
+        // Only announce a window update if it's significant enough
+        // to make it worthwhile sending a MAX_DATA frame.
+        // We use a fraction of the configured connection receive window to make
+        // the decision, to accomodate for connection using bigger windows requring
+        // less updates.
+        let diff = self.local_max_data - self.sent_max_data.into_inner();
+        diff >= (self.receive_window / 8)
+    }
+
+    /// Records that a `MAX_DATA` announcing a certain window was sent
+    ///
+    /// This will suppress enqueuing further `MAX_DATA` frames unless
+    /// either the previous transmission was not acknowledged or the window
+    /// further increased.
+    fn record_sent_max_data(&mut self, sent_value: VarInt) {
+        if sent_value > self.sent_max_data {
+            self.sent_max_data = sent_value;
+        }
     }
 }
 
