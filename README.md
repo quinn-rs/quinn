@@ -38,7 +38,6 @@ This library is at [draft 32][current-draft].
 
 - Detailed [examples][examples-readme]
 - Talk at [RustFest Paris (May 2018) presentation][talk]; [slides][slides]; [YouTube][youtube]
-- Usage [examples][examples]
 - Guide [book][documentation]
 
 ## Usage Notes
