@@ -1,9 +1,6 @@
-//! Demonstrates how to make a QUIC connection that ignores the server certificate.
+//! Checkout the `README.md` for guidance.
 //!
-//! Run:
-//! ```text
-//! $ cargo run --example insecure_connection --features="rustls/dangerous_configuration"
-//! ```
+//! README: https://github.com/quinn-rs/quinn/tree/main/quinn/examples/README.md
 
 use futures::StreamExt;
 use std::{error::Error, net::SocketAddr, sync::Arc};

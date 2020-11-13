@@ -1,17 +1,6 @@
-//! This example intends to use the smallest amount of code to make a simple QUIC connection.
+//! Checkout the `README.md` for guidance.
 //!
-//! The server issues it's own certificate and passes it to the client to trust.
-//!
-//! Run:
-//! ```text
-//! $ cargo run --example connection
-//! ```
-//!
-//! This example will make a QUIC connection on localhost, and you should see output like:
-//! ```text
-//! [server] incoming connection: id=3680c7d3b3ebd250 addr=127.0.0.1:50469
-//! [client] connected: id=61a2df1548935aeb, addr=127.0.0.1:5000
-//! ```
+//! README: https://github.com/quinn-rs/quinn/tree/main/quinn/examples/README.md
 
 // Provides the async `next()` method on `incoming` below
 use futures::StreamExt;

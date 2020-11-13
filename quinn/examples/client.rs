@@ -1,3 +1,7 @@
+//! Checkout the `README.md` for guidance.
+//!
+//! README: https://github.com/quinn-rs/quinn/tree/main/quinn/examples/README.md
+
 use std::{
     fs,
     io::{self, Write},

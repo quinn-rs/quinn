@@ -1,18 +1,6 @@
-//! Example to serve files from a directory.
+//! Checkout the `README.md` for guidance.
 //!
-//! Run:
-//! ```text
-//! $ RUST_LOG=debug cargo run --example server ./
-//! ```
-//!
-//! and in another terminal you can run the client example:
-//!
-//! Run:
-//! ```test
-//! $ cargo run --example client https://localhost:4433/Cargo.toml
-//! ```
-//!
-//! The output will be the source code of the Cargo.toml file.
+//! README: https://github.com/quinn-rs/quinn/tree/main/quinn/examples/README.md
 
 use std::{
     ascii, fs, io,
