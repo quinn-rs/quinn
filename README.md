@@ -1,4 +1,4 @@
-<h1 align="center"><img width="500" src="./docs/thumbnail.svg" /></h1>
+<h1 align="center"><img width="500" src="https://raw.githubusercontent.com/quinn-rs/quinn/51a3cea225670757cb844a342428e4e1341d9f13/docs/thumbnail.svg" /></h1>
 
 [![Documentation](https://docs.rs/quinn/badge.svg)](https://docs.rs/quinn/)
 [![Crates.io](https://img.shields.io/crates/v/quinn.svg)](https://crates.io/crates/quinn)
