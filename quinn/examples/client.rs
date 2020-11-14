@@ -1,6 +1,6 @@
-//! Checkout the `README.md` for guidance.
+//! This example demonstrates a HTTP client that requests files from a server.
 //!
-//! README: https://github.com/quinn-rs/quinn/tree/main/quinn/examples/README.md
+//! Checkout the `README.md` for guidance.
 
 use std::{
     fs,

@@ -1,6 +1,6 @@
-//! Checkout the `README.md` for guidance.
+//! This example demonstrates how to make multiple outgoing connections on a single UDP socket.
 //!
-//! README: https://github.com/quinn-rs/quinn/tree/main/quinn/examples/README.md
+//! Checkout the `README.md` for guidance.
 
 use futures::StreamExt;
 use std::{error::Error, net::SocketAddr};

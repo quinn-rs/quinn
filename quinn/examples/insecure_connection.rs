@@ -1,6 +1,6 @@
-//! Checkout the `README.md` for guidance.
+//! This example intends to demonstrates how to make a QUIC connection that ignores the server certificate.
 //!
-//! README: https://github.com/quinn-rs/quinn/tree/main/quinn/examples/README.md
+//! Checkout the `README.md` for guidance.
 
 use futures::StreamExt;
 use std::{error::Error, net::SocketAddr, sync::Arc};

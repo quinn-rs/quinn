@@ -1,6 +1,6 @@
-//! Checkout the `README.md` for guidance.
+//! This example intends to use the smallest amount of code to make a simple QUIC connection.
 //!
-//! README: https://github.com/quinn-rs/quinn/tree/main/quinn/examples/README.md
+//! Checkout the `README.md` for guidance.
 
 // Provides the async `next()` method on `incoming` below
 use futures::StreamExt;

@@ -1,6 +1,6 @@
-//! Checkout the `README.md` for guidance.
+//! This example demonstrates a HTTP server that serve's files from a directory.
 //!
-//! README: https://github.com/quinn-rs/quinn/tree/main/quinn/examples/README.md
+//! Checkout the `README.md` for guidance.
 
 use std::{
     ascii, fs, io,
