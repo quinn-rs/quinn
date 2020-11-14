@@ -31,11 +31,11 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --workspace --all-targets
+          args: --all-targets
       - uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --workspace --exclude fuzz
+          args: --workspace
 
   lint:
     runs-on: ubuntu-latest
@@ -55,7 +55,7 @@ jobs:
         if: always()
         with:
           command: clippy
-          args: --workspace --exclude fuzz --all-targets -- -D warnings
+          args: --all-targets -- -D warnings
       - uses: actions-rs/toolchain@v1
         with:
           profile: minimal
