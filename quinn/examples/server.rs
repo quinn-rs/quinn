@@ -1,4 +1,4 @@
-//! This example demonstrates a HTTP server that serve's files from a directory.
+//! This example demonstrates an HTTP server that serves files from a directory.
 //!
 //! Checkout the `README.md` for guidance.
 

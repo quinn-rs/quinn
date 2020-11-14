@@ -1,4 +1,4 @@
-//! This example intends to demonstrates how to make a QUIC connection that ignores the server certificate.
+//! This example demonstrates how to make a QUIC connection that ignores the server certificate.
 //!
 //! Checkout the `README.md` for guidance.
 
