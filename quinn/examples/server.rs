@@ -1,18 +1,6 @@
-//! Example to serve files from a directory.
+//! This example demonstrates an HTTP server that serves files from a directory.
 //!
-//! Run:
-//! ```text
-//! $ RUST_LOG=debug cargo run --example server ./
-//! ```
-//!
-//! and in another terminal you can run the client example:
-//!
-//! Run:
-//! ```test
-//! $ cargo run --example client https://localhost:4433/Cargo.toml
-//! ```
-//!
-//! The output will be the source code of the Cargo.toml file.
+//! Checkout the `README.md` for guidance.
 
 use std::{
     ascii, fs, io,

@@ -1,3 +1,7 @@
+//! This example demonstrates an HTTP client that requests files from a server.
+//!
+//! Checkout the `README.md` for guidance.
+
 use std::{
     fs,
     io::{self, Write},
