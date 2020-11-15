@@ -26,6 +26,7 @@ pub struct PartialDecode {
 }
 
 impl PartialDecode {
+    #![allow(clippy::len_without_is_empty)]
     #[doc(hidden)]
     pub fn new(
         bytes: BytesMut,
