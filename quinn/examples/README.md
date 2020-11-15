@@ -3,9 +3,6 @@
 The `https` example shows how to request a file on the `server` from the `client` over HTTPS. 
 This is HTTP/0.9, which is a toy protocol that's much simpler than real HTTP, especially HTTP/3.
 
-(Note: when providing the example server with a specific address to listen on,
-make sure you match the correct IPv4 vs IPv6 address in the client command.)
-
 1. HTTPS Server (`http_server.rs`)
 
 The server listens for any client requesting a file. 
