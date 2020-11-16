@@ -1,51 +1,42 @@
 # Networking Introduction
 
 In this chapter, you will find a very short introduction to various networking concepts. 
-Those concepts are key for understanding the motivations for QUIC. 
+These concepts are important to understanding when to use QUIC.
 
 ## 1. TCP/IP and UDP Comparison
 
-**TCP:** stands for 'transmission control protocol' and adds certain guarantees ontop of [IP][3]. 
-It forms the backbone for almost everything you do online, from web browsing to IRC to email to file transfer.
-The protocol is [reliable ordered][guarantees] in nature.
+Lets define some transport guarantees and their properties:
 
-**UDP** stands for 'user datagram protocol' and adds certain guarantees ontop of [IP][3], but unlike TCP, 
-instead of adding lots of features and complexity, UDP is a very thin layer over IP and is also [unreliable][guarantees] in nature.
+| Transport Guarantees | Packet Loss [(1)][1]  | Packet Duplication [(2)][2] | Packet Order | Packet Delivery |
+| :-------------:   | :-------------: | :-------------: | :-------------: | :-------------:
+|   **Unreliable**  |       Any       |      Yes        |     No          |   No
+|   **Reliable**    |       No        |      No         |     Ordered     |   Yes
+
+Now, lets compare TCP, UDP, and QUIC.
 
 | Feature |  TCP  | UDP | QUIC
 | :-------------: | :-------------: | :-------------: | :-------------: |
-|  [Connection-Oriented][6]           |       Yes                      | No                       | Yes
-|  [Transport Guarantees][guarantees] | [Reliable Ordered][guarantees] | [Unreliable][guarantees] | [Reliable Ordered][guarantees] and [Unreliable][guarantees] 
-|  Packet Transfer                    | [Stream-based][4]              | Message based            | Message based and Stream based
-|  Automatic [fragmentation][8]       | Yes                            | Yes, but better to stay below datagram size limit | Yes
-|  Header Size                        |  20 bytes                      | 8 bytes                  |  16 bytes  
-|  [Control Flow, Congestion Avoidance/Control][5] | Yes               | No                       |  Yes, and user controlled                                          
-
-## 2. The 5 Transport Guarantees
-
-There are 5 main different ways you can transfer data:
-
-| Transport Guarantees         | Packet Drop [(1)][1]  | Packet Duplication [(2)][2] | Packet Order | Packet Delivery |
-| :-------------:              | :-------------: | :-------------: | :-------------: | :-------------:
-|   **Unreliable Unordered**   |       Any       |      Yes        |     No          |   No
-|   **Unreliable Sequenced**   |    Any + old    |      No         |     Sequenced   |   No
-|   **Reliable Unordered**     |       No        |      No         |     No          |   Yes
-|   **Reliable Ordered**       |       No        |      No         |     Ordered     |   Yes
-|   **Reliable Sequenced**     |    Only old     |      No         |     Sequenced   |   Only newest
+|  [Connection-Oriented][6]           |       Yes         | No                       | Yes
+|  Transport Guarantees              | Reliable Ordered  | Unreliable               | Reliable Ordered and Unreliable 
+|  Packet Transfer                    | [Stream-based][4] | Message based            | Message based and/or Stream based
+|  Automatic [fragmentation][8]       | Yes               | Yes, ip-fragmentation    | Yes
+|  Header Size                        |  20 bytes         | 8 bytes                  |  16 bytes  
+|  [Control Flow, Congestion Avoidance/Control][5] | Yes  | No                       |  Yes, and user controlled                                          
+|  Based On | [IP][3]                | [IP][3]            |  UDP
 
 Unreliability gives great uncertainty with a lot of freedom, while reliability gives great certainty with costs in speed and freedom.
-That is why protocols such as QUIC, RUDP, SCTP, QUIC, netcode, laminar are built on UDP instead of TCP. 
+That is why some protocols such as QUIC, SCTP are built on UDP instead of TCP. 
 UDP gives the end-user more control over the transmission than TCP can do. 
+While QUIC is build on top of UDP it does provides the same and even more features than TCP.
 
-## 3. Issues with TCP 
+## 2. Issues with TCP 
 
-Now the golden question: "Why choose so much uncertainty with UDP when TCP is so reliable and safe?". 
-To answer that question we will have to delve a little deeper into some issues with TCP. 
+While TCP has been around for long it does have some issues that QUIC tries to solve.
 
 ### Head-of-line Blocking
 
 One of the biggest issues with TCP is that of Head-of-line blocking. 
-It is a convenient feature because it ensures that all packages are sent and arrive in [order][guarantees]. 
+It is a convenient feature because it ensures that all packages are sent and arrive in order. 
 However, in cases of high throughput (multiplayer game networking) and big load in a short time (web page load), this can be catastrophic to your application performance.
 
 The issue is demonstrated in the following animation:
@@ -57,17 +48,8 @@ If the dropped packet is resent and arrived then all packets are freed from the 
 
 Let's look at two areas where this head-of-line blocking issue is a huge deal.
 
-**Multiplayer Game Networking**
-
-Multiplayer action games are based on a constant stream of packets sent at a speed ranging from 10 to 30 packets per second.
-For the most part, the data in these packages are so time-sensitive that only the most recent data is useful.
-You can think of the input and position of the player, the orientation and speed, and the state of the physical objects in the world.
-If a single packet drops out we can not afford to queue up 10-30 packets a second until the lost packet is retransmitted. 
-This could cause annoying lag behavior and a bad user experience. 
-
 **Web Networking**
 
-Game networking is not the only area where this head-of-line blocking is a big issue.
 The World Wide Web is a place where quick web-page load speeds are important (who wants to wait 200ms to the long right?).
 As websites get bigger and attention decreases, we need faster loading times for websites.
 
@@ -76,7 +58,16 @@ In short, this means that multiple TCP streams are initialized to communicate wi
 Then If one of them blocks the whole website can continue to load seemingly while that single stream is retransmitting.
 
 We will take a deeper dive into this subject when looking at QUIC multiplexing.
-    
+
+**Multiplayer Game Networking**
+
+The web space is not the only area where this head-of-line blocking is a big issue.
+Multiplayer action games are based on a constant stream of packets sent at a speed ranging from 10 to 30 packets per second.
+For the most part, the data in these packages are so time-sensitive that only the most recent data is useful.
+You can think of the input and position of the player, the orientation and speed, and the state of the physical objects in the world.
+If a single packet drops out we can not afford to queue up 10-30 packets a second until the lost packet is retransmitted. 
+This could cause annoying lag behavior and a bad user experience. 
+   
 ### Connection Setup Duration
 
 In the standard HTTP+TLS+TCP stack, TCP needs a handshake to establish a session between server and client, 
@@ -94,7 +85,6 @@ In the case of TLS versions older than 1.3, an additional three more handshake m
 You can see how expensive it is to create a secure TCP connection. 
 In a scenario of TCP and TLS 1.2 with a 100ms latency, we need to wait for 6 x 100ms = 600ms to set up a connection. 
 If the website is big, an additional load time can make the website load over a second. 
-This, of course, is disturbing for our short attention spans. 
 
 ### Requests in Segment
 
@@ -110,7 +100,6 @@ wait for a request from the client, even if the server knows
 that the client needs a specific resource.
 
 
-[guarantees]: #2-the-5-transport-guarantees
 [animation]: ./images/hol.gif 
 
 [1]: https://en.wikipedia.org/wiki/Packet_loss
