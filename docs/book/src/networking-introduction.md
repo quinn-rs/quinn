@@ -86,20 +86,6 @@ You can see how expensive it is to create a secure TCP connection.
 In a scenario of TCP and TLS 1.2 with a 100ms latency, we need to wait for 6 x 100ms = 600ms to set up a connection. 
 If the website is big, an additional load time can make the website load over a second. 
 
-### Requests in Segment
-
-A TCP segment can only carry a single HTTP/1.1 Request/Response. 
-Consequently, a large number of small segments may be sent within
-an HTTP/1.1 session which can lead to overhead.
-
-### Client Connection Initiation
-
-HTTP/1.1 transfers are always initiated by the client. 
-This decreases the performance of HTTP/1.1 significantly when loading embedded files because a server has to
-wait for a request from the client, even if the server knows
-that the client needs a specific resource.
-
-
 [animation]: ./images/hol.gif 
 
 [1]: https://en.wikipedia.org/wiki/Packet_loss
