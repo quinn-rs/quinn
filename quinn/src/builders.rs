@@ -1,6 +1,9 @@
 use std::{io, net::SocketAddr, sync::Arc};
 
-use proto::{generic::{ClientConfig, EndpointConfig, ServerConfig}, ConnectionIdGenerator};
+use proto::{
+    generic::{ClientConfig, EndpointConfig, ServerConfig},
+    ConnectionIdGenerator,
+};
 use thiserror::Error;
 use tracing::error;
 
