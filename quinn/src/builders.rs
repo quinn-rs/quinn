@@ -105,7 +105,9 @@ where
     }
 
     /// Use a customized cid generator factory in the endpoint
-    pub fn connection_id_generator<F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static>(
+    pub fn connection_id_generator<
+        F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static,
+    >(
         &mut self,
         factory: F,
     ) -> &mut Self {
