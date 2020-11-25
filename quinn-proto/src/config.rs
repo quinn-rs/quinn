@@ -47,6 +47,7 @@ pub struct TransportConfig {
     pub(crate) datagram_send_buffer_size: usize,
 
     pub(crate) congestion_controller_factory: Box<dyn congestion::ControllerFactory + Send + Sync>,
+    //pub(crate) cid_lifetime: Option<Duration>,
 }
 
 impl TransportConfig {

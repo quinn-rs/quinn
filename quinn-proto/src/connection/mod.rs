@@ -70,10 +70,12 @@ where
     handshake_cid: ConnectionId,
     /// The CID the peer initially chose, for use during the handshake
     rem_handshake_cid: ConnectionId,
-    /// Cid rotation
-    ///
-    /// Expiration timestamp of local connection IDs
-    cids_timeline: VecDeque<CidTimeStamp>,
+
+    //
+    // Cid rotation
+    //
+    /// Record the timestamp when issued cids should be retired
+    cids_retire_timestamp: VecDeque<CidTimeStamp>,
     /// The lifetime of Local connection IDs
     cids_timeout: Option<Duration>,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
@@ -212,7 +214,7 @@ where
             rem_handshake_cid: rem_cid,
             retired_prior_to_seq: 0,
             retire_cid_seq: 0,
-            cids_timeline: VecDeque::new(),
+            cids_retire_timestamp: VecDeque::new(),
             cids_active_seq: HashSet::new(),
             cids_timeout,
             local_cid_len,
@@ -794,7 +796,7 @@ where
                         self.retired_prior_to_seq = self.retire_cid_seq;
                     }
 
-                    let next_checkpoint = self.cids_timeline.pop_front();
+                    let next_checkpoint = self.cids_retire_timestamp.pop_front();
                     let next_seq = next_checkpoint.unwrap().sequence + 1;
                     let current_seq = self.retire_cid_seq;
                     //  Endpoints SHOULD NOT issue updates of the Retire Prior To field
@@ -851,27 +853,27 @@ where
     /// set timer for CID rotation
     fn reset_cid_timer(&mut self, id: Option<CidTimeStamp>) {
         // Remove any timestamp attached to a cid that is retired
-        while let Some(nc) = self.cids_timeline.front() {
+        while let Some(nc) = self.cids_retire_timestamp.front() {
             if nc.sequence < self.retire_cid_seq {
-                self.cids_timeline.pop_front();
+                self.cids_retire_timestamp.pop_front();
             } else {
                 break;
             }
         }
 
         if let Some(new_cid) = id {
-            if let Some(nc) = self.cids_timeline.front_mut() {
+            if let Some(nc) = self.cids_retire_timestamp.front_mut() {
                 if new_cid.timestamp == nc.timestamp && new_cid.sequence > nc.sequence {
                     nc.sequence = new_cid.sequence;
                 } else {
-                    self.cids_timeline.push_back(new_cid);
+                    self.cids_retire_timestamp.push_back(new_cid);
                 }
             } else {
-                self.cids_timeline.push_back(new_cid);
+                self.cids_retire_timestamp.push_back(new_cid);
             }
         }
 
-        if let Some(next_checkpoint) = self.cids_timeline.front() {
+        if let Some(next_checkpoint) = self.cids_retire_timestamp.front() {
             trace!(
                 "set up a timer at {:?} for cid {:?}",
                 next_checkpoint.timestamp,
@@ -3448,9 +3450,11 @@ struct PacketBuilder<'a> {
 /// Chosen arbitrarily, intended to be large enough to prevent spurious connection loss.
 const KEY_UPDATE_MARGIN: u64 = 10000;
 
-/// Record the timestamp when each cid is created
+/// Data structure that records when issued cids should be retired
 #[derive(Copy, Clone, Eq, PartialEq)]
 struct CidTimeStamp {
+    /// Highest cid sequence number created in a batch
     sequence: u64,
+    /// Timestamp when cid needs to be retired
     timestamp: Instant,
 }
