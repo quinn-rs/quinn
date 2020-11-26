@@ -54,10 +54,43 @@ use timer::{Timer, TimerTable};
 
 /// Protocol state and logic for a single QUIC connection
 ///
-/// Objects of this type receive `ConnectionEvent`s and emit `EndpointEvents` and application
-/// `Event`s to make progress. To handle timeouts, a `Connection` returns timer updates and
+/// Objects of this type receive [`ConnectionEvent`]s and emit [`EndpointEvents`] and application
+/// [`Event`]s to make progress. To handle timeouts, a `Connection` returns timer updates and
 /// expects timeouts through various methods. A number of simple getter methods are exposed
 /// to allow callers to inspect some of the connection state.
+///
+/// `Connection` has roughly 4 types of methods:
+///
+/// - A. Simple getters, taking `&self`
+/// - B. Handlers for incoming events from the network or system, named `handle_*`.
+/// - C. State machine mutators, for incoming commands from the application. For
+///   convenience we refer to this as "performing I/O" below, however as per
+///   the design of this library none of the functions actually perform
+///   system-level I/O. For example, [`read`](self::read) and [`write`](self::write),
+///   but also things like [`reset`](self::reset).
+/// - D. Polling functions for outgoing events or results, named `poll_*`.
+///
+/// The simplest way to use this API correctly is to call (B) and (C) whenever
+/// appropriate, then after each of those calls, as soon as feasible call all
+/// polling methods (D) and deal with their outputs appropriately, e.g. by
+/// passing it to the application or by making a system-level I/O call. You
+/// should call the polling functions in this order:
+///
+/// 1. [`poll_transmit`](self::poll_transmit)
+/// 2. [`poll_timeout`](self::poll_timeout)
+/// 3. [`poll_endpoint_events`](self::poll_endpoint_events)
+/// 4. [`poll`](self::poll)
+///
+/// Currently the only actual dependency is from (2) to (1), however additional
+/// dependencies may be added in future, so the above order is recommended.
+///
+/// (A) may be called whenever desired.
+///
+/// Care should be made to ensure that the input events represent monotonically
+/// increasing time. Additionally we recommended that, for any given [`Instant`],
+/// you call [`handle_timeout`](self::handle_timeout) before you call
+/// [`handle_event`](self::handle_event) on any [`ConnectionEvent`]s having the same `Instant`.
+///
 pub struct Connection<S>
 where
     S: crypto::Session,
@@ -728,6 +761,9 @@ where
     /// Executes protocol logic, potentially preparing signals (including application `Event`s,
     /// `EndpointEvent`s and outgoing datagrams) that should be extracted through the relevant
     /// methods.
+    ///
+    /// It is most efficient to call this only for each `Instant` output by `poll_timeout`;
+    /// however spurious extra calls will simply no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
         for &timer in &Timer::VALUES {
             if !self.timers.is_expired(timer, now) {
