@@ -349,7 +349,7 @@ where
         if self.is_full() {
             return Err(ConnectError::TooManyConnections);
         }
-        let (remote_id, _) = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
+        let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
         let (ch, conn) = self.add_connection(
             remote_id,
@@ -372,7 +372,7 @@ where
     ) -> ConnectionEvent {
         let mut ids = vec![];
         for _ in 0..num {
-            let (id, _) = self.new_cid();
+            let id = self.new_cid();
             self.connection_ids.insert(id, ch);
             let meta = &mut self.connections[ch];
             meta.cids_issued += 1;
@@ -387,11 +387,11 @@ where
         ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
     }
 
-    fn new_cid(&mut self) -> (ConnectionId, Option<Duration>) {
+    fn new_cid(&mut self) -> ConnectionId {
         loop {
-            let (cid, lifetime) = self.local_cid_generator.generate_cid();
+            let cid = self.local_cid_generator.generate_cid();
             if !self.connection_ids.contains_key(&cid) {
-                break (cid, lifetime);
+                break cid;
             }
             assert!(self.local_cid_generator.cid_len() > 0);
         }
@@ -405,7 +405,7 @@ where
         opts: ConnectionOpts<S>,
         now: Instant,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
-        let (loc_cid, cid_timeout) = self.new_cid();
+        let loc_cid = self.new_cid();
         let (server_config, tls, transport_config) = match opts {
             ConnectionOpts::Client {
                 config,
@@ -458,9 +458,8 @@ where
             rem_cid,
             remote,
             tls,
+            self.local_cid_generator.as_ref(),
             now,
-            cid_timeout,
-            self.local_cid_generator.cid_len(),
         );
         let id = self.connections.insert(ConnectionMeta {
             init_cid,
@@ -519,7 +518,7 @@ where
         }
 
         // Local CID used for stateless packets
-        let (temp_loc_cid, _) = self.new_cid();
+        let temp_loc_cid = self.new_cid();
         let server_config = self.server_config.as_ref().unwrap();
 
         if self.incoming_handshakes == server_config.accept_buffer as usize
