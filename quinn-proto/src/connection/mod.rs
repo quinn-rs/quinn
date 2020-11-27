@@ -68,7 +68,8 @@ use timer::{Timer, TimerTable};
 ///   the design of this library none of the functions actually perform
 ///   system-level I/O. For example, [`read`](self::read) and [`write`](self::write),
 ///   but also things like [`reset`](self::reset).
-/// - D. Polling functions for outgoing events or results, named `poll_*`.
+/// - D. Polling functions for outgoing events or actions for the caller to
+///   take, named `poll_*`.
 ///
 /// The simplest way to use this API correctly is to call (B) and (C) whenever
 /// appropriate, then after each of those calls, as soon as feasible call all
@@ -87,10 +88,9 @@ use timer::{Timer, TimerTable};
 /// (A) may be called whenever desired.
 ///
 /// Care should be made to ensure that the input events represent monotonically
-/// increasing time. Additionally we recommended that, for any given [`Instant`],
+/// increasing time. Additionally we recommend that, for any given [`Instant`],
 /// you call [`handle_timeout`](self::handle_timeout) before you call
 /// [`handle_event`](self::handle_event) on any [`ConnectionEvent`]s having the same `Instant`.
-///
 pub struct Connection<S>
 where
     S: crypto::Session,
@@ -762,8 +762,9 @@ where
     /// `EndpointEvent`s and outgoing datagrams) that should be extracted through the relevant
     /// methods.
     ///
-    /// It is most efficient to call this only for each `Instant` output by `poll_timeout`;
-    /// however spurious extra calls will simply no-op and therefore are safe.
+    /// It is most efficient to call this immediately after the system clock reaches the latest
+    /// `Instant` that was output by `poll_timeout`; however spurious extra calls will simply
+    /// no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
         for &timer in &Timer::VALUES {
             if !self.timers.is_expired(timer, now) {
