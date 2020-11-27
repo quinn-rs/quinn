@@ -313,6 +313,7 @@ where
     /// - a call was made to `handle_event`
     /// - a call to `poll_transmit` returned `Some`
     /// - a call was made to `handle_timeout`
+    #[must_use]
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         self.timers.next_timeout()
     }
@@ -322,6 +323,7 @@ where
     /// Connections should be polled for events after:
     /// - a call was made to `handle_event`
     /// - a call was made to `handle_timeout`
+    #[must_use]
     pub fn poll(&mut self) -> Option<Event> {
         if let Some(event) = self.streams.poll() {
             return Some(Event::Stream(event));
@@ -335,6 +337,7 @@ where
     }
 
     /// Return endpoint-facing events
+    #[must_use]
     pub fn poll_endpoint_events(&mut self) -> Option<EndpointEvent> {
         self.endpoint_events.pop_front().map(EndpointEvent)
     }
@@ -345,6 +348,7 @@ where
     /// - the application performed some I/O on the connection
     /// - a call was made to `handle_event`
     /// - a call was made to `handle_timeout`
+    #[must_use]
     pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
         if self.anti_amplification_blocked() {
             trace!("blocked by anti-amplification");
