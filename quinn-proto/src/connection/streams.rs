@@ -21,7 +21,7 @@ use crate::{
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
 };
 
-#[doc(hidden)]
+#[allow(missing_docs)]
 pub struct Streams {
     side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
@@ -73,7 +73,7 @@ pub struct Streams {
     stream_receive_window: u64,
 }
 
-#[doc(hidden)]
+#[allow(missing_docs)]
 impl Streams {
     pub fn new(
         side: Side,
