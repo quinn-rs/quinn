@@ -21,6 +21,7 @@
 use std::{convert::TryInto, fmt, net::SocketAddr, ops, time::Duration};
 
 mod cid_queue;
+mod cid_state;
 #[doc(hidden)]
 pub mod coding;
 mod constant_time;
