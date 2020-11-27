@@ -113,9 +113,9 @@ impl CidState {
             }
         }
 
-        // Check if the retirement of all CIDs requested in the above process is already complete.
-        // If yes, it means remote peer proactively retires those CIDs (for other reasons) before CID lifetime is reached.
-        // If no, a new CID must be pushed with updated `retire_prior_to` field to remote peer.
+        // Check if retirement of all CIDs that reach their lifetime is still needed
+        // If yes (return true), a new CID must be pushed with updated `retire_prior_to` field to remote peer.
+        // If no (return false), it means remote peer has proactively retired those CIDs (for other reasons) before CID lifetime is reached.
         (current_retire_prior_to..self.retire_seq).any(|seq| self.active_seq.contains(&seq))
     }
 }
