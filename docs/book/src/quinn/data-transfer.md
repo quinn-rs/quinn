@@ -6,34 +6,26 @@ Now we will continue with the subject of sending data over this connection.
 
 ## Multiplexing
 
-A QUIC stream can be compared to a TCP stream, eventhough if it is based on UDP. 
-The big difference is that you are not limited to a single stream. 
-You can open multiple streams between two peers, this is also called multiplexing.
-
-Stream multiplexing can have a significant positive effect on application performance if the resources allocated to streams are properly prioritized.
-Currently multiplexing it is used in a protocol like HTTP/2, but unlike HTTP multiplexing, QUIC does not automatically multiplex.
-This is an advantage because the user gets full control over the multiplexing. 
-Another difference compared to a TCP stream is that QUIC is not limited to one kind of stream but can open both bidirectional and unidirectional streams.
- 
+Multiplexing is the act of combining data from multiple streams into a single stream. 
+This can have a significant positive effect on the performance of the application. 
+QUIC it itself does not perform multiplexing instead it gives the programmer full control over this process. 
+  
 ## Stream Types
 
-Quinn offers three ways to send your data. 
-Two stream-based and one message-based.
+There are four kinds of streams for each QUIC connection: client/server-initiated bi/uni-directional streams.
 
 | Type | Description | Reference |
 | :----- | :----- | :----- |
 | **Bidirectional Stream** | two way stream communication. | see [open_bi][open_bi] |
 | **Unidirectional Stream** | one way stream communication. | see [open_uni][open_uni] |
-| **Unreliable Messaging** | message based unreliable communication. | see [send_datagram][send_datagram] |
+| **Unreliable Messaging (extension)** | message based unreliable communication. | see [send_datagram][send_datagram] |
 
 ## How to Use
 
-You can open a new stream or read from an existing stream.
-New streams can be created with the methods [open_bi][open_bi], [open_uni][open_uni] from [Connection][Connection] type.
-An instance of this type is found in the [connection][connection] field of [NewConnection][NewConnection]. 
-This [NewConnection][NewConnection] stores existing streams as well. Lets look at some examples:
+New streams can be created with the methods [open_bi][open_bi], [open_uni][open_uni] of type [Connection][Connection].
+An instance of this type, together with existing streams, can be found in the [connection][connection] field of [NewConnection].
 
-*Iterate over various opened streams*
+*Iterate over various streams*
 
 ```rust
 async fn iterate_streams(mut connection: NewConnection) -> anyhow::Result<()> {
@@ -48,7 +40,7 @@ async fn iterate_streams(mut connection: NewConnection) -> anyhow::Result<()> {
 }
 ```
 
-*Open different types of streams*
+*Open various kinds streams*
 
 ```rust
 async fn open_streams(mut connection: Connection) -> anyhow::Result<()> {
@@ -68,7 +60,7 @@ async fn open_streams(mut connection: Connection) -> anyhow::Result<()> {
 
 ## Bidirectional Streams
 
-With bidirectional streams you can carry data in both directions, for example, from the initiator to the peer and in reverse.
+With bidirectional streams data can be sent in both directions, for example, from the connection initiator to the peer and the other way around.
  
 *open bidirectional stream*
 
@@ -137,7 +129,7 @@ async fn receive_unidirectional_stream(mut connection: NewConnection) -> anyhow:
 
 ## Unreliable Messaging
 
-With unreliable messaging you can transfer data unreliable over bare UDP.
+With unreliable messaging you can transfer data unreliable UDP.
 
 *send datagram*
 
