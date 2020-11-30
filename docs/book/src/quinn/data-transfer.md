@@ -12,7 +12,8 @@ QUIC it itself does not perform multiplexing instead it gives the programmer ful
   
 ## Stream Types
 
-There are four kinds of streams for each QUIC connection: client/server-initiated bi/uni-directional streams.
+QUIC provides support for both stream and message based communication.
+Streams and messages can be initiated both on the client and server.
 
 | Type | Description | Reference |
 | :----- | :----- | :----- |
