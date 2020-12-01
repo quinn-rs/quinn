@@ -62,7 +62,7 @@ This can be done with either a real certificate or a self-identified certificate
 
 A [self-signed][5] certificate entails that you sign a certificate with your own CA. 
 These certificates are easy to create and cost no money. 
-However, they do not offer all the security features that certificates from a trusted CA do have. 
+However, they do not offer all the security features that certificates from trusted CA's do have. 
 Some ways to create a self-signed certificate is by using [rcgen][4] or openssl. 
 In this example [rcgen][4] is used.   
 
@@ -94,20 +94,17 @@ For this section lets-encrypt is used however any CA could be used interchangeab
 
 **Generate Certificate**
 
-Let's encode [Certbot][7] to generate certificates. 
+Let's encrypt uses [Certbot][7] to generate certificates. 
 The certbot websites give clear instructions on how to use the tool.  
-Normally a certificate is generated to secure a web server and certbot will use it to secure the server. 
-However, since we generate a certificate for a protocol, the configuration process will be slightly different than normal.
+Normally a certificate is generated to secure a web server, however, because we generate a certificate for a protocol,
+the configuration process will be slightly different than normal.
 If you do want to use an existing web server to generate certificates, please follow the instructions on certbot's website.
 
-For this example it is expected that no web server is installed.
- Select on the certbot website that you do not have a web server and follow the given installation instructions. 
-
-Note that servers must be accessible on a public DNS name in order to get a Let's Encrypt certificate.
-Certbot must answer a cryptographic challenge of the Let's Encrypt API to prove that we control our domain. 
+Select on the certbot website that you do not have a web server, we assume you dont, and follow the given installation instructions.
+Certbot must answer a cryptographic challenge of the Let's Encrypt API to prove that you control the domain. 
 It uses ports 80 (HTTP) or 443 (HTTPS) to achieve this. Open the appropriate port in your firewall and router.
 
-If certbot is installed, run `certbot certonly --standalone`, this command will start a web server in the background.
+If certbot is installed, run `certbot certonly --standalone`, this command will start a web server in the background and start the challenge.
 Certbot asks for the required data and writes the certificate to `cert.pem` and the private key to `privkey.pem`.  
 These files can then be referenced in code.  
  
