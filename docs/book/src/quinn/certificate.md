@@ -1,26 +1,14 @@
-In the following chapters we will go through the protocol using examples. 
-The chapters are in order, first we look at configuring a certificate which is **required**, 
-then at setting up a connection and finally at sending data about this connection. 
-
 # Certificates
 
 In this chapter, we discuss the configuration of the certificates that is **required** for a working Quinn connection. 
 
-A [Certificate Authority (CA)][1] is an entity that issues digital [certificates][2]. 
-These digital certificates certify ownership of a public key associated with, for example, a host, server, client, or document.
-Digital certificates ensure that users can be confident that the content actually comes from a reliable, secure source.
-
-**By default**, Quinn clients validate the cryptographic identity of the servers they connect to. 
-This prevents an attacker from intercepting messages.
-While it is great that quinn offers security by default it requires additional configuration.
-This additional configuration will be the subject of this chapter. 
+QUIC uses TLS 1.3 for authentication of connections, the server will have to provide the client with a certificate confirming its identity, 
+and the customer must be configured to trust the certificates he receives from our server. 
 
 ## Insecure Connection
 
-A certificate is not practical for cases such as: peer-to-peer, trust-on-first-use,
-deliberately insecure applications, or when the servers are not identified by the domain name. 
-You can change certificate validation logic when the `dangerous_configuration` feature flag of [rustls][3] is enabled.
-Then the only thing that needs to be done is to configure the client to trust any server.
+For our example use case, the easiest way to allow the client to trust our server is to disable certificate verification (don't do this in production!). 
+When the `dangerous_configuration` feature flag of [rustls][3] is enabled, a client can be configured to trust any server.
 
 Start with adding a [rustls][3] dependency with the `dangerous_configuration` feature flag to your `Cargo.toml` file.
 
@@ -37,11 +25,7 @@ struct SkipCertificationVerification;
 
 impl rustls::ServerCertVerifier for SkipCertificationVerification {
     fn verify_server_cert(
-        &self,
-        _roots: &rustls::RootCertStore,
-        _presented_certs: &[rustls::Certificate],
-        _dns_name: webpki::DNSNameRef,
-        _ocsp_response: &[u8],
+        &self, _: &rustls::RootCertStore, _: &[rustls::Certificate], _: webpki::DNSNameRef, _: &[u8],
     ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
         Ok(ServerCertVerified::assertion())
     }
@@ -74,34 +58,11 @@ Finally, if you plug this [ClientConfig][ClientConfig] into the [EndpointBuilder
 In this section we look at certifying an endpoint with a real certificate. 
 This can be done with either a real certificate or a self-identified certificate.
 
-Let's define two useful functions that can dissect byte certificates and return quinn types.
-
-```rust
-pub fn parse_der(cert: Vec<u8>, private_key: Vec<u8>) -> anyhow::Result<(quinn::Certificate, quinn::PrivateKey)> {
-    let cert = quinn::Certificate::from_der(&cert)?;
-    let key = quinn::PrivateKey::from_der(&private_key)?;
-    Ok((cert, key))
-}
-
-pub fn parse_pem(cert: Vec<u8>, private_key: Vec<u8>) -> anyhow::Result<(quinn::Certificate, quinn::PrivateKey)> {
-    // Parse to certificate chain whereafter taking the first certifcater in this chain.
-    let cert = quinn::CertificateChain::from_pem(&cert)?.iter().next().unwrap().clone();
-    let key = quinn::PrivateKey::from_pem(&private_key)?;
-
-    Ok((quinn::Certificate::from(cert), key))
-}
-```
-
-There are two common certificate formats namely: `.pem` and `.der`.
-The `.der` certificates are byte-coded, while `.pem` is text-coded.
-You can translate one to the other by using tooling such as openssl or even within code self. 
-The code translation is shown above. 
-
 ### Self Signed
 
 A [self-signed][5] certificate entails that you sign a certificate with your own CA. 
 These certificates are easy to create and cost no money. 
-However, they do not offer all the security features that certificates from a CA do have. 
+However, they do not offer all the security features that certificates from a trusted CA do have. 
 Some ways to create a self-signed certificate is by using [rcgen][4] or openssl. 
 In this example [rcgen][4] is used.   
 
@@ -118,7 +79,9 @@ pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> anyhow::Res
     fs::write(&cert_path, &serialized_certificate).context("failed to write certificate")?;
     fs::write(&key_path, &serialized_key).context("failed to write private key")?;
 
-    parse_der(serialized_certificate, serialized_key)
+    let cert = quinn::Certificate::from_der(&cert)?;
+    let key = quinn::PrivateKey::from_der(&serialized_key)?;
+    Ok((cert, key))
 }
 ```
 
@@ -126,34 +89,45 @@ pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> anyhow::Res
 
 ### Official Certificates
 
-[Let's Encrypt][6] is a CA and distributes certificates for free. 
-Its a very well-known CA used by many applications around the world.
-We can cover a detailed lets-encrypt tutorial but there is plenty of good documentation out there.  
+[Let's Encrypt][6] is a well-known Certificate Authority ([CA][1]) (certificate issuer) and distributes certificates for free.
+For this section lets-encrypt is used however any CA could be used interchangeably. 
 
 **Generate Certificate**
 
-Let's Encrypt works with [Certbot][7], certbort generates the certificate for you.
-Often a certificate is generated to secure a web server. 
-Because we generate a certificate for a protocol, the configuration process will be slightly different than normal. 
-We assume that you do not have a web server. 
-Select on the certbot website that you do not have a web server and follow the given installation instructions.
+Let's encode [Certbot][7] to generate certificates. 
+The certbot websites give clear instructions on how to use the tool.  
+Normally a certificate is generated to secure a web server and certbot will use it to secure the server. 
+However, since we generate a certificate for a protocol, the configuration process will be slightly different than normal.
+If you do want to use an existing web server to generate certificates, please follow the instructions on certbot's website.
 
-If certbot is installed, execute `certbot certonly --standalone`, this command will fire up a web server in the background.
-Certbot asks for your data, after entering it two `.pem` files are generated, namely `cert.pem` and `privkey.pem`. 
-Next we can reference those files in the code.  
+For this example it is expected that no web server is installed.
+ Select on the certbot website that you do not have a web server and follow the given installation instructions. 
+
+Note that servers must be accessible on a public DNS name in order to get a Let's Encrypt certificate.
+Certbot must answer a cryptographic challenge of the Let's Encrypt API to prove that we control our domain. 
+It uses ports 80 (HTTP) or 443 (HTTPS) to achieve this. Open the appropriate port in your firewall and router.
+
+If certbot is installed, run `certbot certonly --standalone`, this command will start a web server in the background.
+Certbot asks for the required data and writes the certificate to `cert.pem` and the private key to `privkey.pem`.  
+These files can then be referenced in code.  
  
 ```rust
-// Read from certificate and key from directory. 
-let (cert, key) = fs::read(&"./cert.pem").and_then(|x| Ok((x, fs::read(&"./privkey.pem")?)))?;
-// Parse bytes to type.
-parse_pem(cert, key)
+pub fn read_cert_from_file() -> anyhow::Result<(quinn::Certificate, quinn::PrivateKey)> {
+    // Read from certificate and key from directory.
+    let (cert, key) = fs::read(&"./cert.pem").and_then(|x| Ok((x, fs::read(&"./privkey.pem")?)))?;
+
+    // Parse to certificate chain whereafter taking the first certifcater in this chain.
+    let cert = quinn::CertificateChain::from_pem(&cert)?.iter().next().unwrap().clone();
+    let key = quinn::PrivateKey::from_pem(&key)?;
+
+    Ok((quinn::Certificate::from(cert), key))
+}
 ```
 
 ### Configuring Certificates
 
 Now you generated, or maybe you already had, the certificate, they need to be configured into the client and server. 
 After configuring plug the configuration into the `Endpoint`.
-
 
 **Configure Server**
 
@@ -175,7 +149,7 @@ This is the only thing you need to do for your client trust a server certificate
 
 <br><hr>
 
-[Nextup](set-up-connection.md), lets look at how to setup a connection. 
+[Nextup](set-up-connection.md), lets have a look at how to setup a connection. 
 
 [1]: https://en.wikipedia.org/wiki/Certificate_authority
 [2]: https://en.wikipedia.org/wiki/Public_key_certificate
