@@ -2,7 +2,7 @@
 
 In the [previous chapter](certificate.md) we looked at how to configure a certificate.
 This aspect is omitted in this chapter to prevent duplication. 
-But **remember** that is is required to get your [Endpoint][Endpoint] up and running. 
+But **remember** that tis is required to get your [Endpoint][Endpoint] up and running. 
 This chapter explains how to set up a connection and prepare it for data transfer. 
 
 It all starts with the [Endpoint][Endpoint] struct, this is the entry of the library. 
@@ -23,16 +23,15 @@ fn server_addr() -> SocketAddr {
 }
 ```   
 
-For both the server and the client we use the [EndpointBuilder][EndpointBuilder]. 
-The [EndpointBuilder][EndpointBuilder] has a method [bind(address)][bind] with which you link an address to the endpoint. 
-This method initializes a UDP-socket that is used by quinn.
-If you need more control over the socket creation, it is also possible to initialize a quinn endpoint with an existing UDP socket with [with_socket][with_socket]. 
+On both the client and the server, the [EndpointBuilder][EndpointBuilder] should be used to configure an endpoint. 
+The [bind(address)][bind] method initializes a UDP socket on the specified address.
+It is also possible to provide Quinn with an initialized socket via [with_socket()][with_socket]. 
 
 **Server**
 
-Just like a TCP Listener, you have to listen to incoming connections.
-Before you can listen to connections you need to configure the [EndpointBuilder][EndpointBuilder] as a server. 
-Note that the configuration itself does not perform any listening logic, instead use the `Incomming` type returned by [bind()][bind].  
+First, the server endpoint should be bound to a socket. 
+The [bind()][bind] method, which can be used for this, returns a tuple with the `Endpoint` and `Incomming` types. 
+The `Endpoint` type can be used to start outgoing connections, and the `Incoming` type can be used to listen for incoming connections.
 
 ```rust
 async fn server() -> anyhow::Result<()> {
@@ -56,9 +55,8 @@ async fn server() -> anyhow::Result<()> {
 
 **Client**
 
-Just like a TCP client, you need to connect to a listening endpoint (the server).
-In quinn you can do this with the method [connect()][connect].
-The [connect()][connect] method has an argument 'server name' which has to be the name that is in the configured certificate. 
+The client needs to connect to the server using the [connect(server_name)][connect] method.  
+The argument 'server name' is the DNS name (matching the certificate configured in the server).
 
 ```rust
 async fn client() -> anyhow::Result<()> {
