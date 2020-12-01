@@ -2,7 +2,7 @@
 
 In the [previous chapter](certificate.md) we looked at how to configure a certificate.
 This aspect is omitted in this chapter to prevent duplication. 
-But **remember** that tis is required to get your [Endpoint][Endpoint] up and running. 
+But **remember** that this is required to get your [Endpoint][Endpoint] up and running. 
 This chapter explains how to set up a connection and prepare it for data transfer. 
 
 It all starts with the [Endpoint][Endpoint] struct, this is the entry of the library. 
