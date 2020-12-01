@@ -60,7 +60,7 @@ This can be done with either a real certificate or a self-identified certificate
 
 ### Self Signed
 
-A [self-signed][5] certificate entails that you sign a certificate with your own CA. 
+A [self-signed][5] certificate entails that the user signing it will be its own CA. 
 These certificates are easy to create and cost no money. 
 However, they do not offer all the security features that certificates from trusted CA's do have. 
 Some ways to create a self-signed certificate is by using [rcgen][4] or openssl. 
