@@ -88,9 +88,10 @@ use timer::{Timer, TimerTable};
 /// (A) may be called whenever desired.
 ///
 /// Care should be made to ensure that the input events represent monotonically
-/// increasing time. Additionally we recommend that, for any given [`Instant`],
-/// you call [`handle_timeout`](self::handle_timeout) before you call
-/// [`handle_event`](self::handle_event) on any [`ConnectionEvent`]s having the same `Instant`.
+/// increasing time. Specifically, calling [`handle_timeout`](self::handle_timeout)
+/// with events of the same [`Instant`] may be interleaved in any order with a
+/// call to [`handle_event`](self::handle_event) at that same instant; however
+/// events or timeouts with different instants must not be interleaved.
 pub struct Connection<S>
 where
     S: crypto::Session,
