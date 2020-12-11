@@ -126,7 +126,7 @@ async fn run(options: Opt) -> Result<()> {
     }
 
     let (endpoint, mut incoming) = endpoint.bind(&options.listen)?;
-    info!("listening on {}", endpoint.local_addr()?);
+    eprintln!("listening on {}", endpoint.local_addr()?);
     drop(endpoint);
 
     while let Some(conn) = incoming.next().await {
