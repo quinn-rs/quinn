@@ -1510,10 +1510,9 @@ where
     }
 
     fn reset_cid_retirement(&mut self) {
-        match self.local_cid_state.next_timeout() {
-            None => {}
-            Some(t) => self.timers.set(Timer::PushNewCid, t),
-        };
+        if let Some(t) = self.local_cid_state.next_timeout() {
+            self.timers.set(Timer::PushNewCid, t);
+        }
     }
 
     /// Abandon transmitting data on a stream
