@@ -701,18 +701,10 @@ where
                 }
             }
             NewIdentifiers(ids, now) => {
-                // `ids` could be `None` once active_connection_id_limit is set to 1 by peer
-                if let Some(last_cid) = ids.last() {
-                    self.local_cid_state.issued += ids.len() as u64;
-                    // Record the timestamp of CID with the largest seq number
-                    let sequence = last_cid.sequence;
-                    ids.into_iter().rev().for_each(|frame| {
-                        self.spaces[SpaceId::Data].pending.new_cids.push(frame);
-                        self.local_cid_state.active_seq.insert(frame.sequence);
-                    });
-                    self.local_cid_state.track_lifetime(sequence, now);
-                }
-
+                self.local_cid_state.new_cids(&ids, now);
+                ids.into_iter().rev().for_each(|frame| {
+                    self.spaces[SpaceId::Data].pending.new_cids.push(frame);
+                });
                 // Update Timer::PushNewCid
                 if self.timers.is_expired(Timer::PushNewCid, now, true) {
                     self.reset_cid_retirement();
@@ -763,11 +755,11 @@ where
                 Timer::Pacing => trace!("pacing timer expired"),
                 Timer::PushNewCid => {
                     // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
-                    let num_new_cid = self.local_cid_state.on_cid_retirement_timeout().into();
+                    let num_new_cid = self.local_cid_state.on_cid_timeout().into();
                     if !self.state.is_closed() {
                         trace!(
                             "push a new cid to peer RETIRE_PRIOR_TO field {}",
-                            self.local_cid_state.retire_seq
+                            self.local_cid_state.retire_prior_to()
                         );
                         self.endpoint_events
                             .push_back(EndpointEventInner::NeedIdentifiers(now, num_new_cid));
@@ -1732,7 +1724,7 @@ where
         self.total_recvd = self.total_recvd.wrapping_add(data.len() as u64);
         let mut remaining = Some(data);
         while let Some(data) = remaining {
-            match PartialDecode::new(data, self.local_cid_state.cid_len) {
+            match PartialDecode::new(data, self.local_cid_state.cid_len()) {
                 Ok((partial_decode, rest)) => {
                     remaining = rest;
                     self.handle_decode(now, remote, ecn, partial_decode);
@@ -2371,28 +2363,9 @@ where
                     self.streams.received_stop_sending(id, error_code);
                 }
                 Frame::RetireConnectionId { sequence } => {
-                    if self.local_cid_state.cid_len == 0 {
-                        return Err(TransportError::PROTOCOL_VIOLATION(
-                            "RETIRE_CONNECTION_ID when CIDs aren't in use",
-                        ));
-                    }
-                    if sequence > self.local_cid_state.issued {
-                        debug!(
-                            sequence,
-                            "got RETIRE_CONNECTION_ID for unissued sequence number"
-                        );
-                        return Err(TransportError::PROTOCOL_VIOLATION(
-                            "RETIRE_CONNECTION_ID for unissued sequence number",
-                        ));
-                    }
-                    self.local_cid_state.active_seq.remove(&sequence);
-                    // Consider a scenario where peer A has active remote cid 0,1,2.
-                    // Peer B first send a NEW_CONNECTION_ID with cid 3 and retire_prior_to set to 1.
-                    // Peer A processes this NEW_CONNECTION_ID frame; update remote cid to 1,2,3
-                    // and meanwhile send a RETIRE_CONNECTION_ID to retire cid 0 to peer B.
-                    // If peer B doesn't check the cid limit here and send a new cid again, peer A will then face CONNECTION_ID_LIMIT_ERROR
-                    let allow_more_cids = self.peer_params.issue_cids_limit()
-                        > self.local_cid_state.active_seq.len() as u64;
+                    let allow_more_cids = self
+                        .local_cid_state
+                        .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
                     self.endpoint_events
                         .push_back(EndpointEventInner::RetireConnectionId(
                             now,
@@ -2586,7 +2559,7 @@ where
 
     /// Issue an initial set of connection IDs to the peer
     fn issue_cids(&mut self, now: Instant) {
-        if self.local_cid_state.cid_len == 0 {
+        if self.local_cid_state.cid_len() == 0 {
             return;
         }
 
@@ -2727,7 +2700,7 @@ where
             );
             frame::NewConnectionId {
                 sequence: issued.sequence,
-                retire_prior_to: self.local_cid_state.retire_seq,
+                retire_prior_to: self.local_cid_state.retire_prior_to(),
                 id: issued.id,
                 reset_token: issued.reset_token,
             }
@@ -2989,20 +2962,14 @@ where
 
     #[cfg(test)]
     pub(crate) fn active_local_cid_seq(&self) -> (u64, u64) {
-        (
-            *self.local_cid_state.active_seq.iter().min().unwrap(),
-            *self.local_cid_state.active_seq.iter().max().unwrap(),
-        )
+        self.local_cid_state.active_seq()
     }
 
     /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
     /// with updated `retire_prior_to` field set to `v`
     #[cfg(test)]
     pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant) {
-        // Cannot retire more CIDs than what have been issued
-        debug_assert!(v <= *self.local_cid_state.active_seq.iter().max().unwrap() + 1);
-        let n = v.checked_sub(self.local_cid_state.retire_seq).unwrap();
-        self.local_cid_state.retire_seq = v;
+        let n = self.local_cid_state.assign_retire_seq(v);
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(now, n));
     }

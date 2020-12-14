@@ -1,9 +1,10 @@
 //! Maintain the state of local connection IDs
+use crate::{shared::IssuedCid, TransportError};
 use std::{
     collections::{HashSet, VecDeque},
     time::{Duration, Instant},
 };
-use tracing::trace;
+use tracing::{debug, trace};
 
 /// Data structure that records when issued cids should be retired
 #[derive(Copy, Clone, Eq, PartialEq)]
@@ -21,15 +22,15 @@ pub struct CidState {
     /// Timestamp when issued cids should be retired
     retire_timestamp: VecDeque<CidTimeStamp>,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
-    pub(crate) issued: u64,
+    issued: u64,
     /// Sequence numbers of local connection IDs not yet retired by the peer
-    pub(crate) active_seq: HashSet<u64>,
+    active_seq: HashSet<u64>,
     /// Sequence number the peer has already retired all CIDs below at our request via `retire_prior_to`
     prev_retire_seq: u64,
     /// Sequence number to set in retire_prior_to field in NEW_CONNECTION_ID frame
-    pub(crate) retire_seq: u64,
+    retire_seq: u64,
     /// cid length used to decode short packet
-    pub(crate) cid_len: usize,
+    cid_len: usize,
     //// cid lifetime
     cid_lifetime: Option<Duration>,
 }
@@ -85,7 +86,7 @@ impl CidState {
 
     /// Update local CID state when previously issued CID is retired
     /// Return a flag that indicates whether a new CID needs to be pushed that notifies remote peer to respond `RETIRE_CONNECTION_ID`
-    pub(crate) fn on_cid_retirement_timeout(&mut self) -> bool {
+    pub(crate) fn on_cid_timeout(&mut self) -> bool {
         // Whether the peer hasn't retired all the CIDs we asked it to yet
         let unretired_ids_found =
             (self.prev_retire_seq..self.retire_seq).any(|seq| self.active_seq.contains(&seq));
@@ -117,5 +118,79 @@ impl CidState {
         // If yes (return true), a new CID must be pushed with updated `retire_prior_to` field to remote peer.
         // If no (return false), it means remote peer has proactively retired those CIDs (for other reasons) before CID lifetime is reached.
         (current_retire_prior_to..self.retire_seq).any(|seq| self.active_seq.contains(&seq))
+    }
+
+    /// Update cid state when `NewIdentifiers` event is received
+    pub(crate) fn new_cids(&mut self, ids: &Vec<IssuedCid>, now: Instant) {
+        // `ids` could be `None` once active_connection_id_limit is set to 1 by peer
+        if let Some(last_cid) = ids.last() {
+            self.issued += ids.len() as u64;
+            // Record the timestamp of CID with the largest seq number
+            let sequence = last_cid.sequence;
+            ids.into_iter().rev().for_each(|frame| {
+                self.active_seq.insert(frame.sequence);
+            });
+            self.track_lifetime(sequence, now);
+        }
+    }
+
+    /// Update CidState when recieve a `RETIRE_CONNECTION_ID` frame
+    /// Return a boolean variable or `TransportError` if CID content violates RFC
+    /// When boolean variable is `true`, a new CID should be issued to peer.
+    pub(crate) fn on_cid_retirement(
+        &mut self,
+        sequence: u64,
+        limit: u64,
+    ) -> Result<bool, TransportError> {
+        if self.cid_len == 0 {
+            return Err(TransportError::PROTOCOL_VIOLATION(
+                "RETIRE_CONNECTION_ID when CIDs aren't in use",
+            ));
+        }
+        if sequence > self.issued {
+            debug!(
+                sequence,
+                "got RETIRE_CONNECTION_ID for unissued sequence number"
+            );
+            return Err(TransportError::PROTOCOL_VIOLATION(
+                "RETIRE_CONNECTION_ID for unissued sequence number",
+            ));
+        }
+        self.active_seq.remove(&sequence);
+        // Consider a scenario where peer A has active remote cid 0,1,2.
+        // Peer B first send a NEW_CONNECTION_ID with cid 3 and retire_prior_to set to 1.
+        // Peer A processes this NEW_CONNECTION_ID frame; update remote cid to 1,2,3
+        // and meanwhile send a RETIRE_CONNECTION_ID to retire cid 0 to peer B.
+        // If peer B doesn't check the cid limit here and send a new cid again, peer A will then face CONNECTION_ID_LIMIT_ERROR
+        let allow_more_cids = limit > self.active_seq.len() as u64;
+
+        Ok(allow_more_cids)
+    }
+
+    /// Length of local Connection IDs
+    pub(crate) fn cid_len(&self) -> usize {
+        self.cid_len
+    }
+
+    /// The value for `retire_prior_to` field in `NEW_CONNECTION_ID` frame
+    pub(crate) fn retire_prior_to(&self) -> u64 {
+        self.retire_seq
+    }
+
+    #[cfg(test)]
+    pub(crate) fn active_seq(&self) -> (u64, u64) {
+        (
+            *self.active_seq.iter().min().unwrap(),
+            *self.active_seq.iter().max().unwrap(),
+        )
+    }
+
+    #[cfg(test)]
+    pub(crate) fn assign_retire_seq(&mut self, v: u64) -> u64 {
+        // Cannot retire more CIDs than what have been issued
+        debug_assert!(v <= *self.active_seq.iter().max().unwrap() + 1);
+        let n = v.checked_sub(self.retire_seq).unwrap();
+        self.retire_seq = v;
+        n
     }
 }
