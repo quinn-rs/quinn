@@ -121,13 +121,13 @@ impl CidState {
     }
 
     /// Update cid state when `NewIdentifiers` event is received
-    pub(crate) fn new_cids(&mut self, ids: &Vec<IssuedCid>, now: Instant) {
+    pub(crate) fn new_cids(&mut self, ids: &[IssuedCid], now: Instant) {
         // `ids` could be `None` once active_connection_id_limit is set to 1 by peer
         if let Some(last_cid) = ids.last() {
             self.issued += ids.len() as u64;
             // Record the timestamp of CID with the largest seq number
             let sequence = last_cid.sequence;
-            ids.into_iter().rev().for_each(|frame| {
+            ids.iter().for_each(|frame| {
                 self.active_seq.insert(frame.sequence);
             });
             self.track_lifetime(sequence, now);
