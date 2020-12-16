@@ -39,18 +39,18 @@ pub struct CidState {
 
 impl CidState {
     pub(crate) fn new(cid_len: usize, cid_lifetime: Option<Duration>) -> Self {
-        let mut this = CidState {
+        let mut active_seq = HashSet::new();
+        // Add sequence number of CID used in handshaking into tracking set
+        active_seq.insert(0);
+        CidState {
             retire_timestamp: VecDeque::new(),
             issued: 1, // One CID is already supplied during handshaking
-            active_seq: HashSet::new(),
+            active_seq,
             prev_retire_seq: 0,
             retire_seq: 0,
             cid_len,
             cid_lifetime,
-        };
-        // Add sequence number of CID used in handshaking into tracking set
-        this.active_seq.insert(0);
-        this
+        }
     }
 
     /// Find the next timestamp when previously issued CID should be retired
