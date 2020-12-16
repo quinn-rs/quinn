@@ -8,15 +8,6 @@ use tracing::{debug, trace};
 
 use crate::{shared::IssuedCid, TransportError};
 
-/// Data structure that records when issued cids should be retired
-#[derive(Copy, Clone, Eq, PartialEq)]
-struct CidTimeStamp {
-    /// Highest cid sequence number created in a batch
-    sequence: u64,
-    /// Timestamp when cid needs to be retired
-    timestamp: Instant,
-}
-
 /// Local connection IDs management
 ///
 /// `CidState` maintains attributes of local connection IDs
@@ -133,7 +124,7 @@ impl CidState {
         // Record the timestamp of CID with the largest seq number
         let sequence = last_cid.sequence;
         ids.iter().for_each(|frame| {
-             self.active_seq.insert(frame.sequence);
+            self.active_seq.insert(frame.sequence);
         });
         self.track_lifetime(sequence, now);
     }
@@ -181,10 +172,17 @@ impl CidState {
 
     #[cfg(test)]
     pub(crate) fn active_seq(&self) -> (u64, u64) {
-        (
-            *self.active_seq.iter().min().unwrap(),
-            *self.active_seq.iter().max().unwrap(),
-        )
+        let mut min = u64::MAX;
+        let mut max = u64::MIN;
+        for n in self.active_seq.iter() {
+            if n < &min {
+                min = *n;
+            }
+            if n > &max {
+                max = *n;
+            }
+        }
+        (min, max)
     }
 
     #[cfg(test)]
@@ -195,4 +193,13 @@ impl CidState {
         self.retire_seq = v;
         n
     }
+}
+
+/// Data structure that records when issued cids should be retired
+#[derive(Copy, Clone, Eq, PartialEq)]
+struct CidTimeStamp {
+    /// Highest cid sequence number created in a batch
+    sequence: u64,
+    /// Timestamp when cid needs to be retired
+    timestamp: Instant,
 }

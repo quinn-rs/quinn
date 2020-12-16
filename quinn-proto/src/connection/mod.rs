@@ -15,7 +15,6 @@ use tracing::{debug, error, trace, trace_span, warn};
 use crate::{
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
-    cid_state::CidState,
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
@@ -34,6 +33,8 @@ use crate::{
 };
 
 mod assembler;
+mod cid_state;
+use cid_state::CidState;
 
 mod pacing;
 mod paths;
