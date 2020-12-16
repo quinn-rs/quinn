@@ -166,9 +166,7 @@ impl CidState {
         // Peer A processes this NEW_CONNECTION_ID frame; update remote cid to 1,2,3
         // and meanwhile send a RETIRE_CONNECTION_ID to retire cid 0 to peer B.
         // If peer B doesn't check the cid limit here and send a new cid again, peer A will then face CONNECTION_ID_LIMIT_ERROR
-        let allow_more_cids = limit > self.active_seq.len() as u64;
-
-        Ok(allow_more_cids)
+        Ok(limit > self.active_seq.len() as u64)
     }
 
     /// Length of local Connection IDs
