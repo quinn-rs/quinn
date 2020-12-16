@@ -1,10 +1,12 @@
 //! Maintain the state of local connection IDs
-use crate::{shared::IssuedCid, TransportError};
 use std::{
     collections::{HashSet, VecDeque},
     time::{Duration, Instant},
 };
+
 use tracing::{debug, trace};
+
+use crate::{shared::IssuedCid, TransportError};
 
 /// Data structure that records when issued cids should be retired
 #[derive(Copy, Clone, Eq, PartialEq)]
