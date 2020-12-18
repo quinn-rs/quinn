@@ -80,6 +80,9 @@ where
         if endpoint.driver_lost {
             return Err(ConnectError::EndpointStopping);
         }
+        if addr.is_ipv6() && !endpoint.ipv6 {
+            return Err(ConnectError::InvalidRemoteAddress(*addr));
+        }
         let addr = if endpoint.ipv6 {
             SocketAddr::V6(ensure_ipv6(*addr))
         } else {

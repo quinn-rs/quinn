@@ -348,6 +348,9 @@ where
         if self.is_full() {
             return Err(ConnectError::TooManyConnections);
         }
+        if remote.port() == 0 {
+            return Err(ConnectError::InvalidRemoteAddress(remote));
+        }
         let (remote_id, _) = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
         let (ch, conn) = self.add_connection(
@@ -823,6 +826,11 @@ pub enum ConnectError {
     /// The transport configuration was invalid
     #[error("transport configuration error: {0}")]
     Config(#[source] ConfigError),
+    /// The remote [`SocketAddr`] supplied was malformed
+    ///
+    /// Examples include attempting to connect to port 0, or using an inappropriate address family.
+    #[error("invalid remote address: {0}")]
+    InvalidRemoteAddress(SocketAddr),
 }
 
 #[derive(Default, Debug)]
