@@ -19,7 +19,7 @@ use crate::{
     config::{ServerConfig, TransportConfig},
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
-    frame::{Close, Datagram, FrameStruct},
+    frame::{Close, Datagram, FrameStruct, ShouldTransmit},
     is_supported_version,
     packet::{Header, LongType, Packet, PacketNumber, PartialDecode, PartialEncode, SpaceId},
     range_set::RangeSet,
@@ -57,10 +57,44 @@ use timer::{Timer, TimerTable};
 
 /// Protocol state and logic for a single QUIC connection
 ///
-/// Objects of this type receive `ConnectionEvent`s and emit `EndpointEvents` and application
-/// `Event`s to make progress. To handle timeouts, a `Connection` returns timer updates and
+/// Objects of this type receive [`ConnectionEvent`]s and emit [`EndpointEvents`] and application
+/// [`Event`]s to make progress. To handle timeouts, a `Connection` returns timer updates and
 /// expects timeouts through various methods. A number of simple getter methods are exposed
 /// to allow callers to inspect some of the connection state.
+///
+/// `Connection` has roughly 4 types of methods:
+///
+/// - A. Simple getters, taking `&self`
+/// - B. Handlers for incoming events from the network or system, named `handle_*`.
+/// - C. State machine mutators, for incoming commands from the application. For
+///   convenience we refer to this as "performing I/O" below, however as per
+///   the design of this library none of the functions actually perform
+///   system-level I/O. For example, [`read`](self::read) and [`write`](self::write),
+///   but also things like [`reset`](self::reset).
+/// - D. Polling functions for outgoing events or actions for the caller to
+///   take, named `poll_*`.
+///
+/// The simplest way to use this API correctly is to call (B) and (C) whenever
+/// appropriate, then after each of those calls, as soon as feasible call all
+/// polling methods (D) and deal with their outputs appropriately, e.g. by
+/// passing it to the application or by making a system-level I/O call. You
+/// should call the polling functions in this order:
+///
+/// 1. [`poll_transmit`](self::poll_transmit)
+/// 2. [`poll_timeout`](self::poll_timeout)
+/// 3. [`poll_endpoint_events`](self::poll_endpoint_events)
+/// 4. [`poll`](self::poll)
+///
+/// Currently the only actual dependency is from (2) to (1), however additional
+/// dependencies may be added in future, so the above order is recommended.
+///
+/// (A) may be called whenever desired.
+///
+/// Care should be made to ensure that the input events represent monotonically
+/// increasing time. Specifically, calling [`handle_timeout`](self::handle_timeout)
+/// with events of the same [`Instant`] may be interleaved in any order with a
+/// call to [`handle_event`](self::handle_event) at that same instant; however
+/// events or timeouts with different instants must not be interleaved.
 pub struct Connection<S>
 where
     S: crypto::Session,
@@ -271,6 +305,7 @@ where
     /// - a call was made to `handle_event`
     /// - a call to `poll_transmit` returned `Some`
     /// - a call was made to `handle_timeout`
+    #[must_use]
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         self.timers.next_timeout()
     }
@@ -280,6 +315,7 @@ where
     /// Connections should be polled for events after:
     /// - a call was made to `handle_event`
     /// - a call was made to `handle_timeout`
+    #[must_use]
     pub fn poll(&mut self) -> Option<Event> {
         if let Some(event) = self.streams.poll() {
             return Some(Event::Stream(event));
@@ -293,6 +329,7 @@ where
     }
 
     /// Return endpoint-facing events
+    #[must_use]
     pub fn poll_endpoint_events(&mut self) -> Option<EndpointEvent> {
         self.endpoint_events.pop_front().map(EndpointEvent)
     }
@@ -303,6 +340,7 @@ where
     /// - the application performed some I/O on the connection
     /// - a call was made to `handle_event`
     /// - a call was made to `handle_timeout`
+    #[must_use]
     pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
         if self.anti_amplification_blocked() {
             trace!("blocked by anti-amplification");
@@ -491,8 +529,8 @@ where
         trace!("sending {} byte datagram", buf.len());
         self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
 
-        self.stats.packet_tx.packets += 1;
-        self.stats.packet_tx.bytes += buf.len() as u64;
+        self.stats.udp_tx.datagrams += 1;
+        self.stats.udp_tx.bytes += buf.len() as u64;
 
         Some(Transmit {
             destination: self.path.remote,
@@ -694,10 +732,13 @@ where
                     return;
                 }
 
+                self.stats.udp_rx.datagrams += 1;
+                self.stats.udp_rx.bytes += first_decode.len() as u64;
                 self.total_recvd = self.total_recvd.wrapping_add(first_decode.len() as u64);
 
                 self.handle_decode(now, remote, ecn, first_decode);
                 if let Some(data) = remaining {
+                    self.stats.udp_rx.bytes += data.len() as u64;
                     self.handle_coalesced(now, remote, ecn, data);
                 }
             }
@@ -723,6 +764,10 @@ where
     /// Executes protocol logic, potentially preparing signals (including application `Event`s,
     /// `EndpointEvent`s and outgoing datagrams) that should be extracted through the relevant
     /// methods.
+    ///
+    /// It is most efficient to call this immediately after the system clock reaches the latest
+    /// `Instant` that was output by `poll_timeout`; however spurious extra calls will simply
+    /// no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
         for &timer in &Timer::VALUES {
             if !self.timers.is_expired(timer, now) {
@@ -832,24 +877,18 @@ where
     ///
     /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
-        Ok(self
-            .streams
-            .read_unordered(id)?
-            .map(|(buf, offset, transmit_max_stream_data)| {
-                self.add_read_credits(id, transmit_max_stream_data);
-                (buf, offset)
-            }))
+        Ok(self.streams.read_unordered(id)?.map(|result| {
+            self.add_read_credits(id, result.max_stream_data, result.max_data);
+            (result.buf, result.offset)
+        }))
     }
 
     /// Read from the given recv stream
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
-        Ok(self
-            .streams
-            .read(id, buf)?
-            .map(|(len, transmit_max_stream_data)| {
-                self.add_read_credits(id, transmit_max_stream_data);
-                len
-            }))
+        Ok(self.streams.read(id, buf)?.map(|result| {
+            self.add_read_credits(id, result.max_stream_data, result.max_data);
+            result.len
+        }))
     }
 
     /// Send data on the given stream
@@ -874,12 +913,16 @@ where
             "only streams supporting incoming data may be stopped"
         );
         // Only bother if there's data we haven't received yet
-        if self.streams.stop(id)? {
+        let result = self.streams.stop(id)?;
+        if result.stop_sending.should_transmit() {
             let space = &mut self.spaces[SpaceId::Data];
             space
                 .pending
                 .stop_sending
                 .push(frame::StopSending { id, error_code });
+        }
+        if result.max_data.should_transmit() {
+            self.spaces[SpaceId::Data].pending.max_data = true;
         }
         Ok(())
     }
@@ -2268,7 +2311,9 @@ where
                     self.read_crypto(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
-                    self.streams.received(frame)?;
+                    if self.streams.received(frame)?.should_transmit() {
+                        self.spaces[SpaceId::Data].pending.max_data = true;
+                    }
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, ack)?;
@@ -2322,7 +2367,7 @@ where
                     self.streams.received_max_streams(dir, count)?;
                 }
                 Frame::ResetStream(frame) => {
-                    if self.streams.received_reset(frame)? {
+                    if self.streams.received_reset(frame)?.should_transmit() {
                         self.spaces[SpaceId::Data].pending.max_data = true;
                     }
                 }
@@ -2809,10 +2854,17 @@ where
         self.streams.alloc_remote_stream(&self.peer_params, dir);
     }
 
-    fn add_read_credits(&mut self, id: StreamId, transmit_max_stream_data: bool) {
+    fn add_read_credits(
+        &mut self,
+        id: StreamId,
+        transmit_max_stream_data: ShouldTransmit,
+        transmit_max_data: ShouldTransmit,
+    ) {
         let space = &mut self.spaces[SpaceId::Data];
-        space.pending.max_data = true;
-        if transmit_max_stream_data {
+        if transmit_max_data.should_transmit() {
+            space.pending.max_data = true;
+        }
+        if transmit_max_stream_data.should_transmit() {
             // Only bother issuing stream credit if the peer wants to send more
             space.pending.max_stream_data.insert(id);
         }

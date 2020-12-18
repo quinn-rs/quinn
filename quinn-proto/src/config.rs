@@ -317,7 +317,7 @@ where
             || Box::new(RandomConnectionIdGenerator::default());
         Self {
             reset_key: Arc::new(reset_key),
-            max_udp_payload_size: MAX_UDP_PAYLOAD_SIZE.into(),
+            max_udp_payload_size: 1480u32.into(), // Typical internet MTU minus IPv4 and UDP overhead, rounded up to a multiple of 8
             connection_id_generator_factory: Arc::new(cid_factory),
         }
     }
@@ -348,6 +348,9 @@ where
     }
 
     /// Maximum UDP payload size accepted from peers. Excludes UDP and IP overhead.
+    ///
+    /// The default is suitable for typical internet applications. Applications which expect to run
+    /// on networks supporting Ethernet jumbo frames or similar should set this appropriately.
     pub fn max_udp_payload_size(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
         self.max_udp_payload_size = value.try_into()?;
         Ok(self)
@@ -641,6 +644,3 @@ impl From<VarIntBoundsExceeded> for ConfigError {
         ConfigError::OutOfBounds
     }
 }
-
-/// Largest theoretically possible UDP/IPv4 payload
-const MAX_UDP_PAYLOAD_SIZE: u32 = 64 * 1024 - 8 - 20;

@@ -97,6 +97,7 @@ where
     }
 
     /// Get the next packet to transmit
+    #[must_use]
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
         self.transmits.pop_front()
     }
@@ -346,6 +347,9 @@ where
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
         if self.is_full() {
             return Err(ConnectError::TooManyConnections);
+        }
+        if remote.port() == 0 {
+            return Err(ConnectError::InvalidRemoteAddress(remote));
         }
         let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
@@ -827,6 +831,11 @@ pub enum ConnectError {
     /// The transport configuration was invalid
     #[error("transport configuration error: {0}")]
     Config(#[source] ConfigError),
+    /// The remote [`SocketAddr`] supplied was malformed
+    ///
+    /// Examples include attempting to connect to port 0, or using an inappropriate address family.
+    #[error("invalid remote address: {0}")]
+    InvalidRemoteAddress(SocketAddr),
 }
 
 #[derive(Default, Debug)]

@@ -29,7 +29,7 @@ pub fn make_client_endpoint(
 ///
 /// ## Returns
 ///
-/// - a sream of incoming QUIC connections
+/// - a stream of incoming QUIC connections
 /// - server certificate serialized into DER format
 #[allow(unused)]
 pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Incoming, Vec<u8>), Box<dyn Error>> {

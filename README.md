@@ -3,15 +3,15 @@
 [![Documentation](https://docs.rs/quinn/badge.svg)](https://docs.rs/quinn/)
 [![Crates.io](https://img.shields.io/crates/v/quinn.svg)](https://crates.io/crates/quinn)
 [![Build status](https://github.com/djc/quinn/workflows/CI/badge.svg)](https://github.com/djc/quinn/actions?query=workflow%3ACI)
-[![codecov](https://codecov.io/gh/djc/quinn/branch/master/graph/badge.svg)](https://codecov.io/gh/djc/quinn)
+[![codecov](https://codecov.io/gh/djc/quinn/branch/main/graph/badge.svg)](https://codecov.io/gh/djc/quinn)
 [![Chat](https://img.shields.io/badge/chat-%23quinn:matrix.org-%2346BC99?logo=matrix)](https://matrix.to/#/#quinn:matrix.org)
 [![Chat](https://badges.gitter.im/gitterHQ/gitter.svg)](https://gitter.im/djc/quinn)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
-# Pure-rust QUIC protocol implementation 
+# Pure-rust QUIC protocol implementation
 
-Quinn is a pure-rust, future-based implementation of the [QUIC][quic] transport protocol undergoing standardization by the IETF. 
+Quinn is a pure-rust, future-based implementation of the [QUIC][quic] transport protocol undergoing standardization by the IETF.
 This library is at [draft 32][current-draft].
 
 ## Features
@@ -27,12 +27,12 @@ This library is at [draft 32][current-draft].
 
 ## Overview
 
-- **quinn:** High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)  
-- **quinn-proto:** Deterministic state machine of the protocol which performs **no** I/O internally and is suitable for use with custom event loops (and potentially a C or C++ API). 
-- **quinn-h3:** Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.  
-- **bench:** Benchmarks without any framework. 
-- **interop:** Tooling that helps to run interoperability tests. 
-- **fuzz:** Fuzz tests. 
+- **quinn:** High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)
+- **quinn-proto:** Deterministic state machine of the protocol which performs [**no** I/O][sans-io] internally and is suitable for use with custom event loops (and potentially a C or C++ API).
+- **quinn-h3:** Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.
+- **bench:** Benchmarks without any framework.
+- **interop:** Tooling that helps to run interoperability tests.
+- **fuzz:** Fuzz tests.
 
 # Getting Started
 
@@ -100,7 +100,7 @@ future runs.
 ## Contribution
 
 All feedback welcome. Feel free to file bugs, requests for documentation and
-any other feedback to the [issue tracker][issues]. 
+any other feedback to the [issue tracker][issues].
 
 The quinn-proto test suite uses simulated IO for reproducibility and to avoid
 long sleeps in certain timing-sensitive tests. If the `SSLKEYLOGFILE`
@@ -125,6 +125,7 @@ the variable.
 [youtube]: https://www.youtube.com/watch?v=EHgyY5DNdvI
 [letsencrypt]: https://letsencrypt.org/
 [rcgen]: https://crates.io/crates/rcgen
-[examples]: https://github.com/djc/quinn/tree/master/quinn/examples
+[examples]: https://github.com/djc/quinn/tree/main/quinn/examples
 [documentation]: https://github.com/djc/quinn/issues/865
-[current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/29/
+[current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/32/
+[sans-io]: https://sans-io.readthedocs.io/how-to-sans-io.html

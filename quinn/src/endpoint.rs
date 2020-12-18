@@ -2,6 +2,8 @@ use std::{
     collections::{HashMap, VecDeque},
     future::Future,
     io,
+    io::IoSliceMut,
+    mem::MaybeUninit,
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
@@ -18,7 +20,8 @@ use crate::{
     broadcast::{self, Broadcast},
     builders::EndpointBuilder,
     connection::Connecting,
-    udp::UdpSocket,
+    platform::BATCH_SIZE,
+    udp::{RecvMeta, UdpSocket},
     ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND,
 };
 
@@ -77,13 +80,16 @@ where
         if endpoint.driver_lost {
             return Err(ConnectError::EndpointStopping);
         }
+        if addr.is_ipv6() && !endpoint.ipv6 {
+            return Err(ConnectError::InvalidRemoteAddress(*addr));
+        }
         let addr = if endpoint.ipv6 {
             SocketAddr::V6(ensure_ipv6(*addr))
         } else {
             *addr
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
-        Ok(endpoint.create_connection(ch, conn))
+        Ok(endpoint.connections.insert(ch, conn))
     }
 
     /// Switch to a new UDP socket
@@ -114,8 +120,8 @@ where
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let reason = Bytes::copy_from_slice(reason);
         let mut endpoint = self.inner.lock().unwrap();
-        endpoint.close = Some((error_code, reason.clone()));
-        for sender in endpoint.connections.values() {
+        endpoint.connections.close = Some((error_code, reason.clone()));
+        for sender in endpoint.connections.senders.values() {
             // Ignoring errors from dropped connections
             let _ = sender.unbounded_send(ConnectionEvent::Close {
                 error_code,
@@ -199,6 +205,11 @@ where
                 break;
             }
         }
+        if !endpoint.incoming.is_empty() {
+            if let Some(task) = endpoint.incoming_reader.take() {
+                task.wake();
+            }
+        }
         if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
             Poll::Ready(Ok(()))
         } else {
@@ -219,7 +230,7 @@ where
         }
         // Drop all outgoing channels, signaling the termination of the endpoint to the associated
         // connections.
-        endpoint.connections.clear();
+        endpoint.connections.senders.clear();
     }
 }
 
@@ -233,18 +244,12 @@ where
     outgoing: VecDeque<proto::Transmit>,
     incoming: VecDeque<Connecting<S>>,
     incoming_reader: Option<Waker>,
-    /// Whether the `Incoming` stream has not yet been dropped
-    incoming_live: bool,
     driver: Option<Waker>,
     ipv6: bool,
-    connections: HashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
-    // Stored to give out clones to new ConnectionInners
-    sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
+    connections: ConnectionSet,
     events: mpsc::UnboundedReceiver<(ConnectionHandle, EndpointEvent)>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
-    /// Set if the endpoint has been manually closed
-    close: Option<(VarInt, Bytes)>,
     driver_lost: bool,
     recv_buf: Box<[u8]>,
     idle: Broadcast,
@@ -254,33 +259,42 @@ impl<S> EndpointInner<S>
 where
     S: proto::crypto::Session + 'static,
 {
-    fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
         let mut recvd = 0;
+        let mut metas = [RecvMeta::default(); BATCH_SIZE];
+        let mut iovs = MaybeUninit::<[IoSliceMut<'a>; BATCH_SIZE]>::uninit();
+        self.recv_buf
+            .chunks_mut(self.recv_buf.len() / BATCH_SIZE)
+            .enumerate()
+            .for_each(|(i, buf)| unsafe {
+                iovs.as_mut_ptr()
+                    .cast::<IoSliceMut>()
+                    .add(i)
+                    .write(IoSliceMut::<'a>::new(buf));
+            });
+        let mut iovs = unsafe { iovs.assume_init() };
         loop {
-            match self.socket.poll_recv(cx, &mut self.recv_buf) {
-                Poll::Ready(Ok((n, addr, ecn))) => {
-                    match self
-                        .inner
-                        .handle(now, addr, ecn, (&self.recv_buf[0..n]).into())
-                    {
-                        Some((handle, DatagramEvent::NewConnection(conn))) => {
-                            let conn = self.create_connection(handle, conn);
-                            if self.incoming_live {
+            match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
+                Poll::Ready(Ok(msgs)) => {
+                    recvd += msgs;
+                    for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
+                        let data = buf[0..meta.len].into();
+                        match self.inner.handle(now, meta.addr, meta.ecn, data) {
+                            Some((handle, DatagramEvent::NewConnection(conn))) => {
+                                let conn = self.connections.insert(handle, conn);
                                 self.incoming.push_back(conn);
-                                if let Some(task) = self.incoming_reader.take() {
-                                    task.wake();
-                                }
                             }
+                            Some((handle, DatagramEvent::ConnectionEvent(event))) => {
+                                // Ignoring errors from dropped connections that haven't yet been cleaned up
+                                let _ = self
+                                    .connections
+                                    .senders
+                                    .get_mut(&handle)
+                                    .unwrap()
+                                    .unbounded_send(ConnectionEvent::Proto(event));
+                            }
+                            None => {}
                         }
-                        Some((handle, DatagramEvent::ConnectionEvent(event))) => {
-                            // Ignoring errors from dropped connections that haven't yet been cleaned up
-                            let _ = self
-                                .connections
-                                .get_mut(&handle)
-                                .unwrap()
-                                .unbounded_send(ConnectionEvent::Proto(event));
-                        }
-                        None => {}
                     }
                 }
                 Poll::Pending => {
@@ -295,7 +309,6 @@ where
                     return Err(e);
                 }
             }
-            recvd += 1;
             if recvd >= IO_LOOP_BOUND {
                 return Ok(true);
             }
@@ -306,7 +319,7 @@ where
     fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
         let mut calls = 0;
         loop {
-            while self.outgoing.len() < crate::udp::BATCH_SIZE {
+            while self.outgoing.len() < BATCH_SIZE {
                 match self.inner.poll_transmit() {
                     Some(x) => self.outgoing.push_back(x),
                     None => break,
@@ -343,7 +356,7 @@ where
                 Poll::Ready(Some((ch, event))) => match event {
                     Proto(e) => {
                         if e.is_drained() {
-                            self.connections.remove(&ch);
+                            self.connections.senders.remove(&ch);
                             if self.connections.is_empty() {
                                 self.idle.wake();
                             }
@@ -352,6 +365,7 @@ where
                             // Ignoring errors from dropped connections that haven't yet been cleaned up
                             let _ = self
                                 .connections
+                                .senders
                                 .get_mut(&ch)
                                 .unwrap()
                                 .unbounded_send(ConnectionEvent::Proto(event));
@@ -366,8 +380,20 @@ where
             }
         }
     }
+}
 
-    fn create_connection(
+#[derive(Debug)]
+struct ConnectionSet {
+    /// Senders for communicating with the endpoint's connections
+    senders: HashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
+    /// Stored to give out clones to new ConnectionInners
+    sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
+    /// Set if the endpoint has been manually closed
+    close: Option<(VarInt, Bytes)>,
+}
+
+impl ConnectionSet {
+    fn insert<S: proto::crypto::Session + 'static>(
         &mut self,
         handle: ConnectionHandle,
         conn: proto::generic::Connection<S>,
@@ -380,8 +406,12 @@ where
             })
             .unwrap();
         }
-        self.connections.insert(handle, send);
+        self.senders.insert(handle, send);
         Connecting::new(handle, conn, self.sender.clone(), recv)
+    }
+
+    fn is_empty(&self) -> bool {
+        self.senders.is_empty()
     }
 }
 
@@ -417,7 +447,7 @@ where
         } else if let Some(conn) = endpoint.incoming.pop_front() {
             endpoint.inner.accept();
             Poll::Ready(Some(conn))
-        } else if endpoint.close.is_some() {
+        } else if endpoint.connections.close.is_some() {
             Poll::Ready(None)
         } else {
             endpoint.incoming_reader = Some(cx.waker().clone());
@@ -433,7 +463,6 @@ where
     fn drop(&mut self) {
         let endpoint = &mut *self.0.lock().unwrap();
         endpoint.inner.reject_new_connections();
-        endpoint.incoming_live = false;
         endpoint.incoming_reader = None;
     }
 }
@@ -446,22 +475,24 @@ where
     S: proto::crypto::Session,
 {
     pub(crate) fn new(socket: UdpSocket, inner: proto::generic::Endpoint<S>, ipv6: bool) -> Self {
-        let recv_buf = vec![0; inner.config().get_max_udp_payload_size().min(64 * 1024) as usize];
+        let recv_buf =
+            vec![0; inner.config().get_max_udp_payload_size().min(64 * 1024) as usize * BATCH_SIZE];
         let (sender, events) = mpsc::unbounded();
         Self(Arc::new(Mutex::new(EndpointInner {
             socket,
             inner,
             ipv6,
-            sender,
             events,
             outgoing: VecDeque::new(),
             incoming: VecDeque::new(),
-            incoming_live: true,
             incoming_reader: None,
             driver: None,
-            connections: HashMap::new(),
+            connections: ConnectionSet {
+                senders: HashMap::new(),
+                sender,
+                close: None,
+            },
             ref_count: 0,
-            close: None,
             driver_lost: false,
             recv_buf: recv_buf.into(),
             idle: Broadcast::new(),

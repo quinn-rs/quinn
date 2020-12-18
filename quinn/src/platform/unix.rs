@@ -1,5 +1,6 @@
 use std::{
     io,
+    io::IoSliceMut,
     mem::{self, MaybeUninit},
     net::{SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
@@ -10,6 +11,7 @@ use mio::net::UdpSocket;
 use proto::{EcnCodepoint, Transmit};
 
 use super::cmsg;
+use crate::udp::RecvMeta;
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
@@ -105,7 +107,6 @@ impl super::UdpExt for UdpSocket {
 
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
-        use crate::udp::BATCH_SIZE;
         let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
         let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
         let mut cmsgs = [cmsg::Aligned(MaybeUninit::uninit()); BATCH_SIZE];
@@ -122,7 +123,7 @@ impl super::UdpExt for UdpSocket {
                 libc::sendmmsg(
                     self.as_raw_fd(),
                     msgs.as_mut_ptr(),
-                    transmits.len().min(crate::udp::BATCH_SIZE) as _,
+                    transmits.len().min(BATCH_SIZE) as _,
                     0,
                 )
             };
@@ -165,21 +166,51 @@ impl super::UdpExt for UdpSocket {
         Ok(sent)
     }
 
-    fn recv_ext(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr, Option<EcnCodepoint>)> {
-        let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
-        let mut iov = libc::iovec {
-            iov_base: buf.as_ptr() as *mut _,
-            iov_len: buf.len(),
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
+        let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
+        let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
+        let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
+        let max_msg_count = bufs.len().min(BATCH_SIZE);
+        for i in 0..max_msg_count {
+            prepare_recv(
+                &mut bufs[i],
+                &mut names[i],
+                &mut ctrls[i],
+                &mut hdrs[i].msg_hdr,
+            );
+        }
+        let msg_count = loop {
+            let n = unsafe {
+                libc::recvmmsg(
+                    self.as_raw_fd(),
+                    hdrs.as_mut_ptr(),
+                    bufs.len().min(BATCH_SIZE) as libc::c_uint,
+                    0,
+                    ptr::null_mut(),
+                )
+            };
+            if n == -1 {
+                let e = io::Error::last_os_error();
+                if e.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(e);
+            }
+            break n;
         };
+        for i in 0..(msg_count as usize) {
+            meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize);
+        }
+        Ok(msg_count as usize)
+    }
+
+    #[cfg(any(target_os = "macos", target_os = "ios"))]
+    fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
+        let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
         let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
         let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
-        hdr.msg_name = name.as_mut_ptr() as _;
-        hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
-        hdr.msg_iov = &mut iov;
-        hdr.msg_iovlen = 1;
-        hdr.msg_control = ctrl.0.as_mut_ptr() as _;
-        hdr.msg_controllen = CMSG_LEN as _;
-        hdr.msg_flags = 0;
+        prepare_recv(&mut bufs[0], &mut name, &mut ctrl, &mut hdr);
         let n = loop {
             let n = unsafe { libc::recvmsg(self.as_raw_fd(), &mut hdr, 0) };
             if n == -1 {
@@ -194,35 +225,8 @@ impl super::UdpExt for UdpSocket {
             }
             break n;
         };
-        let name = unsafe { name.assume_init() };
-        let ecn_bits = match unsafe { cmsg::Iter::new(&hdr).next() } {
-            Some(cmsg) => match (cmsg.cmsg_level, cmsg.cmsg_type) {
-                // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
-                (libc::IPPROTO_IP, libc::IP_TOS) | (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
-                    cmsg::decode::<u8>(cmsg)
-                },
-                (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
-                    // Temporary hack around broken macos ABI. Remove once upstream fixes it.
-                    // https://bugreport.apple.com/web/?problemID=48761855
-                    if cfg!(target_os = "macos")
-                        && cmsg.cmsg_len as usize
-                            == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
-                    {
-                        cmsg::decode::<u8>(cmsg)
-                    } else {
-                        cmsg::decode::<libc::c_int>(cmsg) as u8
-                    }
-                },
-                _ => 0,
-            },
-            None => 0,
-        };
-        let addr = match libc::c_int::from(name.ss_family) {
-            libc::AF_INET => unsafe { SocketAddr::V4(ptr::read(&name as *const _ as _)) },
-            libc::AF_INET6 => unsafe { SocketAddr::V6(ptr::read(&name as *const _ as _)) },
-            _ => unreachable!(),
-        };
-        Ok((n as usize, addr, EcnCodepoint::from_bits(ecn_bits)))
+        meta[0] = decode_recv(&name, &hdr, n as usize);
+        Ok(1)
     }
 }
 
@@ -257,3 +261,64 @@ fn prepare_msg(
     }
     encoder.finish();
 }
+
+fn prepare_recv(
+    buf: &mut IoSliceMut,
+    name: &mut MaybeUninit<libc::sockaddr_storage>,
+    ctrl: &mut cmsg::Aligned<MaybeUninit<[u8; CMSG_LEN]>>,
+    hdr: &mut libc::msghdr,
+) {
+    hdr.msg_name = name.as_mut_ptr() as _;
+    hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
+    hdr.msg_iov = buf as *mut IoSliceMut as *mut libc::iovec;
+    hdr.msg_iovlen = 1;
+    hdr.msg_control = ctrl.0.as_mut_ptr() as _;
+    hdr.msg_controllen = CMSG_LEN as _;
+    hdr.msg_flags = 0;
+}
+
+fn decode_recv(
+    name: &MaybeUninit<libc::sockaddr_storage>,
+    hdr: &libc::msghdr,
+    len: usize,
+) -> RecvMeta {
+    let name = unsafe { name.assume_init() };
+    let ecn_bits = match unsafe { cmsg::Iter::new(&hdr).next() } {
+        Some(cmsg) => match (cmsg.cmsg_level, cmsg.cmsg_type) {
+            // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
+            (libc::IPPROTO_IP, libc::IP_TOS) | (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
+                cmsg::decode::<u8>(cmsg)
+            },
+            (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
+                // Temporary hack around broken macos ABI. Remove once upstream fixes it.
+                // https://bugreport.apple.com/web/?problemID=48761855
+                if cfg!(target_os = "macos")
+                    && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
+                {
+                    cmsg::decode::<u8>(cmsg)
+                } else {
+                    cmsg::decode::<libc::c_int>(cmsg) as u8
+                }
+            },
+            _ => 0,
+        },
+        None => 0,
+    };
+    let addr = match libc::c_int::from(name.ss_family) {
+        libc::AF_INET => unsafe { SocketAddr::V4(ptr::read(&name as *const _ as _)) },
+        libc::AF_INET6 => unsafe { SocketAddr::V6(ptr::read(&name as *const _ as _)) },
+        _ => unreachable!(),
+    };
+    RecvMeta {
+        len,
+        addr,
+        ecn: EcnCodepoint::from_bits(ecn_bits),
+    }
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+// Chosen somewhat arbitrarily; might benefit from additional tuning.
+pub const BATCH_SIZE: usize = 32;
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+pub const BATCH_SIZE: usize = 1;
