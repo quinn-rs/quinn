@@ -8,9 +8,7 @@ use tracing::{debug, trace};
 
 use crate::{shared::IssuedCid, TransportError};
 
-/// Local connection IDs management
-///
-/// `CidState` maintains attributes of local connection IDs
+/// Local connection ID management
 pub struct CidState {
     /// Timestamp when issued cids should be retired
     retire_timestamp: VecDeque<CidTimeStamp>,
@@ -78,7 +76,8 @@ impl CidState {
     }
 
     /// Update local CID state when previously issued CID is retired
-    /// Return a flag that indicates whether a new CID needs to be pushed that notifies remote peer to respond `RETIRE_CONNECTION_ID`
+    ///
+    /// Return whether a new CID needs to be pushed that notifies remote peer to respond `RETIRE_CONNECTION_ID`
     pub(crate) fn on_cid_timeout(&mut self) -> bool {
         // Whether the peer hasn't retired all the CIDs we asked it to yet
         let unretired_ids_found =
@@ -129,9 +128,9 @@ impl CidState {
         self.track_lifetime(sequence, now);
     }
 
-    /// Update CidState when recieve a `RETIRE_CONNECTION_ID` frame
-    /// Return a boolean variable or `TransportError` if CID content violates RFC
-    /// When boolean variable is `true`, a new CID should be issued to peer.
+    /// Update CidState for receipt of a `RETIRE_CONNECTION_ID` frame
+    ///
+    /// Returns whether a new CID can be issued, or an error if the frame was illegal.
     pub(crate) fn on_cid_retirement(
         &mut self,
         sequence: u64,
@@ -197,7 +196,7 @@ impl CidState {
 
 /// Data structure that records when issued cids should be retired
 #[derive(Copy, Clone, Eq, PartialEq)]
-struct CidTimeStamp {
+struct CidTimestamp {
     /// Highest cid sequence number created in a batch
     sequence: u64,
     /// Timestamp when cid needs to be retired

@@ -17,7 +17,8 @@ pub trait ConnectionIdGenerator: Send {
     /// Returns the length of a CID for cononections created by this generator
     fn cid_len(&self) -> usize;
     /// Returns the lifetime of generated Connection IDs
-    /// Connection IDs will be retired after the returned `Duration`, if any
+    ///
+    /// Connection IDs will be retired after the returned `Duration`, if any. Assumed to be constant.
     fn cid_lifetime(&self) -> Option<Duration>;
 }
 
