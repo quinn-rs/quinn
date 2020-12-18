@@ -11,7 +11,7 @@ use crate::{shared::IssuedCid, TransportError};
 /// Local connection ID management
 pub struct CidState {
     /// Timestamp when issued cids should be retired
-    retire_timestamp: VecDeque<CidTimeStamp>,
+    retire_timestamp: VecDeque<CidTimestamp>,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     issued: u64,
     /// Sequence numbers of local connection IDs not yet retired by the peer
@@ -27,11 +27,11 @@ pub struct CidState {
 }
 
 impl CidState {
-    pub(crate) fn new(cid_len: usize, cid_lifetime: Option<Duration>) -> Self {
+    pub(crate) fn new(cid_len: usize, cid_lifetime: Option<Duration>, now: Instant) -> Self {
         let mut active_seq = HashSet::new();
         // Add sequence number of CID used in handshaking into tracking set
         active_seq.insert(0);
-        CidState {
+        let mut this = CidState {
             retire_timestamp: VecDeque::new(),
             issued: 1, // One CID is already supplied during handshaking
             active_seq,
@@ -39,7 +39,10 @@ impl CidState {
             retire_seq: 0,
             cid_len,
             cid_lifetime,
-        }
+        };
+        // Track lifetime of cid used in handshaking
+        this.track_lifetime(0, now);
+        this
     }
 
     /// Find the next timestamp when previously issued CID should be retired
@@ -68,7 +71,7 @@ impl CidState {
                     return;
                 }
             }
-            self.retire_timestamp.push_back(CidTimeStamp {
+            self.retire_timestamp.push_back(CidTimestamp {
                 sequence: new_cid_seq,
                 timestamp: expire_at,
             });
@@ -101,7 +104,7 @@ impl CidState {
 
         // Advance `retire_cid_seq` if next cid that needs to be retired exists
         if let Some(next_retire_prior_to) = next_retire_sequence {
-            if !unretired_ids_found && next_retire_prior_to > current_retire_prior_to {
+            if !unretired_ids_found && next_retire_prior_to != current_retire_prior_to {
                 self.retire_seq = next_retire_prior_to;
             }
         }

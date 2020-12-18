@@ -197,7 +197,7 @@ where
             crypto,
             handshake_cid: loc_cid,
             rem_handshake_cid: rem_cid,
-            local_cid_state: CidState::new(cid_gen.cid_len(), cid_gen.cid_lifetime()),
+            local_cid_state: CidState::new(cid_gen.cid_len(), cid_gen.cid_lifetime(), now),
             path: PathData::new(
                 remote,
                 config.initial_rtt,
@@ -707,7 +707,11 @@ where
                     self.spaces[SpaceId::Data].pending.new_cids.push(frame);
                 });
                 // Update Timer::PushNewCid
-                if self.timers.is_expired(Timer::PushNewCid, now, true) {
+                if self
+                    .timers
+                    .get(Timer::PushNewCid)
+                    .map_or(true, |x| x <= now)
+                {
                     self.reset_cid_retirement();
                 }
             }
@@ -721,7 +725,7 @@ where
     /// methods.
     pub fn handle_timeout(&mut self, now: Instant) {
         for &timer in &Timer::VALUES {
-            if !self.timers.is_expired(timer, now, false) {
+            if !self.timers.is_expired(timer, now) {
                 continue;
             }
             self.timers.stop(timer);
@@ -2568,8 +2572,6 @@ where
         let n = self.peer_params.issue_cids_limit() - 1;
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(now, n));
-        // Track lifetime of cid used in handshaking
-        self.local_cid_state.track_lifetime(0, now);
     }
 
     fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> SentFrames {

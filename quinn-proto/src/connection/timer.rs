@@ -44,7 +44,6 @@ impl TimerTable {
         self.data[timer as usize] = Some(time);
     }
 
-    #[cfg(test)]
     pub fn get(&self, timer: Timer) -> Option<Instant> {
         self.data[timer as usize]
     }
@@ -57,7 +56,7 @@ impl TimerTable {
         self.data.iter().filter_map(|&x| x).min()
     }
 
-    pub fn is_expired(&self, timer: Timer, after: Instant, default_none: bool) -> bool {
-        self.data[timer as usize].map_or(default_none, |x| x <= after)
+    pub fn is_expired(&self, timer: Timer, after: Instant) -> bool {
+        self.data[timer as usize].map_or(false, |x| x <= after)
     }
 }

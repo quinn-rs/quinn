@@ -112,9 +112,7 @@ where
         use EndpointEventInner::*;
         match event.0 {
             NeedIdentifiers(now, n) => {
-                if self.connections.get(ch.into()).is_some() {
-                    return Some(self.send_new_identifiers(now, ch, n));
-                }
+                return Some(self.send_new_identifiers(now, ch, n));
             }
             ResetToken(remote, token) => {
                 if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
