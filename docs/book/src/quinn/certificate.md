@@ -3,7 +3,7 @@
 In this chapter, we discuss the configuration of the certificates that is **required** for a working Quinn connection. 
 
 QUIC uses TLS 1.3 for authentication of connections, the server will have to provide the client with a certificate confirming its identity, 
-and the customer must be configured to trust the certificates he receives from our server. 
+and the client must be configured to trust the certificates he receives from our server. 
 
 ## Insecure Connection
 
@@ -17,7 +17,7 @@ quinn = "*"
 rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 ``` 
 
-Then, you can skip the certificate validation on the client by implementing [ServerCertVerifier][ServerCertVerifier] and let it assert true for any server. 
+Then, you can skip the certificate validation on the client by implementing [ServerCertVerifier][ServerCertVerifier] and let it assert verification for any server. 
 
 ```rust
 // Implementation of `ServerCertVerifier` that verifies everything as trustworthy.
@@ -32,7 +32,7 @@ impl rustls::ServerCertVerifier for SkipCertificationVerification {
 }
 ```
 
-After that, we can configure our [ClientConfig][ClientConfig] to use this new [ServerCertVerifier][ServerCertVerifier]. 
+After that, we can configure our [ClientConfig][ClientConfig] to use this new [ServerCertVerifier][ServerCertVerifier] implementation. 
 
 ```rust
 pub fn insecure() -> ClientConfig {
@@ -55,15 +55,15 @@ Finally, if you plug this [ClientConfig][ClientConfig] into the [EndpointBuilder
 
 ## Using Certificates
 
-In this section we look at certifying an endpoint with a real certificate. 
-This can be done with either a real certificate or a self-identified certificate.
+In this section we look at certifying an endpoint with a certificate. 
+This can be done with either a non-self-signed or a self-signed certificate.
 
-### Self Signed
+### Self Signed Certificates
 
-A [self-signed][5] certificate entails that the user signing it will be its own CA. 
-These certificates are easy to create and cost no money. 
-However, they do not offer all the security features that certificates from trusted CA's do have. 
-Some ways to create a self-signed certificate is by using [rcgen][4] or openssl. 
+Relying on [self-signed][5] certificates means that clients allow servers to sign their own certificates. 
+This is simpler because no third party has to be involved in signing the server's certificate.
+However, they do not offer all the security features that certificates from trusted CAs do have. 
+Self-signed certificates, among other options, can be created using the [rcgen][4] crate or the openssl binary.
 In this example [rcgen][4] is used.   
 
 Let's look at an example:
@@ -87,7 +87,7 @@ pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> anyhow::Res
 
 *Note that [generate_simple_self_signed][generate_simple_self_signed] returns a [Certificate][2] that can be serialized to both `.der` and `.pem` formats.*
 
-### Official Certificates
+### Non-self-signed Certificates
 
 [Let's Encrypt][6] is a well-known Certificate Authority ([CA][1]) (certificate issuer) and distributes certificates for free.
 For this section lets-encrypt is used however any CA could be used interchangeably. 
@@ -100,7 +100,7 @@ Normally a certificate is generated to secure a web server, however, because we 
 the configuration process will be slightly different than normal.
 If you do want to use an existing web server to generate certificates, please follow the instructions on certbot's website.
 
-Select on the certbot website that you do not have a web server, we assume you dont, and follow the given installation instructions.
+Select on the certbot website that you do not have a web server (we assume you don't) and follow the given installation instructions.
 Certbot must answer a cryptographic challenge of the Let's Encrypt API to prove that you control the domain. 
 It uses ports 80 (HTTP) or 443 (HTTPS) to achieve this. Open the appropriate port in your firewall and router.
 
@@ -123,7 +123,7 @@ pub fn read_cert_from_file() -> anyhow::Result<(quinn::Certificate, quinn::Priva
 
 ### Configuring Certificates
 
-Now you generated, or maybe you already had, the certificate, they need to be configured into the client and server. 
+Now that you have a valid certificate, the client and server need to be configured to use it.
 After configuring plug the configuration into the `Endpoint`.
 
 **Configure Server**
@@ -133,7 +133,7 @@ let mut builder = ServerConfigBuilder::default();
 builder.certificate(CertificateChain::from_certs(vec![certificate]), key)?;
 ```
 
-This is the only thing you need to do for your sever to be secured. 
+This is the only thing you need to do for your server to be secured. 
 
 **Configure Client**
 
@@ -146,7 +146,7 @@ This is the only thing you need to do for your client trust a server certificate
 
 <br><hr>
 
-[Nextup](set-up-connection.md), lets have a look at how to setup a connection. 
+[Next](set-up-connection.md), let's have a look at how to setup a connection. 
 
 [1]: https://en.wikipedia.org/wiki/Certificate_authority
 [2]: https://en.wikipedia.org/wiki/Public_key_certificate
