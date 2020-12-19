@@ -3098,28 +3098,28 @@ where
     }
 }
 
-/// Reasons why a connection might be lost.
+/// Reasons why a connection might be lost
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConnectionError {
-    /// The peer doesn't implement any supported version.
+    /// The peer doesn't implement any supported version
     #[error("peer doesn't implement any supported version")]
     VersionMismatch,
-    /// The peer violated the QUIC specification as understood by this implementation.
+    /// The peer violated the QUIC specification as understood by this implementation
     #[error("{0}")]
     TransportError(#[from] TransportError),
-    /// The peer's QUIC stack aborted the connection automatically.
+    /// The peer's QUIC stack aborted the connection automatically
     #[error("aborted by peer: {}", 0)]
     ConnectionClosed(frame::ConnectionClose),
-    /// The peer closed the connection.
+    /// The peer closed the connection
     #[error("closed by peer: {}", 0)]
     ApplicationClosed(frame::ApplicationClose),
-    /// The peer is unable to continue processing this connection, usually due to having restarted.
+    /// The peer is unable to continue processing this connection, usually due to having restarted
     #[error("reset by peer")]
     Reset,
-    /// The peer has become unreachable.
+    /// The peer has become unreachable
     #[error("timed out")]
     TimedOut,
-    /// The local application closed the connection.
+    /// The local application closed the connection
     #[error("closed")]
     LocallyClosed,
 }
