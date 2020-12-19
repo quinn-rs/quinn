@@ -5,39 +5,36 @@ These concepts are important to understanding when to use QUIC.
 
 ## 1. TCP/IP and UDP Comparison
 
-Lets define some transport guarantees and their properties:
+Let's compare TCP, UDP, and QUIC.
 
-| Transport Guarantees | Packet Loss [(1)][1]  | Packet Duplication [(2)][2] | Packet Order | Packet Delivery |
-| :-------------:   | :-------------: | :-------------: | :-------------: | :-------------:
-|   **Unreliable**  |       Any       |      Yes        |     No          |   No
-|   **Reliable**    |       No        |      No         |     Ordered     |   Yes
+- **unreliable**: Transport packeten zijn er niet van verzekerd dat ze aan komen bij hun eindbestemming en op volgorde zijn. 
+- **reliable**: Transport packeten zijn er van verzekerd dat ze op volgorde op hun eindbestemming komen.
 
-Now, lets compare TCP, UDP, and QUIC.
+Unreliability gives great uncertainty with a lot of freedom, while reliability gives great certainty with costs in speed and freedom.
+That is why some protocols such as QUIC, SCTP are built on UDP instead of TCP. 
 
 | Feature |  TCP  | UDP | QUIC
 | :-------------: | :-------------: | :-------------: | :-------------: |
 |  [Connection-Oriented][6]           |       Yes         | No                       | Yes
-|  Transport Guarantees              | Reliable Ordered  | Unreliable               | Reliable Ordered and Unreliable 
+|  Transport Guarantees               | Reliable          | Unreliable               | Reliable and/or unreliable with extension 
 |  Packet Transfer                    | [Stream-based][4] | Message based            | Message based and/or Stream based
-|  Automatic [fragmentation][8]       | Yes               | Yes, ip-fragmentation    | Yes
-|  Header Size                        |  20 bytes         | 8 bytes                  |  16 bytes  
-|  [Control Flow, Congestion Avoidance/Control][5] | Yes  | No                       |  Yes, and user controlled                                          
-|  Based On | [IP][3]                | [IP][3]            |  UDP
+|  Header Size                        |  20 bytes         | 8 bytes                  |  ~16 bytes(depending on connection id)  
+|  [Control Flow, Congestion Avoidance/Control][5] | Yes  | No                       |  ** Yes, and possible controlled by userspace                                          
+|  Based On | [IP][3]                 | [IP][3]           |  UDP
 
-Unreliability gives great uncertainty with a lot of freedom, while reliability gives great certainty with costs in speed and freedom.
-That is why some protocols such as QUIC, SCTP are built on UDP instead of TCP. 
-UDP gives the end-user more control over the transmission than TCP can do. 
-While QUIC is build on top of UDP it does provides the same and even more features than TCP.
+** QUIC control flow/congestion implementations will run in userspace wereas in TCP its running in kernelspace, 
+however there might be a kernel implementations for QUIC in the future.
 
 ## 2. Issues with TCP 
 
-While TCP has been around for long it does have some issues that QUIC tries to solve.
+TCP has been around for a long time and was not designed with the modern internet in mind. 
+It has several difficulties that QUIC tries to resolve. 
 
 ### Head-of-line Blocking
 
 One of the biggest issues with TCP is that of Head-of-line blocking. 
 It is a convenient feature because it ensures that all packages are sent and arrive in order. 
-However, in cases of high throughput (multiplayer game networking) and big load in a short time (web page load), this can be catastrophic to your application performance.
+However, in cases of high throughput (multiplayer game networking) and big load in a short time (web page load), this can severely impact latency.
 
 The issue is demonstrated in the following animation:
 
@@ -46,45 +43,32 @@ The issue is demonstrated in the following animation:
 This animation shows that if a certain packet drops in transmission, all packets have to wait at the transport layer until it is resent by the other end.
 If the dropped packet is resent and arrived then all packets are freed from the transport layer. 
 
-Let's look at two areas where this head-of-line blocking issue is a huge deal.
+Let's look at two areas where this head-of-line blocking issue creates issues. 
 
 **Web Networking**
 
-The World Wide Web is a place where quick web-page load speeds are important (who wants to wait 200ms to the long right?).
-As websites get bigger and attention decreases, we need faster loading times for websites.
-
-To tackle this issue, HTTP-2 introduced a technique called multiplexing. 
+The last years websites have been growing in size which causes. 
+This increases the loading time and makes head-of-line blocking a more concerning topic. 
+To tackle this issue HTTP-2 has introduced a technique called multiplexing. 
 In short, this means that multiple TCP streams are initialized to communicate with the server. 
-Then If one of them blocks the whole website can continue to load seemingly while that single stream is retransmitting.
-
-We will take a deeper dive into this subject when looking at QUIC multiplexing.
+It allows a server to transfer multiple sources in parallel over a single stream.
 
 **Multiplayer Game Networking**
 
-The web space is not the only area where this head-of-line blocking is a big issue.
-Multiplayer action games are based on a constant stream of packets sent at a speed ranging from 10 to 30 packets per second.
-For the most part, the data in these packages are so time-sensitive that only the most recent data is useful.
-You can think of the input and position of the player, the orientation and speed, and the state of the physical objects in the world.
-If a single packet drops out we can not afford to queue up 10-30 packets a second until the lost packet is retransmitted. 
-This could cause annoying lag behavior and a bad user experience. 
+The web space is not the only area where this head-of-line blocking is a major concern.
+Multiplayer action games work with a constant flow of packets sent at an interval ranging between 10 to 30 packets per second.
+For the most part, the data in these packets is so time sensitive that only the most recent data can be used. 
+Therefore, it cannot be afforded to queue 10-30 packets per second until the lost packet is resent.
+Most multiplayer network solutions build a custom protocol on top of UDP to address head-of-line blocking issues while maintaining reliability.
    
 ### Connection Setup Duration
 
-In the standard HTTP+TLS+TCP stack, TCP needs a handshake to establish a session between server and client, 
-and TLS needs its handshake to ensure that the session is secured.
-
-![TCP-handshake](./images/tcp-handshake.svg.png)
-
-First, the source sends an 'SYN initial request' packet to the target server to start the dialogue. 
-Then the target server sends an 'SYN-ACK packet' to agree to the process.
-Lastly, the source sends an 'ACK packet' to the target to confirm the process, after which the message exchange can start. 
- 
-Now if we want to secure the TCP connection, we have to use a protocol like TLS on top of it. 
-In the case of TLS versions older than 1.3, an additional three more handshake messages are required.
-
-You can see how expensive it is to create a secure TCP connection. 
-In a scenario of TCP and TLS 1.2 with a 100ms latency, we need to wait for 6 x 100ms = 600ms to set up a connection. 
-If the website is big, an additional load time can make the website load over a second. 
+In the usual HTTP+TLS+TCP stack, TCP needs 6 handshake messages to set up a session between server and client, 
+and TLS needs its own handshake to make sure the session is secure.  
+This handshake consists of 6 messages for TLS 1.2 or lower, and 4 messages for setting up the 'initial' connection over TLS 1.3.
+Despite the '0-RTT' function of TLS 1.3, which allows you to resume a previous connection in 0-RTT, the 6 TCP handshake messages are still required.
+Nevertheless, QUIC has the 0-RTT feature as well and is not restrained by the 6 TCP handshake messages.
+This implies that QUIC is able to provide encrypted true 0-RTT connections. 
 
 [animation]: ./images/hol.gif 
 
