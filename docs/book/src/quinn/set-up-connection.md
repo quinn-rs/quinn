@@ -5,7 +5,7 @@ This aspect is omitted in this chapter to prevent duplication.
 But **remember** that this is required to get your [Endpoint][Endpoint] up and running. 
 This chapter explains how to set up a connection and prepare it for data transfer. 
 
-It all starts with the [Endpoint][Endpoint] struct, this is the entry of the library. 
+It all starts with the [Endpoint][Endpoint] struct, this is the entry point of the library. 
 
 ## Example
 
@@ -30,7 +30,7 @@ It is also possible to provide Quinn with an initialized socket via [with_socket
 **Server**
 
 First, the server endpoint should be bound to a socket. 
-The [bind()][bind] method, which can be used for this, returns a tuple with the `Endpoint` and `Incomming` types. 
+The [bind()][bind] method, which can be used for this, returns a tuple containing the `Endpoint` and `Incoming` types. 
 The `Endpoint` type can be used to start outgoing connections, and the `Incoming` type can be used to listen for incoming connections.
 
 ```rust
