@@ -1,6 +1,6 @@
 # Data Transfer
 
-In the [previous chapter](set-up-connection.md) we characterized how to set up an [Endpoint][Endpoint]
+In the [previous chapter](set-up-connection.md) it is explained how to set up an [Endpoint][Endpoint]
 and then get access to a [NewConnection][NewConnection] instance.
 Now we will continue with the subject of sending data over this connection.
 
@@ -8,7 +8,7 @@ Now we will continue with the subject of sending data over this connection.
 
 Multiplexing is the act of combining data from multiple streams into a single stream. 
 This can have a significant positive effect on the performance of the application. 
-QUIC it itself does not perform multiplexing instead it gives the programmer full control over this process. 
+With QUIC, the programmer is in full control over the stream allocation.  
   
 ## Stream Types
 
@@ -26,7 +26,7 @@ Streams and messages can be initiated both on the client and server.
 New streams can be created with the methods [open_bi][open_bi], [open_uni][open_uni] of type [Connection][Connection].
 An instance of this type, together with existing streams, can be found in the [connection][connection] field of [NewConnection].
 
-*Iterate over various streams*
+*Receive from various streams*
 
 ```rust
 async fn iterate_streams(mut connection: NewConnection) -> anyhow::Result<()> {
@@ -40,8 +40,9 @@ async fn iterate_streams(mut connection: NewConnection) -> anyhow::Result<()> {
     Ok(())
 }
 ```
+* *(Note that this example would get stuck in the first while loop)* 
 
-*Open various kinds streams*
+*Open various kinds of streams*
 
 ```rust
 async fn open_streams(mut connection: Connection) -> anyhow::Result<()> {
@@ -80,7 +81,7 @@ async fn open_bidirectional_stream(connection: Connection) -> anyhow::Result<()>
 }
 ```
 
-*iterate bidirectional stream(s)*
+*iterate incoming bidirectional stream(s)*
 
 ```rust
 async fn receive_bidirectional_stream(mut connection: NewConnection) -> anyhow::Result<()> {
@@ -98,7 +99,7 @@ async fn receive_bidirectional_stream(mut connection: NewConnection) -> anyhow::
 
 ## Unidirectional Streams 
 
-With unidirectional streams, you can carry data only in one direction, for example, from the initiator of the stream to its peer.
+With unidirectional streams, you can carry data only in one direction: from the initiator of the stream to its peer.
     
 *open unidirectional stream*
 
@@ -115,7 +116,7 @@ async fn open_unidirectional_stream(connection: Connection)-> anyhow::Result<()>
 }
 ```
 
-*iterating unidirectional stream(s)*
+*iterating incoming unidirectional stream(s)*
 
 ```rust
 async fn receive_unidirectional_stream(mut connection: NewConnection) -> anyhow::Result<()> {
@@ -130,7 +131,8 @@ async fn receive_unidirectional_stream(mut connection: NewConnection) -> anyhow:
 
 ## Unreliable Messaging
 
-With unreliable messaging you can transfer data unreliable UDP.
+With unreliable messaging you can transfer data over UDP without reliability. 
+This could be useful if data-arrival isnt essential or when needing of high-throughput matters and reliab
 
 *send datagram*
 
