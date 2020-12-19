@@ -54,7 +54,7 @@ use timer::{Timer, TimerTable};
 
 /// Protocol state and logic for a single QUIC connection
 ///
-/// Objects of this type receive [`ConnectionEvent`]s and emit [`EndpointEvents`] and application
+/// Objects of this type receive [`ConnectionEvent`]s and emit [`EndpointEvent`]s and application
 /// [`Event`]s to make progress. To handle timeouts, a `Connection` returns timer updates and
 /// expects timeouts through various methods. A number of simple getter methods are exposed
 /// to allow callers to inspect some of the connection state.
