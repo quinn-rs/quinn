@@ -54,7 +54,7 @@ impl CidState {
     }
 
     /// Track the lifetime of issued cids in `retire_timestamp`
-    pub(crate) fn track_lifetime(&mut self, new_cid_seq: u64, now: Instant) {
+    fn track_lifetime(&mut self, new_cid_seq: u64, now: Instant) {
         let lifetime = match self.cid_lifetime {
             Some(lifetime) => lifetime,
             None => return,
