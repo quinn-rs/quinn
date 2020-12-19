@@ -3116,7 +3116,11 @@ pub enum ConnectionError {
     /// The peer is unable to continue processing this connection, usually due to having restarted
     #[error("reset by peer")]
     Reset,
-    /// The peer has become unreachable
+    /// Communication with the peer has lapsed for longer than the negotiated idle timeout
+    ///
+    /// If neither side is sending keep-alives, a connection will time out after a long enough idle
+    /// period even if the peer is still reachable. See also [`TransportConfig::max_idle_timeout()`]
+    /// and [`TransportConfig::keep_alive_interval()`].
     #[error("timed out")]
     TimedOut,
     /// The local application closed the connection
