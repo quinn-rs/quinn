@@ -628,11 +628,8 @@ impl From<ReadError> for io::Error {
     fn from(x: ReadError) -> Self {
         use self::ReadError::*;
         let kind = match x {
-            ConnectionClosed(e) => {
-                return e.into();
-            }
             Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            UnknownStream => io::ErrorKind::NotConnected,
+            ConnectionClosed(_) | UnknownStream => io::ErrorKind::NotConnected,
             IllegalOrderedRead => io::ErrorKind::InvalidInput,
         };
         io::Error::new(kind, x)
@@ -686,11 +683,8 @@ impl From<WriteError> for io::Error {
     fn from(x: WriteError) -> Self {
         use self::WriteError::*;
         let kind = match x {
-            ConnectionClosed(e) => {
-                return e.into();
-            }
             Stopped(_) | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            UnknownStream => io::ErrorKind::NotConnected,
+            ConnectionClosed(_) | UnknownStream => io::ErrorKind::NotConnected,
         };
         io::Error::new(kind, x)
     }
