@@ -100,7 +100,7 @@ impl CidState {
         if !unretired_ids_found {
             // All Cids are retired, `prev_retire_cid_seq` can be assigned to `retire_cid_seq`
             self.prev_retire_seq = self.retire_seq;
-            // Advance `retire_cid_seq` if next cid that needs to be retired exists
+            // Advance `retire_seq` if next cid that needs to be retired exists
             if let Some(next_retire_prior_to) = next_retire_sequence {
                 self.retire_seq = next_retire_prior_to;
             }
@@ -115,7 +115,7 @@ impl CidState {
         // by including a sufficiently large value in the Retire Prior To field.
         //
         // If yes (return true), a new CID must be pushed with updated `retire_prior_to` field to remote peer.
-        // If no (return false), do not push a new CID in order to avoid violating above RFC
+        // If no (return false), it means CIDs that reach the end of lifetime have been retired already. Do not push a new CID in order to avoid violating above RFC.
         (current_retire_prior_to..self.retire_seq).any(|seq| self.active_seq.contains(&seq))
     }
 
