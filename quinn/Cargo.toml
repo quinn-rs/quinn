@@ -28,7 +28,7 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 bytes = "0.5.2"
-futures = "0.3.1"
+futures = "0.3.8"
 libc = "0.2.69"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.6.1" }
