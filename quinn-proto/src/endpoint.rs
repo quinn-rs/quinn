@@ -321,7 +321,7 @@ where
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
             max_padding_len
         } else {
-            self.rng.gen_range(IDEAL_MIN_PADDING_LEN, max_padding_len)
+            self.rng.gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
         };
         buf.reserve_exact(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);

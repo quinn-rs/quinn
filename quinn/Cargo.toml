@@ -43,7 +43,7 @@ anyhow = "1.0.22"
 crc = "1.8.1"
 bencher = "0.1.5"
 directories-next = "1.0.1"
-rand = "0.7"
+rand = "0.8"
 rcgen = "0.8"
 structopt = "0.3.0"
 tokio = { version = "0.2.6", features = ["rt-threaded", "time", "macros"] }
