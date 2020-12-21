@@ -279,7 +279,10 @@ where
                     recvd += msgs;
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
                         let data = buf[0..meta.len].into();
-                        match self.inner.handle(now, meta.addr, meta.ecn, data) {
+                        match self
+                            .inner
+                            .handle(now, meta.addr, meta.dst_ip, meta.ecn, data)
+                        {
                             Some((handle, DatagramEvent::NewConnection(conn))) => {
                                 let conn = self.connections.insert(handle, conn);
                                 self.incoming.push_back(conn);

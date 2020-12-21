@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     convert::TryFrom,
     fmt, iter,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -154,6 +154,7 @@ where
         &mut self,
         now: Instant,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
     ) -> Option<(ConnectionHandle, DatagramEvent<S>)> {
@@ -273,7 +274,7 @@ where
             let crypto = S::initial_keys(&dst_cid, Side::Server);
             return match first_decode.finish(Some(&crypto.header.remote)) {
                 Ok(packet) => self
-                    .handle_first_packet(now, remote, ecn, packet, remaining, &crypto)
+                    .handle_first_packet(now, remote, local_ip, ecn, packet, remaining, &crypto)
                     .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
                 Err(e) => {
                     trace!("unable to decode initial packet: {}", e);
@@ -357,6 +358,7 @@ where
             remote_id,
             remote_id,
             remote,
+            None,
             ConnectionOpts::Client {
                 config,
                 server_name: server_name.into(),
@@ -399,6 +401,7 @@ where
         init_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         opts: ConnectionOpts<S>,
         now: Instant,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
@@ -454,6 +457,7 @@ where
             loc_cid,
             rem_cid,
             remote,
+            local_ip,
             tls,
             now,
             self.local_cid_generator.cid_len(),
@@ -479,6 +483,7 @@ where
         &mut self,
         now: Instant,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         rest: Option<BytesMut>,
@@ -614,6 +619,7 @@ where
                 dst_cid,
                 src_cid,
                 remote,
+                local_ip,
                 ConnectionOpts::Server {
                     retry_src_cid,
                     orig_dst_cid,
