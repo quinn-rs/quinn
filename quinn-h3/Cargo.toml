@@ -47,7 +47,7 @@ assert_matches = "1.1"
 bencher = "0.1.5"
 directories-next = "1.0.1"
 proptest = "0.10.0"
-rand = "0.7.0"
+rand = "0.8.0"
 rcgen = "0.8"
 structopt = "0.3.0"
 tokio = { version = "0.2.6", features = ["io-util", "macros", "rt-threaded", "time", "fs"] }
