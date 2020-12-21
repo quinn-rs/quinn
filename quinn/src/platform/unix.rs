@@ -2,7 +2,7 @@ use std::{
     io,
     io::IoSliceMut,
     mem::{self, MaybeUninit},
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
     ptr,
 };
@@ -29,8 +29,17 @@ impl super::UdpExt for UdpSocket {
             mem::size_of::<SocketAddrV6>(),
             mem::size_of::<libc::sockaddr_in6>()
         );
+
+        let mut cmsg_platform_space = 0;
+        if cfg!(target_os = "linux") {
+            cmsg_platform_space +=
+                unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
+        }
+
         assert!(
-            CMSG_LEN >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
+            CMSG_LEN
+                >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
+                    + cmsg_platform_space
         );
         assert!(
             mem::align_of::<libc::cmsghdr>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
@@ -72,6 +81,20 @@ impl super::UdpExt for UdpSocket {
                 if rc == -1 {
                     return Err(io::Error::last_os_error());
                 }
+
+                let on: libc::c_int = 1;
+                let rc = unsafe {
+                    libc::setsockopt(
+                        self.as_raw_fd(),
+                        libc::IPPROTO_IP,
+                        libc::IP_PKTINFO,
+                        &on as *const _ as _,
+                        mem::size_of_val(&on) as _,
+                    )
+                };
+                if rc == -1 {
+                    return Err(io::Error::last_os_error());
+                }
             } else if addr.is_ipv6() {
                 let rc = unsafe {
                     libc::setsockopt(
@@ -80,6 +103,20 @@ impl super::UdpExt for UdpSocket {
                         libc::IPV6_MTU_DISCOVER,
                         &libc::IP_PMTUDISC_PROBE as *const _ as _,
                         mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
+                    )
+                };
+                if rc == -1 {
+                    return Err(io::Error::last_os_error());
+                }
+
+                let on: libc::c_int = 1;
+                let rc = unsafe {
+                    libc::setsockopt(
+                        self.as_raw_fd(),
+                        libc::IPPROTO_IPV6,
+                        libc::IPV6_RECVPKTINFO,
+                        &on as *const _ as _,
+                        mem::size_of_val(&on) as _,
                     )
                 };
                 if rc == -1 {
@@ -230,7 +267,7 @@ impl super::UdpExt for UdpSocket {
     }
 }
 
-const CMSG_LEN: usize = 24;
+const CMSG_LEN: usize = 64;
 
 fn prepare_msg(
     transmit: &Transmit,
@@ -283,11 +320,15 @@ fn decode_recv(
     len: usize,
 ) -> RecvMeta {
     let name = unsafe { name.assume_init() };
-    let ecn_bits = match unsafe { cmsg::Iter::new(&hdr).next() } {
-        Some(cmsg) => match (cmsg.cmsg_level, cmsg.cmsg_type) {
+    let mut ecn_bits = 0;
+    let mut dst_ip = None;
+
+    let cmsg_iter = unsafe { cmsg::Iter::new(&hdr) };
+    for cmsg in cmsg_iter {
+        match (cmsg.cmsg_level, cmsg.cmsg_type) {
             // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
             (libc::IPPROTO_IP, libc::IP_TOS) | (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
-                cmsg::decode::<u8>(cmsg)
+                ecn_bits = cmsg::decode::<u8>(cmsg);
             },
             (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
@@ -295,24 +336,34 @@ fn decode_recv(
                 if cfg!(target_os = "macos")
                     && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
                 {
-                    cmsg::decode::<u8>(cmsg)
+                    ecn_bits = cmsg::decode::<u8>(cmsg);
                 } else {
-                    cmsg::decode::<libc::c_int>(cmsg) as u8
+                    ecn_bits = cmsg::decode::<libc::c_int>(cmsg) as u8;
                 }
             },
-            _ => 0,
-        },
-        None => 0,
-    };
+            (libc::IPPROTO_IP, libc::IP_PKTINFO) => unsafe {
+                let pktinfo = cmsg::decode::<libc::in_pktinfo>(cmsg);
+                dst_ip = Some(IpAddr::V4(ptr::read(&pktinfo.ipi_addr as *const _ as _)));
+            },
+            (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => unsafe {
+                let pktinfo = cmsg::decode::<libc::in6_pktinfo>(cmsg);
+                dst_ip = Some(IpAddr::V6(ptr::read(&pktinfo.ipi6_addr as *const _ as _)));
+            },
+            _ => {}
+        }
+    }
+
     let addr = match libc::c_int::from(name.ss_family) {
         libc::AF_INET => unsafe { SocketAddr::V4(ptr::read(&name as *const _ as _)) },
         libc::AF_INET6 => unsafe { SocketAddr::V6(ptr::read(&name as *const _ as _)) },
         _ => unreachable!(),
     };
+
     RecvMeta {
         len,
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
+        dst_ip,
     }
 }
 

@@ -28,6 +28,7 @@ fn version_negotiate_server() {
         now,
         client_addr,
         None,
+        None,
         // Long-header packet with reserved version number
         hex!("80 0a1a2a3a 04 00000000 04 00000000 00")[..].into(),
     );
@@ -63,6 +64,7 @@ fn version_negotiate_client() {
     let opt_event = client.handle(
         now,
         server_addr,
+        None,
         None,
         // Version negotiation packet for reserved version
         hex!(

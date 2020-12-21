@@ -2,7 +2,7 @@ use std::{
     cmp,
     collections::{BTreeMap, HashSet, VecDeque},
     fmt, io, mem,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -111,6 +111,10 @@ where
 
     /// cid length used to decode short packet
     local_cid_len: usize,
+    /// The "real" local IP address which was was used to receive the initial packet.
+    /// This is only populated for the server case, and if known
+    local_ip: Option<IpAddr>,
+
     path: PathData,
     prev_path: Option<PathData>,
     state: State,
@@ -208,6 +212,7 @@ where
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         crypto: S,
         now: Instant,
         local_cid_len: usize,
@@ -244,6 +249,7 @@ where
                 config.congestion_controller_factory.build(now),
                 now,
             ),
+            local_ip,
             prev_path: None,
             side,
             state,
@@ -1060,6 +1066,24 @@ where
     /// The latest socket address for this connection's peer
     pub fn remote_address(&self) -> SocketAddr {
         self.path.remote
+    }
+
+    /// The local IP address which was used when the peer established
+    /// the connection
+    ///
+    /// This can be different from the address the endpoint is bound to, in case
+    /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
+    ///
+    /// This will return `None` for clients.
+    ///
+    /// Retrieving the local IP address is currently supported on the following
+    /// platforms:
+    /// - Linux
+    ///
+    /// On all non-supported platforms the local IP address will not be available,
+    /// and the method will return `None`.
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        self.local_ip
     }
 
     /// Current best estimate of this connection's latency (round-trip-time)

@@ -3,7 +3,7 @@ use std::{
     fmt,
     future::Future,
     mem,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
@@ -126,6 +126,27 @@ where
                     .clone()
                     .expect("spurious handshake data ready notification")
             })
+    }
+
+    /// The local IP address which was used when the peer established
+    /// the connection
+    ///
+    /// This can be different from the address the endpoint is bound to, in case
+    /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
+    ///
+    /// This will return `None` for clients.
+    ///
+    /// Retrieving the local IP address is currently supported on the following
+    /// platforms:
+    /// - Linux
+    ///
+    /// On all non-supported platforms the local IP address will not be available,
+    /// and the method will return `None`.
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        let conn = self.conn.as_ref().unwrap();
+        let inner = conn.lock().unwrap();
+
+        inner.inner.local_ip()
     }
 }
 
@@ -395,6 +416,24 @@ where
     /// switching to a cellular internet connection.
     pub fn remote_address(&self) -> SocketAddr {
         self.0.lock().unwrap().inner.remote_address()
+    }
+
+    /// The local IP address which was used when the peer established
+    /// the connection
+    ///
+    /// This can be different from the address the endpoint is bound to, in case
+    /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
+    ///
+    /// This will return `None` for clients.
+    ///
+    /// Retrieving the local IP address is currently supported on the following
+    /// platforms:
+    /// - Linux
+    ///
+    /// On all non-supported platforms the local IP address will not be available,
+    /// and the method will return `None`.
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        self.0.lock().unwrap().inner.local_ip()
     }
 
     /// Current best estimate of this connection's latency (round-trip-time)
