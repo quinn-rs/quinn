@@ -21,8 +21,10 @@ If the file is on the server, it will receive the response.
 In a new terminal execute:
 
 ```test
-$ cargo run --example client https://localhost:4433/README.md
+$ cargo run --example client https://localhost:4433/Cargo.toml
 ```
+
+where `Cargo.toml` is any file in the directory passed to the server.
 
 **Result:**
 
@@ -34,6 +36,10 @@ If the client times out with no activity on the server, try forcing the server t
 running it with `cargo run --example server -- ./ --listen 127.0.0.1:4433`. The server listens on
 IPv6 by default, `localhost` tends to resolve to IPv4, and support for accepting IPv4 packets on
 IPv6 sockets varies between platforms.
+
+If the client prints `failed to process request: failed reading file`, the request was processed
+successfully but the path segment of the URL did not correspond to a file in the directory being
+served.
 
 ## Minimal Example
 The `connection.rs` example intends to use the smallest amount of code to make a simple QUIC connection.
