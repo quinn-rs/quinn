@@ -28,6 +28,13 @@ $ cargo run --example client https://localhost:4433/README.md
 
 The output will be the contents of this README.
 
+**Troubleshooting:**
+
+If the client times out with no activity on the server, try forcing the server to run on IPv4 by
+running it with `cargo run --example server -- ./ --listen 127.0.0.1:4433`. The server listens on
+IPv6 by default, `localhost` tends to resolve to IPv4, and support for accepting IPv4 packets on
+IPv6 sockets varies between platforms.
+
 ## Minimal Example
 The `connection.rs` example intends to use the smallest amount of code to make a simple QUIC connection.
 The server issues it's own certificate and passes it to the client to trust.
