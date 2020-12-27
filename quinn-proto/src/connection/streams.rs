@@ -350,7 +350,12 @@ impl Streams {
             return Ok(ShouldTransmit::new(false));
         }
         let bytes_read = rs.assembler.bytes_read();
-        self.on_stream_frame(true, id);
+        let stopped = rs.assembler.is_stopped();
+        if stopped {
+            // Stopped streams should be disposed immediately on reset
+            self.recv.remove(&id);
+        }
+        self.on_stream_frame(!stopped, id);
 
         // Update flow control
         Ok(if bytes_read != final_offset {
@@ -1474,5 +1479,43 @@ mod tests {
         );
         assert_eq!(client.local_max_data - initial_max, 48);
         assert!(!client.recv.contains_key(&id));
+    }
+
+    #[test]
+    fn stopped_reset() {
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        // Server opens stream
+        assert_eq!(
+            client
+                .received(frame::Stream {
+                    id,
+                    offset: 0,
+                    fin: false,
+                    data: Bytes::from_static(&[0; 32]),
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
+        // Client stops it
+        assert_eq!(
+            client.stop(id).unwrap(),
+            StopResult {
+                max_data: ShouldTransmit::new(false),
+                stop_sending: ShouldTransmit::new(true),
+            }
+        );
+        // Server complies
+        assert_eq!(
+            client
+                .received_reset(frame::ResetStream {
+                    id,
+                    error_code: 0u32.into(),
+                    final_offset: 32,
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
+        assert!(!client.recv.contains_key(&id), "stream state is freed");
     }
 }
