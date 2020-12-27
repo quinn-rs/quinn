@@ -44,7 +44,7 @@ pub struct Streams {
     /// permitted to open but which have not yet been opened.
     send_streams: usize,
     /// Streams with outgoing data queued
-    pending: Vec<StreamId>,
+    pending: VecDeque<StreamId>,
 
     events: VecDeque<StreamEvent>,
     /// Streams blocked on connection-level flow control or stream window space
@@ -92,7 +92,7 @@ impl Streams {
             opened: [false, false],
             next_reported_remote: [0, 0],
             send_streams: 0,
-            pending: Vec::new(),
+            pending: VecDeque::new(),
             events: VecDeque::new(),
             connection_blocked: Vec::new(),
             max_data: 0,
@@ -256,7 +256,7 @@ impl Streams {
         self.unacked_data += len as u64;
         trace!(stream = %id, "wrote {} bytes", len);
         if !was_pending {
-            self.pending.push(id);
+            self.pending.push_back(id);
         }
         Ok(len)
     }
@@ -385,7 +385,7 @@ impl Streams {
         let was_pending = stream.is_pending();
         stream.finish()?;
         if !was_pending {
-            self.pending.push(id);
+            self.pending.push_back(id);
         }
         Ok(())
     }
@@ -589,7 +589,12 @@ impl Streams {
                 Some(x) => x,
                 None => break,
             };
-            let id = match self.pending.pop() {
+            // Poppping data from the front of the queue, storing as much data
+            // as possible in a single frame, and enqueing sending further
+            // remaining data at the end of the queue helps with fairness.
+            // Other streams will have a chance to write data before we touch
+            // this stream again.
+            let id = match self.pending.pop_front() {
                 Some(x) => x,
                 None => break,
             };
@@ -612,7 +617,7 @@ impl Streams {
                 stream.fin_pending = false;
             }
             if stream.is_pending() {
-                self.pending.push(id);
+                self.pending.push_back(id);
             }
 
             let meta = frame::StreamMeta { id, offsets, fin };
@@ -672,7 +677,7 @@ impl Streams {
             Some(x) => x,
         };
         if !stream.is_pending() {
-            self.pending.push(frame.id);
+            self.pending.push_back(frame.id);
         }
         stream.fin_pending |= frame.fin;
         stream.pending.retransmit(frame.offsets);
@@ -689,7 +694,7 @@ impl Streams {
                     continue;
                 }
                 if !stream.is_pending() {
-                    self.pending.push(id);
+                    self.pending.push_back(id);
                 }
                 stream.pending.retransmit_all_for_0rtt();
             }
