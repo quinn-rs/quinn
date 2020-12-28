@@ -1,5 +1,8 @@
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
-use std::time::Instant;
+use std::{
+    net::{IpAddr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+    time::{Duration, Instant},
+};
 
 use anyhow::{anyhow, Context, Result};
 use futures::StreamExt;
@@ -87,21 +90,62 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate) -> Res
         .context("unable to connect")?;
     trace!("connected");
 
+    let start = Instant::now();
+
+    let connection = Arc::new(connection);
+
+    let send_result = send_data_on_stream(connection, 1024).await?;
+
+    println!(
+        "sent {} bytes in {:?}",
+        1024 * send_result.size,
+        start.elapsed()
+    );
+    Ok(())
+}
+
+async fn send_data_on_stream(
+    connection: Arc<quinn::Connection>,
+    stream_size_mb: usize,
+) -> Result<SendResult> {
+    const DATA: &[u8] = &[0xAB; 1024 * 1024];
+
+    let start = Instant::now();
+
     let mut stream = connection
         .open_uni()
         .await
         .context("failed to open stream")?;
-    const DATA: &[u8] = &[0xAB; 1024 * 1024];
-    let start = Instant::now();
-    for _ in 0..1024 {
+
+    for _ in 0..stream_size_mb {
         stream
             .write_all(DATA)
             .await
             .context("failed sending data")?;
     }
+
     stream.finish().await.context("failed finishing stream")?;
-    println!("sent {} bytes in {:?}", 1024 * DATA.len(), start.elapsed());
-    Ok(())
+
+    let duration = start.elapsed();
+    let size = DATA.len() * stream_size_mb;
+    let throughput = throughput_bps(duration, size as u64);
+
+    Ok(SendResult {
+        duration,
+        size,
+        throughput,
+    })
+}
+
+#[derive(Debug)]
+struct SendResult {
+    duration: Duration,
+    size: usize,
+    throughput: f64,
+}
+
+fn throughput_bps(duration: Duration, size: u64) -> f64 {
+    (size as f64) / (duration.as_secs_f64())
 }
 
 fn rt() -> Runtime {
