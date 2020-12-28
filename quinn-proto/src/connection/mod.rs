@@ -919,8 +919,8 @@ where
 
     /// Stop accepting data on the given receive stream
     ///
-    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, a stream
-    /// cannot be read from any further.
+    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
+    /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
         assert!(
             id.dir() == Dir::Bi || id.initiator() != self.side,

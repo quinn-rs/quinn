@@ -1039,10 +1039,7 @@ pub enum WriteError {
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
     #[error("stopped by peer: code {}", 0)]
     Stopped(VarInt),
-    /// Unknown stream
-    ///
-    /// Occurs when attempting to access a stream after finishing it or observing that it has been
-    /// stopped.
+    /// The stream has not been opened or has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
 }
@@ -1229,10 +1226,7 @@ pub enum ReadError {
     /// Carries an application-defined error code.
     #[error("reset by peer: code {}", 0)]
     Reset(VarInt),
-    /// Unknown stream
-    ///
-    /// Occurs when attempting to access a stream after stopping it, or observing that it has been
-    /// finished or reset.
+    /// The stream has not been opened or was already stopped, finished, or reset
     #[error("unknown stream")]
     UnknownStream,
     /// Attempted an ordered read following an unordered read
@@ -1287,7 +1281,7 @@ pub enum FinishError {
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
     #[error("stopped by peer: code {}", 0)]
     Stopped(VarInt),
-    /// The stream has not yet been created or was already finished or stopped.
+    /// The stream has not been opened or was already finished or reset
     #[error("unknown stream")]
     UnknownStream,
 }
@@ -1331,7 +1325,7 @@ pub enum StreamEvent {
     },
 }
 
-/// Unknown stream ID
+/// Error indicating that a stream has not been opened or has already been finished or reset
 #[derive(Debug)]
 pub struct UnknownStream {
     _private: (),
