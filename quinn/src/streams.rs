@@ -453,8 +453,8 @@ where
 
     /// Stop accepting data
     ///
-    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, a stream
-    /// cannot be read from any further.
+    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
+    /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt && conn.check_0rtt().is_err() {
@@ -605,7 +605,7 @@ pub enum ReadError {
     /// The connection was closed.
     #[error("connection closed: {0}")]
     ConnectionClosed(ConnectionError),
-    /// Unknown stream
+    /// The stream has already been stopped, finished, or reset
     #[error("unknown stream")]
     UnknownStream,
     /// Attempted an ordered read following an unordered read
@@ -647,7 +647,7 @@ pub enum WriteError {
     /// The connection was closed.
     #[error("connection closed: {0}")]
     ConnectionClosed(#[source] ConnectionError),
-    /// Unknown stream
+    /// The stream has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
     /// This was a 0-RTT stream and the server rejected it.
@@ -666,7 +666,7 @@ pub enum StoppedError {
     /// The connection was closed.
     #[error("connection closed: {0}")]
     ConnectionClosed(#[source] ConnectionError),
-    /// Unknown stream
+    /// The stream has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
     /// This was a 0-RTT stream and the server rejected it.
@@ -824,6 +824,7 @@ where
     }
 }
 
+/// Error indicating that a stream has already been finished or reset
 #[derive(Debug)]
 pub struct UnknownStream {}
 
