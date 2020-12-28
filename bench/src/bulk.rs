@@ -4,12 +4,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use anyhow::{anyhow, Context, Result};
+use anyhow::{Context, Result};
 use futures::StreamExt;
+use hdrhistogram::Histogram;
+use structopt::StructOpt;
 use tokio::runtime::{Builder, Runtime};
-use tracing::trace;
+use tracing::{info, trace};
 
 fn main() {
+    let opt = Opt::from_args();
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -25,8 +28,12 @@ fn main() {
     server_config
         .certificate(quinn::CertificateChain::from_certs(vec![cert.clone()]), key)
         .unwrap();
+
+    let mut server_config = server_config.build();
+    server_config.transport = Arc::new(transport_config());
+
     let mut endpoint = quinn::EndpointBuilder::default();
-    endpoint.listen(server_config.build());
+    endpoint.listen(server_config);
     let mut runtime = rt();
     let (endpoint, incoming) = runtime.enter(|| {
         endpoint
@@ -42,7 +49,7 @@ fn main() {
     });
 
     let mut runtime = rt();
-    if let Err(e) = runtime.block_on(client(server_addr, cert)) {
+    if let Err(e) = runtime.block_on(client(server_addr, cert, opt)) {
         eprintln!("client failed: {:#}", e);
     }
 
@@ -54,27 +61,25 @@ async fn server(mut incoming: quinn::Incoming) -> Result<()> {
     let quinn::NewConnection {
         mut uni_streams, ..
     } = handshake.await.context("handshake failed")?;
-    let mut stream = uni_streams
-        .next()
-        .await
-        .ok_or_else(|| anyhow!("accepting stream failed"))??;
-    trace!("stream established");
-    let start = Instant::now();
-    let mut n = 0;
-    while let Some((data, offset)) = stream.read_unordered().await? {
-        n = n.max(offset + data.len() as u64);
+
+    loop {
+        let mut stream = match uni_streams.next().await {
+            None => return Ok(()),
+            Some(Err(quinn::ConnectionError::ApplicationClosed(_))) => return Ok(()),
+            Some(Err(e)) => return Err(e).context("accepting stream failed"),
+            Some(Ok(stream)) => stream,
+        };
+        trace!("stream established");
+
+        let _: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
+            while stream.read_unordered().await?.is_some() {}
+
+            Ok(())
+        });
     }
-    let dt = start.elapsed();
-    println!(
-        "recvd {} bytes in {:?} ({} MiB/s)",
-        n,
-        dt,
-        n as f32 / (dt.as_secs_f32() * 1024.0 * 1024.0)
-    );
-    Ok(())
 }
 
-async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate) -> Result<()> {
+async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: Opt) -> Result<()> {
     let (endpoint, _) = quinn::EndpointBuilder::default()
         .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
         .unwrap();
@@ -83,8 +88,11 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate) -> Res
     client_config
         .add_certificate_authority(server_cert)
         .unwrap();
+    let mut client_config = client_config.build();
+    client_config.transport = Arc::new(transport_config());
+
     let quinn::NewConnection { connection, .. } = endpoint
-        .connect_with(client_config.build(), &server_addr, "localhost")
+        .connect_with(client_config, &server_addr, "localhost")
         .unwrap()
         .await
         .context("unable to connect")?;
@@ -94,13 +102,64 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate) -> Res
 
     let connection = Arc::new(connection);
 
-    let send_result = send_data_on_stream(connection, 1024).await?;
+    let mut ops = futures::stream::iter((0..opt.streams).map(|_| {
+        let connection = connection.clone();
+        async move { send_data_on_stream(connection, opt.stream_size_mb).await }
+    }))
+    .buffer_unordered(opt.max_streams);
 
+    let mut total_size = 0;
+    let mut duration_hist = Histogram::<u64>::new(3).unwrap();
+    let mut throughput_hist = Histogram::<u64>::new(3).unwrap();
+
+    while let Some(result) = ops.next().await {
+        info!("stream finished: {:?}", result);
+        let result = result.unwrap();
+        total_size += result.size;
+
+        duration_hist
+            .record(result.duration.as_millis() as u64)
+            .unwrap();
+        throughput_hist.record(result.throughput as u64).unwrap();
+    }
+
+    let dt = start.elapsed();
+    println!("Overall stats:\n");
     println!(
-        "sent {} bytes in {:?}",
-        1024 * send_result.size,
-        start.elapsed()
+        "Sent {} bytes on {} streams in {:4.2?} ({:.2} MiB/s)\n",
+        total_size,
+        opt.streams,
+        dt,
+        throughput_bps(dt, total_size as u64) / 1024.0 / 1024.0
     );
+
+    println!("Stream metrics:\n");
+
+    println!("      │  Throughput   │ Duration ");
+    println!("──────┼───────────────┼──────────");
+
+    let print_metric = |label: &'static str, get_metric: fn(&Histogram<u64>) -> u64| {
+        println!(
+            " {} │ {:7.2} MiB/s │ {:>9}",
+            label,
+            get_metric(&throughput_hist) as f64 / 1024.0 / 1024.0,
+            format!("{:.2?}", Duration::from_millis(get_metric(&duration_hist)))
+        );
+    };
+
+    print_metric("AVG ", |hist| hist.mean() as u64);
+    print_metric("P0  ", |hist| hist.value_at_quantile(0.00));
+    print_metric("P10 ", |hist| hist.value_at_quantile(0.10));
+    print_metric("P50 ", |hist| hist.value_at_quantile(0.50));
+    print_metric("P90 ", |hist| hist.value_at_quantile(0.90));
+    print_metric("P100", |hist| hist.value_at_quantile(1.00));
+
+    // Explicit close of the connection, since handles can still be around due
+    // to `Arc`ing them
+    connection.close(0u32.into(), b"Benchmark done");
+
+    endpoint.wait_idle().await;
+
     Ok(())
 }
 
@@ -154,4 +213,26 @@ fn rt() -> Runtime {
         .enable_all()
         .build()
         .unwrap()
+}
+
+fn transport_config() -> quinn::TransportConfig {
+    // High stream windows are chosen because the amount of concurrent streams
+    // is configurable as a parameter.
+    let mut config = quinn::TransportConfig::default();
+    config.stream_window_uni(1024).unwrap();
+    config
+}
+
+#[derive(StructOpt, Debug, Clone, Copy)]
+#[structopt(name = "bulk")]
+struct Opt {
+    /// The total number of streams which should be created
+    #[structopt(long = "streams", short = "n", default_value = "1")]
+    streams: usize,
+    /// The amount of concurrent streams which should be used
+    #[structopt(long = "max_streams", short = "m", default_value = "1")]
+    max_streams: usize,
+    /// The amount of data to transfer on a stream in megabytes
+    #[structopt(long = "stream_size", default_value = "1024")]
+    stream_size_mb: usize,
 }
