@@ -868,14 +868,22 @@ where
     ///
     /// While stream data is typically processed by applications in-order, unordered reads improve
     /// performance when packet loss occurs and data cannot be retransmitted before the flow control
-    /// window is filled. When in-order delivery is required, the sibling `read()` method should be
-    /// used.
+    /// window is filled. When in-order delivery is required, the sibling `read()` or `read_chunk()`
+    /// methods should be used.
     ///
     /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
         Ok(self.streams.read_unordered(id)?.map(|result| {
             self.add_read_credits(id, result.max_stream_data, result.max_data);
             (result.buf, result.offset)
+        }))
+    }
+
+    /// Read the next ordered chunk from the given recv stream
+    pub fn read_chunk(&mut self, id: StreamId) -> Result<Option<Bytes>, ReadError> {
+        Ok(self.streams.read_chunk(id)?.map(|result| {
+            self.add_read_credits(id, result.max_stream_data, result.max_data);
+            result.buf
         }))
     }
 

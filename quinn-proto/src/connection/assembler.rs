@@ -59,6 +59,37 @@ impl Assembler {
         Some((n, data))
     }
 
+    // Get the the next ordered chunk
+    pub(crate) fn read_chunk(&mut self) -> Result<Option<Bytes>, IllegalOrderedRead> {
+        if let State::Unordered { .. } = self.state {
+            return Err(IllegalOrderedRead);
+        }
+
+        loop {
+            let chunk = match self.data.peek() {
+                Some(chunk) => chunk,
+                None => return Ok(None),
+            };
+
+            if chunk.offset > self.bytes_read {
+                // Next chunk is after current read index
+                return Ok(None);
+            } else if (chunk.offset + chunk.bytes.len() as u64) <= self.bytes_read {
+                // Next chunk is useless as the read index is beyond its end
+                self.data.pop();
+                continue;
+            }
+
+            // Determine `start` and `len` of the slice of useful data in chunk
+            let start = (self.bytes_read - chunk.offset) as usize;
+            let len = chunk.bytes.len() - start;
+
+            self.bytes_read += len as u64;
+
+            return Ok(self.data.pop().map(|mut x| x.bytes.split_off(start)));
+        }
+    }
+
     // Read as much from the first chunk in the heap as fits in the buffer.
     // Takes the buffer to read into and the amount of bytes that has already
     // been read into it. Returns whether the first chunk has been fully consumed.
@@ -466,5 +497,26 @@ mod test {
         assert_eq!(x.read_unordered(), None);
         x.insert(2, Bytes::from_static(b"cde"));
         assert_eq!(x.read_unordered(), None);
+    }
+
+    #[test]
+    fn chunks_dedup() {
+        let mut x = Assembler::new();
+        x.insert(3, Bytes::from_static(b"def"));
+        assert_eq!(x.read_chunk().unwrap(), None);
+        x.insert(0, Bytes::from_static(b"a"));
+        x.insert(1, Bytes::from_static(b"bcdefghi"));
+        x.insert(0, Bytes::from_static(b"abcd"));
+        assert_eq!(x.read_chunk().unwrap(), Some(Bytes::from_static(b"abcd")));
+        assert_eq!(x.read_chunk().unwrap(), Some(Bytes::from_static(b"efghi")));
+        assert_eq!(x.read_chunk().unwrap(), None);
+        x.insert(8, Bytes::from_static(b"ijkl"));
+        assert_eq!(x.read_chunk().unwrap(), Some(Bytes::from_static(b"jkl")));
+        assert_eq!(x.read_chunk().unwrap(), None);
+        x.insert(12, Bytes::from_static(b"mno"));
+        assert_eq!(x.read_chunk().unwrap(), Some(Bytes::from_static(b"mno")));
+        assert_eq!(x.read_chunk().unwrap(), None);
+        x.insert(2, Bytes::from_static(b"cde"));
+        assert_eq!(x.read_chunk().unwrap(), None);
     }
 }

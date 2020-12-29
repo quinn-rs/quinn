@@ -352,36 +352,7 @@ where
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<Result<Option<usize>, ReadError>> {
-        self.any_data_read = true;
-        use proto::ReadError::*;
-        let mut conn = self.conn.lock().unwrap();
-        if self.is_0rtt {
-            conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
-        }
-        match conn.inner.read(self.stream, buf) {
-            Ok(Some(n)) => {
-                // Flow control credit may have been issued
-                conn.wake();
-                Poll::Ready(Ok(Some(n)))
-            }
-            Ok(None) => {
-                self.all_data_read = true;
-                Poll::Ready(Ok(None))
-            }
-            Err(Blocked) => {
-                if let Some(ref x) = conn.error {
-                    return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
-                }
-                conn.blocked_readers.insert(self.stream, cx.waker().clone());
-                Poll::Pending
-            }
-            Err(Reset(error_code)) => {
-                self.all_data_read = true;
-                Poll::Ready(Err(ReadError::Reset(error_code)))
-            }
-            Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
-            Err(IllegalOrderedRead) => Poll::Ready(Err(ReadError::IllegalOrderedRead)),
-        }
+        self.poll_read_generic(cx, |conn, stream| conn.inner.read(stream, buf))
     }
 
     /// Read a segment of data from any offset in the stream.
@@ -399,36 +370,23 @@ where
         &mut self,
         cx: &mut Context,
     ) -> Poll<Result<Option<(Bytes, u64)>, ReadError>> {
-        self.any_data_read = true;
-        use proto::ReadError::*;
-        let mut conn = self.conn.lock().unwrap();
-        if self.is_0rtt {
-            conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
-        }
-        match conn.inner.read_unordered(self.stream) {
-            Ok(Some((bytes, offset))) => {
-                // Flow control credit may have been issued
-                conn.wake();
-                Poll::Ready(Ok(Some((bytes, offset))))
-            }
-            Ok(None) => {
-                self.all_data_read = true;
-                Poll::Ready(Ok(None))
-            }
-            Err(Blocked) => {
-                if let Some(ref x) = conn.error {
-                    return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
-                }
-                conn.blocked_readers.insert(self.stream, cx.waker().clone());
-                Poll::Pending
-            }
-            Err(Reset(error_code)) => {
-                self.all_data_read = true;
-                Poll::Ready(Err(ReadError::Reset(error_code)))
-            }
-            Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
-            Err(IllegalOrderedRead) => Poll::Ready(Err(ReadError::IllegalOrderedRead)),
-        }
+        self.poll_read_generic(cx, |conn, stream| conn.inner.read_unordered(stream))
+    }
+
+    /// Read the next segment of data
+    ///
+    /// Yields a segment of data beginning immediately after the last data yielded by
+    /// `read` or `read_chunk`, or `None` if the stream was finished.
+    ///
+    /// Slightly more efficient than `read` due to not copying. Chunk boundaries
+    /// do not correspond to peer writes, and hence cannot be used as framing.
+    pub fn read_chunk(&mut self) -> ReadChunk<'_, S> {
+        ReadChunk { stream: self }
+    }
+
+    /// Foundation of [`read_chunk()`]: RecvStream::read_chunk
+    fn poll_read_chunk(&mut self, cx: &mut Context) -> Poll<Result<Option<Bytes>, ReadError>> {
+        self.poll_read_generic(cx, |conn, stream| conn.inner.read_chunk(stream))
     }
 
     /// Convenience method to read all remaining data into a buffer
@@ -477,6 +435,49 @@ where
     /// Get the identity of this stream
     pub fn id(&self) -> StreamId {
         self.stream
+    }
+
+    fn poll_read_generic<T, U>(
+        &mut self,
+        cx: &mut Context,
+        mut read_fn: T,
+    ) -> Poll<Result<Option<U>, ReadError>>
+    where
+        T: FnMut(
+            &mut crate::connection::ConnectionInner<S>,
+            StreamId,
+        ) -> Result<Option<U>, proto::ReadError>,
+    {
+        self.any_data_read = true;
+        use proto::ReadError::*;
+        let mut conn = self.conn.lock().unwrap();
+        if self.is_0rtt {
+            conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
+        }
+        match read_fn(&mut conn, self.stream) {
+            Ok(Some(u)) => {
+                // Flow control credit may have been issued
+                conn.wake();
+                Poll::Ready(Ok(Some(u)))
+            }
+            Ok(None) => {
+                self.all_data_read = true;
+                Poll::Ready(Ok(None))
+            }
+            Err(Blocked) => {
+                if let Some(ref x) = conn.error {
+                    return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
+                }
+                conn.blocked_readers.insert(self.stream, cx.waker().clone());
+                Poll::Pending
+            }
+            Err(Reset(error_code)) => {
+                self.all_data_read = true;
+                Poll::Ready(Err(ReadError::Reset(error_code)))
+            }
+            Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
+            Err(IllegalOrderedRead) => Poll::Ready(Err(ReadError::IllegalOrderedRead)),
+        }
     }
 }
 
@@ -771,6 +772,26 @@ where
     type Output = Result<Option<(Bytes, u64)>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.stream.poll_read_unordered(cx)
+    }
+}
+
+/// Future produced by [`RecvStream::read_chunk()`].
+///
+/// [`RecvStream::read_chunk()`]: crate::generic::RecvStream::read_chunk
+pub struct ReadChunk<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut RecvStream<S>,
+}
+
+impl<'a, S> Future for ReadChunk<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    type Output = Result<Option<Bytes>, ReadError>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.stream.poll_read_chunk(cx)
     }
 }
 
