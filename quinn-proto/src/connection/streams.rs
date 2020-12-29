@@ -236,6 +236,34 @@ impl Streams {
         }
     }
 
+    pub fn read_chunk(&mut self, id: StreamId) -> Result<Option<ReadChunkResult>, ReadError> {
+        let mut entry = match self.recv.entry(id) {
+            hash_map::Entry::Vacant(_) => return Err(ReadError::UnknownStream),
+            hash_map::Entry::Occupied(e) => e,
+        };
+        let rs = entry.get_mut();
+        match rs.read_chunk() {
+            Ok(Some(chunk)) => {
+                let (_, transmit_max_stream_data) = rs.max_stream_data(self.stream_receive_window);
+                let transmit_max_data = self.add_read_credits(chunk.len() as u64);
+                Ok(Some(ReadChunkResult {
+                    buf: chunk,
+                    max_stream_data: transmit_max_stream_data,
+                    max_data: transmit_max_data,
+                }))
+            }
+            Ok(None) => {
+                entry.remove_entry();
+                Ok(None)
+            }
+            Err(e @ ReadError::Reset { .. }) => {
+                entry.remove_entry();
+                Err(e)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Queue `data` to be written for `stream`
     pub fn write(&mut self, id: StreamId, data: &[u8]) -> Result<usize, WriteError> {
         let limit = (self.max_data - self.data_sent).min(self.send_window - self.unacked_data);
@@ -996,6 +1024,15 @@ pub struct ReadUnorderedResult {
     pub max_data: ShouldTransmit,
 }
 
+/// Result of a `Streams::read_chunk` call in case the stream had not ended yet
+#[derive(Debug, Eq, PartialEq)]
+#[must_use = "A frame might need to be enqueued"]
+pub struct ReadChunkResult {
+    pub buf: Bytes,
+    pub max_stream_data: ShouldTransmit,
+    pub max_data: ShouldTransmit,
+}
+
 /// Result of a `Streams::read` call in case the stream had not ended yet
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 #[must_use = "A frame might need to be enqueued"]
@@ -1111,6 +1148,13 @@ impl Recv {
             Ok(Some((bytes, offset)))
         } else {
             self.read_blocked().map(|()| None)
+        }
+    }
+
+    fn read_chunk(&mut self) -> Result<Option<Bytes>, ReadError> {
+        match self.assembler.read_chunk()? {
+            Some(bytes) => Ok(Some(bytes)),
+            None => self.read_blocked().map(|()| None),
         }
     }
 
