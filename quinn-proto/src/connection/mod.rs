@@ -376,7 +376,10 @@ where
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
                 let mut buf = Vec::with_capacity(self.mtu as usize);
-                let builder = self.begin_packet(now, SpaceId::Data, false, &mut buf)?;
+                let buf_capacity = self.mtu as usize;
+
+                let builder =
+                    self.begin_packet(now, SpaceId::Data, false, &mut buf, buf_capacity)?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 builder.buffer.write(frame::Type::PATH_CHALLENGE);
                 builder.buffer.write(token);
@@ -424,6 +427,11 @@ where
         };
 
         let mut buf = Vec::with_capacity(self.mtu as usize);
+        // Reserving capacity can provide more capacity than we asked for.
+        // However we are not allowed to write more than MTU size. Therefore
+        // the maximum capacity is tracked separately.
+        let buf_capacity = self.mtu as usize;
+
         let mut coalesce = spaces.len() > 1;
         let pad_space = spaces.last().cloned().filter(|_| {
             self.side.is_client() && spaces.first() == Some(&SpaceId::Initial)
@@ -468,8 +476,13 @@ where
                 prev.update_unacked = false;
             }
 
-            let mut builder =
-                self.begin_packet(now, space_id, pad_space == Some(space_id), &mut buf)?;
+            let mut builder = self.begin_packet(
+                now,
+                space_id,
+                pad_space == Some(space_id),
+                &mut buf,
+                buf_capacity,
+            )?;
             coalesce = coalesce && !builder.short_header;
 
             let sent = if close {
@@ -500,7 +513,7 @@ where
                 coalesce = false;
                 None
             } else {
-                Some(self.populate_packet(space_id, &mut builder.buffer))
+                Some(self.populate_packet(space_id, &mut builder.buffer, buf_capacity))
             };
 
             let exact_number = builder.exact_number;
@@ -532,7 +545,7 @@ where
                 );
             }
 
-            if !coalesce || buf.capacity() - buf.len() < MIN_PACKET_SPACE {
+            if !coalesce || buf_capacity - buf.len() < MIN_PACKET_SPACE {
                 break;
             }
         }
@@ -568,6 +581,7 @@ where
         space_id: SpaceId,
         initial_padding: bool,
         buffer: &'a mut Vec<u8>,
+        buffer_capacity: usize,
     ) -> Option<PacketBuilder<'a>> {
         // Initiate key update if we're approaching the confidentiality limit
         let confidentiality_limit = self.spaces[space_id]
@@ -665,8 +679,7 @@ where
             // payload_len >= sample_size + 4 - pn_len - tag_len
             buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len)
         };
-        let max_size =
-            buffer.capacity() - partial_encode.start - partial_encode.header_len - tag_len;
+        let max_size = buffer_capacity - partial_encode.start - partial_encode.header_len - tag_len;
         Some(PacketBuilder {
             buffer,
             space: space_id,
@@ -700,7 +713,7 @@ where
         builder
             .buffer
             .resize(builder.buffer.len() + packet_crypto.tag_len(), 0);
-        debug_assert!(builder.buffer.len() < self.mtu as usize);
+        debug_assert!(builder.buffer.len() <= self.mtu as usize);
         let packet_buf = &mut builder.buffer[builder.partial_encode.start..];
         builder.partial_encode.finish(
             packet_buf,
@@ -2645,7 +2658,12 @@ where
             .push_back(EndpointEventInner::NeedIdentifiers(n));
     }
 
-    fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> SentFrames {
+    fn populate_packet(
+        &mut self,
+        space_id: SpaceId,
+        buf: &mut Vec<u8>,
+        buf_capacity: usize,
+    ) -> SentFrames {
         let mut sent = SentFrames::default();
         let space = &mut self.spaces[space_id];
         let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
@@ -2665,7 +2683,7 @@ where
                 |x| &x.packet.local,
             )
             .tag_len();
-        let max_size = buf.capacity() - tag_len;
+        let max_size = buf_capacity - tag_len;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
 
         // HANDSHAKE_DONE
