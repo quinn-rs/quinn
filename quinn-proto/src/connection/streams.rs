@@ -177,80 +177,59 @@ impl Streams {
     }
 
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<ReadResult>, ReadError> {
-        let mut entry = match self.recv.entry(id) {
-            hash_map::Entry::Vacant(_) => return Err(ReadError::UnknownStream),
-            hash_map::Entry::Occupied(e) => e,
-        };
-        let rs = entry.get_mut();
-        match rs.read(buf) {
-            Ok(Some(len)) => {
-                let (_, transmit_max_stream_data) = rs.max_stream_data(self.stream_receive_window);
-                let transmit_max_data = self.add_read_credits(len as u64);
-                Ok(Some(ReadResult {
-                    len,
-                    max_stream_data: transmit_max_stream_data,
-                    max_data: transmit_max_data,
-                }))
-            }
-            Ok(None) => {
-                entry.remove_entry();
-                Ok(None)
-            }
-            Err(e @ ReadError::Reset { .. }) => {
-                entry.remove_entry();
-                Err(e)
-            }
-            Err(e) => Err(e),
-        }
+        let res = self.try_read(id, |rs: &mut Recv| rs.read(buf))?;
+        Ok(res.map(|(len, max_stream_data)| ReadResult {
+            len,
+            max_stream_data,
+            max_data: self.add_read_credits(len as u64),
+        }))
     }
 
     pub fn read_unordered(
         &mut self,
         id: StreamId,
     ) -> Result<Option<ReadUnorderedResult>, ReadError> {
-        let mut entry = match self.recv.entry(id) {
-            hash_map::Entry::Vacant(_) => return Err(ReadError::UnknownStream),
-            hash_map::Entry::Occupied(e) => e,
-        };
-        let rs = entry.get_mut();
-        match rs.read_unordered() {
-            Ok(Some((buf, offset))) => {
-                let (_, transmit_max_stream_data) = rs.max_stream_data(self.stream_receive_window);
-                let transmit_max_data = self.add_read_credits(buf.len() as u64);
-                Ok(Some(ReadUnorderedResult {
-                    buf,
-                    offset,
-                    max_stream_data: transmit_max_stream_data,
-                    max_data: transmit_max_data,
-                }))
+        let res = self.try_read(id, |rs: &mut Recv| rs.read_unordered())?;
+        Ok(res.map(|((buf, offset), max_stream_data)| {
+            let max_data = self.add_read_credits(buf.len() as u64);
+            ReadUnorderedResult {
+                buf,
+                offset,
+                max_stream_data,
+                max_data,
             }
-            Ok(None) => {
-                entry.remove_entry();
-                Ok(None)
-            }
-            Err(e @ ReadError::Reset { .. }) => {
-                entry.remove_entry();
-                Err(e)
-            }
-            Err(e) => Err(e),
-        }
+        }))
     }
 
     pub fn read_chunk(&mut self, id: StreamId) -> Result<Option<ReadChunkResult>, ReadError> {
+        let res = self.try_read(id, |rs: &mut Recv| rs.read_chunk())?;
+        Ok(res.map(|(buf, max_stream_data)| {
+            let max_data = self.add_read_credits(buf.len() as u64);
+            ReadChunkResult {
+                buf,
+                max_stream_data,
+                max_data,
+            }
+        }))
+    }
+
+    fn try_read<T, U>(
+        &mut self,
+        id: StreamId,
+        mut read: T,
+    ) -> Result<Option<(U, ShouldTransmit)>, ReadError>
+    where
+        T: FnMut(&mut Recv) -> Result<Option<U>, ReadError>,
+    {
         let mut entry = match self.recv.entry(id) {
             hash_map::Entry::Vacant(_) => return Err(ReadError::UnknownStream),
             hash_map::Entry::Occupied(e) => e,
         };
         let rs = entry.get_mut();
-        match rs.read_chunk() {
-            Ok(Some(chunk)) => {
+        match read(rs) {
+            Ok(Some(res)) => {
                 let (_, transmit_max_stream_data) = rs.max_stream_data(self.stream_receive_window);
-                let transmit_max_data = self.add_read_credits(chunk.len() as u64);
-                Ok(Some(ReadChunkResult {
-                    buf: chunk,
-                    max_stream_data: transmit_max_stream_data,
-                    max_data: transmit_max_data,
-                }))
+                Ok(Some((res, transmit_max_stream_data)))
             }
             Ok(None) => {
                 entry.remove_entry();
