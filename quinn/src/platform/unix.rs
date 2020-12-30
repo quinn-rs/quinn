@@ -146,7 +146,7 @@ impl super::UdpExt for UdpSocket {
     fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
         let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
         let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
-        let mut cmsgs = [cmsg::Aligned(MaybeUninit::uninit()); BATCH_SIZE];
+        let mut cmsgs = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
         for (i, transmit) in transmits.iter().enumerate().take(BATCH_SIZE) {
             prepare_msg(
                 transmit,
@@ -179,7 +179,7 @@ impl super::UdpExt for UdpSocket {
     fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
         let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
         let mut iov: libc::iovec = unsafe { mem::zeroed() };
-        let mut ctrl = cmsg::Aligned(MaybeUninit::uninit());
+        let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
         let mut sent = 0;
         while sent < transmits.len() {
             prepare_msg(&transmits[sent], &mut hdr, &mut iov, &mut ctrl);
@@ -273,7 +273,7 @@ fn prepare_msg(
     transmit: &Transmit,
     hdr: &mut libc::msghdr,
     iov: &mut libc::iovec,
-    ctrl: &mut cmsg::Aligned<MaybeUninit<[u8; CMSG_LEN]>>,
+    ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
 ) {
     iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
     iov.iov_len = transmit.contents.len();
