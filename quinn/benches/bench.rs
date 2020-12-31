@@ -83,7 +83,7 @@ impl Context {
         let cert_chain = quinn::CertificateChain::from_certs(vec![cert.clone()]);
 
         let mut transport = quinn::TransportConfig::default();
-        transport.stream_window_uni(1024).unwrap();
+        transport.max_concurrent_uni_streams(1024).unwrap();
         let mut server_config = quinn::ServerConfig::default();
         server_config.transport = Arc::new(transport);
         let mut server_config = ServerConfigBuilder::new(server_config);

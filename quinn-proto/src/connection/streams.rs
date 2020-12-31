@@ -70,6 +70,8 @@ pub struct Streams {
     send_window: u64,
     /// Configured upper bound for how much unacked data the peer can send us per stream
     stream_receive_window: u64,
+    /// Whether the corresponding `max_remote` has increased
+    max_streams_dirty: [bool; 2],
 
     // Pertinent state from the TransportParameters supplied by the peer
     initial_max_stream_data_uni: VarInt,
@@ -109,6 +111,7 @@ impl Streams {
             unacked_data: 0,
             send_window,
             stream_receive_window: stream_receive_window.into(),
+            max_streams_dirty: [false, false],
             initial_max_stream_data_uni: 0u32.into(),
             initial_max_stream_data_bidi_local: 0u32.into(),
             initial_max_stream_data_bidi_remote: 0u32.into(),
@@ -153,10 +156,11 @@ impl Streams {
         self.send_streams
     }
 
-    pub fn alloc_remote_stream(&mut self, dir: Dir) {
+    fn alloc_remote_stream(&mut self, dir: Dir) {
         self.max_remote[dir as usize] += 1;
         let id = StreamId::new(!self.side, dir, self.max_remote[dir as usize] - 1);
         self.insert(true, id);
+        self.max_streams_dirty[dir as usize] = true;
     }
 
     pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
@@ -767,6 +771,10 @@ impl Streams {
         self.events.pop_front()
     }
 
+    pub fn take_max_streams_dirty(&mut self, dir: Dir) -> bool {
+        mem::replace(&mut self.max_streams_dirty[dir as usize], false)
+    }
+
     /// Fetch a stream for which a write previously failed due to *connection-level* flow control or
     /// send window limits which no longer apply.
     fn poll_unblocked(&mut self) -> Option<StreamId> {
@@ -886,6 +894,16 @@ impl Streams {
 
     /// Update counters for removal of a stream
     fn stream_freed(&mut self, id: StreamId, half: StreamHalf) {
+        if id.initiator() != self.side {
+            let fully_free = id.dir() == Dir::Uni
+                || match half {
+                    StreamHalf::Send => !self.recv.contains_key(&id),
+                    StreamHalf::Recv => !self.send.contains_key(&id),
+                };
+            if fully_free {
+                self.alloc_remote_stream(id.dir());
+            }
+        }
         if half == StreamHalf::Send {
             self.send_streams -= 1;
         }
@@ -1281,7 +1299,7 @@ pub(crate) type ReadResult<T> = Result<Option<DidRead<T>>, ReadError>;
 /// Result of a `Streams::read` call in case the stream had not ended yet
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 #[must_use = "A frame might need to be enqueued"]
-pub(crate) struct DidRead<T: BytesRead> {
+pub(crate) struct DidRead<T> {
     pub result: T,
     pub max_stream_data: ShouldTransmit,
     pub max_data: ShouldTransmit,

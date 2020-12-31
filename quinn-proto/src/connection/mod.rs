@@ -274,8 +274,8 @@ where
 
             streams: Streams::new(
                 side,
-                config.stream_window_uni,
-                config.stream_window_bidi,
+                config.max_concurrent_uni_streams,
+                config.max_concurrent_bidi_streams,
                 config.send_window,
                 config.receive_window,
                 config.stream_receive_window,
@@ -865,7 +865,7 @@ where
             return None;
         }
         // TODO: Queue STREAM_ID_BLOCKED if this fails
-        let id = self.streams.open(&self.peer_params, dir)?;
+        let id = self.streams.open(dir)?;
         Some(id)
     }
 
@@ -874,7 +874,6 @@ where
     /// Returns `None` if there are no new incoming streams for this connection.
     pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
         let id = self.streams.accept(dir)?;
-        self.alloc_remote_stream(id.dir());
         Some(id)
     }
 
@@ -887,18 +886,16 @@ where
     ///
     /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
-        Ok(self.streams.read_unordered(id)?.map(|result| {
-            self.add_read_credits(id, result.max_stream_data, result.max_data);
-            result.result
-        }))
+        let result = self.streams.read_unordered(id);
+        self.post_read(id, &result);
+        Ok(result?.map(|x| x.result))
     }
 
     /// Read the next ordered chunk from the given recv stream
     pub fn read_chunk(&mut self, id: StreamId) -> Result<Option<Bytes>, ReadError> {
-        Ok(self.streams.read_chunk(id)?.map(|result| {
-            self.add_read_credits(id, result.max_stream_data, result.max_data);
-            result.result
-        }))
+        let result = self.streams.read_chunk(id);
+        self.post_read(id, &result);
+        Ok(result?.map(|x| x.result))
     }
 
     /// Read the next ordered chunks from the given recv stream
@@ -907,18 +904,29 @@ where
         id: StreamId,
         bufs: &mut [Bytes],
     ) -> Result<Option<usize>, ReadError> {
-        Ok(self.streams.read_chunks(id, bufs)?.map(|result| {
-            self.add_read_credits(id, result.max_stream_data, result.max_data);
-            result.result.bufs
-        }))
+        let result = self.streams.read_chunks(id, bufs);
+        self.post_read(id, &result);
+        Ok(result?.map(|x| x.result.bufs))
     }
 
     /// Read from the given recv stream
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
-        Ok(self.streams.read(id, buf)?.map(|result| {
+        let result = self.streams.read(id, buf);
+        self.post_read(id, &result);
+        Ok(result?.map(|x| x.result))
+    }
+
+    fn post_read<T>(&mut self, id: StreamId, result: &streams::ReadResult<T>) {
+        if let Ok(Some(ref result)) = *result {
             self.add_read_credits(id, result.max_stream_data, result.max_data);
-            result.result
-        }))
+        }
+        if self.streams.take_max_streams_dirty(id.dir()) {
+            let pending = &mut self.spaces[SpaceId::Data].pending;
+            match id.dir() {
+                Dir::Uni => pending.max_uni_stream_id = true,
+                Dir::Bi => pending.max_bi_stream_id = true,
+            }
+        }
     }
 
     /// Send data on the given stream
@@ -2575,6 +2583,18 @@ where
             }
         }
 
+        // Issue stream ID credit due to ACKs of outgoing finish/resets and incoming finish/resets
+        // on stopped streams
+        let pending = &mut self.spaces[SpaceId::Data].pending;
+        for dir in Dir::iter() {
+            if self.streams.take_max_streams_dirty(dir) {
+                match dir {
+                    Dir::Uni => pending.max_uni_stream_id = true,
+                    Dir::Bi => pending.max_bi_stream_id = true,
+                }
+            }
+        }
+
         if let Some(reason) = close {
             self.events.push_back(ConnectionError::from(reason).into());
             self.state = State::Draining;
@@ -2894,20 +2914,6 @@ where
             }).expect("preferred address CID is the first received, and hence is guaranteed to be legal");
         }
         self.peer_params = params;
-    }
-
-    /// Permit an additional remote `ty` stream.
-    fn alloc_remote_stream(&mut self, dir: Dir) {
-        let space = &mut self.spaces[SpaceId::Data];
-        match dir {
-            Dir::Bi => {
-                space.pending.max_bi_stream_id = true;
-            }
-            Dir::Uni => {
-                space.pending.max_uni_stream_id = true;
-            }
-        }
-        self.streams.alloc_remote_stream(&self.peer_params, dir);
     }
 
     fn add_read_credits(
