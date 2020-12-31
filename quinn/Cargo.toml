@@ -38,6 +38,9 @@ tracing = "0.1.10"
 tokio = { version = "0.2.6", features = ["rt-core", "io-driver", "time"] }
 webpki = { version = "0.21", optional = true }
 
+[target.'cfg(unix)'.dependencies]
+lazy_static = "1"
+
 [dev-dependencies]
 anyhow = "1.0.22"
 crc = "1.8.1"

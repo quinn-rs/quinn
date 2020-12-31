@@ -274,6 +274,9 @@ pub struct Transmit {
     pub ecn: Option<EcnCodepoint>,
     /// Contents of the datagram
     pub contents: Vec<u8>,
+    /// The segment size if this transmission contains multiple datagrams.
+    /// This is `None` if the transmit only contains a single datagram
+    pub segment_size: Option<usize>,
 }
 
 //

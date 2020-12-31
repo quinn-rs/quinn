@@ -379,6 +379,7 @@ where
                     destination,
                     contents: buf,
                     ecn: None,
+                    segment_size: None,
                 });
             }
         }
@@ -559,6 +560,7 @@ where
             } else {
                 None
             },
+            segment_size: None,
         })
     }
 
