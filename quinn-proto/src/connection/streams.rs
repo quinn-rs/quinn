@@ -70,6 +70,11 @@ pub struct Streams {
     send_window: u64,
     /// Configured upper bound for how much unacked data the peer can send us per stream
     stream_receive_window: u64,
+
+    // Pertinent state from the TransportParameters supplied by the peer
+    initial_max_stream_data_uni: VarInt,
+    initial_max_stream_data_bidi_local: VarInt,
+    initial_max_stream_data_bidi_remote: VarInt,
 }
 
 impl Streams {
@@ -104,30 +109,36 @@ impl Streams {
             unacked_data: 0,
             send_window,
             stream_receive_window: stream_receive_window.into(),
+            initial_max_stream_data_uni: 0u32.into(),
+            initial_max_stream_data_bidi_local: 0u32.into(),
+            initial_max_stream_data_bidi_remote: 0u32.into(),
         };
 
         for dir in Dir::iter() {
             for i in 0..this.max_remote[dir as usize] {
-                this.insert(None, true, StreamId::new(!side, dir, i));
+                this.insert(true, StreamId::new(!side, dir, i));
             }
         }
 
         this
     }
 
-    pub fn open(&mut self, params: &TransportParameters, dir: Dir) -> Option<StreamId> {
+    pub fn open(&mut self, dir: Dir) -> Option<StreamId> {
         if self.next[dir as usize] >= self.max[dir as usize] {
             return None;
         }
 
         self.next[dir as usize] += 1;
         let id = StreamId::new(self.side, dir, self.next[dir as usize] - 1);
-        self.insert(Some(params), false, id);
+        self.insert(false, id);
         self.send_streams += 1;
         Some(id)
     }
 
     pub fn set_params(&mut self, params: &TransportParameters) {
+        self.initial_max_stream_data_uni = params.initial_max_stream_data_uni;
+        self.initial_max_stream_data_bidi_local = params.initial_max_stream_data_bidi_local;
+        self.initial_max_stream_data_bidi_remote = params.initial_max_stream_data_bidi_remote;
         self.max[Dir::Bi as usize] = params.initial_max_streams_bidi.into();
         self.max[Dir::Uni as usize] = params.initial_max_streams_uni.into();
         self.received_max_data(params.initial_max_data);
@@ -142,10 +153,10 @@ impl Streams {
         self.send_streams
     }
 
-    pub fn alloc_remote_stream(&mut self, params: &TransportParameters, dir: Dir) {
+    pub fn alloc_remote_stream(&mut self, dir: Dir) {
         self.max_remote[dir as usize] += 1;
         let id = StreamId::new(!self.side, dir, self.max_remote[dir as usize] - 1);
-        self.insert(Some(params), true, id);
+        self.insert(true, id);
     }
 
     pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
@@ -811,16 +822,16 @@ impl Streams {
         id.index() >= self.next[id.dir() as usize]
     }
 
-    fn insert(&mut self, params: Option<&TransportParameters>, remote: bool, id: StreamId) {
+    fn insert(&mut self, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
         if bi || !remote {
-            let max_data = params.map_or(0u32.into(), |params| match id.dir() {
-                Dir::Uni => params.initial_max_stream_data_uni,
+            let max_data = match id.dir() {
+                Dir::Uni => self.initial_max_stream_data_uni,
                 // Remote/local appear reversed here because the transport parameters are named from
                 // the perspective of the peer.
-                Dir::Bi if remote => params.initial_max_stream_data_bidi_local,
-                Dir::Bi => params.initial_max_stream_data_bidi_remote,
-            });
+                Dir::Bi if remote => self.initial_max_stream_data_bidi_local,
+                Dir::Bi => self.initial_max_stream_data_bidi_remote,
+            };
             let stream = Send::new(max_data);
             assert!(self.send.insert(id, stream).is_none());
         }
@@ -1630,15 +1641,14 @@ mod tests {
 
     #[test]
     fn send_stopped() {
-        let params = TransportParameters {
+        let mut server = make(Side::Server);
+        server.set_params(&TransportParameters {
             initial_max_streams_uni: 1u32.into(),
             initial_max_data: 42u32.into(),
             initial_max_stream_data_uni: 42u32.into(),
             ..Default::default()
-        };
-        let mut server = make(Side::Server);
-        server.set_params(&params);
-        let id = server.open(&params, Dir::Uni).unwrap();
+        });
+        let id = server.open(Dir::Uni).unwrap();
         let reason = 0u32.into();
         server.received_stop_sending(id, reason);
         assert_eq!(server.write(id, &[]), Err(WriteError::Stopped(reason)));
