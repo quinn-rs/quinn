@@ -889,7 +889,7 @@ where
     pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
         Ok(self.streams.read_unordered(id)?.map(|result| {
             self.add_read_credits(id, result.max_stream_data, result.max_data);
-            (result.buf, result.offset)
+            result.result
         }))
     }
 
@@ -897,7 +897,7 @@ where
     pub fn read_chunk(&mut self, id: StreamId) -> Result<Option<Bytes>, ReadError> {
         Ok(self.streams.read_chunk(id)?.map(|result| {
             self.add_read_credits(id, result.max_stream_data, result.max_data);
-            result.buf
+            result.result
         }))
     }
 
@@ -909,7 +909,7 @@ where
     ) -> Result<Option<usize>, ReadError> {
         Ok(self.streams.read_chunks(id, bufs)?.map(|result| {
             self.add_read_credits(id, result.max_stream_data, result.max_data);
-            result.n_bufs
+            result.result.bufs
         }))
     }
 
@@ -917,7 +917,7 @@ where
     pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
         Ok(self.streams.read(id, buf)?.map(|result| {
             self.add_read_credits(id, result.max_stream_data, result.max_data);
-            result.len
+            result.result
         }))
     }
 
