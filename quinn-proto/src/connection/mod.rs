@@ -43,7 +43,7 @@ mod spaces;
 use spaces::{PacketSpace, Retransmits, SentPacket};
 
 mod stats;
-use stats::ConnectionStats;
+pub use stats::ConnectionStats;
 
 mod streams;
 pub use streams::Streams;
@@ -910,6 +910,11 @@ where
             return Err(WriteError::Blocked);
         }
         self.streams.write(stream, data)
+    }
+
+    /// Returns connection statistics
+    pub fn stats(&self) -> ConnectionStats {
+        self.stats
     }
 
     /// Stop accepting data on the given receive stream
