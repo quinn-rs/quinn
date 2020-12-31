@@ -436,6 +436,9 @@ impl Streams {
             Some(s) => s,
             None => return Err(UnknownStream { _private: () }),
         };
+        if stream.assembler.is_stopped() {
+            return Err(UnknownStream { _private: () });
+        }
         stream.assembler.stop();
         let stop_sending = ShouldTransmit::new(!stream.is_finished());
 
@@ -923,6 +926,9 @@ impl Send {
     }
 
     fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
+        if !self.is_writable() {
+            return Err(WriteError::UnknownStream);
+        }
         if let Some(error_code) = self.stop_reason {
             return Err(WriteError::Stopped(error_code));
         }
@@ -982,14 +988,7 @@ impl Send {
     }
 
     fn is_writable(&self) -> bool {
-        use SendState::*;
-        // A stream is writable in Ready state or if it's been stopped and the stop hasn't been
-        // reported
-        match self.state {
-            SendState::Ready => true,
-            ResetSent | ResetRecvd => self.stop_reason.is_some(),
-            _ => false,
-        }
+        matches!(self.state, SendState::Ready)
     }
 }
 
@@ -1113,6 +1112,9 @@ impl Recv {
     }
 
     fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
+        if self.assembler.is_stopped() {
+            return Err(ReadError::UnknownStream);
+        }
         // Return data we already have buffered, regardless of state
         if let Some((offset, bytes)) = self.assembler.read_unordered() {
             Ok(Some((bytes, offset)))
@@ -1441,7 +1443,7 @@ mod tests {
     }
 
     #[test]
-    fn stopped() {
+    fn recv_stopped() {
         let mut client = make(Side::Client);
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
         let initial_max = client.local_max_data;
@@ -1464,6 +1466,9 @@ mod tests {
                 stop_sending: ShouldTransmit::new(true),
             }
         );
+        assert!(client.stop(id).is_err());
+        assert_eq!(client.read(id, &mut []), Err(ReadError::UnknownStream));
+        assert_eq!(client.read_unordered(id), Err(ReadError::UnknownStream));
         assert_eq!(client.local_max_data - initial_max, 32);
         assert_eq!(
             client
@@ -1516,5 +1521,23 @@ mod tests {
             ShouldTransmit::new(false)
         );
         assert!(!client.recv.contains_key(&id), "stream state is freed");
+    }
+
+    #[test]
+    fn send_stopped() {
+        let params = TransportParameters {
+            initial_max_streams_uni: 1u32.into(),
+            initial_max_data: 42u32.into(),
+            initial_max_stream_data_uni: 42u32.into(),
+            ..Default::default()
+        };
+        let mut server = make(Side::Server);
+        server.set_params(&params);
+        let id = server.open(&params, Dir::Uni).unwrap();
+        let reason = 0u32.into();
+        server.received_stop_sending(id, reason);
+        assert_eq!(server.write(id, &[]), Err(WriteError::Stopped(reason)));
+        server.reset(id).unwrap();
+        assert_eq!(server.write(id, &[]), Err(WriteError::UnknownStream));
     }
 }
