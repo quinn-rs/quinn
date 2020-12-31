@@ -176,67 +176,30 @@ impl Streams {
         self.connection_blocked.clear();
     }
 
-    pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<ReadResult>, ReadError> {
-        let res = self.try_read(id, |rs: &mut Recv| rs.read(buf))?;
-        Ok(res.map(|(len, max_stream_data)| ReadResult {
-            len,
-            max_stream_data,
-            max_data: self.add_read_credits(len as u64),
-        }))
+    pub(crate) fn read(&mut self, id: StreamId, buf: &mut [u8]) -> ReadResult<usize> {
+        self.try_read(id, |rs| rs.read(buf))
     }
 
-    pub fn read_unordered(
-        &mut self,
-        id: StreamId,
-    ) -> Result<Option<ReadUnorderedResult>, ReadError> {
-        let res = self.try_read(id, |rs: &mut Recv| rs.read_unordered())?;
-        Ok(res.map(|((buf, offset), max_stream_data)| {
-            let max_data = self.add_read_credits(buf.len() as u64);
-            ReadUnorderedResult {
-                buf,
-                offset,
-                max_stream_data,
-                max_data,
-            }
-        }))
+    pub(crate) fn read_unordered(&mut self, id: StreamId) -> ReadResult<(Bytes, u64)> {
+        self.try_read(id, |rs| rs.read_unordered())
     }
 
-    pub fn read_chunk(&mut self, id: StreamId) -> Result<Option<ReadChunkResult>, ReadError> {
-        let res = self.try_read(id, |rs: &mut Recv| rs.read_chunk())?;
-        Ok(res.map(|(buf, max_stream_data)| {
-            let max_data = self.add_read_credits(buf.len() as u64);
-            ReadChunkResult {
-                buf,
-                max_stream_data,
-                max_data,
-            }
-        }))
+    pub(crate) fn read_chunk(&mut self, id: StreamId) -> ReadResult<Bytes> {
+        self.try_read(id, |rs| rs.read_chunk())
     }
 
-    pub fn read_chunks(
+    pub(crate) fn read_chunks(
         &mut self,
         id: StreamId,
         bufs: &mut [Bytes],
-    ) -> Result<Option<ReadChunksResult>, ReadError> {
-        let res = self.try_read(id, |rs: &mut Recv| rs.read_chunks(bufs))?;
-        Ok(res.map(|(n_bufs, max_stream_data)| {
-            let len = bufs[..n_bufs].iter().fold(0, |t, b| t + b.len());
-            let max_data = self.add_read_credits(len as u64);
-            ReadChunksResult {
-                n_bufs,
-                max_stream_data,
-                max_data,
-            }
-        }))
+    ) -> ReadResult<ReadChunks> {
+        self.try_read(id, |rs| rs.read_chunks(bufs))
     }
 
-    fn try_read<T, U>(
-        &mut self,
-        id: StreamId,
-        mut read: T,
-    ) -> Result<Option<(U, ShouldTransmit)>, ReadError>
+    fn try_read<F, O>(&mut self, id: StreamId, mut read: F) -> ReadResult<O>
     where
-        T: FnMut(&mut Recv) -> Result<Option<U>, ReadError>,
+        F: FnMut(&mut Recv) -> StreamReadResult<O>,
+        O: BytesRead,
     {
         let mut entry = match self.recv.entry(id) {
             hash_map::Entry::Vacant(_) => return Err(ReadError::UnknownStream),
@@ -244,9 +207,14 @@ impl Streams {
         };
         let rs = entry.get_mut();
         match read(rs) {
-            Ok(Some(res)) => {
-                let (_, transmit_max_stream_data) = rs.max_stream_data(self.stream_receive_window);
-                Ok(Some((res, transmit_max_stream_data)))
+            Ok(Some(out)) => {
+                let (_, max_stream_data) = rs.max_stream_data(self.stream_receive_window);
+                let max_data = self.add_read_credits(out.bytes_read());
+                Ok(Some(DidRead {
+                    result: out,
+                    max_stream_data,
+                    max_data,
+                }))
             }
             Ok(None) => {
                 entry.remove_entry();
@@ -1010,43 +978,6 @@ impl Send {
     }
 }
 
-/// Result of a `Streams::read_unordered` call in case the stream had not ended yet
-#[derive(Debug, Eq, PartialEq)]
-#[must_use = "A frame might need to be enqueued"]
-pub struct ReadUnorderedResult {
-    pub buf: Bytes,
-    pub offset: u64,
-    pub max_stream_data: ShouldTransmit,
-    pub max_data: ShouldTransmit,
-}
-
-/// Result of a `Streams::read_chunk` call in case the stream had not ended yet
-#[derive(Debug, Eq, PartialEq)]
-#[must_use = "A frame might need to be enqueued"]
-pub struct ReadChunkResult {
-    pub buf: Bytes,
-    pub max_stream_data: ShouldTransmit,
-    pub max_data: ShouldTransmit,
-}
-
-/// Result of a `Streams::read_chunks` call in case the stream had not ended yet
-#[derive(Debug, Eq, PartialEq)]
-#[must_use = "A frame might need to be enqueued"]
-pub struct ReadChunksResult {
-    pub n_bufs: usize,
-    pub max_stream_data: ShouldTransmit,
-    pub max_data: ShouldTransmit,
-}
-
-/// Result of a `Streams::read` call in case the stream had not ended yet
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-#[must_use = "A frame might need to be enqueued"]
-pub struct ReadResult {
-    pub len: usize,
-    pub max_stream_data: ShouldTransmit,
-    pub max_data: ShouldTransmit,
-}
-
 /// Result of a successful `Streams::stop` call
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 #[must_use = "A frame might need to be enqueued"]
@@ -1132,7 +1063,7 @@ impl Recv {
         Ok(new_bytes)
     }
 
-    fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
+    fn read(&mut self, buf: &mut [u8]) -> StreamReadResult<usize> {
         if self.assembler.is_stopped() {
             return Err(ReadError::UnknownStream);
         }
@@ -1144,7 +1075,7 @@ impl Recv {
         }
     }
 
-    fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
+    fn read_unordered(&mut self) -> StreamReadResult<(Bytes, u64)> {
         if self.assembler.is_stopped() {
             return Err(ReadError::UnknownStream);
         }
@@ -1156,30 +1087,31 @@ impl Recv {
         }
     }
 
-    fn read_chunk(&mut self) -> Result<Option<Bytes>, ReadError> {
+    fn read_chunk(&mut self) -> StreamReadResult<Bytes> {
         match self.assembler.read_chunk()? {
             Some(bytes) => Ok(Some(bytes)),
             None => self.read_blocked().map(|()| None),
         }
     }
 
-    fn read_chunks(&mut self, chunks: &mut [Bytes]) -> Result<Option<usize>, ReadError> {
+    fn read_chunks(&mut self, chunks: &mut [Bytes]) -> Result<Option<ReadChunks>, ReadError> {
+        let mut out = ReadChunks { bufs: 0, read: 0 };
         if chunks.is_empty() {
-            return Ok(Some(0));
+            return Ok(Some(out));
         }
 
-        let mut size = 0;
         while let Some(bytes) = self.assembler.read_chunk()? {
-            chunks[size] = bytes;
-            size += 1;
+            chunks[out.bufs] = bytes;
+            out.read += chunks[out.bufs].len();
+            out.bufs += 1;
 
-            if size >= chunks.len() {
-                return Ok(Some(size));
+            if out.bufs >= chunks.len() {
+                return Ok(Some(out));
             }
         }
 
-        if size > 0 {
-            return Ok(Some(size));
+        if out.bufs > 0 {
+            return Ok(Some(out));
         }
 
         self.read_blocked().map(|()| None)
@@ -1316,6 +1248,52 @@ impl Recv {
         }
 
         Ok(new_bytes)
+    }
+}
+
+pub(crate) type ReadResult<T> = Result<Option<DidRead<T>>, ReadError>;
+
+/// Result of a `Streams::read` call in case the stream had not ended yet
+#[derive(Debug, Eq, PartialEq, Copy, Clone)]
+#[must_use = "A frame might need to be enqueued"]
+pub(crate) struct DidRead<T: BytesRead> {
+    pub result: T,
+    pub max_stream_data: ShouldTransmit,
+    pub max_data: ShouldTransmit,
+}
+
+type StreamReadResult<T> = Result<Option<T>, ReadError>;
+
+pub(crate) trait BytesRead {
+    fn bytes_read(&self) -> u64;
+}
+
+impl BytesRead for usize {
+    fn bytes_read(&self) -> u64 {
+        *self as u64
+    }
+}
+
+impl BytesRead for Bytes {
+    fn bytes_read(&self) -> u64 {
+        self.len() as u64
+    }
+}
+
+impl BytesRead for (Bytes, u64) {
+    fn bytes_read(&self) -> u64 {
+        self.0.len() as u64
+    }
+}
+
+pub(crate) struct ReadChunks {
+    pub bufs: usize,
+    pub read: usize,
+}
+
+impl BytesRead for ReadChunks {
+    fn bytes_read(&self) -> u64 {
+        self.read as u64
     }
 }
 
