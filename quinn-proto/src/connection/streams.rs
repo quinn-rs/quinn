@@ -218,10 +218,12 @@ impl Streams {
             }
             Ok(None) => {
                 entry.remove_entry();
+                self.stream_freed(id, StreamHalf::Recv);
                 Ok(None)
             }
             Err(e @ ReadError::Reset { .. }) => {
                 entry.remove_entry();
+                self.stream_freed(id, StreamHalf::Recv);
                 Err(e)
             }
             Err(e) => Err(e),
@@ -288,6 +290,7 @@ impl Streams {
         // Stopped streams become closed instantly on FIN, so check whether we need to clean up
         if rs.is_closed() {
             self.recv.remove(&stream);
+            self.stream_freed(stream, StreamHalf::Recv);
         }
 
         // We don't buffer data on stopped streams, so issue flow control credit immediately
@@ -403,8 +406,8 @@ impl Streams {
             hash_map::Entry::Vacant(_) => {}
             hash_map::Entry::Occupied(e) => {
                 if let SendState::ResetSent = e.get().state {
-                    self.send_streams -= 1;
                     e.remove_entry();
+                    self.stream_freed(id, StreamHalf::Send);
                 }
             }
         }
@@ -651,8 +654,8 @@ impl Streams {
             return;
         }
 
-        self.send_streams -= 1;
         entry.remove_entry();
+        self.stream_freed(id, StreamHalf::Send);
         self.events.push_back(StreamEvent::Finished { id });
     }
 
@@ -863,6 +866,13 @@ impl Streams {
     fn record_sent_max_data(&mut self, sent_value: VarInt) {
         if sent_value > self.sent_max_data {
             self.sent_max_data = sent_value;
+        }
+    }
+
+    /// Update counters for removal of a stream
+    fn stream_freed(&mut self, id: StreamId, half: StreamHalf) {
+        if half == StreamHalf::Send {
+            self.send_streams -= 1;
         }
     }
 }
@@ -1415,6 +1425,12 @@ pub enum StreamEvent {
 #[error("unknown stream")]
 pub struct UnknownStream {
     _private: (),
+}
+
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+enum StreamHalf {
+    Send,
+    Recv,
 }
 
 #[cfg(test)]
