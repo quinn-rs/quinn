@@ -42,9 +42,8 @@ fn main() {
     });
     let server_addr = endpoint.local_addr().unwrap();
     drop(endpoint); // Ensure server shuts down when finished
-    let server_opt = opt.clone();
     let thread = std::thread::spawn(move || {
-        if let Err(e) = runtime.block_on(server(incoming, server_opt)) {
+        if let Err(e) = runtime.block_on(server(incoming, opt)) {
             eprintln!("server failed: {:#}", e);
         }
     });

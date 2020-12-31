@@ -55,10 +55,10 @@ impl HttpFrame {
 
     pub fn decode<T: Buf>(buf: &mut T) -> Result<Self, Error> {
         let remaining = buf.remaining();
-        let ty = Type::decode(buf).map_err(|_| Error::Incomplete(remaining + 1 as usize))?;
+        let ty = Type::decode(buf).map_err(|_| Error::Incomplete(remaining + 1))?;
         let len = buf
             .get_var()
-            .map_err(|_| Error::Incomplete(remaining + 1 as usize))?;
+            .map_err(|_| Error::Incomplete(remaining + 1))?;
 
         if buf.remaining() < len as usize {
             if ty == Type::DATA {

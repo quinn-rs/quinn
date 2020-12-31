@@ -552,10 +552,7 @@ where
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         Poll::Ready(Ok(
-            match ready!(RecvStream::poll_read(self.get_mut(), cx, buf))? {
-                Some(n) => n,
-                None => 0,
-            },
+            ready!(RecvStream::poll_read(self.get_mut(), cx, buf))?.unwrap_or(0)
         ))
     }
 }

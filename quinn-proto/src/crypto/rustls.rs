@@ -16,8 +16,7 @@ use rustls::{
 use webpki::DNSNameRef;
 
 use crate::{
-    crypto,
-    crypto::{ExportKeyingMaterialError, KeyPair, Keys},
+    crypto::{self, CryptoError, ExportKeyingMaterialError, KeyPair, Keys},
     transport_parameters::TransportParameters,
     CertificateChain, ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
 };
@@ -356,17 +355,20 @@ impl crypto::PacketKey for PacketKey {
         tag_storage.copy_from_slice(tag.as_ref());
     }
 
-    fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()> {
+    fn decrypt(
+        &self,
+        packet: u64,
+        header: &[u8],
+        payload: &mut BytesMut,
+    ) -> Result<(), CryptoError> {
         if payload.len() < self.key.algorithm().tag_len() {
-            return Err(());
+            return Err(CryptoError);
         }
 
         let payload_len = payload.len();
         let aad = aead::Aad::from(header);
         let nonce = self.iv.nonce_for(packet);
-        self.key
-            .open_in_place(nonce, aad, payload.as_mut())
-            .map_err(|_| ())?;
+        self.key.open_in_place(nonce, aad, payload.as_mut())?;
         payload.truncate(payload_len - self.key.algorithm().tag_len());
         Ok(())
     }

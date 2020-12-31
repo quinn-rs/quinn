@@ -92,7 +92,7 @@ macro_rules! errors {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
-                    x if x >= 0x100 && x < 0x200 => write!(f, "Code::crypto({:02x})", self.0 as u8),
+                    x if (0x100..0x200).contains(&x) => write!(f, "Code::crypto({:02x})", self.0 as u8),
                     _ => write!(f, "Code({:x})", self.0),
                 }
             }
