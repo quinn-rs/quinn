@@ -596,11 +596,11 @@ fn alpn_mismatch() {
 }
 
 #[test]
-fn stream_id_backpressure() {
+fn stream_id_limit() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_uni: 1u32.into(),
+            max_concurrent_uni_streams: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -623,8 +623,12 @@ fn stream_id_backpressure() {
     // Generate some activity to allow the server to see the stream
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive();
-    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Stream(StreamEvent::Finished { id })) if id == s
+    );
     assert_eq!(
         pair.client_conn_mut(client_ch).open(Dir::Uni),
         None,
@@ -636,6 +640,7 @@ fn stream_id_backpressure() {
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(Some((msg, 0))) if msg == MSG);
+    assert_eq!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
     // Server will only send MAX_STREAM_ID now that the application's been notified
     pair.drive();
     assert_matches!(
@@ -1657,7 +1662,7 @@ fn repeated_request_response() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_bidi: 1u32.into(),
+            max_concurrent_bidi_streams: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -1698,7 +1703,7 @@ fn read_chunks() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_bidi: 1u32.into(),
+            max_concurrent_bidi_streams: 3u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()

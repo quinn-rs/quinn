@@ -30,7 +30,7 @@ fn main() {
         .unwrap();
 
     let mut server_config = server_config.build();
-    server_config.transport = Arc::new(transport_config());
+    server_config.transport = Arc::new(transport_config(&opt));
 
     let mut endpoint = quinn::EndpointBuilder::default();
     endpoint.listen(server_config);
@@ -102,7 +102,7 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: O
         .add_certificate_authority(server_cert)
         .unwrap();
     let mut client_config = client_config.build();
-    client_config.transport = Arc::new(transport_config());
+    client_config.transport = Arc::new(transport_config(&opt));
 
     let quinn::NewConnection { connection, .. } = endpoint
         .connect_with(client_config, &server_addr, "localhost")
@@ -244,11 +244,13 @@ fn rt() -> Runtime {
         .unwrap()
 }
 
-fn transport_config() -> quinn::TransportConfig {
+fn transport_config(opt: &Opt) -> quinn::TransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
     let mut config = quinn::TransportConfig::default();
-    config.stream_window_uni(1024).unwrap();
+    config
+        .max_concurrent_uni_streams(opt.max_streams as u64)
+        .unwrap();
     config
 }
 

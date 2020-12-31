@@ -44,7 +44,7 @@ impl Bench {
         let cert_chain = quinn::CertificateChain::from_certs(vec![cert.clone()]);
 
         let mut transport = quinn::TransportConfig::default();
-        transport.stream_window_bidi(102_400).unwrap();
+        transport.max_concurrent_bidi_streams(102_400).unwrap();
         let mut server_config = quinn::ServerConfig::default();
         server_config.transport = Arc::new(transport);
         let mut server_config = ServerConfigBuilder::new(server_config);
