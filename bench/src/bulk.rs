@@ -42,8 +42,9 @@ fn main() {
     });
     let server_addr = endpoint.local_addr().unwrap();
     drop(endpoint); // Ensure server shuts down when finished
+    let server_opt = opt.clone();
     let thread = std::thread::spawn(move || {
-        if let Err(e) = runtime.block_on(server(incoming)) {
+        if let Err(e) = runtime.block_on(server(incoming, server_opt)) {
             eprintln!("server failed: {:#}", e);
         }
     });
@@ -56,17 +57,24 @@ fn main() {
     thread.join().expect("server thread");
 }
 
-async fn server(mut incoming: quinn::Incoming) -> Result<()> {
+async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
     let handshake = incoming.next().await.unwrap();
     let quinn::NewConnection {
-        mut uni_streams, ..
+        mut uni_streams,
+        connection,
+        ..
     } = handshake.await.context("handshake failed")?;
+
+    let mut result = Ok(());
 
     loop {
         let mut stream = match uni_streams.next().await {
-            None => return Ok(()),
-            Some(Err(quinn::ConnectionError::ApplicationClosed(_))) => return Ok(()),
-            Some(Err(e)) => return Err(e).context("accepting stream failed"),
+            None => break,
+            Some(Err(quinn::ConnectionError::ApplicationClosed(_))) => break,
+            Some(Err(e)) => {
+                result = Err(e).context("accepting stream failed");
+                break;
+            }
             Some(Ok(stream)) => stream,
         };
         trace!("stream established");
@@ -77,6 +85,12 @@ async fn server(mut incoming: quinn::Incoming) -> Result<()> {
             Ok(())
         });
     }
+
+    if opt.stats {
+        println!("\nServer connection stats:\n{:#?}", connection.stats());
+    }
+
+    result
 }
 
 async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: Opt) -> Result<()> {
@@ -160,6 +174,10 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: O
 
     endpoint.wait_idle().await;
 
+    if opt.stats {
+        println!("\nClient connection stats:\n{:#?}", connection.stats());
+    }
+
     Ok(())
 }
 
@@ -235,4 +253,7 @@ struct Opt {
     /// The amount of data to transfer on a stream in megabytes
     #[structopt(long = "stream_size", default_value = "1024")]
     stream_size_mb: usize,
+    /// Show connection stats the at the end of the benchmark
+    #[structopt(long = "stats")]
+    stats: bool,
 }
