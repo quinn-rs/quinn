@@ -166,9 +166,10 @@ impl Streams {
             for i in 0..self.next[dir as usize] {
                 // We don't bother calling `stream_freed` here because we explicitly reset affected
                 // counters below.
-                self.send.remove(&StreamId::new(self.side, dir, i)).unwrap();
+                let id = StreamId::new(self.side, dir, i);
+                self.send.remove(&id).unwrap();
                 if let Dir::Bi = dir {
-                    self.recv.remove(&StreamId::new(self.side, dir, i)).unwrap();
+                    self.recv.remove(&id).unwrap();
                 }
             }
             self.next[dir as usize] = 0;
