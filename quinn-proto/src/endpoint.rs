@@ -189,6 +189,7 @@ where
                         destination: remote,
                         ecn: None,
                         contents: buf,
+                        segment_size: None,
                     });
                     return None;
                 }
@@ -334,6 +335,7 @@ where
             destination: remote,
             ecn: None,
             contents: buf,
+            segment_size: None,
         });
     }
 
@@ -587,6 +589,7 @@ where
                     destination: remote,
                     ecn: None,
                     contents: buf,
+                    segment_size: None,
                 });
                 return None;
             }
@@ -679,6 +682,7 @@ where
             destination,
             ecn: None,
             contents: buf,
+            segment_size: None,
         })
     }
 

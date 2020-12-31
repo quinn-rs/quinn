@@ -7,10 +7,11 @@ use std::{
     ptr,
 };
 
+use lazy_static::lazy_static;
 use mio::net::UdpSocket;
 use proto::{EcnCodepoint, Transmit};
 
-use super::cmsg;
+use super::{cmsg, UdpCapabilities, UdpExt};
 use crate::udp::RecvMeta;
 
 #[cfg(target_os = "freebsd")]
@@ -18,7 +19,7 @@ type IpTosTy = libc::c_uchar;
 #[cfg(not(target_os = "freebsd"))]
 type IpTosTy = libc::c_int;
 
-impl super::UdpExt for UdpSocket {
+impl UdpExt for UdpSocket {
     fn init_ext(&self) -> io::Result<()> {
         // Safety
         assert_eq!(
@@ -267,6 +268,11 @@ impl super::UdpExt for UdpSocket {
     }
 }
 
+/// Returns the platforms UDP socket capabilities
+pub fn caps() -> UdpCapabilities {
+    *CAPABILITIES
+}
+
 const CMSG_LEN: usize = 64;
 
 fn prepare_msg(
@@ -296,6 +302,16 @@ fn prepare_msg(
     } else {
         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
     }
+
+    if let Some(segment_size) = transmit.segment_size {
+        debug_assert!(
+            caps().gso,
+            "Platform must support GSO for setting segment size"
+        );
+
+        gso::set_segment_size(&mut encoder, segment_size as u16);
+    }
+
     encoder.finish();
 }
 
@@ -373,3 +389,56 @@ pub const BATCH_SIZE: usize = 32;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub const BATCH_SIZE: usize = 1;
+
+#[cfg(target_os = "linux")]
+mod gso {
+    use super::*;
+
+    /// Checks whether GSO support is available by setting the UDP_SEGMENT
+    /// option on a socket
+    pub fn supports_gso() -> bool {
+        const GSO_SIZE: libc::c_int = 1500;
+
+        let socket = match std::net::UdpSocket::bind("[::]:0") {
+            Ok(socket) => socket,
+            Err(_) => return false,
+        };
+
+        let rc = unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_UDP,
+                libc::UDP_SEGMENT,
+                &GSO_SIZE as *const _ as _,
+                mem::size_of_val(&GSO_SIZE) as _,
+            )
+        };
+
+        rc != -1
+    }
+
+    pub fn set_segment_size(encoder: &mut cmsg::Encoder, segment_size: u16) {
+        encoder.push(libc::SOL_UDP, libc::UDP_SEGMENT, segment_size);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+mod gso {
+    use super::*;
+
+    pub fn supports_gso() -> bool {
+        false
+    }
+
+    pub fn set_segment_size(_encoder: &mut cmsg::Encoder, _segment_size: u16) {
+        panic!("Setting a segment size is not supported on current platform");
+    }
+}
+
+lazy_static! {
+    static ref CAPABILITIES: UdpCapabilities = {
+        UdpCapabilities {
+            gso: gso::supports_gso(),
+        }
+    };
+}
