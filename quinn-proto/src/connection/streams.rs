@@ -164,6 +164,8 @@ impl Streams {
         // Revert to initial state for outgoing streams
         for dir in Dir::iter() {
             for i in 0..self.next[dir as usize] {
+                // We don't bother calling `stream_freed` here because we explicitly reset affected
+                // counters below.
                 self.send.remove(&StreamId::new(self.side, dir, i)).unwrap();
                 if let Dir::Bi = dir {
                     self.recv.remove(&StreamId::new(self.side, dir, i)).unwrap();
@@ -172,6 +174,7 @@ impl Streams {
             self.next[dir as usize] = 0;
         }
         self.pending.clear();
+        self.send_streams = 0;
         self.data_sent = 0;
         self.connection_blocked.clear();
     }
