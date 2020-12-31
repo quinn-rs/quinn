@@ -15,7 +15,7 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
-use proto::{ConnectionError, ConnectionHandle, Dir, StreamEvent, StreamId};
+use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use thiserror::Error;
 use tokio::time::{delay_until, Delay, Instant as TokioInstant};
 use tracing::info_span;
@@ -439,6 +439,11 @@ where
     /// Current best estimate of this connection's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
         self.0.lock().unwrap().inner.rtt()
+    }
+
+    /// Returns connection statistics
+    pub fn stats(&self) -> ConnectionStats {
+        self.0.lock().unwrap().inner.stats()
     }
 
     /// Parameters negotiated during the handshake
