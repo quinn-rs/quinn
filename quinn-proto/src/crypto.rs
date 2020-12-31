@@ -172,7 +172,12 @@ pub trait PacketKey: Send {
     /// Encrypt the packet payload with the given packet number
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
     /// Decrypt the packet payload with the given packet number
-    fn decrypt(&self, packet: u64, header: &[u8], payload: &mut BytesMut) -> Result<(), ()>;
+    fn decrypt(
+        &self,
+        packet: u64,
+        header: &[u8],
+        payload: &mut BytesMut,
+    ) -> Result<(), CryptoError>;
     /// The length of the AEAD tag appended to packets on encryption
     fn tag_len(&self) -> usize;
     /// Maximum number of packets that may be sent using a single key
@@ -204,7 +209,7 @@ pub trait HmacKey: Send + Sized + Sync {
     /// Method for signing a message
     fn sign(&self, data: &[u8]) -> Self::Signature;
     /// Method for verifying a message
-    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), ()>;
+    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), CryptoError>;
 }
 
 /// Error returned by [Session::export_keying_material].
@@ -231,7 +236,15 @@ pub trait AeadKey {
 
     // fn from_hkdf(master_key: &impl PseudoRandomKey, random_bytes: &[u8]) -> Self;
     /// Method for sealing message `data`
-    fn seal(&self, data: &mut Vec<u8>, additional_data: &[u8]) -> Result<(), ()>;
+    fn seal(&self, data: &mut Vec<u8>, additional_data: &[u8]) -> Result<(), CryptoError>;
     /// Method for opening a sealed message `data`
-    fn open<'a>(&self, data: &'a mut [u8], additional_data: &[u8]) -> Result<&'a mut [u8], ()>;
+    fn open<'a>(
+        &self,
+        data: &'a mut [u8],
+        additional_data: &[u8],
+    ) -> Result<&'a mut [u8], CryptoError>;
 }
+
+/// Generic crypto errors
+#[derive(Debug)]
+pub struct CryptoError;

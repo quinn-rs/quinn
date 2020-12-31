@@ -8,7 +8,7 @@ use bytes::BufMut;
 
 use crate::{
     coding::{BufExt, BufMutExt},
-    crypto::{AeadKey, HandshakeTokenKey, HmacKey},
+    crypto::{AeadKey, CryptoError, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
     RESET_TOKEN_SIZE,
 };
@@ -56,10 +56,10 @@ impl<'a> RetryToken<'a> {
         address: &SocketAddr,
         retry_src_cid: &ConnectionId,
         raw_token_bytes: &'a [u8],
-    ) -> Result<Self, ()> {
+    ) -> Result<Self, CryptoError> {
         if raw_token_bytes.len() < Self::RANDOM_BYTES_LEN {
             // Invalid length
-            return Err(());
+            return Err(CryptoError);
         }
 
         let random_bytes = &raw_token_bytes[..Self::RANDOM_BYTES_LEN];
@@ -72,8 +72,8 @@ impl<'a> RetryToken<'a> {
         let data = aead_key.open(&mut sealed_token, additional_data)?;
 
         let mut reader = io::Cursor::new(data);
-        let orig_dst_cid = ConnectionId::decode_long(&mut reader).ok_or(())?;
-        let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().map_err(|_| ())?, 0);
+        let orig_dst_cid = ConnectionId::decode_long(&mut reader).ok_or(CryptoError)?;
+        let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().map_err(|_| CryptoError)?, 0);
 
         Ok(Self {
             orig_dst_cid,

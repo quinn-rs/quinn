@@ -54,6 +54,7 @@ fn configure_client(server_certs: &[&[u8]]) -> Result<ClientConfig, Box<dyn Erro
 }
 
 /// Returns default server configuration along with its certificate.
+#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let cert_der = cert.serialize_der().unwrap();

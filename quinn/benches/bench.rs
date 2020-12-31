@@ -75,6 +75,7 @@ struct Context {
 }
 
 impl Context {
+    #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
     fn new() -> Self {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();

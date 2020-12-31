@@ -61,6 +61,7 @@ fn main() {
 }
 
 #[tokio::main]
+#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 async fn run(options: Opt) -> Result<()> {
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.stream_window_uni(0).unwrap();

@@ -2962,7 +2962,7 @@ where
 
         crypto
             .decrypt(number, &packet.header_data, &mut packet.payload)
-            .map_err(|()| {
+            .map_err(|_| {
                 trace!("decryption failed with packet number {}", number);
                 None
             })?;
