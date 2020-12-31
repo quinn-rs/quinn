@@ -1328,7 +1328,8 @@ pub enum StreamEvent {
 }
 
 /// Error indicating that a stream has not been opened or has already been finished or reset
-#[derive(Debug)]
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("unknown stream")]
 pub struct UnknownStream {
     _private: (),
 }

@@ -825,11 +825,14 @@ where
 }
 
 /// Error indicating that a stream has already been finished or reset
-#[derive(Debug)]
-pub struct UnknownStream {}
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("unknown stream")]
+pub struct UnknownStream {
+    _private: (),
+}
 
 impl From<proto::UnknownStream> for UnknownStream {
     fn from(_: proto::UnknownStream) -> Self {
-        UnknownStream {}
+        UnknownStream { _private: () }
     }
 }
