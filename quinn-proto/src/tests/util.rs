@@ -298,12 +298,7 @@ impl TestEndpoint {
     }
 
     pub fn assert_accept(&mut self) -> ConnectionHandle {
-        if let Some(c) = self.accepted.take() {
-            self.accept();
-            c
-        } else {
-            panic!("server didn't connect");
-        }
+        self.accepted.take().expect("server didn't connect")
     }
 }
 

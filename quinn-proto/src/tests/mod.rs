@@ -872,12 +872,12 @@ fn idle_timeout() {
 }
 
 #[test]
-fn accept_buffer_full() {
+fn concurrent_connections_full() {
     let _guard = subscribe();
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
-            accept_buffer: 0,
+            concurrent_connections: 0,
             ..server_config()
         },
     );

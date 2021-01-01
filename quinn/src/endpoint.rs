@@ -448,7 +448,6 @@ where
         if endpoint.driver_lost {
             Poll::Ready(None)
         } else if let Some(conn) = endpoint.incoming.pop_front() {
-            endpoint.inner.accept();
             Poll::Ready(Some(conn))
         } else if endpoint.connections.close.is_some() {
             Poll::Ready(None)
