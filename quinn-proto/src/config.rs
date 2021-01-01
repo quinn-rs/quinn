@@ -426,10 +426,8 @@ where
     /// Microseconds after a stateless retry token was issued for which it's considered valid.
     pub(crate) retry_token_lifetime: u64,
 
-    /// Maximum number of incoming connections to buffer.
-    ///
-    /// Accepting a connection removes it from the buffer, so this does not need to be large.
-    pub(crate) accept_buffer: u32,
+    /// Maximum number of concurrent connections
+    pub(crate) concurrent_connections: u32,
 
     /// Whether to allow clients to migrate to new addresses
     ///
@@ -452,7 +450,7 @@ where
             use_stateless_retry: false,
             retry_token_lifetime: 15_000_000,
 
-            accept_buffer: 1024,
+            concurrent_connections: 100_000,
 
             migration: true,
         }
@@ -481,8 +479,8 @@ where
     /// Maximum number of incoming connections to buffer.
     ///
     /// Accepting a connection removes it from the buffer, so this does not need to be large.
-    pub fn accept_buffer(&mut self, value: u32) -> &mut Self {
-        self.accept_buffer = value;
+    pub fn concurrent_connections(&mut self, value: u32) -> &mut Self {
+        self.concurrent_connections = value;
         self
     }
 
@@ -520,7 +518,7 @@ where
             .field("token_key", &"[ elided ]")
             .field("use_stateless_retry", &self.use_stateless_retry)
             .field("retry_token_lifetime", &self.retry_token_lifetime)
-            .field("accept_buffer", &self.accept_buffer)
+            .field("concurrent_connections", &self.concurrent_connections)
             .field("migration", &self.migration)
             .finish()
     }
@@ -552,7 +550,7 @@ where
             token_key: self.token_key.clone(),
             use_stateless_retry: self.use_stateless_retry,
             retry_token_lifetime: self.retry_token_lifetime,
-            accept_buffer: self.accept_buffer,
+            concurrent_connections: self.concurrent_connections,
             migration: self.migration,
         }
     }
