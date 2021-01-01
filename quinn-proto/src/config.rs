@@ -225,8 +225,8 @@ impl Default for TransportConfig {
         const STREAM_RWND: u32 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
 
         TransportConfig {
-            max_concurrent_bidi_streams: 32u32.into(),
-            max_concurrent_uni_streams: 32u32.into(),
+            max_concurrent_bidi_streams: 100u32.into(),
+            max_concurrent_uni_streams: 100u32.into(),
             max_idle_timeout: Some(Duration::from_millis(10_000)),
             stream_receive_window: STREAM_RWND.into(),
             receive_window: VarInt::MAX,
