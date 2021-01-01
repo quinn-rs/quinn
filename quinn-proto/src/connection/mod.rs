@@ -956,11 +956,7 @@ where
         Ok(())
     }
 
-    /// Prepare to transmit an unreliable, unordered datagram
-    ///
-    /// The returned `DatagramSender` must be used to actually send a datagram. This allows the
-    /// caller to defer materializing a datagram until one can be sent immediately without redundant
-    /// checks
+    /// Queue an unreliable, unordered datagram for immediate transmission
     ///
     /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
     pub fn send_datagram(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
