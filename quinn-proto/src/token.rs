@@ -179,11 +179,9 @@ mod test {
         let prk: ring::hkdf::Prk = crypto::HandshakeTokenKey::from_secret(&master_key);
 
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
-        let (retry_src_cid, _) = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
+        let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         let token = RetryToken {
-            orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE)
-                .generate_cid()
-                .0,
+            orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
             issued: UNIX_EPOCH + Duration::new(42, 0), // Fractional seconds would be lost
             random_bytes: &random_bytes,
         };
@@ -215,7 +213,7 @@ mod test {
         let prk: ring::hkdf::Prk = crypto::HandshakeTokenKey::from_secret(&master_key);
 
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
-        let (retry_src_cid, _) = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
+        let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
 
         let mut invalid_token = Vec::new();
         invalid_token.put_slice(&random_bytes);
