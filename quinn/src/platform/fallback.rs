@@ -38,6 +38,7 @@ impl super::UdpExt for UdpSocket {
             len,
             addr,
             ecn: None,
+            dst_ip: None,
         };
         Ok(1)
     }

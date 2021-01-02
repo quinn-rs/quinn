@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     convert::TryFrom,
     fmt, iter,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -58,7 +58,6 @@ where
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig<S>>,
     server_config: Option<Arc<ServerConfig<S>>>,
-    incoming_handshakes: usize,
     /// Whether incoming connections should be unconditionally rejected by a server
     ///
     /// Equivalent to a `ServerConfig.accept_buffer` of `0`, but can be changed after the endpoint is constructed.
@@ -85,7 +84,6 @@ where
             connection_reset_tokens: ResetTokenTable::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
-            incoming_handshakes: 0,
             reject_new_connections: false,
             config,
             server_config,
@@ -154,6 +152,7 @@ where
         &mut self,
         now: Instant,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
     ) -> Option<(ConnectionHandle, DatagramEvent<S>)> {
@@ -273,7 +272,7 @@ where
             let crypto = S::initial_keys(&dst_cid, Side::Server);
             return match first_decode.finish(Some(&crypto.header.remote)) {
                 Ok(packet) => self
-                    .handle_first_packet(now, remote, ecn, packet, remaining, &crypto)
+                    .handle_first_packet(now, remote, local_ip, ecn, packet, remaining, &crypto)
                     .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
                 Err(e) => {
                     trace!("unable to decode initial packet: {}", e);
@@ -321,7 +320,7 @@ where
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
             max_padding_len
         } else {
-            self.rng.gen_range(IDEAL_MIN_PADDING_LEN, max_padding_len)
+            self.rng.gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
         };
         buf.reserve_exact(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);
@@ -357,6 +356,7 @@ where
             remote_id,
             remote_id,
             remote,
+            None,
             ConnectionOpts::Client {
                 config,
                 server_name: server_name.into(),
@@ -404,6 +404,7 @@ where
         init_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         opts: ConnectionOpts<S>,
         now: Instant,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
@@ -459,6 +460,7 @@ where
             loc_cid,
             rem_cid,
             remote,
+            local_ip,
             tls,
             self.local_cid_generator.as_ref(),
             now,
@@ -484,6 +486,7 @@ where
         &mut self,
         now: Instant,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         rest: Option<BytesMut>,
@@ -523,11 +526,11 @@ where
         let temp_loc_cid = self.new_cid();
         let server_config = self.server_config.as_ref().unwrap();
 
-        if self.incoming_handshakes == server_config.accept_buffer as usize
+        if self.connections.len() >= server_config.concurrent_connections as usize
             || self.reject_new_connections
             || self.is_full()
         {
-            debug!("rejecting connection due to full accept buffer");
+            debug!("refusing connection");
             self.initial_close(
                 remote,
                 crypto,
@@ -619,6 +622,7 @@ where
                 dst_cid,
                 src_cid,
                 remote,
+                local_ip,
                 ConnectionOpts::Server {
                     retry_src_cid,
                     orig_dst_cid,
@@ -632,7 +636,6 @@ where
         match conn.handle_first_packet(now, remote, ecn, packet_number as u64, packet, rest) {
             Ok(()) => {
                 trace!(id = ch.0, icid = %dst_cid, "connection incoming");
-                self.incoming_handshakes += 1;
                 Some((ch, conn))
             }
             Err(e) => {
@@ -677,16 +680,6 @@ where
             ecn: None,
             contents: buf,
         })
-    }
-
-    /// Free a handshake slot for reuse
-    ///
-    /// Every time an [`DatagramEvent::NewConnection`] is yielded by `Endpoint::handle`, a slot is
-    /// consumed, up to a limit of [`ServerConfig.accept_buffer`]. Calling this indicates the
-    /// application's acceptance of that connection and releases the slot for reuse.
-    pub fn accept(&mut self) {
-        // Don't overflow if a buggy caller invokes this too many times.
-        self.incoming_handshakes = self.incoming_handshakes.saturating_sub(1);
     }
 
     /// Unconditionally reject future incoming connections
@@ -743,7 +736,6 @@ where
             .field("connections", &self.connections)
             .field("config", &self.config)
             .field("server_config", &self.server_config)
-            .field("incoming_handshakes", &self.incoming_handshakes)
             .field("reject_new_connections", &self.reject_new_connections)
             .finish()
     }

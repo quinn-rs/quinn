@@ -2,7 +2,7 @@ use std::{
     cmp,
     collections::{BTreeMap, VecDeque},
     fmt, io, mem,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -46,7 +46,7 @@ mod spaces;
 use spaces::{PacketSpace, Retransmits, SentPacket};
 
 mod stats;
-use stats::ConnectionStats;
+pub use stats::ConnectionStats;
 
 mod streams;
 pub use streams::Streams;
@@ -57,7 +57,7 @@ use timer::{Timer, TimerTable};
 
 /// Protocol state and logic for a single QUIC connection
 ///
-/// Objects of this type receive [`ConnectionEvent`]s and emit [`EndpointEvents`] and application
+/// Objects of this type receive [`ConnectionEvent`]s and emit [`EndpointEvent`]s and application
 /// [`Event`]s to make progress. To handle timeouts, a `Connection` returns timer updates and
 /// expects timeouts through various methods. A number of simple getter methods are exposed
 /// to allow callers to inspect some of the connection state.
@@ -107,6 +107,10 @@ where
     handshake_cid: ConnectionId,
     /// The CID the peer initially chose, for use during the handshake
     rem_handshake_cid: ConnectionId,
+    /// The "real" local IP address which was was used to receive the initial packet.
+    /// This is only populated for the server case, and if known
+    local_ip: Option<IpAddr>,
+
     path: PathData,
     prev_path: Option<PathData>,
     state: State,
@@ -204,6 +208,7 @@ where
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         crypto: S,
         cid_gen: &dyn ConnectionIdGenerator,
         now: Instant,
@@ -238,6 +243,7 @@ where
                 config.congestion_controller_factory.build(now),
                 now,
             ),
+            local_ip,
             prev_path: None,
             side,
             state,
@@ -361,7 +367,10 @@ where
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
                 let mut buf = Vec::with_capacity(self.mtu as usize);
-                let builder = self.begin_packet(now, SpaceId::Data, false, &mut buf)?;
+                let buf_capacity = self.mtu as usize;
+
+                let builder =
+                    self.begin_packet(now, SpaceId::Data, false, &mut buf, buf_capacity)?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 builder.buffer.write(frame::Type::PATH_CHALLENGE);
                 builder.buffer.write(token);
@@ -409,6 +418,11 @@ where
         };
 
         let mut buf = Vec::with_capacity(self.mtu as usize);
+        // Reserving capacity can provide more capacity than we asked for.
+        // However we are not allowed to write more than MTU size. Therefore
+        // the maximum capacity is tracked separately.
+        let buf_capacity = self.mtu as usize;
+
         let mut coalesce = spaces.len() > 1;
         let pad_space = spaces.last().cloned().filter(|_| {
             self.side.is_client() && spaces.first() == Some(&SpaceId::Initial)
@@ -453,8 +467,13 @@ where
                 prev.update_unacked = false;
             }
 
-            let mut builder =
-                self.begin_packet(now, space_id, pad_space == Some(space_id), &mut buf)?;
+            let mut builder = self.begin_packet(
+                now,
+                space_id,
+                pad_space == Some(space_id),
+                &mut buf,
+                buf_capacity,
+            )?;
             coalesce = coalesce && !builder.short_header;
 
             let sent = if close {
@@ -485,7 +504,7 @@ where
                 coalesce = false;
                 None
             } else {
-                Some(self.populate_packet(space_id, &mut builder.buffer))
+                Some(self.populate_packet(space_id, &mut builder.buffer, buf_capacity))
             };
 
             let exact_number = builder.exact_number;
@@ -517,7 +536,7 @@ where
                 );
             }
 
-            if !coalesce || buf.capacity() - buf.len() < MIN_PACKET_SPACE {
+            if !coalesce || buf_capacity - buf.len() < MIN_PACKET_SPACE {
                 break;
             }
         }
@@ -553,6 +572,7 @@ where
         space_id: SpaceId,
         initial_padding: bool,
         buffer: &'a mut Vec<u8>,
+        buffer_capacity: usize,
     ) -> Option<PacketBuilder<'a>> {
         // Initiate key update if we're approaching the confidentiality limit
         let confidentiality_limit = self.spaces[space_id]
@@ -650,8 +670,7 @@ where
             // payload_len >= sample_size + 4 - pn_len - tag_len
             buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len)
         };
-        let max_size =
-            buffer.capacity() - partial_encode.start - partial_encode.header_len - tag_len;
+        let max_size = buffer_capacity - partial_encode.start - partial_encode.header_len - tag_len;
         Some(PacketBuilder {
             buffer,
             space: space_id,
@@ -685,7 +704,7 @@ where
         builder
             .buffer
             .resize(builder.buffer.len() + packet_crypto.tag_len(), 0);
-        debug_assert!(builder.buffer.len() < self.mtu as usize);
+        debug_assert!(builder.buffer.len() <= self.mtu as usize);
         let packet_buf = &mut builder.buffer[builder.partial_encode.start..];
         builder.partial_encode.finish(
             packet_buf,
@@ -903,10 +922,15 @@ where
         self.streams.write(stream, data)
     }
 
+    /// Returns connection statistics
+    pub fn stats(&self) -> ConnectionStats {
+        self.stats
+    }
+
     /// Stop accepting data on the given receive stream
     ///
-    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, a stream
-    /// cannot be read from any further.
+    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
+    /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
         assert!(
             id.dir() == Dir::Bi || id.initiator() != self.side,
@@ -942,11 +966,7 @@ where
         Ok(())
     }
 
-    /// Prepare to transmit an unreliable, unordered datagram
-    ///
-    /// The returned `DatagramSender` must be used to actually send a datagram. This allows the
-    /// caller to defer materializing a datagram until one can be sent immediately without redundant
-    /// checks
+    /// Queue an unreliable, unordered datagram for immediate transmission
     ///
     /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
     pub fn send_datagram(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
@@ -1070,6 +1090,24 @@ where
     /// The latest socket address for this connection's peer
     pub fn remote_address(&self) -> SocketAddr {
         self.path.remote
+    }
+
+    /// The local IP address which was used when the peer established
+    /// the connection
+    ///
+    /// This can be different from the address the endpoint is bound to, in case
+    /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
+    ///
+    /// This will return `None` for clients.
+    ///
+    /// Retrieving the local IP address is currently supported on the following
+    /// platforms:
+    /// - Linux
+    ///
+    /// On all non-supported platforms the local IP address will not be available,
+    /// and the method will return `None`.
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        self.local_ip
     }
 
     /// Current best estimate of this connection's latency (round-trip-time)
@@ -2619,7 +2657,12 @@ where
             .push_back(EndpointEventInner::NeedIdentifiers(now, n));
     }
 
-    fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> SentFrames {
+    fn populate_packet(
+        &mut self,
+        space_id: SpaceId,
+        buf: &mut Vec<u8>,
+        buf_capacity: usize,
+    ) -> SentFrames {
         let mut sent = SentFrames::default();
         let space = &mut self.spaces[space_id];
         let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
@@ -2639,7 +2682,7 @@ where
                 |x| &x.packet.local,
             )
             .tag_len();
-        let max_size = buf.capacity() - tag_len;
+        let max_size = buf_capacity - tag_len;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
 
         // HANDSHAKE_DONE
@@ -2917,7 +2960,7 @@ where
 
         crypto
             .decrypt(number, &packet.header_data, &mut packet.payload)
-            .map_err(|()| {
+            .map_err(|_| {
                 trace!("decryption failed with packet number {}", number);
                 None
             })?;
@@ -3098,28 +3141,32 @@ where
     }
 }
 
-/// Reasons why a connection might be lost.
+/// Reasons why a connection might be lost
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConnectionError {
-    /// The peer doesn't implement any supported version.
+    /// The peer doesn't implement any supported version
     #[error("peer doesn't implement any supported version")]
     VersionMismatch,
-    /// The peer violated the QUIC specification as understood by this implementation.
+    /// The peer violated the QUIC specification as understood by this implementation
     #[error("{0}")]
     TransportError(#[from] TransportError),
-    /// The peer's QUIC stack aborted the connection automatically.
+    /// The peer's QUIC stack aborted the connection automatically
     #[error("aborted by peer: {}", 0)]
     ConnectionClosed(frame::ConnectionClose),
-    /// The peer closed the connection.
+    /// The peer closed the connection
     #[error("closed by peer: {}", 0)]
     ApplicationClosed(frame::ApplicationClose),
-    /// The peer is unable to continue processing this connection, usually due to having restarted.
+    /// The peer is unable to continue processing this connection, usually due to having restarted
     #[error("reset by peer")]
     Reset,
-    /// The peer has become unreachable.
+    /// Communication with the peer has lapsed for longer than the negotiated idle timeout
+    ///
+    /// If neither side is sending keep-alives, a connection will time out after a long enough idle
+    /// period even if the peer is still reachable. See also [`TransportConfig::max_idle_timeout()`]
+    /// and [`TransportConfig::keep_alive_interval()`].
     #[error("timed out")]
     TimedOut,
-    /// The local application closed the connection.
+    /// The local application closed the connection
     #[error("closed")]
     LocallyClosed,
 }

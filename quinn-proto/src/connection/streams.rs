@@ -44,7 +44,7 @@ pub struct Streams {
     /// permitted to open but which have not yet been opened.
     send_streams: usize,
     /// Streams with outgoing data queued
-    pending: Vec<StreamId>,
+    pending: VecDeque<StreamId>,
 
     events: VecDeque<StreamEvent>,
     /// Streams blocked on connection-level flow control or stream window space
@@ -92,7 +92,7 @@ impl Streams {
             opened: [false, false],
             next_reported_remote: [0, 0],
             send_streams: 0,
-            pending: Vec::new(),
+            pending: VecDeque::new(),
             events: VecDeque::new(),
             connection_blocked: Vec::new(),
             max_data: 0,
@@ -256,7 +256,7 @@ impl Streams {
         self.unacked_data += len as u64;
         trace!(stream = %id, "wrote {} bytes", len);
         if !was_pending {
-            self.pending.push(id);
+            self.pending.push_back(id);
         }
         Ok(len)
     }
@@ -350,7 +350,12 @@ impl Streams {
             return Ok(ShouldTransmit::new(false));
         }
         let bytes_read = rs.assembler.bytes_read();
-        self.on_stream_frame(true, id);
+        let stopped = rs.assembler.is_stopped();
+        if stopped {
+            // Stopped streams should be disposed immediately on reset
+            self.recv.remove(&id);
+        }
+        self.on_stream_frame(!stopped, id);
 
         // Update flow control
         Ok(if bytes_read != final_offset {
@@ -380,7 +385,7 @@ impl Streams {
         let was_pending = stream.is_pending();
         stream.finish()?;
         if !was_pending {
-            self.pending.push(id);
+            self.pending.push_back(id);
         }
         Ok(())
     }
@@ -431,6 +436,9 @@ impl Streams {
             Some(s) => s,
             None => return Err(UnknownStream { _private: () }),
         };
+        if stream.assembler.is_stopped() {
+            return Err(UnknownStream { _private: () });
+        }
         stream.assembler.stop();
         let stop_sending = ShouldTransmit::new(!stream.is_finished());
 
@@ -584,7 +592,12 @@ impl Streams {
                 Some(x) => x,
                 None => break,
             };
-            let id = match self.pending.pop() {
+            // Poppping data from the front of the queue, storing as much data
+            // as possible in a single frame, and enqueing sending further
+            // remaining data at the end of the queue helps with fairness.
+            // Other streams will have a chance to write data before we touch
+            // this stream again.
+            let id = match self.pending.pop_front() {
                 Some(x) => x,
                 None => break,
             };
@@ -607,7 +620,7 @@ impl Streams {
                 stream.fin_pending = false;
             }
             if stream.is_pending() {
-                self.pending.push(id);
+                self.pending.push_back(id);
             }
 
             let meta = frame::StreamMeta { id, offsets, fin };
@@ -667,7 +680,7 @@ impl Streams {
             Some(x) => x,
         };
         if !stream.is_pending() {
-            self.pending.push(frame.id);
+            self.pending.push_back(frame.id);
         }
         stream.fin_pending |= frame.fin;
         stream.pending.retransmit(frame.offsets);
@@ -684,7 +697,7 @@ impl Streams {
                     continue;
                 }
                 if !stream.is_pending() {
-                    self.pending.push(id);
+                    self.pending.push_back(id);
                 }
                 stream.pending.retransmit_all_for_0rtt();
             }
@@ -913,6 +926,9 @@ impl Send {
     }
 
     fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
+        if !self.is_writable() {
+            return Err(WriteError::UnknownStream);
+        }
         if let Some(error_code) = self.stop_reason {
             return Err(WriteError::Stopped(error_code));
         }
@@ -972,14 +988,7 @@ impl Send {
     }
 
     fn is_writable(&self) -> bool {
-        use SendState::*;
-        // A stream is writable in Ready state or if it's been stopped and the stop hasn't been
-        // reported
-        match self.state {
-            SendState::Ready => true,
-            ResetSent | ResetRecvd => self.stop_reason.is_some(),
-            _ => false,
-        }
+        matches!(self.state, SendState::Ready)
     }
 }
 
@@ -1029,10 +1038,7 @@ pub enum WriteError {
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
     #[error("stopped by peer: code {}", 0)]
     Stopped(VarInt),
-    /// Unknown stream
-    ///
-    /// Occurs when attempting to access a stream after finishing it or observing that it has been
-    /// stopped.
+    /// The stream has not been opened or has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
 }
@@ -1106,6 +1112,9 @@ impl Recv {
     }
 
     fn read_unordered(&mut self) -> Result<Option<(Bytes, u64)>, ReadError> {
+        if self.assembler.is_stopped() {
+            return Err(ReadError::UnknownStream);
+        }
         // Return data we already have buffered, regardless of state
         if let Some((offset, bytes)) = self.assembler.read_unordered() {
             Ok(Some((bytes, offset)))
@@ -1219,10 +1228,7 @@ pub enum ReadError {
     /// Carries an application-defined error code.
     #[error("reset by peer: code {}", 0)]
     Reset(VarInt),
-    /// Unknown stream
-    ///
-    /// Occurs when attempting to access a stream after stopping it, or observing that it has been
-    /// finished or reset.
+    /// The stream has not been opened or was already stopped, finished, or reset
     #[error("unknown stream")]
     UnknownStream,
     /// Attempted an ordered read following an unordered read
@@ -1277,7 +1283,7 @@ pub enum FinishError {
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
     #[error("stopped by peer: code {}", 0)]
     Stopped(VarInt),
-    /// The stream has not yet been created or was already finished or stopped.
+    /// The stream has not been opened or was already finished or reset
     #[error("unknown stream")]
     UnknownStream,
 }
@@ -1321,8 +1327,9 @@ pub enum StreamEvent {
     },
 }
 
-/// Unknown stream ID
-#[derive(Debug)]
+/// Error indicating that a stream has not been opened or has already been finished or reset
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("unknown stream")]
 pub struct UnknownStream {
     _private: (),
 }
@@ -1437,7 +1444,7 @@ mod tests {
     }
 
     #[test]
-    fn stopped() {
+    fn recv_stopped() {
         let mut client = make(Side::Client);
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
         let initial_max = client.local_max_data;
@@ -1460,6 +1467,9 @@ mod tests {
                 stop_sending: ShouldTransmit::new(true),
             }
         );
+        assert!(client.stop(id).is_err());
+        assert_eq!(client.read(id, &mut []), Err(ReadError::UnknownStream));
+        assert_eq!(client.read_unordered(id), Err(ReadError::UnknownStream));
         assert_eq!(client.local_max_data - initial_max, 32);
         assert_eq!(
             client
@@ -1474,5 +1484,61 @@ mod tests {
         );
         assert_eq!(client.local_max_data - initial_max, 48);
         assert!(!client.recv.contains_key(&id));
+    }
+
+    #[test]
+    fn stopped_reset() {
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        // Server opens stream
+        assert_eq!(
+            client
+                .received(frame::Stream {
+                    id,
+                    offset: 0,
+                    fin: false,
+                    data: Bytes::from_static(&[0; 32]),
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
+        // Client stops it
+        assert_eq!(
+            client.stop(id).unwrap(),
+            StopResult {
+                max_data: ShouldTransmit::new(false),
+                stop_sending: ShouldTransmit::new(true),
+            }
+        );
+        // Server complies
+        assert_eq!(
+            client
+                .received_reset(frame::ResetStream {
+                    id,
+                    error_code: 0u32.into(),
+                    final_offset: 32,
+                })
+                .unwrap(),
+            ShouldTransmit::new(false)
+        );
+        assert!(!client.recv.contains_key(&id), "stream state is freed");
+    }
+
+    #[test]
+    fn send_stopped() {
+        let params = TransportParameters {
+            initial_max_streams_uni: 1u32.into(),
+            initial_max_data: 42u32.into(),
+            initial_max_stream_data_uni: 42u32.into(),
+            ..Default::default()
+        };
+        let mut server = make(Side::Server);
+        server.set_params(&params);
+        let id = server.open(&params, Dir::Uni).unwrap();
+        let reason = 0u32.into();
+        server.received_stop_sending(id, reason);
+        assert_eq!(server.write(id, &[]), Err(WriteError::Stopped(reason)));
+        server.reset(id).unwrap();
+        assert_eq!(server.write(id, &[]), Err(WriteError::UnknownStream));
     }
 }

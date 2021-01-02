@@ -28,6 +28,7 @@ fn version_negotiate_server() {
         now,
         client_addr,
         None,
+        None,
         // Long-header packet with reserved version number
         hex!("80 0a1a2a3a 04 00000000 04 00000000 00")[..].into(),
     );
@@ -63,6 +64,7 @@ fn version_negotiate_client() {
     let opt_event = client.handle(
         now,
         server_addr,
+        None,
         None,
         // Version negotiation packet for reserved version
         hex!(
@@ -378,6 +380,7 @@ fn congestion() {
         .unwrap();
 }
 
+#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 #[test]
 fn high_latency_handshake() {
     let _guard = subscribe();
@@ -870,12 +873,12 @@ fn idle_timeout() {
 }
 
 #[test]
-fn accept_buffer_full() {
+fn concurrent_connections_full() {
     let _guard = subscribe();
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
-            accept_buffer: 0,
+            concurrent_connections: 0,
             ..server_config()
         },
     );

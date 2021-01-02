@@ -453,8 +453,8 @@ where
 
     /// Stop accepting data
     ///
-    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, a stream
-    /// cannot be read from any further.
+    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
+    /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt && conn.check_0rtt().is_err() {
@@ -552,10 +552,7 @@ where
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         Poll::Ready(Ok(
-            match ready!(RecvStream::poll_read(self.get_mut(), cx, buf))? {
-                Some(n) => n,
-                None => 0,
-            },
+            ready!(RecvStream::poll_read(self.get_mut(), cx, buf))?.unwrap_or(0)
         ))
     }
 }
@@ -605,7 +602,7 @@ pub enum ReadError {
     /// The connection was closed.
     #[error("connection closed: {0}")]
     ConnectionClosed(ConnectionError),
-    /// Unknown stream
+    /// The stream has already been stopped, finished, or reset
     #[error("unknown stream")]
     UnknownStream,
     /// Attempted an ordered read following an unordered read
@@ -628,11 +625,8 @@ impl From<ReadError> for io::Error {
     fn from(x: ReadError) -> Self {
         use self::ReadError::*;
         let kind = match x {
-            ConnectionClosed(e) => {
-                return e.into();
-            }
             Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            UnknownStream => io::ErrorKind::NotConnected,
+            ConnectionClosed(_) | UnknownStream => io::ErrorKind::NotConnected,
             IllegalOrderedRead => io::ErrorKind::InvalidInput,
         };
         io::Error::new(kind, x)
@@ -650,7 +644,7 @@ pub enum WriteError {
     /// The connection was closed.
     #[error("connection closed: {0}")]
     ConnectionClosed(#[source] ConnectionError),
-    /// Unknown stream
+    /// The stream has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
     /// This was a 0-RTT stream and the server rejected it.
@@ -669,7 +663,7 @@ pub enum StoppedError {
     /// The connection was closed.
     #[error("connection closed: {0}")]
     ConnectionClosed(#[source] ConnectionError),
-    /// Unknown stream
+    /// The stream has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
     /// This was a 0-RTT stream and the server rejected it.
@@ -686,11 +680,8 @@ impl From<WriteError> for io::Error {
     fn from(x: WriteError) -> Self {
         use self::WriteError::*;
         let kind = match x {
-            ConnectionClosed(e) => {
-                return e.into();
-            }
             Stopped(_) | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            UnknownStream => io::ErrorKind::NotConnected,
+            ConnectionClosed(_) | UnknownStream => io::ErrorKind::NotConnected,
         };
         io::Error::new(kind, x)
     }
@@ -830,11 +821,15 @@ where
     }
 }
 
-#[derive(Debug)]
-pub struct UnknownStream {}
+/// Error indicating that a stream has already been finished or reset
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("unknown stream")]
+pub struct UnknownStream {
+    _private: (),
+}
 
 impl From<proto::UnknownStream> for UnknownStream {
     fn from(_: proto::UnknownStream) -> Self {
-        UnknownStream {}
+        UnknownStream { _private: () }
     }
 }
