@@ -12,7 +12,7 @@
 //! related `Connection`. `Connection` types contain the bulk of the protocol logic related to
 //! managing a single connection and all the related state (such as streams).
 
-#![warn(missing_docs)]
+#![cfg_attr(not(fuzzing), warn(missing_docs))]
 #![cfg_attr(test, allow(dead_code))]
 // Fixes welcome:
 #![allow(clippy::cognitive_complexity)]

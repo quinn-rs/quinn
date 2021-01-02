@@ -18,7 +18,6 @@ use crate::{
 // across QUIC versions), which gives us the destination CID and allows us
 // to inspect the version and packet type (which depends on the version).
 // This information allows us to fully decode and decrypt the packet.
-#[allow(missing_docs)]
 #[derive(Debug)]
 pub struct PartialDecode {
     plain_header: PlainHeader,
@@ -27,7 +26,6 @@ pub struct PartialDecode {
 
 impl PartialDecode {
     #![allow(clippy::len_without_is_empty)]
-    #[allow(missing_docs)]
     pub fn new(
         bytes: BytesMut,
         local_cid_len: usize,

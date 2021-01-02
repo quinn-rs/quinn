@@ -735,7 +735,6 @@ impl<'a> Iterator for AckIter<'a> {
     }
 }
 
-#[doc(hidden)]
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 #[derive(Debug, Copy, Clone)]
 pub struct ResetStream {
@@ -749,7 +748,6 @@ impl FrameStruct for ResetStream {
 }
 
 impl ResetStream {
-    #[doc(hidden)]
     pub fn encode<W: BufMut>(&self, out: &mut W) {
         out.write(Type::RESET_STREAM); // 1 byte
         out.write(self.id); // <= 8 bytes
