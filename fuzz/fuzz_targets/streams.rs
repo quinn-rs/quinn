@@ -1,6 +1,6 @@
 #![no_main]
 
-use arbitrary::{Arbitrary, Unstructured};
+use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 extern crate proto;
@@ -16,7 +16,7 @@ struct StreamParams {
     receive_window: u16,
     stream_receive_window: u16,
     dir: Dir,
-    transport_params: TransportParameters
+    transport_params: TransportParameters,
 }
 
 #[derive(Arbitrary, Debug)]
@@ -49,16 +49,16 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
                 stream.accept(dir);
             }
             Operation::Finish(id) => {
-                stream.finish(id);
+                let _ = stream.finish(id);
             }
             Operation::ReceivedStopSending(sid, err_code) => {
                 stream.received_stop_sending(sid, err_code);
             }
             Operation::ReceivedReset(rs) => {
-                stream.received_reset(rs);
+                let _ = stream.received_reset(rs);
             }
             Operation::Reset(id) => {
-                stream.reset(id);
+                let _ = stream.reset(id);
             }
         }
     }
