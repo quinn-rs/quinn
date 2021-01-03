@@ -72,7 +72,6 @@ pub struct Streams {
     stream_receive_window: u64,
 }
 
-#[doc(hidden)]
 impl Streams {
     pub fn new(
         side: Side,
