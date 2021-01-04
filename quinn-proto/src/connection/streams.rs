@@ -1065,13 +1065,7 @@ impl Recv {
             }
         }
 
-        let prev_end = self.assembler.end();
-        let new_bytes = end.saturating_sub(prev_end);
-        let stream_max_data = self.assembler.bytes_read() + receive_window;
-        if end > stream_max_data || received + new_bytes > max_data {
-            debug!(stream = %frame.id, received, new_bytes, max_data, end, stream_max_data, "flow control error");
-            return Err(TransportError::FLOW_CONTROL_ERROR(""));
-        }
+        let new_bytes = self.credit_consumed_by(end, received, max_data, receive_window)?;
 
         if frame.fin {
             if self.assembler.is_stopped() {
@@ -1211,6 +1205,29 @@ impl Recv {
         // reset streams.
         self.assembler.clear();
         Ok(true)
+    }
+
+    /// Compute the amount of flow control credit consumed, or return an error if more was consumed
+    /// than issued
+    fn credit_consumed_by(
+        &self,
+        offset: u64,
+        received: u64,
+        max_data: u64,
+        receive_window: u64,
+    ) -> Result<u64, TransportError> {
+        let prev_end = self.assembler.end();
+        let new_bytes = offset.saturating_sub(prev_end);
+        let stream_max_data = self.assembler.bytes_read() + receive_window;
+        if offset > stream_max_data || received + new_bytes > max_data {
+            debug!(
+                received,
+                new_bytes, max_data, offset, stream_max_data, "flow control error"
+            );
+            return Err(TransportError::FLOW_CONTROL_ERROR(""));
+        }
+
+        Ok(new_bytes)
     }
 }
 
