@@ -2,7 +2,7 @@ use std::{
     io,
     io::IoSliceMut,
     mem::{self, MaybeUninit},
-    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
     ptr,
 };
@@ -273,7 +273,7 @@ pub fn caps() -> UdpCapabilities {
     *CAPABILITIES
 }
 
-const CMSG_LEN: usize = 64;
+const CMSG_LEN: usize = 80;
 
 fn prepare_msg(
     transmit: &Transmit,
@@ -310,6 +310,32 @@ fn prepare_msg(
         );
 
         gso::set_segment_size(&mut encoder, segment_size as u16);
+    }
+
+    if let Some(ip) = &transmit.src_ip {
+        if cfg!(target_os = "linux") {
+            match ip {
+                IpAddr::V4(v4) => {
+                    let pktinfo = libc::in_pktinfo {
+                        ipi_ifindex: 0,
+                        ipi_spec_dst: unsafe {
+                            *(v4 as *const Ipv4Addr as *const () as *const libc::in_addr)
+                        },
+                        ipi_addr: libc::in_addr { s_addr: 0 },
+                    };
+                    encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
+                }
+                IpAddr::V6(v6) => {
+                    let pktinfo = libc::in6_pktinfo {
+                        ipi6_ifindex: 0,
+                        ipi6_addr: unsafe {
+                            *(v6 as *const Ipv6Addr as *const () as *const libc::in6_addr)
+                        },
+                    };
+                    encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
+                }
+            }
+        }
     }
 
     encoder.finish();

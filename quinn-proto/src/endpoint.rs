@@ -190,6 +190,7 @@ where
                         ecn: None,
                         contents: buf,
                         segment_size: None,
+                        src_ip: local_ip,
                     });
                     return None;
                 }
@@ -253,7 +254,7 @@ where
 
         if !self.is_server() {
             debug!("packet for unrecognized connection {}", dst_cid);
-            self.stateless_reset(datagram_len, remote, &dst_cid);
+            self.stateless_reset(datagram_len, remote, local_ip, &dst_cid);
             return None;
         }
 
@@ -288,7 +289,7 @@ where
         //
 
         if !dst_cid.is_empty() {
-            self.stateless_reset(datagram_len, remote, &dst_cid);
+            self.stateless_reset(datagram_len, remote, local_ip, &dst_cid);
         } else {
             trace!("dropping unrecognized short packet without ID");
         }
@@ -299,6 +300,7 @@ where
         &mut self,
         inciting_dgram_len: usize,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         dst_cid: &ConnectionId,
     ) {
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
@@ -336,6 +338,7 @@ where
             ecn: None,
             contents: buf,
             segment_size: None,
+            src_ip: local_ip,
         });
     }
 
@@ -535,6 +538,7 @@ where
             debug!("refusing connection");
             self.initial_close(
                 remote,
+                local_ip,
                 crypto,
                 &src_cid,
                 &temp_loc_cid,
@@ -553,6 +557,7 @@ where
             );
             self.initial_close(
                 remote,
+                local_ip,
                 crypto,
                 &src_cid,
                 &temp_loc_cid,
@@ -590,6 +595,7 @@ where
                     ecn: None,
                     contents: buf,
                     segment_size: None,
+                    src_ip: local_ip,
                 });
                 return None;
             }
@@ -608,6 +614,7 @@ where
                     debug!("rejecting invalid stateless retry token");
                     self.initial_close(
                         remote,
+                        local_ip,
                         crypto,
                         &src_cid,
                         &temp_loc_cid,
@@ -645,7 +652,7 @@ where
                 debug!("handshake failed: {}", e);
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 if let ConnectionError::TransportError(e) = e {
-                    self.initial_close(remote, crypto, &src_cid, &temp_loc_cid, e);
+                    self.initial_close(remote, local_ip, crypto, &src_cid, &temp_loc_cid, e);
                 }
                 None
             }
@@ -655,6 +662,7 @@ where
     fn initial_close(
         &mut self,
         destination: SocketAddr,
+        local_ip: Option<IpAddr>,
         crypto: &Keys<S>,
         remote_id: &ConnectionId,
         local_id: &ConnectionId,
@@ -683,6 +691,7 @@ where
             ecn: None,
             contents: buf,
             segment_size: None,
+            src_ip: local_ip,
         })
     }
 

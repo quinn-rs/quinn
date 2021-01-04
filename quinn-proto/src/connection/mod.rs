@@ -365,6 +365,7 @@ where
                     contents: buf,
                     ecn: None,
                     segment_size: None,
+                    src_ip: self.local_ip,
                 });
             }
         }
@@ -554,6 +555,7 @@ where
                 None
             },
             segment_size: None,
+            src_ip: self.local_ip,
         })
     }
 

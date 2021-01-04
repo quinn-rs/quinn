@@ -18,7 +18,13 @@
 #![allow(clippy::cognitive_complexity)]
 #![allow(clippy::too_many_arguments)]
 
-use std::{convert::TryInto, fmt, net::SocketAddr, ops, time::Duration};
+use std::{
+    convert::TryInto,
+    fmt,
+    net::{IpAddr, SocketAddr},
+    ops,
+    time::Duration,
+};
 
 mod cid_queue;
 #[doc(hidden)]
@@ -277,6 +283,8 @@ pub struct Transmit {
     /// The segment size if this transmission contains multiple datagrams.
     /// This is `None` if the transmit only contains a single datagram
     pub segment_size: Option<usize>,
+    /// Optional source IP address for the datagram
+    pub src_ip: Option<IpAddr>,
 }
 
 //
