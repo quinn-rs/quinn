@@ -291,7 +291,7 @@ impl Streams {
             self.local_max_data,
             self.stream_receive_window,
         )?;
-        self.data_recvd += new_bytes;
+        self.data_recvd = self.data_recvd.saturating_add(new_bytes);
 
         if !rs.assembler.is_stopped() {
             self.on_stream_frame(true, stream);
@@ -355,7 +355,9 @@ impl Streams {
         // Update flow control
         Ok(if bytes_read != final_offset.into() {
             // bytes_read is always <= end, so this won't underflow.
-            self.data_recvd += u64::from(final_offset) - end;
+            self.data_recvd = self
+                .data_recvd
+                .saturating_add(u64::from(final_offset) - end);
             self.add_read_credits(u64::from(final_offset) - bytes_read)
         } else {
             ShouldTransmit::new(false)
