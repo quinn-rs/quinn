@@ -15,6 +15,15 @@ pub struct PathData {
     pub pacing: Pacer,
     pub challenge: Option<u64>,
     pub challenge_pending: bool,
+    /// Whether we're certain the peer can both send and receive on this address
+    ///
+    /// Initially equal to `use_stateless_retry` for servers, and becomes false again on every
+    /// migration. Always true for clients.
+    pub validated: bool,
+    /// Total size of all UDP datagrams sent on this path
+    pub total_sent: u64,
+    /// Total size of all UDP datagrams received on this path
+    pub total_recvd: u64,
 }
 
 impl PathData {
@@ -23,6 +32,7 @@ impl PathData {
         initial_rtt: Duration,
         congestion: Box<dyn congestion::Controller>,
         now: Instant,
+        validated: bool,
     ) -> Self {
         PathData {
             remote,
@@ -32,6 +42,9 @@ impl PathData {
             congestion,
             challenge: None,
             challenge_pending: false,
+            validated,
+            total_sent: 0,
+            total_recvd: 0,
         }
     }
 
@@ -45,7 +58,16 @@ impl PathData {
             congestion,
             challenge: None,
             challenge_pending: false,
+            validated: false,
+            total_sent: 0,
+            total_recvd: 0,
         }
+    }
+
+    /// Indicates whether we're a server that hasn't validated the peer's address and hasn't
+    /// received enough data from the peer to permit additional sending
+    pub fn anti_amplification_blocked(&self, mtu: u16) -> bool {
+        !self.validated && self.total_recvd * 3 < self.total_sent + u64::from(mtu)
     }
 }
 
