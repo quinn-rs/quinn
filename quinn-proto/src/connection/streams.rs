@@ -347,10 +347,10 @@ impl Streams {
         self.on_stream_frame(!stopped, id);
 
         // Update flow control
-        Ok(if bytes_read != final_offset {
+        Ok(if bytes_read != final_offset.into() {
             // bytes_read is always <= end, so this won't underflow.
-            self.data_recvd += final_offset - end;
-            self.add_read_credits(final_offset - bytes_read)
+            self.data_recvd += u64::from(final_offset) - end;
+            self.add_read_credits(u64::from(final_offset) - bytes_read)
         } else {
             ShouldTransmit::new(false)
         })
@@ -474,7 +474,7 @@ impl Streams {
             frame::ResetStream {
                 id,
                 error_code,
-                final_offset: stream.offset(),
+                final_offset: VarInt::try_from(stream.offset()).expect("impossibly large offset"),
             }
             .encode(buf);
             stats.reset_stream += 1;
@@ -1186,13 +1186,13 @@ impl Recv {
     }
 
     /// Returns `false` iff the reset was redundant
-    fn reset(&mut self, error_code: VarInt, final_offset: u64) -> Result<bool, TransportError> {
+    fn reset(&mut self, error_code: VarInt, final_offset: VarInt) -> Result<bool, TransportError> {
         // Validate final_offset
         if let Some(offset) = self.final_offset() {
-            if offset != final_offset {
+            if offset != final_offset.into() {
                 return Err(TransportError::FINAL_SIZE_ERROR("inconsistent value"));
             }
-        } else if self.assembler.end() > final_offset {
+        } else if self.assembler.end() > final_offset.into() {
             return Err(TransportError::FINAL_SIZE_ERROR(
                 "lower than high water mark",
             ));
@@ -1202,7 +1202,7 @@ impl Recv {
             return Ok(false);
         }
         self.state = RecvState::ResetRecvd {
-            size: final_offset,
+            size: final_offset.into(),
             error_code,
         };
         // Nuke buffers so that future reads fail immediately, which ensures future reads don't
@@ -1374,7 +1374,7 @@ mod tests {
                 .received_reset(frame::ResetStream {
                     id,
                     error_code: 0u32.into(),
-                    final_offset: 4096,
+                    final_offset: 4096u32.into(),
                 })
                 .unwrap(),
             ShouldTransmit::new(false)
@@ -1406,7 +1406,7 @@ mod tests {
                 .received_reset(frame::ResetStream {
                     id,
                     error_code: 0u32.into(),
-                    final_offset: 4096,
+                    final_offset: 4096u32.into(),
                 })
                 .unwrap(),
             ShouldTransmit::new(false)
@@ -1424,7 +1424,7 @@ mod tests {
                 .received_reset(frame::ResetStream {
                     id,
                     error_code: 0u32.into(),
-                    final_offset: 4096,
+                    final_offset: 4096u32.into(),
                 })
                 .unwrap(),
             ShouldTransmit::new(false)
@@ -1435,7 +1435,7 @@ mod tests {
                 .received_reset(frame::ResetStream {
                     id,
                     error_code: 0u32.into(),
-                    final_offset: 4096,
+                    final_offset: 4096u32.into(),
                 })
                 .unwrap(),
             ShouldTransmit::new(false)
@@ -1516,7 +1516,7 @@ mod tests {
                 .received_reset(frame::ResetStream {
                     id,
                     error_code: 0u32.into(),
-                    final_offset: 32,
+                    final_offset: 32u32.into(),
                 })
                 .unwrap(),
             ShouldTransmit::new(false)
