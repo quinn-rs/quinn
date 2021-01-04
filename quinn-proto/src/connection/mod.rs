@@ -539,7 +539,7 @@ where
         }
 
         trace!("sending {} byte datagram", buf.len());
-        self.path.total_sent = self.path.total_sent.wrapping_add(buf.len() as u64);
+        self.path.total_sent = self.path.total_sent.saturating_add(buf.len() as u64);
 
         self.stats.udp_tx.datagrams += 1;
         self.stats.udp_tx.bytes += buf.len() as u64;
@@ -741,7 +741,7 @@ where
                 self.path.total_recvd = self
                     .path
                     .total_recvd
-                    .wrapping_add(first_decode.len() as u64);
+                    .saturating_add(first_decode.len() as u64);
 
                 self.handle_decode(now, remote, ecn, first_decode);
                 if let Some(data) = remaining {
@@ -1795,7 +1795,7 @@ where
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
     ) {
-        self.path.total_recvd = self.path.total_recvd.wrapping_add(data.len() as u64);
+        self.path.total_recvd = self.path.total_recvd.saturating_add(data.len() as u64);
         let mut remaining = Some(data);
         while let Some(data) = remaining {
             match PartialDecode::new(data, self.local_cid_state.cid_len()) {
