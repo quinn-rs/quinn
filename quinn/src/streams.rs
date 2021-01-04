@@ -389,6 +389,27 @@ where
         self.poll_read_generic(cx, |conn, stream| conn.inner.read_chunk(stream))
     }
 
+    /// Read the next segments of data
+    ///
+    /// Fills `bufs` with the segments of data beginning immediately after the
+    /// last data yielded by `read` or `read_chunk`, or `None` if the stream was
+    /// finished.
+    ///
+    /// Slightly more efficient than `read` due to not copying. Chunk boundaries
+    /// do not correspond to peer writes, and hence cannot be used as framing.
+    pub fn read_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> ReadChunks<'a, S> {
+        ReadChunks { stream: self, bufs }
+    }
+
+    /// Foundation of [`read_chunks()`]: RecvStream::read_chunks
+    fn poll_read_chunks(
+        &mut self,
+        cx: &mut Context,
+        bufs: &mut [Bytes],
+    ) -> Poll<Result<Option<usize>, ReadError>> {
+        self.poll_read_generic(cx, |conn, stream| conn.inner.read_chunks(stream, bufs))
+    }
+
     /// Convenience method to read all remaining data into a buffer
     ///
     /// The returned future fails with [`ReadToEndError::TooLong`] if it's longer than `size_limit`
@@ -789,6 +810,28 @@ where
     type Output = Result<Option<Bytes>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.stream.poll_read_chunk(cx)
+    }
+}
+
+/// Future produced by [`RecvStream::read_chunks()`].
+///
+/// [`RecvStream::read_chunks()`]: crate::generic::RecvStream::read_chunks
+pub struct ReadChunks<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut RecvStream<S>,
+    bufs: &'a mut [Bytes],
+}
+
+impl<'a, S> Future for ReadChunks<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    type Output = Result<Option<usize>, ReadError>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        this.stream.poll_read_chunks(cx, this.bufs)
     }
 }
 

@@ -1692,3 +1692,80 @@ fn repeated_request_response() {
         assert_matches!(pair.client_conn_mut(client_ch).read_unordered(s), Ok(None));
     }
 }
+
+#[test]
+fn read_chunks() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            stream_window_bidi: 1u32.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    let mut empty = vec![];
+    let mut chunks = vec![Bytes::new(), Bytes::new()];
+    const ONE: &[u8] = b"ONE";
+    const TWO: &[u8] = b"TWO";
+    const THREE: &[u8] = b"THREE";
+    for _ in 0..3 {
+        let s = pair.client_conn_mut(client_ch).open(Dir::Bi).unwrap();
+
+        pair.client_conn_mut(client_ch).write(s, ONE).unwrap();
+        pair.drive();
+        pair.client_conn_mut(client_ch).write(s, TWO).unwrap();
+        pair.drive();
+        pair.client_conn_mut(client_ch).write(s, THREE).unwrap();
+
+        pair.drive();
+
+        assert_eq!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(s));
+
+        // Read into an empty slice can't do much you, but doesn't crash
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut empty),
+            Ok(Some(0))
+        );
+
+        // Read until `chunks` is filled
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(Some(2))
+        );
+        assert_eq!(&chunks, &[ONE, TWO]);
+
+        // Read the rest
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(Some(1))
+        );
+        assert_eq!(&chunks[..1], &[THREE]);
+
+        // We've read everything, stream is now blocked
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Err(ReadError::Blocked)
+        );
+
+        // Read a new chunk after we've been blocked
+        pair.client_conn_mut(client_ch).write(s, ONE).unwrap();
+        pair.drive();
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(Some(1))
+        );
+        assert_eq!(&chunks[..1], &[ONE]);
+
+        // Stream finishes by yeilding `Ok(None)`
+        pair.client_conn_mut(client_ch).finish(s).unwrap();
+        pair.drive();
+        assert_matches!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(None)
+        );
+
+        pair.drive();
+    }
+}
