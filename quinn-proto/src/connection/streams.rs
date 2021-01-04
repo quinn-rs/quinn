@@ -832,7 +832,10 @@ impl Streams {
             assert!(self.send.insert(id, stream).is_none());
         }
         if bi || remote {
-            assert!(self.recv.insert(id, Recv::new()).is_none());
+            assert!(self
+                .recv
+                .insert(id, Recv::new(self.stream_receive_window))
+                .is_none());
         }
     }
 
@@ -1048,8 +1051,12 @@ struct Recv {
 }
 
 impl Recv {
-    fn new() -> Self {
-        Self::default()
+    fn new(initial_max_data: u64) -> Self {
+        Self {
+            state: RecvState::default(),
+            assembler: Assembler::new(),
+            sent_max_stream_data: initial_max_data,
+        }
     }
 
     fn ingest(
