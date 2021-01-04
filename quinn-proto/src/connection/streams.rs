@@ -333,7 +333,13 @@ impl Streams {
         };
 
         // State transition
-        if !rs.reset(error_code, final_offset)? {
+        if !rs.reset(
+            error_code,
+            final_offset,
+            self.data_recvd,
+            self.local_max_data,
+            self.stream_receive_window,
+        )? {
             // Redundant reset
             return Ok(ShouldTransmit::new(false));
         }
@@ -1180,7 +1186,14 @@ impl Recv {
     }
 
     /// Returns `false` iff the reset was redundant
-    fn reset(&mut self, error_code: VarInt, final_offset: VarInt) -> Result<bool, TransportError> {
+    fn reset(
+        &mut self,
+        error_code: VarInt,
+        final_offset: VarInt,
+        received: u64,
+        max_data: u64,
+        receive_window: u64,
+    ) -> Result<bool, TransportError> {
         // Validate final_offset
         if let Some(offset) = self.final_offset() {
             if offset != final_offset.into() {
@@ -1191,6 +1204,7 @@ impl Recv {
                 "lower than high water mark",
             ));
         }
+        self.credit_consumed_by(final_offset.into(), received, max_data, receive_window)?;
 
         if matches!(self.state, RecvState::ResetRecvd { .. } | RecvState::Closed) {
             return Ok(false);
@@ -1354,6 +1368,7 @@ pub struct UnknownStream {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::TransportErrorCode;
 
     fn make(side: Side) -> Streams {
         Streams::new(
@@ -1557,5 +1572,21 @@ mod tests {
         assert_eq!(server.write(id, &[]), Err(WriteError::Stopped(reason)));
         server.reset(id).unwrap();
         assert_eq!(server.write(id, &[]), Err(WriteError::UnknownStream));
+    }
+
+    #[test]
+    fn final_offset_flow_control() {
+        let mut client = make(Side::Client);
+        assert_eq!(
+            client
+                .received_reset(frame::ResetStream {
+                    id: StreamId::new(Side::Server, Dir::Uni, 0),
+                    error_code: 0u32.into(),
+                    final_offset: VarInt::MAX,
+                })
+                .unwrap_err()
+                .code,
+            TransportErrorCode::FLOW_CONTROL_ERROR
+        );
     }
 }
