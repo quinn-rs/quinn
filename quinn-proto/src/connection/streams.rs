@@ -285,12 +285,7 @@ impl Streams {
             return Ok(ShouldTransmit::new(false));
         }
 
-        let new_bytes = rs.ingest(
-            frame,
-            self.data_recvd,
-            self.local_max_data,
-            self.stream_receive_window,
-        )?;
+        let new_bytes = rs.ingest(frame, self.data_recvd, self.local_max_data)?;
         self.data_recvd = self.data_recvd.saturating_add(new_bytes);
 
         if !rs.assembler.is_stopped() {
@@ -338,7 +333,6 @@ impl Streams {
             final_offset,
             self.data_recvd,
             self.local_max_data,
-            self.stream_receive_window,
         )? {
             // Redundant reset
             return Ok(ShouldTransmit::new(false));
@@ -1064,7 +1058,6 @@ impl Recv {
         frame: frame::Stream,
         received: u64,
         max_data: u64,
-        receive_window: u64,
     ) -> Result<u64, TransportError> {
         let end = frame.offset + frame.data.len() as u64;
         if end >= 2u64.pow(62) {
@@ -1080,7 +1073,7 @@ impl Recv {
             }
         }
 
-        let new_bytes = self.credit_consumed_by(end, received, max_data, receive_window)?;
+        let new_bytes = self.credit_consumed_by(end, received, max_data)?;
 
         if frame.fin {
             if self.assembler.is_stopped() {
@@ -1201,7 +1194,6 @@ impl Recv {
         final_offset: VarInt,
         received: u64,
         max_data: u64,
-        receive_window: u64,
     ) -> Result<bool, TransportError> {
         // Validate final_offset
         if let Some(offset) = self.final_offset() {
@@ -1213,7 +1205,7 @@ impl Recv {
                 "lower than high water mark",
             ));
         }
-        self.credit_consumed_by(final_offset.into(), received, max_data, receive_window)?;
+        self.credit_consumed_by(final_offset.into(), received, max_data)?;
 
         if matches!(self.state, RecvState::ResetRecvd { .. } | RecvState::Closed) {
             return Ok(false);
@@ -1237,15 +1229,17 @@ impl Recv {
         offset: u64,
         received: u64,
         max_data: u64,
-        receive_window: u64,
     ) -> Result<u64, TransportError> {
         let prev_end = self.assembler.end();
         let new_bytes = offset.saturating_sub(prev_end);
-        let stream_max_data = self.assembler.bytes_read() + receive_window;
-        if offset > stream_max_data || received + new_bytes > max_data {
+        if offset > self.sent_max_stream_data || received + new_bytes > max_data {
             debug!(
                 received,
-                new_bytes, max_data, offset, stream_max_data, "flow control error"
+                new_bytes,
+                max_data,
+                offset,
+                stream_max_data = self.sent_max_stream_data,
+                "flow control error"
             );
             return Err(TransportError::FLOW_CONTROL_ERROR(""));
         }
