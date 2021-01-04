@@ -213,6 +213,23 @@ impl Streams {
         }))
     }
 
+    pub fn read_chunks(
+        &mut self,
+        id: StreamId,
+        bufs: &mut [Bytes],
+    ) -> Result<Option<ReadChunksResult>, ReadError> {
+        let res = self.try_read(id, |rs: &mut Recv| rs.read_chunks(bufs))?;
+        Ok(res.map(|(n_bufs, max_stream_data)| {
+            let len = bufs[..n_bufs].iter().fold(0, |t, b| t + b.len());
+            let max_data = self.add_read_credits(len as u64);
+            ReadChunksResult {
+                n_bufs,
+                max_stream_data,
+                max_data,
+            }
+        }))
+    }
+
     fn try_read<T, U>(
         &mut self,
         id: StreamId,
@@ -1019,6 +1036,15 @@ pub struct ReadChunkResult {
     pub max_data: ShouldTransmit,
 }
 
+/// Result of a `Streams::read_chunks` call in case the stream had not ended yet
+#[derive(Debug, Eq, PartialEq)]
+#[must_use = "A frame might need to be enqueued"]
+pub struct ReadChunksResult {
+    pub n_bufs: usize,
+    pub max_stream_data: ShouldTransmit,
+    pub max_data: ShouldTransmit,
+}
+
 /// Result of a `Streams::read` call in case the stream had not ended yet
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 #[must_use = "A frame might need to be enqueued"]
@@ -1145,6 +1171,28 @@ impl Recv {
             Some(bytes) => Ok(Some(bytes)),
             None => self.read_blocked().map(|()| None),
         }
+    }
+
+    fn read_chunks(&mut self, chunks: &mut [Bytes]) -> Result<Option<usize>, ReadError> {
+        if chunks.is_empty() {
+            return Ok(Some(0));
+        }
+
+        let mut size = 0;
+        while let Some(bytes) = self.assembler.read_chunk()? {
+            chunks[size] = bytes;
+            size += 1;
+
+            if size >= chunks.len() {
+                return Ok(Some(size));
+            }
+        }
+
+        if size > 0 {
+            return Ok(Some(size));
+        }
+
+        self.read_blocked().map(|()| None)
     }
 
     fn read_blocked(&mut self) -> Result<(), ReadError> {
