@@ -331,26 +331,15 @@ impl Streams {
                 return Ok(ShouldTransmit::new(false));
             }
         };
-        let end = rs.assembler.end();
-
-        // Validate final_offset
-        if let Some(offset) = rs.final_offset() {
-            if offset != final_offset {
-                return Err(TransportError::FINAL_SIZE_ERROR("inconsistent value"));
-            }
-        } else if end > final_offset {
-            return Err(TransportError::FINAL_SIZE_ERROR(
-                "lower than high water mark",
-            ));
-        }
 
         // State transition
-        if !rs.reset(error_code, final_offset) {
+        if !rs.reset(error_code, final_offset)? {
             // Redundant reset
             return Ok(ShouldTransmit::new(false));
         }
         let bytes_read = rs.assembler.bytes_read();
         let stopped = rs.assembler.is_stopped();
+        let end = rs.assembler.end();
         if stopped {
             // Stopped streams should be disposed immediately on reset
             self.recv.remove(&id);
@@ -1197,9 +1186,20 @@ impl Recv {
     }
 
     /// Returns `false` iff the reset was redundant
-    fn reset(&mut self, error_code: VarInt, final_offset: u64) -> bool {
+    fn reset(&mut self, error_code: VarInt, final_offset: u64) -> Result<bool, TransportError> {
+        // Validate final_offset
+        if let Some(offset) = self.final_offset() {
+            if offset != final_offset {
+                return Err(TransportError::FINAL_SIZE_ERROR("inconsistent value"));
+            }
+        } else if self.assembler.end() > final_offset {
+            return Err(TransportError::FINAL_SIZE_ERROR(
+                "lower than high water mark",
+            ));
+        }
+
         if matches!(self.state, RecvState::ResetRecvd { .. } | RecvState::Closed) {
-            return false;
+            return Ok(false);
         }
         self.state = RecvState::ResetRecvd {
             size: final_offset,
@@ -1210,7 +1210,7 @@ impl Recv {
         // reset streams during read, but it's unclear if there's any benefit to retaining data for
         // reset streams.
         self.assembler.clear();
-        true
+        Ok(true)
     }
 }
 
