@@ -65,9 +65,9 @@ impl PathData {
     }
 
     /// Indicates whether we're a server that hasn't validated the peer's address and hasn't
-    /// received enough data from the peer to permit additional sending
-    pub fn anti_amplification_blocked(&self, mtu: u16) -> bool {
-        !self.validated && self.total_recvd * 3 < self.total_sent + u64::from(mtu)
+    /// received enough data from the peer to permit sending `bytes_to_send` additional bytes
+    pub fn anti_amplification_blocked(&self, bytes_to_send: u64) -> bool {
+        !self.validated && self.total_recvd * 3 < self.total_sent + bytes_to_send
     }
 }
 
