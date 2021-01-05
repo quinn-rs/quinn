@@ -1,6 +1,7 @@
 use std::{
     fs, io,
     net::{IpAddr, Ipv6Addr, SocketAddr},
+    str,
     sync::atomic::{AtomicU16, Ordering},
     time::Duration,
 };
@@ -23,7 +24,6 @@ use crate::{
     SendData, ZeroRttAccepted,
 };
 use quinn_proto::StreamId;
-use tracing_subscriber::EnvFilter;
 
 pub fn get(path: &str) -> Request<Body> {
     Request::get(format!("https://localhost{}", path))
@@ -49,8 +49,9 @@ pub struct Helper {
 
 impl Helper {
     pub fn new() -> Self {
-        let _ = tracing_subscriber::fmt()
-            .with_env_filter(EnvFilter::from_default_env())
+        let _ = tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter("quinn=trace,quinn-h3=trace")
+            .with_writer(|| TestWriter)
             .try_init();
 
         let port = PORT_COUNT.fetch_add(1, Ordering::SeqCst);
@@ -282,4 +283,19 @@ pub async fn timeout_join<T>(handle: tokio::task::JoinHandle<T>) -> T {
         .map_err(|e| panic!("IncomingRequest did not resolve, {:?}", e))
         .expect("server panic")
         .unwrap()
+}
+
+struct TestWriter;
+
+impl std::io::Write for TestWriter {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        print!(
+            "{}",
+            str::from_utf8(buf).expect("tried to log invalid UTF-8")
+        );
+        Ok(buf.len())
+    }
+    fn flush(&mut self) -> io::Result<()> {
+        io::stdout().flush()
+    }
 }
