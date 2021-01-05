@@ -371,7 +371,7 @@ where
             }
         }
 
-        if self.path.anti_amplification_blocked(self.mtu) {
+        if self.path.anti_amplification_blocked(self.mtu.into()) {
             trace!("blocked by anti-amplification");
             return None;
         }
@@ -1481,7 +1481,7 @@ where
             return;
         }
 
-        if self.path.anti_amplification_blocked(self.mtu) {
+        if self.path.anti_amplification_blocked(self.mtu.into()) {
             // We wouldn't be able to send anything, so don't bother.
             self.timers.stop(Timer::LossDetection);
             return;
