@@ -361,7 +361,7 @@ impl ConnectionInner {
                 Poll::Ready(None) => {
                     return Err(DriverError::peer(
                         ErrorCode::CLOSED_CRITICAL_STREAM,
-                        "control in closed",
+                        "control stream closed",
                     ));
                 }
                 Poll::Ready(Some(Err(e))) => {
