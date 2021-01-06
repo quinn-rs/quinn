@@ -9,7 +9,7 @@ use tracing::error;
 
 use crate::{
     endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming},
-    udp::UdpSocket,
+    platform::UdpSocket,
 };
 #[cfg(feature = "rustls")]
 use crate::{Certificate, CertificateChain, PrivateKey};
