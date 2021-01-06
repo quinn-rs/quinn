@@ -62,35 +62,33 @@ impl Future for RecvUni {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
-            match self.inner {
+            let (recv, buf, expected, len) = match self.inner {
                 None => panic!("polled after resolved"),
                 Some((ref mut recv, ref mut buf, ref mut expected, ref mut len)) => {
-                    match ready!(Pin::new(recv).poll_read(cx, &mut buf[*len..*expected]))? {
-                        0 => {
-                            return Poll::Ready(Err(Error::peer(
-                                "Uni stream closed before type received",
-                            )))
-                        }
-                        read => {
-                            *len += read;
-                            if *len == 1 {
-                                *expected = VarInt::encoded_size(buf[0]);
-                            }
-                            if len == expected {
-                                let mut cur = io::Cursor::new(&buf);
-                                let ty = StreamType::decode(&mut cur)
-                                    .map_err(|_| Error::internal("stream type decode"))?;
-                                match mem::replace(&mut self.inner, None) {
-                                    Some((recv, _, _, _)) => {
-                                        return Poll::Ready(NewUni::try_from((ty, recv)))
-                                    }
-                                    _ => unreachable!(),
-                                };
-                            }
-                        }
-                    }
+                    (recv, buf, expected, len)
                 }
+            };
+
+            let read = ready!(Pin::new(recv).poll_read(cx, &mut buf[*len..*expected]))?;
+            if read == 0 {
+                return Poll::Ready(Err(Error::peer("Uni stream closed before type received")));
+            };
+
+            *len += read;
+            if *len == 1 {
+                *expected = VarInt::encoded_size(buf[0]);
             }
+            if len != expected {
+                continue;
+            }
+
+            let mut cur = io::Cursor::new(&buf);
+            let ty =
+                StreamType::decode(&mut cur).map_err(|_| Error::internal("stream type decode"))?;
+            match mem::replace(&mut self.inner, None) {
+                Some((recv, _, _, _)) => return Poll::Ready(NewUni::try_from((ty, recv))),
+                _ => unreachable!(),
+            };
         }
     }
 }
