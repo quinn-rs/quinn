@@ -304,7 +304,7 @@ impl ConnectionInner {
         match new_stream {
             NewUni::Control(stream) => match self.recv_control {
                 None => {
-                    trace!("Got Control stream");
+                    trace!("{:?} got Control stream", self.side);
                     self.recv_control = Some(stream);
                     self.poll_recv_control(cx)?;
                     Ok(())
@@ -316,7 +316,7 @@ impl ConnectionInner {
             },
             NewUni::Decoder(s) => match self.recv_decoder {
                 None => {
-                    trace!("Got Decoder stream");
+                    trace!("{:?} got Decoder stream", self.side);
                     self.recv_decoder =
                         Some((s, BytesMut::with_capacity(RECV_DECODER_INITIAL_CAPACITY)));
                     Ok(())
@@ -328,7 +328,7 @@ impl ConnectionInner {
             },
             NewUni::Encoder(s) => match self.recv_encoder {
                 None => {
-                    trace!("Got Encoder stream");
+                    trace!("{:?} got Encoder stream", self.side);
                     self.recv_encoder =
                         Some((s, BytesMut::with_capacity(RECV_ENCODER_INITIAL_CAPACITY)));
                     Ok(())
