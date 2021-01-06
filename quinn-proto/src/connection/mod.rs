@@ -29,7 +29,7 @@ use crate::{
     },
     transport_parameters::TransportParameters,
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
-    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 mod assembler;
@@ -115,7 +115,6 @@ where
     prev_path: Option<PathData>,
     state: State,
     side: Side,
-    mtu: u16,
     /// Whether or not 0-RTT was enabled during the handshake. Does not imply acceptance.
     zero_rtt_enabled: bool,
     /// Set if 0-RTT is supported, then cleared when no longer needed.
@@ -242,7 +241,6 @@ where
             prev_path: None,
             side,
             state,
-            mtu: MIN_MTU,
             zero_rtt_enabled: false,
             zero_rtt_crypto: None,
             key_phase: false,
@@ -353,8 +351,8 @@ where
                     SpaceId::Data,
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
-                let mut buf = Vec::with_capacity(self.mtu as usize);
-                let buf_capacity = self.mtu as usize;
+                let mut buf = Vec::with_capacity(self.path.mtu as usize);
+                let buf_capacity = self.path.mtu as usize;
 
                 let builder =
                     self.begin_packet(now, SpaceId::Data, false, &mut buf, buf_capacity)?;
@@ -370,7 +368,7 @@ where
             }
         }
 
-        if self.path.anti_amplification_blocked(self.mtu.into()) {
+        if self.path.anti_amplification_blocked(self.path.mtu.into()) {
             trace!("blocked by anti-amplification");
             return None;
         }
@@ -409,11 +407,11 @@ where
             ),
         };
 
-        let mut buf = Vec::with_capacity(self.mtu as usize);
+        let mut buf = Vec::with_capacity(self.path.mtu as usize);
         // Reserving capacity can provide more capacity than we asked for.
         // However we are not allowed to write more than MTU size. Therefore
         // the maximum capacity is tracked separately.
-        let buf_capacity = self.mtu as usize;
+        let buf_capacity = self.path.mtu as usize;
 
         let mut coalesce = spaces.len() > 1;
         let pad_space = spaces.last().cloned().filter(|_| {
@@ -435,7 +433,10 @@ where
                     }
                     let smoothed_rtt = self.path.rtt.conservative();
                     let window = self.path.congestion.window();
-                    if let Some(delay) = self.path.pacing.delay(smoothed_rtt, self.mtu, window, now)
+                    if let Some(delay) =
+                        self.path
+                            .pacing
+                            .delay(smoothed_rtt, self.path.mtu, window, now)
                     {
                         self.timers.set(Timer::Pacing, delay);
                         continue;
@@ -696,7 +697,7 @@ where
         builder
             .buffer
             .resize(builder.buffer.len() + packet_crypto.tag_len(), 0);
-        debug_assert!(builder.buffer.len() <= self.mtu as usize);
+        debug_assert!(builder.buffer.len() <= self.path.mtu as usize);
         let packet_buf = &mut builder.buffer[builder.partial_encode.start..];
         builder.partial_encode.finish(
             packet_buf,
@@ -997,7 +998,7 @@ where
     /// Not necessarily the maximum size of received datagrams.
     pub fn max_datagram_size(&self) -> Option<usize> {
         // This is usually 1182 bytes, but we shouldn't document that without a doctest.
-        let max_size = self.mtu as usize
+        let max_size = self.path.mtu as usize
             - 1                 // flags byte
             - self.rem_cids.active().len()
             - 4                 // worst-case packet number size
@@ -1479,7 +1480,7 @@ where
             return;
         }
 
-        if self.path.anti_amplification_blocked(self.mtu.into()) {
+        if self.path.anti_amplification_blocked(self.path.mtu.into()) {
             // We wouldn't be able to send anything, so don't bother.
             self.timers.stop(Timer::LossDetection);
             return;
@@ -2903,7 +2904,7 @@ where
 
     /// Whether UDP transmits are currently blocked by link congestion
     fn congestion_blocked(&self) -> bool {
-        self.in_flight.bytes + u64::from(self.mtu) >= self.path.congestion.window()
+        self.in_flight.bytes + u64::from(self.path.mtu) >= self.path.congestion.window()
     }
 
     fn decrypt_packet(
