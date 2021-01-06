@@ -543,7 +543,7 @@ impl Stream for IncomingRequest {
 ///
 /// use quinn_h3::{server::RecvRequest, Body};
 ///
-/// async fn handle_resquest(recv_request: RecvRequest) -> Result<()> {
+/// async fn handle_request(recv_request: RecvRequest) -> Result<()> {
 ///     let (mut request, mut sender) = recv_request.await?;
 ///     println!("received request: {:?}", request);
 ///
