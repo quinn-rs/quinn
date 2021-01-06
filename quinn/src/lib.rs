@@ -56,7 +56,6 @@ mod connection;
 mod endpoint;
 mod platform;
 mod streams;
-mod udp;
 
 pub use proto::{
     crypto, ApplicationClose, Certificate, CertificateChain, ConnectError, ConnectionClose,

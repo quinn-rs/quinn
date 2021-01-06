@@ -5,267 +5,329 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
     ptr,
+    task::{Context, Poll},
 };
 
+use futures::ready;
 use lazy_static::lazy_static;
-use mio::net::UdpSocket;
 use proto::{EcnCodepoint, Transmit};
+use tokio::io::PollEvented;
 
-use super::{cmsg, UdpCapabilities, UdpExt};
-use crate::udp::RecvMeta;
+use super::{cmsg, RecvMeta, UdpCapabilities};
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
 #[cfg(not(target_os = "freebsd"))]
 type IpTosTy = libc::c_int;
 
-impl UdpExt for UdpSocket {
-    fn init_ext(&self) -> io::Result<()> {
-        // Safety
-        assert_eq!(
-            mem::size_of::<SocketAddrV4>(),
-            mem::size_of::<libc::sockaddr_in>()
-        );
-        assert_eq!(
-            mem::size_of::<SocketAddrV6>(),
-            mem::size_of::<libc::sockaddr_in6>()
-        );
+/// Tokio-compatible UDP socket with some useful specializations.
+///
+/// Unlike a standard tokio UDP socket, this allows ECN bits to be read and written on some
+/// platforms.
+#[derive(Debug)]
+pub struct UdpSocket {
+    io: PollEvented<mio::net::UdpSocket>,
+}
 
-        let mut cmsg_platform_space = 0;
-        if cfg!(target_os = "linux") {
-            cmsg_platform_space +=
-                unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
-        }
-
-        assert!(
-            CMSG_LEN
-                >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
-                    + cmsg_platform_space
-        );
-        assert!(
-            mem::align_of::<libc::cmsghdr>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
-            "control message buffers will be misaligned"
-        );
-
-        let addr = self.local_addr()?;
-
-        // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
-        if addr.is_ipv4()
-            || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !self.only_v6()?)
-        {
-            let on: libc::c_int = 1;
-            let rc = unsafe {
-                libc::setsockopt(
-                    self.as_raw_fd(),
-                    libc::IPPROTO_IP,
-                    libc::IP_RECVTOS,
-                    &on as *const _ as _,
-                    mem::size_of_val(&on) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
-        }
-        #[cfg(target_os = "linux")]
-        {
-            if addr.is_ipv4() {
-                let rc = unsafe {
-                    libc::setsockopt(
-                        self.as_raw_fd(),
-                        libc::IPPROTO_IP,
-                        libc::IP_MTU_DISCOVER,
-                        &libc::IP_PMTUDISC_PROBE as *const _ as _,
-                        mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
-                    )
-                };
-                if rc == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-
-                let on: libc::c_int = 1;
-                let rc = unsafe {
-                    libc::setsockopt(
-                        self.as_raw_fd(),
-                        libc::IPPROTO_IP,
-                        libc::IP_PKTINFO,
-                        &on as *const _ as _,
-                        mem::size_of_val(&on) as _,
-                    )
-                };
-                if rc == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-            } else if addr.is_ipv6() {
-                let rc = unsafe {
-                    libc::setsockopt(
-                        self.as_raw_fd(),
-                        libc::IPPROTO_IPV6,
-                        libc::IPV6_MTU_DISCOVER,
-                        &libc::IP_PMTUDISC_PROBE as *const _ as _,
-                        mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
-                    )
-                };
-                if rc == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-
-                let on: libc::c_int = 1;
-                let rc = unsafe {
-                    libc::setsockopt(
-                        self.as_raw_fd(),
-                        libc::IPPROTO_IPV6,
-                        libc::IPV6_RECVPKTINFO,
-                        &on as *const _ as _,
-                        mem::size_of_val(&on) as _,
-                    )
-                };
-                if rc == -1 {
-                    return Err(io::Error::last_os_error());
-                }
-            }
-        }
-        if addr.is_ipv6() {
-            let on: libc::c_int = 1;
-            let rc = unsafe {
-                libc::setsockopt(
-                    self.as_raw_fd(),
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_RECVTCLASS,
-                    &on as *const _ as _,
-                    mem::size_of_val(&on) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
-        }
-        Ok(())
+impl UdpSocket {
+    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
+        let io = mio::net::UdpSocket::from_socket(socket)?;
+        init(&io)?;
+        Ok(UdpSocket {
+            io: PollEvented::new(io)?,
+        })
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
-        let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
-        let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
-        let mut cmsgs = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
-        for (i, transmit) in transmits.iter().enumerate().take(BATCH_SIZE) {
-            prepare_msg(
-                transmit,
-                &mut msgs[i].msg_hdr,
-                &mut iovecs[i],
-                &mut cmsgs[i],
-            );
-        }
-        loop {
-            let n = unsafe {
-                libc::sendmmsg(
-                    self.as_raw_fd(),
-                    msgs.as_mut_ptr(),
-                    transmits.len().min(BATCH_SIZE) as _,
-                    0,
-                )
-            };
-            if n == -1 {
-                let e = io::Error::last_os_error();
-                if e.kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(e);
+    pub fn poll_send(
+        &self,
+        cx: &mut Context,
+        transmits: &[Transmit],
+    ) -> Poll<Result<usize, io::Error>> {
+        ready!(self.io.poll_write_ready(cx))?;
+        match send(self.io.get_ref(), transmits) {
+            Ok(n) => Poll::Ready(Ok(n)),
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                self.io.clear_write_ready(cx)?;
+                Poll::Pending
             }
-            return Ok(n as usize);
+            Err(e) => Poll::Ready(Err(e)),
         }
     }
 
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
-        let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
-        let mut iov: libc::iovec = unsafe { mem::zeroed() };
-        let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
-        let mut sent = 0;
-        while sent < transmits.len() {
-            prepare_msg(&transmits[sent], &mut hdr, &mut iov, &mut ctrl);
-            let n = unsafe { libc::sendmsg(self.as_raw_fd(), &hdr, 0) };
-            if n == -1 {
-                let e = io::Error::last_os_error();
-                if e.kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                if sent != 0 {
-                    // We need to report that some packets were sent in this case, so we rely on
-                    // errors being either harmlessly transient (in the case of WouldBlock) or
-                    // recurring on the next call.
-                    return Ok(sent);
-                }
-                return Err(e);
-            } else {
-                sent += 1;
+    pub fn poll_recv(
+        &self,
+        cx: &mut Context,
+        bufs: &mut [IoSliceMut<'_>],
+        meta: &mut [RecvMeta],
+    ) -> Poll<io::Result<usize>> {
+        debug_assert!(!bufs.is_empty());
+        ready!(self.io.poll_read_ready(cx, mio::Ready::readable()))?;
+        match recv(self.io.get_ref(), bufs, meta) {
+            Ok(n) => Poll::Ready(Ok(n)),
+            Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                self.io.clear_read_ready(cx, mio::Ready::readable())?;
+                Poll::Pending
             }
+            Err(e) => Poll::Ready(Err(e)),
         }
-        Ok(sent)
     }
 
-    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-    fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
-        let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
-        let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
-        let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
-        let max_msg_count = bufs.len().min(BATCH_SIZE);
-        for i in 0..max_msg_count {
-            prepare_recv(
-                &mut bufs[i],
-                &mut names[i],
-                &mut ctrls[i],
-                &mut hdrs[i].msg_hdr,
-            );
-        }
-        let msg_count = loop {
-            let n = unsafe {
-                libc::recvmmsg(
-                    self.as_raw_fd(),
-                    hdrs.as_mut_ptr(),
-                    bufs.len().min(BATCH_SIZE) as libc::c_uint,
-                    0,
-                    ptr::null_mut(),
-                )
-            };
-            if n == -1 {
-                let e = io::Error::last_os_error();
-                if e.kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(e);
-            }
-            break n;
+    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+        self.io.get_ref().local_addr()
+    }
+}
+
+fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
+    // Safety
+    assert_eq!(
+        mem::size_of::<SocketAddrV4>(),
+        mem::size_of::<libc::sockaddr_in>()
+    );
+    assert_eq!(
+        mem::size_of::<SocketAddrV6>(),
+        mem::size_of::<libc::sockaddr_in6>()
+    );
+
+    let mut cmsg_platform_space = 0;
+    if cfg!(target_os = "linux") {
+        cmsg_platform_space +=
+            unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
+    }
+
+    assert!(
+        CMSG_LEN
+            >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
+                + cmsg_platform_space
+    );
+    assert!(
+        mem::align_of::<libc::cmsghdr>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
+        "control message buffers will be misaligned"
+    );
+
+    let addr = io.local_addr()?;
+
+    // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
+    if addr.is_ipv4() || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !io.only_v6()?) {
+        let on: libc::c_int = 1;
+        let rc = unsafe {
+            libc::setsockopt(
+                io.as_raw_fd(),
+                libc::IPPROTO_IP,
+                libc::IP_RECVTOS,
+                &on as *const _ as _,
+                mem::size_of_val(&on) as _,
+            )
         };
-        for i in 0..(msg_count as usize) {
-            meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize);
+        if rc == -1 {
+            return Err(io::Error::last_os_error());
         }
-        Ok(msg_count as usize)
     }
-
-    #[cfg(any(target_os = "macos", target_os = "ios"))]
-    fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
-        let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
-        let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
-        let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
-        prepare_recv(&mut bufs[0], &mut name, &mut ctrl, &mut hdr);
-        let n = loop {
-            let n = unsafe { libc::recvmsg(self.as_raw_fd(), &mut hdr, 0) };
-            if n == -1 {
-                let e = io::Error::last_os_error();
-                if e.kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(e);
+    #[cfg(target_os = "linux")]
+    {
+        if addr.is_ipv4() {
+            let rc = unsafe {
+                libc::setsockopt(
+                    io.as_raw_fd(),
+                    libc::IPPROTO_IP,
+                    libc::IP_MTU_DISCOVER,
+                    &libc::IP_PMTUDISC_PROBE as *const _ as _,
+                    mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
+                )
+            };
+            if rc == -1 {
+                return Err(io::Error::last_os_error());
             }
-            if hdr.msg_flags & libc::MSG_TRUNC != 0 {
+
+            let on: libc::c_int = 1;
+            let rc = unsafe {
+                libc::setsockopt(
+                    io.as_raw_fd(),
+                    libc::IPPROTO_IP,
+                    libc::IP_PKTINFO,
+                    &on as *const _ as _,
+                    mem::size_of_val(&on) as _,
+                )
+            };
+            if rc == -1 {
+                return Err(io::Error::last_os_error());
+            }
+        } else if addr.is_ipv6() {
+            let rc = unsafe {
+                libc::setsockopt(
+                    io.as_raw_fd(),
+                    libc::IPPROTO_IPV6,
+                    libc::IPV6_MTU_DISCOVER,
+                    &libc::IP_PMTUDISC_PROBE as *const _ as _,
+                    mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
+                )
+            };
+            if rc == -1 {
+                return Err(io::Error::last_os_error());
+            }
+
+            let on: libc::c_int = 1;
+            let rc = unsafe {
+                libc::setsockopt(
+                    io.as_raw_fd(),
+                    libc::IPPROTO_IPV6,
+                    libc::IPV6_RECVPKTINFO,
+                    &on as *const _ as _,
+                    mem::size_of_val(&on) as _,
+                )
+            };
+            if rc == -1 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+    }
+    if addr.is_ipv6() {
+        let on: libc::c_int = 1;
+        let rc = unsafe {
+            libc::setsockopt(
+                io.as_raw_fd(),
+                libc::IPPROTO_IPV6,
+                libc::IPV6_RECVTCLASS,
+                &on as *const _ as _,
+                mem::size_of_val(&on) as _,
+            )
+        };
+        if rc == -1 {
+            return Err(io::Error::last_os_error());
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn send(io: &mio::net::UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
+    let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
+    let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
+    let mut cmsgs = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
+    for (i, transmit) in transmits.iter().enumerate().take(BATCH_SIZE) {
+        prepare_msg(
+            transmit,
+            &mut msgs[i].msg_hdr,
+            &mut iovecs[i],
+            &mut cmsgs[i],
+        );
+    }
+    loop {
+        let n = unsafe {
+            libc::sendmmsg(
+                io.as_raw_fd(),
+                msgs.as_mut_ptr(),
+                transmits.len().min(BATCH_SIZE) as _,
+                0,
+            )
+        };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
                 continue;
             }
-            break n;
-        };
-        meta[0] = decode_recv(&name, &hdr, n as usize);
-        Ok(1)
+            return Err(e);
+        }
+        return Ok(n as usize);
     }
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn send(io: &mio::net::UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
+    let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
+    let mut iov: libc::iovec = unsafe { mem::zeroed() };
+    let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
+    let mut sent = 0;
+    while sent < transmits.len() {
+        prepare_msg(&transmits[sent], &mut hdr, &mut iov, &mut ctrl);
+        let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            if sent != 0 {
+                // We need to report that some packets were sent in this case, so we rely on
+                // errors being either harmlessly transient (in the case of WouldBlock) or
+                // recurring on the next call.
+                return Ok(sent);
+            }
+            return Err(e);
+        } else {
+            sent += 1;
+        }
+    }
+    Ok(sent)
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+fn recv(
+    io: &mio::net::UdpSocket,
+    bufs: &mut [IoSliceMut<'_>],
+    meta: &mut [RecvMeta],
+) -> io::Result<usize> {
+    let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
+    let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
+    let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
+    let max_msg_count = bufs.len().min(BATCH_SIZE);
+    for i in 0..max_msg_count {
+        prepare_recv(
+            &mut bufs[i],
+            &mut names[i],
+            &mut ctrls[i],
+            &mut hdrs[i].msg_hdr,
+        );
+    }
+    let msg_count = loop {
+        let n = unsafe {
+            libc::recvmmsg(
+                io.as_raw_fd(),
+                hdrs.as_mut_ptr(),
+                bufs.len().min(BATCH_SIZE) as libc::c_uint,
+                0,
+                ptr::null_mut(),
+            )
+        };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(e);
+        }
+        break n;
+    };
+    for i in 0..(msg_count as usize) {
+        meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize);
+    }
+    Ok(msg_count as usize)
+}
+
+#[cfg(any(target_os = "macos", target_os = "ios"))]
+fn recv(
+    io: &mio::net::UdpSocket,
+    bufs: &mut [IoSliceMut<'_>],
+    meta: &mut [RecvMeta],
+) -> io::Result<usize> {
+    let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
+    let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
+    let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
+    prepare_recv(&mut bufs[0], &mut name, &mut ctrl, &mut hdr);
+    let n = loop {
+        let n = unsafe { libc::recvmsg(io.as_raw_fd(), &mut hdr, 0) };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
+            }
+            return Err(e);
+        }
+        if hdr.msg_flags & libc::MSG_TRUNC != 0 {
+            continue;
+        }
+        break n;
+    };
+    meta[0] = decode_recv(&name, &hdr, n as usize);
+    Ok(1)
 }
 
 /// Returns the platforms UDP socket capabilities
