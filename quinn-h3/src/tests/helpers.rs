@@ -67,6 +67,7 @@ impl Helper {
         let mut client_config = quinn::ClientConfigBuilder::default();
         client_config
             .protocols(&[crate::ALPN])
+            .enable_keylog()
             .add_certificate_authority(cert)
             .expect("client cert");
         client_config.enable_0rtt();
