@@ -46,13 +46,25 @@ impl TryFrom<(StreamType, RecvStream)> for NewUni {
 }
 
 pub struct RecvUni {
-    inner: Option<(RecvStream, [u8; VarInt::MAX_SIZE], usize, usize)>,
+    inner: Option<RecvUniInner>,
+}
+
+pub struct RecvUniInner {
+    stream: RecvStream,
+    buf: [u8; VarInt::MAX_SIZE],
+    expected: usize,
+    len: usize,
 }
 
 impl RecvUni {
-    pub fn new(recv: RecvStream) -> Self {
+    pub fn new(stream: RecvStream) -> Self {
         Self {
-            inner: Some((recv, [0u8; VarInt::MAX_SIZE], 1, 0)),
+            inner: Some(RecvUniInner {
+                stream,
+                buf: [0; VarInt::MAX_SIZE],
+                expected: 1,
+                len: 0,
+            }),
         }
     }
 }
@@ -62,31 +74,30 @@ impl Future for RecvUni {
 
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
-            let (recv, buf, expected, len) = match self.inner {
+            let inner = match self.inner {
                 None => panic!("polled after resolved"),
-                Some((ref mut recv, ref mut buf, ref mut expected, ref mut len)) => {
-                    (recv, buf, expected, len)
-                }
+                Some(ref mut inner) => inner,
             };
 
-            let read = ready!(Pin::new(recv).poll_read(cx, &mut buf[*len..*expected]))?;
+            let read = ready!(Pin::new(&mut inner.stream)
+                .poll_read(cx, &mut inner.buf[inner.len..inner.expected]))?;
             if read == 0 {
                 return Poll::Ready(Err(Error::peer("Uni stream closed before type received")));
             };
 
-            *len += read;
-            if *len == 1 {
-                *expected = VarInt::encoded_size(buf[0]);
+            inner.len += read;
+            if inner.len == 1 {
+                inner.expected = VarInt::encoded_size(inner.buf[0]);
             }
-            if len != expected {
+            if inner.len != inner.expected {
                 continue;
             }
 
-            let mut cur = io::Cursor::new(&buf);
+            let mut cur = io::Cursor::new(&inner.buf);
             let ty =
                 StreamType::decode(&mut cur).map_err(|_| Error::internal("stream type decode"))?;
             match mem::replace(&mut self.inner, None) {
-                Some((recv, _, _, _)) => return Poll::Ready(NewUni::try_from((ty, recv))),
+                Some(inner) => return Poll::Ready(NewUni::try_from((ty, inner.stream))),
                 _ => unreachable!(),
             };
         }
