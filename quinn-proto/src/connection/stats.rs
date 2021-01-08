@@ -1,4 +1,7 @@
+//! Connection statistics
+
 use crate::{frame::Frame, Dir};
+use std::time::Duration;
 
 /// Statistics about UDP datagrams transmitted or received on a connection
 #[derive(Default, Debug, Copy, Clone)]
@@ -108,6 +111,16 @@ impl std::fmt::Debug for FrameStats {
     }
 }
 
+/// Statistics related to a transmission path
+#[derive(Debug, Default, Copy, Clone)]
+#[non_exhaustive]
+pub struct PathStats {
+    /// Current best estimate of this connection's latency (round-trip-time)
+    pub rtt: Duration,
+    /// Current congestion window of the connection
+    pub cwnd: u64,
+}
+
 /// Connection statistics
 #[derive(Debug, Default, Copy, Clone)]
 #[non_exhaustive]
@@ -120,4 +133,6 @@ pub struct ConnectionStats {
     pub frame_tx: FrameStats,
     /// Statistics about frames received on a connection
     pub frame_rx: FrameStats,
+    /// Statistics related to the current transmission path
+    pub path: PathStats,
 }

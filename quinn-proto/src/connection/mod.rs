@@ -935,7 +935,11 @@ where
 
     /// Returns connection statistics
     pub fn stats(&self) -> ConnectionStats {
-        self.stats
+        let mut stats = self.stats;
+        stats.path.rtt = self.path.rtt.get();
+        stats.path.cwnd = self.path.congestion.window();
+
+        stats
     }
 
     /// Stop accepting data on the given receive stream
