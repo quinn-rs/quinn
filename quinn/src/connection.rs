@@ -436,6 +436,11 @@ where
         self.0.lock().unwrap().inner.local_ip()
     }
 
+    /// Current best estimate of this connection's congestion window
+    pub fn cwnd(&self) -> u64 {
+        self.0.lock().unwrap().inner.cwnd()
+    }
+
     /// Current best estimate of this connection's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
         self.0.lock().unwrap().inner.rtt()

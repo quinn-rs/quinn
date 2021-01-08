@@ -1121,6 +1121,11 @@ where
         self.local_ip
     }
 
+    /// Current best estimate of this connection's congestion window
+    pub fn cwnd(&self) -> u64 {
+        self.path.congestion.window()
+    }
+
     /// Current best estimate of this connection's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
         self.path.rtt.get()
