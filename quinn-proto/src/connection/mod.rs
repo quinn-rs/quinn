@@ -2241,6 +2241,12 @@ where
             }
             State::Closed(_) => {
                 for frame in frame::Iter::new(packet.payload.freeze()) {
+                    if let Frame::Padding = frame {
+                        continue;
+                    };
+
+                    self.stats.frame_rx.record(&frame);
+
                     if let Frame::Close(_) = frame {
                         trace!("draining");
                         self.state = State::Draining;
@@ -2262,9 +2268,12 @@ where
         debug_assert_ne!(packet.header.space(), SpaceId::Data);
         for frame in frame::Iter::new(packet.payload.freeze()) {
             let span = match frame {
-                Frame::Padding => None,
+                Frame::Padding => continue,
                 _ => Some(trace_span!("frame", ty = %frame.ty())),
             };
+
+            self.stats.frame_rx.record(&frame);
+
             let _guard = span.as_ref().map(|x| x.enter());
             // Check for ack-eliciting frames
             match frame {
@@ -2317,9 +2326,11 @@ where
         let mut close = None;
         for frame in frame::Iter::new(payload) {
             let span = match frame {
-                Frame::Padding => None,
+                Frame::Padding => continue,
                 _ => Some(trace_span!("frame", ty = %frame.ty())),
             };
+
+            self.stats.frame_rx.record(&frame);
 
             let _guard = span.as_ref().map(|x| x.enter());
             if is_0rtt {
