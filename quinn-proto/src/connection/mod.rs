@@ -178,6 +178,9 @@ where
     receiving_ecn: bool,
     /// Number of packets authenticated
     total_authed_packets: u64,
+    /// Whether the last `poll_transmit` call yielded no data because there was
+    /// no outgoing application data.
+    app_limited: bool,
 
     streams: Streams,
     /// Surplus remote CIDs for future use on new paths
@@ -268,6 +271,7 @@ where
 
             pto_count: 0,
 
+            app_limited: false,
             in_flight: InFlight::new(),
             receiving_ecn: false,
             total_authed_packets: 0,
@@ -385,12 +389,14 @@ where
         // Select the set of spaces that have data to send so we can try to coalesce them
         let (spaces, close) = match self.state {
             State::Drained => {
+                self.app_limited = true;
                 return None;
             }
             State::Draining | State::Closed(_) => {
                 if mem::replace(&mut self.close, false) {
                     (vec![self.highest_space], true)
                 } else {
+                    self.app_limited = true;
                     return None;
                 }
             }
@@ -422,6 +428,8 @@ where
                 || self.path_response.is_some()
         });
 
+        let mut congestion_blocked = false;
+
         for space_id in spaces {
             let buf_start = buf.len();
             let mut ack_eliciting =
@@ -431,6 +439,7 @@ where
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
                 if ack_eliciting && self.spaces[space_id].loss_probes == 0 {
                     if self.congestion_blocked() {
+                        congestion_blocked = true;
                         continue;
                     }
                     let smoothed_rtt = self.path.rtt.conservative();
@@ -441,6 +450,7 @@ where
                             .delay(smoothed_rtt, self.path.mtu, window, now)
                     {
                         self.timers.set(Timer::Pacing, delay);
+                        congestion_blocked = true;
                         continue;
                     }
                 }
@@ -535,6 +545,8 @@ where
                 break;
             }
         }
+
+        self.app_limited = buf.is_empty() && !congestion_blocked;
 
         if buf.is_empty() {
             return None;
@@ -1281,7 +1293,6 @@ where
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
     fn on_packet_acked(&mut self, now: Instant, space: SpaceId, info: SentPacket) {
-        let was_congestion_blocked = self.congestion_blocked();
         self.remove_in_flight(space, &info);
         if info.ack_eliciting {
             // Congestion control
@@ -1291,7 +1302,7 @@ where
                     now,
                     info.time_sent,
                     info.size.into(),
-                    was_congestion_blocked,
+                    self.app_limited,
                 );
             }
         }
