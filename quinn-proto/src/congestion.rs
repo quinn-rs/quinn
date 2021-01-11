@@ -9,9 +9,9 @@ pub use new_reno::{NewReno, NewRenoConfig};
 pub trait Controller: Send {
     /// Packet deliveries were confirmed
     ///
-    /// `congestion_blocked` indicates whether the connection was blocked on congestion prior to
-    /// receiving these acknowledgements.
-    fn on_ack(&mut self, now: Instant, sent: Instant, bytes: u64, congestion_blocked: bool);
+    /// `app_limited` indicates whether the connection was blocked on outgoing
+    /// application data prior to receiving these acknowledgements.
+    fn on_ack(&mut self, now: Instant, sent: Instant, bytes: u64, app_limited: bool);
 
     /// Packets were deemed lost or marked congested
     ///

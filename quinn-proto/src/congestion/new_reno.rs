@@ -15,6 +15,8 @@ pub struct NewReno {
     /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
     /// after this time is acknowledged, QUIC exits recovery.
     recovery_start_time: Instant,
+    /// Bytes which had been acked by the peer since leaving slow start
+    bytes_acked: u64,
 }
 
 impl NewReno {
@@ -25,21 +27,43 @@ impl NewReno {
             ssthresh: u64::max_value(),
             recovery_start_time: now,
             config,
+            bytes_acked: 0,
         }
     }
 }
 
 impl Controller for NewReno {
-    fn on_ack(&mut self, _now: Instant, sent: Instant, bytes: u64, congestion_blocked: bool) {
-        if !congestion_blocked || sent <= self.recovery_start_time {
+    fn on_ack(&mut self, _now: Instant, sent: Instant, bytes: u64, app_limited: bool) {
+        if app_limited || sent <= self.recovery_start_time {
             return;
         }
+
         if self.window < self.ssthresh {
             // Slow start
             self.window += bytes;
+
+            if self.window >= self.ssthresh {
+                // Exiting slow start
+                // Initialize `bytes_acked` for congestion avoidance. The idea
+                // here is that any bytes over `sshthresh` will already be counted
+                // towards the congestion avoidance phase - independent of when
+                // how close to `sshthresh` the `window` was when switching states,
+                // and independent of datagram sizes.
+                self.bytes_acked = self.window - self.ssthresh;
+            }
         } else {
             // Congestion avoidance
-            self.window += self.config.max_datagram_size * bytes / self.window;
+            // This implementation uses the method which does not require
+            // floating point math, which also increases the window by 1 datagram
+            // for every round trip.
+            // This mechanism is called Appropriate Byte Counting in
+            // https://tools.ietf.org/html/rfc3465
+            self.bytes_acked += bytes;
+
+            if self.bytes_acked >= self.window {
+                self.bytes_acked -= self.window;
+                self.window += self.config.max_datagram_size;
+            }
         }
     }
 
