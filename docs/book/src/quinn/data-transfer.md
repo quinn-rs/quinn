@@ -150,7 +150,7 @@ async fn sent_unreliable(connection: Connection)-> anyhow::Result<()> {
 
 ```rust
 async fn receive_datagram(mut connection: NewConnection) -> anyhow::Result<()> {
-    while let Some(Ok(receivedBytes)) = connection.datagrams.next().await {
+    while let Some(Ok(received_bytes)) = connection.datagrams.next().await {
         // Because it is a unidirectional stream, we can only receive not sent back.
         println!("request: {:?}", received);
     }
