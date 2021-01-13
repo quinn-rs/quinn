@@ -55,7 +55,7 @@ Finally, if you plug this [ClientConfig][ClientConfig] into the [EndpointBuilder
 ## Using Certificates
 
 In this section we look at certifying an endpoint with a certificate. 
-This can be done with either a non-self-signed or a self-signed certificate.
+The certificate can be signed with its own key, or with a certificate authority's key.
 
 ### Self Signed Certificates
 
