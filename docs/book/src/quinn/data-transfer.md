@@ -131,7 +131,7 @@ async fn receive_unidirectional_stream(mut connection: NewConnection) -> anyhow:
 
 ## Unreliable Messaging
 
-With unreliable messaging you can transfer data over UDP without reliability. 
+With unreliable messaging you can transfer data without reliability. 
 This could be useful if data-arrival isnt essential or when needing of high-throughput matters and reliab
 
 *send datagram*
