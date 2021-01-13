@@ -1,6 +1,6 @@
 # Data Transfer
 
-In the [previous chapter](set-up-connection.md) it is explained how to set up an [Endpoint][Endpoint]
+The [previous chapter](set-up-connection.md) explained how to set up an [Endpoint][Endpoint]
 and then get access to a [NewConnection][NewConnection] instance.
 Now we will continue with the subject of sending data over this connection.
 
