@@ -7,7 +7,7 @@ As QUIC uses TLS 1.3 for authentication of connections, the server needs  to pro
 ## Insecure Connection
 
 For our example use case, the easiest way to allow the client to trust our server is to disable certificate verification (don't do this in production!). 
-When the `dangerous_configuration` feature flag of [rustls][3] is enabled, a client can be configured to trust any server.
+When the [rustls][3] `dangerous_configuration` feature flag is enabled, a client can be configured to trust any server.
 
 Start with adding a [rustls][3] dependency with the `dangerous_configuration` feature flag to your `Cargo.toml` file.
 
