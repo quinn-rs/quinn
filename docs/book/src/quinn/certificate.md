@@ -60,9 +60,8 @@ The certificate can be signed with its own key, or with a certificate authority'
 ### Self Signed Certificates
 
 Relying on [self-signed][5] certificates means that clients allow servers to sign their own certificates. 
-This is simpler because no third party has to be involved in signing the server's certificate.
-However, they do not offer all the security features that certificates from trusted CAs do have. 
-Self-signed certificates, among other options, can be created using the [rcgen][4] crate or the openssl binary.
+This is simpler because no third party is involved in signing the server's certificate.
+However, self-signed certificates do not protect users from person-in-the-middle attacks, because an interceptor can trivially replace the certificate with one that it has signed. Self-signed certificates, among other options, can be created using the [rcgen][4] crate or the openssl binary.
 This example uses [rcgen][4] to generate a certificate.
 
 Let's look at an example:
