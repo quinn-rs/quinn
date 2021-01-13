@@ -91,18 +91,15 @@ For this example, we use [Let's Encrypt][6], a well-known Certificate Authority 
 
 **Generate Certificate**
 
-Let's encrypt uses [Certbot][7] to generate certificates. 
-The certbot websites give clear instructions on how to use the tool.  
-Normally a certificate is generated to secure a web server, however, because we generate a certificate for a protocol,
-the configuration process will be slightly different than normal.
-If you do want to use an existing web server to generate certificates, please follow the instructions on certbot's website.
+[certbot][7] can be used with Let's Encrypt to generate certificates; its website comes with clear instructions.
+Because we're generating a certificate for an internal test server, the process used will be slightly different compared to what you would do when generating certificates for an existing (public) website.
 
-Select on the certbot website that you do not have a web server (we assume you don't) and follow the given installation instructions.
-Certbot must answer a cryptographic challenge of the Let's Encrypt API to prove that you control the domain. 
-It uses ports 80 (HTTP) or 443 (HTTPS) to achieve this. Open the appropriate port in your firewall and router.
+On the certbot website, select that you do not have a public web server and follow the given installation instructions.
+certbot must answer a cryptographic challenge of the Let's Encrypt API to prove that you control the domain. 
+It needs to listen on port 80 (HTTP) or 443 (HTTPS) to achieve this. Open the appropriate port in your firewall and router.
 
 If certbot is installed, run `certbot certonly --standalone`, this command will start a web server in the background and start the challenge.
-Certbot asks for the required data and writes the certificate to `cert.pem` and the private key to `privkey.pem`.  
+certbot asks for the required data and writes the certificate to `cert.pem` and the private key to `privkey.pem`.  
 These files can then be referenced in code.  
  
 ```rust
