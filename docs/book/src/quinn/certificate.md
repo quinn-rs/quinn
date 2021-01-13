@@ -16,7 +16,7 @@ quinn = "*"
 rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 ``` 
 
-Then, you can skip the certificate validation on the client by implementing [ServerCertVerifier][ServerCertVerifier] and let it assert verification for any server. 
+Then, allow the client to skip the certificate validation by implementing [ServerCertVerifier][ServerCertVerifier] and letting it assert verification for any server. 
 
 ```rust
 // Implementation of `ServerCertVerifier` that verifies everything as trustworthy.
