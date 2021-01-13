@@ -138,8 +138,8 @@ This could be useful if data arrival isn't essential or when needing of high thr
 
 ```rust
 async fn sent_unreliable(connection: Connection)-> anyhow::Result<()> {
-    connection.
-        send_datagram(b"test".into())
+    connection
+        .send_datagram(b"test".into())
         .await?;
 
     Ok(())
