@@ -87,8 +87,7 @@ pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> anyhow::Res
 
 ### Non-self-signed Certificates
 
-[Let's Encrypt][6] is a well-known Certificate Authority ([CA][1]) (certificate issuer) and distributes certificates for free.
-For this section lets-encrypt is used however any CA could be used interchangeably. 
+For this example, we use [Let's Encrypt][6], a well-known Certificate Authority ([CA][1]) (certificate issuer) which  distributes certificates for free.
 
 **Generate Certificate**
 
