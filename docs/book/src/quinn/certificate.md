@@ -63,7 +63,7 @@ Relying on [self-signed][5] certificates means that clients allow servers to sig
 This is simpler because no third party has to be involved in signing the server's certificate.
 However, they do not offer all the security features that certificates from trusted CAs do have. 
 Self-signed certificates, among other options, can be created using the [rcgen][4] crate or the openssl binary.
-In this example [rcgen][4] is used.   
+This example uses [rcgen][4] to generate a certificate.
 
 Let's look at an example:
 
