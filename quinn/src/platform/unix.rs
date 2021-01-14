@@ -206,7 +206,7 @@ impl UdpExt for UdpSocket {
 
     #[cfg(not(any(target_os = "macos", target_os = "ios")))]
     fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
-        let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
+        let mut names = unsafe { mem::zeroed::<[libc::sockaddr_storage; BATCH_SIZE]>() };
         let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
         let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
         let max_msg_count = bufs.len().min(BATCH_SIZE);
@@ -245,7 +245,7 @@ impl UdpExt for UdpSocket {
 
     #[cfg(any(target_os = "macos", target_os = "ios"))]
     fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
-        let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
+        let mut name = unsafe { mem::zeroed::<libc::sockaddr_storage>() };
         let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
         let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
         prepare_recv(&mut bufs[0], &mut name, &mut ctrl, &mut hdr);
@@ -284,6 +284,7 @@ fn prepare_msg(
     iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
     iov.iov_len = transmit.contents.len();
 
+    tracing::trace!("Sending datagram to {:?}", transmit.destination);
     let (name, namelen) = match transmit.destination {
         SocketAddr::V4(ref addr) => (addr as *const _ as _, mem::size_of::<libc::sockaddr_in>()),
         SocketAddr::V6(ref addr) => (addr as *const _ as _, mem::size_of::<libc::sockaddr_in6>()),
@@ -343,11 +344,11 @@ fn prepare_msg(
 
 fn prepare_recv(
     buf: &mut IoSliceMut,
-    name: &mut MaybeUninit<libc::sockaddr_storage>,
+    name: &mut libc::sockaddr_storage,
     ctrl: &mut cmsg::Aligned<MaybeUninit<[u8; CMSG_LEN]>>,
     hdr: &mut libc::msghdr,
 ) {
-    hdr.msg_name = name.as_mut_ptr() as _;
+    hdr.msg_name = name as *mut libc::sockaddr_storage as _;
     hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
     hdr.msg_iov = buf as *mut IoSliceMut as *mut libc::iovec;
     hdr.msg_iovlen = 1;
@@ -356,12 +357,7 @@ fn prepare_recv(
     hdr.msg_flags = 0;
 }
 
-fn decode_recv(
-    name: &MaybeUninit<libc::sockaddr_storage>,
-    hdr: &libc::msghdr,
-    len: usize,
-) -> RecvMeta {
-    let name = unsafe { name.assume_init() };
+fn decode_recv(name: &libc::sockaddr_storage, hdr: &libc::msghdr, len: usize) -> RecvMeta {
     let mut ecn_bits = 0;
     let mut dst_ip = None;
 
@@ -400,6 +396,8 @@ fn decode_recv(
         libc::AF_INET6 => unsafe { SocketAddr::V6(ptr::read(&name as *const _ as _)) },
         _ => unreachable!(),
     };
+
+    tracing::trace!("Received datagram from {:?}", addr);
 
     RecvMeta {
         len,
