@@ -24,7 +24,6 @@ fn server_addr() -> SocketAddr {
 ```   
 
 On both the client and the server, the [EndpointBuilder][EndpointBuilder] should be used to configure an endpoint. 
-The [bind(address)][bind] method initializes a UDP socket on the specified address.
 It is also possible to provide Quinn with an initialized socket via [with_socket()][with_socket]. 
 
 **Server**
