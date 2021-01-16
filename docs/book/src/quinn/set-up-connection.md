@@ -77,7 +77,7 @@ async fn client() -> anyhow::Result<()> {
 ```
 <br><hr>
 
-[Nextup](set-up-connection.md), lets have a look at sending data over this connection.  
+[Next up](set-up-connection.md), let's have a look at sending data over this connection.  
 
 
 [Endpoint]: https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html
