@@ -1,8 +1,8 @@
 # Certificates
 
-In this chapter, we discuss the configuration of the certificates that is **required** for a working Quinn connection. 
+In this chapter, we discuss the configuration of the certificates that are **required** for a working Quinn connection. 
 
-As QUIC uses TLS 1.3 for authentication of connections, the server needs  to provide the client with a certificate confirming its identity, and the client must be configured to trust the certificates it receives from the server. 
+As QUIC uses TLS 1.3 for authentication of connections, the server needs to provide the client with a certificate confirming its identity, and the client must be configured to trust the certificates it receives from the server. 
 
 ## Insecure Connection
 
@@ -37,12 +37,12 @@ After that, modify the [ClientConfig][ClientConfig] to use this [ServerCertVerif
 pub fn insecure() -> ClientConfig {
     let mut cfg = quinn::ClientConfigBuilder::default().build();
 
-    // Get a mutable reference to the 'crypto' config in the 'client config'..
+    // Get a mutable reference to the 'crypto' config in the 'client config'.
     let tls_cfg: &mut rustls::ClientConfig =
         std::sync::Arc::get_mut(&mut cfg.crypto).unwrap();
 
     // Change the certification verifier.
-    // This is only available when compiled with 'dangerous_configuration' feature.
+    // This is only available when compiled with the 'dangerous_configuration' feature.
     tls_cfg
         .dangerous()
         .set_certificate_verifier(Arc::new(SkipCertificationVerification));
@@ -54,12 +54,12 @@ Finally, if you plug this [ClientConfig][ClientConfig] into the [EndpointBuilder
 
 ## Using Certificates
 
-In this section we look at certifying an endpoint with a certificate. 
-The certificate can be signed with its own key, or with a certificate authority's key.
+In this section, we look at certifying an endpoint with a certificate. 
+The certificate can be signed with its key, or with a certificate authority's key.
 
 ### Self Signed Certificates
 
-Relying on [self-signed][5] certificates means that clients allow servers to sign their own certificates. 
+Relying on [self-signed][5] certificates means that clients allow servers to sign their certificates. 
 This is simpler because no third party is involved in signing the server's certificate.
 However, self-signed certificates do not protect users from person-in-the-middle attacks, because an interceptor can trivially replace the certificate with one that it has signed. Self-signed certificates, among other options, can be created using the [rcgen][4] crate or the openssl binary.
 This example uses [rcgen][4] to generate a certificate.
@@ -87,7 +87,7 @@ pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> anyhow::Res
 
 ### Non-self-signed Certificates
 
-For this example, we use [Let's Encrypt][6], a well-known Certificate Authority ([CA][1]) (certificate issuer) which  distributes certificates for free.
+For this example, we use [Let's Encrypt][6], a well-known Certificate Authority ([CA][1]) (certificate issuer) which distributes certificates for free.
 
 **Generate Certificate**
 
@@ -136,11 +136,11 @@ let mut builder = ClientConfigBuilder::default();
 builder.add_certificate_authority(certificate)?;    
 ```
 
-This is the only thing you need to do for your client trust a server certificate. 
+This is the only thing you need to do for your client to trust a server certificate. 
 
 <br><hr>
 
-[Next](set-up-connection.md), let's have a look at how to setup a connection. 
+[Next](set-up-connection.md), let's have a look at how to set up a connection. 
 
 [1]: https://en.wikipedia.org/wiki/Certificate_authority
 [2]: https://en.wikipedia.org/wiki/Public_key_certificate
