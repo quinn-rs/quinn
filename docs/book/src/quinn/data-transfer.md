@@ -2,7 +2,7 @@
 
 The [previous chapter](set-up-connection.md) explained how to set up an [Endpoint][Endpoint]
 and then get access to a [NewConnection][NewConnection] instance.
-Now we will continue with the subject of sending data over this connection.
+This chapter continues with the subject of sending data over this connection.
 
 ## Multiplexing
 
@@ -23,46 +23,13 @@ Streams and messages can be initiated both on the client and server.
 
 ## How to Use
 
-New streams can be created with the methods [open_bi][open_bi], [open_uni][open_uni] of type [Connection][Connection].
+New streams can be created with [open_bi][open_bi], [open_uni][open_uni] from type [Connection][Connection].
 An instance of this type, together with existing streams, can be found in the [connection][connection] field of [NewConnection].
-
-*Receive from various streams*
-
-```rust
-async fn iterate_streams(mut connection: NewConnection) -> anyhow::Result<()> {
-    // Iterate unidirectional streams with only the receiving side.
-    while let Some(Ok(recv)) = connection.uni_streams.next().await { }
-    // Iterate bidirectional streams with both sent and receiving side.
-    while let Some(Ok((sent, recv))) = connection.bi_streams.next().await { }
-    // Iterate arrived datagrams.
-    while let Some(Ok(bytes)) = connection.datagrams.next().await { }
-
-    Ok(())
-}
-```
-* *(Note that this example would get stuck in the first while loop)* 
-
-*Open various kinds of streams*
-
-```rust
-async fn open_streams(mut connection: Connection) -> anyhow::Result<()> {
-    // Open unidirectional stream.
-    let mut send = connection.
-        open_uni()
-        .await?;
-
-    // Open bidirectional stream.
-    let (send, recv) = connection.
-        open_bi()
-        .await?;
-
-    Ok(())
-}
-```
 
 ## Bidirectional Streams
 
-With bidirectional streams data can be sent in both directions, for example, from the connection initiator to the peer and the other way around.
+With bidirectional streams, data can be send in both directions. 
+For example, from the connection initiator to the peer and the other way around.
  
 *open bidirectional stream*
 
@@ -85,8 +52,8 @@ async fn open_bidirectional_stream(connection: Connection) -> anyhow::Result<()>
 
 ```rust
 async fn receive_bidirectional_stream(mut connection: NewConnection) -> anyhow::Result<()> {
-    while let Some(Ok((sent, recv))) = connection.bi_streams.next().await {
-        // Because it is a bidirectional stream, we can both sent and recieve.
+    while let Some(Ok((send, recv))) = connection.bi_streams.next().await {
+        // Because it is a bidirectional stream, we can both send and recieve.
         println!("request: {:?}", recv.read_to_end(50).await?);
 
         send.write_all(b"response").await?;
@@ -121,7 +88,7 @@ async fn open_unidirectional_stream(connection: Connection)-> anyhow::Result<()>
 ```rust
 async fn receive_unidirectional_stream(mut connection: NewConnection) -> anyhow::Result<()> {
     while let Some(Ok(recv)) = connection.uni_streams.next().await {
-        // Because it is a unidirectional stream, we can only receive not sent back.
+        // Because it is a unidirectional stream, we can only receive not send back.
         println!("{:?}", recv.read_to_end(50).await?);
     }
 
@@ -132,12 +99,12 @@ async fn receive_unidirectional_stream(mut connection: NewConnection) -> anyhow:
 ## Unreliable Messaging
 
 With unreliable messaging you can transfer data without reliability. 
-This could be useful if data arrival isn't essential or when needing of high throughput matters and reliab
+This could be useful if data arrival isn't essential or when high throughput is important.
 
 *send datagram*
 
 ```rust
-async fn sent_unreliable(connection: Connection)-> anyhow::Result<()> {
+async fn send_unreliable(connection: Connection)-> anyhow::Result<()> {
     connection
         .send_datagram(b"test".into())
         .await?;
@@ -151,7 +118,7 @@ async fn sent_unreliable(connection: Connection)-> anyhow::Result<()> {
 ```rust
 async fn receive_datagram(mut connection: NewConnection) -> anyhow::Result<()> {
     while let Some(Ok(received_bytes)) = connection.datagrams.next().await {
-        // Because it is a unidirectional stream, we can only receive not sent back.
+        // Because it is a unidirectional stream, we can only receive not send back.
         println!("request: {:?}", received);
     }
 
