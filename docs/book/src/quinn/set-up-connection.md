@@ -56,7 +56,7 @@ async fn server() -> anyhow::Result<()> {
 **Client**
 
 The client needs to connect to the server using the [connect(server_name)][connect] method.  
-The argument 'server name' is the DNS name (matching the certificate configured in the server).
+The `SERVER_NAME` argument is the DNS name, matching the certificate configured in the server.
 
 ```rust
 async fn client() -> anyhow::Result<()> {
