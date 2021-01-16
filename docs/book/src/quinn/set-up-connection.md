@@ -66,9 +66,7 @@ async fn client() -> anyhow::Result<()> {
     let (endpoint, _) = endpoint_builder.bind(&client_addr())?;
 
     // Connect to the server passing in the server name which is supposed to be in the server certificate.
-    let connection: NewConnection = endpoint
-        .connect(&server_addr(), SERVER_NAME)?
-        .await?;
+    let connection = endpoint.connect(&server_addr(), SERVER_NAME)?.await?;
 
     // Start transferring, receiving data, see data transfer page.
 
