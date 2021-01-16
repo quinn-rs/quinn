@@ -19,9 +19,9 @@ Let's compare TCP, UDP, and QUIC.
 |  [Control Flow, Congestion Avoidance/Control][5] | Yes  | No                       |  Yes ('b)                                      
 |  Based On | [IP][3]                 | [IP][3]           |  UDP
 
-'a. Unreliable is supported as extension.    
-'b. QUIC control flow/congestion implementations will run in userspace wereas in TCP its running in kernelspace, 
-however there might be a kernel implementations for QUIC in the future.
+'a. Unreliable is supported as an extension.    
+'b. QUIC control flow/congestion implementations will run in userspace whereas in TCP it's running in kernel space, 
+however, there might be a kernel implementation for QUIC in the future.
 
 ## 2. Issues with TCP 
 
@@ -50,9 +50,9 @@ However, data loss of a single packet will still block all response streams beca
 
 **Multiplayer Game Networking**
 
-The web space is not the only area where this head-of-line blocking is a major concern.
-Multiplayer action games work with a constant flow of packets sent at an interval ranging between 10 to 30 packets per second.
-For the most part, the data in these packets is so time sensitive that only the most recent data can be used. 
+The webspace is not the only area where this head-of-line blocking is a concern.
+Multiplayer action games work with a constant flow of packets sent at a ranging interval between 10 to 30 packets per second.
+For the most part, the data in these packets is so time-sensitive that only the most recent data can be used. 
 Therefore, it cannot be afforded to queue 10-30 packets per second until the lost packet is resent.
 Most multiplayer network solutions build a custom protocol on top of UDP to address head-of-line blocking issues while maintaining reliability.
    
