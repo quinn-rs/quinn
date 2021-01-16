@@ -7,22 +7,20 @@ These concepts are important to understanding when to use QUIC.
 
 Let's compare TCP, UDP, and QUIC.
 
-- **unreliable**: Transport packeten zijn er niet van verzekerd dat ze aan komen bij hun eindbestemming en op volgorde zijn. 
-- **reliable**: Transport packeten zijn er van verzekerd dat ze op volgorde op hun eindbestemming komen.
-
-Unreliability gives great uncertainty with a lot of freedom, while reliability gives great certainty with costs in speed and freedom.
-That is why some protocols such as QUIC, SCTP are built on UDP instead of TCP. 
+- **unreliable**: Transport packets are not assured of arrival and ordering. 
+- **reliable**: Transport packets are assured of arrival and ordering.
 
 | Feature |  TCP  | UDP | QUIC
 | :-------------: | :-------------: | :-------------: | :-------------: |
 |  [Connection-Oriented][6]           |       Yes         | No                       | Yes
-|  Transport Guarantees               | Reliable          | Unreliable               | Reliable and/or unreliable with extension 
+|  Transport Guarantees               | Reliable          | Unreliable               | Reliable ('a)
 |  Packet Transfer                    | [Stream-based][4] | Message based            | Message based and/or Stream based
-|  Header Size                        |  20 bytes         | 8 bytes                  |  ~16 bytes(depending on connection id)  
-|  [Control Flow, Congestion Avoidance/Control][5] | Yes  | No                       |  ** Yes, and possible controlled by userspace                                          
+|  Header Size                        |  ~20 bytes         | 8 bytes                  |  ~16 bytes (depending on connection id)  
+|  [Control Flow, Congestion Avoidance/Control][5] | Yes  | No                       |  Yes ('b)                                      
 |  Based On | [IP][3]                 | [IP][3]           |  UDP
 
-** QUIC control flow/congestion implementations will run in userspace wereas in TCP its running in kernelspace, 
+'a. Unreliable is supported as extension.    
+'b. QUIC control flow/congestion implementations will run in userspace wereas in TCP its running in kernelspace, 
 however there might be a kernel implementations for QUIC in the future.
 
 ## 2. Issues with TCP 
@@ -46,11 +44,9 @@ Let's look at two areas where head-of-line blocking causes problems.
 
 **Web Networking**
 
-The last years websites have been growing in size which causes. 
-This increases the loading time and makes head-of-line blocking a more concerning topic. 
-To tackle this issue HTTP-2 has introduced a technique called multiplexing. 
-In short, this means that multiple TCP streams are initialized to communicate with the server. 
-It allows a server to transfer multiple sources in parallel over a single stream.
+As websites increasingly need a larger number of HTTP requests (HTML, CSS, JavaScript, images) to display all content, the impact of head-of-line blocking has also increased. 
+To improve on this, HTTP 2 introduced request multiplexing within a TCP data stream, which allows servers to stream multiple responses at the same time. 
+However, data loss of a single packet will still block all response streams because they exist within the context of a single TCP stream.
 
 **Multiplayer Game Networking**
 
