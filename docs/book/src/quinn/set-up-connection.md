@@ -23,8 +23,7 @@ fn server_addr() -> SocketAddr {
 }
 ```   
 
-On both the client and the server, the [EndpointBuilder][EndpointBuilder] should be used to configure an endpoint. 
-It is also possible to provide Quinn with an initialized socket via [with_socket()][with_socket]. 
+The [EndpointBuilder][EndpointBuilder] should be used to configure an endpoint. It is also possible to provide Quinn with an initialized socket via [with_socket()][with_socket]. 
 
 **Server**
 
