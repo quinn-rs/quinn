@@ -23,7 +23,7 @@ Streams and messages can be initiated both on the client and server.
 
 ## How to Use
 
-New streams can be created with [open_bi][open_bi], [open_uni][open_uni] from type [Connection][Connection].
+New streams can be created with [open_bi()][open_bi], [open_uni()][open_uni] from type [Connection][Connection].
 An instance of this type, together with existing streams, can be found in the [connection][connection] field of [NewConnection].
 
 ## Bidirectional Streams
