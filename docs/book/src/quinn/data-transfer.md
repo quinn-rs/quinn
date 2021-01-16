@@ -12,7 +12,7 @@ With QUIC, the programmer is in full control over the stream allocation.
   
 ## Stream Types
 
-QUIC provides support for both stream and message based communication.
+QUIC provides support for both stream and message-based communication.
 Streams and messages can be initiated both on the client and server.
 
 | Type | Description | Reference |
@@ -28,7 +28,7 @@ An instance of this type, together with existing streams, can be found in the [c
 
 ## Bidirectional Streams
 
-With bidirectional streams, data can be send in both directions. 
+With bidirectional streams, data can be sent in both directions. 
 For example, from the connection initiator to the peer and the other way around.
  
 *open bidirectional stream*
@@ -98,7 +98,7 @@ async fn receive_unidirectional_stream(mut connection: NewConnection) -> anyhow:
 
 ## Unreliable Messaging
 
-With unreliable messaging you can transfer data without reliability. 
+With unreliable messaging, you can transfer data without reliability. 
 This could be useful if data arrival isn't essential or when high throughput is important.
 
 *send datagram*
