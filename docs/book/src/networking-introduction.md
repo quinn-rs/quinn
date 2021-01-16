@@ -40,8 +40,7 @@ The issue is demonstrated in the following animation:
 
 ![Head of line blocking][animation] 
 
-This animation shows that if a certain packet drops in transmission, all packets have to wait at the transport layer until it is resent by the other end.
-If the dropped packet is resent and arrived then all packets are freed from the transport layer. 
+This animation shows that if a certain packet drops in transmission, all packets have to wait at the transport layer until it is resent by the other end. Once the delayed packet arrives at its destination, all later packets are passed on to the destination application together.
 
 Let's look at two areas where head-of-line blocking causes problems. 
 
