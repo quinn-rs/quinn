@@ -63,12 +63,7 @@ Most multiplayer network solutions build a custom protocol on top of UDP to addr
    
 ### Connection Setup Duration
 
-In the usual HTTP+TLS+TCP stack, TCP needs 6 handshake messages to set up a session between server and client, 
-and TLS needs its own handshake to make sure the session is secure.  
-This handshake consists of 6 messages for TLS 1.2 or lower, and 4 messages for setting up the 'initial' connection over TLS 1.3.
-Despite the '0-RTT' function of TLS 1.3, which allows you to resume a previous connection in 0-RTT, the 6 TCP handshake messages are still required.
-Nevertheless, QUIC has the 0-RTT feature as well and is not restrained by the 6 TCP handshake messages.
-This implies that QUIC is able to provide encrypted true 0-RTT connections. 
+In the usual TCP + TLS + HTTP stack, TCP needs 6 handshake messages to set up a session between server and client. TLS performs its own, sending 4 messages for setting up an initial connection over TLS 1.3. By integrating the transport protocol and TLS handshakes, QUIC can make connection setup more efficient.
 
 [animation]: ./images/hol.gif 
 
