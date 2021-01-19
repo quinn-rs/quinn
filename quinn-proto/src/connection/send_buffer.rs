@@ -36,9 +36,12 @@ impl SendBuffer {
     }
 
     /// Discard a range of acknowledged stream data
-    ///
-    /// Each offset must be acknowledged at most once.
-    pub fn ack(&mut self, range: Range<u64>) {
+    pub fn ack(&mut self, mut range: Range<u64>) {
+        // Clamp the range to data which is still tracked
+        let base_offset = self.offset - self.unacked.len() as u64;
+        range.start = base_offset.max(range.start);
+        range.end = base_offset.max(range.end);
+
         self.acks.insert(range);
         while self.acks.min() == Some(self.offset - self.unacked.len() as u64) {
             let prefix = self.acks.pop_min().unwrap();
