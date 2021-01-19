@@ -31,7 +31,7 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: build
-          args: --workspace --all-targets
+          args: --all-targets
       - uses: actions-rs/cargo@v1
         with:
           command: test
@@ -55,7 +55,17 @@ jobs:
         if: always()
         with:
           command: clippy
-          args: --workspace --all-targets -- -D warnings
+          args: --all-targets -- -D warnings
+      - uses: actions-rs/toolchain@v1
+        with:
+          profile: minimal
+          toolchain: stable
+          override: true
+          components: clippy
+      - name: lint fuzz
+        run: |
+          cd fuzz
+          cargo clippy -- -D warnings
 
   audit:
     runs-on: ubuntu-latest

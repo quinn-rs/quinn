@@ -10,7 +10,7 @@ publish = false
 [dependencies]
 anyhow = "1.0.22"
 bytes = "0.5.2"
-futures = "0.3.1"
+futures = "0.3.8"
 http = "0.2"
 http-body = "0.3"
 hyper = "0.13"

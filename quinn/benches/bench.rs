@@ -12,46 +12,61 @@ use tracing_futures::Instrument as _;
 
 use quinn::{ClientConfigBuilder, Endpoint, ServerConfigBuilder};
 
-benchmark_group!(benches, large_streams, small_streams);
+benchmark_group!(
+    benches,
+    large_data_1_stream,
+    large_data_10_streams,
+    small_data_1_stream,
+    small_data_100_streams
+);
 benchmark_main!(benches);
 
-fn large_streams(bench: &mut Bencher) {
-    let _ = tracing_subscriber::fmt::try_init();
-
-    let ctx = Context::new();
-    let (addr, thread) = ctx.spawn_server();
-    let (endpoint, client, mut runtime) = ctx.make_client(addr);
-    const DATA: &[u8] = &[0xAB; 128 * 1024];
-    bench.bytes = DATA.len() as u64;
-    bench.iter(|| {
-        runtime.block_on(async {
-            let mut stream = client.open_uni().await.unwrap();
-            stream.write_all(DATA).await.unwrap();
-            stream.finish().await.unwrap();
-        });
-    });
-    drop(client);
-    runtime.block_on(endpoint.wait_idle());
-    thread.join().unwrap();
+fn large_data_1_stream(bench: &mut Bencher) {
+    send_data(bench, LARGE_DATA, 1);
 }
 
-fn small_streams(bench: &mut Bencher) {
+fn large_data_10_streams(bench: &mut Bencher) {
+    send_data(bench, LARGE_DATA, 10);
+}
+
+fn small_data_1_stream(bench: &mut Bencher) {
+    send_data(bench, SMALL_DATA, 1);
+}
+
+fn small_data_100_streams(bench: &mut Bencher) {
+    send_data(bench, SMALL_DATA, 100);
+}
+
+fn send_data(bench: &mut Bencher, data: &'static [u8], concurrent_streams: usize) {
     let _ = tracing_subscriber::fmt::try_init();
 
     let ctx = Context::new();
     let (addr, thread) = ctx.spawn_server();
     let (endpoint, client, mut runtime) = ctx.make_client(addr);
-    const DATA: &[u8] = &[0xAB; 1];
-    bench.bytes = 1;
+    let client = Arc::new(client);
+
+    bench.bytes = (data.len() as u64) * (concurrent_streams as u64);
     bench.iter(|| {
+        let mut handles = Vec::new();
+
+        for _ in 0..concurrent_streams {
+            let client = client.clone();
+            handles.push(runtime.spawn(async move {
+                let mut stream = client.open_uni().await.unwrap();
+                stream.write_all(data).await.unwrap();
+                stream.finish().await.unwrap();
+            }));
+        }
+
         runtime.block_on(async {
-            let mut stream = client.open_uni().await.unwrap();
-            stream.write_all(DATA).await.unwrap();
+            for handle in handles {
+                handle.await.unwrap();
+            }
         });
     });
     drop(client);
     runtime.block_on(endpoint.wait_idle());
-    thread.join().unwrap();
+    thread.join().unwrap()
 }
 
 struct Context {
@@ -60,6 +75,7 @@ struct Context {
 }
 
 impl Context {
+    #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
     fn new() -> Self {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
@@ -101,8 +117,11 @@ impl Context {
                         .expect("accept")
                         .await
                         .expect("connect");
+
                     while let Some(Ok(mut stream)) = uni_streams.next().await {
-                        while stream.read_unordered().await.unwrap().is_some() {}
+                        tokio::spawn(async move {
+                            while stream.read_unordered().await.unwrap().is_some() {}
+                        });
                     }
                 }
                 .instrument(error_span!("server")),
@@ -141,3 +160,7 @@ fn rt() -> Runtime {
         .build()
         .unwrap()
 }
+
+const LARGE_DATA: &[u8] = &[0xAB; 1024 * 1024];
+
+const SMALL_DATA: &[u8] = &[0xAB; 1];

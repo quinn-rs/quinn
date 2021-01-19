@@ -28,6 +28,7 @@ fn version_negotiate_server() {
         now,
         client_addr,
         None,
+        None,
         // Long-header packet with reserved version number
         hex!("80 0a1a2a3a 04 00000000 04 00000000 00")[..].into(),
     );
@@ -63,6 +64,7 @@ fn version_negotiate_client() {
     let opt_event = client.handle(
         now,
         server_addr,
+        None,
         None,
         // Version negotiation packet for reserved version
         hex!(
@@ -378,6 +380,7 @@ fn congestion() {
         .unwrap();
 }
 
+#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 #[test]
 fn high_latency_handshake() {
     let _guard = subscribe();
@@ -870,12 +873,12 @@ fn idle_timeout() {
 }
 
 #[test]
-fn accept_buffer_full() {
+fn concurrent_connections_full() {
     let _guard = subscribe();
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
-            accept_buffer: 0,
+            concurrent_connections: 0,
             ..server_config()
         },
     );
@@ -1175,13 +1178,72 @@ fn keep_alive() {
 }
 
 #[test]
+fn cid_rotation() {
+    let _guard = subscribe();
+    const CID_TIMEOUT: Duration = Duration::from_secs(2);
+
+    let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
+        || Box::new(*RandomConnectionIdGenerator::new(8).set_lifetime(CID_TIMEOUT));
+
+    // Only test cid rotation on server side to have a clear output trace
+    let server = Endpoint::new(
+        Arc::new(EndpointConfig {
+            connection_id_generator_factory: Arc::new(cid_generator_factory),
+            ..EndpointConfig::default()
+        }),
+        Some(Arc::new(server_config())),
+    );
+    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None);
+
+    let mut pair = Pair::new_from_endpoint(client, server);
+    let (_, server_ch) = pair.connect();
+
+    let mut round: u64 = 1;
+    let mut stop = pair.time;
+    let end = pair.time + 5 * CID_TIMEOUT;
+
+    use crate::cid_queue::CidQueue;
+    use crate::LOC_CID_COUNT;
+    let mut active_cid_num = CidQueue::LEN as u64 + 1;
+    active_cid_num = active_cid_num.min(LOC_CID_COUNT);
+    let mut left_bound = 0;
+    let mut right_bound = active_cid_num - 1;
+
+    while pair.time < end {
+        stop += CID_TIMEOUT;
+        // Run a while until PushNewCID timer fires
+        while pair.time < stop {
+            if !pair.step() {
+                if let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
+                    pair.time = time;
+                }
+            }
+        }
+        info!(
+            "Checking active cid sequence range before {:?} seconds",
+            round * CID_TIMEOUT.as_secs()
+        );
+        let _bound = (left_bound, right_bound);
+        assert_matches!(
+            pair.server_conn_mut(server_ch).active_local_cid_seq(),
+            _bound
+        );
+        round += 1;
+        left_bound += active_cid_num;
+        right_bound += active_cid_num;
+        pair.drive_server();
+    }
+}
+
+#[test]
 fn cid_retirement() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
     // Server retires current active remote CIDs
-    pair.server_conn_mut(server_ch).rotate_local_cid(1);
+    pair.server_conn_mut(server_ch)
+        .rotate_local_cid(1, Instant::now());
     pair.drive();
     // Any unexpected behavior may trigger TransportError::CONNECTION_ID_LIMIT_ERROR
     assert!(!pair.client_conn_mut(client_ch).is_closed());
@@ -1197,7 +1259,7 @@ fn cid_retirement() {
     pair.client_conn_mut(client_ch).ping();
     // Server retires all valid remote CIDs
     pair.server_conn_mut(server_ch)
-        .rotate_local_cid(next_retire_prior_to);
+        .rotate_local_cid(next_retire_prior_to, Instant::now());
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(server_ch).is_closed());
@@ -1628,5 +1690,82 @@ fn repeated_request_response() {
             Ok(Some((ref data, 0))) if data == RESPONSE
         );
         assert_matches!(pair.client_conn_mut(client_ch).read_unordered(s), Ok(None));
+    }
+}
+
+#[test]
+fn read_chunks() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            stream_window_bidi: 1u32.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    let mut empty = vec![];
+    let mut chunks = vec![Bytes::new(), Bytes::new()];
+    const ONE: &[u8] = b"ONE";
+    const TWO: &[u8] = b"TWO";
+    const THREE: &[u8] = b"THREE";
+    for _ in 0..3 {
+        let s = pair.client_conn_mut(client_ch).open(Dir::Bi).unwrap();
+
+        pair.client_conn_mut(client_ch).write(s, ONE).unwrap();
+        pair.drive();
+        pair.client_conn_mut(client_ch).write(s, TWO).unwrap();
+        pair.drive();
+        pair.client_conn_mut(client_ch).write(s, THREE).unwrap();
+
+        pair.drive();
+
+        assert_eq!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(s));
+
+        // Read into an empty slice can't do much you, but doesn't crash
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut empty),
+            Ok(Some(0))
+        );
+
+        // Read until `chunks` is filled
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(Some(2))
+        );
+        assert_eq!(&chunks, &[ONE, TWO]);
+
+        // Read the rest
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(Some(1))
+        );
+        assert_eq!(&chunks[..1], &[THREE]);
+
+        // We've read everything, stream is now blocked
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Err(ReadError::Blocked)
+        );
+
+        // Read a new chunk after we've been blocked
+        pair.client_conn_mut(client_ch).write(s, ONE).unwrap();
+        pair.drive();
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(Some(1))
+        );
+        assert_eq!(&chunks[..1], &[ONE]);
+
+        // Stream finishes by yeilding `Ok(None)`
+        pair.client_conn_mut(client_ch).finish(s).unwrap();
+        pair.drive();
+        assert_matches!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(None)
+        );
+
+        pair.drive();
     }
 }

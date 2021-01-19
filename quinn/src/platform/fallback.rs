@@ -38,9 +38,15 @@ impl super::UdpExt for UdpSocket {
             len,
             addr,
             ecn: None,
+            dst_ip: None,
         };
         Ok(1)
     }
+}
+
+/// Returns the platforms UDP socket capabilities
+pub fn caps() -> super::UdpCapabilities {
+    super::UdpCapabilities { gso: false }
 }
 
 pub const BATCH_SIZE: usize = 1;

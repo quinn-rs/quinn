@@ -26,8 +26,8 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 bytes = "0.5.2"
-futures = "0.3.1"
-futures-util = { version = "0.3", default-features = false }
+futures = "0.3.8"
+futures-util = { version = "0.3.8", default-features = false }
 http = "0.2"
 http-body = "0.3"
 lazy_static = "1"
@@ -45,9 +45,9 @@ webpki = "0.21"
 anyhow = "1.0.22"
 assert_matches = "1.1"
 bencher = "0.1.5"
-directories-next = "1.0.1"
+directories-next = "2"
 proptest = "0.10.0"
-rand = "0.7.0"
+rand = "0.8.0"
 rcgen = "0.8"
 structopt = "0.3.0"
 tokio = { version = "0.2.6", features = ["io-util", "macros", "rt-threaded", "time", "fs"] }

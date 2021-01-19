@@ -524,7 +524,7 @@ impl Iter {
             Type::RESET_STREAM => Frame::ResetStream(ResetStream {
                 id: self.bytes.get()?,
                 error_code: self.bytes.get()?,
-                final_offset: self.bytes.get_var()?,
+                final_offset: self.bytes.get()?,
             }),
             Type::CONNECTION_CLOSE => Frame::Close(Close::Connection(ConnectionClose {
                 error_code: self.bytes.get()?,
@@ -740,7 +740,7 @@ impl<'a> Iterator for AckIter<'a> {
 pub struct ResetStream {
     pub id: StreamId,
     pub error_code: VarInt,
-    pub final_offset: u64,
+    pub final_offset: VarInt,
 }
 
 impl FrameStruct for ResetStream {
@@ -752,7 +752,7 @@ impl ResetStream {
         out.write(Type::RESET_STREAM); // 1 byte
         out.write(self.id); // <= 8 bytes
         out.write(self.error_code); // <= 8 bytes
-        out.write_var(self.final_offset); // <= 8 bytes
+        out.write(self.final_offset); // <= 8 bytes
     }
 }
 
@@ -823,6 +823,28 @@ impl Datagram {
         } else {
             0
         } + self.data.len()
+    }
+}
+
+/// Indicates whether a frame needs to be transmitted
+///
+/// This type wraps around bool and uses the `#[must_use]` attribute in order
+/// to prevent accidental loss of the frame transmission requirement.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[must_use = "A frame might need to be enqueued"]
+pub struct ShouldTransmit {
+    should_transmit: bool,
+}
+
+impl ShouldTransmit {
+    /// Creates a new `ShouldTransmit` instance
+    pub fn new(should_transmit: bool) -> Self {
+        Self { should_transmit }
+    }
+
+    /// Returns whether a frame should be transmitted
+    pub fn should_transmit(self) -> bool {
+        self.should_transmit
     }
 }
 

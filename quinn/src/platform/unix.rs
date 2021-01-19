@@ -2,15 +2,16 @@ use std::{
     io,
     io::IoSliceMut,
     mem::{self, MaybeUninit},
-    net::{SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
     ptr,
 };
 
+use lazy_static::lazy_static;
 use mio::net::UdpSocket;
 use proto::{EcnCodepoint, Transmit};
 
-use super::cmsg;
+use super::{cmsg, UdpCapabilities, UdpExt};
 use crate::udp::RecvMeta;
 
 #[cfg(target_os = "freebsd")]
@@ -18,7 +19,7 @@ type IpTosTy = libc::c_uchar;
 #[cfg(not(target_os = "freebsd"))]
 type IpTosTy = libc::c_int;
 
-impl super::UdpExt for UdpSocket {
+impl UdpExt for UdpSocket {
     fn init_ext(&self) -> io::Result<()> {
         // Safety
         assert_eq!(
@@ -29,8 +30,17 @@ impl super::UdpExt for UdpSocket {
             mem::size_of::<SocketAddrV6>(),
             mem::size_of::<libc::sockaddr_in6>()
         );
+
+        let mut cmsg_platform_space = 0;
+        if cfg!(target_os = "linux") {
+            cmsg_platform_space +=
+                unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
+        }
+
         assert!(
-            CMSG_LEN >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
+            CMSG_LEN
+                >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
+                    + cmsg_platform_space
         );
         assert!(
             mem::align_of::<libc::cmsghdr>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
@@ -72,6 +82,20 @@ impl super::UdpExt for UdpSocket {
                 if rc == -1 {
                     return Err(io::Error::last_os_error());
                 }
+
+                let on: libc::c_int = 1;
+                let rc = unsafe {
+                    libc::setsockopt(
+                        self.as_raw_fd(),
+                        libc::IPPROTO_IP,
+                        libc::IP_PKTINFO,
+                        &on as *const _ as _,
+                        mem::size_of_val(&on) as _,
+                    )
+                };
+                if rc == -1 {
+                    return Err(io::Error::last_os_error());
+                }
             } else if addr.is_ipv6() {
                 let rc = unsafe {
                     libc::setsockopt(
@@ -80,6 +104,20 @@ impl super::UdpExt for UdpSocket {
                         libc::IPV6_MTU_DISCOVER,
                         &libc::IP_PMTUDISC_PROBE as *const _ as _,
                         mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
+                    )
+                };
+                if rc == -1 {
+                    return Err(io::Error::last_os_error());
+                }
+
+                let on: libc::c_int = 1;
+                let rc = unsafe {
+                    libc::setsockopt(
+                        self.as_raw_fd(),
+                        libc::IPPROTO_IPV6,
+                        libc::IPV6_RECVPKTINFO,
+                        &on as *const _ as _,
+                        mem::size_of_val(&on) as _,
                     )
                 };
                 if rc == -1 {
@@ -109,7 +147,7 @@ impl super::UdpExt for UdpSocket {
     fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
         let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
         let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
-        let mut cmsgs = [cmsg::Aligned(MaybeUninit::uninit()); BATCH_SIZE];
+        let mut cmsgs = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
         for (i, transmit) in transmits.iter().enumerate().take(BATCH_SIZE) {
             prepare_msg(
                 transmit,
@@ -142,7 +180,7 @@ impl super::UdpExt for UdpSocket {
     fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize> {
         let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
         let mut iov: libc::iovec = unsafe { mem::zeroed() };
-        let mut ctrl = cmsg::Aligned(MaybeUninit::uninit());
+        let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
         let mut sent = 0;
         while sent < transmits.len() {
             prepare_msg(&transmits[sent], &mut hdr, &mut iov, &mut ctrl);
@@ -230,13 +268,18 @@ impl super::UdpExt for UdpSocket {
     }
 }
 
-const CMSG_LEN: usize = 24;
+/// Returns the platforms UDP socket capabilities
+pub fn caps() -> UdpCapabilities {
+    *CAPABILITIES
+}
+
+const CMSG_LEN: usize = 80;
 
 fn prepare_msg(
     transmit: &Transmit,
     hdr: &mut libc::msghdr,
     iov: &mut libc::iovec,
-    ctrl: &mut cmsg::Aligned<MaybeUninit<[u8; CMSG_LEN]>>,
+    ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
 ) {
     iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
     iov.iov_len = transmit.contents.len();
@@ -259,6 +302,42 @@ fn prepare_msg(
     } else {
         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
     }
+
+    if let Some(segment_size) = transmit.segment_size {
+        debug_assert!(
+            caps().gso,
+            "Platform must support GSO for setting segment size"
+        );
+
+        gso::set_segment_size(&mut encoder, segment_size as u16);
+    }
+
+    if let Some(ip) = &transmit.src_ip {
+        if cfg!(target_os = "linux") {
+            match ip {
+                IpAddr::V4(v4) => {
+                    let pktinfo = libc::in_pktinfo {
+                        ipi_ifindex: 0,
+                        ipi_spec_dst: unsafe {
+                            *(v4 as *const Ipv4Addr as *const () as *const libc::in_addr)
+                        },
+                        ipi_addr: libc::in_addr { s_addr: 0 },
+                    };
+                    encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
+                }
+                IpAddr::V6(v6) => {
+                    let pktinfo = libc::in6_pktinfo {
+                        ipi6_ifindex: 0,
+                        ipi6_addr: unsafe {
+                            *(v6 as *const Ipv6Addr as *const () as *const libc::in6_addr)
+                        },
+                    };
+                    encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
+                }
+            }
+        }
+    }
+
     encoder.finish();
 }
 
@@ -283,11 +362,15 @@ fn decode_recv(
     len: usize,
 ) -> RecvMeta {
     let name = unsafe { name.assume_init() };
-    let ecn_bits = match unsafe { cmsg::Iter::new(&hdr).next() } {
-        Some(cmsg) => match (cmsg.cmsg_level, cmsg.cmsg_type) {
+    let mut ecn_bits = 0;
+    let mut dst_ip = None;
+
+    let cmsg_iter = unsafe { cmsg::Iter::new(&hdr) };
+    for cmsg in cmsg_iter {
+        match (cmsg.cmsg_level, cmsg.cmsg_type) {
             // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
             (libc::IPPROTO_IP, libc::IP_TOS) | (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
-                cmsg::decode::<u8>(cmsg)
+                ecn_bits = cmsg::decode::<u8>(cmsg);
             },
             (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
@@ -295,24 +378,34 @@ fn decode_recv(
                 if cfg!(target_os = "macos")
                     && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
                 {
-                    cmsg::decode::<u8>(cmsg)
+                    ecn_bits = cmsg::decode::<u8>(cmsg);
                 } else {
-                    cmsg::decode::<libc::c_int>(cmsg) as u8
+                    ecn_bits = cmsg::decode::<libc::c_int>(cmsg) as u8;
                 }
             },
-            _ => 0,
-        },
-        None => 0,
-    };
+            (libc::IPPROTO_IP, libc::IP_PKTINFO) => unsafe {
+                let pktinfo = cmsg::decode::<libc::in_pktinfo>(cmsg);
+                dst_ip = Some(IpAddr::V4(ptr::read(&pktinfo.ipi_addr as *const _ as _)));
+            },
+            (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => unsafe {
+                let pktinfo = cmsg::decode::<libc::in6_pktinfo>(cmsg);
+                dst_ip = Some(IpAddr::V6(ptr::read(&pktinfo.ipi6_addr as *const _ as _)));
+            },
+            _ => {}
+        }
+    }
+
     let addr = match libc::c_int::from(name.ss_family) {
         libc::AF_INET => unsafe { SocketAddr::V4(ptr::read(&name as *const _ as _)) },
         libc::AF_INET6 => unsafe { SocketAddr::V6(ptr::read(&name as *const _ as _)) },
         _ => unreachable!(),
     };
+
     RecvMeta {
         len,
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
+        dst_ip,
     }
 }
 
@@ -322,3 +415,56 @@ pub const BATCH_SIZE: usize = 32;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub const BATCH_SIZE: usize = 1;
+
+#[cfg(target_os = "linux")]
+mod gso {
+    use super::*;
+
+    /// Checks whether GSO support is available by setting the UDP_SEGMENT
+    /// option on a socket
+    pub fn supports_gso() -> bool {
+        const GSO_SIZE: libc::c_int = 1500;
+
+        let socket = match std::net::UdpSocket::bind("[::]:0") {
+            Ok(socket) => socket,
+            Err(_) => return false,
+        };
+
+        let rc = unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_UDP,
+                libc::UDP_SEGMENT,
+                &GSO_SIZE as *const _ as _,
+                mem::size_of_val(&GSO_SIZE) as _,
+            )
+        };
+
+        rc != -1
+    }
+
+    pub fn set_segment_size(encoder: &mut cmsg::Encoder, segment_size: u16) {
+        encoder.push(libc::SOL_UDP, libc::UDP_SEGMENT, segment_size);
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+mod gso {
+    use super::*;
+
+    pub fn supports_gso() -> bool {
+        false
+    }
+
+    pub fn set_segment_size(_encoder: &mut cmsg::Encoder, _segment_size: u16) {
+        panic!("Setting a segment size is not supported on current platform");
+    }
+}
+
+lazy_static! {
+    static ref CAPABILITIES: UdpCapabilities = {
+        UdpCapabilities {
+            gso: gso::supports_gso(),
+        }
+    };
+}
