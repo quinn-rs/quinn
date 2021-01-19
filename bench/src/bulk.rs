@@ -125,15 +125,27 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: O
     let mut duration_hist = Histogram::<u64>::new(3).unwrap();
     let mut throughput_hist = Histogram::<u64>::new(3).unwrap();
 
-    while let Some(result) = ops.next().await {
-        info!("stream finished: {:?}", result);
-        let result = result.unwrap();
-        total_size += result.size;
+    let mut result = Ok(());
 
-        duration_hist
-            .record(result.duration.as_millis() as u64)
-            .unwrap();
-        throughput_hist.record(result.throughput as u64).unwrap();
+    while let Some(stream_result) = ops.next().await {
+        info!("stream finished: {:?}", stream_result);
+        match stream_result {
+            Ok(stream_result) => {
+                total_size += stream_result.size;
+
+                duration_hist
+                    .record(stream_result.duration.as_millis() as u64)
+                    .unwrap();
+                throughput_hist
+                    .record(stream_result.throughput as u64)
+                    .unwrap();
+            }
+            Err(e) => {
+                if result.is_ok() {
+                    result = Err(e);
+                }
+            }
+        }
     }
 
     let dt = start.elapsed();
@@ -177,7 +189,7 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: O
         println!("\nClient connection stats:\n{:#?}", connection.stats());
     }
 
-    Ok(())
+    result
 }
 
 async fn send_data_on_stream(
