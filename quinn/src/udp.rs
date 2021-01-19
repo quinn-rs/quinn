@@ -1,7 +1,7 @@
 use std::{
     io,
     io::IoSliceMut,
-    net::{Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     task::{Context, Poll},
 };
 
@@ -74,6 +74,8 @@ pub struct RecvMeta {
     pub addr: SocketAddr,
     pub len: usize,
     pub ecn: Option<EcnCodepoint>,
+    /// The destination IP address which was encoded in this datagram
+    pub dst_ip: Option<IpAddr>,
 }
 
 impl Default for RecvMeta {
@@ -83,6 +85,7 @@ impl Default for RecvMeta {
             addr: SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0),
             len: 0,
             ecn: None,
+            dst_ip: None,
         }
     }
 }

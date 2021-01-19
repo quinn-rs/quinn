@@ -191,7 +191,7 @@ impl<R: Buf> BlockIterator<R> {
         }
     }
 
-    fn next<'a>(&'a mut self) -> Result<Option<Block<'a>>> {
+    fn next(&mut self) -> Result<Option<Block<'_>>> {
         self.buf.advance(self.last_block_len);
         if self.buf.remaining() < mem::size_of::<u64>() + mem::size_of::<u32>() {
             if self.buf.remaining() > 0 {

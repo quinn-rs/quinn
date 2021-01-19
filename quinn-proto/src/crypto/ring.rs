@@ -2,7 +2,7 @@ use ring::{aead, hkdf, hmac};
 
 use crate::{
     config::ConfigError,
-    crypto,
+    crypto::{self, CryptoError},
     packet::{PacketNumber, LONG_HEADER_FORM},
 };
 
@@ -66,8 +66,8 @@ impl crypto::HmacKey for hmac::Key {
         hmac::sign(self, data)
     }
 
-    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), ()> {
-        hmac::verify(self, data, signature).map_err(|_| ())
+    fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), CryptoError> {
+        Ok(hmac::verify(self, data, signature)?)
     }
 }
 
@@ -93,16 +93,25 @@ impl crypto::HandshakeTokenKey for hkdf::Prk {
 impl crypto::AeadKey for aead::LessSafeKey {
     const KEY_LEN: usize = 32;
 
-    fn seal(&self, data: &mut Vec<u8>, additional_data: &[u8]) -> Result<(), ()> {
+    fn seal(&self, data: &mut Vec<u8>, additional_data: &[u8]) -> Result<(), CryptoError> {
         let aad = ring::aead::Aad::from(additional_data);
         let zero_nonce = ring::aead::Nonce::assume_unique_for_key([0u8; 12]);
-        self.seal_in_place_append_tag(zero_nonce, aad, data)
-            .map_err(|_| ())
+        Ok(self.seal_in_place_append_tag(zero_nonce, aad, data)?)
     }
 
-    fn open<'a>(&self, data: &'a mut [u8], additional_data: &[u8]) -> Result<&'a mut [u8], ()> {
+    fn open<'a>(
+        &self,
+        data: &'a mut [u8],
+        additional_data: &[u8],
+    ) -> Result<&'a mut [u8], CryptoError> {
         let aad = ring::aead::Aad::from(additional_data);
         let zero_nonce = ring::aead::Nonce::assume_unique_for_key([0u8; 12]);
-        self.open_in_place(zero_nonce, aad, data).map_err(|_| ())
+        Ok(self.open_in_place(zero_nonce, aad, data)?)
+    }
+}
+
+impl From<ring::error::Unspecified> for CryptoError {
+    fn from(_: ring::error::Unspecified) -> Self {
+        CryptoError
     }
 }

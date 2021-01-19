@@ -33,6 +33,10 @@ impl Pair {
         let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)));
         let client = Endpoint::new(endpoint_config, None);
 
+        Pair::new_from_endpoint(client, server)
+    }
+
+    pub fn new_from_endpoint(client: Endpoint, server: Endpoint) -> Self {
         let server_addr = SocketAddr::new(
             Ipv6Addr::LOCALHOST.into(),
             SERVER_PORTS.lock().unwrap().next().unwrap(),
@@ -226,7 +230,7 @@ impl TestEndpoint {
             let (_, ecn, packet) = self.inbound.pop_front().unwrap();
             if let Some((ch, event)) =
                 self.endpoint
-                    .handle(now, remote, ecn, packet.as_slice().into())
+                    .handle(now, remote, None, ecn, packet.as_slice().into())
             {
                 match event {
                     DatagramEvent::NewConnection(conn) => {
@@ -298,12 +302,7 @@ impl TestEndpoint {
     }
 
     pub fn assert_accept(&mut self) -> ConnectionHandle {
-        if let Some(c) = self.accepted.take() {
-            self.accept();
-            c
-        } else {
-            panic!("server didn't connect");
-        }
+        self.accepted.take().expect("server didn't connect")
     }
 }
 

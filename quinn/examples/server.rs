@@ -1,18 +1,6 @@
-//! Example to serve files from a directory.
+//! This example demonstrates an HTTP server that serves files from a directory.
 //!
-//! Run:
-//! ```text
-//! $ RUST_LOG=debug cargo run --example server ./
-//! ```
-//!
-//! and in another terminal you can run the client example:
-//!
-//! Run:
-//! ```test
-//! $ cargo run --example client https://localhost:4433/Cargo.toml
-//! ```
-//!
-//! The output will be the source code of the Cargo.toml file.
+//! Checkout the `README.md` for guidance.
 
 use std::{
     ascii, fs, io,
@@ -73,6 +61,7 @@ fn main() {
 }
 
 #[tokio::main]
+#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 async fn run(options: Opt) -> Result<()> {
     let mut transport_config = quinn::TransportConfig::default();
     transport_config.stream_window_uni(0).unwrap();
@@ -138,7 +127,7 @@ async fn run(options: Opt) -> Result<()> {
     }
 
     let (endpoint, mut incoming) = endpoint.bind(&options.listen)?;
-    info!("listening on {}", endpoint.local_addr()?);
+    eprintln!("listening on {}", endpoint.local_addr()?);
     drop(endpoint);
 
     while let Some(conn) = incoming.next().await {

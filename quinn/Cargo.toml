@@ -28,7 +28,7 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 bytes = "0.5.2"
-futures = "0.3.1"
+futures = "0.3.8"
 libc = "0.2.69"
 mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.6.1" }
@@ -38,12 +38,15 @@ tracing = "0.1.10"
 tokio = { version = "0.2.6", features = ["rt-core", "io-driver", "time"] }
 webpki = { version = "0.21", optional = true }
 
+[target.'cfg(unix)'.dependencies]
+lazy_static = "1"
+
 [dev-dependencies]
 anyhow = "1.0.22"
 crc = "1.8.1"
 bencher = "0.1.5"
-directories-next = "1.0.1"
-rand = "0.7"
+directories-next = "2"
+rand = "0.8"
 rcgen = "0.8"
 structopt = "0.3.0"
 tokio = { version = "0.2.6", features = ["rt-threaded", "time", "macros"] }

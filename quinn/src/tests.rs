@@ -376,6 +376,18 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
 
         let handle = runtime.spawn(async move {
             let incoming = server_incoming.next().await.unwrap();
+
+            // Note for anyone modifying the platform support in this test:
+            // If `local_ip` gets available on additional platforms - which
+            // requires modifying this test - please update the list of supported
+            // platforms in the doc comments of the various `local_ip` functions.
+            if cfg!(target_os = "linux") {
+                let local_ip = incoming.local_ip().expect("Local IP must be available");
+                assert!(local_ip.is_loopback());
+            } else {
+                assert_eq!(None, incoming.local_ip());
+            }
+
             let new_conn = incoming.instrument(info_span!("server")).await.unwrap();
             tokio::spawn(
                 new_conn

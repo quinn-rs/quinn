@@ -19,7 +19,7 @@ pub(crate) enum ConnectionEventInner {
         remaining: Option<BytesMut>,
     },
     /// New connection identifiers have been issued for the Connection
-    NewIdentifiers(Vec<IssuedCid>),
+    NewIdentifiers(Vec<IssuedCid>, Instant),
 }
 
 /// Events sent from a Connection to an Endpoint
@@ -50,10 +50,10 @@ pub(crate) enum EndpointEventInner {
     /// The reset token and/or address eligible for generating resets has been updated
     ResetToken(SocketAddr, ResetToken),
     /// The connection needs connection identifiers
-    NeedIdentifiers(u64),
+    NeedIdentifiers(Instant, u64),
     /// Stop routing connection ID for this sequence number to the connection
     /// When `bool == true`, a new connection ID will be issued to peer
-    RetireConnectionId(u64, bool),
+    RetireConnectionId(Instant, u64, bool),
 }
 
 /// Protocol-level identifier for a connection.
