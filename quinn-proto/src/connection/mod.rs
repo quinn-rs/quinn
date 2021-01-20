@@ -442,7 +442,7 @@ where
                         congestion_blocked = true;
                         continue;
                     }
-                    let smoothed_rtt = self.path.rtt.conservative();
+                    let smoothed_rtt = self.path.rtt.get();
                     let window = self.path.congestion.window();
                     if let Some(delay) =
                         self.path
