@@ -39,7 +39,7 @@ impl PathData {
             remote,
             rtt: RttEstimator::new(initial_rtt),
             sending_ecn: true,
-            pacing: Pacer::new(congestion.initial_window(), now),
+            pacing: Pacer::new(initial_rtt, congestion.initial_window(), MIN_MTU, now),
             congestion,
             challenge: None,
             challenge_pending: false,
@@ -52,10 +52,11 @@ impl PathData {
 
     pub fn from_previous(remote: SocketAddr, prev: &PathData, now: Instant) -> Self {
         let congestion = prev.congestion.clone_box();
+        let smoothed_rtt = prev.rtt.get();
         PathData {
             remote,
             rtt: prev.rtt,
-            pacing: Pacer::new(congestion.initial_window(), now),
+            pacing: Pacer::new(smoothed_rtt, congestion.window(), prev.mtu, now),
             sending_ecn: true,
             congestion,
             challenge: None,
