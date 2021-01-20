@@ -48,7 +48,7 @@ impl Pacer {
         );
 
         // if we can already send a packet, there is no need for delay
-        if self.tokens > mtu.into() {
+        if self.tokens >= mtu.into() {
             return None;
         }
 
