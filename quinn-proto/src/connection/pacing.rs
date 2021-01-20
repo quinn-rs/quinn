@@ -75,6 +75,8 @@ impl Pacer {
             .saturating_add(new_tokens as _)
             .min(self.capacity);
 
+        self.prev = now;
+
         // if we can already send a packet, there is no need for delay
         if self.tokens > mtu.into() {
             return None;
