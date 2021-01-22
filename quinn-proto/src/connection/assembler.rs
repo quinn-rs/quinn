@@ -76,7 +76,7 @@ impl Assembler {
                 return Ok(None);
             } else if (chunk.offset + chunk.bytes.len() as u64) <= self.bytes_read {
                 // Next chunk is useless as the read index is beyond its end
-                self.data.pop();
+                self.pop();
                 continue;
             }
 
@@ -86,7 +86,7 @@ impl Assembler {
 
             self.bytes_read += len as u64;
 
-            return Ok(self.data.pop().map(|mut x| x.bytes.split_off(start)));
+            return Ok(self.pop().map(|mut x| x.1.split_off(start)));
         }
     }
 
@@ -463,6 +463,24 @@ mod test {
         x.insert(3, Bytes::from_static(b"def"));
         x.defragment();
         assert_eq!(x.pop(), Some((3, Bytes::from_static(b"def"))));
+    }
+
+    #[test]
+    fn defrag_read_chunk() {
+        let mut x = Assembler::new();
+        x.insert(3, Bytes::from_static(b"def"));
+        x.insert(0, Bytes::from_static(b"abc"));
+        x.insert(7, Bytes::from_static(b"hij"));
+        x.insert(11, Bytes::from_static(b"lmn"));
+        x.defragment();
+        assert_matches!(x.read_chunk(), Ok(Some(ref y)) if &y[..] == b"abcdef");
+        x.insert(5, Bytes::from_static(b"fghijklmn"));
+        assert_matches!(x.read_chunk(), Ok(Some(ref y)) if &y[..] == b"ghijklmn");
+        x.insert(13, Bytes::from_static(b"nopq"));
+        assert_matches!(x.read_chunk(), Ok(Some(ref y)) if &y[..] == b"opq");
+        x.insert(15, Bytes::from_static(b"pqrs"));
+        assert_matches!(x.read_chunk(), Ok(Some(ref y)) if &y[..] == b"rs");
+        assert_matches!(x.read_chunk(), Ok(None));
     }
 
     #[test]
