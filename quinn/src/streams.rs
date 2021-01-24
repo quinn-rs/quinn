@@ -751,11 +751,8 @@ where
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
         while this.buf.len() != this.off {
-            let n: usize = ready!(this
-                .stream
-                .poll_read(cx, &mut this.buf[this.off..])
-                .map_err(ReadExactError::ReadError)?)
-            .ok_or(ReadExactError::FinishedEarly)?;
+            let n: usize = ready!(this.stream.poll_read(cx, &mut this.buf[this.off..])?)
+                .ok_or(ReadExactError::FinishedEarly)?;
             this.off += n;
         }
         Poll::Ready(Ok(()))
@@ -770,7 +767,7 @@ pub enum ReadExactError {
     FinishedEarly,
     /// A read error occurred
     #[error("{0}")]
-    ReadError(#[source] ReadError),
+    ReadError(#[from] ReadError),
 }
 
 /// Future produced by [`RecvStream::read_unordered()`].
