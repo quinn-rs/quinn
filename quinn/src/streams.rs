@@ -300,7 +300,6 @@ where
     stream: StreamId,
     is_0rtt: bool,
     all_data_read: bool,
-    any_data_read: bool,
 }
 
 impl<S> RecvStream<S>
@@ -313,7 +312,6 @@ where
             stream,
             is_0rtt,
             all_data_read: false,
-            any_data_read: false,
         }
     }
 
@@ -485,7 +483,6 @@ where
             StreamId,
         ) -> Result<Option<U>, proto::ReadError>,
     {
-        self.any_data_read = true;
         use proto::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
