@@ -925,13 +925,6 @@ where
         Ok(result?.map(|x| x.result.bufs))
     }
 
-    /// Read from the given recv stream
-    pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
-        let result = self.streams.read(id, buf);
-        self.post_read(id, &result);
-        Ok(result?.map(|x| x.result))
-    }
-
     fn post_read<T>(&mut self, id: StreamId, result: &streams::ReadResult<T>) {
         if let Ok(Some(ref result)) = *result {
             self.add_read_credits(id, result.max_stream_data, result.max_data);
