@@ -17,10 +17,14 @@ use crate::{
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
 };
 
-mod types;
-pub(super) use types::ReadResult;
-use types::{BytesRead, DidRead, ReadChunks, Recv, Send, SendState, StopResult, StreamReadResult};
-pub use types::{FinishError, ReadError, WriteError};
+mod recv;
+pub use recv::ReadError;
+pub(super) use recv::ReadResult;
+use recv::{BytesRead, DidRead, ReadChunks, Recv, StreamReadResult};
+
+mod send;
+pub use send::{FinishError, WriteError};
+use send::{Send, SendState, StopResult};
 
 pub struct Streams {
     side: Side,
