@@ -95,6 +95,10 @@ impl Recv {
     }
 
     pub(super) fn read_chunk(&mut self, max_length: usize) -> StreamReadResult<Bytes> {
+        if self.assembler.is_stopped() {
+            return Err(ReadError::UnknownStream);
+        }
+
         match self.assembler.read(max_length)? {
             Some(bytes) => Ok(Some(bytes)),
             None => self.read_blocked().map(|()| None),
@@ -105,6 +109,10 @@ impl Recv {
         &mut self,
         chunks: &mut [Bytes],
     ) -> Result<Option<ReadChunks>, ReadError> {
+        if self.assembler.is_stopped() {
+            return Err(ReadError::UnknownStream);
+        }
+
         let mut out = ReadChunks { bufs: 0, read: 0 };
         if chunks.is_empty() {
             return Ok(Some(out));
