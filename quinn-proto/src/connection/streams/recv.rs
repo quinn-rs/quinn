@@ -61,27 +61,6 @@ impl Recv {
         Ok(new_bytes)
     }
 
-    pub(super) fn read(&mut self, buf: &mut [u8]) -> StreamReadResult<usize> {
-        if self.assembler.is_stopped() {
-            return Err(ReadError::UnknownStream);
-        }
-
-        let mut read = 0;
-        while let Some(chunk) = self.assembler.read(buf.len() - read)? {
-            (&mut buf[read..read + chunk.len()]).copy_from_slice(&chunk);
-            read += chunk.len();
-            if read == buf.len() {
-                break;
-            }
-        }
-
-        if read > 0 {
-            Ok(Some(read))
-        } else {
-            self.read_blocked().map(|()| None)
-        }
-    }
-
     pub(super) fn read_unordered(&mut self) -> StreamReadResult<(Bytes, u64)> {
         if self.assembler.is_stopped() {
             return Err(ReadError::UnknownStream);
@@ -284,12 +263,6 @@ pub(super) type StreamReadResult<T> = Result<Option<T>, ReadError>;
 
 pub(crate) trait BytesRead {
     fn bytes_read(&self) -> u64;
-}
-
-impl BytesRead for usize {
-    fn bytes_read(&self) -> u64 {
-        *self as u64
-    }
 }
 
 impl BytesRead for Bytes {

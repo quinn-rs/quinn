@@ -352,14 +352,12 @@ where
         cx: &mut Context,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), ReadError>> {
-        let res = ready!(self.poll_read_generic(cx, |conn, stream| {
-            conn.inner.read(stream, buf.initialize_unfilled())
-        }));
-
-        if let Ok(Some(n)) = res {
-            buf.advance(n);
-        }
-        Poll::Ready(res.map(|_| ()))
+        self.poll_read_generic(cx, |conn, stream| {
+            conn.inner
+                .read_chunk(stream, buf.remaining())
+                .map(|val| val.map(|chunk| buf.put_slice(&chunk)))
+        })
+        .map(|res| res.map(|_| ()))
     }
 
     /// Read a segment of data from any offset in the stream.

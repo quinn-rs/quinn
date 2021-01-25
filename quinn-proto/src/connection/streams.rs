@@ -200,10 +200,6 @@ impl Streams {
         self.connection_blocked.clear();
     }
 
-    pub(crate) fn read(&mut self, id: StreamId, buf: &mut [u8]) -> ReadResult<usize> {
-        self.try_read(id, |rs| rs.read(buf))
-    }
-
     pub(crate) fn read_unordered(&mut self, id: StreamId) -> ReadResult<(Bytes, u64)> {
         self.try_read(id, |rs| rs.read_unordered())
     }
@@ -1010,7 +1006,7 @@ mod tests {
         );
         assert_eq!(client.data_recvd, 2048);
         assert_eq!(client.local_max_data - initial_max, 0);
-        client.read(id, &mut [0; 1024]).unwrap();
+        client.read_chunk(id, 1024).unwrap();
         assert_eq!(client.local_max_data - initial_max, 1024);
         assert_eq!(
             client
@@ -1111,7 +1107,7 @@ mod tests {
             }
         );
         assert!(client.stop(id).is_err());
-        assert_eq!(client.read(id, &mut []), Err(ReadError::UnknownStream));
+        assert_eq!(client.read_chunk(id, 0), Err(ReadError::UnknownStream));
         assert_eq!(client.read_unordered(id), Err(ReadError::UnknownStream));
         assert_eq!(client.local_max_data - initial_max, 32);
         assert_eq!(
