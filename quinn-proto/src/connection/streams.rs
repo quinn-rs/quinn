@@ -1119,7 +1119,16 @@ impl Recv {
         if self.assembler.is_stopped() {
             return Err(ReadError::UnknownStream);
         }
-        let read = self.assembler.read(buf)?;
+
+        let mut read = 0;
+        while let Some(chunk) = self.assembler.read_chunk(buf.len() - read)? {
+            (&mut buf[read..read + chunk.len()]).copy_from_slice(&chunk);
+            read += chunk.len();
+            if read == buf.len() {
+                break;
+            }
+        }
+
         if read > 0 {
             Ok(Some(read))
         } else {
