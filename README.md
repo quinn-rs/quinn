@@ -24,6 +24,7 @@ This library is at [draft 32][current-draft].
 - Application-layer datagrams for small, unreliable messages.
 - Future-based async API.
 - Experimental HTTP over QUIC.
+- The minimum supported Rust version is 1.45.0.
 
 ## Overview
 
