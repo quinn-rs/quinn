@@ -1,4 +1,8 @@
-use std::{cmp::Ordering, collections::BinaryHeap, mem};
+use std::{
+    cmp::Ordering,
+    collections::{binary_heap::PeekMut, BinaryHeap},
+    mem,
+};
 
 use bytes::{Buf, Bytes, BytesMut};
 
@@ -60,13 +64,16 @@ impl Assembler {
     }
 
     // Get the the next ordered chunk
-    pub(crate) fn read_chunk(&mut self) -> Result<Option<Bytes>, IllegalOrderedRead> {
+    pub(crate) fn read_chunk(
+        &mut self,
+        max_length: usize,
+    ) -> Result<Option<Bytes>, IllegalOrderedRead> {
         if let State::Unordered { .. } = self.state {
             return Err(IllegalOrderedRead);
         }
 
         loop {
-            let chunk = match self.data.peek() {
+            let mut chunk = match self.data.peek_mut() {
                 Some(chunk) => chunk,
                 None => return Ok(None),
             };
@@ -76,17 +83,26 @@ impl Assembler {
                 return Ok(None);
             } else if (chunk.offset + chunk.bytes.len() as u64) <= self.bytes_read {
                 // Next chunk is useless as the read index is beyond its end
-                self.pop();
+                PeekMut::pop(chunk);
                 continue;
             }
 
             // Determine `start` and `len` of the slice of useful data in chunk
             let start = (self.bytes_read - chunk.offset) as usize;
-            let len = chunk.bytes.len() - start;
+            if start > 0 {
+                chunk.bytes.advance(start);
+                chunk.offset += start as u64;
+            }
 
-            self.bytes_read += len as u64;
-
-            return Ok(self.pop().map(|mut x| x.1.split_off(start)));
+            return Ok(Some(if max_length < chunk.bytes.len() {
+                self.bytes_read += max_length as u64;
+                chunk.offset += max_length as u64;
+                chunk.bytes.split_to(max_length)
+            } else {
+                self.bytes_read += chunk.bytes.len() as u64;
+                self.defragmented = self.defragmented.saturating_sub(1);
+                PeekMut::pop(chunk).bytes
+            }));
         }
     }
 
@@ -163,18 +179,6 @@ impl Assembler {
         let bytes = buffer.split().freeze();
         self.data.push(Chunk { offset, bytes });
         self.defragmented = self.data.len();
-    }
-
-    #[cfg(test)]
-    fn next(&mut self, size: usize) -> Option<Vec<u8>> {
-        let mut buf = vec![0; size];
-        let read = self.read(&mut buf).unwrap();
-        buf.resize(read, 0);
-        if !buf.is_empty() {
-            Some(buf)
-        } else {
-            None
-        }
     }
 
     fn pop(&mut self) -> Option<(u64, Bytes)> {
@@ -304,26 +308,28 @@ mod test {
     #[test]
     fn assemble_ordered() {
         let mut x = Assembler::new();
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), None);
         x.insert(0, Bytes::from_static(b"123"));
-        assert_matches!(x.next(1), Some(ref y) if &y[..] == b"1");
-        assert_matches!(x.next(3), Some(ref y) if &y[..] == b"23");
+        assert_matches!(next(&mut x, 1), Some(ref y) if &y[..] == b"1");
+        assert_matches!(next(&mut x, 3), Some(ref y) if &y[..] == b"23");
         x.insert(3, Bytes::from_static(b"456"));
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"456");
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"456");
         x.insert(6, Bytes::from_static(b"789"));
         x.insert(9, Bytes::from_static(b"10"));
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"78910");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"789");
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"10");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
     fn assemble_unordered() {
         let mut x = Assembler::new();
         x.insert(3, Bytes::from_static(b"456"));
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), None);
         x.insert(0, Bytes::from_static(b"123"));
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"123456");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"123");
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"456");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -331,8 +337,8 @@ mod test {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"123"));
         x.insert(0, Bytes::from_static(b"123"));
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"123");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"123");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -341,8 +347,8 @@ mod test {
         x.insert(0, Bytes::from_static(b"123"));
         x.insert(0, Bytes::from_static(b"123"));
         x.defragment();
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"123");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"123");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -350,8 +356,8 @@ mod test {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"12345"));
         x.insert(1, Bytes::from_static(b"234"));
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"12345");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"12345");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -360,8 +366,8 @@ mod test {
         x.insert(0, Bytes::from_static(b"12345"));
         x.insert(1, Bytes::from_static(b"234"));
         x.defragment();
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"12345");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"12345");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -369,8 +375,8 @@ mod test {
         let mut x = Assembler::new();
         x.insert(1, Bytes::from_static(b"234"));
         x.insert(0, Bytes::from_static(b"12345"));
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"12345");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"12345");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -379,8 +385,8 @@ mod test {
         x.insert(1, Bytes::from_static(b"234"));
         x.insert(0, Bytes::from_static(b"12345"));
         x.defragment();
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"12345");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"12345");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -388,8 +394,9 @@ mod test {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"123"));
         x.insert(1, Bytes::from_static(b"234"));
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"123");
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"4");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -398,8 +405,8 @@ mod test {
         x.insert(0, Bytes::from_static(b"123"));
         x.insert(1, Bytes::from_static(b"234"));
         x.defragment();
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"1234");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -409,8 +416,8 @@ mod test {
         x.insert(2, Bytes::from_static(b"3"));
         x.insert(4, Bytes::from_static(b"5"));
         x.insert(0, Bytes::from_static(b"123456"));
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"123456");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"123456");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -421,17 +428,17 @@ mod test {
         x.insert(4, Bytes::from_static(b"5"));
         x.insert(0, Bytes::from_static(b"123456"));
         x.defragment();
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"123456");
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"123456");
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
     fn assemble_old() {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"1234"));
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"1234");
         x.insert(0, Bytes::from_static(b"1234"));
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -439,10 +446,10 @@ mod test {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"1234"));
         x.defragment();
-        assert_matches!(x.next(32), Some(ref y) if &y[..] == b"1234");
+        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"1234");
         x.insert(0, Bytes::from_static(b"1234"));
         x.defragment();
-        assert_matches!(x.next(32), None);
+        assert_matches!(next(&mut x, 32), None);
     }
 
     #[test]
@@ -473,14 +480,14 @@ mod test {
         x.insert(7, Bytes::from_static(b"hij"));
         x.insert(11, Bytes::from_static(b"lmn"));
         x.defragment();
-        assert_matches!(x.read_chunk(), Ok(Some(ref y)) if &y[..] == b"abcdef");
+        assert_matches!(x.read_chunk(usize::MAX), Ok(Some(ref y)) if &y[..] == b"abcdef");
         x.insert(5, Bytes::from_static(b"fghijklmn"));
-        assert_matches!(x.read_chunk(), Ok(Some(ref y)) if &y[..] == b"ghijklmn");
+        assert_matches!(x.read_chunk(usize::MAX), Ok(Some(ref y)) if &y[..] == b"ghijklmn");
         x.insert(13, Bytes::from_static(b"nopq"));
-        assert_matches!(x.read_chunk(), Ok(Some(ref y)) if &y[..] == b"opq");
+        assert_matches!(x.read_chunk(usize::MAX), Ok(Some(ref y)) if &y[..] == b"opq");
         x.insert(15, Bytes::from_static(b"pqrs"));
-        assert_matches!(x.read_chunk(), Ok(Some(ref y)) if &y[..] == b"rs");
-        assert_matches!(x.read_chunk(), Ok(None));
+        assert_matches!(x.read_chunk(usize::MAX), Ok(Some(ref y)) if &y[..] == b"rs");
+        assert_matches!(x.read_chunk(usize::MAX), Ok(None));
     }
 
     #[test]
@@ -521,20 +528,36 @@ mod test {
     fn chunks_dedup() {
         let mut x = Assembler::new();
         x.insert(3, Bytes::from_static(b"def"));
-        assert_eq!(x.read_chunk().unwrap(), None);
+        assert_eq!(x.read_chunk(usize::MAX).unwrap(), None);
         x.insert(0, Bytes::from_static(b"a"));
         x.insert(1, Bytes::from_static(b"bcdefghi"));
         x.insert(0, Bytes::from_static(b"abcd"));
-        assert_eq!(x.read_chunk().unwrap(), Some(Bytes::from_static(b"abcd")));
-        assert_eq!(x.read_chunk().unwrap(), Some(Bytes::from_static(b"efghi")));
-        assert_eq!(x.read_chunk().unwrap(), None);
+        assert_eq!(
+            x.read_chunk(usize::MAX).unwrap(),
+            Some(Bytes::from_static(b"abcd"))
+        );
+        assert_eq!(
+            x.read_chunk(usize::MAX).unwrap(),
+            Some(Bytes::from_static(b"efghi"))
+        );
+        assert_eq!(x.read_chunk(usize::MAX).unwrap(), None);
         x.insert(8, Bytes::from_static(b"ijkl"));
-        assert_eq!(x.read_chunk().unwrap(), Some(Bytes::from_static(b"jkl")));
-        assert_eq!(x.read_chunk().unwrap(), None);
+        assert_eq!(
+            x.read_chunk(usize::MAX).unwrap(),
+            Some(Bytes::from_static(b"jkl"))
+        );
+        assert_eq!(x.read_chunk(usize::MAX).unwrap(), None);
         x.insert(12, Bytes::from_static(b"mno"));
-        assert_eq!(x.read_chunk().unwrap(), Some(Bytes::from_static(b"mno")));
-        assert_eq!(x.read_chunk().unwrap(), None);
+        assert_eq!(
+            x.read_chunk(usize::MAX).unwrap(),
+            Some(Bytes::from_static(b"mno"))
+        );
+        assert_eq!(x.read_chunk(usize::MAX).unwrap(), None);
         x.insert(2, Bytes::from_static(b"cde"));
-        assert_eq!(x.read_chunk().unwrap(), None);
+        assert_eq!(x.read_chunk(usize::MAX).unwrap(), None);
+    }
+
+    fn next(x: &mut Assembler, size: usize) -> Option<Bytes> {
+        x.read_chunk(size).unwrap()
     }
 }

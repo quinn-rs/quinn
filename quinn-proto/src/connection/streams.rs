@@ -1140,7 +1140,7 @@ impl Recv {
     }
 
     fn read_chunk(&mut self) -> StreamReadResult<Bytes> {
-        match self.assembler.read_chunk()? {
+        match self.assembler.read_chunk(usize::MAX)? {
             Some(bytes) => Ok(Some(bytes)),
             None => self.read_blocked().map(|()| None),
         }
@@ -1152,7 +1152,7 @@ impl Recv {
             return Ok(Some(out));
         }
 
-        while let Some(bytes) = self.assembler.read_chunk()? {
+        while let Some(bytes) = self.assembler.read_chunk(usize::MAX)? {
             chunks[out.bufs] = bytes;
             out.read += chunks[out.bufs].len();
             out.bufs += 1;
