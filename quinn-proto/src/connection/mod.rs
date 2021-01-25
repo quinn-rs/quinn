@@ -1749,20 +1749,18 @@ where
         if end > max {
             return Err(TransportError::CRYPTO_BUFFER_EXCEEDED(""));
         }
+
         space
             .crypto_stream
             .insert(crypto.offset, crypto.data.clone());
-        let mut buf = [0; 8192];
-        loop {
-            let n = space.crypto_stream.read(&mut buf).unwrap();
-            if n == 0 {
-                return Ok(());
-            }
-            trace!("consumed {} CRYPTO bytes", n);
-            if self.crypto.read_handshake(&buf[..n])? {
+        while let Some(buf) = space.crypto_stream.read_chunk().unwrap() {
+            trace!("consumed {} CRYPTO bytes", buf.len());
+            if self.crypto.read_handshake(&buf)? {
                 self.events.push_back(Event::HandshakeDataReady);
             }
         }
+
+        Ok(())
     }
 
     fn write_crypto(&mut self) {
