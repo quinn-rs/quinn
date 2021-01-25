@@ -73,7 +73,7 @@ impl Recv {
         }
     }
 
-    pub(super) fn read_chunk(&mut self, max_length: usize) -> StreamReadResult<Bytes> {
+    pub(super) fn read(&mut self, max_length: usize) -> StreamReadResult<Bytes> {
         if self.assembler.is_stopped() {
             return Err(ReadError::UnknownStream);
         }

@@ -752,13 +752,13 @@ fn key_update_reordered() {
 
     let buf1 = pair
         .server_conn_mut(server_ch)
-        .read_chunk(s, usize::MAX)
+        .read(s, usize::MAX)
         .unwrap()
         .unwrap();
     assert_matches!(&*buf1, MSG1);
     let buf2 = pair
         .server_conn_mut(server_ch)
-        .read_chunk(s, usize::MAX)
+        .read(s, usize::MAX)
         .unwrap()
         .unwrap();
     assert_eq!(buf2, MSG2);
@@ -978,7 +978,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
         .unwrap();
     pair.drive();
     assert_eq!(
-        pair.server_conn_mut(server_conn).read_chunk(s, usize::MAX),
+        pair.server_conn_mut(server_conn).read(s, usize::MAX),
         Err(ReadError::Reset(VarInt(42)))
     );
 
@@ -997,7 +997,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     pair.drive();
     let mut cursor = 0;
     loop {
-        match pair.server_conn_mut(server_conn).read_chunk(s, usize::MAX) {
+        match pair.server_conn_mut(server_conn).read(s, usize::MAX) {
             Ok(Some(buf)) => {
                 cursor += buf.len();
             }
@@ -1028,7 +1028,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     pair.drive();
     let mut cursor = 0;
     loop {
-        match pair.server_conn_mut(server_conn).read_chunk(s, usize::MAX) {
+        match pair.server_conn_mut(server_conn).read(s, usize::MAX) {
             Ok(Some(buf)) => {
                 cursor += buf.len();
             }

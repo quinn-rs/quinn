@@ -354,7 +354,7 @@ where
     ) -> Poll<Result<(), ReadError>> {
         self.poll_read_generic(cx, |conn, stream| {
             conn.inner
-                .read_chunk(stream, buf.remaining())
+                .read(stream, buf.remaining())
                 .map(|val| val.map(|chunk| buf.put_slice(&chunk)))
         })
         .map(|res| res.map(|_| ()))
@@ -398,7 +398,7 @@ where
         cx: &mut Context,
         max_length: usize,
     ) -> Poll<Result<Option<Bytes>, ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| conn.inner.read_chunk(stream, max_length))
+        self.poll_read_generic(cx, |conn, stream| conn.inner.read(stream, max_length))
     }
 
     /// Read the next segments of data
