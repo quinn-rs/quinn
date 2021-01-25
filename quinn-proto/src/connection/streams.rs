@@ -203,8 +203,8 @@ impl Streams {
         self.try_read(id, |rs| rs.read_unordered())
     }
 
-    pub(crate) fn read_chunk(&mut self, id: StreamId) -> ReadResult<Bytes> {
-        self.try_read(id, |rs| rs.read_chunk())
+    pub(crate) fn read_chunk(&mut self, id: StreamId, max_length: usize) -> ReadResult<Bytes> {
+        self.try_read(id, |rs| rs.read_chunk(max_length))
     }
 
     pub(crate) fn read_chunks(
@@ -1139,8 +1139,8 @@ impl Recv {
         }
     }
 
-    fn read_chunk(&mut self) -> StreamReadResult<Bytes> {
-        match self.assembler.read_chunk(usize::MAX)? {
+    fn read_chunk(&mut self, max_length: usize) -> StreamReadResult<Bytes> {
+        match self.assembler.read_chunk(max_length)? {
             Some(bytes) => Ok(Some(bytes)),
             None => self.read_blocked().map(|()| None),
         }

@@ -389,13 +389,20 @@ where
     ///
     /// Slightly more efficient than `read` due to not copying. Chunk boundaries
     /// do not correspond to peer writes, and hence cannot be used as framing.
-    pub fn read_chunk(&mut self) -> ReadChunk<'_, S> {
-        ReadChunk { stream: self }
+    pub fn read_chunk(&mut self, max_length: usize) -> ReadChunk<'_, S> {
+        ReadChunk {
+            stream: self,
+            max_length,
+        }
     }
 
     /// Foundation of [`read_chunk()`]: RecvStream::read_chunk
-    fn poll_read_chunk(&mut self, cx: &mut Context) -> Poll<Result<Option<Bytes>, ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| conn.inner.read_chunk(stream))
+    fn poll_read_chunk(
+        &mut self,
+        cx: &mut Context,
+        max_length: usize,
+    ) -> Poll<Result<Option<Bytes>, ReadError>> {
+        self.poll_read_generic(cx, |conn, stream| conn.inner.read_chunk(stream, max_length))
     }
 
     /// Read the next segments of data
@@ -812,6 +819,7 @@ where
     S: proto::crypto::Session,
 {
     stream: &'a mut RecvStream<S>,
+    max_length: usize,
 }
 
 impl<'a, S> Future for ReadChunk<'a, S>
@@ -820,7 +828,8 @@ where
 {
     type Output = Result<Option<Bytes>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.stream.poll_read_chunk(cx)
+        let max_length = self.max_length;
+        self.stream.poll_read_chunk(cx, max_length)
     }
 }
 
