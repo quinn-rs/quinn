@@ -110,6 +110,9 @@ using external protocol analyzers like Wireshark, and NSS-compatible key logs
 for the client side of each connection will be written to the path specified in
 the variable.
 
+The minimum supported Rust version for published releases of our
+crates will always be at least 6 months old at the time of release.
+
 ## Authors
 
 * **Dirkjan Ochtman** - *Project owner & founder*
