@@ -276,7 +276,9 @@ where
     S: proto::crypto::Session,
 {
     type Output = ();
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+
+    #[allow(unused_mut)] // MSRV
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.lock().unwrap();
 
         let span = info_span!("drive", id = conn.handle.0);
