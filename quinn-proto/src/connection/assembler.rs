@@ -29,25 +29,6 @@ impl Assembler {
         Self::default()
     }
 
-    pub(crate) fn read(&mut self, buf: &mut [u8]) -> Result<usize, IllegalOrderedRead> {
-        if let State::Unordered { .. } = self.state {
-            return Err(IllegalOrderedRead);
-        }
-
-        let mut read = 0;
-        loop {
-            if self.consume(buf, &mut read) {
-                self.pop();
-            } else {
-                break;
-            }
-            if read == buf.len() {
-                break;
-            }
-        }
-        Ok(read)
-    }
-
     pub(crate) fn read_unordered(&mut self) -> Option<(u64, Bytes)> {
         if let State::Ordered = self.state {
             // Enter unordered mode
@@ -103,45 +84,6 @@ impl Assembler {
                 self.defragmented = self.defragmented.saturating_sub(1);
                 PeekMut::pop(chunk).bytes
             }));
-        }
-    }
-
-    // Read as much from the first chunk in the heap as fits in the buffer.
-    // Takes the buffer to read into and the amount of bytes that has already
-    // been read into it. Returns whether the first chunk has been fully consumed.
-    fn consume(&mut self, buf: &mut [u8], read: &mut usize) -> bool {
-        let mut chunk = match self.data.peek_mut() {
-            Some(chunk) => chunk,
-            None => return false,
-        };
-
-        // If this chunk is either after the current offset or fully before it,
-        // return directly, indicating whether the chunk can be discarded.
-        if chunk.offset > self.bytes_read {
-            return false;
-        } else if (chunk.offset + chunk.bytes.len() as u64) <= self.bytes_read {
-            return true;
-        }
-
-        // Determine `start` and `len` of slice to read from chunk
-        let start = (self.bytes_read - chunk.offset) as usize;
-        let left = buf.len() - *read;
-        let len = left.min(chunk.bytes.len() - start) as usize;
-
-        // Actually write into the buffer and update the related state
-        (&mut buf[*read..*read + len]).copy_from_slice(&chunk.bytes[start..start + len]);
-        *read += len;
-        self.bytes_read += len as u64;
-
-        if start + len == chunk.bytes.len() {
-            // This chunk has been fully consumed and can be discarded
-            true
-        } else {
-            // Mutate the chunk; `peek_mut()` is documented to update the heap's ordering
-            // accordingly if necessary on dropping the `PeekMut`. Don't pop the chunk.
-            chunk.offset = chunk.offset + start as u64 + len as u64;
-            chunk.bytes.advance(start + len);
-            false
         }
     }
 
