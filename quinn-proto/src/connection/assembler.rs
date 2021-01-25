@@ -29,7 +29,11 @@ impl Assembler {
         Self::default()
     }
 
-    pub(crate) fn read_unordered(&mut self) -> Option<(u64, Bytes)> {
+    pub(crate) fn read_unordered(&mut self) -> Result<Option<(u64, Bytes)>, AssembleError> {
+        if self.is_stopped() {
+            return Err(AssembleError::UnknownStream);
+        }
+
         if let State::Ordered = self.state {
             // Enter unordered mode
             let mut recvd = RangeSet::new();
@@ -39,15 +43,19 @@ impl Assembler {
             }
             self.state = State::Unordered { recvd };
         }
-        let (n, data) = self.pop()?;
-        self.bytes_read += data.len() as u64;
-        Some((n, data))
+
+        Ok(self.pop().map(|(offset, data)| {
+            self.bytes_read += data.len() as u64;
+            (offset, data)
+        }))
     }
 
     // Get the the next ordered chunk
-    pub(crate) fn read(&mut self, max_length: usize) -> Result<Option<Bytes>, IllegalOrderedRead> {
-        if let State::Unordered { .. } = self.state {
-            return Err(IllegalOrderedRead);
+    pub(crate) fn read(&mut self, max_length: usize) -> Result<Option<Bytes>, AssembleError> {
+        if self.is_stopped() {
+            return Err(AssembleError::UnknownStream);
+        } else if let State::Unordered { .. } = self.state {
+            return Err(AssembleError::IllegalOrderedRead);
         }
 
         loop {
@@ -237,7 +245,10 @@ impl Default for State {
 
 /// Error indicating that an ordered read was performed on a stream after an unordered read
 #[derive(Debug, Copy, Clone)]
-pub struct IllegalOrderedRead;
+pub enum AssembleError {
+    IllegalOrderedRead,
+    UnknownStream,
+}
 
 #[cfg(test)]
 mod test {
@@ -433,34 +444,34 @@ mod test {
     fn unordered_happy_path() {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"abc"));
-        assert_eq!(x.read_unordered(), Some((0, Bytes::from_static(b"abc"))));
-        assert_eq!(x.read_unordered(), None);
+        assert_eq!(next_unordered(&mut x), (0, Bytes::from_static(b"abc")));
+        assert_eq!(x.read_unordered().unwrap(), None);
         x.insert(3, Bytes::from_static(b"def"));
-        assert_eq!(x.read_unordered(), Some((3, Bytes::from_static(b"def"))));
-        assert_eq!(x.read_unordered(), None);
+        assert_eq!(next_unordered(&mut x), (3, Bytes::from_static(b"def")));
+        assert_eq!(x.read_unordered().unwrap(), None);
     }
 
     #[test]
     fn unordered_dedup() {
         let mut x = Assembler::new();
         x.insert(3, Bytes::from_static(b"def"));
-        assert_eq!(x.read_unordered(), Some((3, Bytes::from_static(b"def"))));
-        assert_eq!(x.read_unordered(), None);
+        assert_eq!(next_unordered(&mut x), (3, Bytes::from_static(b"def")));
+        assert_eq!(x.read_unordered().unwrap(), None);
         x.insert(0, Bytes::from_static(b"a"));
         x.insert(0, Bytes::from_static(b"abcdefghi"));
         x.insert(0, Bytes::from_static(b"abcd"));
-        assert_eq!(x.read_unordered(), Some((0, Bytes::from_static(b"a"))));
-        assert_eq!(x.read_unordered(), Some((1, Bytes::from_static(b"bc"))));
-        assert_eq!(x.read_unordered(), Some((6, Bytes::from_static(b"ghi"))));
-        assert_eq!(x.read_unordered(), None);
+        assert_eq!(next_unordered(&mut x), (0, Bytes::from_static(b"a")));
+        assert_eq!(next_unordered(&mut x), (1, Bytes::from_static(b"bc")));
+        assert_eq!(next_unordered(&mut x), (6, Bytes::from_static(b"ghi")));
+        assert_eq!(x.read_unordered().unwrap(), None);
         x.insert(8, Bytes::from_static(b"ijkl"));
-        assert_eq!(x.read_unordered(), Some((9, Bytes::from_static(b"jkl"))));
-        assert_eq!(x.read_unordered(), None);
+        assert_eq!(next_unordered(&mut x), (9, Bytes::from_static(b"jkl")));
+        assert_eq!(x.read_unordered().unwrap(), None);
         x.insert(12, Bytes::from_static(b"mno"));
-        assert_eq!(x.read_unordered(), Some((12, Bytes::from_static(b"mno"))));
-        assert_eq!(x.read_unordered(), None);
+        assert_eq!(next_unordered(&mut x), (12, Bytes::from_static(b"mno")));
+        assert_eq!(x.read_unordered().unwrap(), None);
         x.insert(2, Bytes::from_static(b"cde"));
-        assert_eq!(x.read_unordered(), None);
+        assert_eq!(x.read_unordered().unwrap(), None);
     }
 
     #[test]
@@ -494,6 +505,10 @@ mod test {
         assert_eq!(x.read(usize::MAX).unwrap(), None);
         x.insert(2, Bytes::from_static(b"cde"));
         assert_eq!(x.read(usize::MAX).unwrap(), None);
+    }
+
+    fn next_unordered(x: &mut Assembler) -> (u64, Bytes) {
+        x.read_unordered().unwrap().unwrap()
     }
 
     fn next(x: &mut Assembler, size: usize) -> Option<Bytes> {
