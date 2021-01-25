@@ -45,10 +45,7 @@ impl Assembler {
     }
 
     // Get the the next ordered chunk
-    pub(crate) fn read_chunk(
-        &mut self,
-        max_length: usize,
-    ) -> Result<Option<Bytes>, IllegalOrderedRead> {
+    pub(crate) fn read(&mut self, max_length: usize) -> Result<Option<Bytes>, IllegalOrderedRead> {
         if let State::Unordered { .. } = self.state {
             return Err(IllegalOrderedRead);
         }
@@ -422,14 +419,14 @@ mod test {
         x.insert(7, Bytes::from_static(b"hij"));
         x.insert(11, Bytes::from_static(b"lmn"));
         x.defragment();
-        assert_matches!(x.read_chunk(usize::MAX), Ok(Some(ref y)) if &y[..] == b"abcdef");
+        assert_matches!(x.read(usize::MAX), Ok(Some(ref y)) if &y[..] == b"abcdef");
         x.insert(5, Bytes::from_static(b"fghijklmn"));
-        assert_matches!(x.read_chunk(usize::MAX), Ok(Some(ref y)) if &y[..] == b"ghijklmn");
+        assert_matches!(x.read(usize::MAX), Ok(Some(ref y)) if &y[..] == b"ghijklmn");
         x.insert(13, Bytes::from_static(b"nopq"));
-        assert_matches!(x.read_chunk(usize::MAX), Ok(Some(ref y)) if &y[..] == b"opq");
+        assert_matches!(x.read(usize::MAX), Ok(Some(ref y)) if &y[..] == b"opq");
         x.insert(15, Bytes::from_static(b"pqrs"));
-        assert_matches!(x.read_chunk(usize::MAX), Ok(Some(ref y)) if &y[..] == b"rs");
-        assert_matches!(x.read_chunk(usize::MAX), Ok(None));
+        assert_matches!(x.read(usize::MAX), Ok(Some(ref y)) if &y[..] == b"rs");
+        assert_matches!(x.read(usize::MAX), Ok(None));
     }
 
     #[test]
@@ -470,36 +467,36 @@ mod test {
     fn chunks_dedup() {
         let mut x = Assembler::new();
         x.insert(3, Bytes::from_static(b"def"));
-        assert_eq!(x.read_chunk(usize::MAX).unwrap(), None);
+        assert_eq!(x.read(usize::MAX).unwrap(), None);
         x.insert(0, Bytes::from_static(b"a"));
         x.insert(1, Bytes::from_static(b"bcdefghi"));
         x.insert(0, Bytes::from_static(b"abcd"));
         assert_eq!(
-            x.read_chunk(usize::MAX).unwrap(),
+            x.read(usize::MAX).unwrap(),
             Some(Bytes::from_static(b"abcd"))
         );
         assert_eq!(
-            x.read_chunk(usize::MAX).unwrap(),
+            x.read(usize::MAX).unwrap(),
             Some(Bytes::from_static(b"efghi"))
         );
-        assert_eq!(x.read_chunk(usize::MAX).unwrap(), None);
+        assert_eq!(x.read(usize::MAX).unwrap(), None);
         x.insert(8, Bytes::from_static(b"ijkl"));
         assert_eq!(
-            x.read_chunk(usize::MAX).unwrap(),
+            x.read(usize::MAX).unwrap(),
             Some(Bytes::from_static(b"jkl"))
         );
-        assert_eq!(x.read_chunk(usize::MAX).unwrap(), None);
+        assert_eq!(x.read(usize::MAX).unwrap(), None);
         x.insert(12, Bytes::from_static(b"mno"));
         assert_eq!(
-            x.read_chunk(usize::MAX).unwrap(),
+            x.read(usize::MAX).unwrap(),
             Some(Bytes::from_static(b"mno"))
         );
-        assert_eq!(x.read_chunk(usize::MAX).unwrap(), None);
+        assert_eq!(x.read(usize::MAX).unwrap(), None);
         x.insert(2, Bytes::from_static(b"cde"));
-        assert_eq!(x.read_chunk(usize::MAX).unwrap(), None);
+        assert_eq!(x.read(usize::MAX).unwrap(), None);
     }
 
     fn next(x: &mut Assembler, size: usize) -> Option<Bytes> {
-        x.read_chunk(size).unwrap()
+        x.read(size).unwrap()
     }
 }

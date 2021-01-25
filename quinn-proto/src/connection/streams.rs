@@ -1121,7 +1121,7 @@ impl Recv {
         }
 
         let mut read = 0;
-        while let Some(chunk) = self.assembler.read_chunk(buf.len() - read)? {
+        while let Some(chunk) = self.assembler.read(buf.len() - read)? {
             (&mut buf[read..read + chunk.len()]).copy_from_slice(&chunk);
             read += chunk.len();
             if read == buf.len() {
@@ -1149,7 +1149,7 @@ impl Recv {
     }
 
     fn read_chunk(&mut self, max_length: usize) -> StreamReadResult<Bytes> {
-        match self.assembler.read_chunk(max_length)? {
+        match self.assembler.read(max_length)? {
             Some(bytes) => Ok(Some(bytes)),
             None => self.read_blocked().map(|()| None),
         }
@@ -1161,7 +1161,7 @@ impl Recv {
             return Ok(Some(out));
         }
 
-        while let Some(bytes) = self.assembler.read_chunk(usize::MAX)? {
+        while let Some(bytes) = self.assembler.read(usize::MAX)? {
             chunks[out.bufs] = bytes;
             out.read += chunks[out.bufs].len();
             out.bufs += 1;
