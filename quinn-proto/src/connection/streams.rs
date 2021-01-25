@@ -204,8 +204,8 @@ impl Streams {
         self.try_read(id, |rs| rs.read_unordered())
     }
 
-    pub(crate) fn read_chunk(&mut self, id: StreamId, max_length: usize) -> ReadResult<Bytes> {
-        self.try_read(id, |rs| rs.read_chunk(max_length))
+    pub(crate) fn read(&mut self, id: StreamId, max_length: usize) -> ReadResult<Bytes> {
+        self.try_read(id, |rs| rs.read(max_length))
     }
 
     pub(crate) fn read_chunks(
@@ -1006,7 +1006,7 @@ mod tests {
         );
         assert_eq!(client.data_recvd, 2048);
         assert_eq!(client.local_max_data - initial_max, 0);
-        client.read_chunk(id, 1024).unwrap();
+        client.read(id, 1024).unwrap();
         assert_eq!(client.local_max_data - initial_max, 1024);
         assert_eq!(
             client
@@ -1107,7 +1107,7 @@ mod tests {
             }
         );
         assert!(client.stop(id).is_err());
-        assert_eq!(client.read_chunk(id, 0), Err(ReadError::UnknownStream));
+        assert_eq!(client.read(id, 0), Err(ReadError::UnknownStream));
         assert_eq!(client.read_unordered(id), Err(ReadError::UnknownStream));
         assert_eq!(client.local_max_data - initial_max, 32);
         assert_eq!(

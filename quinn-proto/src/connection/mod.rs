@@ -904,12 +904,8 @@ where
     }
 
     /// Read the next ordered chunk from the given recv stream
-    pub fn read_chunk(
-        &mut self,
-        id: StreamId,
-        max_length: usize,
-    ) -> Result<Option<Bytes>, ReadError> {
-        let result = self.streams.read_chunk(id, max_length);
+    pub fn read(&mut self, id: StreamId, max_length: usize) -> Result<Option<Bytes>, ReadError> {
+        let result = self.streams.read(id, max_length);
         self.post_read(id, &result);
         Ok(result?.map(|x| x.result))
     }
