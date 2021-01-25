@@ -16,15 +16,15 @@ This library is at [draft 32][current-draft].
 
 ## Features
 
-- Simultaneous client/server operation.
-- Ordered and unordered stream reads for improved performance.
-- Works on stable Rust, tested on Linux, macOS and Windows.
+- Simultaneous client/server operation
+- Ordered and unordered stream reads for improved performance
+- Works on stable Rust, tested on Linux, macOS and Windows
 - Pluggable cryptography, with a standard implementation backed by
-  [rustls][rustls] and [*ring*][ring].
-- Application-layer datagrams for small, unreliable messages.
-- Future-based async API.
-- Experimental HTTP over QUIC.
-- The minimum supported Rust version is 1.45.0.
+  [rustls][rustls] and [*ring*][ring]
+- Application-layer datagrams for small, unreliable messages
+- Future-based async API
+- Experimental HTTP over QUIC
+- The minimum supported Rust version is 1.45.0
 
 ## Overview
 
