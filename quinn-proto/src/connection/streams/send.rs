@@ -1,10 +1,8 @@
 use thiserror::Error;
 
+use super::ShouldTransmit;
 use crate::connection::send_buffer::SendBuffer;
-use crate::{
-    frame::{self, ShouldTransmit},
-    VarInt,
-};
+use crate::{frame, VarInt};
 
 #[derive(Debug)]
 pub(super) struct Send {
