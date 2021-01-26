@@ -59,18 +59,13 @@ impl Recv {
         Ok(new_bytes)
     }
 
-    pub(super) fn read_unordered(&mut self) -> StreamReadResult<(Bytes, u64)> {
-        // Return data we already have buffered, regardless of state
-        if let Some((offset, bytes)) = self.assembler.read(usize::MAX, false)? {
-            Ok(Some((bytes, offset)))
-        } else {
-            self.read_blocked().map(|()| None)
-        }
-    }
-
-    pub(super) fn read(&mut self, max_length: usize) -> StreamReadResult<Bytes> {
-        match self.assembler.read(max_length, true)? {
-            Some((_, bytes)) => Ok(Some(bytes)),
+    pub(super) fn read(
+        &mut self,
+        max_length: usize,
+        ordered: bool,
+    ) -> StreamReadResult<(Bytes, u64)> {
+        match self.assembler.read(max_length, ordered)? {
+            Some((offset, bytes)) => Ok(Some((bytes, offset))),
             None => self.read_blocked().map(|()| None),
         }
     }
@@ -250,12 +245,6 @@ pub(super) type StreamReadResult<T> = Result<Option<T>, ReadError>;
 
 pub(crate) trait BytesRead {
     fn bytes_read(&self) -> u64;
-}
-
-impl BytesRead for Bytes {
-    fn bytes_read(&self) -> u64 {
-        self.len() as u64
-    }
 }
 
 impl BytesRead for (Bytes, u64) {
