@@ -248,6 +248,27 @@ pub struct DidRead<T> {
     pub(crate) max_data: ShouldTransmit,
 }
 
+impl<T> DidRead<T> {
+    /// Returns `true` iff the producing `Streams::read` call causes a transmit.
+    pub fn causes_transmit(&self) -> bool {
+        self.max_stream_data.should_transmit() || self.max_data.should_transmit()
+    }
+
+    /// Maps an `DidRead<T>` to `DidRead<U>` by applying a function to the contained result.
+    pub fn map<U, F: FnOnce(T) -> U>(self, f: F) -> DidRead<U> {
+        DidRead {
+            result: f(self.result),
+            max_stream_data: self.max_stream_data,
+            max_data: self.max_data,
+        }
+    }
+
+    /// Returns the contained result, consuming the `self` value.
+    pub fn into_inner(self) -> T {
+        self.result
+    }
+}
+
 pub(super) type StreamReadResult<T> = Result<Option<T>, ReadError>;
 
 pub(crate) trait BytesRead {
