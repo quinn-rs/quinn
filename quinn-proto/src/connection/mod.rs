@@ -889,23 +889,23 @@ where
         Some(id)
     }
 
-    /// Read from the given recv stream, in undefined order
+    /// Read from the given recv stream
     ///
-    /// While stream data is typically processed by applications in-order, unordered reads improve
-    /// performance when packet loss occurs and data cannot be retransmitted before the flow control
-    /// window is filled. When in-order delivery is required, the sibling `read()` or `read_chunk[s]()`
-    /// methods should be used.
+    /// If `Ok`, the return value contains the bytes and their offset in the stream. For ordered
+    /// reads, the offset could be ignored, since it provides no new information.
     ///
-    /// The return value if `Ok` contains the bytes and their offset in the stream.
-    pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
-        let result = self.streams.read_unordered(id);
-        self.post_read(id, &result);
-        Ok(result?.map(|x| x.result))
-    }
-
-    /// Read the next ordered chunk from the given recv stream
-    pub fn read(&mut self, id: StreamId, max_length: usize) -> Result<Option<Bytes>, ReadError> {
-        let result = self.streams.read(id, max_length);
+    /// While most applications will prefer to consume stream data in order, unordered reads can
+    /// improve performance when packet loss occurs and data cannot be retransmitted before the flow
+    /// control window is filled. On any given stream, you can switch from ordered to unordered
+    /// reads, but ordered reads on streams that have seen previous unordered reads will return
+    /// `ReadError::IllegalOrderedRead`.
+    pub fn read(
+        &mut self,
+        id: StreamId,
+        max_length: usize,
+        ordered: bool,
+    ) -> Result<Option<(Bytes, u64)>, ReadError> {
+        let result = self.streams.read(id, max_length, ordered);
         self.post_read(id, &result);
         Ok(result?.map(|x| x.result))
     }
