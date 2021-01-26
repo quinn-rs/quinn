@@ -70,6 +70,7 @@ impl Assembler {
             } else if (chunk.offset + chunk.bytes.len() as u64) <= self.bytes_read {
                 // Next chunk is useless as the read index is beyond its end
                 PeekMut::pop(chunk);
+                self.defragmented = self.defragmented.saturating_sub(1);
                 continue;
             }
 
