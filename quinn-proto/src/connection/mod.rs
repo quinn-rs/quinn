@@ -1120,6 +1120,11 @@ where
         self.zero_rtt_enabled
     }
 
+    /// Whether there are any pending retransmits
+    pub fn has_pending_retransmits(&self) -> bool {
+        !self.spaces[SpaceId::Data].pending.is_empty()
+    }
+
     /// Look up whether we're the client or server of this Connection
     pub fn side(&self) -> Side {
         self.side
