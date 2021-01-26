@@ -50,7 +50,7 @@ pub use stats::ConnectionStats;
 
 mod streams;
 pub use streams::Streams;
-pub use streams::{FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
+pub use streams::{DidRead, FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
 
 mod timer;
 use timer::{Timer, TimerTable};

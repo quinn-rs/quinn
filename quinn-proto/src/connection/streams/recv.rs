@@ -242,10 +242,10 @@ pub(crate) type ReadResult<T> = Result<Option<DidRead<T>>, ReadError>;
 /// Result of a `Streams::read` call in case the stream had not ended yet
 #[derive(Debug, Eq, PartialEq, Copy, Clone)]
 #[must_use = "A frame might need to be enqueued"]
-pub(crate) struct DidRead<T> {
-    pub result: T,
-    pub max_stream_data: ShouldTransmit,
-    pub max_data: ShouldTransmit,
+pub struct DidRead<T> {
+    pub(crate) result: T,
+    pub(crate) max_stream_data: ShouldTransmit,
+    pub(crate) max_data: ShouldTransmit,
 }
 
 pub(super) type StreamReadResult<T> = Result<Option<T>, ReadError>;
