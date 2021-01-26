@@ -63,7 +63,7 @@ impl Recv {
 
     pub(super) fn read_unordered(&mut self) -> StreamReadResult<(Bytes, u64)> {
         // Return data we already have buffered, regardless of state
-        if let Some((offset, bytes)) = self.assembler.read_unordered()? {
+        if let Some((offset, bytes)) = self.assembler.read(usize::MAX, false)? {
             Ok(Some((bytes, offset)))
         } else {
             self.read_blocked().map(|()| None)
@@ -71,8 +71,8 @@ impl Recv {
     }
 
     pub(super) fn read(&mut self, max_length: usize) -> StreamReadResult<Bytes> {
-        match self.assembler.read(max_length)? {
-            Some(bytes) => Ok(Some(bytes)),
+        match self.assembler.read(max_length, true)? {
+            Some((_, bytes)) => Ok(Some(bytes)),
             None => self.read_blocked().map(|()| None),
         }
     }
@@ -86,7 +86,7 @@ impl Recv {
             return Ok(Some(out));
         }
 
-        while let Some(bytes) = self.assembler.read(usize::MAX)? {
+        while let Some((_, bytes)) = self.assembler.read(usize::MAX, true)? {
             chunks[out.bufs] = bytes;
             out.read += chunks[out.bufs].len();
             out.bufs += 1;
