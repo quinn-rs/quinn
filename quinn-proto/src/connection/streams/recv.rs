@@ -1,10 +1,13 @@
+use std::collections::hash_map::Entry;
+
 use bytes::Bytes;
 use thiserror::Error;
 use tracing::debug;
 
-use super::ShouldTransmit;
+use super::{ShouldTransmit, StreamHalf, Streams};
 use crate::connection::assembler::{AssembleError, Assembler};
-use crate::{frame, TransportError, VarInt};
+use crate::connection::spaces::Retransmits;
+use crate::{frame, StreamId, TransportError, VarInt};
 
 #[derive(Debug, Default)]
 pub(super) struct Recv {
@@ -57,46 +60,6 @@ impl Recv {
         self.assembler.insert(frame.offset, frame.data);
 
         Ok(new_bytes)
-    }
-
-    pub(super) fn read(
-        &mut self,
-        max_length: usize,
-        ordered: bool,
-    ) -> StreamReadResult<(Bytes, u64)> {
-        match self.assembler.can_read(ordered)? {
-            true => Ok(self
-                .assembler
-                .read(max_length, ordered)
-                .map(|(offset, bytes)| (bytes, offset))),
-            false => self.read_blocked().map(|()| None),
-        }
-    }
-
-    pub(super) fn read_chunks(
-        &mut self,
-        chunks: &mut [Bytes],
-    ) -> Result<Option<ReadChunks>, ReadError> {
-        if !self.assembler.can_read(true)? {
-            return self.read_blocked().map(|()| None);
-        }
-
-        let mut out = ReadChunks { bufs: 0, read: 0 };
-        if chunks.is_empty() {
-            return Ok(Some(out));
-        }
-
-        while let Some((_, bytes)) = self.assembler.read(usize::MAX, true) {
-            chunks[out.bufs] = bytes;
-            out.read += chunks[out.bufs].len();
-            out.bufs += 1;
-
-            if out.bufs >= chunks.len() {
-                break;
-            }
-        }
-
-        Ok(Some(out))
     }
 
     fn read_blocked(&mut self) -> Result<(), ReadError> {
@@ -233,38 +196,105 @@ impl Recv {
     }
 }
 
-pub(crate) type ReadResult<T> = Result<Option<DidRead<T>>, ReadError>;
-
-/// Result of a `Streams::read` call in case the stream had not ended yet
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-#[must_use = "A frame might need to be enqueued"]
-pub(crate) struct DidRead<T> {
-    pub result: T,
-    pub max_stream_data: ShouldTransmit,
-    pub max_data: ShouldTransmit,
+pub struct Chunks<'a> {
+    id: StreamId,
+    streams: &'a mut Streams,
+    pending: &'a mut Retransmits,
+    recv: Option<Recv>,
+    ordered: bool,
+    read: u64,
+    blocked: bool,
 }
 
-pub(super) type StreamReadResult<T> = Result<Option<T>, ReadError>;
+impl<'a> Chunks<'a> {
+    pub(crate) fn new(
+        id: StreamId,
+        streams: &'a mut Streams,
+        pending: &'a mut Retransmits,
+        ordered: bool,
+    ) -> Result<Self, ReadError> {
+        let mut entry = match streams.recv.entry(id) {
+            Entry::Occupied(entry) => entry,
+            Entry::Vacant(_) => return Err(ReadError::UnknownStream),
+        };
 
-pub(crate) trait BytesRead {
-    fn bytes_read(&self) -> u64;
-}
+        let rs = entry.get_mut();
+        let recv = if !rs.assembler.can_read(ordered)? {
+            match rs.read_blocked() {
+                Ok(()) => {
+                    entry.remove_entry();
+                    streams.stream_freed(id, StreamHalf::Recv);
+                    None
+                }
+                Err(e @ ReadError::Reset { .. }) => {
+                    entry.remove_entry();
+                    streams.stream_freed(id, StreamHalf::Recv);
+                    return Err(e);
+                }
+                Err(e) => return Err(e),
+            }
+        } else {
+            Some(entry.remove())
+        };
 
-impl BytesRead for (Bytes, u64) {
-    fn bytes_read(&self) -> u64 {
-        self.0.len() as u64
+        Ok(Self {
+            id,
+            recv,
+            streams,
+            pending,
+            ordered,
+            read: 0,
+            blocked: false,
+        })
+    }
+
+    pub fn next(&mut self, max_length: usize) -> Option<Chunk> {
+        if self.blocked {
+            return None;
+        }
+
+        let (offset, bytes) = match self.recv.as_mut()?.assembler.read(max_length, self.ordered) {
+            Some(x) => x,
+            None => {
+                self.blocked = true;
+                return None;
+            }
+        };
+
+        self.read += bytes.len() as u64;
+        Some(Chunk { offset, bytes })
     }
 }
 
-pub(crate) struct ReadChunks {
-    pub bufs: usize,
-    pub read: usize,
+impl<'a> Drop for Chunks<'a> {
+    fn drop(&mut self) {
+        let mut rs = match self.recv.take() {
+            Some(rs) => rs,
+            None => return,
+        };
+
+        let max_data = self.streams.add_read_credits(self.read);
+        let (_, max_stream_data) = rs.max_stream_data(self.streams.stream_receive_window);
+
+        if !self.blocked {
+            self.streams.recv.insert(self.id, rs);
+        } else if rs.read_blocked().is_ok() {
+            self.streams.stream_freed(self.id, StreamHalf::Recv);
+        } else {
+            self.streams.recv.insert(self.id, rs);
+        }
+
+        let max_dirty = self.streams.take_max_streams_dirty(self.id.dir());
+        self.pending
+            .post_read(self.id, max_data, max_stream_data, max_dirty);
+    }
 }
 
-impl BytesRead for ReadChunks {
-    fn bytes_read(&self) -> u64 {
-        self.read as u64
-    }
+#[non_exhaustive]
+#[derive(Debug)]
+pub struct Chunk {
+    pub offset: u64,
+    pub bytes: Bytes,
 }
 
 /// Errors triggered when reading from a recv stream

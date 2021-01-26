@@ -7,7 +7,7 @@ use std::{
 };
 
 use super::assembler::Assembler;
-use super::streams::DidRead;
+use super::streams::ShouldTransmit;
 use crate::{
     crypto, crypto::Keys, frame, packet::SpaceId, range_set::RangeSet, shared::IssuedCid, Dir,
     StreamId, VarInt,
@@ -205,20 +205,19 @@ pub struct Retransmits {
 }
 
 impl Retransmits {
-    pub(crate) fn post_read<T>(
+    pub(crate) fn post_read(
         &mut self,
         id: StreamId,
-        result: Option<&DidRead<T>>,
+        max_data: ShouldTransmit,
+        max_stream_data: ShouldTransmit,
         max_dirty: bool,
     ) {
-        if let Some(result) = result {
-            if result.max_data.should_transmit() {
-                self.max_data = true;
-            }
-            if result.max_stream_data.should_transmit() {
-                // Only bother issuing stream credit if the peer wants to send more
-                self.max_stream_data.insert(id);
-            }
+        if max_data.should_transmit() {
+            self.max_data = true;
+        }
+        if max_stream_data.should_transmit() {
+            // Only bother issuing stream credit if the peer wants to send more
+            self.max_stream_data.insert(id);
         }
 
         if max_dirty {

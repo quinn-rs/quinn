@@ -11,7 +11,7 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready, FutureExt,
 };
-use proto::{ConnectionError, FinishError, StreamId};
+use proto::{Chunk, ConnectionError, FinishError, StreamId};
 use thiserror::Error;
 use tokio::io::ReadBuf;
 
@@ -353,9 +353,11 @@ where
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), ReadError>> {
         self.poll_read_generic(cx, |conn, stream| {
-            conn.inner
-                .read(stream, buf.remaining(), true)
-                .map(|val| val.map(|(chunk, _)| buf.put_slice(&chunk)))
+            Ok(conn
+                .inner
+                .read(stream, true)?
+                .next(buf.remaining())
+                .map(|chunk| buf.put_slice(&chunk.bytes)))
         })
         .map(|res| res.map(|_| ()))
     }
@@ -371,12 +373,11 @@ where
         ReadUnordered { stream: self }
     }
 
-    fn poll_read_unordered(
-        &mut self,
-        cx: &mut Context,
-    ) -> Poll<Result<Option<(Bytes, u64)>, ReadError>> {
+    fn poll_read_unordered(&mut self, cx: &mut Context) -> Poll<Result<Option<Chunk>, ReadError>> {
         self.poll_read_generic(cx, |conn, stream| {
-            conn.inner.read(stream, usize::MAX, false)
+            conn.inner
+                .read(stream, false)
+                .map(|mut chunks| chunks.next(usize::MAX))
         })
     }
 
@@ -400,8 +401,10 @@ where
         cx: &mut Context,
         max_length: usize,
     ) -> Poll<Result<Option<Bytes>, ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| conn.inner.read(stream, max_length, true))
-            .map(|ready| ready.map(|ok| ok.map(|(bytes, _)| bytes)))
+        self.poll_read_generic(cx, |conn, stream| {
+            Ok(conn.inner.read(stream, true)?.next(max_length))
+        })
+        .map(|ready| ready.map(|ok| ok.map(|chunk| chunk.bytes)))
     }
 
     /// Read the next segments of data
@@ -422,7 +425,22 @@ where
         cx: &mut Context,
         bufs: &mut [Bytes],
     ) -> Poll<Result<Option<usize>, ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| conn.inner.read_chunks(stream, bufs))
+        self.poll_read_generic(cx, |conn, stream| {
+            let mut chunks = conn.inner.read(stream, true)?;
+            let mut done = 0;
+            while let Some(chunk) = chunks.next(usize::MAX) {
+                bufs[done] = chunk.bytes;
+                done += 1;
+                if done == bufs.len() {
+                    break;
+                }
+            }
+
+            Ok(match done {
+                0 => None,
+                n => Some(n),
+            })
+        })
     }
 
     /// Convenience method to read all remaining data into a buffer
@@ -538,14 +556,14 @@ where
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match ready!(self.stream.poll_read_unordered(cx))? {
-                Some((data, offset)) => {
-                    self.start = self.start.min(offset);
-                    let end = data.len() as u64 + offset;
+                Some(chunk) => {
+                    self.start = self.start.min(chunk.offset);
+                    let end = chunk.bytes.len() as u64 + chunk.offset;
                     if (end - self.start) > self.size_limit as u64 {
                         return Poll::Ready(Err(ReadToEndError::TooLong));
                     }
                     self.end = self.end.max(end);
-                    self.read.push((data, offset));
+                    self.read.push((chunk.bytes, chunk.offset));
                 }
                 None => {
                     if self.end == 0 {
@@ -805,7 +823,9 @@ where
 {
     type Output = Result<Option<(Bytes, u64)>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.stream.poll_read_unordered(cx)
+        self.stream
+            .poll_read_unordered(cx)
+            .map(|ok| ok.map(|opt| opt.map(|chunk| (chunk.bytes, chunk.offset))))
     }
 }
 

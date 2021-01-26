@@ -50,7 +50,7 @@ pub use stats::ConnectionStats;
 
 mod streams;
 pub use streams::Streams;
-pub use streams::{FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
+pub use streams::{Chunk, Chunks, FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
 
 mod timer;
 use timer::{Timer, TimerTable};
@@ -899,36 +899,9 @@ where
     /// control window is filled. On any given stream, you can switch from ordered to unordered
     /// reads, but ordered reads on streams that have seen previous unordered reads will return
     /// `ReadError::IllegalOrderedRead`.
-    pub fn read(
-        &mut self,
-        id: StreamId,
-        max_length: usize,
-        ordered: bool,
-    ) -> Result<Option<(Bytes, u64)>, ReadError> {
-        let result = self.streams.read(id, max_length, ordered);
-        self.post_read(id, &result);
-        Ok(result?.map(|x| x.result))
-    }
-
-    /// Read the next ordered chunks from the given recv stream
-    pub fn read_chunks(
-        &mut self,
-        id: StreamId,
-        bufs: &mut [Bytes],
-    ) -> Result<Option<usize>, ReadError> {
-        let result = self.streams.read_chunks(id, bufs);
-        self.post_read(id, &result);
-        Ok(result?.map(|x| x.result.bufs))
-    }
-
-    fn post_read<T>(&mut self, id: StreamId, result: &streams::ReadResult<T>) {
-        let result = result.as_ref().ok().and_then(|opt| opt.as_ref());
-        let max_dirty = self.streams.take_max_streams_dirty(id.dir());
-        if result.is_some() || max_dirty {
-            self.spaces[SpaceId::Data]
-                .pending
-                .post_read(id, result, max_dirty);
-        }
+    pub fn read(&mut self, id: StreamId, ordered: bool) -> Result<Chunks<'_>, ReadError> {
+        self.streams
+            .read(id, ordered, &mut self.spaces[SpaceId::Data].pending)
     }
 
     /// Send data on the given stream
