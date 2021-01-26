@@ -64,9 +64,12 @@ impl Recv {
         max_length: usize,
         ordered: bool,
     ) -> StreamReadResult<(Bytes, u64)> {
-        match self.assembler.read(max_length, ordered)? {
-            Some((offset, bytes)) => Ok(Some((bytes, offset))),
-            None => self.read_blocked().map(|()| None),
+        match self.assembler.can_read(ordered)? {
+            true => Ok(self
+                .assembler
+                .read(max_length, ordered)
+                .map(|(offset, bytes)| (bytes, offset))),
+            false => self.read_blocked().map(|()| None),
         }
     }
 
@@ -74,26 +77,26 @@ impl Recv {
         &mut self,
         chunks: &mut [Bytes],
     ) -> Result<Option<ReadChunks>, ReadError> {
+        if !self.assembler.can_read(true)? {
+            return self.read_blocked().map(|()| None);
+        }
+
         let mut out = ReadChunks { bufs: 0, read: 0 };
         if chunks.is_empty() {
             return Ok(Some(out));
         }
 
-        while let Some((_, bytes)) = self.assembler.read(usize::MAX, true)? {
+        while let Some((_, bytes)) = self.assembler.read(usize::MAX, true) {
             chunks[out.bufs] = bytes;
             out.read += chunks[out.bufs].len();
             out.bufs += 1;
 
             if out.bufs >= chunks.len() {
-                return Ok(Some(out));
+                break;
             }
         }
 
-        if out.bufs > 0 {
-            return Ok(Some(out));
-        }
-
-        self.read_blocked().map(|()| None)
+        Ok(Some(out))
     }
 
     fn read_blocked(&mut self) -> Result<(), ReadError> {
