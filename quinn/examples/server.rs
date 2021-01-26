@@ -128,7 +128,6 @@ async fn run(options: Opt) -> Result<()> {
 
     let (endpoint, mut incoming) = endpoint.bind(&options.listen)?;
     eprintln!("listening on {}", endpoint.local_addr()?);
-    drop(endpoint);
 
     while let Some(conn) = incoming.next().await {
         info!("connection incoming");

@@ -112,7 +112,7 @@ async fn run(options: Opt) -> Result<()> {
     eprintln!("connected at {:?}", start.elapsed());
     let quinn::NewConnection {
         connection: conn, ..
-    } = { new_conn };
+    } = new_conn;
     let (mut send, recv) = conn
         .open_bi()
         .await
