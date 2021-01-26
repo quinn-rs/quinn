@@ -19,8 +19,8 @@ use crate::{
 
 mod recv;
 pub use recv::ReadError;
-pub(super) use recv::ReadResult;
-use recv::{BytesRead, DidRead, ReadChunks, Recv, StreamReadResult};
+use recv::{BytesRead, ReadChunks, Recv, StreamReadResult};
+pub(super) use recv::{DidRead, ReadResult};
 
 mod send;
 pub use send::{FinishError, WriteError};

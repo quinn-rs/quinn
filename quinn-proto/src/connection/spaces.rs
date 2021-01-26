@@ -7,9 +7,10 @@ use std::{
 };
 
 use super::assembler::Assembler;
+use super::streams::DidRead;
 use crate::{
-    crypto, crypto::Keys, frame, packet::SpaceId, range_set::RangeSet, shared::IssuedCid, StreamId,
-    VarInt,
+    crypto, crypto::Keys, frame, packet::SpaceId, range_set::RangeSet, shared::IssuedCid, Dir,
+    StreamId, VarInt,
 };
 
 pub(crate) struct PacketSpace<S>
@@ -204,6 +205,30 @@ pub struct Retransmits {
 }
 
 impl Retransmits {
+    pub(crate) fn post_read<T>(
+        &mut self,
+        id: StreamId,
+        result: Option<&DidRead<T>>,
+        max_dirty: bool,
+    ) {
+        if let Some(result) = result {
+            if result.max_data.should_transmit() {
+                self.max_data = true;
+            }
+            if result.max_stream_data.should_transmit() {
+                // Only bother issuing stream credit if the peer wants to send more
+                self.max_stream_data.insert(id);
+            }
+        }
+
+        if max_dirty {
+            match id.dir() {
+                Dir::Uni => self.max_uni_stream_id = true,
+                Dir::Bi => self.max_bi_stream_id = true,
+            }
+        }
+    }
+
     pub fn is_empty(&self) -> bool {
         !self.max_data
             && !self.max_uni_stream_id

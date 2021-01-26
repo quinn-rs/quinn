@@ -922,23 +922,12 @@ where
     }
 
     fn post_read<T>(&mut self, id: StreamId, result: &streams::ReadResult<T>) {
-        if let Ok(Some(ref result)) = *result {
-            let pending = &mut self.spaces[SpaceId::Data].pending;
-            if result.max_data.should_transmit() {
-                pending.max_data = true;
-            }
-            if result.max_stream_data.should_transmit() {
-                // Only bother issuing stream credit if the peer wants to send more
-                pending.max_stream_data.insert(id);
-            }
-        }
-
-        if self.streams.take_max_streams_dirty(id.dir()) {
-            let pending = &mut self.spaces[SpaceId::Data].pending;
-            match id.dir() {
-                Dir::Uni => pending.max_uni_stream_id = true,
-                Dir::Bi => pending.max_bi_stream_id = true,
-            }
+        let result = result.as_ref().ok().and_then(|opt| opt.as_ref());
+        let max_dirty = self.streams.take_max_streams_dirty(id.dir());
+        if result.is_some() || max_dirty {
+            self.spaces[SpaceId::Data]
+                .pending
+                .post_read(id, result, max_dirty);
         }
     }
 
