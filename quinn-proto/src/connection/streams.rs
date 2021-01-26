@@ -291,13 +291,13 @@ impl Streams {
             Some(rs) => rs,
             None => {
                 trace!("dropping frame for closed stream");
-                return Ok(ShouldTransmit::new(false));
+                return Ok(ShouldTransmit(false));
             }
         };
 
         if rs.is_finished() {
             trace!("dropping frame for finished stream");
-            return Ok(ShouldTransmit::new(false));
+            return Ok(ShouldTransmit(false));
         }
 
         let new_bytes = rs.ingest(frame, self.data_recvd, self.local_max_data)?;
@@ -305,7 +305,7 @@ impl Streams {
 
         if !rs.assembler.is_stopped() {
             self.on_stream_frame(true, stream);
-            return Ok(ShouldTransmit::new(false));
+            return Ok(ShouldTransmit(false));
         }
 
         // Stopped streams become closed instantly on FIN, so check whether we need to clean up
@@ -339,7 +339,7 @@ impl Streams {
             Some(stream) => stream,
             None => {
                 trace!("received RESET_STREAM on closed stream");
-                return Ok(ShouldTransmit::new(false));
+                return Ok(ShouldTransmit(false));
             }
         };
 
@@ -351,7 +351,7 @@ impl Streams {
             self.local_max_data,
         )? {
             // Redundant reset
-            return Ok(ShouldTransmit::new(false));
+            return Ok(ShouldTransmit(false));
         }
         let bytes_read = rs.assembler.bytes_read();
         let stopped = rs.assembler.is_stopped();
@@ -370,7 +370,7 @@ impl Streams {
                 .saturating_add(u64::from(final_offset) - end);
             self.add_read_credits(u64::from(final_offset) - bytes_read)
         } else {
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         })
     }
 
@@ -447,7 +447,7 @@ impl Streams {
             return Err(UnknownStream { _private: () });
         }
         stream.assembler.stop();
-        let stop_sending = ShouldTransmit::new(!stream.is_finished());
+        let stop_sending = ShouldTransmit(!stream.is_finished());
 
         // Issue flow control credit for unread data
         let read_credits = stream.assembler.end() - stream.assembler.bytes_read();
@@ -880,7 +880,7 @@ impl Streams {
         self.local_max_data = self.local_max_data.saturating_add(credits);
 
         if self.local_max_data > VarInt::MAX.into_inner() {
-            return ShouldTransmit::new(false);
+            return ShouldTransmit(false);
         }
 
         // Only announce a window update if it's significant enough
@@ -889,7 +889,7 @@ impl Streams {
         // the decision, to accomodate for connection using bigger windows requring
         // less updates.
         let diff = self.local_max_data - self.sent_max_data.into_inner();
-        ShouldTransmit::new(diff >= (self.receive_window / 8))
+        ShouldTransmit(diff >= (self.receive_window / 8))
     }
 
     /// Records that a `MAX_DATA` announcing a certain window was sent
@@ -966,19 +966,12 @@ pub enum StreamEvent {
 /// to prevent accidental loss of the frame transmission requirement.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 #[must_use = "A frame might need to be enqueued"]
-pub struct ShouldTransmit {
-    should_transmit: bool,
-}
+pub struct ShouldTransmit(bool);
 
 impl ShouldTransmit {
-    /// Creates a new `ShouldTransmit` instance
-    pub fn new(should_transmit: bool) -> Self {
-        Self { should_transmit }
-    }
-
     /// Returns whether a frame should be transmitted
     pub fn should_transmit(self) -> bool {
-        self.should_transmit
+        self.0
     }
 }
 
@@ -1025,7 +1018,7 @@ mod tests {
                     data: Bytes::from_static(&[0; 2048]),
                 })
                 .unwrap(),
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         );
         assert_eq!(client.data_recvd, 2048);
         assert_eq!(client.local_max_data - initial_max, 0);
@@ -1039,7 +1032,7 @@ mod tests {
                     final_offset: 4096u32.into(),
                 })
                 .unwrap(),
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         );
         assert_eq!(client.data_recvd, 4096);
         assert_eq!(client.local_max_data - initial_max, 4096);
@@ -1059,7 +1052,7 @@ mod tests {
                     data: Bytes::from_static(&[0; 0]),
                 })
                 .unwrap(),
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         );
         assert_eq!(client.data_recvd, 4096);
         assert_eq!(client.local_max_data - initial_max, 0);
@@ -1071,7 +1064,7 @@ mod tests {
                     final_offset: 4096u32.into(),
                 })
                 .unwrap(),
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         );
         assert_eq!(client.data_recvd, 4096);
         assert_eq!(client.local_max_data - initial_max, 4096);
@@ -1089,7 +1082,7 @@ mod tests {
                     final_offset: 4096u32.into(),
                 })
                 .unwrap(),
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         );
         assert_eq!(client.data_recvd, 4096);
         assert_eq!(
@@ -1100,7 +1093,7 @@ mod tests {
                     final_offset: 4096u32.into(),
                 })
                 .unwrap(),
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         );
         assert_eq!(client.data_recvd, 4096);
     }
@@ -1119,14 +1112,14 @@ mod tests {
                     data: Bytes::from_static(&[0; 32]),
                 })
                 .unwrap(),
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         );
         assert_eq!(client.local_max_data, initial_max);
         assert_eq!(
             client.stop(id).unwrap(),
             StopResult {
-                max_data: ShouldTransmit::new(false),
-                stop_sending: ShouldTransmit::new(true),
+                max_data: ShouldTransmit(false),
+                stop_sending: ShouldTransmit(true),
             }
         );
         assert!(client.stop(id).is_err());
@@ -1145,7 +1138,7 @@ mod tests {
                     data: Bytes::from_static(&[0; 16]),
                 })
                 .unwrap(),
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         );
         assert_eq!(client.local_max_data - initial_max, 48);
         assert!(!client.recv.contains_key(&id));
@@ -1165,14 +1158,14 @@ mod tests {
                     data: Bytes::from_static(&[0; 32]),
                 })
                 .unwrap(),
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         );
         // Client stops it
         assert_eq!(
             client.stop(id).unwrap(),
             StopResult {
-                max_data: ShouldTransmit::new(false),
-                stop_sending: ShouldTransmit::new(true),
+                max_data: ShouldTransmit(false),
+                stop_sending: ShouldTransmit(true),
             }
         );
         // Server complies
@@ -1184,7 +1177,7 @@ mod tests {
                     final_offset: 32u32.into(),
                 })
                 .unwrap(),
-            ShouldTransmit::new(false)
+            ShouldTransmit(false)
         );
         assert!(!client.recv.contains_key(&id), "stream state is freed");
     }
