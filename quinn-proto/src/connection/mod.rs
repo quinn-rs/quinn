@@ -50,7 +50,7 @@ pub use stats::ConnectionStats;
 
 mod streams;
 pub use streams::Streams;
-pub use streams::{FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
+pub use streams::{FinishError, ReadError, ShouldTransmit, StreamEvent, UnknownStream, WriteError};
 
 mod timer;
 use timer::{Timer, TimerTable};
@@ -922,22 +922,16 @@ where
     }
 
     fn post_read<T>(&mut self, id: StreamId, result: &streams::ReadResult<T>) {
-        if let Ok(Some(ref result)) = *result {
-            let pending = &mut self.spaces[SpaceId::Data].pending;
-            if result.max_data.should_transmit() {
-                pending.max_data = true;
-            }
-            if result.max_stream_data.should_transmit() {
-                pending.max_stream_data.insert(id);
-            }
-        }
+        let (did_read, max_data, max_stream_data) = match result {
+            Ok(Some(did)) => (true, did.max_data, did.max_stream_data),
+            _ => (false, ShouldTransmit::default(), ShouldTransmit::default()),
+        };
 
-        if self.streams.take_max_streams_dirty(id.dir()) {
-            let pending = &mut self.spaces[SpaceId::Data].pending;
-            match id.dir() {
-                Dir::Uni => pending.max_uni_stream_id = true,
-                Dir::Bi => pending.max_bi_stream_id = true,
-            }
+        let max_dirty = self.streams.take_max_streams_dirty(id.dir());
+        if did_read || max_dirty {
+            self.spaces[SpaceId::Data]
+                .pending
+                .post_read(id, max_data, max_stream_data, max_dirty);
         }
     }
 
