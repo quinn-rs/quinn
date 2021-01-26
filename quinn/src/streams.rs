@@ -509,8 +509,9 @@ where
         }
         match read_fn(&mut conn, self.stream) {
             Ok(Some(u)) => {
-                // Flow control credit may have been issued
-                conn.wake();
+                if conn.inner.has_pending_retransmits() {
+                    conn.wake()
+                }
                 Poll::Ready(Ok(Some(u)))
             }
             Ok(None) => {
