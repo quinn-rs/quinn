@@ -11,7 +11,7 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready, FutureExt,
 };
-use proto::{ConnectionError, FinishError, StreamId};
+use proto::{ConnectionError, DidRead, FinishError, StreamId};
 use thiserror::Error;
 use tokio::io::ReadBuf;
 
@@ -355,7 +355,7 @@ where
         self.poll_read_generic(cx, |conn, stream| {
             conn.inner
                 .read(stream, buf.remaining())
-                .map(|val| val.map(|chunk| buf.put_slice(&chunk)))
+                .map(|val| val.map(|x| x.map(|chunk| buf.put_slice(&chunk))))
         })
         .map(|res| res.map(|_| ()))
     }
@@ -479,7 +479,7 @@ where
         T: FnMut(
             &mut crate::connection::ConnectionInner<S>,
             StreamId,
-        ) -> Result<Option<U>, proto::ReadError>,
+        ) -> Result<Option<DidRead<U>>, proto::ReadError>,
     {
         use proto::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
@@ -488,9 +488,10 @@ where
         }
         match read_fn(&mut conn, self.stream) {
             Ok(Some(u)) => {
-                // Flow control credit may have been issued
-                conn.wake();
-                Poll::Ready(Ok(Some(u)))
+                if u.causes_transmit() {
+                    conn.wake()
+                }
+                Poll::Ready(Ok(Some(u.into_inner())))
             }
             Ok(None) => {
                 self.all_data_read = true;

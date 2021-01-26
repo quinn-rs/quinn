@@ -239,7 +239,7 @@ fn finish_stream_simple() {
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())),
         Ok(Some((ref data, 0))) if data == MSG
     );
     assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
@@ -430,7 +430,7 @@ fn zero_rtt_happypath() {
     assert!(pair.client_conn_mut(client_ch).accepted_0rtt());
     let server_ch = pair.server.assert_accept();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())),
         Ok(Some((ref data, 0))) if data == MSG
     );
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
@@ -639,7 +639,7 @@ fn stream_id_limit() {
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(Some((msg, 0))) if msg == MSG);
+    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())), Ok(Some((msg, 0))) if msg == MSG);
     assert_eq!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
     // Server will only send MAX_STREAM_ID now that the application's been notified
     pair.drive();
@@ -693,7 +693,7 @@ fn key_update_simple() {
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())),
         Ok(Some((ref data, 0))) if data == MSG1
     );
 
@@ -707,7 +707,7 @@ fn key_update_simple() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::Stream(StreamEvent::Readable { id })) if id == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())),
         Ok(Some((ref data, 6))) if data == MSG2
     );
 
@@ -754,13 +754,15 @@ fn key_update_reordered() {
         .server_conn_mut(server_ch)
         .read(s, usize::MAX)
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .into_inner();
     assert_matches!(&*buf1, MSG1);
     let buf2 = pair
         .server_conn_mut(server_ch)
         .read(s, usize::MAX)
         .unwrap()
-        .unwrap();
+        .unwrap()
+        .into_inner();
     assert_eq!(buf2, MSG2);
 
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
@@ -997,7 +999,11 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     pair.drive();
     let mut cursor = 0;
     loop {
-        match pair.server_conn_mut(server_conn).read(s, usize::MAX) {
+        match pair
+            .server_conn_mut(server_conn)
+            .read(s, usize::MAX)
+            .map(|x| x.map(|y| y.into_inner()))
+        {
             Ok(Some(buf)) => {
                 cursor += buf.len();
             }
@@ -1028,7 +1034,11 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     pair.drive();
     let mut cursor = 0;
     loop {
-        match pair.server_conn_mut(server_conn).read(s, usize::MAX) {
+        match pair
+            .server_conn_mut(server_conn)
+            .read(s, usize::MAX)
+            .map(|x| x.map(|y| y.into_inner()))
+        {
             Ok(Some(buf)) => {
                 cursor += buf.len();
             }
@@ -1293,7 +1303,7 @@ fn finish_stream_flow_control_reordered() {
 
     // Issue flow control credit
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())),
         Ok(Some((ref data, 0))) if data == MSG
     );
     pair.server.drive(pair.time, pair.client.addr);
@@ -1345,7 +1355,7 @@ fn handshake_1rtt_handling() {
 
     assert!(pair.client_conn_mut(client_ch).lost_packets() != 0);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())),
         Ok(Some((ref data, 0))) if data == MSG
     );
 }
@@ -1591,7 +1601,7 @@ fn finish_acked() {
 
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())),
         Ok(Some((ref data, 0))) if data == MSG
     );
     assert_matches!(
@@ -1653,10 +1663,15 @@ fn finish_retransmit() {
 
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())),
         Ok(Some((ref data, 0))) if data == MSG
     );
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(
+        pair.server_conn_mut(server_ch)
+            .read_unordered(s)
+            .map(|x| x.map(|y| y.into_inner())),
+        Ok(None)
+    );
 }
 
 /// Ensures that exchanging data on a client-initiated bidirectional stream works past the initial
@@ -1685,20 +1700,30 @@ fn repeated_request_response() {
 
         assert_eq!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(s));
         assert_matches!(
-            pair.server_conn_mut(server_ch).read_unordered(s),
+            pair.server_conn_mut(server_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())),
             Ok(Some((ref data, 0))) if data == REQUEST
         );
-        assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+        assert_matches!(
+            pair.server_conn_mut(server_ch)
+                .read_unordered(s)
+                .map(|x| x.map(|y| y.into_inner())),
+            Ok(None)
+        );
         pair.server_conn_mut(server_ch).write(s, RESPONSE).unwrap();
         pair.server_conn_mut(server_ch).finish(s).unwrap();
 
         pair.drive();
 
         assert_matches!(
-            pair.client_conn_mut(client_ch).read_unordered(s),
+            pair.client_conn_mut(client_ch).read_unordered(s).map(|x| x.map(|y| y.into_inner())),
             Ok(Some((ref data, 0))) if data == RESPONSE
         );
-        assert_matches!(pair.client_conn_mut(client_ch).read_unordered(s), Ok(None));
+        assert_matches!(
+            pair.client_conn_mut(client_ch)
+                .read_unordered(s)
+                .map(|x| x.map(|y| y.into_inner())),
+            Ok(None)
+        );
     }
 }
 
@@ -1734,27 +1759,35 @@ fn read_chunks() {
 
         // Read into an empty slice can't do much you, but doesn't crash
         assert_eq!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut empty),
+            pair.server_conn_mut(server_ch)
+                .read_chunks(s, &mut empty)
+                .map(|x| x.map(|y| y.into_inner())),
             Ok(Some(0))
         );
 
         // Read until `chunks` is filled
         assert_eq!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            pair.server_conn_mut(server_ch)
+                .read_chunks(s, &mut chunks)
+                .map(|x| x.map(|y| y.into_inner())),
             Ok(Some(2))
         );
         assert_eq!(&chunks, &[ONE, TWO]);
 
         // Read the rest
         assert_eq!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            pair.server_conn_mut(server_ch)
+                .read_chunks(s, &mut chunks)
+                .map(|x| x.map(|y| y.into_inner())),
             Ok(Some(1))
         );
         assert_eq!(&chunks[..1], &[THREE]);
 
         // We've read everything, stream is now blocked
         assert_eq!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            pair.server_conn_mut(server_ch)
+                .read_chunks(s, &mut chunks)
+                .map(|x| x.map(|y| y.into_inner())),
             Err(ReadError::Blocked)
         );
 
@@ -1762,7 +1795,9 @@ fn read_chunks() {
         pair.client_conn_mut(client_ch).write(s, ONE).unwrap();
         pair.drive();
         assert_eq!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            pair.server_conn_mut(server_ch)
+                .read_chunks(s, &mut chunks)
+                .map(|x| x.map(|y| y.into_inner())),
             Ok(Some(1))
         );
         assert_eq!(&chunks[..1], &[ONE]);
@@ -1771,7 +1806,9 @@ fn read_chunks() {
         pair.client_conn_mut(client_ch).finish(s).unwrap();
         pair.drive();
         assert_matches!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            pair.server_conn_mut(server_ch)
+                .read_chunks(s, &mut chunks)
+                .map(|x| x.map(|y| y.into_inner())),
             Ok(None)
         );
 

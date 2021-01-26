@@ -896,18 +896,25 @@ where
     /// window is filled. When in-order delivery is required, the sibling `read()` or `read_chunk[s]()`
     /// methods should be used.
     ///
-    /// The return value if `Ok` contains the bytes and their offset in the stream.
-    pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
+    /// The return value if `Ok` contains the bytes and their offset in the stream, wrapped in a `DidRead`.
+    pub fn read_unordered(
+        &mut self,
+        id: StreamId,
+    ) -> Result<Option<DidRead<(Bytes, u64)>>, ReadError> {
         let result = self.streams.read_unordered(id);
         self.post_read(id, &result);
-        Ok(result?.map(|x| x.result))
+        result
     }
 
     /// Read the next ordered chunk from the given recv stream
-    pub fn read(&mut self, id: StreamId, max_length: usize) -> Result<Option<Bytes>, ReadError> {
+    pub fn read(
+        &mut self,
+        id: StreamId,
+        max_length: usize,
+    ) -> Result<Option<DidRead<Bytes>>, ReadError> {
         let result = self.streams.read(id, max_length);
         self.post_read(id, &result);
-        Ok(result?.map(|x| x.result))
+        result
     }
 
     /// Read the next ordered chunks from the given recv stream
@@ -915,10 +922,10 @@ where
         &mut self,
         id: StreamId,
         bufs: &mut [Bytes],
-    ) -> Result<Option<usize>, ReadError> {
+    ) -> Result<Option<DidRead<usize>>, ReadError> {
         let result = self.streams.read_chunks(id, bufs);
         self.post_read(id, &result);
-        Ok(result?.map(|x| x.result.bufs))
+        Ok(result?.map(|x| x.map(|chunks| chunks.bufs)))
     }
 
     fn post_read<T>(&mut self, id: StreamId, result: &streams::ReadResult<T>) {
