@@ -138,7 +138,7 @@ impl Recv {
         // does not get stuck.
         let diff = max_stream_data - self.sent_max_stream_data;
         let transmit = self.receiving_unknown_size() && diff >= (stream_receive_window / 8);
-        (max_stream_data, ShouldTransmit::new(transmit))
+        (max_stream_data, ShouldTransmit(transmit))
     }
 
     /// Records that a `MAX_STREAM_DATA` announcing a certain window was sent
