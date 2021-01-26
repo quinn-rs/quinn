@@ -12,7 +12,7 @@ use super::spaces::Retransmits;
 use crate::{
     coding::BufMutExt,
     connection::stats::FrameStats,
-    frame::{self, FrameStruct, ShouldTransmit},
+    frame::{self, FrameStruct},
     transport_parameters::TransportParameters,
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
 };
@@ -957,6 +957,28 @@ pub enum StreamEvent {
         /// Directionality for which streams are newly available
         dir: Dir,
     },
+}
+
+/// Indicates whether a frame needs to be transmitted
+///
+/// This type wraps around bool and uses the `#[must_use]` attribute in order
+/// to prevent accidental loss of the frame transmission requirement.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[must_use = "A frame might need to be enqueued"]
+pub struct ShouldTransmit {
+    should_transmit: bool,
+}
+
+impl ShouldTransmit {
+    /// Creates a new `ShouldTransmit` instance
+    pub fn new(should_transmit: bool) -> Self {
+        Self { should_transmit }
+    }
+
+    /// Returns whether a frame should be transmitted
+    pub fn should_transmit(self) -> bool {
+        self.should_transmit
+    }
 }
 
 /// Error indicating that a stream has not been opened or has already been finished or reset
