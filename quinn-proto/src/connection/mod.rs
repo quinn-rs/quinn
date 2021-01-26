@@ -19,7 +19,7 @@ use crate::{
     config::{ServerConfig, TransportConfig},
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
-    frame::{Close, Datagram, FrameStruct, ShouldTransmit},
+    frame::{Close, Datagram, FrameStruct},
     is_supported_version,
     packet::{Header, LongType, Packet, PacketNumber, PartialDecode, PartialEncode, SpaceId},
     range_set::RangeSet,
@@ -49,6 +49,7 @@ mod stats;
 pub use stats::ConnectionStats;
 
 mod streams;
+use streams::ShouldTransmit;
 pub use streams::Streams;
 pub use streams::{FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
 

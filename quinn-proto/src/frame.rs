@@ -824,28 +824,6 @@ impl Datagram {
     }
 }
 
-/// Indicates whether a frame needs to be transmitted
-///
-/// This type wraps around bool and uses the `#[must_use]` attribute in order
-/// to prevent accidental loss of the frame transmission requirement.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
-#[must_use = "A frame might need to be enqueued"]
-pub struct ShouldTransmit {
-    should_transmit: bool,
-}
-
-impl ShouldTransmit {
-    /// Creates a new `ShouldTransmit` instance
-    pub fn new(should_transmit: bool) -> Self {
-        Self { should_transmit }
-    }
-
-    /// Returns whether a frame should be transmitted
-    pub fn should_transmit(self) -> bool {
-        self.should_transmit
-    }
-}
-
 #[cfg(test)]
 mod test {
     use super::*;

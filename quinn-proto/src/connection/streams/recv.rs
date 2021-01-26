@@ -2,11 +2,9 @@ use bytes::Bytes;
 use thiserror::Error;
 use tracing::debug;
 
+use super::ShouldTransmit;
 use crate::connection::assembler::{AssembleError, Assembler};
-use crate::{
-    frame::{self, ShouldTransmit},
-    TransportError, VarInt,
-};
+use crate::{frame, TransportError, VarInt};
 
 #[derive(Debug, Default)]
 pub(super) struct Recv {
