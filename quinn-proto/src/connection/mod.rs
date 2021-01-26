@@ -49,7 +49,6 @@ mod stats;
 pub use stats::ConnectionStats;
 
 mod streams;
-use streams::ShouldTransmit;
 pub use streams::Streams;
 pub use streams::{FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
 
@@ -924,8 +923,16 @@ where
 
     fn post_read<T>(&mut self, id: StreamId, result: &streams::ReadResult<T>) {
         if let Ok(Some(ref result)) = *result {
-            self.add_read_credits(id, result.max_stream_data, result.max_data);
+            let pending = &mut self.spaces[SpaceId::Data].pending;
+            if result.max_data.should_transmit() {
+                pending.max_data = true;
+            }
+            if result.max_stream_data.should_transmit() {
+                // Only bother issuing stream credit if the peer wants to send more
+                pending.max_stream_data.insert(id);
+            }
         }
+
         if self.streams.take_max_streams_dirty(id.dir()) {
             let pending = &mut self.spaces[SpaceId::Data].pending;
             match id.dir() {
@@ -2932,22 +2939,6 @@ where
             }).expect("preferred address CID is the first received, and hence is guaranteed to be legal");
         }
         self.peer_params = params;
-    }
-
-    fn add_read_credits(
-        &mut self,
-        id: StreamId,
-        transmit_max_stream_data: ShouldTransmit,
-        transmit_max_data: ShouldTransmit,
-    ) {
-        let space = &mut self.spaces[SpaceId::Data];
-        if transmit_max_data.should_transmit() {
-            space.pending.max_data = true;
-        }
-        if transmit_max_stream_data.should_transmit() {
-            // Only bother issuing stream credit if the peer wants to send more
-            space.pending.max_stream_data.insert(id);
-        }
     }
 
     /// Whether UDP transmits are currently blocked by link congestion
