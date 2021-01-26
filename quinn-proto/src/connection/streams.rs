@@ -19,8 +19,8 @@ use crate::{
 
 mod recv;
 pub use recv::ReadError;
-pub(super) use recv::ReadResult;
-use recv::{BytesRead, DidRead, ReadChunks, Recv, StreamReadResult};
+use recv::{BytesRead, ReadChunks, Recv, StreamReadResult};
+pub(super) use recv::{DidRead, ReadResult};
 
 mod send;
 pub use send::{FinishError, WriteError};
@@ -963,7 +963,7 @@ pub enum StreamEvent {
 ///
 /// This type wraps around bool and uses the `#[must_use]` attribute in order
 /// to prevent accidental loss of the frame transmission requirement.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Copy, Clone, Debug, Default, Eq, PartialEq)]
 #[must_use = "A frame might need to be enqueued"]
 pub struct ShouldTransmit(bool);
 
