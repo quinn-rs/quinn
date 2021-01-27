@@ -213,7 +213,7 @@ impl PartialData {
         }
 
         let len = buf.get_var()? as usize;
-        let payload = buf.copy_to_bytes(buf.remaining());
+        let payload = buf.copy_to_bytes(len.min(buf.remaining()));
 
         Ok((
             Self {
@@ -224,7 +224,7 @@ impl PartialData {
     }
 
     pub fn decode_data<B: Buf>(&mut self, buf: &mut B) -> DataFrame<Bytes> {
-        let payload = buf.copy_to_bytes(self.remaining);
+        let payload = buf.copy_to_bytes(self.remaining.min(buf.remaining()));
         self.remaining -= payload.len();
         DataFrame { payload }
     }
