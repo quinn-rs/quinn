@@ -8,6 +8,7 @@ use bytes::{BufMut, Bytes};
 use thiserror::Error;
 use tracing::{debug, trace};
 
+use super::assembler::Chunk;
 use super::spaces::Retransmits;
 use crate::{
     coding::BufMutExt,
@@ -205,7 +206,7 @@ impl Streams {
         id: StreamId,
         max_length: usize,
         ordered: bool,
-    ) -> ReadResult<(Bytes, u64)> {
+    ) -> ReadResult<Chunk> {
         self.try_read(id, |rs| rs.read(max_length, ordered))
     }
 
