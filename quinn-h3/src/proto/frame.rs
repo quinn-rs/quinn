@@ -213,7 +213,7 @@ impl PartialData {
         }
 
         let len = buf.get_var()? as usize;
-        let payload = buf.copy_to_bytes(len.min(buf.remaining()));
+        let payload = buf.copy_to_bytes(buf.remaining());
 
         Ok((
             Self {
