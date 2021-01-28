@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>The QUIC protocol - Quinn</title>
+        <title>Connection Setup - Quinn</title>
         
         
 
@@ -18,28 +18,28 @@
         <meta name="theme-color" content="#ffffff" />
 
         
-        <link rel="icon" href="favicon.svg">
+        <link rel="icon" href="../favicon.svg">
         
         
-        <link rel="shortcut icon" href="favicon.png">
+        <link rel="shortcut icon" href="../favicon.png">
         
-        <link rel="stylesheet" href="css/variables.css">
-        <link rel="stylesheet" href="css/general.css">
-        <link rel="stylesheet" href="css/chrome.css">
+        <link rel="stylesheet" href="../css/variables.css">
+        <link rel="stylesheet" href="../css/general.css">
+        <link rel="stylesheet" href="../css/chrome.css">
         
-        <link rel="stylesheet" href="css/print.css" media="print">
+        <link rel="stylesheet" href="../css/print.css" media="print">
         
 
         <!-- Fonts -->
-        <link rel="stylesheet" href="FontAwesome/css/font-awesome.css">
+        <link rel="stylesheet" href="../FontAwesome/css/font-awesome.css">
         
-        <link rel="stylesheet" href="fonts/fonts.css">
+        <link rel="stylesheet" href="../fonts/fonts.css">
         
 
         <!-- Highlight.js Stylesheets -->
-        <link rel="stylesheet" href="highlight.css">
-        <link rel="stylesheet" href="tomorrow-night.css">
-        <link rel="stylesheet" href="ayu-highlight.css">
+        <link rel="stylesheet" href="../highlight.css">
+        <link rel="stylesheet" href="../tomorrow-night.css">
+        <link rel="stylesheet" href="../ayu-highlight.css">
 
         <!-- Custom theme stylesheets -->
         
@@ -49,7 +49,7 @@
     <body>
         <!-- Provide site root to javascript -->
         <script type="text/javascript">
-            var path_to_root = "";
+            var path_to_root = "../";
             var default_theme = window.matchMedia("(prefers-color-scheme: dark)").matches ? "navy" : "light";
         </script>
 
@@ -95,7 +95,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quinn.html"><strong aria-hidden="true">1.</strong> QUINN Introduction</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="quinn/certificate.html"><strong aria-hidden="true">1.1.</strong> Certificate Configuration</a></li><li class="chapter-item expanded "><a href="quinn/set-up-connection.html"><strong aria-hidden="true">1.2.</strong> Connection Setup</a></li></ol></li><li class="chapter-item expanded "><a href="quic.html" class="active"><strong aria-hidden="true">2.</strong> The QUIC protocol</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="../quinn.html"><strong aria-hidden="true">1.</strong> QUINN Introduction</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="../quinn/certificate.html"><strong aria-hidden="true">1.1.</strong> Certificate Configuration</a></li><li class="chapter-item expanded "><a href="../quinn/set-up-connection.html" class="active"><strong aria-hidden="true">1.2.</strong> Connection Setup</a></li></ol></li><li class="chapter-item expanded "><a href="../quic.html"><strong aria-hidden="true">2.</strong> The QUIC protocol</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -131,7 +131,7 @@
 
                     <div class="right-buttons">
                         
-                        <a href="print.html" title="Print this book" aria-label="Print this book">
+                        <a href="../print.html" title="Print this book" aria-label="Print this book">
                             <i id="print-button" class="fa fa-print"></i>
                         </a>
                         
@@ -163,37 +163,93 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1><a class="header" href="#the-quic-protocol" id="the-quic-protocol">The QUIC protocol</a></h1>
-<p><a href="https://en.wikipedia.org/wiki/QUIC">QUIC</a> is a general-purpose network protocol built on top of UDP.
-The protocol is still under development and standardized by the <a href="https://www.ietf.org/">IETF</a>. 
-Quinn strives to implement the latest <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-transport/">draft</a> but may lag a bit behind. Although QUIC is still in a draft phase, 
-the protocol is used for all connections from Chrome web browsers to the Google servers. </p>
-<p>QUIC solves a number of transport-layer and application-layer problems experienced by modern web applications. 
-It is very similar to TCP+TLS+HTTP2, but implemented on top of UDP. 
-Having QUIC as a self-contained protocol allows innovations which aren’t 
-possible with existing protocols as they are hampered by legacy clients and middleboxes.</p>
-<p>Key advantages of QUIC over TCP+TLS+HTTP2 include:</p>
-<ul>
-<li>Improved connection establishment speed (0-rtt).</li>
-<li>Improved congestion control by moving congestion control algorithms into the user space at both endpoints.</li>
-<li>Improved bandwidth estimation in each direction to avoid congestion. </li>
-<li>Improved multiplexing without head-of-line blocking.</li>
-<li>Contains forward error correction (FEC). </li>
-</ul>
-<p>While QUIC's intentions are originally web-oriented, it offers interesting opportunities in other areas like game networking.
-One thing is for sure, QUIC has many great potentials and will serve us in the future with HTTP/3. </p>
-<p>In the upcoming chapter we will be discussing various aspects of QUIC also in relation to Quinn. </p>
+                        <h1><a class="header" href="#connection-setup" id="connection-setup">Connection Setup</a></h1>
+<p>In the <a href="certificate.html">previous chapter</a> we looked at how to configure a certificate.
+This aspect is omitted in this chapter to prevent duplication. 
+But <strong>remember</strong> that this is required to get your <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a> up and running. 
+This chapter explains how to set up a connection and prepare it for data transfer. </p>
+<p>It all starts with the <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a> struct, this is the entry point of the library. </p>
+<h2><a class="header" href="#example" id="example">Example</a></h2>
+<p>Let's start by defining some constants. </p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>static SERVER_NAME: &amp;str = &quot;localhost&quot;;
+
+fn client_addr() -&gt; SocketAddr {
+    &quot;127.0.0.1:5000&quot;.parse::&lt;SocketAddr&gt;().unwrap()
+}
+
+fn server_addr() -&gt; SocketAddr {
+    &quot;127.0.0.1:5001&quot;.parse::&lt;SocketAddr&gt;().unwrap()
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p>The <a href="https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html">EndpointBuilder</a> should be used to configure an endpoint. It is also possible to provide Quinn with an initialized socket via <a href="https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html#method.with_socket">with_socket()</a>. </p>
+<p><strong>Server</strong></p>
+<p>First, the server endpoint should be bound to a socket. 
+The <a href="https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html#method.bind">bind()</a> method, which can be used for this, returns a tuple containing the <code>Endpoint</code> and <code>Incoming</code> types. 
+The <code>Endpoint</code> type can be used to start outgoing connections, and the <code>Incoming</code> type can be used to listen for incoming connections.</p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn server() -&gt; anyhow::Result&lt;()&gt; {
+    let mut endpoint_builder = Endpoint::builder();
+    // Configure this endpoint as a server by passing in `ServerConfig`.
+    endpoint_builder.listen(ServerConfig::default());
+
+    // Bind this endpoint to a UDP socket on the given server address. 
+    let (endpoint, mut incoming) = endpoint_builder.bind(&amp;server_addr())?;
+
+    // Start iterating over incoming connections.
+    while let Some(conn) = incoming.next().await {
+        let mut connection: NewConnection = conn.await?;
+
+        // Save connection somewhere, start transferring, receiving data, see DataTransfer tutorial.
+    }
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p><strong>Client</strong></p>
+<p>The client needs to connect to the server using the <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html#method.connect">connect(server_name)</a> method.<br />
+The <code>SERVER_NAME</code> argument is the DNS name, matching the certificate configured in the server.</p>
+<pre><pre class="playground"><code class="language-rust">
+<span class="boring">#![allow(unused)]
+</span><span class="boring">fn main() {
+</span>async fn client() -&gt; anyhow::Result&lt;()&gt; {
+    let mut endpoint_builder = Endpoint::builder();
+
+    // Bind this endpoint to a UDP socket on the given client address.
+    let (endpoint, _) = endpoint_builder.bind(&amp;client_addr())?;
+
+    // Connect to the server passing in the server name which is supposed to be in the server certificate.
+    let connection = endpoint.connect(&amp;server_addr(), SERVER_NAME)?.await?;
+
+    // Start transferring, receiving data, see data transfer page.
+
+    Ok(())
+}
+<span class="boring">}
+</span></code></pre></pre>
+<p><br><hr></p>
+<p><a href="set-up-connection.html">Next up</a>, let's have a look at sending data over this connection.</p>
 
                     </main>
 
                     <nav class="nav-wrapper" aria-label="Page navigation">
                         <!-- Mobile navigation buttons -->
                         
-                            <a rel="prev" href="quinn/set-up-connection.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                            <a rel="prev" href="../quinn/certificate.html" class="mobile-nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                                 <i class="fa fa-angle-left"></i>
                             </a>
                         
 
+                        
+                            <a rel="next" href="../quic.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                                <i class="fa fa-angle-right"></i>
+                            </a>
                         
 
                         <div style="clear: both"></div>
@@ -203,11 +259,15 @@ One thing is for sure, QUIC has many great potentials and will serve us in the f
 
             <nav class="nav-wide-wrapper" aria-label="Page navigation">
                 
-                    <a rel="prev" href="quinn/set-up-connection.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
+                    <a rel="prev" href="../quinn/certificate.html" class="nav-chapters previous" title="Previous chapter" aria-label="Previous chapter" aria-keyshortcuts="Left">
                         <i class="fa fa-angle-left"></i>
                     </a>
                 
 
+                
+                    <a rel="next" href="../quic.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                        <i class="fa fa-angle-right"></i>
+                    </a>
                 
             </nav>
 
@@ -228,14 +288,14 @@ One thing is for sure, QUIC has many great potentials and will serve us in the f
         
 
         
-        <script src="elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="mark.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="searcher.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../elasticlunr.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../mark.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../searcher.js" type="text/javascript" charset="utf-8"></script>
         
 
-        <script src="clipboard.min.js" type="text/javascript" charset="utf-8"></script>
-        <script src="highlight.js" type="text/javascript" charset="utf-8"></script>
-        <script src="book.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../clipboard.min.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../highlight.js" type="text/javascript" charset="utf-8"></script>
+        <script src="../book.js" type="text/javascript" charset="utf-8"></script>
 
         <!-- Custom JS scripts -->
         
