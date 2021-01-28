@@ -3,7 +3,7 @@ use thiserror::Error;
 use tracing::debug;
 
 use super::ShouldTransmit;
-use crate::connection::assembler::{AssembleError, Assembler};
+use crate::connection::assembler::{AssembleError, Assembler, Chunk};
 use crate::{frame, TransportError, VarInt};
 
 #[derive(Debug, Default)]
@@ -59,13 +59,9 @@ impl Recv {
         Ok(new_bytes)
     }
 
-    pub(super) fn read(
-        &mut self,
-        max_length: usize,
-        ordered: bool,
-    ) -> StreamReadResult<(Bytes, u64)> {
+    pub(super) fn read(&mut self, max_length: usize, ordered: bool) -> StreamReadResult<Chunk> {
         match self.assembler.read(max_length, ordered)? {
-            Some(chunk) => Ok(Some((chunk.bytes, chunk.offset))),
+            Some(chunk) => Ok(Some(chunk)),
             None => self.read_blocked().map(|()| None),
         }
     }
@@ -247,9 +243,9 @@ pub(crate) trait BytesRead {
     fn bytes_read(&self) -> u64;
 }
 
-impl BytesRead for (Bytes, u64) {
+impl BytesRead for Chunk {
     fn bytes_read(&self) -> u64 {
-        self.0.len() as u64
+        self.bytes.len() as u64
     }
 }
 

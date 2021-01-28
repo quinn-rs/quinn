@@ -58,7 +58,7 @@ mod platform;
 mod streams;
 
 pub use proto::{
-    crypto, ApplicationClose, Certificate, CertificateChain, ConnectError, ConnectionClose,
+    crypto, ApplicationClose, Certificate, CertificateChain, Chunk, ConnectError, ConnectionClose,
     ConnectionError, ParseError, PrivateKey, StreamId, Transmit, TransportConfig, VarInt,
 };
 

@@ -240,7 +240,7 @@ fn finish_stream_simple() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(Some((ref data, 0))) if data == MSG
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
@@ -434,7 +434,7 @@ fn zero_rtt_happypath() {
     let server_ch = pair.server.assert_accept();
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(Some((ref data, 0))) if data == MSG
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
 }
@@ -643,7 +643,10 @@ fn stream_id_limit() {
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    assert_matches!(pair.server_conn_mut(server_ch).read(s, usize::MAX, false), Ok(Some((msg, 0))) if msg == MSG);
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
+    );
     assert_eq!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
         Ok(None)
@@ -704,7 +707,7 @@ fn key_update_simple() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(Some((ref data, 0))) if data == MSG1
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG1
     );
 
     info!("initiating key update");
@@ -718,7 +721,7 @@ fn key_update_simple() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(Some((ref data, 6))) if data == MSG2
+        Ok(Some(chunk)) if chunk.offset == 6 && chunk.bytes == MSG2
     );
 
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
@@ -765,13 +768,13 @@ fn key_update_reordered() {
         .read(s, usize::MAX, true)
         .unwrap()
         .unwrap();
-    assert_matches!(&*buf1.0, MSG1);
+    assert_matches!(&*buf1.bytes, MSG1);
     let buf2 = pair
         .server_conn_mut(server_ch)
         .read(s, usize::MAX, true)
         .unwrap()
         .unwrap();
-    assert_eq!(buf2.0, MSG2);
+    assert_eq!(buf2.bytes, MSG2);
 
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
     assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
@@ -1008,8 +1011,8 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     let mut cursor = 0;
     loop {
         match pair.server_conn_mut(server_conn).read(s, usize::MAX, true) {
-            Ok(Some((buf, _))) => {
-                cursor += buf.len();
+            Ok(Some(chunk)) => {
+                cursor += chunk.bytes.len();
             }
             Ok(None) => {
                 panic!("end of stream");
@@ -1039,8 +1042,8 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     let mut cursor = 0;
     loop {
         match pair.server_conn_mut(server_conn).read(s, usize::MAX, true) {
-            Ok(Some((buf, _))) => {
-                cursor += buf.len();
+            Ok(Some(chunk)) => {
+                cursor += chunk.bytes.len();
             }
             Ok(None) => {
                 panic!("end of stream");
@@ -1304,7 +1307,7 @@ fn finish_stream_flow_control_reordered() {
     // Issue flow control credit
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(Some((ref data, 0))) if data == MSG
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     pair.server.drive(pair.time, pair.client.addr);
     pair.server.delay_outbound(); // Delay it
@@ -1359,7 +1362,7 @@ fn handshake_1rtt_handling() {
     assert!(pair.client_conn_mut(client_ch).lost_packets() != 0);
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(Some((ref data, 0))) if data == MSG
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
 }
 
@@ -1605,7 +1608,7 @@ fn finish_acked() {
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(Some((ref data, 0))) if data == MSG
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
@@ -1670,7 +1673,7 @@ fn finish_retransmit() {
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(Some((ref data, 0))) if data == MSG
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
@@ -1705,7 +1708,7 @@ fn repeated_request_response() {
         assert_eq!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(s));
         assert_matches!(
             pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-            Ok(Some((ref data, 0))) if data == REQUEST
+            Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == REQUEST
         );
         assert_matches!(
             pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
@@ -1718,7 +1721,7 @@ fn repeated_request_response() {
 
         assert_matches!(
             pair.client_conn_mut(client_ch).read(s, usize::MAX, false),
-            Ok(Some((ref data, 0))) if data == RESPONSE
+            Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == RESPONSE
         );
         assert_matches!(
             pair.client_conn_mut(client_ch).read(s, usize::MAX, false),
