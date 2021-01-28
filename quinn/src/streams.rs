@@ -11,7 +11,7 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready, FutureExt,
 };
-use proto::{ConnectionError, FinishError, StreamId};
+use proto::{Chunk, ConnectionError, FinishError, StreamId};
 use thiserror::Error;
 use tokio::io::ReadBuf;
 
@@ -355,7 +355,7 @@ where
         self.poll_read_generic(cx, |conn, stream| {
             conn.inner
                 .read(stream, buf.remaining(), true)
-                .map(|val| val.map(|(chunk, _)| buf.put_slice(&chunk)))
+                .map(|val| val.map(|chunk| buf.put_slice(&chunk.bytes)))
         })
         .map(|res| res.map(|_| ()))
     }
@@ -385,7 +385,7 @@ where
         cx: &mut Context,
         max_length: usize,
         ordered: bool,
-    ) -> Poll<Result<Option<(Bytes, u64)>, ReadError>> {
+    ) -> Poll<Result<Option<Chunk>, ReadError>> {
         self.poll_read_generic(cx, |conn, stream| {
             conn.inner.read(stream, max_length, ordered)
         })
@@ -525,14 +525,14 @@ where
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
             match ready!(self.stream.poll_read_chunk(cx, usize::MAX, false))? {
-                Some((data, offset)) => {
-                    self.start = self.start.min(offset);
-                    let end = data.len() as u64 + offset;
+                Some(chunk) => {
+                    self.start = self.start.min(chunk.offset);
+                    let end = chunk.bytes.len() as u64 + chunk.offset;
                     if (end - self.start) > self.size_limit as u64 {
                         return Poll::Ready(Err(ReadToEndError::TooLong));
                     }
                     self.end = self.end.max(end);
-                    self.read.push((data, offset));
+                    self.read.push((chunk.bytes, chunk.offset));
                 }
                 None => {
                     if self.end == 0 {
@@ -792,7 +792,7 @@ impl<'a, S> Future for ReadChunk<'a, S>
 where
     S: proto::crypto::Session,
 {
-    type Output = Result<Option<(Bytes, u64)>, ReadError>;
+    type Output = Result<Option<Chunk>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let (max_length, ordered) = (self.max_length, self.ordered);
         self.stream.poll_read_chunk(cx, max_length, ordered)
