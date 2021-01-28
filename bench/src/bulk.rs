@@ -80,7 +80,7 @@ async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
         trace!("stream established");
 
         let _: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
-            while stream.read_unordered().await?.is_some() {}
+            while stream.read_chunk(usize::MAX, false).await?.is_some() {}
 
             Ok(())
         });
