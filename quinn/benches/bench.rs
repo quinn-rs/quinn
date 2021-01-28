@@ -123,7 +123,12 @@ impl Context {
 
                     while let Some(Ok(mut stream)) = uni_streams.next().await {
                         tokio::spawn(async move {
-                            while stream.read_unordered().await.unwrap().is_some() {}
+                            while stream
+                                .read_chunk(usize::MAX, false)
+                                .await
+                                .unwrap()
+                                .is_some()
+                            {}
                         });
                     }
                 }

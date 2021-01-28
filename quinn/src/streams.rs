@@ -360,37 +360,22 @@ where
         .map(|res| res.map(|_| ()))
     }
 
-    /// Read a segment of data from any offset in the stream.
-    ///
-    /// Yields a segment of data and their offset in the stream, or `None` if the stream was
-    /// finished. Segments may be received in any order and may overlap.
-    ///
-    /// Unordered reads have reduced overhead and higher throughput, and should therefore be
-    /// preferred when applicable.
-    pub fn read_unordered(&mut self) -> ReadUnordered<'_, S> {
-        ReadUnordered { stream: self }
-    }
-
-    fn poll_read_unordered(
-        &mut self,
-        cx: &mut Context,
-    ) -> Poll<Result<Option<(Bytes, u64)>, ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| {
-            conn.inner.read(stream, usize::MAX, false)
-        })
-    }
-
     /// Read the next segment of data
     ///
-    /// Yields a segment of data beginning immediately after the last data yielded by
-    /// `read` or `read_chunk`, or `None` if the stream was finished.
+    /// Yields `None` if the stream was finished. Otherwise, yields a segment of data and its
+    /// offset in the stream. If `ordered` is `true`, the chunk's offset will be immediately after
+    /// the last data yielded by `read()` or `read_chunk()`. If `ordered` is `false`, segments may
+    /// be received in any order, and the `Chunk`'s `offset` field can be used to determine
+    /// ordering in the caller. Unordered reads have reduced overhead and higher throughput, and
+    /// should therefore be preferred when applicable.
     ///
-    /// Slightly more efficient than `read` due to not copying. Chunk boundaries
-    /// do not correspond to peer writes, and hence cannot be used as framing.
-    pub fn read_chunk(&mut self, max_length: usize) -> ReadChunk<'_, S> {
+    /// Slightly more efficient than `read` due to not copying. Chunk boundaries do not correspond
+    /// to peer writes, and hence cannot be used as framing.
+    pub fn read_chunk(&mut self, max_length: usize, ordered: bool) -> ReadChunk<'_, S> {
         ReadChunk {
             stream: self,
             max_length,
+            ordered,
         }
     }
 
@@ -399,9 +384,11 @@ where
         &mut self,
         cx: &mut Context,
         max_length: usize,
-    ) -> Poll<Result<Option<Bytes>, ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| conn.inner.read(stream, max_length, true))
-            .map(|ready| ready.map(|ok| ok.map(|(bytes, _)| bytes)))
+        ordered: bool,
+    ) -> Poll<Result<Option<(Bytes, u64)>, ReadError>> {
+        self.poll_read_generic(cx, |conn, stream| {
+            conn.inner.read(stream, max_length, ordered)
+        })
     }
 
     /// Read the next segments of data
@@ -537,7 +524,7 @@ where
     type Output = Result<Vec<u8>, ReadToEndError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
-            match ready!(self.stream.poll_read_unordered(cx))? {
+            match ready!(self.stream.poll_read_chunk(cx, usize::MAX, false))? {
                 Some((data, offset)) => {
                     self.start = self.start.min(offset);
                     let end = data.len() as u64 + offset;
@@ -789,26 +776,6 @@ pub enum ReadExactError {
     ReadError(#[from] ReadError),
 }
 
-/// Future produced by [`RecvStream::read_unordered()`].
-///
-/// [`RecvStream::read_unordered()`]: crate::generic::RecvStream::read_unordered
-pub struct ReadUnordered<'a, S>
-where
-    S: proto::crypto::Session,
-{
-    stream: &'a mut RecvStream<S>,
-}
-
-impl<'a, S> Future for ReadUnordered<'a, S>
-where
-    S: proto::crypto::Session,
-{
-    type Output = Result<Option<(Bytes, u64)>, ReadError>;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.stream.poll_read_unordered(cx)
-    }
-}
-
 /// Future produced by [`RecvStream::read_chunk()`].
 ///
 /// [`RecvStream::read_chunk()`]: crate::generic::RecvStream::read_chunk
@@ -818,16 +785,17 @@ where
 {
     stream: &'a mut RecvStream<S>,
     max_length: usize,
+    ordered: bool,
 }
 
 impl<'a, S> Future for ReadChunk<'a, S>
 where
     S: proto::crypto::Session,
 {
-    type Output = Result<Option<Bytes>, ReadError>;
+    type Output = Result<Option<(Bytes, u64)>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let max_length = self.max_length;
-        self.stream.poll_read_chunk(cx, max_length)
+        let (max_length, ordered) = (self.max_length, self.ordered);
+        self.stream.poll_read_chunk(cx, max_length, ordered)
     }
 }
 
