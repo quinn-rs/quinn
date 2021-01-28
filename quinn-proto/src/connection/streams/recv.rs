@@ -65,7 +65,7 @@ impl Recv {
         ordered: bool,
     ) -> StreamReadResult<(Bytes, u64)> {
         match self.assembler.read(max_length, ordered)? {
-            Some((offset, bytes)) => Ok(Some((bytes, offset))),
+            Some(chunk) => Ok(Some((chunk.bytes, chunk.offset))),
             None => self.read_blocked().map(|()| None),
         }
     }
@@ -79,8 +79,8 @@ impl Recv {
             return Ok(Some(out));
         }
 
-        while let Some((_, bytes)) = self.assembler.read(usize::MAX, true)? {
-            chunks[out.bufs] = bytes;
+        while let Some(chunk) = self.assembler.read(usize::MAX, true)? {
+            chunks[out.bufs] = chunk.bytes;
             out.read += chunks[out.bufs].len();
             out.bufs += 1;
 
