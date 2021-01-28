@@ -1,7 +1,6 @@
 use std::{
     future::Future,
     io,
-    mem::MaybeUninit,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -14,6 +13,7 @@ use futures::{
 };
 use proto::{ConnectionError, FinishError, StreamId};
 use thiserror::Error;
+use tokio::io::ReadBuf;
 
 use crate::{connection::ConnectionRef, VarInt};
 
@@ -300,7 +300,6 @@ where
     stream: StreamId,
     is_0rtt: bool,
     all_data_read: bool,
-    any_data_read: bool,
 }
 
 impl<S> RecvStream<S>
@@ -313,7 +312,6 @@ where
             stream,
             is_0rtt,
             all_data_read: false,
-            any_data_read: false,
         }
     }
 
@@ -331,7 +329,10 @@ where
     ///
     /// [`read_unordered()`]: RecvStream::read_unordered
     pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'a, S> {
-        Read { stream: self, buf }
+        Read {
+            stream: self,
+            buf: ReadBuf::new(buf),
+        }
     }
 
     /// Read an exact number of bytes contiguously from the stream.
@@ -342,17 +343,21 @@ where
     pub fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExact<'a, S> {
         ReadExact {
             stream: self,
-            off: 0,
-            buf,
+            buf: ReadBuf::new(buf),
         }
     }
 
     fn poll_read(
         &mut self,
         cx: &mut Context,
-        buf: &mut [u8],
-    ) -> Poll<Result<Option<usize>, ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| conn.inner.read(stream, buf))
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<Result<(), ReadError>> {
+        self.poll_read_generic(cx, |conn, stream| {
+            conn.inner
+                .read(stream, buf.remaining())
+                .map(|val| val.map(|chunk| buf.put_slice(&chunk)))
+        })
+        .map(|res| res.map(|_| ()))
     }
 
     /// Read a segment of data from any offset in the stream.
@@ -380,13 +385,20 @@ where
     ///
     /// Slightly more efficient than `read` due to not copying. Chunk boundaries
     /// do not correspond to peer writes, and hence cannot be used as framing.
-    pub fn read_chunk(&mut self) -> ReadChunk<'_, S> {
-        ReadChunk { stream: self }
+    pub fn read_chunk(&mut self, max_length: usize) -> ReadChunk<'_, S> {
+        ReadChunk {
+            stream: self,
+            max_length,
+        }
     }
 
     /// Foundation of [`read_chunk()`]: RecvStream::read_chunk
-    fn poll_read_chunk(&mut self, cx: &mut Context) -> Poll<Result<Option<Bytes>, ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| conn.inner.read_chunk(stream))
+    fn poll_read_chunk(
+        &mut self,
+        cx: &mut Context,
+        max_length: usize,
+    ) -> Poll<Result<Option<Bytes>, ReadError>> {
+        self.poll_read_generic(cx, |conn, stream| conn.inner.read(stream, max_length))
     }
 
     /// Read the next segments of data
@@ -469,7 +481,6 @@ where
             StreamId,
         ) -> Result<Option<U>, proto::ReadError>,
     {
-        self.any_data_read = true;
         use proto::ReadError::*;
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt {
@@ -573,9 +584,9 @@ where
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        Poll::Ready(Ok(
-            ready!(RecvStream::poll_read(self.get_mut(), cx, buf))?.unwrap_or(0)
-        ))
+        let mut buf = ReadBuf::new(buf);
+        ready!(RecvStream::poll_read(self.get_mut(), cx, &mut buf))?;
+        Poll::Ready(Ok(buf.filled().len()))
     }
 }
 
@@ -583,16 +594,13 @@ impl<S> tokio::io::AsyncRead for RecvStream<S>
 where
     S: proto::crypto::Session,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [MaybeUninit<u8>]) -> bool {
-        false
-    }
-
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        AsyncRead::poll_read(self, cx, buf)
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        ready!(RecvStream::poll_read(self.get_mut(), cx, buf))?;
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -717,7 +725,7 @@ where
     S: proto::crypto::Session,
 {
     stream: &'a mut RecvStream<S>,
-    buf: &'a mut [u8],
+    buf: ReadBuf<'a>,
 }
 
 impl<'a, S> Future for Read<'a, S>
@@ -725,9 +733,14 @@ where
     S: proto::crypto::Session,
 {
     type Output = Result<Option<usize>, ReadError>;
+
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        this.stream.poll_read(cx, this.buf)
+        ready!(this.stream.poll_read(cx, &mut this.buf))?;
+        match this.buf.filled().len() {
+            0 => Poll::Ready(Ok(None)),
+            n => Poll::Ready(Ok(Some(n))),
+        }
     }
 }
 
@@ -739,8 +752,7 @@ where
     S: proto::crypto::Session,
 {
     stream: &'a mut RecvStream<S>,
-    off: usize,
-    buf: &'a mut [u8],
+    buf: ReadBuf<'a>,
 }
 
 impl<'a, S> Future for ReadExact<'a, S>
@@ -750,13 +762,14 @@ where
     type Output = Result<(), ReadExactError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        while this.buf.len() != this.off {
-            let n: usize = ready!(this
-                .stream
-                .poll_read(cx, &mut this.buf[this.off..])
-                .map_err(ReadExactError::ReadError)?)
-            .ok_or(ReadExactError::FinishedEarly)?;
-            this.off += n;
+        let mut remaining = this.buf.remaining();
+        while remaining > 0 {
+            ready!(this.stream.poll_read(cx, &mut this.buf))?;
+            let new = this.buf.remaining();
+            if new == remaining {
+                return Poll::Ready(Err(ReadExactError::FinishedEarly));
+            }
+            remaining = new;
         }
         Poll::Ready(Ok(()))
     }
@@ -770,7 +783,7 @@ pub enum ReadExactError {
     FinishedEarly,
     /// A read error occurred
     #[error("{0}")]
-    ReadError(#[source] ReadError),
+    ReadError(#[from] ReadError),
 }
 
 /// Future produced by [`RecvStream::read_unordered()`].
@@ -801,6 +814,7 @@ where
     S: proto::crypto::Session,
 {
     stream: &'a mut RecvStream<S>,
+    max_length: usize,
 }
 
 impl<'a, S> Future for ReadChunk<'a, S>
@@ -809,7 +823,8 @@ where
 {
     type Output = Result<Option<Bytes>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.stream.poll_read_chunk(cx)
+        let max_length = self.max_length;
+        self.stream.poll_read_chunk(cx, max_length)
     }
 }
 

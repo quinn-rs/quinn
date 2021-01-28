@@ -11,7 +11,7 @@ use std::{
     net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
 };
 
-use bytes::{buf::ext::BufExt as _, Buf, BufMut};
+use bytes::{Buf, BufMut};
 use thiserror::Error;
 
 use crate::{
@@ -127,8 +127,8 @@ impl TransportParameters {
     {
         TransportParameters {
             initial_src_cid: Some(initial_src_cid),
-            initial_max_streams_bidi: config.stream_window_bidi,
-            initial_max_streams_uni: config.stream_window_uni,
+            initial_max_streams_bidi: config.max_concurrent_bidi_streams,
+            initial_max_streams_uni: config.max_concurrent_uni_streams,
             initial_max_data: config.receive_window,
             initial_max_stream_data_bidi_local: config.stream_receive_window,
             initial_max_stream_data_bidi_remote: config.stream_receive_window,
@@ -427,11 +427,11 @@ impl TransportParameters {
 }
 
 fn decode_cid(len: usize, value: &mut Option<ConnectionId>, r: &mut impl Buf) -> Result<(), Error> {
-    if len > MAX_CID_SIZE || value.is_some() {
+    if len > MAX_CID_SIZE || value.is_some() || r.remaining() < len {
         return Err(Error::Malformed);
     }
-    *value = Some(ConnectionId::new(&r.bytes()[..len]));
-    r.advance(len);
+
+    *value = Some(ConnectionId::new(&r.copy_to_bytes(len)));
     Ok(())
 }
 

@@ -15,20 +15,18 @@ use crate::{
 /// Parameters governing the core QUIC state machine
 ///
 /// Default values should be suitable for most internet applications. Applications protocols which
-/// forbid remotely-initiated streams should set `stream_window_bidi` and `stream_window_uni` to
-/// zero.
+/// forbid remotely-initiated streams should set `max_concurrent_bidi_streams` and
+/// `max_concurrent_uni_streams` to zero.
 ///
 /// In some cases, performance or resource requirements can be improved by tuning these values to
-/// suit a particular application and/or network connection. In particular, window sizes for
-/// streams, stream data, and overall connection data can be tuned for a particular expected round
-/// trip time, link capacity, memory availability, and rate of stream creation. Tuning for higher
-/// bandwidths and latencies increases worst-case memory consumption, but does not impair
+/// suit a particular application and/or network connection. In particular, data window sizes can be
+/// tuned for a particular expected round trip time, link capacity, and memory availability. Tuning
+/// for higher bandwidths and latencies increases worst-case memory consumption, but does not impair
 /// performance at lower bandwidths and latencies. The default configuration is tuned for a 100Mbps
-/// link with a 100ms round trip time, with remote endpoints opening at most 320 new streams per
-/// second.
+/// link with a 100ms round trip time.
 pub struct TransportConfig {
-    pub(crate) stream_window_bidi: VarInt,
-    pub(crate) stream_window_uni: VarInt,
+    pub(crate) max_concurrent_bidi_streams: VarInt,
+    pub(crate) max_concurrent_uni_streams: VarInt,
     pub(crate) max_idle_timeout: Option<Duration>,
     pub(crate) stream_receive_window: VarInt,
     pub(crate) receive_window: VarInt,
@@ -50,30 +48,20 @@ pub struct TransportConfig {
 }
 
 impl TransportConfig {
-    /// Maximum number of bidirectional streams that may be initiated by the peer but not yet
-    /// accepted locally
+    /// Maximum number of bidirectional streams that may be open concurrently
     ///
     /// Must be nonzero for the peer to open any bidirectional streams.
     ///
-    /// Any number of streams may be in flight concurrently. However, to ensure predictable resource
-    /// use, the number of streams which the peer has initiated but which the local application has
-    /// not yet accepted will be kept below this threshold.
-    ///
-    /// Because it takes at least one round trip for an endpoint to open a new stream and be
-    /// notified of its peer's flow control updates, this imposes a hard upper bound on the number
-    /// of streams that may be opened per round-trip. In other words, this should be set to at least
-    /// the desired number of streams opened per unit time, multiplied by the round trip time.
-    ///
-    /// Note that worst-case memory use is directly proportional to `stream_window_bidi *
+    /// Worst-case memory use is directly proportional to `max_concurrent_bidi_streams *
     /// stream_receive_window`, with an upper bound proportional to `receive_window`.
-    pub fn stream_window_bidi(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
-        self.stream_window_bidi = value.try_into()?;
+    pub fn max_concurrent_bidi_streams(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
+        self.max_concurrent_bidi_streams = value.try_into()?;
         Ok(self)
     }
 
-    /// Variant of `stream_window_bidi` affecting unidirectional streams
-    pub fn stream_window_uni(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
-        self.stream_window_uni = value.try_into()?;
+    /// Variant of `max_concurrent_bidi_streams` affecting unidirectional streams
+    pub fn max_concurrent_uni_streams(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
+        self.max_concurrent_uni_streams = value.try_into()?;
         Ok(self)
     }
 
@@ -237,8 +225,8 @@ impl Default for TransportConfig {
         const STREAM_RWND: u32 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
 
         TransportConfig {
-            stream_window_bidi: 32u32.into(),
-            stream_window_uni: 32u32.into(),
+            max_concurrent_bidi_streams: 100u32.into(),
+            max_concurrent_uni_streams: 100u32.into(),
             max_idle_timeout: Some(Duration::from_millis(10_000)),
             stream_receive_window: STREAM_RWND.into(),
             receive_window: VarInt::MAX,
@@ -264,8 +252,14 @@ impl Default for TransportConfig {
 impl fmt::Debug for TransportConfig {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("TranportConfig")
-            .field("stream_window_bidi", &self.stream_window_bidi)
-            .field("stream_window_uni", &self.stream_window_uni)
+            .field(
+                "max_concurrent_bidi_streams",
+                &self.max_concurrent_bidi_streams,
+            )
+            .field(
+                "max_concurrent_uni_streams",
+                &self.max_concurrent_uni_streams,
+            )
             .field("max_idle_timeout", &self.max_idle_timeout)
             .field("stream_receive_window", &self.stream_receive_window)
             .field("receive_window", &self.receive_window)

@@ -596,11 +596,11 @@ fn alpn_mismatch() {
 }
 
 #[test]
-fn stream_id_backpressure() {
+fn stream_id_limit() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_uni: 1u32.into(),
+            max_concurrent_uni_streams: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -623,8 +623,12 @@ fn stream_id_backpressure() {
     // Generate some activity to allow the server to see the stream
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive();
-    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Stream(StreamEvent::Finished { id })) if id == s
+    );
     assert_eq!(
         pair.client_conn_mut(client_ch).open(Dir::Uni),
         None,
@@ -636,6 +640,7 @@ fn stream_id_backpressure() {
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(Some((msg, 0))) if msg == MSG);
+    assert_eq!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
     // Server will only send MAX_STREAM_ID now that the application's been notified
     pair.drive();
     assert_matches!(
@@ -744,11 +749,19 @@ fn key_update_reordered() {
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Bi }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(stream) if stream == s);
-    let mut buf = [0; 32];
-    assert_matches!(pair.server_conn_mut(server_ch).read(s, &mut buf),
-                    Ok(Some(n)) if n == MSG1.len() + MSG2.len());
-    assert_eq!(&buf[0..MSG1.len()], MSG1);
-    assert_eq!(&buf[MSG1.len()..MSG1.len() + MSG2.len()], MSG2);
+
+    let buf1 = pair
+        .server_conn_mut(server_ch)
+        .read(s, usize::MAX)
+        .unwrap()
+        .unwrap();
+    assert_matches!(&*buf1, MSG1);
+    let buf2 = pair
+        .server_conn_mut(server_ch)
+        .read(s, usize::MAX)
+        .unwrap()
+        .unwrap();
+    assert_eq!(buf2, MSG2);
 
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
     assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
@@ -947,7 +960,6 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     );
     let (client_conn, server_conn) = pair.connect();
     let msg = vec![0xAB; window_size + 10];
-    let mut buf = [0; 4096];
 
     // Stream reset before read
     let s = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
@@ -966,7 +978,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
         .unwrap();
     pair.drive();
     assert_eq!(
-        pair.server_conn_mut(server_conn).read(s, &mut buf),
+        pair.server_conn_mut(server_conn).read(s, usize::MAX),
         Err(ReadError::Reset(VarInt(42)))
     );
 
@@ -981,15 +993,13 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
             .write(s, &msg[window_size..]),
         Err(WriteError::Blocked)
     );
+
     pair.drive();
     let mut cursor = 0;
     loop {
-        match pair
-            .server_conn_mut(server_conn)
-            .read(s, &mut buf[cursor..])
-        {
-            Ok(Some(n)) => {
-                cursor += n;
+        match pair.server_conn_mut(server_conn).read(s, usize::MAX) {
+            Ok(Some(buf)) => {
+                cursor += buf.len();
             }
             Ok(None) => {
                 panic!("end of stream");
@@ -1002,6 +1012,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
             }
         }
     }
+
     assert_eq!(cursor, window_size);
     pair.drive();
     assert_eq!(
@@ -1013,15 +1024,13 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
             .write(s, &msg[window_size..]),
         Err(WriteError::Blocked)
     );
+
     pair.drive();
     let mut cursor = 0;
     loop {
-        match pair
-            .server_conn_mut(server_conn)
-            .read(s, &mut buf[cursor..])
-        {
-            Ok(Some(n)) => {
-                cursor += n;
+        match pair.server_conn_mut(server_conn).read(s, usize::MAX) {
+            Ok(Some(buf)) => {
+                cursor += buf.len();
             }
             Ok(None) => {
                 panic!("end of stream");
@@ -1657,7 +1666,7 @@ fn repeated_request_response() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_bidi: 1u32.into(),
+            max_concurrent_bidi_streams: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -1698,7 +1707,7 @@ fn read_chunks() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_bidi: 1u32.into(),
+            max_concurrent_bidi_streams: 3u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()

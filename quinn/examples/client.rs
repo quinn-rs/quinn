@@ -112,7 +112,7 @@ async fn run(options: Opt) -> Result<()> {
     eprintln!("connected at {:?}", start.elapsed());
     let quinn::NewConnection {
         connection: conn, ..
-    } = { new_conn };
+    } = new_conn;
     let (mut send, recv) = conn
         .open_bi()
         .await
@@ -145,6 +145,9 @@ async fn run(options: Opt) -> Result<()> {
     io::stdout().write_all(&resp).unwrap();
     io::stdout().flush().unwrap();
     conn.close(0u32.into(), b"done");
+
+    // Give the server a fair chance to receive the close packet
+    endpoint.wait_idle().await;
 
     Ok(())
 }

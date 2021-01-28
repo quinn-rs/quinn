@@ -79,7 +79,7 @@ fn parse_header_field<R: Buf>(
     table: &DynamicTableDecoder,
     buf: &mut R,
 ) -> Result<HeaderField, Error> {
-    let first = buf.bytes()[0];
+    let first = buf.chunk()[0];
     let field = match HeaderBlockField::decode(first) {
         HeaderBlockField::Indexed => match Indexed::decode(buf)? {
             Indexed::Static(index) => StaticTable::get(index)?.clone(),
@@ -143,8 +143,8 @@ fn parse_instruction<R: Buf>(
         return Ok(None);
     }
 
-    let mut buf = Cursor::new(read.bytes());
-    let first = buf.bytes()[0];
+    let mut buf = Cursor::new(read.chunk());
+    let first = buf.chunk()[0];
     let instruction = match EncoderInstruction::decode(first) {
         EncoderInstruction::Unknown => return Err(Error::UnknownPrefix),
         EncoderInstruction::DynamicTableSizeUpdate => {

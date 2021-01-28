@@ -43,7 +43,7 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
     for operation in operations {
         match operation {
             Operation::Open => {
-                stream.open(&params.transport_params, params.dir);
+                stream.open(params.dir);
             }
             Operation::Accept(dir) => {
                 stream.accept(dir);

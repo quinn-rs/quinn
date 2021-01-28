@@ -265,8 +265,8 @@ impl Literal {
     pub fn decode<R: Buf>(buf: &mut R) -> Result<Self, ParseError> {
         if buf.remaining() < 1 {
             return Err(ParseError::InvalidInteger(prefix_int::Error::UnexpectedEnd));
-        } else if buf.bytes()[0] & 0b1110_0000 != 0b0010_0000 {
-            return Err(ParseError::InvalidPrefix(buf.bytes()[0]));
+        } else if buf.chunk()[0] & 0b1110_0000 != 0b0010_0000 {
+            return Err(ParseError::InvalidPrefix(buf.chunk()[0]));
         }
         Ok(Literal::new(
             prefix_string::decode(4, buf)?,
