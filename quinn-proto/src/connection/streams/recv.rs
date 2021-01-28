@@ -25,6 +25,7 @@ impl Recv {
     pub(super) fn ingest(
         &mut self,
         frame: frame::Stream,
+        payload_len: usize,
         received: u64,
         max_data: u64,
     ) -> Result<u64, TransportError> {
@@ -54,7 +55,7 @@ impl Recv {
             }
         }
 
-        self.assembler.insert(frame.offset, frame.data);
+        self.assembler.insert(frame.offset, frame.data, payload_len);
 
         Ok(new_bytes)
     }
