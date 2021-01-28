@@ -12,7 +12,7 @@ use crate::range_set::RangeSet;
 #[derive(Debug, Default)]
 pub(crate) struct Assembler {
     state: State,
-    data: BinaryHeap<Chunk>,
+    data: BinaryHeap<Buffer>,
     defragmented: usize,
     /// Number of bytes read by the application. When only ordered reads have been used, this is the
     /// length of the contiguous prefix of the stream which has been consumed by the application,
@@ -113,14 +113,14 @@ impl Assembler {
                 }
             } else {
                 let bytes = buffer.split().freeze();
-                self.data.push(Chunk { offset, bytes });
+                self.data.push(Buffer { offset, bytes });
                 offset = chunk.offset;
                 buffer.extend_from_slice(&chunk.bytes);
             }
         }
 
         let bytes = buffer.split().freeze();
-        self.data.push(Chunk { offset, bytes });
+        self.data.push(Buffer { offset, bytes });
         self.defragmented = self.data.len();
     }
 
@@ -131,7 +131,7 @@ impl Assembler {
             // Discard duplicate data
             for duplicate in recvd.replace(offset..offset + bytes.len() as u64) {
                 if duplicate.start > offset {
-                    self.data.push(Chunk {
+                    self.data.push(Buffer {
                         offset,
                         bytes: bytes.split_to((duplicate.start - offset) as usize),
                     });
@@ -144,7 +144,7 @@ impl Assembler {
         if bytes.is_empty() || self.stopped {
             return;
         }
-        self.data.push(Chunk { offset, bytes });
+        self.data.push(Buffer { offset, bytes });
         // Why 32: on the one hand, we want to defragment rarely, ideally never
         // in non-pathological scenarios. However, a pathological or malicious
         // peer could send us one-byte frames, and since we use reference-counted
@@ -190,15 +190,15 @@ impl Assembler {
 }
 
 #[derive(Debug, Eq)]
-struct Chunk {
+struct Buffer {
     offset: u64,
     bytes: Bytes,
 }
 
-impl Ord for Chunk {
+impl Ord for Buffer {
     // Invert ordering based on offset (max-heap, min offset first),
     // prioritize longer chunks at the same offset.
-    fn cmp(&self, other: &Chunk) -> Ordering {
+    fn cmp(&self, other: &Buffer) -> Ordering {
         self.offset
             .cmp(&other.offset)
             .reverse()
@@ -206,14 +206,14 @@ impl Ord for Chunk {
     }
 }
 
-impl PartialOrd for Chunk {
-    fn partial_cmp(&self, other: &Chunk) -> Option<Ordering> {
+impl PartialOrd for Buffer {
+    fn partial_cmp(&self, other: &Buffer) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl PartialEq for Chunk {
-    fn eq(&self, other: &Chunk) -> bool {
+impl PartialEq for Buffer {
+    fn eq(&self, other: &Buffer) -> bool {
         (self.offset, self.bytes.len()) == (other.offset, other.bytes.len())
     }
 }
