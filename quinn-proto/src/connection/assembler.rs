@@ -94,7 +94,19 @@ impl Assembler {
     // counter to the new number of chunks left in the heap so that we can decide
     // when to defragment the queue again if necessary.
     fn defragment(&mut self) {
-        let buffered = self.data.iter().map(|c| c.bytes.len()).sum::<usize>();
+        let high_utilization_over_allocation = self
+            .data
+            .iter()
+            .filter(|b| b.high_utilization())
+            .map(|b| b.over_allocation)
+            .sum::<usize>();
+        let include_highly_utilized = high_utilization_over_allocation > DEFRAGMENTATION_THRESHOLD;
+        let buffered = self
+            .data
+            .iter()
+            .filter(|b| b.should_defragment(include_highly_utilized))
+            .map(|b| b.bytes.len())
+            .sum::<usize>();
         let mut buffer = BytesMut::with_capacity(buffered);
         let mut offset = self
             .data
@@ -106,20 +118,24 @@ impl Assembler {
         let new = BinaryHeap::with_capacity(self.data.len());
         let old = mem::replace(&mut self.data, new);
         for chunk in old.into_sorted_vec().into_iter().rev() {
-            let end = offset + (buffer.len() as u64);
-            if let Some(overlap) = end.checked_sub(chunk.offset) {
-                if let Some(bytes) = chunk.bytes.get(overlap as usize..) {
-                    buffer.extend_from_slice(bytes);
+            if chunk.should_defragment(include_highly_utilized) {
+                let end = offset + (buffer.len() as u64);
+                if let Some(overlap) = end.checked_sub(chunk.offset) {
+                    if let Some(bytes) = chunk.bytes.get(overlap as usize..) {
+                        buffer.extend_from_slice(bytes);
+                    }
+                } else {
+                    let bytes = buffer.split().freeze();
+                    self.data.push(Buffer {
+                        offset,
+                        bytes,
+                        over_allocation: 0,
+                    });
+                    offset = chunk.offset;
+                    buffer.extend_from_slice(&chunk.bytes);
                 }
             } else {
-                let bytes = buffer.split().freeze();
-                self.data.push(Buffer {
-                    offset,
-                    bytes,
-                    over_allocation: 0,
-                });
-                offset = chunk.offset;
-                buffer.extend_from_slice(&chunk.bytes);
+                self.data.push(chunk);
             }
         }
 
@@ -129,7 +145,11 @@ impl Assembler {
             bytes,
             over_allocation: 0,
         });
-        self.over_allocation = 0;
+        self.over_allocation = if include_highly_utilized {
+            0
+        } else {
+            high_utilization_over_allocation
+        };
     }
 
     pub(crate) fn insert(&mut self, mut offset: u64, mut bytes: Bytes, mut allocation_size: usize) {
@@ -170,7 +190,7 @@ impl Assembler {
         // of memory allocated. In a worst case scenario like 32 1-byte chunks,
         // each one from a ~1000-byte datagram, this limits us to having a
         // maximum pathological over-allocation of about 32k bytes.
-        if self.over_allocation > 32 * 1024 {
+        if self.over_allocation > DEFRAGMENTATION_THRESHOLD {
             self.defragment()
         }
     }
@@ -208,6 +228,8 @@ impl Assembler {
     }
 }
 
+const DEFRAGMENTATION_THRESHOLD: usize = 32 * 1024;
+
 /// A chunk of data from the receive stream
 #[non_exhaustive]
 #[derive(Debug, PartialEq)]
@@ -229,6 +251,20 @@ struct Buffer {
     offset: u64,
     bytes: Bytes,
     over_allocation: usize,
+}
+
+impl Buffer {
+    fn high_utilization(&self) -> bool {
+        self.bytes.len() >= self.over_allocation
+    }
+
+    fn should_defragment(&self, include_highly_utilized: bool) -> bool {
+        if include_highly_utilized {
+            self.over_allocation > 0
+        } else {
+            !self.high_utilization()
+        }
+    }
 }
 
 impl Ord for Buffer {
@@ -385,8 +421,8 @@ mod test {
     #[test]
     fn assemble_overlapping_compact() {
         let mut x = Assembler::new();
-        x.insert(0, Bytes::from_static(b"123"), 3);
-        x.insert(1, Bytes::from_static(b"234"), 3);
+        x.insert(0, Bytes::from_static(b"123"), DEFRAGMENTATION_THRESHOLD / 2);
+        x.insert(1, Bytes::from_static(b"234"), DEFRAGMENTATION_THRESHOLD / 2);
         x.defragment();
         assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"1234");
         assert_matches!(next(&mut x, 32), None);
@@ -438,10 +474,14 @@ mod test {
     #[test]
     fn compact() {
         let mut x = Assembler::new();
-        x.insert(0, Bytes::from_static(b"abc"), 3);
-        x.insert(3, Bytes::from_static(b"def"), 3);
-        x.insert(9, Bytes::from_static(b"jkl"), 3);
-        x.insert(12, Bytes::from_static(b"mno"), 3);
+        x.insert(0, Bytes::from_static(b"abc"), DEFRAGMENTATION_THRESHOLD / 4);
+        x.insert(3, Bytes::from_static(b"def"), DEFRAGMENTATION_THRESHOLD / 4);
+        x.insert(9, Bytes::from_static(b"jkl"), DEFRAGMENTATION_THRESHOLD / 4);
+        x.insert(
+            12,
+            Bytes::from_static(b"mno"),
+            DEFRAGMENTATION_THRESHOLD / 4,
+        );
         x.defragment();
         assert_eq!(
             next_unordered(&mut x),
@@ -467,10 +507,14 @@ mod test {
     #[test]
     fn defrag_read_chunk() {
         let mut x = Assembler::new();
-        x.insert(3, Bytes::from_static(b"def"), 3);
-        x.insert(0, Bytes::from_static(b"abc"), 3);
-        x.insert(7, Bytes::from_static(b"hij"), 3);
-        x.insert(11, Bytes::from_static(b"lmn"), 3);
+        x.insert(3, Bytes::from_static(b"def"), DEFRAGMENTATION_THRESHOLD / 4);
+        x.insert(0, Bytes::from_static(b"abc"), DEFRAGMENTATION_THRESHOLD / 4);
+        x.insert(7, Bytes::from_static(b"hij"), DEFRAGMENTATION_THRESHOLD / 4);
+        x.insert(
+            11,
+            Bytes::from_static(b"lmn"),
+            DEFRAGMENTATION_THRESHOLD / 4,
+        );
         x.defragment();
         assert_matches!(x.read(usize::MAX, true), Ok(Some(ref y)) if &y.bytes[..] == b"abcdef");
         x.insert(5, Bytes::from_static(b"fghijklmn"), 9);
