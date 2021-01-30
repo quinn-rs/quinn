@@ -1760,7 +1760,7 @@ where
         space
             .crypto_stream
             .insert(crypto.offset, crypto.data.clone());
-        while let Some(chunk) = space.crypto_stream.read(usize::MAX, true).unwrap() {
+        while let Some(chunk) = space.crypto_stream.read(usize::MAX, true) {
             trace!("consumed {} CRYPTO bytes", chunk.bytes.len());
             if self.crypto.read_handshake(&chunk.bytes)? {
                 self.events.push_back(Event::HandshakeDataReady);
