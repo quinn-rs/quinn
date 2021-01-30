@@ -18,8 +18,6 @@ pub(crate) struct Assembler {
     /// length of the contiguous prefix of the stream which has been consumed by the application,
     /// aka the stream offset.
     bytes_read: u64,
-    /// Whether to discard data
-    stopped: bool,
 }
 
 impl Assembler {
@@ -33,9 +31,7 @@ impl Assembler {
         max_length: usize,
         ordered: bool,
     ) -> Result<Option<Chunk>, AssembleError> {
-        if self.is_stopped() {
-            return Err(AssembleError::UnknownStream);
-        } else if ordered && !self.state.is_ordered() {
+        if ordered && !self.state.is_ordered() {
             return Err(AssembleError::IllegalOrderedRead);
         } else if !ordered && self.state.is_ordered() {
             // Enter unordered mode
@@ -137,7 +133,7 @@ impl Assembler {
                 offset = duplicate.end;
             }
         }
-        if bytes.is_empty() || self.stopped {
+        if bytes.is_empty() {
             return;
         }
         self.data.push(Buffer { offset, bytes });
@@ -153,6 +149,10 @@ impl Assembler {
         }
     }
 
+    pub(crate) fn set_bytes_read(&mut self, new: u64) {
+        self.bytes_read = new;
+    }
+
     /// Number of bytes consumed by the application
     pub(crate) fn bytes_read(&self) -> u64 {
         self.bytes_read
@@ -162,16 +162,6 @@ impl Assembler {
     pub(crate) fn clear(&mut self) {
         self.data.clear();
         self.defragmented = 0;
-    }
-
-    /// Discard buffered data and do not buffer future data, but continue tracking offsets.
-    pub(crate) fn stop(&mut self) {
-        self.stopped = true;
-        self.data.clear();
-    }
-
-    pub(crate) fn is_stopped(&self) -> bool {
-        self.stopped
     }
 }
 
