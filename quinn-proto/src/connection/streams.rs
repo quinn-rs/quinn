@@ -609,11 +609,13 @@ impl Streams {
     ) -> Vec<frame::StreamMeta> {
         let mut stream_frames = Vec::new();
         while buf.len() + frame::Stream::SIZE_BOUND < max_buf_size {
-            let max_data_len = match max_buf_size.checked_sub(buf.len() + frame::Stream::SIZE_BOUND)
+            if max_buf_size
+                .checked_sub(buf.len() + frame::Stream::SIZE_BOUND)
+                .is_none()
             {
-                Some(x) => x,
-                None => break,
-            };
+                break;
+            }
+
             let mut level = match self.pending.peek_mut() {
                 Some(x) => x,
                 None => break,
@@ -642,7 +644,11 @@ impl Streams {
             if stream.is_reset() {
                 continue;
             }
-            let offsets = stream.pending.poll_transmit(max_data_len);
+
+            // Now that we know the `StreamId`, we can better account for how many bytes
+            // are required to encode it.
+            let max_buf_size = max_buf_size - buf.len() - 1 - VarInt::size(id.into());
+            let (offsets, encode_length) = stream.pending.poll_transmit(max_buf_size);
             let fin = offsets.end == stream.pending.offset()
                 && matches!(stream.state, SendState::DataSent { .. });
             if fin {
@@ -659,7 +665,7 @@ impl Streams {
 
             let meta = frame::StreamMeta { id, offsets, fin };
             trace!(id = %meta.id, off = meta.offsets.start, len = meta.offsets.end - meta.offsets.start, fin = meta.fin, "STREAM");
-            meta.encode(true, buf);
+            meta.encode(encode_length, buf);
 
             // The range might not be retrievable in a single `get` if it is
             // stored in noncontiguous fashion. Therefore this loop iterates
