@@ -262,6 +262,18 @@ impl StreamId {
     }
 }
 
+impl Into<VarInt> for StreamId {
+    fn into(self) -> VarInt {
+        unsafe { VarInt::from_u64_unchecked(self.0) }
+    }
+}
+
+impl From<VarInt> for StreamId {
+    fn from(v: VarInt) -> Self {
+        Self(v.0)
+    }
+}
+
 impl coding::Codec for StreamId {
     fn decode<B: bytes::Buf>(buf: &mut B) -> coding::Result<StreamId> {
         VarInt::decode(buf).map(|x| StreamId(x.into_inner()))
