@@ -2,7 +2,7 @@ use bytes::Bytes;
 use thiserror::Error;
 use tracing::debug;
 
-use super::ShouldTransmit;
+use super::{ShouldTransmit, UnknownStream};
 use crate::connection::assembler::{AssembleError, Assembler, Chunk};
 use crate::{frame, TransportError, VarInt};
 
@@ -92,6 +92,17 @@ impl Recv {
         }
 
         self.read_blocked().map(|()| None)
+    }
+
+    pub(super) fn stop(&mut self) -> Result<(u64, ShouldTransmit), UnknownStream> {
+        if self.assembler.is_stopped() {
+            return Err(UnknownStream { _private: () });
+        }
+
+        self.assembler.stop();
+        // Issue flow control credit for unread data
+        let read_credits = self.end - self.assembler.bytes_read();
+        Ok((read_credits, ShouldTransmit(!self.is_finished())))
     }
 
     fn read_blocked(&mut self) -> Result<(), ReadError> {
