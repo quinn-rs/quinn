@@ -3,7 +3,7 @@ use thiserror::Error;
 use tracing::debug;
 
 use super::{ShouldTransmit, UnknownStream};
-use crate::connection::assembler::{AssembleError, Assembler, Chunk};
+use crate::connection::assembler::{Assembler, Chunk, IllegalOrderedRead};
 use crate::{frame, TransportError, VarInt};
 
 #[derive(Debug, Default)]
@@ -73,7 +73,8 @@ impl Recv {
             return Err(ReadError::UnknownStream);
         }
 
-        match self.assembler.read(max_length, ordered)? {
+        self.assembler.ensure_ordering(ordered)?;
+        match self.assembler.read(max_length, ordered) {
             Some(chunk) => Ok(Some(chunk)),
             None => self.read_blocked().map(|()| None),
         }
@@ -92,7 +93,8 @@ impl Recv {
             return Ok(Some(out));
         }
 
-        while let Some(chunk) = self.assembler.read(usize::MAX, true)? {
+        self.assembler.ensure_ordering(true)?;
+        while let Some(chunk) = self.assembler.read(usize::MAX, true) {
             chunks[out.bufs] = chunk.bytes;
             out.read += chunks[out.bufs].len();
             out.bufs += 1;
@@ -314,13 +316,9 @@ pub enum ReadError {
     IllegalOrderedRead,
 }
 
-impl From<AssembleError> for ReadError {
-    fn from(e: AssembleError) -> Self {
-        use AssembleError::*;
-        match e {
-            IllegalOrderedRead => ReadError::IllegalOrderedRead,
-            UnknownStream => ReadError::UnknownStream,
-        }
+impl From<IllegalOrderedRead> for ReadError {
+    fn from(_: IllegalOrderedRead) -> Self {
+        ReadError::IllegalOrderedRead
     }
 }
 
