@@ -444,14 +444,8 @@ impl Streams {
             Some(s) => s,
             None => return Err(UnknownStream { _private: () }),
         };
-        if stream.assembler.is_stopped() {
-            return Err(UnknownStream { _private: () });
-        }
-        stream.assembler.stop();
-        let stop_sending = ShouldTransmit(!stream.is_finished());
 
-        // Issue flow control credit for unread data
-        let read_credits = stream.end - stream.assembler.bytes_read();
+        let (read_credits, stop_sending) = stream.stop()?;
         let max_data = self.add_read_credits(read_credits);
         Ok(StopResult {
             stop_sending,
