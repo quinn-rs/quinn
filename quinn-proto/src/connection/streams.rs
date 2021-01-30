@@ -304,7 +304,7 @@ impl Streams {
         let new_bytes = rs.ingest(frame, self.data_recvd, self.local_max_data)?;
         self.data_recvd = self.data_recvd.saturating_add(new_bytes);
 
-        if !rs.assembler.is_stopped() {
+        if !rs.stopped {
             self.on_stream_frame(true, stream);
             return Ok(ShouldTransmit(false));
         }
@@ -355,7 +355,7 @@ impl Streams {
             return Ok(ShouldTransmit(false));
         }
         let bytes_read = rs.assembler.bytes_read();
-        let stopped = rs.assembler.is_stopped();
+        let stopped = rs.stopped;
         let end = rs.end;
         if stopped {
             // Stopped streams should be disposed immediately on reset

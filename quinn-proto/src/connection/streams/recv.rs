@@ -12,6 +12,7 @@ pub(super) struct Recv {
     pub(super) assembler: Assembler,
     sent_max_stream_data: u64,
     pub(super) end: u64,
+    pub(super) stopped: bool,
 }
 
 impl Recv {
@@ -21,6 +22,7 @@ impl Recv {
             assembler: Assembler::new(),
             sent_max_stream_data: initial_max_data,
             end: 0,
+            stopped: false,
         }
     }
 
@@ -47,7 +49,7 @@ impl Recv {
         let new_bytes = self.credit_consumed_by(end, received, max_data)?;
 
         if frame.fin {
-            if self.assembler.is_stopped() {
+            if self.stopped {
                 // Stopped streams don't need to wait for the actual data, they just need to know
                 // how much there was.
                 self.state = RecvState::Closed;
@@ -57,11 +59,20 @@ impl Recv {
         }
 
         self.end = self.end.max(end);
-        self.assembler.insert(frame.offset, frame.data);
+        if !self.stopped {
+            self.assembler.insert(frame.offset, frame.data);
+        } else {
+            self.assembler.set_bytes_read(end);
+        }
+
         Ok(new_bytes)
     }
 
     pub(super) fn read(&mut self, max_length: usize, ordered: bool) -> StreamReadResult<Chunk> {
+        if self.stopped {
+            return Err(ReadError::UnknownStream);
+        }
+
         match self.assembler.read(max_length, ordered)? {
             Some(chunk) => Ok(Some(chunk)),
             None => self.read_blocked().map(|()| None),
@@ -72,6 +83,10 @@ impl Recv {
         &mut self,
         chunks: &mut [Bytes],
     ) -> Result<Option<ReadChunks>, ReadError> {
+        if self.stopped {
+            return Err(ReadError::UnknownStream);
+        }
+
         let mut out = ReadChunks { bufs: 0, read: 0 };
         if chunks.is_empty() {
             return Ok(Some(out));
@@ -95,11 +110,12 @@ impl Recv {
     }
 
     pub(super) fn stop(&mut self) -> Result<(u64, ShouldTransmit), UnknownStream> {
-        if self.assembler.is_stopped() {
+        if self.stopped {
             return Err(UnknownStream { _private: () });
         }
 
-        self.assembler.stop();
+        self.stopped = true;
+        self.assembler.clear();
         // Issue flow control credit for unread data
         let read_credits = self.end - self.assembler.bytes_read();
         Ok((read_credits, ShouldTransmit(!self.is_finished())))
