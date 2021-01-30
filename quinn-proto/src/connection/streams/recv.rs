@@ -11,6 +11,7 @@ pub(super) struct Recv {
     state: RecvState,
     pub(super) assembler: Assembler,
     sent_max_stream_data: u64,
+    pub(super) end: u64,
 }
 
 impl Recv {
@@ -19,6 +20,7 @@ impl Recv {
             state: RecvState::default(),
             assembler: Assembler::new(),
             sent_max_stream_data: initial_max_data,
+            end: 0,
         }
     }
 
@@ -54,8 +56,8 @@ impl Recv {
             }
         }
 
+        self.end = self.end.max(end);
         self.assembler.insert(frame.offset, frame.data);
-
         Ok(new_bytes)
     }
 
@@ -100,7 +102,7 @@ impl Recv {
             }
             RecvState::Closed => Err(ReadError::UnknownStream),
             RecvState::Recv { size } => {
-                if size == Some(self.assembler.end()) && self.assembler.is_fully_read() {
+                if size == Some(self.end) && self.assembler.bytes_read() == self.end {
                     self.state = RecvState::Closed;
                     Ok(())
                 } else {
@@ -178,7 +180,7 @@ impl Recv {
             if offset != final_offset.into() {
                 return Err(TransportError::FINAL_SIZE_ERROR("inconsistent value"));
             }
-        } else if self.assembler.end() > final_offset.into() {
+        } else if self.end > final_offset.into() {
             return Err(TransportError::FINAL_SIZE_ERROR(
                 "lower than high water mark",
             ));
@@ -208,7 +210,7 @@ impl Recv {
         received: u64,
         max_data: u64,
     ) -> Result<u64, TransportError> {
-        let prev_end = self.assembler.end();
+        let prev_end = self.end;
         let new_bytes = offset.saturating_sub(prev_end);
         if offset > self.sent_max_stream_data || received + new_bytes > max_data {
             debug!(

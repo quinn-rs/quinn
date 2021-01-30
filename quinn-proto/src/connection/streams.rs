@@ -356,7 +356,7 @@ impl Streams {
         }
         let bytes_read = rs.assembler.bytes_read();
         let stopped = rs.assembler.is_stopped();
-        let end = rs.assembler.end();
+        let end = rs.end;
         if stopped {
             // Stopped streams should be disposed immediately on reset
             self.recv.remove(&id);
@@ -451,7 +451,7 @@ impl Streams {
         let stop_sending = ShouldTransmit(!stream.is_finished());
 
         // Issue flow control credit for unread data
-        let read_credits = stream.assembler.end() - stream.assembler.bytes_read();
+        let read_credits = stream.end - stream.assembler.bytes_read();
         let max_data = self.add_read_credits(read_credits);
         Ok(StopResult {
             stop_sending,
