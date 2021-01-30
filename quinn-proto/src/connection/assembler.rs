@@ -132,10 +132,20 @@ impl Assembler {
                 bytes.advance((duplicate.end - offset) as usize);
                 offset = duplicate.end;
             }
+        } else if offset < self.bytes_read {
+            if (offset + bytes.len() as u64) <= self.bytes_read {
+                return;
+            } else {
+                let diff = self.bytes_read - offset;
+                offset += diff;
+                bytes.advance(diff as usize);
+            }
         }
+
         if bytes.is_empty() {
             return;
         }
+
         self.data.push(Buffer { offset, bytes });
         // Why 32: on the one hand, we want to defragment rarely, ideally never
         // in non-pathological scenarios. However, a pathological or malicious
@@ -380,17 +390,6 @@ mod test {
     }
 
     #[test]
-    fn assemble_old_compact() {
-        let mut x = Assembler::new();
-        x.insert(0, Bytes::from_static(b"1234"));
-        x.defragment();
-        assert_matches!(next(&mut x, 32), Some(ref y) if &y[..] == b"1234");
-        x.insert(0, Bytes::from_static(b"1234"));
-        x.defragment();
-        assert_matches!(next(&mut x, 32), None);
-    }
-
-    #[test]
     fn compact() {
         let mut x = Assembler::new();
         x.insert(0, Bytes::from_static(b"abc"));
@@ -526,6 +525,27 @@ mod test {
         assert_eq!(x.read(usize::MAX, true).unwrap(), None);
         x.insert(2, Bytes::from_static(b"cde"));
         assert_eq!(x.read(usize::MAX, true).unwrap(), None);
+    }
+
+    #[test]
+    fn ordered_eager_discard() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"abc"));
+        assert_eq!(x.data.len(), 1);
+        assert_eq!(
+            x.read(usize::MAX, true).unwrap(),
+            Some(Chunk::new(0, Bytes::from_static(b"abc")))
+        );
+        x.insert(0, Bytes::from_static(b"ab"));
+        assert_eq!(x.data.len(), 0);
+        x.insert(2, Bytes::from_static(b"cd"));
+        assert_eq!(
+            x.data.peek(),
+            Some(&Buffer {
+                offset: 3,
+                bytes: Bytes::from_static(b"d")
+            })
+        );
     }
 
     fn next_unordered(x: &mut Assembler) -> Chunk {
