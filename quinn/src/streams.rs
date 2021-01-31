@@ -150,6 +150,25 @@ where
         Ok(())
     }
 
+    /// Set the priority of the send stream
+    ///
+    /// Every send stream has an initial priority of 0. Locally buffered data from streams with
+    /// higher priority will be transmitted before data from streams with lower priority. Changing
+    /// the priority of a stream with pending data may only take effect after that data has been
+    /// transmitted. Using many different priority levels per connection may have a negative
+    /// impact on performance.
+    pub fn set_priority(&self, priority: i32) -> Result<(), UnknownStream> {
+        let mut conn = self.conn.lock().unwrap();
+        conn.inner.set_priority(self.stream, priority)?;
+        Ok(())
+    }
+
+    /// Get the priority of the send stream
+    pub fn priority(&self) -> Result<i32, UnknownStream> {
+        let mut conn = self.conn.lock().unwrap();
+        Ok(conn.inner.priority(self.stream)?)
+    }
+
     /// Completes if/when the peer stops the stream, yielding the error code
     pub fn stopped(&mut self) -> Stopped<'_, S> {
         Stopped { stream: self }
