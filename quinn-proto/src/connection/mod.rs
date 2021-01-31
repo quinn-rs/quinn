@@ -1762,6 +1762,7 @@ where
         &mut self,
         space: SpaceId,
         crypto: &frame::Crypto,
+        payload_len: usize,
     ) -> Result<(), TransportError> {
         let expected = if !self.state.is_handshake() {
             SpaceId::Data
@@ -1796,7 +1797,7 @@ where
 
         space
             .crypto_stream
-            .insert(crypto.offset, crypto.data.clone());
+            .insert(crypto.offset, crypto.data.clone(), payload_len);
         while let Some(chunk) = space.crypto_stream.read(usize::MAX, true) {
             trace!("consumed {} CRYPTO bytes", chunk.bytes.len());
             if self.crypto.read_handshake(&chunk.bytes)? {
@@ -2331,6 +2332,7 @@ where
         packet: Packet,
     ) -> Result<(), TransportError> {
         debug_assert_ne!(packet.header.space(), SpaceId::Data);
+        let payload_len = packet.payload.len();
         for frame in frame::Iter::new(packet.payload.freeze()) {
             let span = match frame {
                 Frame::Padding => continue,
@@ -2351,7 +2353,7 @@ where
             match frame {
                 Frame::Padding | Frame::Ping => {}
                 Frame::Crypto(frame) => {
-                    self.read_crypto(packet.header.space(), &frame)?;
+                    self.read_crypto(packet.header.space(), &frame, payload_len)?;
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, packet.header.space(), ack)?;
@@ -2389,6 +2391,7 @@ where
         let is_0rtt = self.spaces[SpaceId::Data].crypto.is_none();
         let mut is_probing_packet = true;
         let mut close = None;
+        let payload_len = payload.len();
         for frame in frame::Iter::new(payload) {
             let span = match frame {
                 Frame::Padding => continue,
@@ -2433,10 +2436,10 @@ where
                     return Err(err);
                 }
                 Frame::Crypto(frame) => {
-                    self.read_crypto(SpaceId::Data, &frame)?;
+                    self.read_crypto(SpaceId::Data, &frame, payload_len)?;
                 }
                 Frame::Stream(frame) => {
-                    if self.streams.received(frame)?.should_transmit() {
+                    if self.streams.received(frame, payload_len)?.should_transmit() {
                         self.spaces[SpaceId::Data].pending.max_data = true;
                     }
                 }
