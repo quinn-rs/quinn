@@ -281,7 +281,11 @@ impl Streams {
     /// Process incoming stream frame
     ///
     /// If successful, returns whether a `MAX_DATA` frame needs to be transmitted
-    pub fn received(&mut self, frame: frame::Stream) -> Result<ShouldTransmit, TransportError> {
+    pub fn received(
+        &mut self,
+        frame: frame::Stream,
+        payload_len: usize,
+    ) -> Result<ShouldTransmit, TransportError> {
         trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
         let stream = frame.id;
         self.validate_receive_id(stream).map_err(|e| {
@@ -302,7 +306,7 @@ impl Streams {
             return Ok(ShouldTransmit(false));
         }
 
-        let new_bytes = rs.ingest(frame, self.data_recvd, self.local_max_data)?;
+        let new_bytes = rs.ingest(frame, payload_len, self.data_recvd, self.local_max_data)?;
         self.data_recvd = self.data_recvd.saturating_add(new_bytes);
 
         if !rs.stopped {
@@ -1084,12 +1088,15 @@ mod tests {
         let initial_max = client.local_max_data;
         assert_eq!(
             client
-                .received(frame::Stream {
-                    id,
-                    offset: 0,
-                    fin: false,
-                    data: Bytes::from_static(&[0; 2048]),
-                })
+                .received(
+                    frame::Stream {
+                        id,
+                        offset: 0,
+                        fin: false,
+                        data: Bytes::from_static(&[0; 2048]),
+                    },
+                    2048
+                )
                 .unwrap(),
             ShouldTransmit(false)
         );
@@ -1118,12 +1125,15 @@ mod tests {
         let initial_max = client.local_max_data;
         assert_eq!(
             client
-                .received(frame::Stream {
-                    id,
-                    offset: 4096,
-                    fin: false,
-                    data: Bytes::from_static(&[0; 0]),
-                })
+                .received(
+                    frame::Stream {
+                        id,
+                        offset: 4096,
+                        fin: false,
+                        data: Bytes::from_static(&[0; 0]),
+                    },
+                    0
+                )
                 .unwrap(),
             ShouldTransmit(false)
         );
@@ -1178,12 +1188,15 @@ mod tests {
         let initial_max = client.local_max_data;
         assert_eq!(
             client
-                .received(frame::Stream {
-                    id,
-                    offset: 0,
-                    fin: false,
-                    data: Bytes::from_static(&[0; 32]),
-                })
+                .received(
+                    frame::Stream {
+                        id,
+                        offset: 0,
+                        fin: false,
+                        data: Bytes::from_static(&[0; 32]),
+                    },
+                    32
+                )
                 .unwrap(),
             ShouldTransmit(false)
         );
@@ -1204,12 +1217,15 @@ mod tests {
         assert_eq!(client.local_max_data - initial_max, 32);
         assert_eq!(
             client
-                .received(frame::Stream {
-                    id,
-                    offset: 32,
-                    fin: true,
-                    data: Bytes::from_static(&[0; 16]),
-                })
+                .received(
+                    frame::Stream {
+                        id,
+                        offset: 32,
+                        fin: true,
+                        data: Bytes::from_static(&[0; 16]),
+                    },
+                    16
+                )
                 .unwrap(),
             ShouldTransmit(false)
         );
@@ -1224,12 +1240,15 @@ mod tests {
         // Server opens stream
         assert_eq!(
             client
-                .received(frame::Stream {
-                    id,
-                    offset: 0,
-                    fin: false,
-                    data: Bytes::from_static(&[0; 32]),
-                })
+                .received(
+                    frame::Stream {
+                        id,
+                        offset: 0,
+                        fin: false,
+                        data: Bytes::from_static(&[0; 32])
+                    },
+                    32
+                )
                 .unwrap(),
             ShouldTransmit(false)
         );
