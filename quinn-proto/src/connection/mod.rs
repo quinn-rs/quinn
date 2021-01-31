@@ -1653,6 +1653,37 @@ where
         Ok(())
     }
 
+    /// Set the priority of a stream
+    ///
+    /// # Panics
+    /// - when applied to a receive stream
+    pub fn set_priority(
+        &mut self,
+        stream_id: StreamId,
+        priority: i32,
+    ) -> Result<(), UnknownStream> {
+        assert!(
+            stream_id.dir() == Dir::Bi || stream_id.initiator() == self.side,
+            "only streams supporting outgoing data may change priority"
+        );
+
+        self.streams.set_priority(stream_id, priority)?;
+        Ok(())
+    }
+
+    /// Get the priority of a stream
+    ///
+    /// # Panics
+    /// - when applied to a receive stream
+    pub fn priority(&mut self, stream_id: StreamId) -> Result<i32, UnknownStream> {
+        assert!(
+            stream_id.dir() == Dir::Bi || stream_id.initiator() == self.side,
+            "only streams supporting outgoing data have a priority"
+        );
+
+        Ok(self.streams.priority(stream_id)?)
+    }
+
     /// Handle the already-decrypted first packet from the client
     ///
     /// Decrypting the first packet in the `Endpoint` allows stateless packet handling to be more

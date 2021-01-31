@@ -1,5 +1,6 @@
 use std::{
-    collections::{hash_map, HashMap, VecDeque},
+    cell::RefCell,
+    collections::{binary_heap::PeekMut, hash_map, BinaryHeap, HashMap, VecDeque},
     convert::TryFrom,
     mem,
 };
@@ -50,7 +51,7 @@ pub struct Streams {
     /// permitted to open but which have not yet been opened.
     send_streams: usize,
     /// Streams with outgoing data queued
-    pending: VecDeque<StreamId>,
+    pending: BinaryHeap<PendingLevel>,
 
     events: VecDeque<StreamEvent>,
     /// Streams blocked on connection-level flow control or stream window space
@@ -105,7 +106,7 @@ impl Streams {
             opened: [false, false],
             next_reported_remote: [0, 0],
             send_streams: 0,
-            pending: VecDeque::new(),
+            pending: BinaryHeap::new(),
             events: VecDeque::new(),
             connection_blocked: Vec::new(),
             max_data: 0,
@@ -272,7 +273,7 @@ impl Streams {
         self.unacked_data += len as u64;
         trace!(stream = %id, "wrote {} bytes", len);
         if !was_pending {
-            self.pending.push_back(id);
+            push_pending(&mut self.pending, id, stream.priority);
         }
         Ok(len)
     }
@@ -393,7 +394,7 @@ impl Streams {
         let was_pending = stream.is_pending();
         stream.finish()?;
         if !was_pending {
-            self.pending.push_back(id);
+            push_pending(&mut self.pending, id, stream.priority);
         }
         Ok(())
     }
@@ -421,6 +422,25 @@ impl Streams {
 
         // Don't reopen an already-closed stream we haven't forgotten yet
         Ok(())
+    }
+
+    pub fn set_priority(&mut self, id: StreamId, priority: i32) -> Result<(), UnknownStream> {
+        let stream = match self.send.get_mut(&id) {
+            Some(ss) => ss,
+            None => return Err(UnknownStream { _private: () }),
+        };
+
+        stream.priority = priority;
+        Ok(())
+    }
+
+    pub fn priority(&mut self, id: StreamId) -> Result<i32, UnknownStream> {
+        let stream = match self.send.get_mut(&id) {
+            Some(ss) => ss,
+            None => return Err(UnknownStream { _private: () }),
+        };
+
+        Ok(stream.priority)
     }
 
     pub fn reset_acked(&mut self, id: StreamId) {
@@ -594,14 +614,21 @@ impl Streams {
                 Some(x) => x,
                 None => break,
             };
+            let mut level = match self.pending.peek_mut() {
+                Some(x) => x,
+                None => break,
+            };
             // Poppping data from the front of the queue, storing as much data
             // as possible in a single frame, and enqueing sending further
             // remaining data at the end of the queue helps with fairness.
             // Other streams will have a chance to write data before we touch
             // this stream again.
-            let id = match self.pending.pop_front() {
+            let id = match level.queue.get_mut().pop_front() {
                 Some(x) => x,
-                None => break,
+                None => {
+                    PeekMut::pop(level);
+                    continue;
+                }
             };
             let stream = match self.send.get_mut(&id) {
                 Some(s) => s,
@@ -622,7 +649,12 @@ impl Streams {
                 stream.fin_pending = false;
             }
             if stream.is_pending() {
-                self.pending.push_back(id);
+                if level.priority == stream.priority {
+                    level.queue.get_mut().push_back(id);
+                } else {
+                    drop(level);
+                    push_pending(&mut self.pending, id, stream.priority);
+                }
             }
 
             let meta = frame::StreamMeta { id, offsets, fin };
@@ -691,7 +723,7 @@ impl Streams {
             Some(x) => x,
         };
         if !stream.is_pending() {
-            self.pending.push_back(frame.id);
+            push_pending(&mut self.pending, frame.id, stream.priority);
         }
         stream.fin_pending |= frame.fin;
         stream.pending.retransmit(frame.offsets);
@@ -708,7 +740,7 @@ impl Streams {
                     continue;
                 }
                 if !stream.is_pending() {
-                    self.pending.push_back(id);
+                    push_pending(&mut self.pending, id, stream.priority);
                 }
                 stream.pending.retransmit_all_for_0rtt();
             }
@@ -913,6 +945,47 @@ impl Streams {
         if half == StreamHalf::Send {
             self.send_streams -= 1;
         }
+    }
+}
+
+fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: i32) {
+    for level in pending.iter() {
+        if priority == level.priority {
+            level.queue.borrow_mut().push_back(id);
+            return;
+        }
+    }
+    let mut queue = VecDeque::new();
+    queue.push_back(id);
+    pending.push(PendingLevel {
+        queue: RefCell::new(queue),
+        priority,
+    });
+}
+
+struct PendingLevel {
+    // RefCell is needed because BinaryHeap doesn't have an iter_mut()
+    queue: RefCell<VecDeque<StreamId>>,
+    priority: i32,
+}
+
+impl PartialEq for PendingLevel {
+    fn eq(&self, other: &Self) -> bool {
+        self.priority.eq(&other.priority)
+    }
+}
+
+impl PartialOrd for PendingLevel {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Eq for PendingLevel {}
+
+impl Ord for PendingLevel {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.priority.cmp(&other.priority)
     }
 }
 
@@ -1208,5 +1281,29 @@ mod tests {
                 .code,
             TransportErrorCode::FLOW_CONTROL_ERROR
         );
+    }
+
+    #[test]
+    fn stream_priority() {
+        let mut server = make(Side::Server);
+        server.set_params(&TransportParameters {
+            initial_max_streams_bidi: 3u32.into(),
+            initial_max_data: 10u32.into(),
+            initial_max_stream_data_bidi_remote: 10u32.into(),
+            ..Default::default()
+        });
+        let id_high = server.open(Dir::Bi).unwrap();
+        let id_mid = server.open(Dir::Bi).unwrap();
+        let id_low = server.open(Dir::Bi).unwrap();
+        server.set_priority(id_low, -1).unwrap();
+        server.set_priority(id_high, 1).unwrap();
+        server.write(id_mid, b"mid").unwrap();
+        server.write(id_low, b"low").unwrap();
+        server.write(id_high, b"high").unwrap();
+        let mut buf = Vec::with_capacity(40);
+        let meta = server.write_stream_frames(&mut buf, 40);
+        assert_eq!(meta[0].id, id_high);
+        assert_eq!(meta[1].id, id_mid);
+        assert_eq!(meta[2].id, id_low);
     }
 }

@@ -9,6 +9,7 @@ pub(super) struct Send {
     pub(super) max_data: u64,
     pub(super) state: SendState,
     pub(super) pending: SendBuffer,
+    pub(super) priority: i32,
     /// Whether a frame containing a FIN bit must be transmitted, even if we don't have any new data
     pub(super) fin_pending: bool,
     /// Whether this stream is in the `connection_blocked` list of `Streams`
@@ -23,6 +24,7 @@ impl Send {
             max_data: max_data.into(),
             state: SendState::Ready,
             pending: SendBuffer::new(),
+            priority: 0,
             fin_pending: false,
             connection_blocked: false,
             stop_reason: None,
