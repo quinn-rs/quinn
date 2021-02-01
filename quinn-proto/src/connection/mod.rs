@@ -52,7 +52,9 @@ pub use stats::ConnectionStats;
 
 mod streams;
 pub use streams::Streams;
-pub use streams::{FinishError, ReadError, ShouldTransmit, StreamEvent, UnknownStream, WriteError};
+pub use streams::{
+    FinishError, Priority, ReadError, ShouldTransmit, StreamEvent, UnknownStream, WriteError,
+};
 
 mod timer;
 use timer::{Timer, TimerTable};
@@ -1660,7 +1662,7 @@ where
     pub fn set_priority(
         &mut self,
         stream_id: StreamId,
-        priority: i32,
+        priority: Priority,
     ) -> Result<(), UnknownStream> {
         assert!(
             stream_id.dir() == Dir::Bi || stream_id.initiator() == self.side,
@@ -1675,7 +1677,7 @@ where
     ///
     /// # Panics
     /// - when applied to a receive stream
-    pub fn priority(&mut self, stream_id: StreamId) -> Result<i32, UnknownStream> {
+    pub fn priority(&mut self, stream_id: StreamId) -> Result<Priority, UnknownStream> {
         assert!(
             stream_id.dir() == Dir::Bi || stream_id.initiator() == self.side,
             "only streams supporting outgoing data have a priority"

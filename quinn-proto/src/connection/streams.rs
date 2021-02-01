@@ -25,7 +25,7 @@ use recv::{BytesRead, ReadChunks, Recv, StreamReadResult};
 pub(super) use recv::{DidRead, ReadResult};
 
 mod send;
-pub use send::{FinishError, WriteError};
+pub use send::{FinishError, Priority, WriteError};
 use send::{Send, SendState, StopResult};
 
 pub struct Streams {
@@ -424,7 +424,7 @@ impl Streams {
         Ok(())
     }
 
-    pub fn set_priority(&mut self, id: StreamId, priority: i32) -> Result<(), UnknownStream> {
+    pub fn set_priority(&mut self, id: StreamId, priority: Priority) -> Result<(), UnknownStream> {
         let stream = match self.send.get_mut(&id) {
             Some(ss) => ss,
             None => return Err(UnknownStream { _private: () }),
@@ -434,7 +434,7 @@ impl Streams {
         Ok(())
     }
 
-    pub fn priority(&mut self, id: StreamId) -> Result<i32, UnknownStream> {
+    pub fn priority(&mut self, id: StreamId) -> Result<Priority, UnknownStream> {
         let stream = match self.send.get_mut(&id) {
             Some(ss) => ss,
             None => return Err(UnknownStream { _private: () }),
@@ -650,7 +650,11 @@ impl Streams {
             }
             if stream.is_pending() {
                 if level.priority == stream.priority {
-                    level.queue.get_mut().push_back(id);
+                    if level.priority.fair {
+                        level.queue.get_mut().push_back(id);
+                    } else {
+                        level.queue.get_mut().push_front(id);
+                    }
                 } else {
                     drop(level);
                     push_pending(&mut self.pending, id, stream.priority);
@@ -948,7 +952,7 @@ impl Streams {
     }
 }
 
-fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: i32) {
+fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: Priority) {
     for level in pending.iter() {
         if priority == level.priority {
             level.queue.borrow_mut().push_back(id);
@@ -966,7 +970,7 @@ fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: 
 struct PendingLevel {
     // RefCell is needed because BinaryHeap doesn't have an iter_mut()
     queue: RefCell<VecDeque<StreamId>>,
-    priority: i32,
+    priority: Priority,
 }
 
 impl PartialEq for PendingLevel {
@@ -1295,8 +1299,24 @@ mod tests {
         let id_high = server.open(Dir::Bi).unwrap();
         let id_mid = server.open(Dir::Bi).unwrap();
         let id_low = server.open(Dir::Bi).unwrap();
-        server.set_priority(id_low, -1).unwrap();
-        server.set_priority(id_high, 1).unwrap();
+        server
+            .set_priority(
+                id_low,
+                Priority {
+                    level: -1,
+                    fair: true,
+                },
+            )
+            .unwrap();
+        server
+            .set_priority(
+                id_high,
+                Priority {
+                    level: 1,
+                    fair: true,
+                },
+            )
+            .unwrap();
         server.write(id_mid, b"mid").unwrap();
         server.write(id_low, b"low").unwrap();
         server.write(id_high, b"high").unwrap();
@@ -1305,5 +1325,45 @@ mod tests {
         assert_eq!(meta[0].id, id_high);
         assert_eq!(meta[1].id, id_mid);
         assert_eq!(meta[2].id, id_low);
+    }
+
+    #[test]
+    fn stream_fairness() {
+        let mut server = make(Side::Server);
+        server.set_params(&TransportParameters {
+            initial_max_streams_bidi: 2u32.into(),
+            initial_max_data: 1024u32.into(),
+            initial_max_stream_data_bidi_remote: 1024u32.into(),
+            ..Default::default()
+        });
+        let id_1 = server.open(Dir::Bi).unwrap();
+        let id_2 = server.open(Dir::Bi).unwrap();
+        server
+            .set_priority(
+                id_1,
+                Priority {
+                    level: 0,
+                    fair: false,
+                },
+            )
+            .unwrap();
+        server
+            .set_priority(
+                id_2,
+                Priority {
+                    level: 0,
+                    fair: false,
+                },
+            )
+            .unwrap();
+        server.write(id_1, &[0; 512]).unwrap();
+        server.write(id_2, &[0; 512]).unwrap();
+        let mut buf = Vec::with_capacity(200);
+        let meta = server.write_stream_frames(&mut buf, 100);
+        assert_eq!(meta[0].id, id_1);
+        assert_eq!(meta.len(), 1);
+        let meta = server.write_stream_frames(&mut buf, 200);
+        assert_eq!(meta[0].id, id_1);
+        assert_eq!(meta.len(), 1);
     }
 }

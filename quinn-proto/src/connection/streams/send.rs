@@ -9,7 +9,7 @@ pub(super) struct Send {
     pub(super) max_data: u64,
     pub(super) state: SendState,
     pub(super) pending: SendBuffer,
-    pub(super) priority: i32,
+    pub(super) priority: Priority,
     /// Whether a frame containing a FIN bit must be transmitted, even if we don't have any new data
     pub(super) fin_pending: bool,
     /// Whether this stream is in the `connection_blocked` list of `Streams`
@@ -24,7 +24,7 @@ impl Send {
             max_data: max_data.into(),
             state: SendState::Ready,
             pending: SendBuffer::new(),
-            priority: 0,
+            priority: Priority::default(),
             fin_pending: false,
             connection_blocked: false,
             stop_reason: None,
@@ -177,4 +177,26 @@ pub enum FinishError {
     /// The stream has not been opened or was already finished or reset
     #[error("unknown stream")]
     UnknownStream,
+}
+
+/// Priority of a send stream
+#[derive(Debug, Copy, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[non_exhaustive]
+pub struct Priority {
+    /// Pending data of streams with a higher level will be transmitted before data of streams
+    /// with a lower level. Defaults to `0`.
+    pub level: i32,
+    /// If set to `true`, all streams with the same priority will transmit their pending data
+    /// in a round-robin fashion. Otherwise all pending data of a stream will be transmitted
+    /// before transmitting the next stream. Defaults to `true`.
+    pub fair: bool,
+}
+
+impl Default for Priority {
+    fn default() -> Self {
+        Self {
+            level: 0,
+            fair: true,
+        }
+    }
 }
