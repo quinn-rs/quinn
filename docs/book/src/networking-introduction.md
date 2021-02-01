@@ -14,7 +14,7 @@ Let's compare TCP, UDP, and QUIC.
 | :-------------: | :-------------: | :-------------: | :-------------: |
 |  [Connection-Oriented][6]           |       Yes         | No                       | Yes
 |  Transport Guarantees               | Reliable          | Unreliable               | Reliable ('a)
-|  Packet Transfer                    | [Stream-based][4] | Message based            | Message based and/or Stream based
+|  Packet Transfer                    | [Stream-based][4] | Message based            | Stream based
 |  Header Size                        |  ~20 bytes         | 8 bytes                  |  ~16 bytes (depending on connection id)  
 |  [Control Flow, Congestion Avoidance/Control][5] | Yes  | No                       |  Yes ('b)                                      
 |  Based On | [IP][3]                 | [IP][3]           |  UDP
@@ -48,14 +48,6 @@ As websites increasingly need a larger number of HTTP requests (HTML, CSS, JavaS
 To improve on this, HTTP 2 introduced request multiplexing within a TCP data stream, which allows servers to stream multiple responses at the same time. 
 However, data loss of a single packet will still block all response streams because they exist within the context of a single TCP stream.
 
-**Multiplayer Game Networking**
-
-The webspace is not the only area where this head-of-line blocking is a concern.
-Multiplayer action games work with a constant flow of packets sent at a ranging interval between 10 to 30 packets per second.
-For the most part, the data in these packets is so time-sensitive that only the most recent data can be used. 
-Therefore, it cannot be afforded to queue 10-30 packets per second until the lost packet is resent.
-Most multiplayer network solutions build a custom protocol on top of UDP to address head-of-line blocking issues while maintaining reliability.
-   
 ### Connection Setup Duration
 
 In the usual TCP + TLS + HTTP stack, TCP needs 6 handshake messages to set up a session between server and client. TLS performs its own, sending 4 messages for setting up an initial connection over TLS 1.3. By integrating the transport protocol and TLS handshakes, QUIC can make connection setup more efficient.
