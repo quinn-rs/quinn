@@ -67,7 +67,8 @@ async fn receive_bidirectional_stream(mut connection: NewConnection) -> anyhow::
 ## Unidirectional Streams 
 
 With unidirectional streams, you can carry data only in one direction: from the initiator of the stream to its peer.
-    
+It is possible to get reliability without ordering (so no head-of-line blocking) by opening a new stream for each packet.
+
 *open unidirectional stream*
 
 ```rust
