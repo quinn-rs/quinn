@@ -29,7 +29,7 @@ pub fn make_client_endpoint(
 ///
 /// ## Returns
 ///
-/// - a sream of incoming QUIC connections
+/// - a stream of incoming QUIC connections
 /// - server certificate serialized into DER format
 #[allow(unused)]
 pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Incoming, Vec<u8>), Box<dyn Error>> {
@@ -54,6 +54,7 @@ fn configure_client(server_certs: &[&[u8]]) -> Result<ClientConfig, Box<dyn Erro
 }
 
 /// Returns default server configuration along with its certificate.
+#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let cert_der = cert.serialize_der().unwrap();
@@ -61,7 +62,7 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let priv_key = PrivateKey::from_der(&priv_key)?;
 
     let mut transport_config = TransportConfig::default();
-    transport_config.stream_window_uni(0).unwrap();
+    transport_config.max_concurrent_uni_streams(0).unwrap();
     let mut server_config = ServerConfig::default();
     server_config.transport = Arc::new(transport_config);
     let mut cfg_builder = ServerConfigBuilder::new(server_config);

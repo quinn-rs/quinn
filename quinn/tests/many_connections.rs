@@ -25,14 +25,16 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     )
     .unwrap();
 
-    let mut runtime = unwrap!(Builder::new().basic_scheduler().enable_all().build());
+    let runtime = unwrap!(Builder::new_current_thread().enable_all().build());
     let shared = Arc::new(Mutex::new(Shared { errors: vec![] }));
 
     let (cfg, listener_cert) = configure_listener();
     let mut ep_builder = quinn::Endpoint::builder();
     ep_builder.listen(cfg);
-    let (endpoint, incoming_conns) =
-        unwrap!(runtime.enter(|| ep_builder.bind(&"127.0.0.1:0".parse().unwrap())));
+    let (endpoint, incoming_conns) = {
+        let _guard = runtime.enter();
+        unwrap!(ep_builder.bind(&"127.0.0.1:0".parse().unwrap()))
+    };
     let listener_addr = unwrap!(endpoint.local_addr());
 
     let expected_messages = 50;

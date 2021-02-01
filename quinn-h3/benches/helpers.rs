@@ -36,6 +36,7 @@ impl Default for Bench {
 }
 
 impl Bench {
+    #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
     pub fn with_settings(settings: Settings) -> Self {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
@@ -43,7 +44,7 @@ impl Bench {
         let cert_chain = quinn::CertificateChain::from_certs(vec![cert.clone()]);
 
         let mut transport = quinn::TransportConfig::default();
-        transport.stream_window_bidi(102_400).unwrap();
+        transport.max_concurrent_bidi_streams(102_400).unwrap();
         let mut server_config = quinn::ServerConfig::default();
         server_config.transport = Arc::new(transport);
         let mut server_config = ServerConfigBuilder::new(server_config);
@@ -80,7 +81,7 @@ impl Bench {
         self.stop_server = Some(stop_server);
 
         let handle = thread::spawn(move || {
-            let mut runtime = rt();
+            let runtime = rt();
             runtime.block_on(async {
                 let incoming_conn = server.with_socket(socket).unwrap();
                 service(incoming_conn, stop_recv)
@@ -99,7 +100,7 @@ impl Bench {
     }
 
     pub fn make_client(&self, server_addr: SocketAddr) -> (client::Connection, Runtime) {
-        let mut runtime = rt();
+        let runtime = rt();
         let my_span = span!(Level::TRACE, "client");
         let _enter = my_span.enter();
         let connection = runtime.block_on(async {
@@ -117,11 +118,7 @@ impl Bench {
 }
 
 pub fn rt() -> Runtime {
-    Builder::new()
-        .basic_scheduler()
-        .enable_all()
-        .build()
-        .unwrap()
+    Builder::new_current_thread().enable_all().build().unwrap()
 }
 
 pub struct BenchBody {

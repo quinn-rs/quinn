@@ -828,34 +828,34 @@ impl InteropResult {
             string.push_str("VH");
         }
         if self.stream_data {
-            string.push_str("D");
+            string.push('D');
         }
         if self.close {
-            string.push_str("C");
+            string.push('C');
         }
         if self.resumption {
-            string.push_str("R");
+            string.push('R');
         }
         if self.zero_rtt {
-            string.push_str("Z");
+            string.push('Z');
         }
         if self.retry {
-            string.push_str("S");
+            string.push('S');
         }
         if self.rebinding {
-            string.push_str("B");
+            string.push('B');
         }
         if self.key_update {
-            string.push_str("U");
+            string.push('U');
         }
         if self.throughput {
-            string.push_str("T");
+            string.push('T');
         }
         if self.h3 {
-            string.push_str("3");
+            string.push('3');
         }
         if self.dynamic_encoding {
-            string.push_str("d");
+            string.push('d');
         }
         string
     }

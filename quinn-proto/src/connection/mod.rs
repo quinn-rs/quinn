@@ -1,8 +1,8 @@
 use std::{
     cmp,
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     fmt, io, mem,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -13,12 +13,13 @@ use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
+    cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
-    frame::{Close, Datagram, FrameStruct},
+    frame::{Close, Datagram, FrameStruct, ShouldTransmit},
     is_supported_version,
     packet::{Header, LongType, Packet, PacketNumber, PartialDecode, PartialEncode, SpaceId},
     range_set::RangeSet,
@@ -28,10 +29,12 @@ use crate::{
     },
     transport_parameters::TransportParameters,
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
-    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, MIN_MTU, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 mod assembler;
+mod cid_state;
+use cid_state::CidState;
 
 mod pacing;
 mod paths;
@@ -43,7 +46,7 @@ mod spaces;
 use spaces::{PacketSpace, Retransmits, SentPacket};
 
 mod stats;
-use stats::ConnectionStats;
+pub use stats::ConnectionStats;
 
 mod streams;
 pub use streams::Streams;
@@ -54,10 +57,44 @@ use timer::{Timer, TimerTable};
 
 /// Protocol state and logic for a single QUIC connection
 ///
-/// Objects of this type receive `ConnectionEvent`s and emit `EndpointEvents` and application
-/// `Event`s to make progress. To handle timeouts, a `Connection` returns timer updates and
+/// Objects of this type receive [`ConnectionEvent`]s and emit [`EndpointEvent`]s and application
+/// [`Event`]s to make progress. To handle timeouts, a `Connection` returns timer updates and
 /// expects timeouts through various methods. A number of simple getter methods are exposed
 /// to allow callers to inspect some of the connection state.
+///
+/// `Connection` has roughly 4 types of methods:
+///
+/// - A. Simple getters, taking `&self`
+/// - B. Handlers for incoming events from the network or system, named `handle_*`.
+/// - C. State machine mutators, for incoming commands from the application. For
+///   convenience we refer to this as "performing I/O" below, however as per
+///   the design of this library none of the functions actually perform
+///   system-level I/O. For example, [`read`](self::read) and [`write`](self::write),
+///   but also things like [`reset`](self::reset).
+/// - D. Polling functions for outgoing events or actions for the caller to
+///   take, named `poll_*`.
+///
+/// The simplest way to use this API correctly is to call (B) and (C) whenever
+/// appropriate, then after each of those calls, as soon as feasible call all
+/// polling methods (D) and deal with their outputs appropriately, e.g. by
+/// passing it to the application or by making a system-level I/O call. You
+/// should call the polling functions in this order:
+///
+/// 1. [`poll_transmit`](self::poll_transmit)
+/// 2. [`poll_timeout`](self::poll_timeout)
+/// 3. [`poll_endpoint_events`](self::poll_endpoint_events)
+/// 4. [`poll`](self::poll)
+///
+/// Currently the only actual dependency is from (2) to (1), however additional
+/// dependencies may be added in future, so the above order is recommended.
+///
+/// (A) may be called whenever desired.
+///
+/// Care should be made to ensure that the input events represent monotonically
+/// increasing time. Specifically, calling [`handle_timeout`](self::handle_timeout)
+/// with events of the same [`Instant`] may be interleaved in any order with a
+/// call to [`handle_event`](self::handle_event) at that same instant; however
+/// events or timeouts with different instants must not be interleaved.
 pub struct Connection<S>
 where
     S: crypto::Session,
@@ -70,18 +107,14 @@ where
     handshake_cid: ConnectionId,
     /// The CID the peer initially chose, for use during the handshake
     rem_handshake_cid: ConnectionId,
-    /// The sequence numbers of local connection IDs not yet retired by the peer
-    cids_active_seq: HashSet<u64>,
-    /// Sequence number to set in retire_prior_to field in NEW_CONNECTION_ID frame
-    retire_cid_seq: u64,
+    /// The "real" local IP address which was was used to receive the initial packet.
+    /// This is only populated for the server case, and if known
+    local_ip: Option<IpAddr>,
 
-    /// cid length used to decode short packet
-    local_cid_len: usize,
     path: PathData,
     prev_path: Option<PathData>,
     state: State,
     side: Side,
-    mtu: u16,
     /// Whether or not 0-RTT was enabled during the handshake. Does not imply acceptance.
     zero_rtt_enabled: bool,
     /// Set if 0-RTT is supported, then cleared when no longer needed.
@@ -100,8 +133,6 @@ where
     lost_packets: u64,
     events: VecDeque<Event>,
     endpoint_events: VecDeque<EndpointEventInner>,
-    /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
-    cids_issued: u64,
     /// Whether the spin bit is in use for this connection
     spin_enabled: bool,
     /// Outgoing spin bit state
@@ -145,18 +176,17 @@ where
     in_flight: InFlight,
     /// Whether the most recently received packet had an ECN codepoint set
     receiving_ecn: bool,
-    /// Whether the remote address used to initiate the connection has been validated. Not used for
-    /// validating migration; see path_challenge.
-    remote_validated: bool,
-    /// Total UDP datagram bytes received, tracked for handshake anti-amplification
-    total_recvd: u64,
     /// Number of packets authenticated
     total_authed_packets: u64,
-    total_sent: u64,
+    /// Whether the last `poll_transmit` call yielded no data because there was
+    /// no outgoing application data.
+    app_limited: bool,
 
     streams: Streams,
     /// Surplus remote CIDs for future use on new paths
     rem_cids: CidQueue,
+    // Attributes of CIDs generated by local peer
+    local_cid_state: CidState,
     /// State of the unreliable datagram extension
     datagrams: DatagramState,
     /// Connection level statistics
@@ -174,9 +204,10 @@ where
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         crypto: S,
+        cid_gen: &dyn ConnectionIdGenerator,
         now: Instant,
-        local_cid_len: usize,
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
@@ -193,27 +224,26 @@ where
             client_hello: None,
         });
         let mut rng = StdRng::from_entropy();
-        let remote_validated = server_config
+        let path_validated = server_config
             .as_ref()
-            .map_or(false, |c| c.use_stateless_retry);
+            .map_or(true, |c| c.use_stateless_retry);
         let mut this = Self {
             server_config,
             crypto,
             handshake_cid: loc_cid,
             rem_handshake_cid: rem_cid,
-            retire_cid_seq: 0,
-            cids_active_seq: HashSet::new(),
-            local_cid_len,
+            local_cid_state: CidState::new(cid_gen.cid_len(), cid_gen.cid_lifetime(), now),
             path: PathData::new(
                 remote,
                 config.initial_rtt,
                 config.congestion_controller_factory.build(now),
                 now,
+                path_validated,
             ),
+            local_ip,
             prev_path: None,
             side,
             state,
-            mtu: MIN_MTU,
             zero_rtt_enabled: false,
             zero_rtt_crypto: None,
             key_phase: false,
@@ -224,7 +254,6 @@ where
             lost_packets: 0,
             events: VecDeque::new(),
             endpoint_events: VecDeque::new(),
-            cids_issued: 1, // One CID is already supplied during handshaking
             spin_enabled: config.allow_spin && rng.gen_ratio(7, 8),
             spin: false,
             spaces: [initial_space, PacketSpace::new(now), PacketSpace::new(now)],
@@ -242,17 +271,15 @@ where
 
             pto_count: 0,
 
+            app_limited: false,
             in_flight: InFlight::new(),
             receiving_ecn: false,
-            remote_validated,
-            total_recvd: 0,
             total_authed_packets: 0,
-            total_sent: 0,
 
             streams: Streams::new(
                 side,
-                config.stream_window_uni,
-                config.stream_window_bidi,
+                config.max_concurrent_uni_streams,
+                config.max_concurrent_bidi_streams,
                 config.send_window,
                 config.receive_window,
                 config.stream_receive_window,
@@ -263,8 +290,6 @@ where
             rng,
             stats: ConnectionStats::default(),
         };
-        // Add sequence number of CID used in handshaking into tracking set
-        this.cids_active_seq.insert(0);
         if side.is_client() {
             // Kick off the connection
             this.write_crypto();
@@ -280,6 +305,7 @@ where
     /// - a call was made to `handle_event`
     /// - a call to `poll_transmit` returned `Some`
     /// - a call was made to `handle_timeout`
+    #[must_use]
     pub fn poll_timeout(&mut self) -> Option<Instant> {
         self.timers.next_timeout()
     }
@@ -289,6 +315,7 @@ where
     /// Connections should be polled for events after:
     /// - a call was made to `handle_event`
     /// - a call was made to `handle_timeout`
+    #[must_use]
     pub fn poll(&mut self) -> Option<Event> {
         if let Some(event) = self.streams.poll() {
             return Some(Event::Stream(event));
@@ -302,6 +329,7 @@ where
     }
 
     /// Return endpoint-facing events
+    #[must_use]
     pub fn poll_endpoint_events(&mut self) -> Option<EndpointEvent> {
         self.endpoint_events.pop_front().map(EndpointEvent)
     }
@@ -312,12 +340,8 @@ where
     /// - the application performed some I/O on the connection
     /// - a call was made to `handle_event`
     /// - a call was made to `handle_timeout`
+    #[must_use]
     pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
-        if self.anti_amplification_blocked() {
-            trace!("blocked by anti-amplification");
-            return None;
-        }
-
         // Send PATH_CHALLENGE for a previous path if necessary
         if let Some(ref mut prev_path) = self.prev_path {
             if prev_path.challenge_pending {
@@ -331,8 +355,11 @@ where
                     SpaceId::Data,
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
-                let mut buf = Vec::with_capacity(self.mtu as usize);
-                let builder = self.begin_packet(now, SpaceId::Data, false, &mut buf)?;
+                let mut buf = Vec::with_capacity(self.path.mtu as usize);
+                let buf_capacity = self.path.mtu as usize;
+
+                let builder =
+                    self.begin_packet(now, SpaceId::Data, false, &mut buf, buf_capacity)?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 builder.buffer.write(frame::Type::PATH_CHALLENGE);
                 builder.buffer.write(token);
@@ -341,8 +368,15 @@ where
                     destination,
                     contents: buf,
                     ecn: None,
+                    segment_size: None,
+                    src_ip: self.local_ip,
                 });
             }
+        }
+
+        if self.path.anti_amplification_blocked(self.path.mtu.into()) {
+            trace!("blocked by anti-amplification");
+            return None;
         }
 
         // If we need to send a probe, make sure we have something to send.
@@ -355,12 +389,14 @@ where
         // Select the set of spaces that have data to send so we can try to coalesce them
         let (spaces, close) = match self.state {
             State::Drained => {
+                self.app_limited = true;
                 return None;
             }
             State::Draining | State::Closed(_) => {
                 if mem::replace(&mut self.close, false) {
                     (vec![self.highest_space], true)
                 } else {
+                    self.app_limited = true;
                     return None;
                 }
             }
@@ -379,13 +415,20 @@ where
             ),
         };
 
-        let mut buf = Vec::with_capacity(self.mtu as usize);
+        let mut buf = Vec::with_capacity(self.path.mtu as usize);
+        // Reserving capacity can provide more capacity than we asked for.
+        // However we are not allowed to write more than MTU size. Therefore
+        // the maximum capacity is tracked separately.
+        let buf_capacity = self.path.mtu as usize;
+
         let mut coalesce = spaces.len() > 1;
         let pad_space = spaces.last().cloned().filter(|_| {
             self.side.is_client() && spaces.first() == Some(&SpaceId::Initial)
                 || self.path.challenge.is_some()
                 || self.path_response.is_some()
         });
+
+        let mut congestion_blocked = false;
 
         for space_id in spaces {
             let buf_start = buf.len();
@@ -396,13 +439,18 @@ where
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
                 if ack_eliciting && self.spaces[space_id].loss_probes == 0 {
                     if self.congestion_blocked() {
+                        congestion_blocked = true;
                         continue;
                     }
-                    let smoothed_rtt = self.path.rtt.conservative();
+                    let smoothed_rtt = self.path.rtt.get();
                     let window = self.path.congestion.window();
-                    if let Some(delay) = self.path.pacing.delay(smoothed_rtt, self.mtu, window, now)
+                    if let Some(delay) =
+                        self.path
+                            .pacing
+                            .delay(smoothed_rtt, self.path.mtu, window, now)
                     {
                         self.timers.set(Timer::Pacing, delay);
+                        congestion_blocked = true;
                         continue;
                     }
                 }
@@ -424,8 +472,13 @@ where
                 prev.update_unacked = false;
             }
 
-            let mut builder =
-                self.begin_packet(now, space_id, pad_space == Some(space_id), &mut buf)?;
+            let mut builder = self.begin_packet(
+                now,
+                space_id,
+                pad_space == Some(space_id),
+                &mut buf,
+                buf_capacity,
+            )?;
             coalesce = coalesce && !builder.short_header;
 
             let sent = if close {
@@ -456,7 +509,7 @@ where
                 coalesce = false;
                 None
             } else {
-                Some(self.populate_packet(space_id, &mut builder.buffer))
+                Some(self.populate_packet(space_id, &mut builder.buffer, buf_capacity))
             };
 
             let exact_number = builder.exact_number;
@@ -488,17 +541,19 @@ where
                 );
             }
 
-            if !coalesce || buf.capacity() - buf.len() < MIN_PACKET_SPACE {
+            if !coalesce || buf_capacity - buf.len() < MIN_PACKET_SPACE {
                 break;
             }
         }
+
+        self.app_limited = buf.is_empty() && !congestion_blocked;
 
         if buf.is_empty() {
             return None;
         }
 
         trace!("sending {} byte datagram", buf.len());
-        self.total_sent = self.total_sent.wrapping_add(buf.len() as u64);
+        self.path.total_sent = self.path.total_sent.saturating_add(buf.len() as u64);
 
         self.stats.udp_tx.datagrams += 1;
         self.stats.udp_tx.bytes += buf.len() as u64;
@@ -511,6 +566,8 @@ where
             } else {
                 None
             },
+            segment_size: None,
+            src_ip: self.local_ip,
         })
     }
 
@@ -524,6 +581,7 @@ where
         space_id: SpaceId,
         initial_padding: bool,
         buffer: &'a mut Vec<u8>,
+        buffer_capacity: usize,
     ) -> Option<PacketBuilder<'a>> {
         // Initiate key update if we're approaching the confidentiality limit
         let confidentiality_limit = self.spaces[space_id]
@@ -621,8 +679,7 @@ where
             // payload_len >= sample_size + 4 - pn_len - tag_len
             buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len)
         };
-        let max_size =
-            buffer.capacity() - partial_encode.start - partial_encode.header_len - tag_len;
+        let max_size = buffer_capacity - partial_encode.start - partial_encode.header_len - tag_len;
         Some(PacketBuilder {
             buffer,
             space: space_id,
@@ -656,7 +713,7 @@ where
         builder
             .buffer
             .resize(builder.buffer.len() + packet_crypto.tag_len(), 0);
-        debug_assert!(builder.buffer.len() < self.mtu as usize);
+        debug_assert!(builder.buffer.len() <= self.path.mtu as usize);
         let packet_buf = &mut builder.buffer[builder.partial_encode.start..];
         builder.partial_encode.finish(
             packet_buf,
@@ -667,15 +724,6 @@ where
             .span
             .with_subscriber(|(id, dispatch)| dispatch.exit(id));
         pad
-    }
-
-    /// Indicates whether we're a server that hasn't validated the peer's address and hasn't
-    /// received enough data from the peer to permit additional sending
-    fn anti_amplification_blocked(&self) -> bool {
-        self.state.is_handshake()
-            && !self.remote_validated
-            && self.side.is_server()
-            && self.total_recvd * 3 < self.total_sent + u64::from(self.mtu)
     }
 
     /// Process `ConnectionEvent`s generated by the associated `Endpoint`
@@ -705,7 +753,10 @@ where
 
                 self.stats.udp_rx.datagrams += 1;
                 self.stats.udp_rx.bytes += first_decode.len() as u64;
-                self.total_recvd = self.total_recvd.wrapping_add(first_decode.len() as u64);
+                self.path.total_recvd = self
+                    .path
+                    .total_recvd
+                    .saturating_add(first_decode.len() as u64);
 
                 self.handle_decode(now, remote, ecn, first_decode);
                 if let Some(data) = remaining {
@@ -713,12 +764,19 @@ where
                     self.handle_coalesced(now, remote, ecn, data);
                 }
             }
-            NewIdentifiers(ids) => {
-                self.cids_issued += ids.len() as u64;
+            NewIdentifiers(ids, now) => {
+                self.local_cid_state.new_cids(&ids, now);
                 ids.into_iter().rev().for_each(|frame| {
                     self.spaces[SpaceId::Data].pending.new_cids.push(frame);
-                    self.cids_active_seq.insert(frame.sequence);
                 });
+                // Update Timer::PushNewCid
+                if self
+                    .timers
+                    .get(Timer::PushNewCid)
+                    .map_or(true, |x| x <= now)
+                {
+                    self.reset_cid_retirement();
+                }
             }
         }
     }
@@ -728,6 +786,10 @@ where
     /// Executes protocol logic, potentially preparing signals (including application `Event`s,
     /// `EndpointEvent`s and outgoing datagrams) that should be extracted through the relevant
     /// methods.
+    ///
+    /// It is most efficient to call this immediately after the system clock reaches the latest
+    /// `Instant` that was output by `poll_timeout`; however spurious extra calls will simply
+    /// no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
         for &timer in &Timer::VALUES {
             if !self.timers.is_expired(timer, now) {
@@ -763,6 +825,18 @@ where
                     self.path.challenge_pending = false;
                 }
                 Timer::Pacing => trace!("pacing timer expired"),
+                Timer::PushNewCid => {
+                    // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
+                    let num_new_cid = self.local_cid_state.on_cid_timeout().into();
+                    if !self.state.is_closed() {
+                        trace!(
+                            "push a new cid to peer RETIRE_PRIOR_TO field {}",
+                            self.local_cid_state.retire_prior_to()
+                        );
+                        self.endpoint_events
+                            .push_back(EndpointEventInner::NeedIdentifiers(now, num_new_cid));
+                    }
+                }
             }
         }
     }
@@ -803,7 +877,7 @@ where
             return None;
         }
         // TODO: Queue STREAM_ID_BLOCKED if this fails
-        let id = self.streams.open(&self.peer_params, dir)?;
+        let id = self.streams.open(dir)?;
         Some(id)
     }
 
@@ -812,7 +886,6 @@ where
     /// Returns `None` if there are no new incoming streams for this connection.
     pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
         let id = self.streams.accept(dir)?;
-        self.alloc_remote_stream(id.dir());
         Some(id)
     }
 
@@ -820,29 +893,45 @@ where
     ///
     /// While stream data is typically processed by applications in-order, unordered reads improve
     /// performance when packet loss occurs and data cannot be retransmitted before the flow control
-    /// window is filled. When in-order delivery is required, the sibling `read()` method should be
-    /// used.
+    /// window is filled. When in-order delivery is required, the sibling `read()` or `read_chunk[s]()`
+    /// methods should be used.
     ///
     /// The return value if `Ok` contains the bytes and their offset in the stream.
     pub fn read_unordered(&mut self, id: StreamId) -> Result<Option<(Bytes, u64)>, ReadError> {
-        Ok(self
-            .streams
-            .read_unordered(id)?
-            .map(|(buf, offset, transmit_max_stream_data)| {
-                self.add_read_credits(id, transmit_max_stream_data);
-                (buf, offset)
-            }))
+        let result = self.streams.read_unordered(id);
+        self.post_read(id, &result);
+        Ok(result?.map(|x| x.result))
     }
 
-    /// Read from the given recv stream
-    pub fn read(&mut self, id: StreamId, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
-        Ok(self
-            .streams
-            .read(id, buf)?
-            .map(|(len, transmit_max_stream_data)| {
-                self.add_read_credits(id, transmit_max_stream_data);
-                len
-            }))
+    /// Read the next ordered chunk from the given recv stream
+    pub fn read(&mut self, id: StreamId, max_length: usize) -> Result<Option<Bytes>, ReadError> {
+        let result = self.streams.read(id, max_length);
+        self.post_read(id, &result);
+        Ok(result?.map(|x| x.result))
+    }
+
+    /// Read the next ordered chunks from the given recv stream
+    pub fn read_chunks(
+        &mut self,
+        id: StreamId,
+        bufs: &mut [Bytes],
+    ) -> Result<Option<usize>, ReadError> {
+        let result = self.streams.read_chunks(id, bufs);
+        self.post_read(id, &result);
+        Ok(result?.map(|x| x.result.bufs))
+    }
+
+    fn post_read<T>(&mut self, id: StreamId, result: &streams::ReadResult<T>) {
+        if let Ok(Some(ref result)) = *result {
+            self.add_read_credits(id, result.max_stream_data, result.max_data);
+        }
+        if self.streams.take_max_streams_dirty(id.dir()) {
+            let pending = &mut self.spaces[SpaceId::Data].pending;
+            match id.dir() {
+                Dir::Uni => pending.max_uni_stream_id = true,
+                Dir::Bi => pending.max_bi_stream_id = true,
+            }
+        }
     }
 
     /// Send data on the given stream
@@ -857,24 +946,34 @@ where
         self.streams.write(stream, data)
     }
 
+    /// Returns connection statistics
+    pub fn stats(&self) -> ConnectionStats {
+        let mut stats = self.stats;
+        stats.path.rtt = self.path.rtt.get();
+        stats.path.cwnd = self.path.congestion.window();
+
+        stats
+    }
+
     /// Stop accepting data on the given receive stream
     ///
-    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, a stream
-    /// cannot be read from any further.
+    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
+    /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
         assert!(
             id.dir() == Dir::Bi || id.initiator() != self.side,
             "only streams supporting incoming data may be stopped"
         );
         // Only bother if there's data we haven't received yet
-        if self.streams.stop(id)? {
+        let result = self.streams.stop(id)?;
+        if result.stop_sending.should_transmit() {
             let space = &mut self.spaces[SpaceId::Data];
             space
                 .pending
                 .stop_sending
                 .push(frame::StopSending { id, error_code });
         }
-        if self.streams.want_send_max_data() {
+        if result.max_data.should_transmit() {
             self.spaces[SpaceId::Data].pending.max_data = true;
         }
         Ok(())
@@ -895,11 +994,7 @@ where
         Ok(())
     }
 
-    /// Prepare to transmit an unreliable, unordered datagram
-    ///
-    /// The returned `DatagramSender` must be used to actually send a datagram. This allows the
-    /// caller to defer materializing a datagram until one can be sent immediately without redundant
-    /// checks
+    /// Queue an unreliable, unordered datagram for immediate transmission
     ///
     /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
     pub fn send_datagram(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
@@ -944,7 +1039,7 @@ where
     /// Not necessarily the maximum size of received datagrams.
     pub fn max_datagram_size(&self) -> Option<usize> {
         // This is usually 1182 bytes, but we shouldn't document that without a doctest.
-        let max_size = self.mtu as usize
+        let max_size = self.path.mtu as usize
             - 1                 // flags byte
             - self.rem_cids.active().len()
             - 4                 // worst-case packet number size
@@ -1023,6 +1118,24 @@ where
     /// The latest socket address for this connection's peer
     pub fn remote_address(&self) -> SocketAddr {
         self.path.remote
+    }
+
+    /// The local IP address which was used when the peer established
+    /// the connection
+    ///
+    /// This can be different from the address the endpoint is bound to, in case
+    /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
+    ///
+    /// This will return `None` for clients.
+    ///
+    /// Retrieving the local IP address is currently supported on the following
+    /// platforms:
+    /// - Linux
+    ///
+    /// On all non-supported platforms the local IP address will not be available,
+    /// and the method will return `None`.
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        self.local_ip
     }
 
     /// Current best estimate of this connection's latency (round-trip-time)
@@ -1181,7 +1294,6 @@ where
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
     fn on_packet_acked(&mut self, now: Instant, space: SpaceId, info: SentPacket) {
-        let was_congestion_blocked = self.congestion_blocked();
         self.remove_in_flight(space, &info);
         if info.ack_eliciting {
             // Congestion control
@@ -1191,7 +1303,7 @@ where
                     now,
                     info.time_sent,
                     info.size.into(),
-                    was_congestion_blocked,
+                    self.app_limited,
                 );
             }
         }
@@ -1408,7 +1520,7 @@ where
             return;
         }
 
-        if self.anti_amplification_blocked() {
+        if self.path.anti_amplification_blocked(self.path.mtu.into()) {
             // We wouldn't be able to send anything, so don't bother.
             self.timers.stop(Timer::LossDetection);
             return;
@@ -1502,6 +1614,12 @@ where
         self.timers.set(Timer::KeepAlive, now + interval);
     }
 
+    fn reset_cid_retirement(&mut self) {
+        if let Some(t) = self.local_cid_state.next_timeout() {
+            self.timers.set(Timer::PushNewCid, t);
+        }
+    }
+
     /// Abandon transmitting data on a stream
     ///
     /// # Panics
@@ -1538,7 +1656,7 @@ where
         let _guard = span.enter();
         debug_assert!(self.side.is_server());
         let len = packet.header_data.len() + packet.payload.len();
-        self.total_recvd = len as u64;
+        self.path.total_recvd = len as u64;
 
         self.on_packet_authenticated(
             now,
@@ -1624,20 +1742,18 @@ where
         if end > max {
             return Err(TransportError::CRYPTO_BUFFER_EXCEEDED(""));
         }
+
         space
             .crypto_stream
             .insert(crypto.offset, crypto.data.clone());
-        let mut buf = [0; 8192];
-        loop {
-            let n = space.crypto_stream.read(&mut buf).unwrap();
-            if n == 0 {
-                return Ok(());
-            }
-            trace!("consumed {} CRYPTO bytes", n);
-            if self.crypto.read_handshake(&buf[..n])? {
+        while let Some(buf) = space.crypto_stream.read(usize::MAX).unwrap() {
+            trace!("consumed {} CRYPTO bytes", buf.len());
+            if self.crypto.read_handshake(&buf)? {
                 self.events.push_back(Event::HandshakeDataReady);
             }
         }
+
+        Ok(())
     }
 
     fn write_crypto(&mut self) {
@@ -1716,10 +1832,10 @@ where
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
     ) {
-        self.total_recvd = self.total_recvd.wrapping_add(data.len() as u64);
+        self.path.total_recvd = self.path.total_recvd.saturating_add(data.len() as u64);
         let mut remaining = Some(data);
         while let Some(data) = remaining {
-            match PartialDecode::new(data, self.local_cid_len) {
+            match PartialDecode::new(data, self.local_cid_state.cid_len()) {
                 Ok((partial_decode, rest)) => {
                     remaining = rest;
                     self.handle_decode(now, remote, ecn, partial_decode);
@@ -2005,7 +2121,7 @@ where
                             );
                             return Ok(());
                         }
-                        self.remote_validated = true;
+                        self.path.validated = true;
 
                         let state = state.clone();
                         self.process_early_payload(now, packet)?;
@@ -2049,7 +2165,7 @@ where
                             }
                             self.validate_peer_params(&params)?;
                             self.set_peer_params(params);
-                            self.issue_cids();
+                            self.issue_cids(now);
                         } else {
                             // Server-only
                             self.spaces[SpaceId::Data].pending.handshake_done = true;
@@ -2096,7 +2212,7 @@ where
                             })?;
                             self.validate_peer_params(&params)?;
                             self.set_peer_params(params);
-                            self.issue_cids();
+                            self.issue_cids(now);
                             self.init_0rtt();
                         }
                         Ok(())
@@ -2139,6 +2255,12 @@ where
             }
             State::Closed(_) => {
                 for frame in frame::Iter::new(packet.payload.freeze()) {
+                    if let Frame::Padding = frame {
+                        continue;
+                    };
+
+                    self.stats.frame_rx.record(&frame);
+
                     if let Frame::Close(_) = frame {
                         trace!("draining");
                         self.state = State::Draining;
@@ -2160,9 +2282,12 @@ where
         debug_assert_ne!(packet.header.space(), SpaceId::Data);
         for frame in frame::Iter::new(packet.payload.freeze()) {
             let span = match frame {
-                Frame::Padding => None,
+                Frame::Padding => continue,
                 _ => Some(trace_span!("frame", ty = %frame.ty())),
             };
+
+            self.stats.frame_rx.record(&frame);
+
             let _guard = span.as_ref().map(|x| x.enter());
             // Check for ack-eliciting frames
             match frame {
@@ -2215,9 +2340,11 @@ where
         let mut close = None;
         for frame in frame::Iter::new(payload) {
             let span = match frame {
-                Frame::Padding => None,
+                Frame::Padding => continue,
                 _ => Some(trace_span!("frame", ty = %frame.ty())),
             };
+
+            self.stats.frame_rx.record(&frame);
 
             let _guard = span.as_ref().map(|x| x.enter());
             if is_0rtt {
@@ -2258,8 +2385,7 @@ where
                     self.read_crypto(SpaceId::Data, &frame)?;
                 }
                 Frame::Stream(frame) => {
-                    self.streams.received(frame)?;
-                    if self.streams.want_send_max_data() {
+                    if self.streams.received(frame)?.should_transmit() {
                         self.spaces[SpaceId::Data].pending.max_data = true;
                     }
                 }
@@ -2292,6 +2418,7 @@ where
                         trace!("new path validated");
                         self.timers.stop(Timer::PathValidation);
                         self.path.challenge = None;
+                        self.path.validated = true;
                         if let Some(ref mut prev_path) = self.prev_path {
                             prev_path.challenge = None;
                             prev_path.challenge_pending = false;
@@ -2315,7 +2442,7 @@ where
                     self.streams.received_max_streams(dir, count)?;
                 }
                 Frame::ResetStream(frame) => {
-                    if self.streams.received_reset(frame)? {
+                    if self.streams.received_reset(frame)?.should_transmit() {
                         self.spaces[SpaceId::Data].pending.max_data = true;
                     }
                 }
@@ -2361,30 +2488,12 @@ where
                     self.streams.received_stop_sending(id, error_code);
                 }
                 Frame::RetireConnectionId { sequence } => {
-                    if self.local_cid_len == 0 {
-                        return Err(TransportError::PROTOCOL_VIOLATION(
-                            "RETIRE_CONNECTION_ID when CIDs aren't in use",
-                        ));
-                    }
-                    if sequence > self.cids_issued {
-                        debug!(
-                            sequence,
-                            "got RETIRE_CONNECTION_ID for unissued sequence number"
-                        );
-                        return Err(TransportError::PROTOCOL_VIOLATION(
-                            "RETIRE_CONNECTION_ID for unissued sequence number",
-                        ));
-                    }
-                    self.cids_active_seq.remove(&sequence);
-                    // Consider a scenario where peer A has active remote cid 0,1,2.
-                    // Peer B first send a NEW_CONNECTION_ID with cid 3 and retire_prior_to set to 1.
-                    // Peer A processes this NEW_CONNECTION_ID frame; update remote cid to 1,2,3
-                    // and meanwhile send a RETIRE_CONNECTION_ID to retire cid 0 to peer B.
-                    // If peer B doesn't check the cid limit here and send a new cid again, peer A will then face CONNECTION_ID_LIMIT_ERROR
-                    let allow_more_cids =
-                        self.peer_params.issue_cids_limit() > self.cids_active_seq.len() as u64;
+                    let allow_more_cids = self
+                        .local_cid_state
+                        .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
                     self.endpoint_events
                         .push_back(EndpointEventInner::RetireConnectionId(
+                            now,
                             sequence,
                             allow_more_cids,
                         ));
@@ -2491,6 +2600,18 @@ where
             }
         }
 
+        // Issue stream ID credit due to ACKs of outgoing finish/resets and incoming finish/resets
+        // on stopped streams
+        let pending = &mut self.spaces[SpaceId::Data].pending;
+        for dir in Dir::iter() {
+            if self.streams.take_max_streams_dirty(dir) {
+                match dir {
+                    Dir::Uni => pending.max_uni_stream_id = true,
+                    Dir::Bi => pending.max_bi_stream_id = true,
+                }
+            }
+        }
+
         if let Some(reason) = close {
             self.events.push_back(ConnectionError::from(reason).into());
             self.state = State::Draining;
@@ -2534,6 +2655,7 @@ where
                 self.config.initial_rtt,
                 self.config.congestion_controller_factory.build(now),
                 now,
+                false,
             )
         };
         new_path.challenge = Some(self.rng.gen());
@@ -2574,18 +2696,23 @@ where
     }
 
     /// Issue an initial set of connection IDs to the peer
-    fn issue_cids(&mut self) {
-        if self.local_cid_len == 0 {
+    fn issue_cids(&mut self, now: Instant) {
+        if self.local_cid_state.cid_len() == 0 {
             return;
         }
 
         // Subtract 1 to account for the CID we supplied while handshaking
         let n = self.peer_params.issue_cids_limit() - 1;
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(n));
+            .push_back(EndpointEventInner::NeedIdentifiers(now, n));
     }
 
-    fn populate_packet(&mut self, space_id: SpaceId, buf: &mut Vec<u8>) -> SentFrames {
+    fn populate_packet(
+        &mut self,
+        space_id: SpaceId,
+        buf: &mut Vec<u8>,
+        buf_capacity: usize,
+    ) -> SentFrames {
         let mut sent = SentFrames::default();
         let space = &mut self.spaces[space_id];
         let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
@@ -2605,7 +2732,7 @@ where
                 |x| &x.packet.local,
             )
             .tag_len();
-        let max_size = buf.capacity() - tag_len;
+        let max_size = buf_capacity - tag_len;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
 
         // HANDSHAKE_DONE
@@ -2714,7 +2841,7 @@ where
             );
             frame::NewConnectionId {
                 sequence: issued.sequence,
-                retire_prior_to: self.retire_cid_seq,
+                retire_prior_to: self.local_cid_state.retire_prior_to(),
                 id: issued.id,
                 reset_token: issued.reset_token,
             }
@@ -2806,26 +2933,17 @@ where
         self.peer_params = params;
     }
 
-    /// Permit an additional remote `ty` stream.
-    fn alloc_remote_stream(&mut self, dir: Dir) {
+    fn add_read_credits(
+        &mut self,
+        id: StreamId,
+        transmit_max_stream_data: ShouldTransmit,
+        transmit_max_data: ShouldTransmit,
+    ) {
         let space = &mut self.spaces[SpaceId::Data];
-        match dir {
-            Dir::Bi => {
-                space.pending.max_bi_stream_id = true;
-            }
-            Dir::Uni => {
-                space.pending.max_uni_stream_id = true;
-            }
-        }
-        self.streams.alloc_remote_stream(&self.peer_params, dir);
-    }
-
-    fn add_read_credits(&mut self, id: StreamId, transmit_max_stream_data: bool) {
-        let space = &mut self.spaces[SpaceId::Data];
-        if self.streams.want_send_max_data() {
+        if transmit_max_data.should_transmit() {
             space.pending.max_data = true;
         }
-        if transmit_max_stream_data {
+        if transmit_max_stream_data.should_transmit() {
             // Only bother issuing stream credit if the peer wants to send more
             space.pending.max_stream_data.insert(id);
         }
@@ -2833,7 +2951,7 @@ where
 
     /// Whether UDP transmits are currently blocked by link congestion
     fn congestion_blocked(&self) -> bool {
-        self.in_flight.bytes + u64::from(self.mtu) >= self.path.congestion.window()
+        self.in_flight.bytes + u64::from(self.path.mtu) >= self.path.congestion.window()
     }
 
     fn decrypt_packet(
@@ -2878,7 +2996,7 @@ where
 
         crypto
             .decrypt(number, &packet.header_data, &mut packet.payload)
-            .map_err(|()| {
+            .map_err(|_| {
                 trace!("decryption failed with packet number {}", number);
                 None
             })?;
@@ -2953,12 +3071,12 @@ where
             .saturating_sub(self.in_flight.bytes)
     }
 
-    /// Whether no timers but keepalive and idle are running
+    /// Whether no timers but keepalive, idle and pushnewcid are running
     #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
         Timer::VALUES
             .iter()
-            .filter(|&&t| t != Timer::KeepAlive)
+            .filter(|&&t| t != Timer::KeepAlive && t != Timer::PushNewCid)
             .filter_map(|&t| Some((t, self.timers.get(t)?)))
             .min_by_key(|&(_, time)| time)
             .map_or(true, |(timer, _)| timer == Timer::Idle)
@@ -2976,16 +3094,18 @@ where
         self.path.sending_ecn
     }
 
+    #[cfg(test)]
+    pub(crate) fn active_local_cid_seq(&self) -> (u64, u64) {
+        self.local_cid_state.active_seq()
+    }
+
     /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
     /// with updated `retire_prior_to` field set to `v`
     #[cfg(test)]
-    pub(crate) fn rotate_local_cid(&mut self, v: u64) {
-        // Cannot retire more CIDs than what have been issued
-        debug_assert!(v <= *self.cids_active_seq.iter().max().unwrap() + 1);
-        let n = v.checked_sub(self.retire_cid_seq).unwrap();
-        self.retire_cid_seq = v;
+    pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant) {
+        let n = self.local_cid_state.assign_retire_seq(v);
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(n));
+            .push_back(EndpointEventInner::NeedIdentifiers(now, n));
     }
 
     /// Check the current active remote CID sequence
@@ -3057,28 +3177,32 @@ where
     }
 }
 
-/// Reasons why a connection might be lost.
+/// Reasons why a connection might be lost
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ConnectionError {
-    /// The peer doesn't implement any supported version.
+    /// The peer doesn't implement any supported version
     #[error("peer doesn't implement any supported version")]
     VersionMismatch,
-    /// The peer violated the QUIC specification as understood by this implementation.
+    /// The peer violated the QUIC specification as understood by this implementation
     #[error("{0}")]
     TransportError(#[from] TransportError),
-    /// The peer's QUIC stack aborted the connection automatically.
+    /// The peer's QUIC stack aborted the connection automatically
     #[error("aborted by peer: {}", 0)]
     ConnectionClosed(frame::ConnectionClose),
-    /// The peer closed the connection.
+    /// The peer closed the connection
     #[error("closed by peer: {}", 0)]
     ApplicationClosed(frame::ApplicationClose),
-    /// The peer is unable to continue processing this connection, usually due to having restarted.
+    /// The peer is unable to continue processing this connection, usually due to having restarted
     #[error("reset by peer")]
     Reset,
-    /// The peer has become unreachable.
+    /// Communication with the peer has lapsed for longer than the negotiated idle timeout
+    ///
+    /// If neither side is sending keep-alives, a connection will time out after a long enough idle
+    /// period even if the peer is still reachable. See also [`TransportConfig::max_idle_timeout()`]
+    /// and [`TransportConfig::keep_alive_interval()`].
     #[error("timed out")]
     TimedOut,
-    /// The local application closed the connection.
+    /// The local application closed the connection
     #[error("closed")]
     LocallyClosed,
 }

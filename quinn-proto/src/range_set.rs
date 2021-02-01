@@ -56,7 +56,7 @@ impl RangeSet {
     }
 
     pub fn insert(&mut self, mut x: Range<u64>) -> bool {
-        if x.end == 0 {
+        if x.end == 0 || x.start == x.end {
             return false;
         }
         if let Some((start, end)) = self.pred(x.start) {
@@ -458,5 +458,16 @@ mod tests {
         assert_eq!(set.replace(0..2).collect::<Vec<_>>(), &[]);
         assert_eq!(set.len(), 1);
         assert_eq!(set.peek_min().unwrap(), 0..4);
+    }
+
+    #[test]
+    fn skip_empty_ranges() {
+        let mut set = RangeSet::new();
+        assert!(!set.insert(2..2));
+        assert_eq!(set.len(), 0);
+        assert!(!set.insert(4..4));
+        assert_eq!(set.len(), 0);
+        assert!(!set.insert(0..0));
+        assert_eq!(set.len(), 0);
     }
 }

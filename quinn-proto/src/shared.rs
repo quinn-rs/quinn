@@ -19,7 +19,7 @@ pub(crate) enum ConnectionEventInner {
         remaining: Option<BytesMut>,
     },
     /// New connection identifiers have been issued for the Connection
-    NewIdentifiers(Vec<IssuedCid>),
+    NewIdentifiers(Vec<IssuedCid>, Instant),
 }
 
 /// Events sent from a Connection to an Endpoint
@@ -50,10 +50,10 @@ pub(crate) enum EndpointEventInner {
     /// The reset token and/or address eligible for generating resets has been updated
     ResetToken(SocketAddr, ResetToken),
     /// The connection needs connection identifiers
-    NeedIdentifiers(u64),
+    NeedIdentifiers(Instant, u64),
     /// Stop routing connection ID for this sequence number to the connection
     /// When `bool == true`, a new connection ID will be issued to peer
-    RetireConnectionId(u64, bool),
+    RetireConnectionId(Instant, u64, bool),
 }
 
 /// Protocol-level identifier for a connection.
@@ -82,12 +82,10 @@ impl ConnectionId {
     /// Decode from long header format
     pub(crate) fn decode_long(buf: &mut impl Buf) -> Option<Self> {
         let len = buf.get::<u8>().ok()? as usize;
-        if len > MAX_CID_SIZE || buf.remaining() < len {
-            return None;
+        match len > MAX_CID_SIZE || buf.remaining() < len {
+            false => Some(ConnectionId::new(&buf.copy_to_bytes(len))),
+            true => None,
         }
-        let cid = ConnectionId::new(&buf.bytes()[..len]);
-        buf.advance(len);
-        Some(cid)
     }
 
     /// Encode in long header format

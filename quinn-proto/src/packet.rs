@@ -19,13 +19,14 @@ use crate::{
 // to inspect the version and packet type (which depends on the version).
 // This information allows us to fully decode and decrypt the packet.
 #[derive(Debug)]
-pub(crate) struct PartialDecode {
+pub struct PartialDecode {
     plain_header: PlainHeader,
     buf: io::Cursor<BytesMut>,
 }
 
 impl PartialDecode {
-    pub(crate) fn new(
+    #![allow(clippy::len_without_is_empty)]
+    pub fn new(
         bytes: BytesMut,
         local_cid_len: usize,
     ) -> Result<(Self, Option<BytesMut>), PacketDecodeError> {
@@ -90,7 +91,7 @@ impl PartialDecode {
     }
 
     /// Length of QUIC packet being decoded
-    pub(crate) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.buf.get_ref().len()
     }
 
@@ -498,17 +499,14 @@ impl PlainHeader {
         let first = buf.get::<u8>()?;
         if first & LONG_HEADER_FORM == 0 {
             let spin = first & SPIN_BIT != 0;
-            let dst_cid = ConnectionId::new(
-                &buf.bytes()
-                    .get(..local_cid_len)
-                    .ok_or(PacketDecodeError::InvalidHeader("cid out of bounds"))?,
-            );
-            buf.advance(local_cid_len);
+            if buf.remaining() < local_cid_len {
+                return Err(PacketDecodeError::InvalidHeader("cid out of bounds"));
+            }
 
             Ok(PlainHeader::Short {
                 first,
                 spin,
-                dst_cid,
+                dst_cid: ConnectionId::new(&buf.copy_to_bytes(local_cid_len)),
             })
         } else {
             let version = buf.get::<u32>()?;
@@ -710,7 +708,7 @@ pub(crate) enum LongType {
 }
 
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub(crate) enum PacketDecodeError {
+pub enum PacketDecodeError {
     #[error("unsupported version {version:x}")]
     UnsupportedVersion {
         src_cid: ConnectionId,

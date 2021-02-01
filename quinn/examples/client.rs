@@ -1,3 +1,7 @@
+//! This example demonstrates an HTTP client that requests files from a server.
+//!
+//! Checkout the `README.md` for guidance.
+
 use std::{
     fs,
     io::{self, Write},
@@ -100,6 +104,7 @@ async fn run(options: Opt) -> Result<()> {
         .map_or_else(|| url.host_str(), |x| Some(&x))
         .ok_or_else(|| anyhow!("no hostname specified"))?;
 
+    eprintln!("connecting to {} at {}", host, remote);
     let new_conn = endpoint
         .connect(&remote, &host)?
         .await
@@ -107,7 +112,7 @@ async fn run(options: Opt) -> Result<()> {
     eprintln!("connected at {:?}", start.elapsed());
     let quinn::NewConnection {
         connection: conn, ..
-    } = { new_conn };
+    } = new_conn;
     let (mut send, recv) = conn
         .open_bi()
         .await
@@ -140,6 +145,9 @@ async fn run(options: Opt) -> Result<()> {
     io::stdout().write_all(&resp).unwrap();
     io::stdout().flush().unwrap();
     conn.close(0u32.into(), b"done");
+
+    // Give the server a fair chance to receive the close packet
+    endpoint.wait_idle().await;
 
     Ok(())
 }

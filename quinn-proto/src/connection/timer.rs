@@ -16,10 +16,12 @@ pub(crate) enum Timer {
     KeepAlive = 5,
     /// When pacing will allow us to send a packet
     Pacing = 6,
+    /// When to invalidate old CID and proactively push new one via NEW_CONNECTION_ID frame
+    PushNewCid = 7,
 }
 
 impl Timer {
-    pub(crate) const VALUES: [Self; 7] = [
+    pub(crate) const VALUES: [Self; 8] = [
         Timer::LossDetection,
         Timer::Idle,
         Timer::Close,
@@ -27,13 +29,14 @@ impl Timer {
         Timer::PathValidation,
         Timer::KeepAlive,
         Timer::Pacing,
+        Timer::PushNewCid,
     ];
 }
 
 /// A table of data associated with each distinct kind of `Timer`
 #[derive(Debug, Copy, Clone, Default)]
 pub(crate) struct TimerTable {
-    data: [Option<Instant>; 7],
+    data: [Option<Instant>; 8],
 }
 
 impl TimerTable {
@@ -41,7 +44,6 @@ impl TimerTable {
         self.data[timer as usize] = Some(time);
     }
 
-    #[cfg(test)]
     pub fn get(&self, timer: Timer) -> Option<Instant> {
         self.data[timer as usize]
     }
