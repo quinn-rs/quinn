@@ -12,13 +12,19 @@
 //! related `Connection`. `Connection` types contain the bulk of the protocol logic related to
 //! managing a single connection and all the related state (such as streams).
 
-#![warn(missing_docs)]
+#![cfg_attr(not(fuzzing), warn(missing_docs))]
 #![cfg_attr(test, allow(dead_code))]
 // Fixes welcome:
 #![allow(clippy::cognitive_complexity)]
 #![allow(clippy::too_many_arguments)]
 
-use std::{convert::TryInto, fmt, net::SocketAddr, ops, time::Duration};
+use std::{
+    convert::TryInto,
+    fmt,
+    net::{IpAddr, SocketAddr},
+    ops,
+    time::Duration,
+};
 
 mod cid_queue;
 #[doc(hidden)]
@@ -34,7 +40,7 @@ mod varint;
 pub use varint::{VarInt, VarIntBoundsExceeded};
 
 mod connection;
-pub use crate::connection::{ConnectionError, Event, SendDatagramError};
+pub use crate::connection::{Chunk, ConnectionError, ConnectionStats, Event, SendDatagramError};
 pub use crate::connection::{FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
 
 mod config;
@@ -99,10 +105,13 @@ use arbitrary::Arbitrary;
 #[doc(hidden)]
 #[cfg(fuzzing)]
 pub mod fuzzing {
-    pub use crate::connection::Streams;
+    pub use crate::connection::{FinishError, Streams};
     pub use crate::frame::ResetStream;
+    pub use crate::packet::PartialDecode;
     pub use crate::transport_parameters::TransportParameters;
+    use crate::MAX_CID_SIZE;
     use arbitrary::{Arbitrary, Result, Unstructured};
+    pub use bytes::{BufMut, BytesMut};
 
     impl Arbitrary for TransportParameters {
         fn arbitrary(u: &mut Unstructured<'_>) -> Result<Self> {
@@ -113,6 +122,22 @@ pub mod fuzzing {
                 max_udp_payload_size: u.arbitrary()?,
                 ..TransportParameters::default()
             })
+        }
+    }
+
+    #[derive(Debug)]
+    pub struct PacketParams {
+        pub local_cid_len: usize,
+        pub buf: BytesMut,
+    }
+
+    impl Arbitrary for PacketParams {
+        fn arbitrary(u: &mut Unstructured<'_>) -> Result<Self> {
+            let local_cid_len: usize = u.int_in_range(0..=MAX_CID_SIZE)?;
+            let bytes: Vec<u8> = Vec::arbitrary(u)?;
+            let mut buf = BytesMut::new();
+            buf.put_slice(&bytes[..]);
+            Ok(PacketParams { local_cid_len, buf })
         }
     }
 }
@@ -255,6 +280,11 @@ pub struct Transmit {
     pub ecn: Option<EcnCodepoint>,
     /// Contents of the datagram
     pub contents: Vec<u8>,
+    /// The segment size if this transmission contains multiple datagrams.
+    /// This is `None` if the transmit only contains a single datagram
+    pub segment_size: Option<usize>,
+    /// Optional source IP address for the datagram
+    pub src_ip: Option<IpAddr>,
 }
 
 //

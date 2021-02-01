@@ -28,6 +28,7 @@ fn version_negotiate_server() {
         now,
         client_addr,
         None,
+        None,
         // Long-header packet with reserved version number
         hex!("80 0a1a2a3a 04 00000000 04 00000000 00")[..].into(),
     );
@@ -63,6 +64,7 @@ fn version_negotiate_client() {
     let opt_event = client.handle(
         now,
         server_addr,
+        None,
         None,
         // Version negotiation packet for reserved version
         hex!(
@@ -237,10 +239,13 @@ fn finish_stream_simple() {
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok(Some((ref data, 0))) if data == MSG
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(None)
+    );
 }
 
 #[test]
@@ -266,7 +271,7 @@ fn reset_stream() {
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
         Err(ReadError::Reset(ERROR))
     );
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
@@ -378,6 +383,7 @@ fn congestion() {
         .unwrap();
 }
 
+#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 #[test]
 fn high_latency_handshake() {
     let _guard = subscribe();
@@ -427,8 +433,8 @@ fn zero_rtt_happypath() {
     assert!(pair.client_conn_mut(client_ch).accepted_0rtt());
     let server_ch = pair.server.assert_accept();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok(Some((ref data, 0))) if data == MSG
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
 }
@@ -498,7 +504,8 @@ fn zero_rtt_rejection() {
     let s2 = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     assert_eq!(s, s2);
     assert_eq!(
-        pair.server_conn_mut(server_conn).read_unordered(s2),
+        pair.server_conn_mut(server_conn)
+            .read(s2, usize::MAX, false),
         Err(ReadError::Blocked)
     );
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
@@ -593,11 +600,11 @@ fn alpn_mismatch() {
 }
 
 #[test]
-fn stream_id_backpressure() {
+fn stream_id_limit() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_uni: 1u32.into(),
+            max_concurrent_uni_streams: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -620,8 +627,12 @@ fn stream_id_backpressure() {
     // Generate some activity to allow the server to see the stream
     const MSG: &[u8] = b"hello";
     pair.client_conn_mut(client_ch).write(s, MSG).unwrap();
+    pair.client_conn_mut(client_ch).finish(s).unwrap();
     pair.drive();
-    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Stream(StreamEvent::Finished { id })) if id == s
+    );
     assert_eq!(
         pair.client_conn_mut(client_ch).open(Dir::Uni),
         None,
@@ -632,7 +643,14 @@ fn stream_id_backpressure() {
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(Some((msg, 0))) if msg == MSG);
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
+    );
+    assert_eq!(
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(None)
+    );
     // Server will only send MAX_STREAM_ID now that the application's been notified
     pair.drive();
     assert_matches!(
@@ -658,7 +676,10 @@ fn stream_id_backpressure() {
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(None)
+    );
 }
 
 #[test]
@@ -685,8 +706,8 @@ fn key_update_simple() {
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok(Some((ref data, 0))) if data == MSG1
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG1
     );
 
     info!("initiating key update");
@@ -699,8 +720,8 @@ fn key_update_simple() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::Stream(StreamEvent::Readable { id })) if id == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok(Some((ref data, 6))) if data == MSG2
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(Some(chunk)) if chunk.offset == 6 && chunk.bytes == MSG2
     );
 
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
@@ -741,11 +762,19 @@ fn key_update_reordered() {
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Bi }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(stream) if stream == s);
-    let mut buf = [0; 32];
-    assert_matches!(pair.server_conn_mut(server_ch).read(s, &mut buf),
-                    Ok(Some(n)) if n == MSG1.len() + MSG2.len());
-    assert_eq!(&buf[0..MSG1.len()], MSG1);
-    assert_eq!(&buf[MSG1.len()..MSG1.len() + MSG2.len()], MSG2);
+
+    let buf1 = pair
+        .server_conn_mut(server_ch)
+        .read(s, usize::MAX, true)
+        .unwrap()
+        .unwrap();
+    assert_matches!(&*buf1.bytes, MSG1);
+    let buf2 = pair
+        .server_conn_mut(server_ch)
+        .read(s, usize::MAX, true)
+        .unwrap()
+        .unwrap();
+    assert_eq!(buf2.bytes, MSG2);
 
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
     assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
@@ -870,12 +899,12 @@ fn idle_timeout() {
 }
 
 #[test]
-fn accept_buffer_full() {
+fn concurrent_connections_full() {
     let _guard = subscribe();
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
-            accept_buffer: 0,
+            concurrent_connections: 0,
             ..server_config()
         },
     );
@@ -944,7 +973,6 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     );
     let (client_conn, server_conn) = pair.connect();
     let msg = vec![0xAB; window_size + 10];
-    let mut buf = [0; 4096];
 
     // Stream reset before read
     let s = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
@@ -963,7 +991,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
         .unwrap();
     pair.drive();
     assert_eq!(
-        pair.server_conn_mut(server_conn).read(s, &mut buf),
+        pair.server_conn_mut(server_conn).read(s, usize::MAX, true),
         Err(ReadError::Reset(VarInt(42)))
     );
 
@@ -978,15 +1006,13 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
             .write(s, &msg[window_size..]),
         Err(WriteError::Blocked)
     );
+
     pair.drive();
     let mut cursor = 0;
     loop {
-        match pair
-            .server_conn_mut(server_conn)
-            .read(s, &mut buf[cursor..])
-        {
-            Ok(Some(n)) => {
-                cursor += n;
+        match pair.server_conn_mut(server_conn).read(s, usize::MAX, true) {
+            Ok(Some(chunk)) => {
+                cursor += chunk.bytes.len();
             }
             Ok(None) => {
                 panic!("end of stream");
@@ -999,6 +1025,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
             }
         }
     }
+
     assert_eq!(cursor, window_size);
     pair.drive();
     assert_eq!(
@@ -1010,15 +1037,13 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
             .write(s, &msg[window_size..]),
         Err(WriteError::Blocked)
     );
+
     pair.drive();
     let mut cursor = 0;
     loop {
-        match pair
-            .server_conn_mut(server_conn)
-            .read(s, &mut buf[cursor..])
-        {
-            Ok(Some(n)) => {
-                cursor += n;
+        match pair.server_conn_mut(server_conn).read(s, usize::MAX, true) {
+            Ok(Some(chunk)) => {
+                cursor += chunk.bytes.len();
             }
             Ok(None) => {
                 panic!("end of stream");
@@ -1081,7 +1106,7 @@ fn stop_opens_bidi() {
     assert_matches!(pair.server_conn_mut(server_conn).accept(Dir::Bi), Some(stream) if stream == s);
     assert_eq!(pair.server_conn_mut(client_conn).send_streams(), 1);
     assert_matches!(
-        pair.server_conn_mut(server_conn).read_unordered(s),
+        pair.server_conn_mut(server_conn).read(s, usize::MAX, false),
         Err(ReadError::Blocked)
     );
     assert_matches!(
@@ -1175,13 +1200,72 @@ fn keep_alive() {
 }
 
 #[test]
+fn cid_rotation() {
+    let _guard = subscribe();
+    const CID_TIMEOUT: Duration = Duration::from_secs(2);
+
+    let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
+        || Box::new(*RandomConnectionIdGenerator::new(8).set_lifetime(CID_TIMEOUT));
+
+    // Only test cid rotation on server side to have a clear output trace
+    let server = Endpoint::new(
+        Arc::new(EndpointConfig {
+            connection_id_generator_factory: Arc::new(cid_generator_factory),
+            ..EndpointConfig::default()
+        }),
+        Some(Arc::new(server_config())),
+    );
+    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None);
+
+    let mut pair = Pair::new_from_endpoint(client, server);
+    let (_, server_ch) = pair.connect();
+
+    let mut round: u64 = 1;
+    let mut stop = pair.time;
+    let end = pair.time + 5 * CID_TIMEOUT;
+
+    use crate::cid_queue::CidQueue;
+    use crate::LOC_CID_COUNT;
+    let mut active_cid_num = CidQueue::LEN as u64 + 1;
+    active_cid_num = active_cid_num.min(LOC_CID_COUNT);
+    let mut left_bound = 0;
+    let mut right_bound = active_cid_num - 1;
+
+    while pair.time < end {
+        stop += CID_TIMEOUT;
+        // Run a while until PushNewCID timer fires
+        while pair.time < stop {
+            if !pair.step() {
+                if let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
+                    pair.time = time;
+                }
+            }
+        }
+        info!(
+            "Checking active cid sequence range before {:?} seconds",
+            round * CID_TIMEOUT.as_secs()
+        );
+        let _bound = (left_bound, right_bound);
+        assert_matches!(
+            pair.server_conn_mut(server_ch).active_local_cid_seq(),
+            _bound
+        );
+        round += 1;
+        left_bound += active_cid_num;
+        right_bound += active_cid_num;
+        pair.drive_server();
+    }
+}
+
+#[test]
 fn cid_retirement() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
 
     // Server retires current active remote CIDs
-    pair.server_conn_mut(server_ch).rotate_local_cid(1);
+    pair.server_conn_mut(server_ch)
+        .rotate_local_cid(1, Instant::now());
     pair.drive();
     // Any unexpected behavior may trigger TransportError::CONNECTION_ID_LIMIT_ERROR
     assert!(!pair.client_conn_mut(client_ch).is_closed());
@@ -1197,7 +1281,7 @@ fn cid_retirement() {
     pair.client_conn_mut(client_ch).ping();
     // Server retires all valid remote CIDs
     pair.server_conn_mut(server_ch)
-        .rotate_local_cid(next_retire_prior_to);
+        .rotate_local_cid(next_retire_prior_to, Instant::now());
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(server_ch).is_closed());
@@ -1222,8 +1306,8 @@ fn finish_stream_flow_control_reordered() {
 
     // Issue flow control credit
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok(Some((ref data, 0))) if data == MSG
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     pair.server.drive(pair.time, pair.client.addr);
     pair.server.delay_outbound(); // Delay it
@@ -1244,7 +1328,10 @@ fn finish_stream_flow_control_reordered() {
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(None)
+    );
 }
 
 #[test]
@@ -1274,8 +1361,8 @@ fn handshake_1rtt_handling() {
 
     assert!(pair.client_conn_mut(client_ch).lost_packets() != 0);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok(Some((ref data, 0))) if data == MSG
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
 }
 
@@ -1520,11 +1607,11 @@ fn finish_acked() {
 
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok(Some((ref data, 0))) if data == MSG
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
         Err(ReadError::Blocked)
     );
 
@@ -1542,7 +1629,10 @@ fn finish_acked() {
         pair.client_conn_mut(client_ch).poll(),
         Some(Event::Stream(StreamEvent::Finished { id })) if id == s
     );
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(None)
+    );
 }
 
 #[test]
@@ -1582,10 +1672,13 @@ fn finish_retransmit() {
 
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(
-        pair.server_conn_mut(server_ch).read_unordered(s),
-        Ok(Some((ref data, 0))) if data == MSG
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
-    assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+    assert_matches!(
+        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        Ok(None)
+    );
 }
 
 /// Ensures that exchanging data on a client-initiated bidirectional stream works past the initial
@@ -1595,7 +1688,7 @@ fn repeated_request_response() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            stream_window_bidi: 1u32.into(),
+            max_concurrent_bidi_streams: 1u32.into(),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -1614,19 +1707,102 @@ fn repeated_request_response() {
 
         assert_eq!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(s));
         assert_matches!(
-            pair.server_conn_mut(server_ch).read_unordered(s),
-            Ok(Some((ref data, 0))) if data == REQUEST
+            pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+            Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == REQUEST
         );
-        assert_matches!(pair.server_conn_mut(server_ch).read_unordered(s), Ok(None));
+        assert_matches!(
+            pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+            Ok(None)
+        );
         pair.server_conn_mut(server_ch).write(s, RESPONSE).unwrap();
         pair.server_conn_mut(server_ch).finish(s).unwrap();
 
         pair.drive();
 
         assert_matches!(
-            pair.client_conn_mut(client_ch).read_unordered(s),
-            Ok(Some((ref data, 0))) if data == RESPONSE
+            pair.client_conn_mut(client_ch).read(s, usize::MAX, false),
+            Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == RESPONSE
         );
-        assert_matches!(pair.client_conn_mut(client_ch).read_unordered(s), Ok(None));
+        assert_matches!(
+            pair.client_conn_mut(client_ch).read(s, usize::MAX, false),
+            Ok(None)
+        );
+    }
+}
+
+#[test]
+fn read_chunks() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            max_concurrent_bidi_streams: 3u32.into(),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let (client_ch, server_ch) = pair.connect();
+    let mut empty = vec![];
+    let mut chunks = vec![Bytes::new(), Bytes::new()];
+    const ONE: &[u8] = b"ONE";
+    const TWO: &[u8] = b"TWO";
+    const THREE: &[u8] = b"THREE";
+    for _ in 0..3 {
+        let s = pair.client_conn_mut(client_ch).open(Dir::Bi).unwrap();
+
+        pair.client_conn_mut(client_ch).write(s, ONE).unwrap();
+        pair.drive();
+        pair.client_conn_mut(client_ch).write(s, TWO).unwrap();
+        pair.drive();
+        pair.client_conn_mut(client_ch).write(s, THREE).unwrap();
+
+        pair.drive();
+
+        assert_eq!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(s));
+
+        // Read into an empty slice can't do much you, but doesn't crash
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut empty),
+            Ok(Some(0))
+        );
+
+        // Read until `chunks` is filled
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(Some(2))
+        );
+        assert_eq!(&chunks, &[ONE, TWO]);
+
+        // Read the rest
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(Some(1))
+        );
+        assert_eq!(&chunks[..1], &[THREE]);
+
+        // We've read everything, stream is now blocked
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Err(ReadError::Blocked)
+        );
+
+        // Read a new chunk after we've been blocked
+        pair.client_conn_mut(client_ch).write(s, ONE).unwrap();
+        pair.drive();
+        assert_eq!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(Some(1))
+        );
+        assert_eq!(&chunks[..1], &[ONE]);
+
+        // Stream finishes by yeilding `Ok(None)`
+        pair.client_conn_mut(client_ch).finish(s).unwrap();
+        pair.drive();
+        assert_matches!(
+            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
+            Ok(None)
+        );
+
+        pair.drive();
     }
 }

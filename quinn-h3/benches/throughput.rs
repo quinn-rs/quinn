@@ -49,7 +49,7 @@ fn download(bench: &mut Bencher, frame_size: usize) {
     let mut ctx = Bench::default();
 
     let (addr, server) = ctx.spawn_server(download_server);
-    let (client, mut runtime) = ctx.make_client(addr);
+    let (client, runtime) = ctx.make_client(addr);
     let total_size = 10 * 1024 * 1024;
 
     bench.bytes = total_size as u64;
@@ -133,7 +133,7 @@ fn upload(bench: &mut Bencher, frame_size: usize) {
     let mut ctx = Bench::default();
 
     let (addr, server) = ctx.spawn_server(upload_server);
-    let (client, mut runtime) = ctx.make_client(addr);
+    let (client, runtime) = ctx.make_client(addr);
     let total_size = 10 * 1024 * 1024;
 
     bench.bytes = total_size as u64;

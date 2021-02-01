@@ -1,12 +1,15 @@
 use std::{io, net::SocketAddr, sync::Arc};
 
-use proto::generic::{ClientConfig, EndpointConfig, ServerConfig};
+use proto::{
+    generic::{ClientConfig, EndpointConfig, ServerConfig},
+    ConnectionIdGenerator,
+};
 use thiserror::Error;
 use tracing::error;
 
 use crate::{
     endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming},
-    udp::UdpSocket,
+    platform::UdpSocket,
 };
 #[cfg(feature = "rustls")]
 use crate::{Certificate, CertificateChain, PrivateKey};
@@ -98,6 +101,17 @@ where
     /// [`Endpoint::connect_with()`]: crate::generic::Endpoint::connect_with
     pub fn default_client_config(&mut self, config: ClientConfig<S>) -> &mut Self {
         self.default_client_config = config;
+        self
+    }
+
+    /// Use a customized cid generator factory in the endpoint
+    pub fn connection_id_generator<
+        F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static,
+    >(
+        &mut self,
+        factory: F,
+    ) -> &mut Self {
+        self.config.cid_generator(factory);
         self
     }
 }

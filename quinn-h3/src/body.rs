@@ -4,7 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use bytes::{Buf, Bytes, BytesMut};
+use bytes::{Bytes, BytesMut};
 use futures::{future, ready, Stream};
 use http::HeaderMap;
 use http_body::Body as HttpBody;
@@ -101,7 +101,7 @@ impl RecvBody {
         let mut me = self;
         let res: Result<(), Error> = future::poll_fn(|cx| {
             while let Some(d) = ready!(Pin::new(&mut me).poll_data(cx)) {
-                body.extend(d?.bytes());
+                body.extend(d?);
             }
             Poll::Ready(Ok(()))
         })

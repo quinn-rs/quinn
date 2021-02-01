@@ -7,17 +7,19 @@ use crate::MAX_CID_SIZE;
 
 /// Generates connection IDs for incoming connections
 pub trait ConnectionIdGenerator: Send {
-    /// Generates a new CID with finite lifetime
+    /// Generates a new CID
     ///
     /// Connection IDs MUST NOT contain any information that can be used by
     /// an external observer (that is, one that does not cooperate with the
     /// issuer) to correlate them with other connection IDs for the same
     /// connection.
-    ///
-    /// In the future, connection IDs will be retired after the returned `Duration`, if any.
-    fn generate_cid(&mut self) -> (ConnectionId, Option<Duration>);
+    fn generate_cid(&mut self) -> ConnectionId;
     /// Returns the length of a CID for cononections created by this generator
     fn cid_len(&self) -> usize;
+    /// Returns the lifetime of generated Connection IDs
+    ///
+    /// Connection IDs will be retired after the returned `Duration`, if any. Assumed to be constant.
+    fn cid_lifetime(&self) -> Option<Duration>;
 }
 
 /// Generates purely random connection IDs of a certain length
@@ -56,15 +58,19 @@ impl RandomConnectionIdGenerator {
 }
 
 impl ConnectionIdGenerator for RandomConnectionIdGenerator {
-    fn generate_cid(&mut self) -> (ConnectionId, Option<Duration>) {
+    fn generate_cid(&mut self) -> ConnectionId {
         let mut bytes_arr = [0; MAX_CID_SIZE];
         rand::thread_rng().fill_bytes(&mut bytes_arr[..self.cid_len]);
 
-        (ConnectionId::new(&bytes_arr[..self.cid_len]), self.lifetime)
+        ConnectionId::new(&bytes_arr[..self.cid_len])
     }
 
     /// Provide the length of dst_cid in short header packet
     fn cid_len(&self) -> usize {
         self.cid_len
+    }
+
+    fn cid_lifetime(&self) -> Option<Duration> {
+        self.lifetime
     }
 }

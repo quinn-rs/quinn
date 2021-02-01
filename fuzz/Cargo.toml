@@ -1,8 +1,11 @@
 [package]
-name = "quinn-fuzz"
-version = "0.0.0"
-authors = ["Automatically generated"]
+name = "fuzz"
+version = "0.1.0"
+authors = [
+    "Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>",
+]
 publish = false
+license = "MIT OR Apache-2.0"
 edition = "2018"
 
 [package.metadata]
@@ -18,10 +21,6 @@ path = "../quinn-proto"
 package = "quinn-proto"
 version = "0.6.1"
 
-# Prevent this from interfering with workspaces
-[workspace]
-members = ["."]
-
 [[bin]]
 name = "streams"
 path = "fuzz_targets/streams.rs"
@@ -31,5 +30,11 @@ doc = false
 [[bin]]
 name = "streamid"
 path = "fuzz_targets/streamid.rs"
+test = false
+doc = false
+
+[[bin]]
+name = "packet"
+path = "fuzz_targets/packet.rs"
 test = false
 doc = false

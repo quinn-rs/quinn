@@ -47,7 +47,7 @@ impl<'a> DynamicTableDecoder<'a> {
         self.table
             .fields
             .get(real_index)
-            .ok_or_else(|| Error::BadIndex(real_index))
+            .ok_or(Error::BadIndex(real_index))
     }
 
     pub(super) fn get_postbase(&self, index: usize) -> Result<&HeaderField, Error> {
@@ -55,7 +55,7 @@ impl<'a> DynamicTableDecoder<'a> {
         self.table
             .fields
             .get(real_index)
-            .ok_or_else(|| Error::BadIndex(real_index))
+            .ok_or(Error::BadIndex(real_index))
     }
 }
 
@@ -97,7 +97,7 @@ impl<'a> DynamicTableInserter<'a> {
         self.table
             .fields
             .get(real_index)
-            .ok_or_else(|| Error::BadIndex(real_index))
+            .ok_or(Error::BadIndex(real_index))
     }
 
     pub(super) fn total_inserted(&self) -> usize {

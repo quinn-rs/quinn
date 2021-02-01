@@ -3,7 +3,7 @@ use std::{
     fmt,
     future::Future,
     mem,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
@@ -15,9 +15,9 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
-use proto::{ConnectionError, ConnectionHandle, Dir, StreamEvent, StreamId};
+use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use thiserror::Error;
-use tokio::time::{delay_until, Delay, Instant as TokioInstant};
+use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use tracing::info_span;
 
 use crate::{
@@ -126,6 +126,27 @@ where
                     .clone()
                     .expect("spurious handshake data ready notification")
             })
+    }
+
+    /// The local IP address which was used when the peer established
+    /// the connection
+    ///
+    /// This can be different from the address the endpoint is bound to, in case
+    /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
+    ///
+    /// This will return `None` for clients.
+    ///
+    /// Retrieving the local IP address is currently supported on the following
+    /// platforms:
+    /// - Linux
+    ///
+    /// On all non-supported platforms the local IP address will not be available,
+    /// and the method will return `None`.
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        let conn = self.conn.as_ref().unwrap();
+        let inner = conn.lock().unwrap();
+
+        inner.inner.local_ip()
     }
 }
 
@@ -255,7 +276,9 @@ where
     S: proto::crypto::Session,
 {
     type Output = ();
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+
+    #[allow(unused_mut)] // MSRV
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.lock().unwrap();
 
         let span = info_span!("drive", id = conn.handle.0);
@@ -397,9 +420,32 @@ where
         self.0.lock().unwrap().inner.remote_address()
     }
 
+    /// The local IP address which was used when the peer established
+    /// the connection
+    ///
+    /// This can be different from the address the endpoint is bound to, in case
+    /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
+    ///
+    /// This will return `None` for clients.
+    ///
+    /// Retrieving the local IP address is currently supported on the following
+    /// platforms:
+    /// - Linux
+    ///
+    /// On all non-supported platforms the local IP address will not be available,
+    /// and the method will return `None`.
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        self.0.lock().unwrap().inner.local_ip()
+    }
+
     /// Current best estimate of this connection's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
         self.0.lock().unwrap().inner.rtt()
+    }
+
+    /// Returns connection statistics
+    pub fn stats(&self) -> ConnectionStats {
+        self.0.lock().unwrap().inner.stats()
     }
 
     /// Parameters negotiated during the handshake
@@ -726,7 +772,7 @@ where
     on_handshake_data: Option<oneshot::Sender<()>>,
     on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
-    timer: Option<Delay>,
+    timer: Option<Pin<Box<Sleep>>>,
     timer_deadline: Option<TokioInstant>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
@@ -878,10 +924,10 @@ where
                         .map(|current_deadline| current_deadline != deadline)
                         .unwrap_or(true)
                     {
-                        delay.reset(deadline);
+                        delay.as_mut().reset(deadline);
                     }
                 } else {
-                    self.timer = Some(delay_until(deadline));
+                    self.timer = Some(Box::pin(sleep_until(deadline)));
                 }
                 // Store the actual expiration time of the timer
                 self.timer_deadline = Some(deadline);
@@ -896,8 +942,12 @@ where
             return false;
         }
 
-        let delay = self.timer.as_mut().expect("timer must exist in this state");
-        if delay.poll_unpin(cx).is_pending() {
+        let delay = self
+            .timer
+            .as_mut()
+            .expect("timer must exist in this state")
+            .as_mut();
+        if delay.poll(cx).is_pending() {
             // Since there wasn't a timeout event, there is nothing new
             // for the connection to do
             return false;

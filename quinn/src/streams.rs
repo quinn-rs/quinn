@@ -1,7 +1,6 @@
 use std::{
     future::Future,
     io,
-    mem::MaybeUninit,
     pin::Pin,
     task::{Context, Poll},
 };
@@ -12,8 +11,9 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready, FutureExt,
 };
-use proto::{ConnectionError, FinishError, StreamId};
+use proto::{Chunk, ConnectionError, FinishError, StreamId};
 use thiserror::Error;
+use tokio::io::ReadBuf;
 
 use crate::{connection::ConnectionRef, VarInt};
 
@@ -148,6 +148,25 @@ where
         conn.inner.reset(self.stream, error_code)?;
         conn.wake();
         Ok(())
+    }
+
+    /// Set the priority of the send stream
+    ///
+    /// Every send stream has an initial priority of 0. Locally buffered data from streams with
+    /// higher priority will be transmitted before data from streams with lower priority. Changing
+    /// the priority of a stream with pending data may only take effect after that data has been
+    /// transmitted. Using many different priority levels per connection may have a negative
+    /// impact on performance.
+    pub fn set_priority(&self, priority: i32) -> Result<(), UnknownStream> {
+        let mut conn = self.conn.lock().unwrap();
+        conn.inner.set_priority(self.stream, priority)?;
+        Ok(())
+    }
+
+    /// Get the priority of the send stream
+    pub fn priority(&self) -> Result<i32, UnknownStream> {
+        let mut conn = self.conn.lock().unwrap();
+        Ok(conn.inner.priority(self.stream)?)
     }
 
     /// Completes if/when the peer stops the stream, yielding the error code
@@ -300,7 +319,6 @@ where
     stream: StreamId,
     is_0rtt: bool,
     all_data_read: bool,
-    any_data_read: bool,
 }
 
 impl<S> RecvStream<S>
@@ -313,7 +331,6 @@ where
             stream,
             is_0rtt,
             all_data_read: false,
-            any_data_read: false,
         }
     }
 
@@ -331,7 +348,10 @@ where
     ///
     /// [`read_unordered()`]: RecvStream::read_unordered
     pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'a, S> {
-        Read { stream: self, buf }
+        Read {
+            stream: self,
+            buf: ReadBuf::new(buf),
+        }
     }
 
     /// Read an exact number of bytes contiguously from the stream.
@@ -342,93 +362,73 @@ where
     pub fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExact<'a, S> {
         ReadExact {
             stream: self,
-            off: 0,
-            buf,
+            buf: ReadBuf::new(buf),
         }
     }
 
     fn poll_read(
         &mut self,
         cx: &mut Context,
-        buf: &mut [u8],
-    ) -> Poll<Result<Option<usize>, ReadError>> {
-        self.any_data_read = true;
-        use proto::ReadError::*;
-        let mut conn = self.conn.lock().unwrap();
-        if self.is_0rtt {
-            conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
-        }
-        match conn.inner.read(self.stream, buf) {
-            Ok(Some(n)) => {
-                // Flow control credit may have been issued
-                conn.wake();
-                Poll::Ready(Ok(Some(n)))
-            }
-            Ok(None) => {
-                self.all_data_read = true;
-                Poll::Ready(Ok(None))
-            }
-            Err(Blocked) => {
-                if let Some(ref x) = conn.error {
-                    return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
-                }
-                conn.blocked_readers.insert(self.stream, cx.waker().clone());
-                Poll::Pending
-            }
-            Err(Reset(error_code)) => {
-                self.all_data_read = true;
-                Poll::Ready(Err(ReadError::Reset(error_code)))
-            }
-            Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
-            Err(IllegalOrderedRead) => Poll::Ready(Err(ReadError::IllegalOrderedRead)),
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<Result<(), ReadError>> {
+        self.poll_read_generic(cx, |conn, stream| {
+            conn.inner
+                .read(stream, buf.remaining(), true)
+                .map(|val| val.map(|chunk| buf.put_slice(&chunk.bytes)))
+        })
+        .map(|res| res.map(|_| ()))
+    }
+
+    /// Read the next segment of data
+    ///
+    /// Yields `None` if the stream was finished. Otherwise, yields a segment of data and its
+    /// offset in the stream. If `ordered` is `true`, the chunk's offset will be immediately after
+    /// the last data yielded by `read()` or `read_chunk()`. If `ordered` is `false`, segments may
+    /// be received in any order, and the `Chunk`'s `offset` field can be used to determine
+    /// ordering in the caller. Unordered reads have reduced overhead and higher throughput, and
+    /// should therefore be preferred when applicable.
+    ///
+    /// Slightly more efficient than `read` due to not copying. Chunk boundaries do not correspond
+    /// to peer writes, and hence cannot be used as framing.
+    pub fn read_chunk(&mut self, max_length: usize, ordered: bool) -> ReadChunk<'_, S> {
+        ReadChunk {
+            stream: self,
+            max_length,
+            ordered,
         }
     }
 
-    /// Read a segment of data from any offset in the stream.
-    ///
-    /// Yields a segment of data and their offset in the stream, or `None` if the stream was
-    /// finished. Segments may be received in any order and may overlap.
-    ///
-    /// Unordered reads have reduced overhead and higher throughput, and should therefore be
-    /// preferred when applicable.
-    pub fn read_unordered(&mut self) -> ReadUnordered<'_, S> {
-        ReadUnordered { stream: self }
-    }
-
-    fn poll_read_unordered(
+    /// Foundation of [`read_chunk()`]: RecvStream::read_chunk
+    fn poll_read_chunk(
         &mut self,
         cx: &mut Context,
-    ) -> Poll<Result<Option<(Bytes, u64)>, ReadError>> {
-        self.any_data_read = true;
-        use proto::ReadError::*;
-        let mut conn = self.conn.lock().unwrap();
-        if self.is_0rtt {
-            conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
-        }
-        match conn.inner.read_unordered(self.stream) {
-            Ok(Some((bytes, offset))) => {
-                // Flow control credit may have been issued
-                conn.wake();
-                Poll::Ready(Ok(Some((bytes, offset))))
-            }
-            Ok(None) => {
-                self.all_data_read = true;
-                Poll::Ready(Ok(None))
-            }
-            Err(Blocked) => {
-                if let Some(ref x) = conn.error {
-                    return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
-                }
-                conn.blocked_readers.insert(self.stream, cx.waker().clone());
-                Poll::Pending
-            }
-            Err(Reset(error_code)) => {
-                self.all_data_read = true;
-                Poll::Ready(Err(ReadError::Reset(error_code)))
-            }
-            Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
-            Err(IllegalOrderedRead) => Poll::Ready(Err(ReadError::IllegalOrderedRead)),
-        }
+        max_length: usize,
+        ordered: bool,
+    ) -> Poll<Result<Option<Chunk>, ReadError>> {
+        self.poll_read_generic(cx, |conn, stream| {
+            conn.inner.read(stream, max_length, ordered)
+        })
+    }
+
+    /// Read the next segments of data
+    ///
+    /// Fills `bufs` with the segments of data beginning immediately after the
+    /// last data yielded by `read` or `read_chunk`, or `None` if the stream was
+    /// finished.
+    ///
+    /// Slightly more efficient than `read` due to not copying. Chunk boundaries
+    /// do not correspond to peer writes, and hence cannot be used as framing.
+    pub fn read_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> ReadChunks<'a, S> {
+        ReadChunks { stream: self, bufs }
+    }
+
+    /// Foundation of [`read_chunks()`]: RecvStream::read_chunks
+    fn poll_read_chunks(
+        &mut self,
+        cx: &mut Context,
+        bufs: &mut [Bytes],
+    ) -> Poll<Result<Option<usize>, ReadError>> {
+        self.poll_read_generic(cx, |conn, stream| conn.inner.read_chunks(stream, bufs))
     }
 
     /// Convenience method to read all remaining data into a buffer
@@ -453,8 +453,8 @@ where
 
     /// Stop accepting data
     ///
-    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, a stream
-    /// cannot be read from any further.
+    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
+    /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
         let mut conn = self.conn.lock().unwrap();
         if self.is_0rtt && conn.check_0rtt().is_err() {
@@ -477,6 +477,49 @@ where
     /// Get the identity of this stream
     pub fn id(&self) -> StreamId {
         self.stream
+    }
+
+    fn poll_read_generic<T, U>(
+        &mut self,
+        cx: &mut Context,
+        mut read_fn: T,
+    ) -> Poll<Result<Option<U>, ReadError>>
+    where
+        T: FnMut(
+            &mut crate::connection::ConnectionInner<S>,
+            StreamId,
+        ) -> Result<Option<U>, proto::ReadError>,
+    {
+        use proto::ReadError::*;
+        let mut conn = self.conn.lock().unwrap();
+        if self.is_0rtt {
+            conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
+        }
+        match read_fn(&mut conn, self.stream) {
+            Ok(Some(u)) => {
+                if conn.inner.has_pending_retransmits() {
+                    conn.wake()
+                }
+                Poll::Ready(Ok(Some(u)))
+            }
+            Ok(None) => {
+                self.all_data_read = true;
+                Poll::Ready(Ok(None))
+            }
+            Err(Blocked) => {
+                if let Some(ref x) = conn.error {
+                    return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
+                }
+                conn.blocked_readers.insert(self.stream, cx.waker().clone());
+                Poll::Pending
+            }
+            Err(Reset(error_code)) => {
+                self.all_data_read = true;
+                Poll::Ready(Err(ReadError::Reset(error_code)))
+            }
+            Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
+            Err(IllegalOrderedRead) => Poll::Ready(Err(ReadError::IllegalOrderedRead)),
+        }
     }
 }
 
@@ -501,15 +544,15 @@ where
     type Output = Result<Vec<u8>, ReadToEndError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {
-            match ready!(self.stream.poll_read_unordered(cx))? {
-                Some((data, offset)) => {
-                    self.start = self.start.min(offset);
-                    let end = data.len() as u64 + offset;
+            match ready!(self.stream.poll_read_chunk(cx, usize::MAX, false))? {
+                Some(chunk) => {
+                    self.start = self.start.min(chunk.offset);
+                    let end = chunk.bytes.len() as u64 + chunk.offset;
                     if (end - self.start) > self.size_limit as u64 {
                         return Poll::Ready(Err(ReadToEndError::TooLong));
                     }
                     self.end = self.end.max(end);
-                    self.read.push((data, offset));
+                    self.read.push((chunk.bytes, chunk.offset));
                 }
                 None => {
                     if self.end == 0 {
@@ -551,12 +594,9 @@ where
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        Poll::Ready(Ok(
-            match ready!(RecvStream::poll_read(self.get_mut(), cx, buf))? {
-                Some(n) => n,
-                None => 0,
-            },
-        ))
+        let mut buf = ReadBuf::new(buf);
+        ready!(RecvStream::poll_read(self.get_mut(), cx, &mut buf))?;
+        Poll::Ready(Ok(buf.filled().len()))
     }
 }
 
@@ -564,16 +604,13 @@ impl<S> tokio::io::AsyncRead for RecvStream<S>
 where
     S: proto::crypto::Session,
 {
-    unsafe fn prepare_uninitialized_buffer(&self, _: &mut [MaybeUninit<u8>]) -> bool {
-        false
-    }
-
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
-        buf: &mut [u8],
-    ) -> Poll<io::Result<usize>> {
-        AsyncRead::poll_read(self, cx, buf)
+        buf: &mut ReadBuf<'_>,
+    ) -> Poll<io::Result<()>> {
+        ready!(RecvStream::poll_read(self.get_mut(), cx, buf))?;
+        Poll::Ready(Ok(()))
     }
 }
 
@@ -605,7 +642,7 @@ pub enum ReadError {
     /// The connection was closed.
     #[error("connection closed: {0}")]
     ConnectionClosed(ConnectionError),
-    /// Unknown stream
+    /// The stream has already been stopped, finished, or reset
     #[error("unknown stream")]
     UnknownStream,
     /// Attempted an ordered read following an unordered read
@@ -628,11 +665,8 @@ impl From<ReadError> for io::Error {
     fn from(x: ReadError) -> Self {
         use self::ReadError::*;
         let kind = match x {
-            ConnectionClosed(e) => {
-                return e.into();
-            }
             Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            UnknownStream => io::ErrorKind::NotConnected,
+            ConnectionClosed(_) | UnknownStream => io::ErrorKind::NotConnected,
             IllegalOrderedRead => io::ErrorKind::InvalidInput,
         };
         io::Error::new(kind, x)
@@ -650,7 +684,7 @@ pub enum WriteError {
     /// The connection was closed.
     #[error("connection closed: {0}")]
     ConnectionClosed(#[source] ConnectionError),
-    /// Unknown stream
+    /// The stream has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
     /// This was a 0-RTT stream and the server rejected it.
@@ -669,7 +703,7 @@ pub enum StoppedError {
     /// The connection was closed.
     #[error("connection closed: {0}")]
     ConnectionClosed(#[source] ConnectionError),
-    /// Unknown stream
+    /// The stream has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
     /// This was a 0-RTT stream and the server rejected it.
@@ -686,11 +720,8 @@ impl From<WriteError> for io::Error {
     fn from(x: WriteError) -> Self {
         use self::WriteError::*;
         let kind = match x {
-            ConnectionClosed(e) => {
-                return e.into();
-            }
             Stopped(_) | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            UnknownStream => io::ErrorKind::NotConnected,
+            ConnectionClosed(_) | UnknownStream => io::ErrorKind::NotConnected,
         };
         io::Error::new(kind, x)
     }
@@ -704,7 +735,7 @@ where
     S: proto::crypto::Session,
 {
     stream: &'a mut RecvStream<S>,
-    buf: &'a mut [u8],
+    buf: ReadBuf<'a>,
 }
 
 impl<'a, S> Future for Read<'a, S>
@@ -712,9 +743,14 @@ where
     S: proto::crypto::Session,
 {
     type Output = Result<Option<usize>, ReadError>;
+
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        this.stream.poll_read(cx, this.buf)
+        ready!(this.stream.poll_read(cx, &mut this.buf))?;
+        match this.buf.filled().len() {
+            0 => Poll::Ready(Ok(None)),
+            n => Poll::Ready(Ok(Some(n))),
+        }
     }
 }
 
@@ -726,8 +762,7 @@ where
     S: proto::crypto::Session,
 {
     stream: &'a mut RecvStream<S>,
-    off: usize,
-    buf: &'a mut [u8],
+    buf: ReadBuf<'a>,
 }
 
 impl<'a, S> Future for ReadExact<'a, S>
@@ -737,13 +772,14 @@ where
     type Output = Result<(), ReadExactError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        while this.buf.len() != this.off {
-            let n: usize = ready!(this
-                .stream
-                .poll_read(cx, &mut this.buf[this.off..])
-                .map_err(ReadExactError::ReadError)?)
-            .ok_or(ReadExactError::FinishedEarly)?;
-            this.off += n;
+        let mut remaining = this.buf.remaining();
+        while remaining > 0 {
+            ready!(this.stream.poll_read(cx, &mut this.buf))?;
+            let new = this.buf.remaining();
+            if new == remaining {
+                return Poll::Ready(Err(ReadExactError::FinishedEarly));
+            }
+            remaining = new;
         }
         Poll::Ready(Ok(()))
     }
@@ -757,26 +793,51 @@ pub enum ReadExactError {
     FinishedEarly,
     /// A read error occurred
     #[error("{0}")]
-    ReadError(#[source] ReadError),
+    ReadError(#[from] ReadError),
 }
 
-/// Future produced by [`RecvStream::read_unordered()`].
+/// Future produced by [`RecvStream::read_chunk()`].
 ///
-/// [`RecvStream::read_unordered()`]: crate::generic::RecvStream::read_unordered
-pub struct ReadUnordered<'a, S>
+/// [`RecvStream::read_chunk()`]: crate::generic::RecvStream::read_chunk
+pub struct ReadChunk<'a, S>
 where
     S: proto::crypto::Session,
 {
     stream: &'a mut RecvStream<S>,
+    max_length: usize,
+    ordered: bool,
 }
 
-impl<'a, S> Future for ReadUnordered<'a, S>
+impl<'a, S> Future for ReadChunk<'a, S>
 where
     S: proto::crypto::Session,
 {
-    type Output = Result<Option<(Bytes, u64)>, ReadError>;
+    type Output = Result<Option<Chunk>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.stream.poll_read_unordered(cx)
+        let (max_length, ordered) = (self.max_length, self.ordered);
+        self.stream.poll_read_chunk(cx, max_length, ordered)
+    }
+}
+
+/// Future produced by [`RecvStream::read_chunks()`].
+///
+/// [`RecvStream::read_chunks()`]: crate::generic::RecvStream::read_chunks
+pub struct ReadChunks<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut RecvStream<S>,
+    bufs: &'a mut [Bytes],
+}
+
+impl<'a, S> Future for ReadChunks<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    type Output = Result<Option<usize>, ReadError>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        this.stream.poll_read_chunks(cx, this.bufs)
     }
 }
 
@@ -830,11 +891,15 @@ where
     }
 }
 
-#[derive(Debug)]
-pub struct UnknownStream {}
+/// Error indicating that a stream has already been finished or reset
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("unknown stream")]
+pub struct UnknownStream {
+    _private: (),
+}
 
 impl From<proto::UnknownStream> for UnknownStream {
     fn from(_: proto::UnknownStream) -> Self {
-        UnknownStream {}
+        UnknownStream { _private: () }
     }
 }

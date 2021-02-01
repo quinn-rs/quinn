@@ -2,7 +2,7 @@ use std::{
     collections::{HashMap, VecDeque},
     convert::TryFrom,
     fmt, iter,
-    net::SocketAddr,
+    net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
     sync::Arc,
     time::{Duration, Instant, SystemTime},
@@ -58,7 +58,6 @@ where
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig<S>>,
     server_config: Option<Arc<ServerConfig<S>>>,
-    incoming_handshakes: usize,
     /// Whether incoming connections should be unconditionally rejected by a server
     ///
     /// Equivalent to a `ServerConfig.accept_buffer` of `0`, but can be changed after the endpoint is constructed.
@@ -85,7 +84,6 @@ where
             connection_reset_tokens: ResetTokenTable::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
-            incoming_handshakes: 0,
             reject_new_connections: false,
             config,
             server_config,
@@ -97,6 +95,7 @@ where
     }
 
     /// Get the next packet to transmit
+    #[must_use]
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
         self.transmits.pop_front()
     }
@@ -111,8 +110,8 @@ where
     ) -> Option<ConnectionEvent> {
         use EndpointEventInner::*;
         match event.0 {
-            NeedIdentifiers(n) => {
-                return Some(self.send_new_identifiers(ch, n));
+            NeedIdentifiers(now, n) => {
+                return Some(self.send_new_identifiers(now, ch, n));
             }
             ResetToken(remote, token) => {
                 if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
@@ -122,12 +121,12 @@ where
                     warn!("duplicate reset token");
                 }
             }
-            RetireConnectionId(seq, allow_more_cid) => {
+            RetireConnectionId(now, seq, allow_more_cids) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
                     trace!("peer retired CID {}: {}", seq, cid);
                     self.connection_ids.remove(&cid);
-                    if allow_more_cid {
-                        return Some(self.send_new_identifiers(ch, 1));
+                    if allow_more_cids {
+                        return Some(self.send_new_identifiers(now, ch, 1));
                     }
                 }
             }
@@ -153,6 +152,7 @@ where
         &mut self,
         now: Instant,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
     ) -> Option<(ConnectionHandle, DatagramEvent<S>)> {
@@ -189,6 +189,8 @@ where
                         destination: remote,
                         ecn: None,
                         contents: buf,
+                        segment_size: None,
+                        src_ip: local_ip,
                     });
                     return None;
                 }
@@ -252,7 +254,7 @@ where
 
         if !self.is_server() {
             debug!("packet for unrecognized connection {}", dst_cid);
-            self.stateless_reset(datagram_len, remote, &dst_cid);
+            self.stateless_reset(datagram_len, remote, local_ip, &dst_cid);
             return None;
         }
 
@@ -272,7 +274,7 @@ where
             let crypto = S::initial_keys(&dst_cid, Side::Server);
             return match first_decode.finish(Some(&crypto.header.remote)) {
                 Ok(packet) => self
-                    .handle_first_packet(now, remote, ecn, packet, remaining, &crypto)
+                    .handle_first_packet(now, remote, local_ip, ecn, packet, remaining, &crypto)
                     .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
                 Err(e) => {
                     trace!("unable to decode initial packet: {}", e);
@@ -287,7 +289,7 @@ where
         //
 
         if !dst_cid.is_empty() {
-            self.stateless_reset(datagram_len, remote, &dst_cid);
+            self.stateless_reset(datagram_len, remote, local_ip, &dst_cid);
         } else {
             trace!("dropping unrecognized short packet without ID");
         }
@@ -298,6 +300,7 @@ where
         &mut self,
         inciting_dgram_len: usize,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         dst_cid: &ConnectionId,
     ) {
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
@@ -320,7 +323,7 @@ where
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
             max_padding_len
         } else {
-            self.rng.gen_range(IDEAL_MIN_PADDING_LEN, max_padding_len)
+            self.rng.gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
         };
         buf.reserve_exact(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);
@@ -334,6 +337,8 @@ where
             destination: remote,
             ecn: None,
             contents: buf,
+            segment_size: None,
+            src_ip: local_ip,
         });
     }
 
@@ -347,12 +352,16 @@ where
         if self.is_full() {
             return Err(ConnectError::TooManyConnections);
         }
-        let (remote_id, _) = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
+        if remote.port() == 0 {
+            return Err(ConnectError::InvalidRemoteAddress(remote));
+        }
+        let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
         let (ch, conn) = self.add_connection(
             remote_id,
             remote_id,
             remote,
+            None,
             ConnectionOpts::Client {
                 config,
                 server_name: server_name.into(),
@@ -362,10 +371,15 @@ where
         Ok((ch, conn))
     }
 
-    fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: u64) -> ConnectionEvent {
+    fn send_new_identifiers(
+        &mut self,
+        now: Instant,
+        ch: ConnectionHandle,
+        num: u64,
+    ) -> ConnectionEvent {
         let mut ids = vec![];
         for _ in 0..num {
-            let (id, _) = self.new_cid();
+            let id = self.new_cid();
             self.connection_ids.insert(id, ch);
             let meta = &mut self.connections[ch];
             meta.cids_issued += 1;
@@ -377,14 +391,14 @@ where
                 reset_token: ResetToken::new(&*self.config.reset_key, &id),
             });
         }
-        ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids))
+        ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
     }
 
-    fn new_cid(&mut self) -> (ConnectionId, Option<Duration>) {
+    fn new_cid(&mut self) -> ConnectionId {
         loop {
-            let (cid, lifetime) = self.local_cid_generator.generate_cid();
+            let cid = self.local_cid_generator.generate_cid();
             if !self.connection_ids.contains_key(&cid) {
-                break (cid, lifetime);
+                break cid;
             }
             assert!(self.local_cid_generator.cid_len() > 0);
         }
@@ -395,10 +409,11 @@ where
         init_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         opts: ConnectionOpts<S>,
         now: Instant,
     ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
-        let (loc_cid, _) = self.new_cid();
+        let loc_cid = self.new_cid();
         let (server_config, tls, transport_config) = match opts {
             ConnectionOpts::Client {
                 config,
@@ -450,9 +465,10 @@ where
             loc_cid,
             rem_cid,
             remote,
+            local_ip,
             tls,
+            self.local_cid_generator.as_ref(),
             now,
-            self.local_cid_generator.cid_len(),
         );
         let id = self.connections.insert(ConnectionMeta {
             init_cid,
@@ -475,6 +491,7 @@ where
         &mut self,
         now: Instant,
         remote: SocketAddr,
+        local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         rest: Option<BytesMut>,
@@ -511,16 +528,17 @@ where
         }
 
         // Local CID used for stateless packets
-        let (temp_loc_cid, _) = self.new_cid();
+        let temp_loc_cid = self.new_cid();
         let server_config = self.server_config.as_ref().unwrap();
 
-        if self.incoming_handshakes == server_config.accept_buffer as usize
+        if self.connections.len() >= server_config.concurrent_connections as usize
             || self.reject_new_connections
             || self.is_full()
         {
-            debug!("rejecting connection due to full accept buffer");
+            debug!("refusing connection");
             self.initial_close(
                 remote,
+                local_ip,
                 crypto,
                 &src_cid,
                 &temp_loc_cid,
@@ -539,6 +557,7 @@ where
             );
             self.initial_close(
                 remote,
+                local_ip,
                 crypto,
                 &src_cid,
                 &temp_loc_cid,
@@ -575,6 +594,8 @@ where
                     destination: remote,
                     ecn: None,
                     contents: buf,
+                    segment_size: None,
+                    src_ip: local_ip,
                 });
                 return None;
             }
@@ -593,6 +614,7 @@ where
                     debug!("rejecting invalid stateless retry token");
                     self.initial_close(
                         remote,
+                        local_ip,
                         crypto,
                         &src_cid,
                         &temp_loc_cid,
@@ -610,6 +632,7 @@ where
                 dst_cid,
                 src_cid,
                 remote,
+                local_ip,
                 ConnectionOpts::Server {
                     retry_src_cid,
                     orig_dst_cid,
@@ -623,14 +646,13 @@ where
         match conn.handle_first_packet(now, remote, ecn, packet_number as u64, packet, rest) {
             Ok(()) => {
                 trace!(id = ch.0, icid = %dst_cid, "connection incoming");
-                self.incoming_handshakes += 1;
                 Some((ch, conn))
             }
             Err(e) => {
                 debug!("handshake failed: {}", e);
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 if let ConnectionError::TransportError(e) = e {
-                    self.initial_close(remote, crypto, &src_cid, &temp_loc_cid, e);
+                    self.initial_close(remote, local_ip, crypto, &src_cid, &temp_loc_cid, e);
                 }
                 None
             }
@@ -640,6 +662,7 @@ where
     fn initial_close(
         &mut self,
         destination: SocketAddr,
+        local_ip: Option<IpAddr>,
         crypto: &Keys<S>,
         remote_id: &ConnectionId,
         local_id: &ConnectionId,
@@ -667,17 +690,9 @@ where
             destination,
             ecn: None,
             contents: buf,
+            segment_size: None,
+            src_ip: local_ip,
         })
-    }
-
-    /// Free a handshake slot for reuse
-    ///
-    /// Every time an [`DatagramEvent::NewConnection`] is yielded by `Endpoint::handle`, a slot is
-    /// consumed, up to a limit of [`ServerConfig.accept_buffer`]. Calling this indicates the
-    /// application's acceptance of that connection and releases the slot for reuse.
-    pub fn accept(&mut self) {
-        // Don't overflow if a buggy caller invokes this too many times.
-        self.incoming_handshakes = self.incoming_handshakes.saturating_sub(1);
     }
 
     /// Unconditionally reject future incoming connections
@@ -734,7 +749,6 @@ where
             .field("connections", &self.connections)
             .field("config", &self.config)
             .field("server_config", &self.server_config)
-            .field("incoming_handshakes", &self.incoming_handshakes)
             .field("reject_new_connections", &self.reject_new_connections)
             .finish()
     }
@@ -822,6 +836,11 @@ pub enum ConnectError {
     /// The transport configuration was invalid
     #[error("transport configuration error: {0}")]
     Config(#[source] ConfigError),
+    /// The remote [`SocketAddr`] supplied was malformed
+    ///
+    /// Examples include attempting to connect to port 0, or using an inappropriate address family.
+    #[error("invalid remote address: {0}")]
+    InvalidRemoteAddress(SocketAddr),
 }
 
 #[derive(Default, Debug)]

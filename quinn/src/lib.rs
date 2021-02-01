@@ -56,10 +56,9 @@ mod connection;
 mod endpoint;
 mod platform;
 mod streams;
-mod udp;
 
 pub use proto::{
-    crypto, ApplicationClose, Certificate, CertificateChain, ConnectError, ConnectionClose,
+    crypto, ApplicationClose, Certificate, CertificateChain, Chunk, ConnectError, ConnectionClose,
     ConnectionError, ParseError, PrivateKey, StreamId, Transmit, TransportConfig, VarInt,
 };
 
@@ -75,7 +74,7 @@ pub mod generic {
         OpenBi, OpenUni,
     };
     pub use crate::endpoint::{Endpoint, Incoming};
-    pub use crate::streams::{Read, ReadExact, ReadToEnd, ReadUnordered, RecvStream, SendStream};
+    pub use crate::streams::{Read, ReadExact, ReadToEnd, RecvStream, SendStream};
     pub use proto::generic::{ClientConfig, ServerConfig};
 }
 
@@ -124,8 +123,6 @@ mod rustls_impls {
     pub type ReadExact<'a> = generic::ReadExact<'a, TlsSession>;
     /// A `ReadToEnd` using rustls for the cryptography protocol
     pub type ReadToEnd = generic::ReadToEnd<TlsSession>;
-    /// A `ReadUnordered` using rustls for the cryptography protocol
-    pub type ReadUnordered<'a> = generic::ReadUnordered<'a, TlsSession>;
     /// A `RecvStream` using rustls for the cryptography protocol
     pub type RecvStream = generic::RecvStream<TlsSession>;
     /// A `SendStream` using rustls for the cryptography protocol

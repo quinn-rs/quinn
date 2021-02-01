@@ -1,7 +1,7 @@
 use std::{cmp, net::SocketAddr, time::Duration, time::Instant};
 
 use super::pacing::Pacer;
-use crate::{congestion, TIMER_GRANULARITY};
+use crate::{congestion, MIN_MTU, TIMER_GRANULARITY};
 
 /// Description of a particular network path
 pub struct PathData {
@@ -15,6 +15,16 @@ pub struct PathData {
     pub pacing: Pacer,
     pub challenge: Option<u64>,
     pub challenge_pending: bool,
+    /// Whether we're certain the peer can both send and receive on this address
+    ///
+    /// Initially equal to `use_stateless_retry` for servers, and becomes false again on every
+    /// migration. Always true for clients.
+    pub validated: bool,
+    /// Total size of all UDP datagrams sent on this path
+    pub total_sent: u64,
+    /// Total size of all UDP datagrams received on this path
+    pub total_recvd: u64,
+    pub mtu: u16,
 }
 
 impl PathData {
@@ -23,29 +33,45 @@ impl PathData {
         initial_rtt: Duration,
         congestion: Box<dyn congestion::Controller>,
         now: Instant,
+        validated: bool,
     ) -> Self {
         PathData {
             remote,
             rtt: RttEstimator::new(initial_rtt),
             sending_ecn: true,
-            pacing: Pacer::new(congestion.initial_window(), now),
+            pacing: Pacer::new(initial_rtt, congestion.initial_window(), MIN_MTU, now),
             congestion,
             challenge: None,
             challenge_pending: false,
+            validated,
+            total_sent: 0,
+            total_recvd: 0,
+            mtu: MIN_MTU,
         }
     }
 
     pub fn from_previous(remote: SocketAddr, prev: &PathData, now: Instant) -> Self {
         let congestion = prev.congestion.clone_box();
+        let smoothed_rtt = prev.rtt.get();
         PathData {
             remote,
             rtt: prev.rtt,
-            pacing: Pacer::new(congestion.initial_window(), now),
+            pacing: Pacer::new(smoothed_rtt, congestion.window(), prev.mtu, now),
             sending_ecn: true,
             congestion,
             challenge: None,
             challenge_pending: false,
+            validated: false,
+            total_sent: 0,
+            total_recvd: 0,
+            mtu: prev.mtu,
         }
+    }
+
+    /// Indicates whether we're a server that hasn't validated the peer's address and hasn't
+    /// received enough data from the peer to permit sending `bytes_to_send` additional bytes
+    pub fn anti_amplification_blocked(&self, bytes_to_send: u64) -> bool {
+        !self.validated && self.total_recvd * 3 < self.total_sent + bytes_to_send
     }
 }
 

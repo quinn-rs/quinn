@@ -1,9 +1,6 @@
-//! Demonstrates how to make a QUIC connection that ignores the server certificate.
+//! This example demonstrates how to make a QUIC connection that ignores the server certificate.
 //!
-//! Run:
-//! ```text
-//! $ cargo run --example insecure_connection --features="rustls/dangerous_configuration"
-//! ```
+//! Checkout the `README.md` for guidance.
 
 use futures::StreamExt;
 use std::{error::Error, net::SocketAddr, sync::Arc};

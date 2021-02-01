@@ -524,7 +524,7 @@ impl Iter {
             Type::RESET_STREAM => Frame::ResetStream(ResetStream {
                 id: self.bytes.get()?,
                 error_code: self.bytes.get()?,
-                final_offset: self.bytes.get_var()?,
+                final_offset: self.bytes.get()?,
             }),
             Type::CONNECTION_CLOSE => Frame::Close(Close::Connection(ConnectionClose {
                 error_code: self.bytes.get()?,
@@ -583,13 +583,12 @@ impl Iter {
                 let delay = self.bytes.get_var()?;
                 let extra_blocks = self.bytes.get_var()? as usize;
                 let start = self.bytes.position() as usize;
-                let len = scan_ack_blocks(&self.bytes.bytes()[..], largest, extra_blocks)
-                    .ok_or(UnexpectedEnd)?;
-                self.bytes.advance(len);
+                scan_ack_blocks(&mut self.bytes, largest, extra_blocks)?;
+                let end = self.bytes.position() as usize;
                 Frame::Ack(Ack {
                     delay,
                     largest,
-                    additional: self.bytes.get_ref().slice(start..(start + len)),
+                    additional: self.bytes.get_ref().slice(start..end),
                     ecn: if ty != Type::ACK_ECN {
                         None
                     } else {
@@ -694,17 +693,16 @@ impl Iterator for Iter {
     }
 }
 
-fn scan_ack_blocks(packet: &[u8], largest: u64, n: usize) -> Option<usize> {
-    let mut buf = io::Cursor::new(packet);
-    let first_block = buf.get_var().ok()?;
-    let mut smallest = largest.checked_sub(first_block)?;
+fn scan_ack_blocks(buf: &mut io::Cursor<Bytes>, largest: u64, n: usize) -> Result<(), IterErr> {
+    let first_block = buf.get_var()?;
+    let mut smallest = largest.checked_sub(first_block).ok_or(IterErr::Malformed)?;
     for _ in 0..n {
-        let gap = buf.get_var().ok()?;
-        smallest = smallest.checked_sub(gap + 2)?;
-        let block = buf.get_var().ok()?;
-        smallest = smallest.checked_sub(block)?;
+        let gap = buf.get_var()?;
+        smallest = smallest.checked_sub(gap + 2).ok_or(IterErr::Malformed)?;
+        let block = buf.get_var()?;
+        smallest = smallest.checked_sub(block).ok_or(IterErr::Malformed)?;
     }
-    Some(buf.position() as usize)
+    Ok(())
 }
 
 #[derive(Debug, Clone)]
@@ -740,7 +738,7 @@ impl<'a> Iterator for AckIter<'a> {
 pub struct ResetStream {
     pub id: StreamId,
     pub error_code: VarInt,
-    pub final_offset: u64,
+    pub final_offset: VarInt,
 }
 
 impl FrameStruct for ResetStream {
@@ -752,7 +750,7 @@ impl ResetStream {
         out.write(Type::RESET_STREAM); // 1 byte
         out.write(self.id); // <= 8 bytes
         out.write(self.error_code); // <= 8 bytes
-        out.write_var(self.final_offset); // <= 8 bytes
+        out.write(self.final_offset); // <= 8 bytes
     }
 }
 

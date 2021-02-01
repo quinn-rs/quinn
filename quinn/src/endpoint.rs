@@ -20,8 +20,7 @@ use crate::{
     broadcast::{self, Broadcast},
     builders::EndpointBuilder,
     connection::Connecting,
-    platform::BATCH_SIZE,
-    udp::{RecvMeta, UdpSocket},
+    platform::{RecvMeta, UdpSocket, BATCH_SIZE},
     ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND,
 };
 
@@ -79,6 +78,9 @@ where
         let mut endpoint = self.inner.lock().unwrap();
         if endpoint.driver_lost {
             return Err(ConnectError::EndpointStopping);
+        }
+        if addr.is_ipv6() && !endpoint.ipv6 {
+            return Err(ConnectError::InvalidRemoteAddress(*addr));
         }
         let addr = if endpoint.ipv6 {
             SocketAddr::V6(ensure_ipv6(*addr))
@@ -187,7 +189,9 @@ where
     S: proto::crypto::Session + 'static,
 {
     type Output = Result<(), io::Error>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+
+    #[allow(unused_mut)] // MSRV
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());
@@ -276,7 +280,10 @@ where
                     recvd += msgs;
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
                         let data = buf[0..meta.len].into();
-                        match self.inner.handle(now, meta.addr, meta.ecn, data) {
+                        match self
+                            .inner
+                            .handle(now, meta.addr, meta.dst_ip, meta.ecn, data)
+                        {
                             Some((handle, DatagramEvent::NewConnection(conn))) => {
                                 let conn = self.connections.insert(handle, conn);
                                 self.incoming.push_back(conn);
@@ -437,12 +444,13 @@ where
     S: proto::crypto::Session,
 {
     type Item = Connecting<S>;
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+
+    #[allow(unused_mut)] // MSRV
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver_lost {
             Poll::Ready(None)
         } else if let Some(conn) = endpoint.incoming.pop_front() {
-            endpoint.inner.accept();
             Poll::Ready(Some(conn))
         } else if endpoint.connections.close.is_some() {
             Poll::Ready(None)

@@ -1,10 +1,10 @@
-<h1 align="center"><img width="500" src="./docs/thumbnail.svg" /></h1>
+<h1 align="center"><img width="500" src="https://raw.githubusercontent.com/quinn-rs/quinn/51a3cea225670757cb844a342428e4e1341d9f13/docs/thumbnail.svg" /></h1>
 
 [![Documentation](https://docs.rs/quinn/badge.svg)](https://docs.rs/quinn/)
 [![Crates.io](https://img.shields.io/crates/v/quinn.svg)](https://crates.io/crates/quinn)
 [![Build status](https://github.com/djc/quinn/workflows/CI/badge.svg)](https://github.com/djc/quinn/actions?query=workflow%3ACI)
 [![codecov](https://codecov.io/gh/djc/quinn/branch/main/graph/badge.svg)](https://codecov.io/gh/djc/quinn)
-[![Chat](https://img.shields.io/badge/chat-%23quinn:matrix.org-%2346BC99?logo=matrix)](https://matrix.to/#/#quinn:matrix.org)
+[![Chat](https://img.shields.io/badge/chat-%23djc_quinn:gitter.im-%2346BC99?logo=matrix)](https://matrix.to/#/#djc_quinn:gitter.im)
 [![Chat](https://badges.gitter.im/gitterHQ/gitter.svg)](https://gitter.im/djc/quinn)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
@@ -16,19 +16,20 @@ This library is at [draft 32][current-draft].
 
 ## Features
 
-- Simultaneous client/server operation.
-- Ordered and unordered stream reads for improved performance.
-- Works on stable Rust, tested on Linux, macOS and Windows.
+- Simultaneous client/server operation
+- Ordered and unordered stream reads for improved performance
+- Works on stable Rust, tested on Linux, macOS and Windows
 - Pluggable cryptography, with a standard implementation backed by
-  [rustls][rustls] and [*ring*][ring].
-- Application-layer datagrams for small, unreliable messages.
-- Future-based async API.
-- Experimental HTTP over QUIC.
+  [rustls][rustls] and [*ring*][ring]
+- Application-layer datagrams for small, unreliable messages
+- Future-based async API
+- Experimental HTTP over QUIC
+- The minimum supported Rust version is 1.45.0
 
 ## Overview
 
 - **quinn:** High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)
-- **quinn-proto:** Deterministic state machine of the protocol which performs **no** I/O internally and is suitable for use with custom event loops (and potentially a C or C++ API).
+- **quinn-proto:** Deterministic state machine of the protocol which performs [**no** I/O][sans-io] internally and is suitable for use with custom event loops (and potentially a C or C++ API).
 - **quinn-h3:** Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.
 - **bench:** Benchmarks without any framework.
 - **interop:** Tooling that helps to run interoperability tests.
@@ -109,6 +110,9 @@ using external protocol analyzers like Wireshark, and NSS-compatible key logs
 for the client side of each connection will be written to the path specified in
 the variable.
 
+The minimum supported Rust version for published releases of our
+crates will always be at least 6 months old at the time of release.
+
 ## Authors
 
 * **Dirkjan Ochtman** - *Project owner & founder*
@@ -127,4 +131,5 @@ the variable.
 [rcgen]: https://crates.io/crates/rcgen
 [examples]: https://github.com/djc/quinn/tree/main/quinn/examples
 [documentation]: https://github.com/djc/quinn/issues/865
-[current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/29/
+[current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/32/
+[sans-io]: https://sans-io.readthedocs.io/how-to-sans-io.html
