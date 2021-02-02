@@ -1,5 +1,6 @@
 use std::{
     cell::RefCell,
+    cmp::Reverse,
     collections::{binary_heap::PeekMut, hash_map, BinaryHeap, HashMap, VecDeque},
     convert::TryFrom,
     mem,
@@ -623,7 +624,7 @@ impl Streams {
             // remaining data at the end of the queue helps with fairness.
             // Other streams will have a chance to write data before we touch
             // this stream again.
-            let id = match level.queue.get_mut().pop_front() {
+            let id = match level.queue.get_mut().pop() {
                 Some(x) => x,
                 None => {
                     PeekMut::pop(level);
@@ -650,11 +651,7 @@ impl Streams {
             }
             if stream.is_pending() {
                 if level.priority == stream.priority {
-                    if level.priority.fair {
-                        level.queue.get_mut().push_back(id);
-                    } else {
-                        level.queue.get_mut().push_front(id);
-                    }
+                    level.queue.get_mut().push(id);
                 } else {
                     drop(level);
                     push_pending(&mut self.pending, id, stream.priority);
@@ -955,12 +952,16 @@ impl Streams {
 fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: Priority) {
     for level in pending.iter() {
         if priority == level.priority {
-            level.queue.borrow_mut().push_back(id);
+            level.queue.borrow_mut().push(id);
             return;
         }
     }
-    let mut queue = VecDeque::new();
-    queue.push_back(id);
+    let mut queue = if priority.fair {
+        PendingQueue::Fair(VecDeque::new())
+    } else {
+        PendingQueue::Unfair(BinaryHeap::new())
+    };
+    queue.push(id);
     pending.push(PendingLevel {
         queue: RefCell::new(queue),
         priority,
@@ -969,7 +970,7 @@ fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: 
 
 struct PendingLevel {
     // RefCell is needed because BinaryHeap doesn't have an iter_mut()
-    queue: RefCell<VecDeque<StreamId>>,
+    queue: RefCell<PendingQueue>,
     priority: Priority,
 }
 
@@ -990,6 +991,27 @@ impl Eq for PendingLevel {}
 impl Ord for PendingLevel {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.priority.cmp(&other.priority)
+    }
+}
+
+enum PendingQueue {
+    Fair(VecDeque<StreamId>),
+    Unfair(BinaryHeap<Reverse<StreamId>>),
+}
+
+impl PendingQueue {
+    fn push(&mut self, id: StreamId) {
+        match self {
+            PendingQueue::Fair(deque) => deque.push_back(id),
+            PendingQueue::Unfair(heap) => heap.push(Reverse(id)),
+        }
+    }
+
+    fn pop(&mut self) -> Option<StreamId> {
+        match self {
+            PendingQueue::Fair(deque) => deque.pop_front(),
+            PendingQueue::Unfair(heap) => heap.pop().map(|r| r.0),
+        }
     }
 }
 
