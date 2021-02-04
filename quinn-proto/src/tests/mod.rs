@@ -238,14 +238,14 @@ fn finish_stream_simple() {
     assert_eq!(pair.server_conn_mut(client_ch).send_streams(), 0);
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        chunks.next(usize::MAX),
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(None)
-    );
+    assert_matches!(chunks.next(usize::MAX), Ok(None));
+    let _ = chunks.finalize();
 }
 
 #[test]
@@ -270,10 +270,9 @@ fn reset_stream() {
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Err(ReadError::Reset(ERROR))
-    );
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
+    assert_matches!(chunks.next(usize::MAX), Err(ReadError::Reset(ERROR)));
+    let _ = chunks.finalize();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
 }
 
@@ -432,10 +431,13 @@ fn zero_rtt_happypath() {
     pair.drive();
     assert!(pair.client_conn_mut(client_ch).accepted_0rtt());
     let server_ch = pair.server.assert_accept();
+
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        chunks.next(usize::MAX),
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
+    let _ = chunks.finalize();
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
 }
 
@@ -503,11 +505,10 @@ fn zero_rtt_rejection() {
     assert_matches!(pair.server_conn_mut(server_conn).poll(), None);
     let s2 = pair.client_conn_mut(client_ch).open(Dir::Uni).unwrap();
     assert_eq!(s, s2);
-    assert_eq!(
-        pair.server_conn_mut(server_conn)
-            .read(s2, usize::MAX, false),
-        Err(ReadError::Blocked)
-    );
+
+    let mut chunks = pair.server_conn_mut(server_conn).read(s2, false).unwrap();
+    assert_eq!(chunks.next(usize::MAX), Err(ReadError::Blocked));
+    let _ = chunks.finalize();
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
 }
 
@@ -643,14 +644,15 @@ fn stream_id_limit() {
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        chunks.next(usize::MAX),
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
-    assert_eq!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(None)
-    );
+    assert_eq!(chunks.next(usize::MAX), Ok(None));
+    let _ = chunks.finalize();
+
     // Server will only send MAX_STREAM_ID now that the application's been notified
     pair.drive();
     assert_matches!(
@@ -676,10 +678,10 @@ fn stream_id_limit() {
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(None)
-    );
+
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
+    assert_matches!(chunks.next(usize::MAX), Ok(None));
+    let _ = chunks.finalize();
 }
 
 #[test]
@@ -705,10 +707,12 @@ fn key_update_simple() {
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(stream) if stream == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        chunks.next(usize::MAX),
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG1
     );
+    let _ = chunks.finalize();
 
     info!("initiating key update");
     pair.client_conn_mut(client_ch).initiate_key_update();
@@ -719,10 +723,12 @@ fn key_update_simple() {
 
     assert_matches!(pair.server_conn_mut(server_ch).poll(), Some(Event::Stream(StreamEvent::Readable { id })) if id == s);
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        chunks.next(usize::MAX),
         Ok(Some(chunk)) if chunk.offset == 6 && chunk.bytes == MSG2
     );
+    let _ = chunks.finalize();
 
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
     assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
@@ -763,18 +769,12 @@ fn key_update_reordered() {
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(stream) if stream == s);
 
-    let buf1 = pair
-        .server_conn_mut(server_ch)
-        .read(s, usize::MAX, true)
-        .unwrap()
-        .unwrap();
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, true).unwrap();
+    let buf1 = chunks.next(usize::MAX).unwrap().unwrap();
     assert_matches!(&*buf1.bytes, MSG1);
-    let buf2 = pair
-        .server_conn_mut(server_ch)
-        .read(s, usize::MAX, true)
-        .unwrap()
-        .unwrap();
+    let buf2 = chunks.next(usize::MAX).unwrap().unwrap();
     assert_eq!(buf2.bytes, MSG2);
+    let _ = chunks.finalize();
 
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
     assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
@@ -987,10 +987,13 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
         .reset(s, VarInt(42))
         .unwrap();
     pair.drive();
+
+    let mut chunks = pair.server_conn_mut(server_conn).read(s, true).unwrap();
     assert_eq!(
-        pair.server_conn_mut(server_conn).read(s, usize::MAX, true),
-        Err(ReadError::Reset(VarInt(42)))
+        chunks.next(usize::MAX).err(),
+        Some(ReadError::Reset(VarInt(42)))
     );
+    let _ = chunks.finalize();
 
     // Happy path
     let s = pair.client_conn_mut(client_conn).open(Dir::Uni).unwrap();
@@ -1006,8 +1009,9 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
 
     pair.drive();
     let mut cursor = 0;
+    let mut chunks = pair.server_conn_mut(server_conn).read(s, true).unwrap();
     loop {
-        match pair.server_conn_mut(server_conn).read(s, usize::MAX, true) {
+        match chunks.next(usize::MAX) {
             Ok(Some(chunk)) => {
                 cursor += chunk.bytes.len();
             }
@@ -1022,6 +1026,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
             }
         }
     }
+    let _ = chunks.finalize();
 
     assert_eq!(cursor, window_size);
     pair.drive();
@@ -1037,8 +1042,9 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
 
     pair.drive();
     let mut cursor = 0;
+    let mut chunks = pair.server_conn_mut(server_conn).read(s, true).unwrap();
     loop {
-        match pair.server_conn_mut(server_conn).read(s, usize::MAX, true) {
+        match chunks.next(usize::MAX) {
             Ok(Some(chunk)) => {
                 cursor += chunk.bytes.len();
             }
@@ -1054,6 +1060,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
         }
     }
     assert_eq!(cursor, window_size);
+    let _ = chunks.finalize();
 }
 
 #[test]
@@ -1102,10 +1109,11 @@ fn stop_opens_bidi() {
     assert_eq!(pair.server_conn_mut(client_conn).send_streams(), 0);
     assert_matches!(pair.server_conn_mut(server_conn).accept(Dir::Bi), Some(stream) if stream == s);
     assert_eq!(pair.server_conn_mut(client_conn).send_streams(), 1);
-    assert_matches!(
-        pair.server_conn_mut(server_conn).read(s, usize::MAX, false),
-        Err(ReadError::Blocked)
-    );
+
+    let mut chunks = pair.server_conn_mut(server_conn).read(s, false).unwrap();
+    assert_matches!(chunks.next(usize::MAX), Err(ReadError::Blocked));
+    let _ = chunks.finalize();
+
     assert_matches!(
         pair.server_conn_mut(server_conn).write(s, b"foo"),
         Err(WriteError::Stopped(ERROR))
@@ -1302,10 +1310,13 @@ fn finish_stream_flow_control_reordered() {
     pair.server.drive(pair.time, pair.client.addr); // Receive
 
     // Issue flow control credit
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        chunks.next(usize::MAX),
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
+    let _ = chunks.finalize();
+
     pair.server.drive(pair.time, pair.client.addr);
     pair.server.delay_outbound(); // Delay it
 
@@ -1325,10 +1336,10 @@ fn finish_stream_flow_control_reordered() {
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(None)
-    );
+
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
+    assert_matches!(chunks.next(usize::MAX), Ok(None));
+    let _ = chunks.finalize();
 }
 
 #[test]
@@ -1357,10 +1368,12 @@ fn handshake_1rtt_handling() {
     pair.drive();
 
     assert!(pair.client_conn_mut(client_ch).lost_packets() != 0);
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        chunks.next(usize::MAX),
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
+    let _ = chunks.finalize();
 }
 
 #[test]
@@ -1603,14 +1616,14 @@ fn finish_acked() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
 
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        chunks.next(usize::MAX),
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Err(ReadError::Blocked)
-    );
+    assert_matches!(chunks.next(usize::MAX), Err(ReadError::Blocked));
+    let _ = chunks.finalize();
 
     // Finish before receiving data ack
     pair.client_conn_mut(client_ch).finish(s).unwrap();
@@ -1626,10 +1639,10 @@ fn finish_acked() {
         pair.client_conn_mut(client_ch).poll(),
         Some(Event::Stream(StreamEvent::Finished { id })) if id == s
     );
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(None)
-    );
+
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
+    assert_matches!(chunks.next(usize::MAX), Ok(None));
+    let _ = chunks.finalize();
 }
 
 #[test]
@@ -1668,14 +1681,14 @@ fn finish_retransmit() {
     );
 
     assert_matches!(pair.server_conn_mut(server_ch).accept(Dir::Uni), Some(stream) if stream == s);
+
+    let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
     assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+        chunks.next(usize::MAX),
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
-    assert_matches!(
-        pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-        Ok(None)
-    );
+    assert_matches!(chunks.next(usize::MAX), Ok(None));
+    let _ = chunks.finalize();
 }
 
 /// Ensures that exchanging data on a client-initiated bidirectional stream works past the initial
@@ -1703,103 +1716,25 @@ fn repeated_request_response() {
         pair.drive();
 
         assert_eq!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(s));
+        let mut chunks = pair.server_conn_mut(server_ch).read(s, false).unwrap();
         assert_matches!(
-            pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
+            chunks.next(usize::MAX),
             Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == REQUEST
         );
-        assert_matches!(
-            pair.server_conn_mut(server_ch).read(s, usize::MAX, false),
-            Ok(None)
-        );
+        assert_matches!(chunks.next(usize::MAX), Ok(None));
+        let _ = chunks.finalize();
+
         pair.server_conn_mut(server_ch).write(s, RESPONSE).unwrap();
         pair.server_conn_mut(server_ch).finish(s).unwrap();
 
         pair.drive();
 
+        let mut chunks = pair.client_conn_mut(client_ch).read(s, false).unwrap();
         assert_matches!(
-            pair.client_conn_mut(client_ch).read(s, usize::MAX, false),
+            chunks.next(usize::MAX),
             Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == RESPONSE
         );
-        assert_matches!(
-            pair.client_conn_mut(client_ch).read(s, usize::MAX, false),
-            Ok(None)
-        );
-    }
-}
-
-#[test]
-fn read_chunks() {
-    let _guard = subscribe();
-    let server = ServerConfig {
-        transport: Arc::new(TransportConfig {
-            max_concurrent_bidi_streams: 3u32.into(),
-            ..TransportConfig::default()
-        }),
-        ..server_config()
-    };
-    let mut pair = Pair::new(Default::default(), server);
-    let (client_ch, server_ch) = pair.connect();
-    let mut empty = vec![];
-    let mut chunks = vec![Bytes::new(), Bytes::new()];
-    const ONE: &[u8] = b"ONE";
-    const TWO: &[u8] = b"TWO";
-    const THREE: &[u8] = b"THREE";
-    for _ in 0..3 {
-        let s = pair.client_conn_mut(client_ch).open(Dir::Bi).unwrap();
-
-        pair.client_conn_mut(client_ch).write(s, ONE).unwrap();
-        pair.drive();
-        pair.client_conn_mut(client_ch).write(s, TWO).unwrap();
-        pair.drive();
-        pair.client_conn_mut(client_ch).write(s, THREE).unwrap();
-
-        pair.drive();
-
-        assert_eq!(pair.server_conn_mut(server_ch).accept(Dir::Bi), Some(s));
-
-        // Read into an empty slice can't do much you, but doesn't crash
-        assert_eq!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut empty),
-            Ok(Some(0))
-        );
-
-        // Read until `chunks` is filled
-        assert_eq!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
-            Ok(Some(2))
-        );
-        assert_eq!(&chunks, &[ONE, TWO]);
-
-        // Read the rest
-        assert_eq!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
-            Ok(Some(1))
-        );
-        assert_eq!(&chunks[..1], &[THREE]);
-
-        // We've read everything, stream is now blocked
-        assert_eq!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
-            Err(ReadError::Blocked)
-        );
-
-        // Read a new chunk after we've been blocked
-        pair.client_conn_mut(client_ch).write(s, ONE).unwrap();
-        pair.drive();
-        assert_eq!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
-            Ok(Some(1))
-        );
-        assert_eq!(&chunks[..1], &[ONE]);
-
-        // Stream finishes by yeilding `Ok(None)`
-        pair.client_conn_mut(client_ch).finish(s).unwrap();
-        pair.drive();
-        assert_matches!(
-            pair.server_conn_mut(server_ch).read_chunks(s, &mut chunks),
-            Ok(None)
-        );
-
-        pair.drive();
+        assert_matches!(chunks.next(usize::MAX), Ok(None));
+        let _ = chunks.finalize();
     }
 }

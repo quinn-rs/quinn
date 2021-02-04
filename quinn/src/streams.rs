@@ -11,7 +11,7 @@ use futures::{
     io::{AsyncRead, AsyncWrite},
     ready, FutureExt,
 };
-use proto::{Chunk, ConnectionError, FinishError, StreamId};
+use proto::{Chunk, Chunks, ConnectionError, FinishError, ReadableError, StreamId};
 use thiserror::Error;
 use tokio::io::ReadBuf;
 
@@ -319,6 +319,7 @@ where
     stream: StreamId,
     is_0rtt: bool,
     all_data_read: bool,
+    reset: Option<VarInt>,
 }
 
 impl<S> RecvStream<S>
@@ -331,6 +332,7 @@ where
             stream,
             is_0rtt,
             all_data_read: false,
+            reset: None,
         }
     }
 
@@ -371,10 +373,26 @@ where
         cx: &mut Context,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<Result<(), ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| {
-            conn.inner
-                .read(stream, buf.remaining(), true)
-                .map(|val| val.map(|chunk| buf.put_slice(&chunk.bytes)))
+        if buf.remaining() == 0 {
+            return Poll::Ready(Ok(()));
+        }
+
+        self.poll_read_generic(cx, true, |chunks| {
+            let mut read = false;
+            loop {
+                if buf.remaining() == 0 {
+                    // We know `read` is `true` because `buf.remaining()` was not 0 before
+                    return ReadStatus::Readable(());
+                }
+
+                match chunks.next(buf.remaining()) {
+                    Ok(Some(chunk)) => {
+                        buf.put_slice(&chunk.bytes);
+                        read = true;
+                    }
+                    res => return (if read { Some(()) } else { None }, res.err()).into(),
+                }
+            }
         })
         .map(|res| res.map(|_| ()))
     }
@@ -405,8 +423,9 @@ where
         max_length: usize,
         ordered: bool,
     ) -> Poll<Result<Option<Chunk>, ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| {
-            conn.inner.read(stream, max_length, ordered)
+        self.poll_read_generic(cx, ordered, |chunks| match chunks.next(max_length) {
+            Ok(Some(chunk)) => ReadStatus::Readable(chunk),
+            res => (None, res.err()).into(),
         })
     }
 
@@ -428,7 +447,27 @@ where
         cx: &mut Context,
         bufs: &mut [Bytes],
     ) -> Poll<Result<Option<usize>, ReadError>> {
-        self.poll_read_generic(cx, |conn, stream| conn.inner.read_chunks(stream, bufs))
+        if bufs.is_empty() {
+            return Poll::Ready(Ok(Some(0)));
+        }
+
+        self.poll_read_generic(cx, true, |chunks| {
+            let mut read = 0;
+            loop {
+                if read >= bufs.len() {
+                    // We know `read > 0` because `bufs` cannot be empty here
+                    return ReadStatus::Readable(read);
+                }
+
+                match chunks.next(usize::MAX) {
+                    Ok(Some(chunk)) => {
+                        bufs[read] = chunk.bytes;
+                        read += 1;
+                    }
+                    res => return (if read == 0 { None } else { Some(read) }, res.err()).into(),
+                }
+            }
+        })
     }
 
     /// Convenience method to read all remaining data into a buffer
@@ -479,46 +518,86 @@ where
         self.stream
     }
 
+    /// Handle common logic related to reading out of a receive stream
+    ///
+    /// This takes an `FnMut` closure that takes care of the actual reading process, matching
+    /// the detailed read semantics for the calling function with a particular return type.
+    /// The closure can read from the passed `&mut Chunks` and has to return the status after
+    /// reading: the amount of data read, and the status after the final read call.
     fn poll_read_generic<T, U>(
         &mut self,
         cx: &mut Context,
+        ordered: bool,
         mut read_fn: T,
     ) -> Poll<Result<Option<U>, ReadError>>
     where
-        T: FnMut(
-            &mut crate::connection::ConnectionInner<S>,
-            StreamId,
-        ) -> Result<Option<U>, proto::ReadError>,
+        T: FnMut(&mut Chunks) -> ReadStatus<U>,
     {
         use proto::ReadError::*;
+        if self.all_data_read {
+            return Poll::Ready(Ok(None));
+        }
+
         let mut conn = self.conn.lock("RecvStream::poll_read");
         if self.is_0rtt {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
-        match read_fn(&mut conn, self.stream) {
-            Ok(Some(u)) => {
-                if conn.inner.has_pending_retransmits() {
-                    conn.wake()
+
+        // If we stored an error during a previous call, return it now. This can happen if a
+        // `read_fn` both wants to return data and also returns an error in its final stream status.
+        let status = match self.reset.take() {
+            Some(code) => ReadStatus::Failed(None, Reset(code)),
+            None => {
+                let mut chunks = conn.inner.read(self.stream, ordered)?;
+                let status = read_fn(&mut chunks);
+                if chunks.finalize().should_transmit() {
+                    conn.wake();
                 }
-                Poll::Ready(Ok(Some(u)))
+                status
             }
-            Ok(None) => {
+        };
+
+        match status {
+            ReadStatus::Readable(read) => Poll::Ready(Ok(Some(read))),
+            ReadStatus::Finished(read) => {
                 self.all_data_read = true;
-                Poll::Ready(Ok(None))
+                Poll::Ready(Ok(read))
             }
-            Err(Blocked) => {
-                if let Some(ref x) = conn.error {
-                    return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
+            ReadStatus::Failed(read, Blocked) => match read {
+                Some(val) => Poll::Ready(Ok(Some(val))),
+                None => {
+                    if let Some(ref x) = conn.error {
+                        return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
+                    }
+                    conn.blocked_readers.insert(self.stream, cx.waker().clone());
+                    Poll::Pending
                 }
-                conn.blocked_readers.insert(self.stream, cx.waker().clone());
-                Poll::Pending
-            }
-            Err(Reset(error_code)) => {
-                self.all_data_read = true;
-                Poll::Ready(Err(ReadError::Reset(error_code)))
-            }
-            Err(UnknownStream) => Poll::Ready(Err(ReadError::UnknownStream)),
-            Err(IllegalOrderedRead) => Poll::Ready(Err(ReadError::IllegalOrderedRead)),
+            },
+            ReadStatus::Failed(read, Reset(error_code)) => match read {
+                None => {
+                    self.all_data_read = true;
+                    Poll::Ready(Err(ReadError::Reset(error_code)))
+                }
+                done => {
+                    self.reset = Some(error_code);
+                    Poll::Ready(Ok(done))
+                }
+            },
+        }
+    }
+}
+
+enum ReadStatus<T> {
+    Readable(T),
+    Finished(Option<T>),
+    Failed(Option<T>, proto::ReadError),
+}
+
+impl<T> From<(Option<T>, Option<proto::ReadError>)> for ReadStatus<T> {
+    fn from(status: (Option<T>, Option<proto::ReadError>)) -> Self {
+        match status {
+            (read, None) => ReadStatus::Finished(read),
+            (read, Some(e)) => ReadStatus::Failed(read, e),
         }
     }
 }
@@ -659,6 +738,15 @@ pub enum ReadError {
     /// [`Connecting::into_0rtt()`]: crate::generic::Connecting::into_0rtt()
     #[error("0-RTT rejected")]
     ZeroRttRejected,
+}
+
+impl From<ReadableError> for ReadError {
+    fn from(e: ReadableError) -> Self {
+        match e {
+            ReadableError::UnknownStream => ReadError::UnknownStream,
+            ReadableError::IllegalOrderedRead => ReadError::IllegalOrderedRead,
+        }
+    }
 }
 
 impl From<ReadError> for io::Error {
