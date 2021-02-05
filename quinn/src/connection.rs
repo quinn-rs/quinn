@@ -5,7 +5,7 @@ use std::{
     mem,
     net::{IpAddr, SocketAddr},
     pin::Pin,
-    sync::{Arc, Mutex},
+    sync::Arc,
     task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
@@ -22,6 +22,7 @@ use tracing::info_span;
 
 use crate::{
     broadcast::{self, Broadcast},
+    mutex::Mutex,
     streams::{RecvStream, SendStream, WriteError},
     ConnectionEvent, EndpointEvent, VarInt,
 };
@@ -95,7 +96,7 @@ where
     pub fn into_0rtt(mut self) -> Result<(NewConnection<S>, ZeroRttAccepted), Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
-        let conn = (self.conn.as_mut().unwrap().0).lock().unwrap();
+        let conn = (self.conn.as_mut().unwrap()).lock("into_0rtt");
         if conn.inner.has_0rtt() || conn.inner.side().is_server() {
             drop(conn);
             let conn = self.conn.take().unwrap();
@@ -115,7 +116,7 @@ where
             let _ = x.await;
         }
         let conn = self.conn.as_ref().unwrap();
-        let inner = conn.lock().unwrap();
+        let inner = conn.lock("handshake");
         inner
             .inner
             .crypto_session()
@@ -144,7 +145,7 @@ where
     /// and the method will return `None`.
     pub fn local_ip(&self) -> Option<IpAddr> {
         let conn = self.conn.as_ref().unwrap();
-        let inner = conn.lock().unwrap();
+        let inner = conn.lock("local_ip");
 
         inner.inner.local_ip()
     }
@@ -158,7 +159,7 @@ where
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.connected.poll_unpin(cx).map(|_| {
             let conn = self.conn.take().unwrap();
-            let inner = conn.lock().unwrap();
+            let inner = conn.lock("connecting");
             if inner.connected {
                 drop(inner);
                 Ok(NewConnection::new(conn))
@@ -181,7 +182,7 @@ where
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn remote_address(&self) -> SocketAddr {
         let conn_ref: &ConnectionRef<S> = &self.conn.as_ref().expect("used after yielding Ready");
-        conn_ref.lock().unwrap().inner.remote_address()
+        conn_ref.lock("remote_address").inner.remote_address()
     }
 }
 
@@ -279,7 +280,7 @@ where
 
     #[allow(unused_mut)] // MSRV
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let conn = &mut *self.0.lock().unwrap();
+        let conn = &mut *self.0.lock("poll");
 
         let span = info_span!("drive", id = conn.handle.0);
         let _guard = span.enter();
@@ -369,7 +370,7 @@ where
     /// [`finish`]: crate::generic::SendStream::finish
     /// [`SendStream`]: crate::generic::SendStream
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
-        let conn = &mut *self.0.lock().unwrap();
+        let conn = &mut *self.0.lock("close");
         conn.close(error_code, Bytes::copy_from_slice(reason));
     }
 
@@ -379,7 +380,7 @@ where
     /// and `data` must both fit inside a single QUIC packet and be smaller than the maximum
     /// dictated by the peer.
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
-        let conn = &mut *self.0.lock().unwrap();
+        let conn = &mut *self.0.lock("send_datagram");
         if let Some(ref x) = conn.error {
             return Err(SendDatagramError::ConnectionClosed(x.clone()));
         }
@@ -409,7 +410,7 @@ where
     ///
     /// [`send_datagram()`]: Connection::send_datagram
     pub fn max_datagram_size(&self) -> Option<usize> {
-        self.0.lock().unwrap().inner.max_datagram_size()
+        self.0.lock("max_datagram_size").inner.max_datagram_size()
     }
 
     /// The peer's UDP address
@@ -417,7 +418,7 @@ where
     /// If `ServerConfig::migration` is `true`, clients may change addresses at will, e.g. when
     /// switching to a cellular internet connection.
     pub fn remote_address(&self) -> SocketAddr {
-        self.0.lock().unwrap().inner.remote_address()
+        self.0.lock("remote_address").inner.remote_address()
     }
 
     /// The local IP address which was used when the peer established
@@ -435,17 +436,17 @@ where
     /// On all non-supported platforms the local IP address will not be available,
     /// and the method will return `None`.
     pub fn local_ip(&self) -> Option<IpAddr> {
-        self.0.lock().unwrap().inner.local_ip()
+        self.0.lock("local_ip").inner.local_ip()
     }
 
     /// Current best estimate of this connection's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
-        self.0.lock().unwrap().inner.rtt()
+        self.0.lock("rtt").inner.rtt()
     }
 
     /// Returns connection statistics
     pub fn stats(&self) -> ConnectionStats {
-        self.0.lock().unwrap().inner.stats()
+        self.0.lock("stats").inner.stats()
     }
 
     /// Parameters negotiated during the handshake
@@ -456,8 +457,7 @@ where
     /// [`Connection::handshake_data()`]: crate::generic::Connecting::handshake_data
     pub fn handshake_data(&self) -> Option<S::HandshakeData> {
         self.0
-            .lock()
-            .unwrap()
+            .lock("handshake_data")
             .inner
             .crypto_session()
             .handshake_data()
@@ -466,8 +466,7 @@ where
     /// Cryptographic identity of the peer
     pub fn peer_identity(&self) -> Option<S::Identity> {
         self.0
-            .lock()
-            .unwrap()
+            .lock("peer_identity")
             .inner
             .crypto_session()
             .peer_identity()
@@ -484,7 +483,7 @@ where
     // Update traffic keys spontaneously for testing purposes.
     #[doc(hidden)]
     pub fn force_key_update(&self) {
-        self.0.lock().unwrap().inner.initiate_key_update()
+        self.0.lock("force_key_update").inner.initiate_key_update()
     }
 
     /// Derive keying material from this connection's TLS session secrets.
@@ -502,8 +501,7 @@ where
         context: &[u8],
     ) -> Result<(), proto::crypto::ExportKeyingMaterialError> {
         self.0
-            .lock()
-            .unwrap()
+            .lock("export_keying_material")
             .inner
             .crypto_session()
             .export_keying_material(output, label, context)
@@ -539,7 +537,7 @@ where
     type Item = Result<RecvStream<S>, ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let mut conn = self.0.lock().unwrap();
+        let mut conn = self.0.lock("IncomingUniStreams::poll_next");
         if let Some(x) = conn.inner.accept(Dir::Uni) {
             conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
@@ -568,7 +566,7 @@ where
     type Item = Result<(SendStream<S>, RecvStream<S>), ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let mut conn = self.0.lock().unwrap();
+        let mut conn = self.0.lock("IncomingBiStreams::poll_next");
         if let Some(x) = conn.inner.accept(Dir::Bi) {
             let is_0rtt = conn.inner.is_handshaking();
             conn.wake(); // To send additional stream ID credit
@@ -599,7 +597,7 @@ where
     type Item = Result<Bytes, ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let mut conn = self.0.lock().unwrap();
+        let mut conn = self.0.lock("Datagrams::poll_next");
         if let Some(x) = conn.inner.recv_datagram() {
             Poll::Ready(Some(Ok(x)))
         } else if let Some(ConnectionError::LocallyClosed) = conn.error {
@@ -630,7 +628,7 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let mut conn = this.conn.lock().unwrap();
+        let mut conn = this.conn.lock("OpenUni::next");
         if let Some(ref e) = conn.error {
             return Poll::Ready(Err(e.clone()));
         }
@@ -661,7 +659,7 @@ where
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let mut conn = this.conn.lock().unwrap();
+        let mut conn = this.conn.lock("OpenBi::next");
         if let Some(ref e) = conn.error {
             return Poll::Ready(Err(e.clone()));
         }
@@ -728,7 +726,7 @@ where
     S: proto::crypto::Session,
 {
     fn clone(&self) -> Self {
-        self.0.lock().unwrap().ref_count += 1;
+        self.lock("clone").ref_count += 1;
         Self(self.0.clone())
     }
 }
@@ -738,7 +736,7 @@ where
     S: proto::crypto::Session,
 {
     fn drop(&mut self) {
-        let conn = &mut *self.0.lock().unwrap();
+        let conn = &mut *self.lock("drop");
         if let Some(x) = conn.ref_count.checked_sub(1) {
             conn.ref_count = x;
             if x == 0 && !conn.inner.is_closed() {
