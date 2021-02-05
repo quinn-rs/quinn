@@ -1298,6 +1298,7 @@ where
             }
             Ok(false) => {}
             Ok(true) => {
+                self.stats.path.congestion_events += 1;
                 self.path
                     .congestion
                     .on_congestion_event(now, largest_sent_time, false);
@@ -1460,6 +1461,7 @@ where
                 < largest_lost_sent - congestion_period;
 
             if lost_ack_eliciting {
+                self.stats.path.congestion_events += 1;
                 self.path.congestion.on_congestion_event(
                     now,
                     largest_lost_sent,

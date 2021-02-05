@@ -119,6 +119,8 @@ pub struct PathStats {
     pub rtt: Duration,
     /// Current congestion window of the connection
     pub cwnd: u64,
+    /// Congestion events on the connection
+    pub congestion_events: u64,
 }
 
 /// Connection statistics
