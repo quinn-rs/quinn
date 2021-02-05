@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use bytes::Bytes;
 use futures::StreamExt;
 use hdrhistogram::Histogram;
 use structopt::StructOpt;
@@ -80,7 +81,24 @@ async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
         trace!("stream established");
 
         let _: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
-            while stream.read_chunk(usize::MAX, false).await?.is_some() {}
+            if opt.read_unordered {
+                while stream.read_chunk(usize::MAX, false).await?.is_some() {}
+            } else {
+                // These are 32 buffers, for reading approximately 32kB at once
+                #[rustfmt::skip]
+                let mut bufs = [
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                ];
+
+                while stream.read_chunks(&mut bufs[..]).await?.is_some() {}
+            }
 
             Ok(())
         });
@@ -266,4 +284,7 @@ struct Opt {
     /// Show connection stats the at the end of the benchmark
     #[structopt(long = "stats")]
     stats: bool,
+    /// Whether to use the unordered read API
+    #[structopt(long = "unordered")]
+    read_unordered: bool,
 }
