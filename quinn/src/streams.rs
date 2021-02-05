@@ -62,7 +62,7 @@ where
 
     fn poll_write(&mut self, cx: &mut Context, buf: &[u8]) -> Poll<Result<usize, WriteError>> {
         use proto::WriteError::*;
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock("SendStream::poll_write");
         if self.is_0rtt {
             conn.check_0rtt()
                 .map_err(|()| WriteError::ZeroRttRejected)?;
@@ -97,7 +97,7 @@ where
 
     #[doc(hidden)]
     pub fn poll_finish(&mut self, cx: &mut Context) -> Poll<Result<(), WriteError>> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock("poll_finish");
         if self.is_0rtt {
             conn.check_0rtt()
                 .map_err(|()| WriteError::ZeroRttRejected)?;
@@ -141,7 +141,7 @@ where
     /// previously transmitted data will no longer be retransmitted if lost. If an attempt has
     /// already been made to finish the stream, the peer may still receive all written data.
     pub fn reset(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock("SendStream::reset");
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return Ok(());
         }
@@ -158,14 +158,14 @@ where
     /// transmitted. Using many different priority levels per connection may have a negative
     /// impact on performance.
     pub fn set_priority(&self, priority: i32) -> Result<(), UnknownStream> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock("SendStream::set_priority");
         conn.inner.set_priority(self.stream, priority)?;
         Ok(())
     }
 
     /// Get the priority of the send stream
     pub fn priority(&self) -> Result<i32, UnknownStream> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock("SendStream::priority");
         Ok(conn.inner.priority(self.stream)?)
     }
 
@@ -176,7 +176,7 @@ where
 
     #[doc(hidden)]
     pub fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<VarInt, StoppedError>> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock("SendStream::poll_stopped");
 
         if self.is_0rtt {
             conn.check_0rtt()
@@ -242,7 +242,7 @@ where
     S: proto::crypto::Session,
 {
     fn drop(&mut self) {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock("SendStream::drop");
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
@@ -456,7 +456,7 @@ where
     /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
     /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock("RecvStream::stop");
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return Ok(());
         }
@@ -491,7 +491,7 @@ where
         ) -> Result<Option<U>, proto::ReadError>,
     {
         use proto::ReadError::*;
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock("RecvStream::poll_read");
         if self.is_0rtt {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
@@ -619,7 +619,7 @@ where
     S: proto::crypto::Session,
 {
     fn drop(&mut self) {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock("RecvStream::drop");
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }

@@ -54,6 +54,7 @@ mod broadcast;
 mod builders;
 mod connection;
 mod endpoint;
+mod mutex;
 mod platform;
 mod streams;
 
