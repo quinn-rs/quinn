@@ -14,7 +14,7 @@ use super::spaces::Retransmits;
 use crate::{
     coding::BufMutExt,
     connection::stats::FrameStats,
-    frame::{self, FrameStruct},
+    frame::{self, FrameStruct, StreamMetaVec},
     transport_parameters::TransportParameters,
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
 };
@@ -602,12 +602,8 @@ impl Streams {
         }
     }
 
-    pub fn write_stream_frames(
-        &mut self,
-        buf: &mut Vec<u8>,
-        max_buf_size: usize,
-    ) -> Vec<frame::StreamMeta> {
-        let mut stream_frames = Vec::new();
+    pub fn write_stream_frames(&mut self, buf: &mut Vec<u8>, max_buf_size: usize) -> StreamMetaVec {
+        let mut stream_frames = StreamMetaVec::new();
         while buf.len() + frame::Stream::SIZE_BOUND < max_buf_size {
             if max_buf_size
                 .checked_sub(buf.len() + frame::Stream::SIZE_BOUND)

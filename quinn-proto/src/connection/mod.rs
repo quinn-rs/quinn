@@ -8,6 +8,7 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
+use frame::StreamMetaVec;
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
@@ -3465,7 +3466,7 @@ struct ZeroRttCrypto<S: crypto::Session> {
 struct SentFrames {
     retransmits: Retransmits,
     acks: RangeSet,
-    stream_frames: Vec<frame::StreamMeta>,
+    stream_frames: StreamMetaVec,
     padding: bool,
 }
 
