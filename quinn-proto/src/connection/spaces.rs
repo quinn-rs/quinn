@@ -186,7 +186,7 @@ pub(crate) struct SentPacket {
     /// Metadata for stream frames in a packet
     ///
     /// The actual application data is stored with the stream state.
-    pub(crate) stream_frames: Vec<frame::StreamMeta>,
+    pub(crate) stream_frames: frame::StreamMetaVec,
 }
 
 /// Retransmittable data queue

@@ -4,6 +4,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut, Bytes};
+use tinyvec::TinyVec;
 
 use crate::{
     coding::{self, BufExt, BufMutExt, UnexpectedEnd},
@@ -429,6 +430,19 @@ pub struct StreamMeta {
     pub fin: bool,
 }
 
+// This manual implementation exists because `Default` is not implemented for
+// `Range<u64>` on Rust 1.45. If the MSRV is bumped in the future, this can be replaced
+// with `derive(Default)`.
+impl Default for StreamMeta {
+    fn default() -> Self {
+        StreamMeta {
+            id: StreamId(0),
+            offsets: 0..0,
+            fin: false,
+        }
+    }
+}
+
 impl StreamMeta {
     pub fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
         let mut ty = *STREAM_TYS.start();
@@ -451,6 +465,9 @@ impl StreamMeta {
         }
     }
 }
+
+/// A vector of [`StreamMeta`] with optimization for the single element case
+pub type StreamMetaVec = TinyVec<[StreamMeta; 1]>;
 
 #[derive(Debug, Clone)]
 pub struct Crypto {
