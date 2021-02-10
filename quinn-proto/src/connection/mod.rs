@@ -14,6 +14,7 @@ use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
+    bytes_source::{ByteSlice, BytesArray, BytesSource},
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::BufMutExt,
@@ -29,7 +30,7 @@ use crate::{
         EndpointEventInner, IssuedCid,
     },
     transport_parameters::TransportParameters,
-    Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
+    Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt, Written,
     MAX_STREAM_COUNT, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
@@ -1100,6 +1101,30 @@ where
     ///
     /// Returns the number of bytes successfully written.
     pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
+        let mut source = ByteSlice::from_slice(data);
+        Ok(self.write_source(stream, &mut source)?.bytes)
+    }
+
+    /// Send data on the given stream
+    ///
+    /// Returns the number of bytes and chunks successfully written.
+    /// Note that this method might also write a partial chunk. In this case
+    /// [`Written::chunks`] will not count this chunk as fully written. However
+    /// the chunk will be advanced and contain only non-written data after the call.
+    pub fn write_chunks(
+        &mut self,
+        stream: StreamId,
+        data: &mut [Bytes],
+    ) -> Result<Written, WriteError> {
+        let mut source = BytesArray::from_chunks(data);
+        Ok(self.write_source(stream, &mut source)?)
+    }
+
+    fn write_source<B: BytesSource>(
+        &mut self,
+        stream: StreamId,
+        data: &mut B,
+    ) -> Result<Written, WriteError> {
         assert!(stream.dir() == Dir::Bi || stream.initiator() == self.side);
         if self.state.is_closed() {
             trace!(%stream, "write blocked; connection draining");

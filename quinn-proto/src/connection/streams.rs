@@ -11,11 +11,12 @@ use tracing::{debug, trace};
 
 use super::spaces::{Retransmits, ThinRetransmits};
 use crate::{
+    bytes_source::BytesSource,
     coding::BufMutExt,
     connection::stats::FrameStats,
     frame::{self, FrameStruct, StreamMetaVec},
     transport_parameters::TransportParameters,
-    Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
+    Dir, Side, StreamId, TransportError, VarInt, Written, MAX_STREAM_COUNT,
 };
 
 mod recv;
@@ -210,7 +211,11 @@ impl Streams {
     }
 
     /// Queue `data` to be written for `stream`
-    pub fn write(&mut self, id: StreamId, data: &[u8]) -> Result<usize, WriteError> {
+    pub fn write<S: BytesSource>(
+        &mut self,
+        id: StreamId,
+        source: &mut S,
+    ) -> Result<Written, WriteError> {
         let limit = (self.max_data - self.data_sent).min(self.send_window - self.unacked_data);
         let stream = self.send.get_mut(&id).ok_or(WriteError::UnknownStream)?;
         if limit == 0 {
@@ -223,15 +228,14 @@ impl Streams {
         }
 
         let was_pending = stream.is_pending();
-        let len = (data.len() as u64).min(limit) as usize;
-        let len = stream.write(&data[0..len])?;
-        self.data_sent += len as u64;
-        self.unacked_data += len as u64;
-        trace!(stream = %id, "wrote {} bytes", len);
+        let written = stream.write(source, limit)?;
+        self.data_sent += written.bytes as u64;
+        self.unacked_data += written.bytes as u64;
+        trace!(stream = %id, "wrote {} bytes", written.bytes);
         if !was_pending {
             push_pending(&mut self.pending, id, stream.priority);
         }
-        Ok(len)
+        Ok(written)
     }
 
     /// Process incoming stream frame
@@ -1032,7 +1036,7 @@ enum StreamHalf {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::TransportErrorCode;
+    use crate::{connection::ByteSlice, TransportErrorCode};
     use bytes::Bytes;
 
     fn make(side: Side) -> Streams {
@@ -1258,9 +1262,15 @@ mod tests {
         let id = server.open(Dir::Uni).unwrap();
         let reason = 0u32.into();
         server.received_stop_sending(id, reason);
-        assert_eq!(server.write(id, &[]), Err(WriteError::Stopped(reason)));
+        assert_eq!(
+            server.write(id, &mut ByteSlice::from_slice(&[])),
+            Err(WriteError::Stopped(reason))
+        );
         server.reset(id).unwrap();
-        assert_eq!(server.write(id, &[]), Err(WriteError::UnknownStream));
+        assert_eq!(
+            server.write(id, &mut ByteSlice::from_slice(&[])),
+            Err(WriteError::UnknownStream)
+        );
     }
 
     #[test]
@@ -1293,9 +1303,15 @@ mod tests {
         let id_low = server.open(Dir::Bi).unwrap();
         server.set_priority(id_low, -1).unwrap();
         server.set_priority(id_high, 1).unwrap();
-        server.write(id_mid, b"mid").unwrap();
-        server.write(id_low, b"low").unwrap();
-        server.write(id_high, b"high").unwrap();
+        server
+            .write(id_mid, &mut ByteSlice::from_slice(b"mid"))
+            .unwrap();
+        server
+            .write(id_low, &mut ByteSlice::from_slice(b"low"))
+            .unwrap();
+        server
+            .write(id_high, &mut ByteSlice::from_slice(b"high"))
+            .unwrap();
         let mut buf = Vec::with_capacity(40);
         let meta = server.write_stream_frames(&mut buf, 40);
         assert_eq!(meta[0].id, id_high);

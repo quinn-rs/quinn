@@ -1,9 +1,9 @@
-use bytes::Bytes;
 use thiserror::Error;
 
 use super::ShouldTransmit;
-use crate::connection::send_buffer::SendBuffer;
-use crate::{frame, VarInt};
+use crate::{
+    bytes_source::BytesSource, connection::send_buffer::SendBuffer, frame, VarInt, Written,
+};
 
 #[derive(Debug)]
 pub(super) struct Send {
@@ -51,7 +51,11 @@ impl Send {
         }
     }
 
-    pub(super) fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
+    pub(super) fn write<S: BytesSource>(
+        &mut self,
+        source: &mut S,
+        limit: u64,
+    ) -> Result<Written, WriteError> {
         if !self.is_writable() {
             return Err(WriteError::UnknownStream);
         }
@@ -62,9 +66,23 @@ impl Send {
         if budget == 0 {
             return Err(WriteError::Blocked);
         }
-        let len = (data.len() as u64).min(budget) as usize;
-        self.pending.write(Bytes::from(data[0..len].to_owned()));
-        Ok(len)
+        let mut limit = limit.min(budget) as usize;
+
+        let mut result = Written::default();
+        loop {
+            let (chunk, chunks_consumed) = source.pop_chunk(limit);
+            result.chunks += chunks_consumed;
+            result.bytes += chunk.len();
+
+            if chunk.is_empty() {
+                break;
+            }
+
+            limit -= chunk.len();
+            self.pending.write(chunk);
+        }
+
+        Ok(result)
     }
 
     /// Update stream state due to a reset sent by the local application
