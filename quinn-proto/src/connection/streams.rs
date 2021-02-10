@@ -10,7 +10,7 @@ use thiserror::Error;
 use tracing::{debug, trace};
 
 use super::assembler::Chunk;
-use super::spaces::Retransmits;
+use super::spaces::{Retransmits, ThinRetransmits};
 use crate::{
     coding::BufMutExt,
     connection::stats::FrameStats,
@@ -488,7 +488,7 @@ impl Streams {
         &mut self,
         buf: &mut Vec<u8>,
         pending: &mut Retransmits,
-        sent: &mut Retransmits,
+        retransmits: &mut ThinRetransmits,
         stats: &mut FrameStats,
         max_size: usize,
     ) {
@@ -503,7 +503,10 @@ impl Streams {
                 None => continue,
             };
             trace!(stream = %id, "RESET_STREAM");
-            sent.reset_stream.push((id, error_code));
+            retransmits
+                .get_or_create()
+                .reset_stream
+                .push((id, error_code));
             frame::ResetStream {
                 id,
                 error_code,
@@ -528,7 +531,7 @@ impl Streams {
             }
             trace!(stream = %frame.id, "STOP_SENDING");
             frame.encode(buf);
-            sent.stop_sending.push(frame);
+            retransmits.get_or_create().stop_sending.push(frame);
             stats.stop_sending += 1;
         }
 
@@ -543,7 +546,7 @@ impl Streams {
 
             trace!(value = max.into_inner(), "MAX_DATA");
             self.record_sent_max_data(max);
-            sent.max_data = true;
+            retransmits.get_or_create().max_data = true;
             buf.write(frame::Type::MAX_DATA);
             buf.write(max);
             stats.max_data += 1;
@@ -563,7 +566,7 @@ impl Streams {
             if rs.is_finished() {
                 continue;
             }
-            sent.max_stream_data.insert(id);
+            retransmits.get_or_create().max_stream_data.insert(id);
 
             let (max, _) = rs.max_stream_data(self.stream_receive_window);
             rs.record_sent_max_stream_data(max);
@@ -578,7 +581,7 @@ impl Streams {
         // MAX_STREAMS_UNI
         if pending.max_uni_stream_id && buf.len() + 9 < max_size {
             pending.max_uni_stream_id = false;
-            sent.max_uni_stream_id = true;
+            retransmits.get_or_create().max_uni_stream_id = true;
             trace!(
                 value = self.max_remote[Dir::Uni as usize],
                 "MAX_STREAMS (unidirectional)"
@@ -591,7 +594,7 @@ impl Streams {
         // MAX_STREAMS_BIDI
         if pending.max_bi_stream_id && buf.len() + 9 < max_size {
             pending.max_bi_stream_id = false;
-            sent.max_bi_stream_id = true;
+            retransmits.get_or_create().max_bi_stream_id = true;
             trace!(
                 value = self.max_remote[Dir::Bi as usize],
                 "MAX_STREAMS (bidirectional)"

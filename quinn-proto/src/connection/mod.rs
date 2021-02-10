@@ -46,7 +46,7 @@ use paths::PathData;
 mod send_buffer;
 
 mod spaces;
-use spaces::{PacketSpace, Retransmits, SentPacket};
+use spaces::{PacketSpace, Retransmits, SentPacket, ThinRetransmits};
 
 mod stats;
 pub use stats::ConnectionStats;
@@ -1325,8 +1325,10 @@ where
         }
 
         // Update state for confirmed delivery of frames
-        for (id, _) in info.retransmits.reset_stream {
-            self.streams.reset_acked(id);
+        if let Some(retransmits) = info.retransmits.get() {
+            for (id, _) in retransmits.reset_stream.iter() {
+                self.streams.reset_acked(*id);
+            }
         }
 
         for frame in info.stream_frames {
@@ -2786,7 +2788,7 @@ where
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
             buf.write(frame::Type::HANDSHAKE_DONE);
-            sent.retransmits.handshake_done = true;
+            sent.retransmits.get_or_create().handshake_done = true;
             // This is just a u8 counter and the frame is typically just sent once
             self.stats.frame_tx.handshake_done =
                 self.stats.frame_tx.handshake_done.saturating_add(1);
@@ -2859,7 +2861,7 @@ where
             );
             truncated.encode(buf);
             self.stats.frame_tx.crypto += 1;
-            sent.retransmits.crypto.push_back(truncated);
+            sent.retransmits.get_or_create().crypto.push_back(truncated);
             if !frame.data.is_empty() {
                 frame.offset += len as u64;
                 space.pending.crypto.push_front(frame);
@@ -2894,7 +2896,7 @@ where
                 reset_token: issued.reset_token,
             }
             .encode(buf);
-            sent.retransmits.new_cids.push(issued);
+            sent.retransmits.get_or_create().new_cids.push(issued);
             self.stats.frame_tx.new_connection_id += 1;
         }
 
@@ -2907,7 +2909,7 @@ where
             trace!(sequence = seq, "RETIRE_CONNECTION_ID");
             buf.write(frame::Type::RETIRE_CONNECTION_ID);
             buf.write_var(seq);
-            sent.retransmits.retire_cids.push(seq);
+            sent.retransmits.get_or_create().retire_cids.push(seq);
             self.stats.frame_tx.retire_connection_id += 1;
         }
 
@@ -3464,7 +3466,7 @@ struct ZeroRttCrypto<S: crypto::Session> {
 
 #[derive(Default)]
 struct SentFrames {
-    retransmits: Retransmits,
+    retransmits: ThinRetransmits,
     acks: RangeSet,
     stream_frames: StreamMetaVec,
     padding: bool,

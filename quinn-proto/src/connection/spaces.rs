@@ -182,7 +182,10 @@ pub(crate) struct SentPacket {
     /// Whether an acknowledgement is expected directly in response to this packet.
     pub(crate) ack_eliciting: bool,
     pub(crate) acks: RangeSet,
-    pub(crate) retransmits: Retransmits,
+    /// Data which needs to be retransmitted in case the packet is lost.
+    /// The data is boxed to minimize `SentPacket` size for the typical case of
+    /// packets only containing ACKs and STREAM frames.
+    pub(crate) retransmits: ThinRetransmits,
     /// Metadata for stream frames in a packet
     ///
     /// The actual application data is stored with the stream state.
@@ -276,6 +279,14 @@ impl ::std::ops::BitOrAssign for Retransmits {
     }
 }
 
+impl ::std::ops::BitOrAssign<ThinRetransmits> for Retransmits {
+    fn bitor_assign(&mut self, rhs: ThinRetransmits) {
+        if let Some(retransmits) = rhs.retransmits {
+            self.bitor_assign(*retransmits)
+        }
+    }
+}
+
 impl ::std::iter::FromIterator<Retransmits> for Retransmits {
     fn from_iter<T>(iter: T) -> Self
     where
@@ -286,6 +297,37 @@ impl ::std::iter::FromIterator<Retransmits> for Retransmits {
             result |= packet;
         }
         result
+    }
+}
+
+/// A variant of `Retransmits` which only allocates storage when required
+#[derive(Debug, Default, Clone)]
+pub struct ThinRetransmits {
+    retransmits: Option<Box<Retransmits>>,
+}
+
+impl ThinRetransmits {
+    /// Returns `true` if no retransmits are necessary
+    pub fn is_empty(&self) -> bool {
+        match &self.retransmits {
+            Some(retransmits) => retransmits.is_empty(),
+            None => true,
+        }
+    }
+
+    /// Returns a reference to the retransmits stored in this box
+    pub fn get(&self) -> Option<&Retransmits> {
+        self.retransmits.as_deref()
+    }
+
+    /// Returns a mutable reference to the stored retransmits
+    ///
+    /// This function will allocate a backing storage if required.
+    pub fn get_or_create(&mut self) -> &mut Retransmits {
+        if self.retransmits.is_none() {
+            self.retransmits = Some(Box::new(Retransmits::default()));
+        }
+        self.retransmits.as_deref_mut().unwrap()
     }
 }
 
@@ -414,5 +456,12 @@ mod test {
         assert!(!dedup.insert(WINDOW_SIZE + 1));
         assert_eq!(dedup.next, 2 * WINDOW_SIZE + 1);
         assert_eq!(dedup.window, 1 << (WINDOW_SIZE - 2));
+    }
+
+    #[test]
+    fn sent_packet_size() {
+        // The tracking state of sent packets should be minimal, and not grow
+        // over time.
+        assert!(std::mem::size_of::<SentPacket>() <= 128);
     }
 }
