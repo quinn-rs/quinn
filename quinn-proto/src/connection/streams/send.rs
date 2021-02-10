@@ -1,3 +1,4 @@
+use bytes::Bytes;
 use thiserror::Error;
 
 use super::ShouldTransmit;
@@ -62,7 +63,7 @@ impl Send {
             return Err(WriteError::Blocked);
         }
         let len = (data.len() as u64).min(budget) as usize;
-        self.pending.write(&data[0..len]);
+        self.pending.write(Bytes::from(data[0..len].to_owned()));
         Ok(len)
     }
 
