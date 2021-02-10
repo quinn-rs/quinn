@@ -32,11 +32,10 @@ impl SendBuffer {
     }
 
     /// Append application data to the end of the stream
-    pub fn write(&mut self, data: &[u8]) {
-        let buf = Bytes::from(data.to_owned());
-        self.unacked_segments.push_back(buf);
+    pub fn write(&mut self, data: Bytes) {
         self.unacked_len += data.len();
         self.offset += data.len() as u64;
+        self.unacked_segments.push_back(data);
     }
 
     /// Discard a range of acknowledged stream data
@@ -193,7 +192,7 @@ mod tests {
     fn fragment_with_length() {
         let mut buf = SendBuffer::new();
         const MSG: &[u8] = b"Hello, world!";
-        buf.write(MSG);
+        buf.write(MSG.into());
         // 1 byte offset => 18 bytes left => 13 byte data isn't enough
         // with 8 bytes reserved for length 10 payload bytes will fit
         assert_eq!(buf.poll_transmit(19), (0..10, true));
@@ -211,7 +210,7 @@ mod tests {
     fn fragment_without_length() {
         let mut buf = SendBuffer::new();
         const MSG: &[u8] = b"Hello, world with some extra data!";
-        buf.write(MSG);
+        buf.write(MSG.into());
         // 1 byte offset => 18 bytes left => can be filled by 34 bytes payload
         assert_eq!(buf.poll_transmit(19), (0..18, false));
         assert_eq!(
@@ -231,15 +230,15 @@ mod tests {
         const MSG_LEN: u64 = MSG.len() as u64;
 
         const SEG1: &[u8] = b"He";
-        buf.write(SEG1);
+        buf.write(SEG1.into());
         const SEG2: &[u8] = b"llo,";
-        buf.write(SEG2);
+        buf.write(SEG2.into());
         const SEG3: &[u8] = b" w";
-        buf.write(SEG3);
+        buf.write(SEG3.into());
         const SEG4: &[u8] = b"o";
-        buf.write(SEG4);
+        buf.write(SEG4.into());
         const SEG5: &[u8] = b"rld!";
-        buf.write(SEG5);
+        buf.write(SEG5.into());
 
         assert_eq!(aggregate_unacked(&buf), MSG);
 
@@ -274,7 +273,7 @@ mod tests {
     fn retransmit() {
         let mut buf = SendBuffer::new();
         const MSG: &[u8] = b"Hello, world with extra data!";
-        buf.write(MSG);
+        buf.write(MSG.into());
         // Transmit two frames
         assert_eq!(buf.poll_transmit(16), (0..15, false));
         assert_eq!(buf.poll_transmit(16), (15..22, true));
@@ -289,7 +288,7 @@ mod tests {
     fn ack() {
         let mut buf = SendBuffer::new();
         const MSG: &[u8] = b"Hello, world!";
-        buf.write(MSG);
+        buf.write(MSG.into());
         assert_eq!(buf.poll_transmit(16), (0..7, true));
         buf.ack(0..7);
         assert_eq!(aggregate_unacked(&buf), &MSG[7..]);
@@ -299,7 +298,7 @@ mod tests {
     fn reordered_ack() {
         let mut buf = SendBuffer::new();
         const MSG: &[u8] = b"Hello, world with extra data!";
-        buf.write(MSG);
+        buf.write(MSG.into());
         assert_eq!(buf.poll_transmit(16), (0..15, false));
         assert_eq!(buf.poll_transmit(16), (15..22, true));
         buf.ack(15..22);
