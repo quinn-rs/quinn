@@ -26,6 +26,9 @@ use std::{
     time::Duration,
 };
 
+mod bytes_source;
+pub use bytes_source::Written;
+
 mod cid_queue;
 #[doc(hidden)]
 pub mod coding;
