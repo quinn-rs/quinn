@@ -30,6 +30,10 @@ impl Assembler {
             return Err(IllegalOrderedRead);
         } else if !ordered && self.state.is_ordered() {
             // Enter unordered mode
+            if !self.data.is_empty() {
+                // Get rid of possible duplicates
+                self.defragment();
+            }
             let mut recvd = RangeSet::new();
             recvd.insert(0..self.bytes_read);
             for chunk in &self.data {
@@ -545,6 +549,19 @@ mod test {
                 bytes: Bytes::from_static(b"d")
             })
         );
+    }
+
+    #[test]
+    fn ordered_insert_unordered_read() {
+        let mut x = Assembler::new();
+        x.insert(0, Bytes::from_static(b"abc"));
+        x.insert(0, Bytes::from_static(b"abc"));
+        x.ensure_ordering(false).unwrap();
+        assert_eq!(
+            x.read(3, false),
+            Some(Chunk::new(0, Bytes::from_static(b"abc")))
+        );
+        assert_eq!(x.read(3, false), None);
     }
 
     fn next_unordered(x: &mut Assembler) -> Chunk {
