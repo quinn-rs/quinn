@@ -72,7 +72,7 @@ impl HttpFrame {
             Type::DATA => Ok(HttpFrame::Data(DataFrame {
                 payload: payload.copy_to_bytes(payload.remaining()),
             })),
-            Type::HEADERS => Ok(HttpFrame::Headers(HeadersFrame::decode(&mut payload)?)),
+            Type::HEADERS => Ok(HttpFrame::Headers(HeadersFrame::decode(&mut payload))),
             Type::SETTINGS => Ok(HttpFrame::Settings(SettingsFrame::decode(&mut payload)?)),
             Type::CANCEL_PUSH => Ok(HttpFrame::CancelPush(payload.get_var()?)),
             Type::PUSH_PROMISE => Ok(HttpFrame::PushPromise(PushPromiseFrame::decode(
@@ -164,8 +164,8 @@ pub(crate) trait FrameHeader {
     }
 }
 
-pub(crate) trait IntoPayload {
-    fn into_payload(&mut self) -> &mut dyn Buf;
+pub(crate) trait AsPayload {
+    fn as_payload(&mut self) -> &mut dyn Buf;
 }
 
 #[derive(Debug, PartialEq)]
@@ -193,11 +193,11 @@ where
     }
 }
 
-impl<P> IntoPayload for DataFrame<P>
+impl<P> AsPayload for DataFrame<P>
 where
     P: Buf,
 {
-    fn into_payload(&mut self) -> &mut dyn Buf {
+    fn as_payload(&mut self) -> &mut dyn Buf {
         &mut self.payload
     }
 }
@@ -247,10 +247,10 @@ impl FrameHeader for HeadersFrame {
 }
 
 impl HeadersFrame {
-    fn decode<B: Buf>(buf: &mut B) -> Result<Self, UnexpectedEnd> {
-        Ok(HeadersFrame {
+    fn decode<B: Buf>(buf: &mut B) -> Self {
+        HeadersFrame {
             encoded: buf.copy_to_bytes(buf.remaining()),
-        })
+        }
     }
 
     pub fn encode<B: BufMut>(&self, buf: &mut B) {
@@ -259,8 +259,8 @@ impl HeadersFrame {
     }
 }
 
-impl IntoPayload for HeadersFrame {
-    fn into_payload(&mut self) -> &mut dyn Buf {
+impl AsPayload for HeadersFrame {
+    fn as_payload(&mut self) -> &mut dyn Buf {
         &mut self.encoded
     }
 }

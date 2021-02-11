@@ -17,7 +17,7 @@ use crate::{
     connection::ConnectionRef,
     frame::FrameStream,
     proto::{
-        frame::{DataFrame, FrameHeader, HeadersFrame, HttpFrame, IntoPayload},
+        frame::{AsPayload, DataFrame, FrameHeader, HeadersFrame, HttpFrame},
         headers::Header,
         ErrorCode,
     },
@@ -191,7 +191,7 @@ enum WriteFrameState {
 
 impl<F> WriteFrame<F>
 where
-    F: FrameHeader + IntoPayload,
+    F: FrameHeader + AsPayload,
 {
     pub(crate) fn new(frame: F) -> Self {
         let mut buf = [0u8; VarInt::MAX_SIZE * 2];
@@ -230,7 +230,7 @@ where
                     self.state = WriteFrameState::Payload;
                 }
                 WriteFrameState::Payload => {
-                    let p = self.frame.into_payload();
+                    let p = self.frame.as_payload();
                     match ready!(send.write(p.chunk()).poll_unpin(cx)) {
                         Err(e) => return Poll::Ready(Err(e)),
                         Ok(wrote) => {
