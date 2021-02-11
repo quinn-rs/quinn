@@ -51,7 +51,7 @@ impl HuffmanEncoder {
         self.buffer.extend(iter::repeat(255).take(forward));
     }
 
-    fn put(&mut self, code: u8) -> Result<(), Error> {
+    fn put(&mut self, code: u8) {
         let encode_value = &HPACK_STRING[code as usize];
 
         self.ensure_free_space(encode_value.bit_count);
@@ -65,12 +65,10 @@ impl HuffmanEncoder {
 
             write_bits(&mut self.buffer, &self.buffer_pos, part)
         }
-
-        Ok(())
     }
 
-    fn ends(self) -> Result<Vec<u8>, Error> {
-        Ok(self.buffer)
+    fn ends(self) -> Vec<u8> {
+        self.buffer
     }
 }
 
@@ -389,9 +387,9 @@ impl HpackStringEncode for Vec<u8> {
     fn hpack_encode(&self) -> Result<Vec<u8>, Error> {
         let mut encoder = HuffmanEncoder::new();
         for code in self {
-            encoder.put(*code)?;
+            encoder.put(*code);
         }
-        encoder.ends()
+        Ok(encoder.ends())
     }
 }
 
