@@ -18,7 +18,9 @@ use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
+    congestion::Controller,
     crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
+    endpoint,
     frame,
     frame::{Close, Datagram, FrameStruct},
     is_supported_version,
@@ -100,7 +102,7 @@ use timer::{Timer, TimerTable};
 /// events or timeouts with different instants must not be interleaved.
 pub struct Connection<S>
 where
-    S: crypto::Session,
+    S: endpoint::Session,
 {
     server_config: Option<Arc<ServerConfig<S>>>,
     config: Arc<TransportConfig>,
@@ -114,8 +116,8 @@ where
     /// This is only populated for the server case, and if known
     local_ip: Option<IpAddr>,
 
-    path: PathData,
-    prev_path: Option<PathData>,
+    path: PathData<S::Controller>,
+    prev_path: Option<PathData<S::Controller>>,
     state: State,
     side: Side,
     /// Whether or not 0-RTT was enabled during the handshake. Does not imply acceptance.
@@ -198,7 +200,7 @@ where
 
 impl<S> Connection<S>
 where
-    S: crypto::Session,
+    S: endpoint::Session,
 {
     pub(crate) fn new(
         server_config: Option<Arc<ServerConfig<S>>>,
@@ -239,7 +241,7 @@ where
             path: PathData::new(
                 remote,
                 config.initial_rtt,
-                config.congestion_controller_factory.build(now),
+                S::Controller::new(now),
                 now,
                 path_validated,
             ),
@@ -2704,7 +2706,7 @@ where
             PathData::new(
                 remote,
                 self.config.initial_rtt,
-                self.config.congestion_controller_factory.build(now),
+                S::Controller::new(now),
                 now,
                 false,
             )
@@ -3203,7 +3205,7 @@ where
 
 impl<S> fmt::Debug for Connection<S>
 where
-    S: crypto::Session,
+    S: endpoint::Session,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Connection")
@@ -3460,7 +3462,7 @@ impl DatagramState {
     }
 }
 
-struct ZeroRttCrypto<S: crypto::Session> {
+struct ZeroRttCrypto<S: endpoint::Session> {
     header: S::HeaderKey,
     packet: S::PacketKey,
 }

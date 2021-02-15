@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::{Controller, ControllerFactory};
+use super::Controller;
 
 /// A simple, standard congestion controller
 #[derive(Debug, Clone)]
@@ -19,20 +19,18 @@ pub struct NewReno {
     bytes_acked: u64,
 }
 
-impl NewReno {
-    /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<NewRenoConfig>, now: Instant) -> Self {
+impl Controller for NewReno {
+    fn new(now: Instant) -> Self {
+        let config = NewRenoConfig::default();
         Self {
             window: config.initial_window,
             ssthresh: u64::max_value(),
             recovery_start_time: now,
-            config,
+            config: Arc::new(config),
             bytes_acked: 0,
         }
     }
-}
 
-impl Controller for NewReno {
     fn on_ack(&mut self, _now: Instant, sent: Instant, bytes: u64, app_limited: bool) {
         if app_limited || sent <= self.recovery_start_time {
             return;
@@ -84,10 +82,6 @@ impl Controller for NewReno {
 
     fn window(&self) -> u64 {
         self.window
-    }
-
-    fn clone_box(&self) -> Box<dyn Controller> {
-        Box::new(self.clone())
     }
 
     fn initial_window(&self) -> u64 {
@@ -145,11 +139,5 @@ impl Default for NewRenoConfig {
             minimum_window: 2 * MAX_DATAGRAM_SIZE,
             loss_reduction_factor: 0.5,
         }
-    }
-}
-
-impl ControllerFactory for Arc<NewRenoConfig> {
-    fn build(&self, now: Instant) -> Box<dyn Controller> {
-        Box::new(NewReno::new(self.clone(), now))
     }
 }

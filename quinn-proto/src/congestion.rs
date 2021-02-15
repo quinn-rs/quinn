@@ -6,7 +6,7 @@ mod new_reno;
 pub use new_reno::{NewReno, NewRenoConfig};
 
 /// Common interface for different congestion controllers
-pub trait Controller: Send {
+pub trait Controller: Send + Clone {
     /// Packet deliveries were confirmed
     ///
     /// `app_limited` indicates whether the connection was blocked on outgoing
@@ -23,15 +23,9 @@ pub trait Controller: Send {
     /// Number of ack-eliciting bytes that may be in flight
     fn window(&self) -> u64;
 
-    /// Duplicate the controller's state
-    fn clone_box(&self) -> Box<dyn Controller>;
-
     /// Initial congestion window
     fn initial_window(&self) -> u64;
-}
-
-/// Constructs controllers on demand
-pub trait ControllerFactory {
-    /// Construct a fresh `Controller`
-    fn build(&self, now: Instant) -> Box<dyn Controller>;
+    
+    /// Construct a state using the current time `now`
+    fn new(now: Instant) -> Self;
 }

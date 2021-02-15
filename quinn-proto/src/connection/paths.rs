@@ -4,13 +4,13 @@ use super::pacing::Pacer;
 use crate::{congestion, MIN_MTU, TIMER_GRANULARITY};
 
 /// Description of a particular network path
-pub struct PathData {
+pub struct PathData<C> {
     pub remote: SocketAddr,
     pub rtt: RttEstimator,
     /// Whether we're enabling ECN on outgoing packets
     pub sending_ecn: bool,
     /// Congestion controller state
-    pub congestion: Box<dyn congestion::Controller>,
+    pub congestion: C,
     /// Pacing state
     pub pacing: Pacer,
     pub challenge: Option<u64>,
@@ -27,11 +27,11 @@ pub struct PathData {
     pub mtu: u16,
 }
 
-impl PathData {
+impl <C> PathData<C> where C: congestion::Controller {
     pub fn new(
         remote: SocketAddr,
         initial_rtt: Duration,
-        congestion: Box<dyn congestion::Controller>,
+        congestion: C,
         now: Instant,
         validated: bool,
     ) -> Self {
@@ -50,8 +50,8 @@ impl PathData {
         }
     }
 
-    pub fn from_previous(remote: SocketAddr, prev: &PathData, now: Instant) -> Self {
-        let congestion = prev.congestion.clone_box();
+    pub fn from_previous(remote: SocketAddr, prev: &PathData<C>, now: Instant) -> Self {
+        let congestion = prev.congestion.clone();
         let smoothed_rtt = prev.rtt.get();
         PathData {
             remote,

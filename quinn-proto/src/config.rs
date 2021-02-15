@@ -7,7 +7,6 @@ use thiserror::Error;
 use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
-    congestion,
     crypto::{self, ClientConfig as _, HandshakeTokenKey as _, HmacKey as _, ServerConfig as _},
     VarInt, VarIntBoundsExceeded,
 };
@@ -43,8 +42,6 @@ pub struct TransportConfig {
     pub(crate) allow_spin: bool,
     pub(crate) datagram_receive_buffer_size: Option<usize>,
     pub(crate) datagram_send_buffer_size: usize,
-
-    pub(crate) congestion_controller_factory: Box<dyn congestion::ControllerFactory + Send + Sync>,
 }
 
 impl TransportConfig {
@@ -195,25 +192,6 @@ impl TransportConfig {
         self.datagram_send_buffer_size = value;
         self
     }
-
-    /// How to construct new `congestion::Controller`s
-    ///
-    /// Typically the refcounted configuration of a `congestion::Controller`,
-    /// e.g. a `congestion::NewRenoConfig`.
-    ///
-    /// # Example
-    /// ```
-    /// # use quinn_proto::*; use std::sync::Arc;
-    /// let mut config = TransportConfig::default();
-    /// config.congestion_controller_factory(Arc::new(congestion::NewRenoConfig::default()));
-    /// ```
-    pub fn congestion_controller_factory(
-        &mut self,
-        factory: impl congestion::ControllerFactory + Send + Sync + 'static,
-    ) -> &mut Self {
-        self.congestion_controller_factory = Box::new(factory);
-        self
-    }
 }
 
 impl Default for TransportConfig {
@@ -243,8 +221,6 @@ impl Default for TransportConfig {
             allow_spin: true,
             datagram_receive_buffer_size: Some(STREAM_RWND as usize),
             datagram_send_buffer_size: 1024 * 1024,
-
-            congestion_controller_factory: Box::new(Arc::new(congestion::NewRenoConfig::default())),
         }
     }
 }
@@ -280,7 +256,6 @@ impl fmt::Debug for TransportConfig {
                 &self.datagram_receive_buffer_size,
             )
             .field("datagram_send_buffer_size", &self.datagram_send_buffer_size)
-            .field("congestion_controller_factory", &"[ opaque ]")
             .finish()
     }
 }

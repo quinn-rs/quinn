@@ -19,7 +19,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     config::{EndpointConfig, ServerConfig, TransportConfig},
-    crypto,
+    endpoint,
     shared::ConnectionId,
     ResetToken, Side, TransportError, VarInt, LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT,
     RESET_TOKEN_SIZE,
@@ -123,7 +123,7 @@ impl TransportParameters {
         server_config: Option<&ServerConfig<S>>,
     ) -> Self
     where
-        S: crypto::Session,
+        S: endpoint::Session,
     {
         TransportParameters {
             initial_src_cid: Some(initial_src_cid),

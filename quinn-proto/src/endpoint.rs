@@ -17,6 +17,7 @@ use tracing::{debug, trace, warn};
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     coding::BufMutExt,
+    congestion,
     config::{ClientConfig, ConfigError, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionError},
     crypto::{
@@ -34,6 +35,10 @@ use crate::{
     MIN_MTU, RESET_TOKEN_SIZE, VERSION,
 };
 
+pub trait Session: crypto::Session {
+  type Controller: congestion::Controller;
+}
+
 /// The main entry point to the library
 ///
 /// This object performs no I/O whatsoever. Instead, it generates a stream of packets to send via
@@ -41,7 +46,7 @@ use crate::{
 /// `handle_event`.
 pub struct Endpoint<S>
 where
-    S: crypto::Session,
+    S: Session,
 {
     rng: StdRng,
     transmits: VecDeque<Transmit>,
@@ -66,7 +71,7 @@ where
 
 impl<S> Endpoint<S>
 where
-    S: crypto::Session,
+    S: Session,
 {
     /// Create a new endpoint
     ///
@@ -736,7 +741,7 @@ where
 
 impl<S> fmt::Debug for Endpoint<S>
 where
-    S: crypto::Session,
+    S: Session,
 {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Endpoint<T>")
@@ -796,7 +801,7 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
 /// Event resulting from processing a single datagram
 pub enum DatagramEvent<S>
 where
-    S: crypto::Session,
+    S: Session,
 {
     /// The datagram is redirected to its `Connection`
     ConnectionEvent(ConnectionEvent),
@@ -804,7 +809,7 @@ where
     NewConnection(Connection<S>),
 }
 
-enum ConnectionOpts<S: crypto::Session> {
+enum ConnectionOpts<S: Session> {
     Client {
         config: ClientConfig<S>,
         server_name: String,
