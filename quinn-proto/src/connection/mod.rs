@@ -447,11 +447,13 @@ where
                     }
                     let smoothed_rtt = self.path.rtt.get();
                     let window = self.path.congestion.window();
-                    if let Some(delay) =
-                        self.path
-                            .pacing
-                            .delay(smoothed_rtt, self.path.mtu, window, now)
-                    {
+                    if let Some(delay) = self.path.pacing.delay(
+                        smoothed_rtt,
+                        self.path.mtu as u64,
+                        self.path.mtu,
+                        window,
+                        now,
+                    ) {
                         self.timers.set(Timer::Pacing, delay);
                         congestion_blocked = true;
                         continue;
