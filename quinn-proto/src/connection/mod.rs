@@ -368,7 +368,11 @@ where
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::Type::PATH_CHALLENGE);
                 buf.write(token);
+                self.stats.frame_tx.path_challenge += 1;
                 self.finish_packet(builder, &mut buf);
+                self.stats.udp_tx.datagrams += 1;
+                self.stats.udp_tx.transmits += 1;
+                self.stats.udp_tx.bytes += buf.len() as u64;
                 return Some(Transmit {
                     destination,
                     contents: buf,
@@ -537,11 +541,12 @@ where
             return None;
         }
 
-        trace!("sending {} byte datagram", buf.len());
+        trace!("sending {} bytes in {} datagrams", buf.len(), num_datagrams);
         self.path.total_sent = self.path.total_sent.saturating_add(buf.len() as u64);
 
-        self.stats.udp_tx.datagrams += 1;
+        self.stats.udp_tx.datagrams += num_datagrams as u64;
         self.stats.udp_tx.bytes += buf.len() as u64;
+        self.stats.udp_tx.transmits += 1;
 
         Some(Transmit {
             destination: self.path.remote,
