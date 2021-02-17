@@ -156,3 +156,5 @@ enum EndpointEvent {
 /// This helps ensure we don't starve anything when the CPU is slower than the link. Value selected
 /// more or less arbitrarily.
 const IO_LOOP_BOUND: usize = 10;
+
+pub extern crate tokio;
