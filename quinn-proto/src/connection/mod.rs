@@ -345,6 +345,8 @@ where
     /// - a call was made to `handle_timeout`
     #[must_use]
     pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
+        let mut num_datagrams = 0;
+
         // Send PATH_CHALLENGE for a previous path if necessary
         if let Some(ref mut prev_path) = self.prev_path {
             if prev_path.challenge_pending {
@@ -362,11 +364,11 @@ where
                 let buf_capacity = self.path.mtu as usize;
 
                 let builder =
-                    self.begin_packet(now, SpaceId::Data, false, &mut buf, buf_capacity, false)?;
+                    self.begin_packet(now, SpaceId::Data, false, &mut buf, buf_capacity, 0, false)?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
-                builder.buffer.write(frame::Type::PATH_CHALLENGE);
-                builder.buffer.write(token);
-                self.finish_packet(builder);
+                buf.write(frame::Type::PATH_CHALLENGE);
+                buf.write(token);
+                self.finish_packet(builder, &mut buf);
                 return Some(Transmit {
                     destination,
                     contents: buf,
@@ -416,6 +418,7 @@ where
         // However we are not allowed to write more than MTU size. Therefore
         // the maximum capacity is tracked separately.
         let buf_capacity = self.path.mtu as usize;
+        num_datagrams += 1;
 
         let mut coalesce = spaces.len() > 1;
         let pad_space = spaces.last().cloned().filter(|_| {
@@ -427,7 +430,6 @@ where
         let mut congestion_blocked = false;
 
         for space_id in spaces {
-            let buf_start = buf.len();
             let mut ack_eliciting =
                 !self.spaces[space_id].pending.is_empty() || self.spaces[space_id].ping_pending;
             if space_id == SpaceId::Data {
@@ -470,12 +472,13 @@ where
                 prev.update_unacked = false;
             }
 
-            let mut builder = self.begin_packet(
+            let builder = self.begin_packet(
                 now,
                 space_id,
                 pad_space == Some(space_id),
                 &mut buf,
                 buf_capacity,
+                (num_datagrams - 1) * (self.path.mtu as usize),
                 ack_eliciting,
             )?;
             coalesce = coalesce && !builder.short_header;
@@ -485,14 +488,14 @@ where
                 match self.state {
                     State::Closed(state::Closed { ref reason }) => {
                         if space_id == SpaceId::Data {
-                            reason.encode(&mut builder.buffer, builder.max_size)
+                            reason.encode(&mut buf, builder.max_size)
                         } else {
                             frame::ConnectionClose {
                                 error_code: TransportErrorCode::APPLICATION_ERROR,
                                 frame_type: None,
                                 reason: Bytes::new(),
                             }
-                            .encode(&mut builder.buffer, builder.max_size)
+                            .encode(&mut buf, builder.max_size)
                         }
                     }
                     State::Draining => frame::ConnectionClose {
@@ -500,7 +503,7 @@ where
                         frame_type: None,
                         reason: Bytes::new(),
                     }
-                    .encode(&mut builder.buffer, builder.max_size),
+                    .encode(&mut buf, builder.max_size),
                     _ => unreachable!(
                         "tried to make a close packet when the connection wasn't closed"
                     ),
@@ -508,15 +511,11 @@ where
                 coalesce = false;
                 None
             } else {
-                Some(self.populate_packet(
-                    space_id,
-                    &mut builder.buffer,
-                    buf_capacity - builder.tag_len,
-                ))
+                Some(self.populate_packet(space_id, &mut buf, buf_capacity - builder.tag_len))
             };
 
             let exact_number = builder.exact_number;
-            let padded = self.finish_packet(builder);
+            let (size, padded) = self.finish_packet(builder, &mut buf);
 
             if let Some(mut sent) = sent {
                 sent.padding = padded;
@@ -533,7 +532,7 @@ where
                         acks: sent.acks,
                         time_sent: now,
                         size: if sent.padding || ack_eliciting {
-                            (buf.len() - buf_start) as u16
+                            size as u16
                         } else {
                             0
                         },
@@ -588,15 +587,16 @@ where
     ///
     /// Marks the connection drained and returns `None` if the confidentiality limit would be
     /// violated.
-    fn begin_packet<'a>(
+    fn begin_packet(
         &mut self,
         now: Instant,
         space_id: SpaceId,
         initial_padding: bool,
-        buffer: &'a mut Vec<u8>,
+        buffer: &mut Vec<u8>,
         buffer_capacity: usize,
+        datagram_start: usize,
         ack_eliciting: bool,
-    ) -> Option<PacketBuilder<'a>> {
+    ) -> Option<PacketBuilder> {
         // Initiate key update if we're approaching the confidentiality limit
         let confidentiality_limit = self.spaces[space_id]
             .crypto
@@ -695,7 +695,7 @@ where
         };
         let max_size = buffer_capacity - partial_encode.start - partial_encode.header_len - tag_len;
         Some(PacketBuilder {
-            buffer,
+            datagram_start,
             space: space_id,
             partial_encode,
             exact_number,
@@ -708,12 +708,12 @@ where
         })
     }
 
-    /// Encrypt packet, returning whether padding was added
-    fn finish_packet(&self, builder: PacketBuilder<'_>) -> bool {
-        let pad = builder.buffer.len() < builder.min_size;
+    /// Encrypt packet, returning the length of the packet and whether padding was added
+    fn finish_packet(&self, builder: PacketBuilder, buffer: &mut Vec<u8>) -> (usize, bool) {
+        let pad = buffer.len() < builder.min_size;
         if pad {
-            trace!("PADDING * {}", builder.min_size - builder.buffer.len());
-            builder.buffer.resize(builder.min_size, 0);
+            trace!("PADDING * {}", builder.min_size - buffer.len());
+            buffer.resize(builder.min_size, 0);
         }
 
         let space = &self.spaces[builder.space];
@@ -732,11 +732,10 @@ where
             "Mismatching crypto tag len"
         );
 
-        builder
-            .buffer
-            .resize(builder.buffer.len() + packet_crypto.tag_len(), 0);
-        debug_assert!(builder.buffer.len() <= self.path.mtu as usize);
-        let packet_buf = &mut builder.buffer[builder.partial_encode.start..];
+        buffer.resize(buffer.len() + packet_crypto.tag_len(), 0);
+        debug_assert!(buffer.len() <= builder.datagram_start + self.path.mtu as usize);
+        let encode_start = builder.partial_encode.start;
+        let packet_buf = &mut buffer[encode_start..];
         builder.partial_encode.finish(
             packet_buf,
             header_crypto,
@@ -745,7 +744,8 @@ where
         builder
             .span
             .with_subscriber(|(id, dispatch)| dispatch.exit(id));
-        pad
+
+        (buffer.len() - encode_start, pad)
     }
 
     /// Process `ConnectionEvent`s generated by the associated `Endpoint`
@@ -3477,8 +3477,8 @@ struct SentFrames {
     padding: bool,
 }
 
-struct PacketBuilder<'a> {
-    buffer: &'a mut Vec<u8>,
+struct PacketBuilder {
+    datagram_start: usize,
     space: SpaceId,
     partial_encode: PartialEncode,
     ack_eliciting: bool,
