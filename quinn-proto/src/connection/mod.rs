@@ -362,7 +362,7 @@ where
                 let buf_capacity = self.path.mtu as usize;
 
                 let builder =
-                    self.begin_packet(now, SpaceId::Data, false, &mut buf, buf_capacity)?;
+                    self.begin_packet(now, SpaceId::Data, false, &mut buf, buf_capacity, false)?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 builder.buffer.write(frame::Type::PATH_CHALLENGE);
                 builder.buffer.write(token);
@@ -476,6 +476,7 @@ where
                 pad_space == Some(space_id),
                 &mut buf,
                 buf_capacity,
+                ack_eliciting,
             )?;
             coalesce = coalesce && !builder.short_header;
 
@@ -507,7 +508,11 @@ where
                 coalesce = false;
                 None
             } else {
-                Some(self.populate_packet(space_id, &mut builder.buffer, buf_capacity))
+                Some(self.populate_packet(
+                    space_id,
+                    &mut builder.buffer,
+                    buf_capacity - builder.tag_len,
+                ))
             };
 
             let exact_number = builder.exact_number;
@@ -590,6 +595,7 @@ where
         initial_padding: bool,
         buffer: &'a mut Vec<u8>,
         buffer_capacity: usize,
+        ack_eliciting: bool,
     ) -> Option<PacketBuilder<'a>> {
         // Initiate key update if we're approaching the confidentiality limit
         let confidentiality_limit = self.spaces[space_id]
@@ -697,6 +703,8 @@ where
             min_size,
             max_size,
             span,
+            tag_len,
+            ack_eliciting,
         })
     }
 
@@ -717,6 +725,12 @@ where
         } else {
             unreachable!("tried to send {:?} packet without keys", builder.space);
         };
+
+        debug_assert_eq!(
+            packet_crypto.tag_len(),
+            builder.tag_len,
+            "Mismatching crypto tag len"
+        );
 
         builder
             .buffer
@@ -2770,28 +2784,10 @@ where
         &mut self,
         space_id: SpaceId,
         buf: &mut Vec<u8>,
-        buf_capacity: usize,
+        max_size: usize,
     ) -> SentFrames {
         let mut sent = SentFrames::default();
         let space = &mut self.spaces[space_id];
-        let zero_rtt_crypto = self.zero_rtt_crypto.as_ref();
-        let tag_len = space
-            .crypto
-            .as_ref()
-            .map_or_else(
-                || {
-                    debug_assert_eq!(
-                        space_id,
-                        SpaceId::Data,
-                        "tried to send {:?} packet without keys",
-                        space_id
-                    );
-                    &zero_rtt_crypto.unwrap().packet
-                },
-                |x| &x.packet.local,
-            )
-            .tag_len();
-        let max_size = buf_capacity - tag_len;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
 
         // HANDSHAKE_DONE
@@ -3485,10 +3481,12 @@ struct PacketBuilder<'a> {
     buffer: &'a mut Vec<u8>,
     space: SpaceId,
     partial_encode: PartialEncode,
+    ack_eliciting: bool,
     exact_number: u64,
     short_header: bool,
     min_size: usize,
     max_size: usize,
+    tag_len: usize,
     span: tracing::Span,
 }
 
