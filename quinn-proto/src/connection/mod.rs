@@ -434,7 +434,7 @@ where
                 ack_eliciting |= self.can_send_1rtt();
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
                 if ack_eliciting && self.spaces[space_id].loss_probes == 0 {
-                    if self.congestion_blocked() {
+                    if self.congestion_blocked(u64::from(self.path.mtu)) {
                         congestion_blocked = true;
                         continue;
                     }
@@ -2993,8 +2993,8 @@ where
     }
 
     /// Whether UDP transmits are currently blocked by link congestion
-    fn congestion_blocked(&self) -> bool {
-        self.in_flight.bytes + u64::from(self.path.mtu) >= self.path.congestion.window()
+    fn congestion_blocked(&self, bytes_to_send: u64) -> bool {
+        self.in_flight.bytes + bytes_to_send >= self.path.congestion.window()
     }
 
     fn decrypt_packet(
