@@ -173,6 +173,20 @@ fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
             if rc == -1 {
                 return Err(io::Error::last_os_error());
             }
+
+            let on: libc::c_int = 1;
+            let rc = unsafe {
+                libc::setsockopt(
+                    io.as_raw_fd(),
+                    libc::SOL_IP,
+                    libc::IP_FREEBIND,
+                    &on as *const _ as _,
+                    mem::size_of_val(&on) as _,
+                )
+            };
+            if rc == -1 {
+                return Err(io::Error::last_os_error());
+            }
         }
     }
     if addr.is_ipv6() {
