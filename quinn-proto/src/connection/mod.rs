@@ -405,14 +405,7 @@ where
             }
             _ => (
                 SpaceId::iter()
-                    .filter(|&x| {
-                        (self.spaces[x].crypto.is_some() && self.spaces[x].can_send())
-                            || (x == SpaceId::Data
-                                && ((self.spaces[x].crypto.is_some() && self.can_send_1rtt())
-                                    || (self.zero_rtt_crypto.is_some()
-                                        && self.side.is_client()
-                                        && (self.spaces[x].can_send() || self.can_send_1rtt()))))
-                    })
+                    .filter(|&x| self.space_can_send(x))
                     .collect(),
                 false,
             ),
@@ -574,6 +567,16 @@ where
             segment_size: None,
             src_ip: self.local_ip,
         })
+    }
+
+    /// Returns `true` if a space has outgoing data to send
+    fn space_can_send(&self, space_id: SpaceId) -> bool {
+        (self.spaces[space_id].crypto.is_some() && self.spaces[space_id].can_send())
+            || (space_id == SpaceId::Data
+                && ((self.spaces[space_id].crypto.is_some() && self.can_send_1rtt())
+                    || (self.zero_rtt_crypto.is_some()
+                        && self.side.is_client()
+                        && (self.spaces[space_id].can_send() || self.can_send_1rtt()))))
     }
 
     /// Write a new packet header to `buffer` and determine the packet's properties
