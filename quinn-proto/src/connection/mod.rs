@@ -345,6 +345,9 @@ where
     /// - a call was made to `handle_timeout`
     #[must_use]
     pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
+        // This will become a parameter to `poll_transmit` in an additional update
+        const MAX_DATAGRAMS: usize = 1;
+
         let mut num_datagrams = 0;
 
         // Send PATH_CHALLENGE for a previous path if necessary
@@ -402,66 +405,165 @@ where
             }
         }
 
-        // Select the set of spaces that have data to send so we can try to coalesce them
-        let (spaces, close) = match self.state {
+        // Check whether we need to send a close message
+        let mut close = match self.state {
             State::Drained => {
                 self.app_limited = true;
                 return None;
             }
             State::Draining | State::Closed(_) => {
+                // TODO: This seems to lose the `close` flag if it can't be
+                // immediately enqueued
                 if mem::replace(&mut self.close, false) {
-                    (vec![self.highest_space], true)
+                    true
                 } else {
                     self.app_limited = true;
                     return None;
                 }
             }
-            _ => (
-                SpaceId::iter()
-                    .filter(|&x| self.space_can_send(x))
-                    .collect(),
-                false,
-            ),
+            _ => false,
         };
 
-        let mut buf = Vec::with_capacity(self.path.mtu as usize);
+        let mut buf = Vec::new();
         // Reserving capacity can provide more capacity than we asked for.
         // However we are not allowed to write more than MTU size. Therefore
         // the maximum capacity is tracked separately.
-        let buf_capacity = self.path.mtu as usize;
+        let mut buf_capacity = 0;
+
+        let mut coalesce = true;
+        let mut builder: Option<PacketBuilder> = None;
+        let mut sent_frames = None;
         let mut min_datagram_size = 0;
-        num_datagrams += 1;
-
-        let mut coalesce = spaces.len() > 1;
-
         let mut congestion_blocked = false;
 
-        for space_id in spaces {
+        // Iterate over all spaces and find data to send
+        let mut space_idx = 0;
+        let spaces = [SpaceId::Initial, SpaceId::Handshake, SpaceId::Data];
+        while space_idx < spaces.len() {
+            let space_id = spaces[space_idx];
+
+            let close_in_space = if close {
+                if space_id != self.highest_space {
+                    // We ignore data in this space, since the close message
+                    // has higher priority
+                    space_idx += 1;
+                    continue;
+                }
+                true
+            } else {
+                false
+            };
+
+            // Is there data or a close message to send in this space?
+            if !self.space_can_send(space_id) && !close_in_space {
+                space_idx += 1;
+                continue;
+            }
+
             let mut ack_eliciting =
                 !self.spaces[space_id].pending.is_empty() || self.spaces[space_id].ping_pending;
             if space_id == SpaceId::Data {
                 ack_eliciting |= self.can_send_1rtt();
+            }
+
+            // Can we append more data into the current buffer?
+            // It is not safe to assume that `buf.len()` is the end of the data,
+            // since the last packet might not have been finished.
+            let buf_end = if let Some(builder) = &builder {
+                buf.len().max(builder.min_size) + builder.tag_len
+            } else {
+                buf.len()
+            };
+
+            if !coalesce || buf_capacity - buf_end < MIN_PACKET_SPACE {
+                // We need to send 1 more datagram and extend the buffer for that.
+
+                // Is 1 more datagram allowed?
+                if buf_capacity >= self.path.mtu as usize * MAX_DATAGRAMS {
+                    // No more datagrams allowed
+                    break;
+                }
+
+                // Anti-amplification is only based on `total_sent`, which gets
+                // updated at the end of this method. Therefore we pass the accumulated
+                // amount of datagrams and bytes here.
+                if self
+                    .path
+                    .anti_amplification_blocked(self.path.mtu as u64 * (num_datagrams + 1) as u64)
+                {
+                    trace!("blocked by anti-amplification");
+                    break;
+                }
+
+                // Congestion control and pacing checks
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
                 if ack_eliciting && self.spaces[space_id].loss_probes == 0 {
-                    if self.congestion_blocked(u64::from(self.path.mtu)) {
+                    // Assume the current packet will get padded to fill the full MTU
+                    let untracked_bytes = if let Some(builder) = &builder {
+                        buf_capacity - builder.partial_encode.start
+                    } else {
+                        0
+                    } as u64;
+                    debug_assert!(untracked_bytes <= self.path.mtu as u64);
+
+                    let bytes_to_send = u64::from(self.path.mtu) + untracked_bytes;
+
+                    if self.congestion_blocked(bytes_to_send) {
+                        space_idx += 1;
                         congestion_blocked = true;
+                        // TODO:Should those rather be break?
+                        // Maybe not due to loss probes
                         continue;
                     }
+
+                    // Check whether the next datagram is blocked by pacing
                     let smoothed_rtt = self.path.rtt.get();
-                    let window = self.path.congestion.window();
                     if let Some(delay) = self.path.pacing.delay(
                         smoothed_rtt,
-                        self.path.mtu as u64,
+                        bytes_to_send,
                         self.path.mtu,
-                        window,
+                        self.path.congestion.window(),
                         now,
                     ) {
                         self.timers.set(Timer::Pacing, delay);
+                        space_idx += 1;
                         congestion_blocked = true;
+                        // TODO:Should those rather be break?
+                        // Maybe not due to loss probes
                         continue;
                     }
                 }
+
+                // Finish current packet
+                if let Some(mut builder) = builder.take() {
+                    // Pad the packet to make it suitable for sending with GSO
+                    // which will always send the maximum PDU.
+                    builder.min_size =
+                        builder.datagram_start + (self.path.mtu as usize) - builder.tag_len;
+
+                    self.finish_and_track_packet(now, builder, sent_frames.take(), &mut buf);
+
+                    debug_assert_eq!(buf.len(), buf_capacity, "Packet must be padded");
+                }
+
+                // Allocate space for another datagram
+                buf_capacity += self.path.mtu as usize;
+                if buf.capacity() < buf_capacity {
+                    buf.reserve(buf_capacity - buf.capacity());
+                }
+                num_datagrams += 1;
+                coalesce = true;
+                min_datagram_size = 0;
+            } else {
+                // We can append/coalesce the next packet into the current
+                // datagram.
+                // Finish current packet without adding extra padding
+                if let Some(builder) = builder.take() {
+                    self.finish_and_track_packet(now, builder, sent_frames.take(), &mut buf);
+                }
             }
+
+            debug_assert!(buf_capacity - buf.len() >= MIN_PACKET_SPACE);
 
             //
             // From here on, we've determined that a packet will definitely be sent.
@@ -479,17 +581,23 @@ where
                 prev.update_unacked = false;
             }
 
-            let mut builder = self.begin_packet(
+            debug_assert!(
+                builder.is_none() && sent_frames.is_none(),
+                "Previous packet must have been finished"
+            );
+
+            builder = Some(self.begin_packet(
                 now,
                 space_id,
                 &mut buf,
                 buf_capacity,
                 (num_datagrams - 1) * (self.path.mtu as usize),
                 ack_eliciting,
-            )?;
+            )?);
+            let builder = builder.as_mut().unwrap();
             coalesce = coalesce && !builder.short_header;
 
-            let mut sent_frames = if close {
+            sent_frames = if close_in_space {
                 trace!("sending CONNECTION_CLOSE");
                 match self.state {
                     State::Closed(state::Closed { ref reason }) => {
@@ -520,6 +628,8 @@ where
                     min_datagram_size,
                 );
                 coalesce = false;
+                // We don't want to send 2 close packets
+                close = false;
                 None
             } else {
                 Some(self.populate_packet(space_id, &mut buf, buf_capacity - builder.tag_len))
@@ -542,15 +652,16 @@ where
                 }
             }
 
+            // Don't increment space_idx.
+            // We stay in the current space and check if there is more data to send.
+        }
+
+        // Finish the last packet. This one might also need to be padded
+        if let Some(mut builder) = builder.take() {
             if min_datagram_size != 0 {
                 builder.min_size = min_datagram_size;
             }
-
             self.finish_and_track_packet(now, builder, sent_frames.take(), &mut buf);
-
-            if !coalesce || buf_capacity - buf.len() < MIN_PACKET_SPACE {
-                break;
-            }
         }
 
         self.app_limited = buf.is_empty() && !congestion_blocked;
