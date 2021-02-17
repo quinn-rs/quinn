@@ -2794,6 +2794,10 @@ where
         let max_size = buf_capacity - tag_len;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
 
+        if space_id == SpaceId::Initial && self.side.is_client() {
+            sent.requires_padding = true;
+        }
+
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
             buf.write(frame::Type::HANDSHAKE_DONE);
@@ -2831,6 +2835,7 @@ where
             if let Some(token) = self.path.challenge {
                 // But only send a packet solely for that purpose at most once
                 self.path.challenge_pending = false;
+                sent.requires_padding = true;
                 trace!("PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::Type::PATH_CHALLENGE);
                 buf.write(token);
@@ -2841,6 +2846,7 @@ where
         // PATH_RESPONSE
         if buf.len() + 9 < max_size && space_id == SpaceId::Data {
             if let Some(response) = self.path_response.take() {
+                sent.requires_padding = true;
                 trace!("PATH_RESPONSE {:08x}", response.token);
                 buf.write(frame::Type::PATH_RESPONSE);
                 buf.write(response.token);
@@ -3479,6 +3485,7 @@ struct SentFrames {
     acks: RangeSet,
     stream_frames: StreamMetaVec,
     padding: bool,
+    requires_padding: bool,
 }
 
 struct PacketBuilder<'a> {
