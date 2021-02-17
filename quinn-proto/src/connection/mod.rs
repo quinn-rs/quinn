@@ -556,7 +556,10 @@ where
             } else {
                 None
             },
-            segment_size: None,
+            segment_size: match num_datagrams {
+                1 => None,
+                _ => Some(self.path.mtu as usize),
+            },
             src_ip: self.local_ip,
         })
     }
