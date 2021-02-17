@@ -363,12 +363,19 @@ where
                 let mut buf = Vec::with_capacity(self.path.mtu as usize);
                 let buf_capacity = self.path.mtu as usize;
 
-                let builder =
-                    self.begin_packet(now, SpaceId::Data, false, &mut buf, buf_capacity, 0, false)?;
+                let mut builder =
+                    self.begin_packet(now, SpaceId::Data, &mut buf, buf_capacity, 0, false)?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::Type::PATH_CHALLENGE);
                 buf.write(token);
                 self.stats.frame_tx.path_challenge += 1;
+
+                // An endpoint MUST expand datagrams that contain a PATH_CHALLENGE frame
+                // to at least the smallest allowed maximum datagram size of 1200 bytes,
+                // unless the anti-amplification limit for the path does not permit
+                // sending a datagram of this size
+                builder.min_size = builder.datagram_start + MIN_INITIAL_SIZE - builder.tag_len;
+
                 self.finish_packet(builder, &mut buf);
                 self.stats.udp_tx.datagrams += 1;
                 self.stats.udp_tx.transmits += 1;
@@ -422,14 +429,10 @@ where
         // However we are not allowed to write more than MTU size. Therefore
         // the maximum capacity is tracked separately.
         let buf_capacity = self.path.mtu as usize;
+        let mut min_datagram_size = 0;
         num_datagrams += 1;
 
         let mut coalesce = spaces.len() > 1;
-        let pad_space = spaces.last().cloned().filter(|_| {
-            self.side.is_client() && spaces.first() == Some(&SpaceId::Initial)
-                || self.path.challenge.is_some()
-                || self.path_response.is_some()
-        });
 
         let mut congestion_blocked = false;
 
@@ -476,10 +479,9 @@ where
                 prev.update_unacked = false;
             }
 
-            let builder = self.begin_packet(
+            let mut builder = self.begin_packet(
                 now,
                 space_id,
-                pad_space == Some(space_id),
                 &mut buf,
                 buf_capacity,
                 (num_datagrams - 1) * (self.path.mtu as usize),
@@ -512,6 +514,11 @@ where
                         "tried to make a close packet when the connection wasn't closed"
                     ),
                 }
+                // A close frame in the initial space requires padding
+                min_datagram_size = core::cmp::max(
+                    builder.datagram_start + MIN_INITIAL_SIZE - builder.tag_len,
+                    min_datagram_size,
+                );
                 coalesce = false;
                 None
             } else {
@@ -526,6 +533,17 @@ where
                 // is available in this space - because otherwise it would return
                 // `true` purely due to the ACKs.
                 self.spaces[space_id].permit_ack_only &= sent.acks.is_empty();
+
+                if sent.requires_padding {
+                    min_datagram_size = core::cmp::max(
+                        builder.datagram_start + MIN_INITIAL_SIZE - builder.tag_len,
+                        min_datagram_size,
+                    );
+                }
+            }
+
+            if min_datagram_size != 0 {
+                builder.min_size = min_datagram_size;
             }
 
             self.finish_and_track_packet(now, builder, sent_frames.take(), &mut buf);
@@ -582,7 +600,6 @@ where
         &mut self,
         now: Instant,
         space_id: SpaceId,
-        initial_padding: bool,
         buffer: &mut Vec<u8>,
         buffer_capacity: usize,
         datagram_start: usize,
@@ -672,19 +689,16 @@ where
         } else {
             unreachable!("tried to send {:?} packet without keys", space_id);
         };
-        let min_size = if initial_padding {
-            // Initial packet, must be padded to mitigate amplification attacks
-            MIN_INITIAL_SIZE - tag_len
-        } else {
-            // Regular packet, must be large enough for header protection sampling, i.e. the
-            // combined lengths of the encoded packet number and protected payload must be at
-            // least 4 bytes longer than the sample required for header protection
 
-            // pn_len + payload_len + tag_len >= sample_size + 4
-            // payload_len >= sample_size + 4 - pn_len - tag_len
-            buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len)
-        };
+        // Regular packet, must be large enough for header protection sampling, i.e. the
+        // combined lengths of the encoded packet number and protected payload must be at
+        // least 4 bytes longer than the sample required for header protection
+
+        // pn_len + payload_len + tag_len >= sample_size + 4
+        // payload_len >= sample_size + 4 - pn_len - tag_len
+        let min_size = buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len);
         let max_size = buffer_capacity - partial_encode.start - partial_encode.header_len - tag_len;
+
         Some(PacketBuilder {
             datagram_start,
             space: space_id,
