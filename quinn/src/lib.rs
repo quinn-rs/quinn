@@ -75,7 +75,9 @@ pub mod generic {
         OpenBi, OpenUni,
     };
     pub use crate::endpoint::{Endpoint, Incoming};
-    pub use crate::streams::{Read, ReadExact, ReadToEnd, RecvStream, SendStream};
+    pub use crate::streams::{
+        Read, ReadChunk, ReadChunks, ReadExact, ReadToEnd, RecvStream, SendStream,
+    };
     pub use proto::generic::{ClientConfig, ServerConfig};
 }
 
