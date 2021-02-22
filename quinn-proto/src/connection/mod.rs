@@ -1755,7 +1755,6 @@ where
         }
         if packet >= space.rx_packet {
             space.rx_packet = packet;
-            space.rx_packet_time = now;
             // Update outgoing spin bit, inverting iff we're the client
             self.spin = self.side.is_client() ^ spin;
         }
