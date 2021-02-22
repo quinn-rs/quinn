@@ -1018,7 +1018,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
                 break;
             }
             Err(e) => {
-                panic!(e);
+                panic!("{}", e);
             }
         }
     }
@@ -1049,7 +1049,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
                 break;
             }
             Err(e) => {
-                panic!(e);
+                panic!("{}", e);
             }
         }
     }
