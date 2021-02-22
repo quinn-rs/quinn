@@ -35,7 +35,7 @@ impl Send {
     pub(super) fn is_reset(&self) -> bool {
         matches!(
             self.state,
-            SendState::ResetSent { .. } | SendState::ResetRecvd { .. }
+            SendState::ResetSent { .. }
         )
     }
 
@@ -162,8 +162,6 @@ pub(super) enum SendState {
     ResetSent,
     /// All sent data acknowledged
     DataRecvd,
-    /// Reset acknowledged
-    ResetRecvd,
 }
 
 /// Reasons why attempting to finish a stream might fail

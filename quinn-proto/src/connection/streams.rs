@@ -413,7 +413,7 @@ impl Streams {
             None => return Err(UnknownStream { _private: () }),
         };
 
-        if matches!(stream.state, SendState::ResetSent | SendState::ResetRecvd) {
+        if matches!(stream.state, SendState::ResetSent) {
             // Redundant reset call
             return Err(UnknownStream { _private: () });
         }
