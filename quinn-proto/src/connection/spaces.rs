@@ -21,8 +21,6 @@ where
     pub(crate) dedup: Dedup,
     /// Highest received packet number
     pub(crate) rx_packet: u64,
-    /// Time at which the above was received
-    pub(crate) rx_packet_time: Instant,
 
     /// Data to send
     pub(crate) pending: Retransmits,
@@ -78,7 +76,6 @@ where
             crypto: None,
             dedup: Dedup::new(),
             rx_packet: 0,
-            rx_packet_time: now,
 
             pending: Retransmits::default(),
             pending_acks: RangeSet::new(),
