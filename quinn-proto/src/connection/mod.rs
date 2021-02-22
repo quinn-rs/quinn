@@ -682,12 +682,21 @@ where
 
     /// Returns `true` if a space has outgoing data to send
     fn space_can_send(&self, space_id: SpaceId) -> bool {
-        (self.spaces[space_id].crypto.is_some() && self.spaces[space_id].can_send())
-            || (space_id == SpaceId::Data
-                && ((self.spaces[space_id].crypto.is_some() && self.can_send_1rtt())
-                    || (self.zero_rtt_crypto.is_some()
-                        && self.side.is_client()
-                        && (self.spaces[space_id].can_send() || self.can_send_1rtt()))))
+        if self.spaces[space_id].crypto.is_some() && self.spaces[space_id].can_send() {
+            return true;
+        }
+
+        if space_id != SpaceId::Data {
+            return false;
+        }
+
+        if self.spaces[space_id].crypto.is_some() && self.can_send_1rtt() {
+            return true;
+        }
+
+        self.zero_rtt_crypto.is_some()
+            && self.side.is_client()
+            && (self.spaces[space_id].can_send() || self.can_send_1rtt())
     }
 
     /// Write a new packet header to `buffer` and determine the packet's properties
