@@ -1,10 +1,12 @@
 use std::{
     cmp,
-    collections::{BTreeMap, HashSet, VecDeque},
+    collections::{BTreeMap, VecDeque},
     mem,
     ops::{Index, IndexMut},
     time::Instant,
 };
+
+use fxhash::FxHashSet;
 
 use super::assembler::Assembler;
 use super::streams::ShouldTransmit;
@@ -235,7 +237,7 @@ pub struct Retransmits {
     pub(crate) max_bi_stream_id: bool,
     pub(crate) reset_stream: Vec<(StreamId, VarInt)>,
     pub(crate) stop_sending: Vec<frame::StopSending>,
-    pub(crate) max_stream_data: HashSet<StreamId>,
+    pub(crate) max_stream_data: FxHashSet<StreamId>,
     pub(crate) crypto: VecDeque<frame::Crypto>,
     pub(crate) new_cids: Vec<IssuedCid>,
     pub(crate) retire_cids: Vec<u64>,
@@ -286,7 +288,7 @@ impl Default for Retransmits {
             max_bi_stream_id: false,
             reset_stream: Vec::new(),
             stop_sending: Vec::new(),
-            max_stream_data: HashSet::new(),
+            max_stream_data: FxHashSet::default(),
             crypto: VecDeque::new(),
             new_cids: Vec::new(),
             retire_cids: Vec::new(),

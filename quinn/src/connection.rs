@@ -1,5 +1,4 @@
 use std::{
-    collections::HashMap,
     fmt,
     future::Future,
     mem,
@@ -15,6 +14,7 @@ use futures::{
     channel::{mpsc, oneshot},
     FutureExt, StreamExt,
 };
+use fxhash::FxHashMap;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use thiserror::Error;
 use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
@@ -708,15 +708,15 @@ where
             timer_deadline: None,
             conn_events,
             endpoint_events,
-            blocked_writers: HashMap::new(),
-            blocked_readers: HashMap::new(),
+            blocked_writers: FxHashMap::default(),
+            blocked_readers: FxHashMap::default(),
             uni_opening: Broadcast::new(),
             bi_opening: Broadcast::new(),
             incoming_uni_streams_reader: None,
             incoming_bi_streams_reader: None,
             datagram_reader: None,
-            finishing: HashMap::new(),
-            stopped: HashMap::new(),
+            finishing: FxHashMap::default(),
+            stopped: FxHashMap::default(),
             error: None,
             ref_count: 0,
         })))
@@ -780,15 +780,15 @@ where
     timer_deadline: Option<TokioInstant>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
-    pub(crate) blocked_writers: HashMap<StreamId, Waker>,
-    pub(crate) blocked_readers: HashMap<StreamId, Waker>,
+    pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
+    pub(crate) blocked_readers: FxHashMap<StreamId, Waker>,
     uni_opening: Broadcast,
     bi_opening: Broadcast,
     incoming_uni_streams_reader: Option<Waker>,
     incoming_bi_streams_reader: Option<Waker>,
     datagram_reader: Option<Waker>,
-    pub(crate) finishing: HashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
-    pub(crate) stopped: HashMap<StreamId, Waker>,
+    pub(crate) finishing: FxHashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
+    pub(crate) stopped: FxHashMap<StreamId, Waker>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
