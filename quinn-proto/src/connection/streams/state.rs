@@ -1,10 +1,11 @@
 use std::{
-    collections::{binary_heap::PeekMut, hash_map, BinaryHeap, HashMap, VecDeque},
+    collections::{binary_heap::PeekMut, hash_map, BinaryHeap, VecDeque},
     convert::TryFrom,
     mem,
 };
 
 use bytes::BufMut;
+use fxhash::FxHashMap;
 use tracing::{debug, trace};
 
 use super::{
@@ -22,8 +23,8 @@ use crate::{
 pub struct StreamsState {
     pub(super) side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
-    pub(super) send: HashMap<StreamId, Send>,
-    pub(super) recv: HashMap<StreamId, Recv>,
+    pub(super) send: FxHashMap<StreamId, Send>,
+    pub(super) recv: FxHashMap<StreamId, Recv>,
     pub(super) next: [u64; 2],
     // Locally initiated
     pub(super) max: [u64; 2],
@@ -88,8 +89,8 @@ impl StreamsState {
     ) -> Self {
         let mut this = Self {
             side,
-            send: HashMap::default(),
-            recv: HashMap::default(),
+            send: FxHashMap::default(),
+            recv: FxHashMap::default(),
             next: [0, 0],
             max: [0, 0],
             max_remote: [max_remote_bi.into(), max_remote_uni.into()],

@@ -9,6 +9,7 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
+use fxhash::FxHashMap;
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use slab::Slab;
 use thiserror::Error;
@@ -45,9 +46,17 @@ where
 {
     rng: StdRng,
     transmits: VecDeque<Transmit>,
+    /// Identifies connections based on the initial DCID the peer utilized
+    ///
+    /// Uses a standard `HashMap` to protect against hash collision attacks.
     connection_ids_initial: HashMap<ConnectionId, ConnectionHandle>,
-    connection_ids: HashMap<ConnectionId, ConnectionHandle>,
+    /// Identifies connections based on locally created CIDs
+    ///
+    /// Uses a cheaper hash function since keys are locally created
+    connection_ids: FxHashMap<ConnectionId, ConnectionHandle>,
     /// Identifies connections with zero-length CIDs
+    ///
+    /// Uses a standard `HashMap` to protect against hash collision attacks.
     connection_remotes: HashMap<SocketAddr, ConnectionHandle>,
     /// Reset tokens provided by the peer for the CID each connection is currently sending to
     ///
@@ -78,9 +87,9 @@ where
         Self {
             rng: StdRng::from_entropy(),
             transmits: VecDeque::new(),
-            connection_ids_initial: HashMap::new(),
-            connection_ids: HashMap::new(),
-            connection_remotes: HashMap::new(),
+            connection_ids_initial: HashMap::default(),
+            connection_ids: FxHashMap::default(),
+            connection_remotes: HashMap::default(),
             connection_reset_tokens: ResetTokenTable::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
@@ -759,7 +768,7 @@ pub(crate) struct ConnectionMeta {
     init_cid: ConnectionId,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     cids_issued: u64,
-    loc_cids: HashMap<u64, ConnectionId>,
+    loc_cids: FxHashMap<u64, ConnectionId>,
     /// Remote address the connection began with
     ///
     /// Only needed to support connections with zero-length CIDs, which cannot migrate, so we don't
@@ -843,6 +852,10 @@ pub enum ConnectError {
     InvalidRemoteAddress(SocketAddr),
 }
 
+/// Reset Tokens which are associated with peer socket addresses
+///
+/// The standard `HashMap` is used since both `SocketAddr` and `ResetToken` are
+/// peer generated and might be usable for hash collision attacks.
 #[derive(Default, Debug)]
 struct ResetTokenTable(HashMap<SocketAddr, HashMap<ResetToken, ConnectionHandle>>);
 

@@ -1,9 +1,10 @@
 //! Maintain the state of local connection IDs
 use std::{
-    collections::{HashSet, VecDeque},
+    collections::VecDeque,
     time::{Duration, Instant},
 };
 
+use fxhash::FxHashSet;
 use tracing::{debug, trace};
 
 use crate::{shared::IssuedCid, TransportError};
@@ -15,7 +16,7 @@ pub struct CidState {
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
     issued: u64,
     /// Sequence numbers of local connection IDs not yet retired by the peer
-    active_seq: HashSet<u64>,
+    active_seq: FxHashSet<u64>,
     /// Sequence number the peer has already retired all CIDs below at our request via `retire_prior_to`
     prev_retire_seq: u64,
     /// Sequence number to set in retire_prior_to field in NEW_CONNECTION_ID frame
@@ -28,7 +29,7 @@ pub struct CidState {
 
 impl CidState {
     pub(crate) fn new(cid_len: usize, cid_lifetime: Option<Duration>, now: Instant) -> Self {
-        let mut active_seq = HashSet::new();
+        let mut active_seq = FxHashSet::default();
         // Add sequence number of CID used in handshaking into tracking set
         active_seq.insert(0);
         let mut this = CidState {

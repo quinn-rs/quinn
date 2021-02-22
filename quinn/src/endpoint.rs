@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::VecDeque,
     future::Future,
     io,
     io::IoSliceMut,
@@ -14,6 +14,7 @@ use std::{
 
 use bytes::Bytes;
 use futures::{channel::mpsc, StreamExt};
+use fxhash::FxHashMap;
 use proto::{self as proto, generic::ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 
 use crate::{
@@ -389,7 +390,7 @@ where
 #[derive(Debug)]
 struct ConnectionSet {
     /// Senders for communicating with the endpoint's connections
-    senders: HashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
+    senders: FxHashMap<ConnectionHandle, mpsc::UnboundedSender<ConnectionEvent>>,
     /// Stored to give out clones to new ConnectionInners
     sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     /// Set if the endpoint has been manually closed
@@ -493,7 +494,7 @@ where
             incoming_reader: None,
             driver: None,
             connections: ConnectionSet {
-                senders: HashMap::new(),
+                senders: FxHashMap::default(),
                 sender,
                 close: None,
             },
