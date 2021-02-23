@@ -393,11 +393,6 @@ where
             }
         }
 
-        if self.path.anti_amplification_blocked(self.path.mtu.into()) {
-            trace!("blocked by anti-amplification");
-            return None;
-        }
-
         // If we need to send a probe, make sure we have something to send.
         for space in SpaceId::iter() {
             if self.spaces[space].loss_probes != 0 {
