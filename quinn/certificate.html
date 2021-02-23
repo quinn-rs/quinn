@@ -163,10 +163,10 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1><a class="header" href="#certificates" id="certificates">Certificates</a></h1>
+                        <h1 id="certificates"><a class="header" href="#certificates">Certificates</a></h1>
 <p>In this chapter, we discuss the configuration of the certificates that are <strong>required</strong> for a working Quinn connection. </p>
 <p>As QUIC uses TLS 1.3 for authentication of connections, the server needs to provide the client with a certificate confirming its identity, and the client must be configured to trust the certificates it receives from the server. </p>
-<h2><a class="header" href="#insecure-connection" id="insecure-connection">Insecure Connection</a></h2>
+<h2 id="insecure-connection"><a class="header" href="#insecure-connection">Insecure Connection</a></h2>
 <p>For our example use case, the easiest way to allow the client to trust our server is to disable certificate verification (don't do this in production!). 
 When the <a href="https://github.com/ctz/rustls">rustls</a> <code>dangerous_configuration</code> feature flag is enabled, a client can be configured to trust any server.</p>
 <p>Start by adding a <a href="https://github.com/ctz/rustls">rustls</a> dependency with the <code>dangerous_configuration</code> feature flag to your <code>Cargo.toml</code> file.</p>
@@ -210,10 +210,10 @@ impl rustls::ServerCertVerifier for SkipCertificationVerification {
 <span class="boring">}
 </span></code></pre></pre>
 <p>Finally, if you plug this <a href="https://docs.rs/quinn/latest/quinn/generic/struct.ClientConfig.html">ClientConfig</a> into the <a href="https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html#method.default_client_config">EndpointBuilder::default_client_config()</a> your client endpoint should verify all connections as trustworthy.</p>
-<h2><a class="header" href="#using-certificates" id="using-certificates">Using Certificates</a></h2>
+<h2 id="using-certificates"><a class="header" href="#using-certificates">Using Certificates</a></h2>
 <p>In this section, we look at certifying an endpoint with a certificate. 
 The certificate can be signed with its key, or with a certificate authority's key.</p>
-<h3><a class="header" href="#self-signed-certificates" id="self-signed-certificates">Self Signed Certificates</a></h3>
+<h3 id="self-signed-certificates"><a class="header" href="#self-signed-certificates">Self Signed Certificates</a></h3>
 <p>Relying on <a href="https://en.wikipedia.org/wiki/Self-signed_certificate#:%7E:text=In%20cryptography%20and%20computer%20security,a%20CA%20aim%20to%20provide.">self-signed</a> certificates means that clients allow servers to sign their certificates. 
 This is simpler because no third party is involved in signing the server's certificate.
 However, self-signed certificates do not protect users from person-in-the-middle attacks, because an interceptor can trivially replace the certificate with one that it has signed. Self-signed certificates, among other options, can be created using the <a href="https://github.com/est31/rcgen">rcgen</a> crate or the openssl binary.
@@ -239,7 +239,7 @@ This example uses <a href="https://github.com/est31/rcgen">rcgen</a> to generate
 <span class="boring">}
 </span></code></pre></pre>
 <p><em>Note that <a href="https://docs.rs/rcgen/latest/rcgen/fn.generate_simple_self_signed.html">generate_simple_self_signed</a> returns a <a href="https://en.wikipedia.org/wiki/Public_key_certificate">Certificate</a> that can be serialized to both <code>.der</code> and <code>.pem</code> formats.</em></p>
-<h3><a class="header" href="#non-self-signed-certificates" id="non-self-signed-certificates">Non-self-signed Certificates</a></h3>
+<h3 id="non-self-signed-certificates"><a class="header" href="#non-self-signed-certificates">Non-self-signed Certificates</a></h3>
 <p>For this example, we use <a href="https://letsencrypt.org/getting-started/">Let's Encrypt</a>, a well-known Certificate Authority (<a href="https://en.wikipedia.org/wiki/Certificate_authority">CA</a>) (certificate issuer) which distributes certificates for free.</p>
 <p><strong>Generate Certificate</strong></p>
 <p><a href="https://certbot.eff.org/instructions">certbot</a> can be used with Let's Encrypt to generate certificates; its website comes with clear instructions.
@@ -265,7 +265,7 @@ These files can then be referenced in code.</p>
 }
 <span class="boring">}
 </span></code></pre></pre>
-<h3><a class="header" href="#configuring-certificates" id="configuring-certificates">Configuring Certificates</a></h3>
+<h3 id="configuring-certificates"><a class="header" href="#configuring-certificates">Configuring Certificates</a></h3>
 <p>Now that you have a valid certificate, the client and server need to be configured to use it.
 After configuring plug the configuration into the <code>Endpoint</code>.</p>
 <p><strong>Configure Server</strong></p>

@@ -172,10 +172,10 @@
 <a href="https://gitter.im/djc/quinn"><img src="https://badges.gitter.im/gitterHQ/gitter.svg" alt="Chat" /></a>
 <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
 <a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0" /></a></p>
-<h1><a class="header" href="#pure-rust-quic-protocol-implementation" id="pure-rust-quic-protocol-implementation">Pure-rust QUIC protocol implementation</a></h1>
+<h1 id="pure-rust-quic-protocol-implementation"><a class="header" href="#pure-rust-quic-protocol-implementation">Pure-rust QUIC protocol implementation</a></h1>
 <p>Quinn is a pure-rust, future-based implementation of the <a href="https://quicwg.github.io/">QUIC</a> transport protocol undergoing standardization by the IETF.
 This library is at <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-transport/32/">draft 32</a>.</p>
-<h2><a class="header" href="#features" id="features">Features</a></h2>
+<h2 id="features"><a class="header" href="#features">Features</a></h2>
 <ul>
 <li>Simultaneous client/server operation</li>
 <li>Ordered and unordered stream reads for improved performance</li>
@@ -187,7 +187,7 @@ This library is at <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-tra
 <li>Experimental HTTP over QUIC</li>
 <li>The minimum supported Rust version is 1.45.0</li>
 </ul>
-<h2><a class="header" href="#overview" id="overview">Overview</a></h2>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <ul>
 <li><strong>quinn:</strong> High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)</li>
 <li><strong>quinn-proto:</strong> Deterministic state machine of the protocol which performs <a href="https://sans-io.readthedocs.io/how-to-sans-io.html"><strong>no</strong> I/O</a> internally and is suitable for use with custom event loops (and potentially a C or C++ API).</li>
@@ -196,7 +196,7 @@ This library is at <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-tra
 <li><strong>interop:</strong> Tooling that helps to run interoperability tests.</li>
 <li><strong>fuzz:</strong> Fuzz tests.</li>
 </ul>
-<h1><a class="header" href="#getting-started" id="getting-started">Getting Started</a></h1>
+<h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
 <p><strong>Examples</strong></p>
 <pre><code class="language-sh">$ cargo run --example server ./
 $ cargo run --example client https://localhost:4433/Cargo.toml
@@ -211,12 +211,12 @@ client will automatically find and trust it.</p>
 <li>Usage <a href="https://github.com/djc/quinn/tree/main/quinn/examples">examples</a></li>
 <li>Guide <a href="https://github.com/djc/quinn/issues/865">book</a></li>
 </ul>
-<h2><a class="header" href="#usage-notes" id="usage-notes">Usage Notes</a></h2>
+<h2 id="usage-notes"><a class="header" href="#usage-notes">Usage Notes</a></h2>
 <details>
 <summary>
 Click to show the notes
 </summary>
-<h3><a class="header" href="#buffers" id="buffers">Buffers</a></h3>
+<h3 id="buffers"><a class="header" href="#buffers">Buffers</a></h3>
 <p>A Quinn endpoint corresponds to a single UDP socket, no matter how many
 connections are in use. Handling high aggregate data rates on a single endpoint
 can require a larger UDP buffer than is configured by default in most
@@ -226,7 +226,7 @@ adjust the <code>SO_SNDBUF</code> and <code>SO_RCVBUF</code> options of the UDP 
 before passing it in to Quinn. Note that some platforms (e.g. Linux) require
 elevated privileges or modified system configuration for a process to increase
 its UDP buffer sizes.</p>
-<h3><a class="header" href="#certificates" id="certificates">Certificates</a></h3>
+<h3 id="certificates"><a class="header" href="#certificates">Certificates</a></h3>
 <p>By default, Quinn clients validate the cryptographic identity of servers they
 connect to. This prevents an active, on-path attacker from intercepting
 messages, but requires trusting some certificate authority. For many purposes,
@@ -245,7 +245,7 @@ should write their generated certificate to persistent storage and reuse it on
 future runs.</p>
 </details>
 <p></p>
-<h2><a class="header" href="#contribution" id="contribution">Contribution</a></h2>
+<h2 id="contribution"><a class="header" href="#contribution">Contribution</a></h2>
 <p>All feedback welcome. Feel free to file bugs, requests for documentation and
 any other feedback to the <a href="https://github.com/djc/quinn/issues">issue tracker</a>.</p>
 <p>The quinn-proto test suite uses simulated IO for reproducibility and to avoid
@@ -256,7 +256,7 @@ for the client side of each connection will be written to the path specified in
 the variable.</p>
 <p>The minimum supported Rust version for published releases of our
 crates will always be at least 6 months old at the time of release.</p>
-<h2><a class="header" href="#authors" id="authors">Authors</a></h2>
+<h2 id="authors"><a class="header" href="#authors">Authors</a></h2>
 <ul>
 <li><strong>Dirkjan Ochtman</strong> - <em>Project owner &amp; founder</em></li>
 <li><strong>Benjamin Saunders</strong> - <em>Project owner &amp; founder</em></li>

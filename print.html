@@ -174,10 +174,10 @@
 <a href="https://gitter.im/djc/quinn"><img src="https://badges.gitter.im/gitterHQ/gitter.svg" alt="Chat" /></a>
 <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
 <a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0" /></a></p>
-<h1><a class="header" href="#pure-rust-quic-protocol-implementation" id="pure-rust-quic-protocol-implementation">Pure-rust QUIC protocol implementation</a></h1>
+<h1 id="pure-rust-quic-protocol-implementation"><a class="header" href="#pure-rust-quic-protocol-implementation">Pure-rust QUIC protocol implementation</a></h1>
 <p>Quinn is a pure-rust, future-based implementation of the <a href="https://quicwg.github.io/">QUIC</a> transport protocol undergoing standardization by the IETF.
 This library is at <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-transport/32/">draft 32</a>.</p>
-<h2><a class="header" href="#features" id="features">Features</a></h2>
+<h2 id="features"><a class="header" href="#features">Features</a></h2>
 <ul>
 <li>Simultaneous client/server operation</li>
 <li>Ordered and unordered stream reads for improved performance</li>
@@ -189,7 +189,7 @@ This library is at <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-tra
 <li>Experimental HTTP over QUIC</li>
 <li>The minimum supported Rust version is 1.45.0</li>
 </ul>
-<h2><a class="header" href="#overview" id="overview">Overview</a></h2>
+<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <ul>
 <li><strong>quinn:</strong> High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)</li>
 <li><strong>quinn-proto:</strong> Deterministic state machine of the protocol which performs <a href="https://sans-io.readthedocs.io/how-to-sans-io.html"><strong>no</strong> I/O</a> internally and is suitable for use with custom event loops (and potentially a C or C++ API).</li>
@@ -198,7 +198,7 @@ This library is at <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-tra
 <li><strong>interop:</strong> Tooling that helps to run interoperability tests.</li>
 <li><strong>fuzz:</strong> Fuzz tests.</li>
 </ul>
-<h1><a class="header" href="#getting-started" id="getting-started">Getting Started</a></h1>
+<h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
 <p><strong>Examples</strong></p>
 <pre><code class="language-sh">$ cargo run --example server ./
 $ cargo run --example client https://localhost:4433/Cargo.toml
@@ -213,12 +213,12 @@ client will automatically find and trust it.</p>
 <li>Usage <a href="https://github.com/djc/quinn/tree/main/quinn/examples">examples</a></li>
 <li>Guide <a href="https://github.com/djc/quinn/issues/865">book</a></li>
 </ul>
-<h2><a class="header" href="#usage-notes" id="usage-notes">Usage Notes</a></h2>
+<h2 id="usage-notes"><a class="header" href="#usage-notes">Usage Notes</a></h2>
 <details>
 <summary>
 Click to show the notes
 </summary>
-<h3><a class="header" href="#buffers" id="buffers">Buffers</a></h3>
+<h3 id="buffers"><a class="header" href="#buffers">Buffers</a></h3>
 <p>A Quinn endpoint corresponds to a single UDP socket, no matter how many
 connections are in use. Handling high aggregate data rates on a single endpoint
 can require a larger UDP buffer than is configured by default in most
@@ -228,7 +228,7 @@ adjust the <code>SO_SNDBUF</code> and <code>SO_RCVBUF</code> options of the UDP 
 before passing it in to Quinn. Note that some platforms (e.g. Linux) require
 elevated privileges or modified system configuration for a process to increase
 its UDP buffer sizes.</p>
-<h3><a class="header" href="#certificates" id="certificates">Certificates</a></h3>
+<h3 id="certificates"><a class="header" href="#certificates">Certificates</a></h3>
 <p>By default, Quinn clients validate the cryptographic identity of servers they
 connect to. This prevents an active, on-path attacker from intercepting
 messages, but requires trusting some certificate authority. For many purposes,
@@ -247,7 +247,7 @@ should write their generated certificate to persistent storage and reuse it on
 future runs.</p>
 </details>
 <p></p>
-<h2><a class="header" href="#contribution" id="contribution">Contribution</a></h2>
+<h2 id="contribution"><a class="header" href="#contribution">Contribution</a></h2>
 <p>All feedback welcome. Feel free to file bugs, requests for documentation and
 any other feedback to the <a href="https://github.com/djc/quinn/issues">issue tracker</a>.</p>
 <p>The quinn-proto test suite uses simulated IO for reproducibility and to avoid
@@ -258,16 +258,16 @@ for the client side of each connection will be written to the path specified in
 the variable.</p>
 <p>The minimum supported Rust version for published releases of our
 crates will always be at least 6 months old at the time of release.</p>
-<h2><a class="header" href="#authors" id="authors">Authors</a></h2>
+<h2 id="authors"><a class="header" href="#authors">Authors</a></h2>
 <ul>
 <li><strong>Dirkjan Ochtman</strong> - <em>Project owner &amp; founder</em></li>
 <li><strong>Benjamin Saunders</strong> - <em>Project owner &amp; founder</em></li>
 <li><strong>Jean-Christophe Begue</strong> - <em>Project collaborator, author of the HTTP/3 Implementation</em></li>
 </ul>
-<h1><a class="header" href="#certificates-1" id="certificates-1">Certificates</a></h1>
+<h1 id="certificates-1"><a class="header" href="#certificates-1">Certificates</a></h1>
 <p>In this chapter, we discuss the configuration of the certificates that are <strong>required</strong> for a working Quinn connection. </p>
 <p>As QUIC uses TLS 1.3 for authentication of connections, the server needs to provide the client with a certificate confirming its identity, and the client must be configured to trust the certificates it receives from the server. </p>
-<h2><a class="header" href="#insecure-connection" id="insecure-connection">Insecure Connection</a></h2>
+<h2 id="insecure-connection"><a class="header" href="#insecure-connection">Insecure Connection</a></h2>
 <p>For our example use case, the easiest way to allow the client to trust our server is to disable certificate verification (don't do this in production!). 
 When the <a href="https://github.com/ctz/rustls">rustls</a> <code>dangerous_configuration</code> feature flag is enabled, a client can be configured to trust any server.</p>
 <p>Start by adding a <a href="https://github.com/ctz/rustls">rustls</a> dependency with the <code>dangerous_configuration</code> feature flag to your <code>Cargo.toml</code> file.</p>
@@ -311,10 +311,10 @@ impl rustls::ServerCertVerifier for SkipCertificationVerification {
 <span class="boring">}
 </span></code></pre></pre>
 <p>Finally, if you plug this <a href="https://docs.rs/quinn/latest/quinn/generic/struct.ClientConfig.html">ClientConfig</a> into the <a href="https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html#method.default_client_config">EndpointBuilder::default_client_config()</a> your client endpoint should verify all connections as trustworthy.</p>
-<h2><a class="header" href="#using-certificates" id="using-certificates">Using Certificates</a></h2>
+<h2 id="using-certificates"><a class="header" href="#using-certificates">Using Certificates</a></h2>
 <p>In this section, we look at certifying an endpoint with a certificate. 
 The certificate can be signed with its key, or with a certificate authority's key.</p>
-<h3><a class="header" href="#self-signed-certificates" id="self-signed-certificates">Self Signed Certificates</a></h3>
+<h3 id="self-signed-certificates"><a class="header" href="#self-signed-certificates">Self Signed Certificates</a></h3>
 <p>Relying on <a href="https://en.wikipedia.org/wiki/Self-signed_certificate#:%7E:text=In%20cryptography%20and%20computer%20security,a%20CA%20aim%20to%20provide.">self-signed</a> certificates means that clients allow servers to sign their certificates. 
 This is simpler because no third party is involved in signing the server's certificate.
 However, self-signed certificates do not protect users from person-in-the-middle attacks, because an interceptor can trivially replace the certificate with one that it has signed. Self-signed certificates, among other options, can be created using the <a href="https://github.com/est31/rcgen">rcgen</a> crate or the openssl binary.
@@ -340,7 +340,7 @@ This example uses <a href="https://github.com/est31/rcgen">rcgen</a> to generate
 <span class="boring">}
 </span></code></pre></pre>
 <p><em>Note that <a href="https://docs.rs/rcgen/latest/rcgen/fn.generate_simple_self_signed.html">generate_simple_self_signed</a> returns a <a href="https://en.wikipedia.org/wiki/Public_key_certificate">Certificate</a> that can be serialized to both <code>.der</code> and <code>.pem</code> formats.</em></p>
-<h3><a class="header" href="#non-self-signed-certificates" id="non-self-signed-certificates">Non-self-signed Certificates</a></h3>
+<h3 id="non-self-signed-certificates"><a class="header" href="#non-self-signed-certificates">Non-self-signed Certificates</a></h3>
 <p>For this example, we use <a href="https://letsencrypt.org/getting-started/">Let's Encrypt</a>, a well-known Certificate Authority (<a href="https://en.wikipedia.org/wiki/Certificate_authority">CA</a>) (certificate issuer) which distributes certificates for free.</p>
 <p><strong>Generate Certificate</strong></p>
 <p><a href="https://certbot.eff.org/instructions">certbot</a> can be used with Let's Encrypt to generate certificates; its website comes with clear instructions.
@@ -366,7 +366,7 @@ These files can then be referenced in code.</p>
 }
 <span class="boring">}
 </span></code></pre></pre>
-<h3><a class="header" href="#configuring-certificates" id="configuring-certificates">Configuring Certificates</a></h3>
+<h3 id="configuring-certificates"><a class="header" href="#configuring-certificates">Configuring Certificates</a></h3>
 <p>Now that you have a valid certificate, the client and server need to be configured to use it.
 After configuring plug the configuration into the <code>Endpoint</code>.</p>
 <p><strong>Configure Server</strong></p>
@@ -389,13 +389,13 @@ builder.add_certificate_authority(certificate)?;
 <p>This is the only thing you need to do for your client to trust a server certificate. </p>
 <p><br><hr></p>
 <p><a href="quinn/set-up-connection.html">Next</a>, let's have a look at how to set up a connection. </p>
-<h1><a class="header" href="#connection-setup" id="connection-setup">Connection Setup</a></h1>
+<h1 id="connection-setup"><a class="header" href="#connection-setup">Connection Setup</a></h1>
 <p>In the <a href="quinn/certificate.html">previous chapter</a> we looked at how to configure a certificate.
 This aspect is omitted in this chapter to prevent duplication. 
 But <strong>remember</strong> that this is required to get your <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a> up and running. 
 This chapter explains how to set up a connection and prepare it for data transfer. </p>
 <p>It all starts with the <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a> struct, this is the entry point of the library. </p>
-<h2><a class="header" href="#example" id="example">Example</a></h2>
+<h2 id="example"><a class="header" href="#example">Example</a></h2>
 <p>Let's start by defining some constants. </p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
@@ -461,7 +461,7 @@ The <code>SERVER_NAME</code> argument is the DNS name, matching the certificate 
 </span></code></pre></pre>
 <p><br><hr></p>
 <p><a href="quinn/set-up-connection.html">Next up</a>, let's have a look at sending data over this connection.</p>
-<h1><a class="header" href="#the-quic-protocol" id="the-quic-protocol">The QUIC protocol</a></h1>
+<h1 id="the-quic-protocol"><a class="header" href="#the-quic-protocol">The QUIC protocol</a></h1>
 <p><a href="https://en.wikipedia.org/wiki/QUIC">QUIC</a> is a general-purpose network protocol built on top of UDP.
 The protocol is still under development and standardized by the <a href="https://www.ietf.org/">IETF</a>. 
 Quinn strives to implement the latest <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-transport/">draft</a> but may lag a bit behind. Although QUIC is still in a draft phase, 

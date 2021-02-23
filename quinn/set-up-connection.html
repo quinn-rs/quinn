@@ -163,13 +163,13 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1><a class="header" href="#connection-setup" id="connection-setup">Connection Setup</a></h1>
+                        <h1 id="connection-setup"><a class="header" href="#connection-setup">Connection Setup</a></h1>
 <p>In the <a href="certificate.html">previous chapter</a> we looked at how to configure a certificate.
 This aspect is omitted in this chapter to prevent duplication. 
 But <strong>remember</strong> that this is required to get your <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a> up and running. 
 This chapter explains how to set up a connection and prepare it for data transfer. </p>
 <p>It all starts with the <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a> struct, this is the entry point of the library. </p>
-<h2><a class="header" href="#example" id="example">Example</a></h2>
+<h2 id="example"><a class="header" href="#example">Example</a></h2>
 <p>Let's start by defining some constants. </p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
