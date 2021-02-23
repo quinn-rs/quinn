@@ -3,7 +3,7 @@
     <head>
         <!-- Book generated using mdBook -->
         <meta charset="UTF-8">
-        <title>QUINN Introduction - Quinn</title>
+        <title>Networking introduction - Quinn</title>
         
         
 
@@ -95,7 +95,7 @@
 
         <nav id="sidebar" class="sidebar" aria-label="Table of contents">
             <div class="sidebar-scrollbox">
-                <ol class="chapter"><li class="chapter-item expanded "><a href="quinn.html"><strong aria-hidden="true">1.</strong> QUINN Introduction</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="quinn/certificate.html"><strong aria-hidden="true">1.1.</strong> Certificate Configuration</a></li><li class="chapter-item expanded "><a href="quinn/set-up-connection.html"><strong aria-hidden="true">1.2.</strong> Connection Setup</a></li><li class="chapter-item expanded "><a href="quinn/data-transfer.html"><strong aria-hidden="true">1.3.</strong> Data Transfer</a></li></ol></li><li class="chapter-item expanded "><a href="quic.html"><strong aria-hidden="true">2.</strong> The QUIC protocol</a></li></ol>
+                <ol class="chapter"><li class="chapter-item expanded "><a href="networking-introduction.html"><strong aria-hidden="true">1.</strong> Networking introduction</a></li><li class="chapter-item expanded "><a href="quinn.html"><strong aria-hidden="true">2.</strong> Quinn introduction</a></li><li class="chapter-item expanded "><a href="quinn.html"><strong aria-hidden="true">3.</strong> QUINN Introduction</a></li><li><ol class="section"><li class="chapter-item expanded "><a href="quinn/certificate.html"><strong aria-hidden="true">3.1.</strong> Certificate Configuration</a></li><li class="chapter-item expanded "><a href="quinn/set-up-connection.html"><strong aria-hidden="true">3.2.</strong> Connection Setup</a></li><li class="chapter-item expanded "><a href="quinn/data-transfer.html"><strong aria-hidden="true">3.3.</strong> Data Transfer</a></li></ol></li><li class="chapter-item expanded "><a href="quic.html"><strong aria-hidden="true">4.</strong> The QUIC protocol</a></li></ol>
             </div>
             <div id="sidebar-resize-handle" class="sidebar-resize-handle"></div>
         </nav>
@@ -163,105 +163,43 @@
 
                 <div id="content" class="content">
                     <main>
-                        <h1 align="center"><img width="500" src="https://raw.githubusercontent.com/quinn-rs/quinn/51a3cea225670757cb844a342428e4e1341d9f13/docs/thumbnail.svg" /></h1>
-<p><a href="https://docs.rs/quinn/"><img src="https://docs.rs/quinn/badge.svg" alt="Documentation" /></a>
-<a href="https://crates.io/crates/quinn"><img src="https://img.shields.io/crates/v/quinn.svg" alt="Crates.io" /></a>
-<a href="https://github.com/djc/quinn/actions?query=workflow%3ACI"><img src="https://github.com/djc/quinn/workflows/CI/badge.svg" alt="Build status" /></a>
-<a href="https://codecov.io/gh/djc/quinn"><img src="https://codecov.io/gh/djc/quinn/branch/main/graph/badge.svg" alt="codecov" /></a>
-<a href="https://matrix.to/#/#djc_quinn:gitter.im"><img src="https://img.shields.io/badge/chat-%23djc_quinn:gitter.im-%2346BC99?logo=matrix" alt="Chat" /></a>
-<a href="https://gitter.im/djc/quinn"><img src="https://badges.gitter.im/gitterHQ/gitter.svg" alt="Chat" /></a>
-<a href="LICENSE-MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
-<a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0" /></a></p>
-<h1 id="pure-rust-quic-protocol-implementation"><a class="header" href="#pure-rust-quic-protocol-implementation">Pure-rust QUIC protocol implementation</a></h1>
-<p>Quinn is a pure-rust, future-based implementation of the <a href="https://quicwg.github.io/">QUIC</a> transport protocol undergoing standardization by the IETF.
-This library is at <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-transport/32/">draft 32</a>.</p>
-<h2 id="features"><a class="header" href="#features">Features</a></h2>
+                        <h1 id="networking-introduction"><a class="header" href="#networking-introduction">Networking Introduction</a></h1>
+<p>In this chapter, you will find a very short introduction to various networking concepts. 
+These concepts are important to understanding when to use QUIC.</p>
+<h2 id="1-tcpip-and-udp-comparison"><a class="header" href="#1-tcpip-and-udp-comparison">1. TCP/IP and UDP Comparison</a></h2>
+<p>Let's compare TCP, UDP, and QUIC.</p>
 <ul>
-<li>Simultaneous client/server operation</li>
-<li>Ordered and unordered stream reads for improved performance</li>
-<li>Works on stable Rust, tested on Linux, macOS and Windows</li>
-<li>Pluggable cryptography, with a standard implementation backed by
-<a href="https://github.com/ctz/rustls">rustls</a> and <a href="https://github.com/briansmith/ring"><em>ring</em></a></li>
-<li>Application-layer datagrams for small, unreliable messages</li>
-<li>Future-based async API</li>
-<li>Experimental HTTP over QUIC</li>
-<li>The minimum supported Rust version is 1.45.0</li>
+<li><strong>unreliable</strong>: Transport packets are not assured of arrival and ordering. </li>
+<li><strong>reliable</strong>: Transport packets are assured of arrival and ordering.</li>
 </ul>
-<h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
-<ul>
-<li><strong>quinn:</strong> High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)</li>
-<li><strong>quinn-proto:</strong> Deterministic state machine of the protocol which performs <a href="https://sans-io.readthedocs.io/how-to-sans-io.html"><strong>no</strong> I/O</a> internally and is suitable for use with custom event loops (and potentially a C or C++ API).</li>
-<li><strong>quinn-h3:</strong> Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.</li>
-<li><strong>bench:</strong> Benchmarks without any framework.</li>
-<li><strong>interop:</strong> Tooling that helps to run interoperability tests.</li>
-<li><strong>fuzz:</strong> Fuzz tests.</li>
-</ul>
-<h1 id="getting-started"><a class="header" href="#getting-started">Getting Started</a></h1>
-<p><strong>Examples</strong></p>
-<pre><code class="language-sh">$ cargo run --example server ./
-$ cargo run --example client https://localhost:4433/Cargo.toml
-</code></pre>
-<p>This launches an HTTP 0.9 server on the loopback address serving the current
-working directory, with the client fetching <code>./Cargo.toml</code>. By default, the
-server generates a self-signed certificate and stores it to disk, where the
-client will automatically find and trust it.</p>
-<p><strong>Links</strong></p>
-<ul>
-<li>Talk at <a href="https://paris.rustfest.eu/sessions/a-quic-future-in-rust">RustFest Paris (May 2018) presentation</a>; <a href="https://dirkjan.ochtman.nl/files/quic-future-in-rust.pdf">slides</a>; <a href="https://www.youtube.com/watch?v=EHgyY5DNdvI">YouTube</a></li>
-<li>Usage <a href="https://github.com/djc/quinn/tree/main/quinn/examples">examples</a></li>
-<li>Guide <a href="https://github.com/djc/quinn/issues/865">book</a></li>
-</ul>
-<h2 id="usage-notes"><a class="header" href="#usage-notes">Usage Notes</a></h2>
-<details>
-<summary>
-Click to show the notes
-</summary>
-<h3 id="buffers"><a class="header" href="#buffers">Buffers</a></h3>
-<p>A Quinn endpoint corresponds to a single UDP socket, no matter how many
-connections are in use. Handling high aggregate data rates on a single endpoint
-can require a larger UDP buffer than is configured by default in most
-environments. If you observe erratic latency and/or throughput over a stable
-network link, consider increasing the buffer sizes used. For example, you could
-adjust the <code>SO_SNDBUF</code> and <code>SO_RCVBUF</code> options of the UDP socket to be used
-before passing it in to Quinn. Note that some platforms (e.g. Linux) require
-elevated privileges or modified system configuration for a process to increase
-its UDP buffer sizes.</p>
-<h3 id="certificates"><a class="header" href="#certificates">Certificates</a></h3>
-<p>By default, Quinn clients validate the cryptographic identity of servers they
-connect to. This prevents an active, on-path attacker from intercepting
-messages, but requires trusting some certificate authority. For many purposes,
-this can be accomplished by using certificates from <a href="https://letsencrypt.org/">Let's Encrypt</a>
-for servers, and relying on the default configuration for clients.</p>
-<p>For some cases, including peer-to-peer, trust-on-first-use, deliberately
-insecure applications, or any case where servers are not identified by domain
-name, this isn't practical. Arbitrary certificate validation logic can be
-implemented by enabling the <code>dangerous_configuration</code> feature of <code>rustls</code> and
-constructing a Quinn <code>ClientConfig</code> with an overridden certificate verifier by
-hand.</p>
-<p>When operating your own certificate authority doesn't make sense, <a href="https://crates.io/crates/rcgen">rcgen</a>
-can be used to generate self-signed certificates on demand. To support
-trust-on-first-use, servers that automatically generate self-signed certificates
-should write their generated certificate to persistent storage and reuse it on
-future runs.</p>
-</details>
-<p></p>
-<h2 id="contribution"><a class="header" href="#contribution">Contribution</a></h2>
-<p>All feedback welcome. Feel free to file bugs, requests for documentation and
-any other feedback to the <a href="https://github.com/djc/quinn/issues">issue tracker</a>.</p>
-<p>The quinn-proto test suite uses simulated IO for reproducibility and to avoid
-long sleeps in certain timing-sensitive tests. If the <code>SSLKEYLOGFILE</code>
-environment variable is set, the tests will emit UDP packets for inspection
-using external protocol analyzers like Wireshark, and NSS-compatible key logs
-for the client side of each connection will be written to the path specified in
-the variable.</p>
-<p>The minimum supported Rust version for published releases of our
-crates will always be at least 6 months old at the time of release.</p>
-<h2 id="authors"><a class="header" href="#authors">Authors</a></h2>
-<ul>
-<li><strong>Dirkjan Ochtman</strong> - <em>Project owner &amp; founder</em></li>
-<li><strong>Benjamin Saunders</strong> - <em>Project owner &amp; founder</em></li>
-<li><strong>Jean-Christophe Begue</strong> - <em>Project collaborator, author of the HTTP/3 Implementation</em></li>
-</ul>
+<table><thead><tr><th align="center">Feature</th><th align="center">TCP</th><th align="center">UDP</th><th align="center">QUIC</th></tr></thead><tbody>
+<tr><td align="center"><a href="https://en.wikipedia.org/wiki/Connection-oriented_communication">Connection-Oriented</a></td><td align="center">Yes</td><td align="center">No</td><td align="center">Yes</td></tr>
+<tr><td align="center">Transport Guarantees</td><td align="center">Reliable</td><td align="center">Unreliable</td><td align="center">Reliable ('a)</td></tr>
+<tr><td align="center">Packet Transfer</td><td align="center"><a href="https://en.wikipedia.org/wiki/Stream_(computing)">Stream-based</a></td><td align="center">Message based</td><td align="center">Stream based</td></tr>
+<tr><td align="center">Header Size</td><td align="center">~20 bytes</td><td align="center">8 bytes</td><td align="center">~16 bytes (depending on connection id)</td></tr>
+<tr><td align="center"><a href="https://en.wikipedia.org/wiki/TCP_congestion_control">Control Flow, Congestion Avoidance/Control</a></td><td align="center">Yes</td><td align="center">No</td><td align="center">Yes ('b)</td></tr>
+<tr><td align="center">Based On</td><td align="center"><a href="https://nl.wikipedia.org/wiki/Internetprotocol">IP</a></td><td align="center"><a href="https://nl.wikipedia.org/wiki/Internetprotocol">IP</a></td><td align="center">UDP</td></tr>
+</tbody></table>
+<p>'a. Unreliable is supported as an extension.<br />
+'b. QUIC control flow/congestion implementations will run in userspace whereas in TCP it's running in kernel space, 
+however, there might be a kernel implementation for QUIC in the future.</p>
+<h2 id="2-issues-with-tcp"><a class="header" href="#2-issues-with-tcp">2. Issues with TCP</a></h2>
+<p>TCP has been around for a long time and was not designed with the modern internet in mind. 
+It has several difficulties that QUIC tries to resolve. </p>
+<h3 id="head-of-line-blocking"><a class="header" href="#head-of-line-blocking">Head-of-line Blocking</a></h3>
+<p>One of the biggest issues with TCP is that of Head-of-line blocking. 
+It is a convenient feature because it ensures that all packages are sent and arrive in order. 
+However, in cases of high throughput (multiplayer game networking) and big load in a short time (web page load), this can severely impact latency.</p>
+<p>The issue is demonstrated in the following animation:</p>
+<p><img src="./images/hol.gif" alt="Head of line blocking" /> </p>
+<p>This animation shows that if a certain packet drops in transmission, all packets have to wait at the transport layer until it is resent by the other end. Once the delayed packet arrives at its destination, all later packets are passed on to the destination application together.</p>
+<p>Let's look at two areas where head-of-line blocking causes problems. </p>
+<p><strong>Web Networking</strong></p>
+<p>As websites increasingly need a larger number of HTTP requests (HTML, CSS, JavaScript, images) to display all content, the impact of head-of-line blocking has also increased. 
+To improve on this, HTTP 2 introduced request multiplexing within a TCP data stream, which allows servers to stream multiple responses at the same time. 
+However, data loss of a single packet will still block all response streams because they exist within the context of a single TCP stream.</p>
+<h3 id="connection-setup-duration"><a class="header" href="#connection-setup-duration">Connection Setup Duration</a></h3>
+<p>In the usual TCP + TLS + HTTP stack, TCP needs 6 handshake messages to set up a session between server and client. TLS performs its own, sending 4 messages for setting up an initial connection over TLS 1.3. By integrating the transport protocol and TLS handshakes, QUIC can make connection setup more efficient.</p>
 
                     </main>
 
@@ -270,7 +208,7 @@ crates will always be at least 6 months old at the time of release.</p>
                         
 
                         
-                            <a rel="next" href="quinn/certificate.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                            <a rel="next" href="quinn.html" class="mobile-nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                                 <i class="fa fa-angle-right"></i>
                             </a>
                         
@@ -284,7 +222,7 @@ crates will always be at least 6 months old at the time of release.</p>
                 
 
                 
-                    <a rel="next" href="quinn/certificate.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
+                    <a rel="next" href="quinn.html" class="nav-chapters next" title="Next chapter" aria-label="Next chapter" aria-keyshortcuts="Right">
                         <i class="fa fa-angle-right"></i>
                     </a>
                 
