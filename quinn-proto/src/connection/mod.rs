@@ -926,6 +926,9 @@ where
                     return;
                 }
 
+                let was_anti_amplification_blocked =
+                    self.path.anti_amplification_blocked(self.path.mtu as u64);
+
                 self.stats.udp_rx.datagrams += 1;
                 self.stats.udp_rx.bytes += first_decode.len() as u64;
                 self.path.total_recvd = self
@@ -937,6 +940,13 @@ where
                 if let Some(data) = remaining {
                     self.stats.udp_rx.bytes += data.len() as u64;
                     self.handle_coalesced(now, remote, ecn, data);
+                }
+
+                if was_anti_amplification_blocked {
+                    // A prior attempt to set the loss detection timer may have failed due to
+                    // anti-amplification, so ensure it's set now. Prevents a handshake deadlock if
+                    // the server's first flight is lost.
+                    self.set_loss_detection_timer(now);
                 }
             }
             NewIdentifiers(ids, now) => {
