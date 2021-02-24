@@ -248,7 +248,7 @@ impl TestEndpoint {
         }
 
         while let Some(x) = self.poll_transmit() {
-            self.outbound.push_back(x);
+            self.outbound.extend(split_transmit(x));
         }
 
         let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
@@ -269,7 +269,7 @@ impl TestEndpoint {
             }
 
             while let Some(x) = conn.poll_transmit(now) {
-                self.outbound.push_back(x);
+                self.outbound.extend(split_transmit(x));
             }
             self.timeout = conn.poll_timeout();
         }
@@ -383,6 +383,32 @@ pub fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
         (_, Some(y)) => Some(y),
         _ => None,
     }
+}
+
+fn split_transmit(transmit: Transmit) -> Vec<Transmit> {
+    let segment_size = match transmit.segment_size {
+        Some(segment_size) => segment_size,
+        _ => return vec![transmit],
+    };
+
+    let mut offset = 0;
+    let mut transmits = Vec::new();
+    while offset < transmit.contents.len() {
+        let end = (offset + segment_size).min(transmit.contents.len());
+
+        let contents = transmit.contents[offset..end].to_vec();
+        transmits.push(Transmit {
+            destination: transmit.destination,
+            ecn: transmit.ecn,
+            contents,
+            segment_size: None,
+            src_ip: transmit.src_ip,
+        });
+
+        offset = end;
+    }
+
+    transmits
 }
 
 lazy_static! {
