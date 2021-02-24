@@ -2160,8 +2160,7 @@ where
                         self.endpoint_events
                             .push_back(EndpointEventInner::ResetToken(self.path.remote, token));
                     }
-                    self.validate_peer_params(&params)?;
-                    self.set_peer_params(params);
+                    self.handle_peer_params(params)?;
                     self.issue_cids(now);
                 } else {
                     // Server-only
@@ -2208,8 +2207,7 @@ where
                                 frame: None,
                                 reason: "transport parameters missing".into(),
                             })?;
-                    self.validate_peer_params(&params)?;
-                    self.set_peer_params(params);
+                    self.handle_peer_params(params)?;
                     self.issue_cids(now);
                     self.init_0rtt();
                 }
@@ -2846,8 +2844,8 @@ where
         self.timers.set(Timer::Close, now + 3 * self.pto());
     }
 
-    /// Validate transport parameters received from the peer
-    fn validate_peer_params(&mut self, params: &TransportParameters) -> Result<(), TransportError> {
+    /// Handle transport parameters received from the peer
+    fn handle_peer_params(&mut self, params: TransportParameters) -> Result<(), TransportError> {
         if Some(self.orig_rem_cid) != params.initial_src_cid
             || (self.side.is_client()
                 && (Some(self.initial_dst_cid) != params.original_dst_cid
@@ -2858,6 +2856,7 @@ where
             ));
         }
 
+        self.set_peer_params(params);
         Ok(())
     }
 
