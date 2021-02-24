@@ -505,8 +505,7 @@ where
                     debug_assert!(untracked_bytes <= self.path.mtu as u64);
 
                     let bytes_to_send = u64::from(self.path.mtu) + untracked_bytes;
-
-                    if self.congestion_blocked(bytes_to_send) {
+                    if self.in_flight.bytes + bytes_to_send >= self.path.congestion.window() {
                         space_idx += 1;
                         congestion_blocked = true;
                         // We continue instead of breaking here in order to avoid
@@ -2878,11 +2877,6 @@ where
             }).expect("preferred address CID is the first received, and hence is guaranteed to be legal");
         }
         self.peer_params = params;
-    }
-
-    /// Whether UDP transmits are currently blocked by link congestion
-    fn congestion_blocked(&self, bytes_to_send: u64) -> bool {
-        self.in_flight.bytes + bytes_to_send >= self.path.congestion.window()
     }
 
     fn decrypt_packet(
