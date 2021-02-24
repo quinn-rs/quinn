@@ -30,7 +30,7 @@ use crate::{
     },
     transport_parameters::TransportParameters,
     Dir, Frame, Side, Transmit, TransportError, TransportErrorCode, VarInt, MAX_STREAM_COUNT,
-    MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY, StreamId,
 };
 
 mod assembler;
@@ -65,8 +65,8 @@ pub use streams::StreamsState;
 #[cfg(not(fuzzing))]
 use streams::StreamsState;
 pub use streams::{
-    Chunks, FinishError, ReadError, ReadableError, ShouldTransmit, StreamEvent, Streams,
-    UnknownStream, WriteError,
+    Chunks, FinishError, ReadError, ReadableError, SendStream, ShouldTransmit, StreamEvent,
+    Streams, UnknownStream, WriteError,
 };
 
 mod timer;
@@ -355,6 +355,18 @@ where
     #[must_use]
     pub fn streams(&mut self) -> Streams<'_> {
         Streams {
+            state: &mut self.streams,
+            pending: &mut self.spaces[SpaceId::Data].pending,
+            conn_state: &self.state,
+        }
+    }
+
+    /// Provide control over streams
+    #[must_use]
+    pub fn send_stream(&mut self, id: StreamId) -> SendStream<'_> {
+        assert!(id.dir() == Dir::Bi || id.initiator() == self.side);
+        SendStream {
+            id,
             state: &mut self.streams,
             pending: &mut self.spaces[SpaceId::Data].pending,
             conn_state: &self.state,

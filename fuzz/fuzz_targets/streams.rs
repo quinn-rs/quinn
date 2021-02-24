@@ -53,7 +53,7 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
                 stream.accept(dir);
             }
             Operation::Finish(id) => {
-                let _ = stream.finish(id);
+                let _ = stream.send(id).finish();
             }
             Operation::ReceivedStopSending(sid, err_code) => {
                 stream.state().received_stop_sending(sid, err_code);
@@ -62,7 +62,7 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
                 let _ = stream.state().received_reset(rs);
             }
             Operation::Reset(id) => {
-                let _ = stream.reset(id, 0u32.into());
+                let _ = stream.send(id).reset(0u32.into());
             }
         }
     }

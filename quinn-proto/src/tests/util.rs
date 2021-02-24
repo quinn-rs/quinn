@@ -171,6 +171,10 @@ impl Pair {
         self.client_conn_mut(ch).streams()
     }
 
+    pub fn client_send(&mut self, ch: ConnectionHandle, s: StreamId) -> SendStream<'_> {
+        self.client_conn_mut(ch).send_stream(s)
+    }
+
     pub fn server_conn_mut(&mut self, ch: ConnectionHandle) -> &mut Connection {
         self.server.connections.get_mut(&ch).unwrap()
     }
@@ -178,6 +182,11 @@ impl Pair {
     pub fn server_streams(&mut self, ch: ConnectionHandle) -> Streams<'_> {
         self.server_conn_mut(ch).streams()
     }
+
+    pub fn server_send(&mut self, ch: ConnectionHandle, s: StreamId) -> SendStream<'_> {
+        self.server_conn_mut(ch).send_stream(s)
+    }
+
 }
 
 impl Default for Pair {
