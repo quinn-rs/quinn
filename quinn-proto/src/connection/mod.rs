@@ -23,7 +23,7 @@ use crate::{
     frame,
     frame::{Close, Datagram, FrameStruct},
     is_supported_version,
-    packet::{Header, LongType, Packet, PacketNumber, PartialDecode, PartialEncode, SpaceId},
+    packet::{Header, LongType, Packet, PacketNumber, PartialDecode, SpaceId},
     range_set::RangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
@@ -41,6 +41,10 @@ mod cid_state;
 use cid_state::CidState;
 
 mod pacing;
+
+mod packet_builder;
+use packet_builder::PacketBuilder;
+
 mod paths;
 use paths::PathData;
 
@@ -3586,27 +3590,6 @@ struct SentFrames {
     acks: RangeSet,
     stream_frames: StreamMetaVec,
     requires_padding: bool,
-}
-
-struct PacketBuilder {
-    datagram_start: usize,
-    space: SpaceId,
-    partial_encode: PartialEncode,
-    ack_eliciting: bool,
-    exact_number: u64,
-    short_header: bool,
-    min_size: usize,
-    max_size: usize,
-    tag_len: usize,
-    span: tracing::Span,
-}
-
-impl PacketBuilder {
-    fn pad_to(&mut self, min_size: u16) {
-        let prev = self.min_size;
-        self.min_size = self.datagram_start + (min_size as usize) - self.tag_len;
-        debug_assert!(self.min_size >= prev, "padding must not shrink datagram");
-    }
 }
 
 /// Perform key updates this many packets before the AEAD confidentiality limit.
