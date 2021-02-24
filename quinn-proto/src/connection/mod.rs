@@ -438,6 +438,8 @@ where
         // Iterate over all spaces and find data to send
         let mut space_idx = 0;
         let spaces = [SpaceId::Initial, SpaceId::Handshake, SpaceId::Data];
+        // This loop will potentially spend multiple iterations in the same `SpaceId`,
+        // so we cannot trivially rewrite it to take advantage of `SpaceId::iter()`.
         while space_idx < spaces.len() {
             let space_id = spaces[space_idx];
 
