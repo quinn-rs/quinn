@@ -619,7 +619,7 @@ impl StreamsState {
             return Some(StreamEvent::Opened { dir });
         }
 
-        if !self.flow_blocked() {
+        if self.data_sent < self.max_data && self.unacked_data < self.send_window {
             while let Some(id) = self.connection_blocked.pop() {
                 let stream = match self.send.get_mut(&id) {
                     None => continue,
@@ -693,12 +693,6 @@ impl StreamsState {
                 .insert(id, Recv::new(self.stream_receive_window))
                 .is_none());
         }
-    }
-
-    /// Whether application stream writes are currently blocked on connection-level flow control or
-    /// the send window
-    fn flow_blocked(&self) -> bool {
-        self.data_sent >= self.max_data || self.unacked_data >= self.send_window
     }
 
     /// Adds credits to the connection flow control window
