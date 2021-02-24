@@ -2,9 +2,76 @@ use std::collections::VecDeque;
 
 use bytes::Bytes;
 use thiserror::Error;
-use tracing::debug;
+use tracing::{debug, trace};
 
-use crate::{frame::Datagram, TransportError};
+use super::Connection;
+use crate::{
+    crypto::{PacketKey, Session},
+    frame::{Datagram, FrameStruct},
+    packet::SpaceId,
+    TransportError,
+};
+
+/// API to control datagram traffic
+pub struct Datagrams<'a, S: Session> {
+    pub(super) conn: &'a mut Connection<S>,
+}
+
+impl<'a, S: Session> Datagrams<'a, S> {
+    /// Queue an unreliable, unordered datagram for immediate transmission
+    ///
+    /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
+    pub fn send(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
+        if self.conn.config.datagram_receive_buffer_size.is_none() {
+            return Err(SendDatagramError::Disabled);
+        }
+        let max = self
+            .max_size()
+            .ok_or(SendDatagramError::UnsupportedByPeer)?;
+        while self.conn.datagrams.outgoing_total > self.conn.config.datagram_send_buffer_size {
+            let prev = self
+                .conn
+                .datagrams
+                .outgoing
+                .pop_front()
+                .expect("datagrams.outgoing_total desynchronized");
+            trace!(len = prev.data.len(), "dropping outgoing datagram");
+            self.conn.datagrams.outgoing_total -= prev.data.len();
+        }
+        if data.len() > max {
+            return Err(SendDatagramError::TooLarge);
+        }
+        self.conn.datagrams.outgoing_total += data.len();
+        self.conn.datagrams.outgoing.push_back(Datagram { data });
+        Ok(())
+    }
+
+    /// Compute the maximum size of datagrams that may passed to `send_datagram`
+    ///
+    /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
+    ///
+    /// This may change over the lifetime of a connection according to variation in the path MTU
+    /// estimate. The peer can also enforce an arbitrarily small fixed limit, but if the peer's
+    /// limit is large this is guaranteed to be a little over a kilobyte at minimum.
+    ///
+    /// Not necessarily the maximum size of received datagrams.
+    pub fn max_size(&self) -> Option<usize> {
+        // This is usually 1182 bytes, but we shouldn't document that without a doctest.
+        let max_size = self.conn.path.mtu as usize
+            - 1                 // flags byte
+            - self.conn.rem_cids.active().len()
+            - 4                 // worst-case packet number size
+            - self.conn.spaces[SpaceId::Data].crypto.as_ref().map_or_else(|| &self.conn.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
+            - Datagram::SIZE_BOUND;
+        let limit = self.conn.peer_params.max_datagram_frame_size?.into_inner();
+        Some(limit.min(max_size as u64) as usize)
+    }
+
+    /// Receive an unreliable, unordered datagram
+    pub fn recv(&mut self) -> Option<Bytes> {
+        self.conn.datagrams.recv()
+    }
+}
 
 #[derive(Default)]
 pub(super) struct DatagramState {

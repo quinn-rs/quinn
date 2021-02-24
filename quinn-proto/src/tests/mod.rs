@@ -1453,22 +1453,17 @@ fn datagram_send_recv() {
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
-    assert_matches!(pair.client_conn_mut(client_ch).max_datagram_size(), Some(x) if x > 0);
+    assert_matches!(pair.client_datagrams(client_ch).max_size(), Some(x) if x > 0);
 
     const DATA: &[u8] = b"whee";
-    pair.client_conn_mut(client_ch)
-        .send_datagram(DATA.into())
-        .unwrap();
+    pair.client_datagrams(client_ch).send(DATA.into()).unwrap();
     pair.drive();
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::DatagramReceived)
     );
-    assert_eq!(
-        pair.server_conn_mut(server_ch).recv_datagram().unwrap(),
-        DATA
-    );
-    assert_matches!(pair.server_conn_mut(server_ch).recv_datagram(), None);
+    assert_eq!(pair.server_datagrams(server_ch).recv().unwrap(), DATA);
+    assert_matches!(pair.server_datagrams(server_ch).recv(), None);
 }
 
 #[test]
@@ -1486,46 +1481,29 @@ fn datagram_recv_buffer_overflow() {
     let (client_ch, server_ch) = pair.connect();
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(
-        pair.client_conn_mut(client_ch).max_datagram_size(),
+        pair.client_conn_mut(client_ch).datagrams().max_size(),
         Some(WINDOW)
     );
 
     const DATA1: &[u8] = &[0xAB; (WINDOW / 3) + 1];
     const DATA2: &[u8] = &[0xBC; (WINDOW / 3) + 1];
     const DATA3: &[u8] = &[0xCD; (WINDOW / 3) + 1];
-    pair.client_conn_mut(client_ch)
-        .send_datagram(DATA1.into())
-        .unwrap();
-    pair.client_conn_mut(client_ch)
-        .send_datagram(DATA2.into())
-        .unwrap();
-    pair.client_conn_mut(client_ch)
-        .send_datagram(DATA3.into())
-        .unwrap();
+    pair.client_datagrams(client_ch).send(DATA1.into()).unwrap();
+    pair.client_datagrams(client_ch).send(DATA2.into()).unwrap();
+    pair.client_datagrams(client_ch).send(DATA3.into()).unwrap();
     pair.drive();
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::DatagramReceived)
     );
-    assert_eq!(
-        pair.server_conn_mut(server_ch).recv_datagram().unwrap(),
-        DATA2
-    );
-    assert_eq!(
-        pair.server_conn_mut(server_ch).recv_datagram().unwrap(),
-        DATA3
-    );
-    assert_matches!(pair.server_conn_mut(server_ch).recv_datagram(), None);
+    assert_eq!(pair.server_datagrams(server_ch).recv().unwrap(), DATA2);
+    assert_eq!(pair.server_datagrams(server_ch).recv().unwrap(), DATA3);
+    assert_matches!(pair.server_datagrams(server_ch).recv(), None);
 
-    pair.client_conn_mut(client_ch)
-        .send_datagram(DATA1.into())
-        .unwrap();
+    pair.client_datagrams(client_ch).send(DATA1.into()).unwrap();
     pair.drive();
-    assert_eq!(
-        pair.server_conn_mut(server_ch).recv_datagram().unwrap(),
-        DATA1
-    );
-    assert_matches!(pair.server_conn_mut(server_ch).recv_datagram(), None);
+    assert_eq!(pair.server_datagrams(server_ch).recv().unwrap(), DATA1);
+    assert_matches!(pair.server_datagrams(server_ch).recv(), None);
 }
 
 #[test]
@@ -1541,9 +1519,9 @@ fn datagram_unsupported() {
     let mut pair = Pair::new(Default::default(), server);
     let (client_ch, server_ch) = pair.connect();
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
-    assert_matches!(pair.client_conn_mut(client_ch).max_datagram_size(), None);
+    assert_matches!(pair.client_datagrams(client_ch).max_size(), None);
 
-    match pair.client_conn_mut(client_ch).send_datagram(Bytes::new()) {
+    match pair.client_datagrams(client_ch).send(Bytes::new()) {
         Err(SendDatagramError::UnsupportedByPeer) => {}
         Err(e) => panic!("unexpected error: {}", e),
         Ok(_) => panic!("unexpected success"),

@@ -386,7 +386,7 @@ where
             return Err(SendDatagramError::ConnectionClosed(x.clone()));
         }
         use proto::SendDatagramError::*;
-        match conn.inner.send_datagram(data) {
+        match conn.inner.datagrams().send(data) {
             Ok(()) => {
                 conn.wake();
                 Ok(())
@@ -411,7 +411,11 @@ where
     ///
     /// [`send_datagram()`]: Connection::send_datagram
     pub fn max_datagram_size(&self) -> Option<usize> {
-        self.0.lock("max_datagram_size").inner.max_datagram_size()
+        self.0
+            .lock("max_datagram_size")
+            .inner
+            .datagrams()
+            .max_size()
     }
 
     /// The peer's UDP address
@@ -599,7 +603,7 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock("Datagrams::poll_next");
-        if let Some(x) = conn.inner.recv_datagram() {
+        if let Some(x) = conn.inner.datagrams().recv() {
             Poll::Ready(Some(Ok(x)))
         } else if let Some(ConnectionError::LocallyClosed) = conn.error {
             Poll::Ready(None)
