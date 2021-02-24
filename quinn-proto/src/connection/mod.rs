@@ -2664,19 +2664,10 @@ where
 
         // DATAGRAM
         while buf.len() + Datagram::SIZE_BOUND < max_size && space_id == SpaceId::Data {
-            let datagram = match self.datagrams.outgoing.pop_front() {
-                Some(x) => x,
-                None => break,
-            };
-            if buf.len() + datagram.size(true) > max_size {
-                // Future work: we could be more clever about cramming small datagrams into
-                // mostly-full packets when a larger one is queued first
-                self.datagrams.outgoing.push_front(datagram);
-                break;
+            match self.datagrams.write(buf, max_size) {
+                true => self.stats.frame_tx.datagram += 1,
+                false => break,
             }
-            self.datagrams.outgoing_total -= datagram.data.len();
-            datagram.encode(true, buf);
-            self.stats.frame_tx.datagram += 1;
         }
 
         // STREAM
