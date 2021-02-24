@@ -539,7 +539,7 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock("IncomingUniStreams::poll_next");
-        if let Some(x) = conn.inner.accept(Dir::Uni) {
+        if let Some(x) = conn.inner.streams().accept(Dir::Uni) {
             conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
             Poll::Ready(Some(Ok(RecvStream::new(self.0.clone(), x, false))))
@@ -568,7 +568,7 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock("IncomingBiStreams::poll_next");
-        if let Some(x) = conn.inner.accept(Dir::Bi) {
+        if let Some(x) = conn.inner.streams().accept(Dir::Bi) {
             let is_0rtt = conn.inner.is_handshaking();
             conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
@@ -633,7 +633,7 @@ where
         if let Some(ref e) = conn.error {
             return Poll::Ready(Err(e.clone()));
         }
-        if let Some(id) = conn.inner.open(Dir::Uni) {
+        if let Some(id) = conn.inner.streams().open(Dir::Uni) {
             let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
             drop(conn); // Release lock for clone
             return Poll::Ready(Ok(SendStream::new(this.conn.clone(), id, is_0rtt)));
@@ -664,7 +664,7 @@ where
         if let Some(ref e) = conn.error {
             return Poll::Ready(Err(e.clone()));
         }
-        if let Some(id) = conn.inner.open(Dir::Bi) {
+        if let Some(id) = conn.inner.streams().open(Dir::Bi) {
             let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
             drop(conn); // Release lock for clone
             return Poll::Ready(Ok((

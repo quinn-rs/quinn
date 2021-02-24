@@ -167,8 +167,16 @@ impl Pair {
         self.client.connections.get_mut(&ch).unwrap()
     }
 
+    pub fn client_streams(&mut self, ch: ConnectionHandle) -> Streams<'_> {
+        self.client_conn_mut(ch).streams()
+    }
+
     pub fn server_conn_mut(&mut self, ch: ConnectionHandle) -> &mut Connection {
         self.server.connections.get_mut(&ch).unwrap()
+    }
+
+    pub fn server_streams(&mut self, ch: ConnectionHandle) -> Streams<'_> {
+        self.server_conn_mut(ch).streams()
     }
 }
 
