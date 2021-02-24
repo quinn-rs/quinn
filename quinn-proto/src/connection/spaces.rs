@@ -100,6 +100,44 @@ where
         }
     }
 
+    /// Queue data for a tail loss probe (or anti-amplification deadlock prevention) packet
+    ///
+    /// Probes are sent similarly to normal packets when an expect ACK has not arrived. We never
+    /// deem a packet lost until we receive an ACK that should have included it, but if a trailing
+    /// run of packets (or their ACKs) are lost, this might not happen in a timely fashion. We send
+    /// probe packets to force an ACK, and exempt them from congestion control to prevent a deadlock
+    /// when the congestion window is filled with lost tail packets.
+    ///
+    /// We prefer to send new data, to make the most efficient use of bandwidth. If there's no data
+    /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
+    /// in-flight data either, we're probably a client guarding against a handshake
+    /// anti-amplification deadlock and we just make something up.
+    pub(crate) fn maybe_queue_probe(&mut self) {
+        if self.loss_probes == 0 {
+            return;
+        }
+
+        // Retransmit the data of the oldest in-flight packet
+        if !self.pending.is_empty() {
+            // There's real data to send here, no need to make something up
+            return;
+        }
+
+        for packet in self.sent_packets.values_mut() {
+            if !packet.retransmits.is_empty() {
+                // Remove retransmitted data from the old packet so we don't end up retransmitting
+                // it *again* even if the copy we're sending now gets acknowledged.
+                self.pending |= mem::take(&mut packet.retransmits);
+                return;
+            }
+        }
+
+        // Nothing new to send and nothing to retransmit, so fall back on a ping. This should only
+        // happen in rare cases during the handshake when the server becomes blocked by
+        // anti-amplification.
+        self.ping_pending = true;
+    }
+
     pub(crate) fn get_tx_number(&mut self) -> u64 {
         // TODO: Handle packet number overflow gracefully
         assert!(self.next_packet_number < 2u64.pow(62));
