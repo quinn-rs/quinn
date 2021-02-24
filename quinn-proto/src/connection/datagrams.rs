@@ -4,6 +4,7 @@ use thiserror::Error;
 
 use crate::frame::Datagram;
 
+#[derive(Default)]
 pub(super) struct DatagramState {
     /// Number of bytes of datagrams that have been received by the local transport but not
     /// delivered to the application
@@ -11,17 +12,6 @@ pub(super) struct DatagramState {
     pub(super) incoming: VecDeque<Datagram>,
     pub(super) outgoing: VecDeque<Datagram>,
     pub(super) outgoing_total: usize,
-}
-
-impl DatagramState {
-    pub(super) fn new() -> Self {
-        Self {
-            recv_buffered: 0,
-            incoming: VecDeque::new(),
-            outgoing: VecDeque::new(),
-            outgoing_total: 0,
-        }
-    }
 }
 
 /// Errors that can arise when sending a datagram
