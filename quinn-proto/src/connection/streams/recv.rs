@@ -121,7 +121,7 @@ impl Recv {
         self.assembler.clear();
         // Issue flow control credit for unread data
         let read_credits = self.end - self.assembler.bytes_read();
-        Ok((read_credits, ShouldTransmit(!self.is_finished())))
+        Ok((read_credits, ShouldTransmit(self.is_receiving())))
     }
 
     fn read_blocked(&mut self) -> Result<(), ReadError> {
@@ -179,9 +179,9 @@ impl Recv {
         matches!(self.state, RecvState::Recv { size: None })
     }
 
-    /// No more data expected from peer
-    pub(super) fn is_finished(&self) -> bool {
-        !matches!(self.state, RecvState::Recv { .. })
+    /// Whether data is still being accepted from the peer
+    pub(super) fn is_receiving(&self) -> bool {
+        matches!(self.state, RecvState::Recv { .. })
     }
 
     /// All data read by application

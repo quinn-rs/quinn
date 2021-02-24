@@ -301,7 +301,7 @@ impl Streams {
             }
         };
 
-        if rs.is_finished() {
+        if !rs.is_receiving() {
             trace!("dropping frame for finished stream");
             return Ok(ShouldTransmit(false));
         }
@@ -530,7 +530,7 @@ impl Streams {
                 Some(x) => x,
                 None => continue,
             };
-            if stream.is_finished() {
+            if !stream.is_receiving() {
                 continue;
             }
             trace!(stream = %frame.id, "STOP_SENDING");
@@ -567,7 +567,7 @@ impl Streams {
                 Some(x) => x,
                 None => continue,
             };
-            if rs.is_finished() {
+            if !rs.is_receiving() {
                 continue;
             }
             retransmits.get_or_create().max_stream_data.insert(id);
