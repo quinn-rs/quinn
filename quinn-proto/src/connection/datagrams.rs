@@ -2,8 +2,9 @@ use std::collections::VecDeque;
 
 use bytes::Bytes;
 use thiserror::Error;
+use tracing::debug;
 
-use crate::frame::Datagram;
+use crate::{frame::Datagram, TransportError};
 
 #[derive(Default)]
 pub(super) struct DatagramState {
@@ -16,6 +17,35 @@ pub(super) struct DatagramState {
 }
 
 impl DatagramState {
+    pub fn received(
+        &mut self,
+        datagram: Datagram,
+        window: &Option<usize>,
+    ) -> Result<bool, TransportError> {
+        let window = match window {
+            None => {
+                return Err(TransportError::PROTOCOL_VIOLATION(
+                    "unexpected DATAGRAM frame",
+                ));
+            }
+            Some(x) => *x,
+        };
+
+        if datagram.data.len() > window {
+            return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
+        }
+
+        let was_empty = self.recv_buffered == 0;
+        while datagram.data.len() + self.recv_buffered > window {
+            debug!("dropping stale datagram");
+            self.recv();
+        }
+
+        self.recv_buffered += datagram.data.len();
+        self.incoming.push_back(datagram);
+        Ok(was_empty)
+    }
+
     pub fn recv(&mut self) -> Option<Bytes> {
         let x = self.incoming.pop_front()?.data;
         self.recv_buffered -= x.len();
