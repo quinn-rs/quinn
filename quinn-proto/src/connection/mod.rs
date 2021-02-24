@@ -50,7 +50,11 @@ use paths::PathData;
 mod send_buffer;
 
 mod spaces;
-use spaces::{PacketSpace, Retransmits, SentPacket, ThinRetransmits};
+#[cfg(fuzzing)]
+pub use spaces::Retransmits;
+#[cfg(not(fuzzing))]
+use spaces::Retransmits;
+use spaces::{PacketSpace, SentPacket, ThinRetransmits};
 
 mod stats;
 pub use stats::ConnectionStats;
@@ -61,7 +65,8 @@ pub use streams::StreamsState;
 #[cfg(not(fuzzing))]
 use streams::StreamsState;
 pub use streams::{
-    FinishError, ReadError, ShouldTransmit, StreamEvent, Streams, UnknownStream, WriteError, Chunks, ReadableError,
+    Chunks, FinishError, ReadError, ReadableError, ShouldTransmit, StreamEvent, Streams,
+    UnknownStream, WriteError,
 };
 
 mod timer;
@@ -2977,7 +2982,7 @@ impl From<ConnectionError> for io::Error {
 }
 
 #[derive(Clone)]
-enum State {
+pub enum State {
     Handshake(state::Handshake),
     Established,
     Closed(state::Closed),
