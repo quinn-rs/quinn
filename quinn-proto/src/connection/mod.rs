@@ -377,7 +377,7 @@ where
                 // to at least the smallest allowed maximum datagram size of 1200 bytes,
                 // unless the anti-amplification limit for the path does not permit
                 // sending a datagram of this size
-                builder.pad_to_min_initial_size();
+                builder.pad_to(MIN_INITIAL_SIZE);
 
                 self.finish_packet(builder, &mut buf);
                 self.stats.udp_tx.datagrams += 1;
@@ -527,7 +527,7 @@ where
                 if let Some(mut builder) = builder.take() {
                     // Pad the packet to make it suitable for sending with GSO
                     // which will always send the maximum PDU.
-                    builder.pad_to_mtu_size(self.path.mtu);
+                    builder.pad_to(self.path.mtu);
 
                     self.finish_and_track_packet(now, builder, sent_frames.take(), &mut buf);
 
@@ -641,7 +641,7 @@ where
         // Finish the last packet
         if let Some(mut builder) = builder {
             if pad_datagram {
-                builder.pad_to_min_initial_size();
+                builder.pad_to(MIN_INITIAL_SIZE);
             }
             self.finish_and_track_packet(now, builder, sent_frames, &mut buf);
         }
@@ -3631,12 +3631,10 @@ struct PacketBuilder {
 }
 
 impl PacketBuilder {
-    fn pad_to_min_initial_size(&mut self) {
-        self.min_size = self.datagram_start + MIN_INITIAL_SIZE - self.tag_len;
-    }
-
-    fn pad_to_mtu_size(&mut self, mtu: u16) {
-        self.min_size = self.datagram_start + (mtu as usize) - self.tag_len;
+    fn pad_to(&mut self, min_size: u16) {
+        let prev = self.min_size;
+        self.min_size = self.datagram_start + (min_size as usize) - self.tag_len;
+        debug_assert!(self.min_size >= prev, "padding must not shrink datagram");
     }
 }
 
