@@ -401,7 +401,7 @@ where
         }
 
         // Check whether we need to send a close message
-        let mut close = match self.state {
+        let close = match self.state {
             State::Drained => {
                 self.app_limited = true;
                 return None;
@@ -587,7 +587,9 @@ where
             )?);
             coalesce = coalesce && !builder.short_header;
 
-            sent_frames = if close {
+            pad_datagram |= space_id == SpaceId::Initial && self.side.is_client();
+
+            if close {
                 trace!("sending CONNECTION_CLOSE");
                 match self.state {
                     State::Closed(state::Closed { ref reason }) => {
@@ -612,27 +614,23 @@ where
                         "tried to make a close packet when the connection wasn't closed"
                     ),
                 }
-                coalesce = false;
-                // We don't want to send 2 close packets
-                close = false;
-                None
-            } else {
-                Some(self.populate_packet(space_id, &mut buf, buf_capacity - builder.tag_len))
-            };
-
-            if let Some(sent) = &sent_frames {
-                // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
-                // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
-                // the need for subtler logic to avoid double-transmitting acks all the time.
-                // This reset needs to happen before we check whether more data
-                // is available in this space - because otherwise it would return
-                // `true` purely due to the ACKs.
-                self.spaces[space_id].permit_ack_only &= sent.acks.is_empty();
-
-                pad_datagram |= sent.requires_padding;
+                // `CONNECTION_CLOSE` is the final packet
+                break;
             }
 
-            pad_datagram |= space_id == SpaceId::Initial && self.side.is_client();
+            let sent = self.populate_packet(space_id, &mut buf, buf_capacity - builder.tag_len);
+            pad_datagram |= sent.requires_padding;
+
+            // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
+            // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
+            // the need for subtler logic to avoid double-transmitting acks all the time.
+            // This reset needs to happen before we check whether more data
+            // is available in this space - because otherwise it would return
+            // `true` purely due to the ACKs.
+            self.spaces[space_id].permit_ack_only &= sent.acks.is_empty();
+
+            // Keep information about the packet around until it gets finalized
+            sent_frames = Some(sent);
 
             // Don't increment space_idx.
             // We stay in the current space and check if there is more data to send.
