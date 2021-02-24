@@ -387,7 +387,7 @@ where
                 // sending a datagram of this size
                 builder.pad_to(MIN_INITIAL_SIZE);
 
-                self.finish_packet(builder, &mut buf);
+                builder.finish(self, &mut buf);
                 self.stats.udp_tx.datagrams += 1;
                 self.stats.udp_tx.transmits += 1;
                 self.stats.udp_tx.bytes += buf.len() as u64;
@@ -823,46 +823,6 @@ where
         })
     }
 
-    /// Encrypt packet, returning the length of the packet and whether padding was added
-    fn finish_packet(&self, builder: PacketBuilder, buffer: &mut Vec<u8>) -> (usize, bool) {
-        let pad = buffer.len() < builder.min_size;
-        if pad {
-            trace!("PADDING * {}", builder.min_size - buffer.len());
-            buffer.resize(builder.min_size, 0);
-        }
-
-        let space = &self.spaces[builder.space];
-        let (header_crypto, packet_crypto) = if let Some(ref crypto) = space.crypto {
-            (&crypto.header.local, &crypto.packet.local)
-        } else if builder.space == SpaceId::Data {
-            let zero_rtt = self.zero_rtt_crypto.as_ref().unwrap();
-            (&zero_rtt.header, &zero_rtt.packet)
-        } else {
-            unreachable!("tried to send {:?} packet without keys", builder.space);
-        };
-
-        debug_assert_eq!(
-            packet_crypto.tag_len(),
-            builder.tag_len,
-            "Mismatching crypto tag len"
-        );
-
-        buffer.resize(buffer.len() + packet_crypto.tag_len(), 0);
-        debug_assert!(buffer.len() <= builder.datagram_start + self.path.mtu as usize);
-        let encode_start = builder.partial_encode.start;
-        let packet_buf = &mut buffer[encode_start..];
-        builder.partial_encode.finish(
-            packet_buf,
-            header_crypto,
-            Some((builder.exact_number, packet_crypto)),
-        );
-        builder
-            .span
-            .with_subscriber(|(id, dispatch)| dispatch.exit(id));
-
-        (buffer.len() - encode_start, pad)
-    }
-
     fn finish_and_track_packet(
         &mut self,
         now: Instant,
@@ -873,7 +833,7 @@ where
         let ack_eliciting = builder.ack_eliciting;
         let exact_number = builder.exact_number;
         let space_id = builder.space;
-        let (size, padded) = self.finish_packet(builder, buffer);
+        let (size, padded) = builder.finish(self, buffer);
         let sent = match sent {
             Some(sent) => sent,
             None => return,
