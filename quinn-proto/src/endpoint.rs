@@ -266,7 +266,7 @@ where
                 );
                 return None;
             }
-            if datagram_len < MIN_INITIAL_SIZE {
+            if datagram_len < MIN_INITIAL_SIZE as usize {
                 debug!("ignoring short initial for connection {}", dst_cid);
                 return None;
             }
