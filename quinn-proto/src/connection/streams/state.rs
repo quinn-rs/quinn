@@ -769,7 +769,7 @@ impl StreamsState {
 mod tests {
     use super::*;
     use crate::{
-        connection::State as ConnState, connection::Streams, ReadableError, SendStream,
+        connection::State as ConnState, connection::Streams, ReadableError, RecvStream, SendStream,
         TransportErrorCode, WriteError,
     };
     use bytes::Bytes;
@@ -807,14 +807,14 @@ mod tests {
         assert_eq!(client.data_recvd, 2048);
         assert_eq!(client.local_max_data - initial_max, 0);
 
-        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
-        let mut streams = Streams {
+        let mut pending = Retransmits::default();
+        let mut recv = RecvStream {
+            id,
             state: &mut client,
             pending: &mut pending,
-            conn_state: &state,
         };
 
-        let mut chunks = streams.read(id, true).unwrap();
+        let mut chunks = recv.read(true).unwrap();
         chunks.next(1024).unwrap();
         let _ = chunks.finalize();
         assert_eq!(client.local_max_data - initial_max, 1024);
@@ -916,26 +916,21 @@ mod tests {
         );
         assert_eq!(client.local_max_data, initial_max);
 
-        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
-        let mut streams = Streams {
+        let mut pending = Retransmits::default();
+        let mut recv = RecvStream {
+            id,
             state: &mut client,
             pending: &mut pending,
-            conn_state: &state,
         };
 
-        streams.stop(id, 0u32.into()).unwrap();
-        assert_eq!(streams.pending.stop_sending.len(), 1);
-        assert!(!streams.pending.max_data);
+        recv.stop(0u32.into()).unwrap();
+        assert_eq!(recv.pending.stop_sending.len(), 1);
+        assert!(!recv.pending.max_data);
 
-        assert!(streams.stop(id, 0u32.into()).is_err());
-        assert_eq!(
-            streams.read(id, true).err(),
-            Some(ReadableError::UnknownStream)
-        );
-        assert_eq!(
-            streams.read(id, false).err(),
-            Some(ReadableError::UnknownStream)
-        );
+        assert!(recv.stop(0u32.into()).is_err());
+        assert_eq!(recv.read(true).err(), Some(ReadableError::UnknownStream));
+        assert_eq!(recv.read(false).err(), Some(ReadableError::UnknownStream));
+
         assert_eq!(client.local_max_data - initial_max, 32);
         assert_eq!(
             client
@@ -975,14 +970,14 @@ mod tests {
             ShouldTransmit(false)
         );
 
-        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
-        let mut streams = Streams {
+        let mut pending = Retransmits::default();
+        let mut recv = RecvStream {
+            id,
             state: &mut client,
             pending: &mut pending,
-            conn_state: &state,
         };
 
-        streams.stop(id, 0u32.into()).unwrap();
+        recv.stop(0u32.into()).unwrap();
         assert_eq!(pending.stop_sending.len(), 1);
         assert!(!pending.max_data);
 
@@ -1013,7 +1008,6 @@ mod tests {
         let (mut pending, state) = (Retransmits::default(), ConnState::Established);
         let id = Streams {
             state: &mut server,
-            pending: &mut pending,
             conn_state: &state,
         }
         .open(Dir::Uni)
@@ -1063,7 +1057,6 @@ mod tests {
         let (mut pending, state) = (Retransmits::default(), ConnState::Established);
         let mut streams = Streams {
             state: &mut server,
-            pending: &mut pending,
             conn_state: &state,
         };
 
