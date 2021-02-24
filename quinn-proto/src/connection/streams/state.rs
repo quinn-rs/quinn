@@ -357,7 +357,13 @@ impl StreamsState {
             let max = VarInt::try_from(self.local_max_data).unwrap_or(VarInt::MAX);
 
             trace!(value = max.into_inner(), "MAX_DATA");
-            self.record_sent_max_data(max);
+            if max > self.sent_max_data {
+                // Record that a `MAX_DATA` announcing a certain window was sent. This will
+                // suppress enqueuing further `MAX_DATA` frames unless either the previous
+                // transmission was not acknowledged or the window further increased.
+                self.sent_max_data = max;
+            }
+
             retransmits.get_or_create().max_data = true;
             buf.write(frame::Type::MAX_DATA);
             buf.write(max);
@@ -717,17 +723,6 @@ impl StreamsState {
         // less updates.
         let diff = self.local_max_data - self.sent_max_data.into_inner();
         ShouldTransmit(diff >= (self.receive_window / 8))
-    }
-
-    /// Records that a `MAX_DATA` announcing a certain window was sent
-    ///
-    /// This will suppress enqueuing further `MAX_DATA` frames unless
-    /// either the previous transmission was not acknowledged or the window
-    /// further increased.
-    fn record_sent_max_data(&mut self, sent_value: VarInt) {
-        if sent_value > self.sent_max_data {
-            self.sent_max_data = sent_value;
-        }
     }
 
     /// Update counters for removal of a stream
