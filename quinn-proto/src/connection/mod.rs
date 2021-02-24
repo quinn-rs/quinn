@@ -403,9 +403,7 @@ where
 
         // If we need to send a probe, make sure we have something to send.
         for space in SpaceId::iter() {
-            if self.spaces[space].loss_probes != 0 {
-                self.ensure_probe_queued(space);
-            }
+            self.spaces[space].maybe_queue_probe();
         }
 
         // Check whether we need to send a close message
@@ -1322,39 +1320,6 @@ where
         self.spaces[space].loss_probes = self.spaces[space].loss_probes.saturating_add(count);
         self.pto_count = self.pto_count.saturating_add(1);
         self.set_loss_detection_timer(now);
-    }
-
-    /// Queue data for a tail loss probe (or anti-amplification deadlock prevention) packet
-    ///
-    /// Probes are sent similarly to normal packets when an expect ACK has not arrived. We never
-    /// deem a packet lost until we receive an ACK that should have included it, but if a trailing
-    /// run of packets (or their ACKs) are lost, this might not happen in a timely fashion. We send
-    /// probe packets to force an ACK, and exempt them from congestion control to prevent a deadlock
-    /// when the congestion window is filled with lost tail packets.
-    ///
-    /// We prefer to send new data, to make the most efficient use of bandwidth. If there's no data
-    /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
-    /// in-flight data either, we're probably a client guarding against a handshake
-    /// anti-amplification deadlock and we just make something up.
-    fn ensure_probe_queued(&mut self, space: SpaceId) {
-        // Retransmit the data of the oldest in-flight packet
-        let space = &mut self.spaces[space];
-        if !space.pending.is_empty() {
-            // There's real data to send here, no need to make something up
-            return;
-        }
-        for packet in space.sent_packets.values_mut() {
-            if !packet.retransmits.is_empty() {
-                // Remove retransmitted data from the old packet so we don't end up retransmitting
-                // it *again* even if the copy we're sending now gets acknowledged.
-                space.pending |= mem::take(&mut packet.retransmits);
-                return;
-            }
-        }
-        // Nothing new to send and nothing to retransmit, so fall back on a ping. This should only
-        // happen in rare cases during the handshake when the server becomes blocked by
-        // anti-amplification.
-        space.ping_pending = true;
     }
 
     fn detect_lost_packets(&mut self, now: Instant, pn_space: SpaceId) {
