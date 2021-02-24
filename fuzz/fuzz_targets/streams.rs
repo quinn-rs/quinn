@@ -4,7 +4,7 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 extern crate proto;
-use proto::fuzzing::{ResetStream, Streams, TransportParameters};
+use proto::fuzzing::{ResetStream, StreamsState, TransportParameters};
 use proto::{Dir, Side, StreamId, VarInt};
 
 #[derive(Arbitrary, Debug)]
@@ -31,7 +31,7 @@ enum Operation {
 
 fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
     let (params, operations) = input;
-    let mut stream = Streams::new(
+    let mut stream = StreamsState::new(
         params.side,
         params.max_remote_uni.into(),
         params.max_remote_bi.into(),

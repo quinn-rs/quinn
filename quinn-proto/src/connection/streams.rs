@@ -27,7 +27,7 @@ mod send;
 pub use send::{FinishError, WriteError};
 use send::{Send, SendState, StopResult};
 
-pub struct Streams {
+pub struct StreamsState {
     side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
     send: HashMap<StreamId, Send>,
@@ -85,7 +85,7 @@ pub struct Streams {
     initial_max_stream_data_bidi_remote: VarInt,
 }
 
-impl Streams {
+impl StreamsState {
     pub fn new(
         side: Side,
         max_remote_uni: VarInt,
@@ -1039,8 +1039,8 @@ mod tests {
     use crate::{connection::ByteSlice, TransportErrorCode};
     use bytes::Bytes;
 
-    fn make(side: Side) -> Streams {
-        Streams::new(
+    fn make(side: Side) -> StreamsState {
+        StreamsState::new(
             side,
             128u32.into(),
             128u32.into(),

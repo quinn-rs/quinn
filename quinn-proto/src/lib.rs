@@ -110,7 +110,7 @@ use arbitrary::Arbitrary;
 #[doc(hidden)]
 #[cfg(fuzzing)]
 pub mod fuzzing {
-    pub use crate::connection::{FinishError, Streams};
+    pub use crate::connection::{FinishError, StreamsState};
     pub use crate::frame::ResetStream;
     pub use crate::packet::PartialDecode;
     pub use crate::transport_parameters::TransportParameters;
