@@ -79,16 +79,17 @@ impl Send {
         self.stop_reason = Some(error_code);
     }
 
-    pub(super) fn ack(&mut self, frame: frame::StreamMeta) {
+    /// Returns whether the stream has been finished and all data has been acknowledged by the peer
+    pub(super) fn ack(&mut self, frame: frame::StreamMeta) -> bool {
         self.pending.ack(frame.offsets);
-        if let SendState::DataSent {
-            ref mut finish_acked,
-        } = self.state
-        {
-            *finish_acked |= frame.fin;
-            if *finish_acked && self.pending.is_fully_acked() {
-                self.state = SendState::DataRecvd;
+        match self.state {
+            SendState::DataSent {
+                ref mut finish_acked,
+            } => {
+                *finish_acked |= frame.fin;
+                *finish_acked && self.pending.is_fully_acked()
             }
+            _ => false,
         }
     }
 
@@ -157,8 +158,6 @@ pub(super) enum SendState {
     DataSent { finish_acked: bool },
     /// Sent RESET
     ResetSent,
-    /// All sent data acknowledged
-    DataRecvd,
 }
 
 /// Reasons why attempting to finish a stream might fail

@@ -715,8 +715,8 @@ impl Streams {
         }
         let id = frame.id;
         self.unacked_data -= frame.offsets.end - frame.offsets.start;
-        stream.ack(frame);
-        if stream.state != SendState::DataRecvd {
+        if !stream.ack(frame) {
+            // The stream is unfinished or may still need retransmits
             return;
         }
 
