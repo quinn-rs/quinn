@@ -305,7 +305,7 @@ where
                 config.receive_window,
                 config.stream_receive_window,
             ),
-            datagrams: DatagramState::new(),
+            datagrams: DatagramState::default(),
             config,
             rem_cids: CidQueue::new(rem_cid),
             rng,
