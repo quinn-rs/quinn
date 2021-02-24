@@ -23,7 +23,8 @@ use tracing::info_span;
 use crate::{
     broadcast::{self, Broadcast},
     mutex::Mutex,
-    streams::{RecvStream, SendStream, WriteError},
+    recv_stream::RecvStream,
+    send_stream::{SendStream, WriteError},
     ConnectionEvent, EndpointEvent, VarInt,
 };
 
