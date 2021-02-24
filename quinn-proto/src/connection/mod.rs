@@ -1461,17 +1461,12 @@ where
     // high-latency handshakes
     fn on_packet_acked(&mut self, now: Instant, space: SpaceId, info: SentPacket) {
         self.remove_in_flight(space, &info);
-        if info.ack_eliciting {
-            // Congestion control
-            // Ignore ACKs that might be from an older path
-            if !self.migrating() {
-                self.path.congestion.on_ack(
-                    now,
-                    info.time_sent,
-                    info.size.into(),
-                    self.app_limited,
-                );
-            }
+        if info.ack_eliciting && self.path.challenge.is_none() {
+            // Only pass ACKs to the congestion controller if we are not validating the current
+            // path, so as to ignore any ACKs from older paths still coming in.
+            self.path
+                .congestion
+                .on_ack(now, info.time_sent, info.size.into(), self.app_limited);
         }
 
         // Update state for confirmed delivery of frames
@@ -2838,11 +2833,6 @@ where
         }
 
         Ok(())
-    }
-
-    /// Whether a migration has been initiated and the new path has not yet been validated
-    fn migrating(&self) -> bool {
-        self.path.challenge.is_some()
     }
 
     fn migrate(&mut self, now: Instant, remote: SocketAddr) {
