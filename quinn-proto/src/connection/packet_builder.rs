@@ -1,9 +1,15 @@
-use tracing::trace;
+use std::time::Instant;
 
+use bytes::Bytes;
+use rand::Rng;
+use tracing::{trace, trace_span};
+
+use super::{spaces::SentPacket, Connection, SentFrames, State};
 use crate::{
-    crypto::{PacketKey, Session},
-    generic::Connection,
-    packet::{PartialEncode, SpaceId},
+    crypto::{HeaderKey, PacketKey, Session},
+    frame::{self, Close},
+    packet::{Header, LongType, PacketNumber, PartialEncode, SpaceId},
+    TransportError, TransportErrorCode,
 };
 
 pub(super) struct PacketBuilder {
@@ -20,10 +26,177 @@ pub(super) struct PacketBuilder {
 }
 
 impl PacketBuilder {
+    /// Write a new packet header to `buffer` and determine the packet's properties
+    ///
+    /// Marks the connection drained and returns `None` if the confidentiality limit would be
+    /// violated.
+    pub fn new<S: Session>(
+        now: Instant,
+        space_id: SpaceId,
+        buffer: &mut Vec<u8>,
+        buffer_capacity: usize,
+        datagram_start: usize,
+        ack_eliciting: bool,
+        conn: &mut Connection<S>,
+    ) -> Option<PacketBuilder> {
+        // Initiate key update if we're approaching the confidentiality limit
+        let confidentiality_limit = conn.spaces[space_id]
+            .crypto
+            .as_ref()
+            .map_or_else(
+                || &conn.zero_rtt_crypto.as_ref().unwrap().packet,
+                |keys| &keys.packet.local,
+            )
+            .confidentiality_limit();
+        let sent_with_keys = conn.spaces[space_id].sent_with_keys;
+        if space_id == SpaceId::Data {
+            if sent_with_keys.saturating_add(KEY_UPDATE_MARGIN) >= confidentiality_limit {
+                conn.initiate_key_update();
+            }
+        } else if sent_with_keys.saturating_add(1) == confidentiality_limit {
+            // We still have time to attempt a graceful close
+            conn.close_inner(
+                now,
+                Close::Connection(frame::ConnectionClose {
+                    error_code: TransportErrorCode::AEAD_LIMIT_REACHED,
+                    frame_type: None,
+                    reason: Bytes::from_static(b"confidentiality limit reached"),
+                }),
+            )
+        } else if sent_with_keys > confidentiality_limit {
+            // Confidentiality limited violated and there's nothing we can do
+            conn.kill(TransportError::AEAD_LIMIT_REACHED("confidentiality limit reached").into());
+            return None;
+        }
+
+        let space = &mut conn.spaces[space_id];
+
+        space.loss_probes = space.loss_probes.saturating_sub(1);
+        let exact_number = space.get_tx_number();
+
+        let span = trace_span!("send", space = ?space_id, pn = exact_number);
+        span.with_subscriber(|(id, dispatch)| dispatch.enter(id));
+
+        let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
+        let header = match space_id {
+            SpaceId::Data if space.crypto.is_some() => Header::Short {
+                dst_cid: conn.rem_cids.active(),
+                number,
+                spin: if conn.spin_enabled {
+                    conn.spin
+                } else {
+                    conn.rng.gen()
+                },
+                key_phase: conn.key_phase,
+            },
+            SpaceId::Data => Header::Long {
+                ty: LongType::ZeroRtt,
+                src_cid: conn.handshake_cid,
+                dst_cid: conn.rem_cids.active(),
+                number,
+            },
+            SpaceId::Handshake => Header::Long {
+                ty: LongType::Handshake,
+                src_cid: conn.handshake_cid,
+                dst_cid: conn.rem_cids.active(),
+                number,
+            },
+            SpaceId::Initial => Header::Initial {
+                src_cid: conn.handshake_cid,
+                dst_cid: conn.rem_cids.active(),
+                token: match conn.state {
+                    State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
+                    _ => Bytes::new(),
+                },
+                number,
+            },
+        };
+        let partial_encode = header.encode(buffer);
+        let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
+            (
+                crypto.header.local.sample_size(),
+                crypto.packet.local.tag_len(),
+            )
+        } else if space_id == SpaceId::Data {
+            let zero_rtt = conn.zero_rtt_crypto.as_ref().unwrap();
+            (zero_rtt.header.sample_size(), zero_rtt.packet.tag_len())
+        } else {
+            unreachable!("tried to send {:?} packet without keys", space_id);
+        };
+
+        // Each packet must be large enough for header protection sampling, i.e. the
+        // combined lengths of the encoded packet number and protected payload must be at
+        // least 4 bytes longer than the sample required for header protection
+
+        // pn_len + payload_len + tag_len >= sample_size + 4
+        // payload_len >= sample_size + 4 - pn_len - tag_len
+        let min_size = buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len);
+        let max_size = buffer_capacity - partial_encode.start - partial_encode.header_len - tag_len;
+
+        Some(PacketBuilder {
+            datagram_start,
+            space: space_id,
+            partial_encode,
+            exact_number,
+            short_header: header.is_short(),
+            min_size,
+            max_size,
+            span,
+            tag_len,
+            ack_eliciting,
+        })
+    }
+
     pub fn pad_to(&mut self, min_size: u16) {
         let prev = self.min_size;
         self.min_size = self.datagram_start + (min_size as usize) - self.tag_len;
         debug_assert!(self.min_size >= prev, "padding must not shrink datagram");
+    }
+
+    pub fn finish_and_track<S: Session>(
+        self,
+        now: Instant,
+        conn: &mut Connection<S>,
+        sent: Option<SentFrames>,
+        buffer: &mut Vec<u8>,
+    ) {
+        let ack_eliciting = self.ack_eliciting;
+        let exact_number = self.exact_number;
+        let space_id = self.space;
+        let (size, padded) = self.finish(conn, buffer);
+        let sent = match sent {
+            Some(sent) => sent,
+            None => return,
+        };
+
+        let size = match padded || ack_eliciting {
+            true => size as u16,
+            false => 0,
+        };
+
+        let packet = SentPacket {
+            acks: sent.acks,
+            time_sent: now,
+            size,
+            ack_eliciting,
+            retransmits: sent.retransmits,
+            stream_frames: sent.stream_frames,
+        };
+
+        conn.in_flight.insert(&packet);
+        conn.spaces[space_id].sent(exact_number, packet);
+        conn.reset_keep_alive(now);
+        if size != 0 {
+            if ack_eliciting {
+                conn.spaces[space_id].time_of_last_ack_eliciting_packet = Some(now);
+                if conn.permit_idle_reset {
+                    conn.reset_idle_timeout(now);
+                }
+                conn.permit_idle_reset = false;
+            }
+            conn.set_loss_detection_timer(now);
+            conn.path.pacing.on_transmit(size);
+        }
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
@@ -69,3 +242,8 @@ impl PacketBuilder {
         (buffer.len() - encode_start, pad)
     }
 }
+
+/// Perform key updates this many packets before the AEAD confidentiality limit.
+///
+/// Chosen arbitrarily, intended to be large enough to prevent spurious connection loss.
+const KEY_UPDATE_MARGIN: u64 = 10000;
