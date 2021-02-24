@@ -39,6 +39,10 @@ pub use assembler::Chunk;
 mod cid_state;
 use cid_state::CidState;
 
+mod datagrams;
+use datagrams::DatagramState;
+pub use datagrams::SendDatagramError;
+
 mod pacing;
 
 mod packet_builder;
@@ -3160,43 +3164,6 @@ fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
 const MAX_BACKOFF_EXPONENT: u32 = 16;
 // Minimal remaining size to allow packet coalescing
 const MIN_PACKET_SPACE: usize = 40;
-
-/// Errors that can arise when sending a datagram
-#[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub enum SendDatagramError {
-    /// The peer does not support receiving datagram frames
-    #[error("datagrams not supported by peer")]
-    UnsupportedByPeer,
-    /// Datagram support is disabled locally
-    #[error("datagram support disabled")]
-    Disabled,
-    /// The datagram is larger than the connection can currently accommodate
-    ///
-    /// Indicates that the path MTU minus overhead or the limit advertised by the peer has been
-    /// exceeded.
-    #[error("datagram too large")]
-    TooLarge,
-}
-
-struct DatagramState {
-    /// Number of bytes of datagrams that have been received by the local transport but not
-    /// delivered to the application
-    recv_buffered: usize,
-    incoming: VecDeque<Datagram>,
-    outgoing: VecDeque<Datagram>,
-    outgoing_total: usize,
-}
-
-impl DatagramState {
-    fn new() -> Self {
-        Self {
-            recv_buffered: 0,
-            incoming: VecDeque::new(),
-            outgoing: VecDeque::new(),
-            outgoing_total: 0,
-        }
-    }
-}
 
 struct ZeroRttCrypto<S: crypto::Session> {
     header: S::HeaderKey,
