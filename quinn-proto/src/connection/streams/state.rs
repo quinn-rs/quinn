@@ -138,10 +138,6 @@ impl StreamsState {
         }
     }
 
-    pub fn send_streams(&self) -> usize {
-        self.send_streams
-    }
-
     fn alloc_remote_stream(&mut self, dir: Dir) {
         self.max_remote[dir as usize] += 1;
         let id = StreamId::new(!self.side, dir, self.max_remote[dir as usize] - 1);
@@ -773,8 +769,8 @@ impl StreamsState {
 mod tests {
     use super::*;
     use crate::{
-        connection::State as ConnState, connection::Streams, ReadableError, TransportErrorCode,
-        WriteError,
+        connection::State as ConnState, connection::Streams, ReadableError, SendStream,
+        TransportErrorCode, WriteError,
     };
     use bytes::Bytes;
 
@@ -1015,19 +1011,27 @@ mod tests {
         });
 
         let (mut pending, state) = (Retransmits::default(), ConnState::Established);
-        let mut streams = Streams {
+        let id = Streams {
+            state: &mut server,
+            pending: &mut pending,
+            conn_state: &state,
+        }
+        .open(Dir::Uni)
+        .unwrap();
+
+        let mut stream = SendStream {
+            id,
             state: &mut server,
             pending: &mut pending,
             conn_state: &state,
         };
 
-        let id = streams.open(Dir::Uni).unwrap();
         let reason = 0u32.into();
-        streams.state.received_stop_sending(id, reason);
-        assert_eq!(streams.write(id, &[]), Err(WriteError::Stopped(reason)));
+        stream.state.received_stop_sending(id, reason);
+        assert_eq!(stream.write(&[]), Err(WriteError::Stopped(reason)));
 
-        streams.reset(id, 0u32.into()).unwrap();
-        assert_eq!(streams.write(id, &[]), Err(WriteError::UnknownStream));
+        stream.reset(0u32.into()).unwrap();
+        assert_eq!(stream.write(&[]), Err(WriteError::UnknownStream));
     }
 
     #[test]
@@ -1066,11 +1070,32 @@ mod tests {
         let id_high = streams.open(Dir::Bi).unwrap();
         let id_mid = streams.open(Dir::Bi).unwrap();
         let id_low = streams.open(Dir::Bi).unwrap();
-        streams.set_priority(id_low, -1).unwrap();
-        streams.set_priority(id_high, 1).unwrap();
-        streams.write(id_mid, b"mid").unwrap();
-        streams.write(id_low, b"low").unwrap();
-        streams.write(id_high, b"high").unwrap();
+
+        let mut mid = SendStream {
+            id: id_mid,
+            state: &mut server,
+            pending: &mut pending,
+            conn_state: &state,
+        };
+        mid.write(b"mid").unwrap();
+
+        let mut low = SendStream {
+            id: id_low,
+            state: &mut server,
+            pending: &mut pending,
+            conn_state: &state,
+        };
+        low.set_priority(-1).unwrap();
+        low.write(b"low").unwrap();
+
+        let mut high = SendStream {
+            id: id_high,
+            state: &mut server,
+            pending: &mut pending,
+            conn_state: &state,
+        };
+        high.set_priority(1).unwrap();
+        high.write(b"high").unwrap();
 
         let mut buf = Vec::with_capacity(40);
         let meta = server.write_stream_frames(&mut buf, 40);

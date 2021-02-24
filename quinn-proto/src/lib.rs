@@ -45,7 +45,7 @@ pub use varint::{VarInt, VarIntBoundsExceeded};
 mod connection;
 pub use crate::connection::{
     Chunk, Chunks, ConnectionError, ConnectionStats, Event, FinishError, ReadError, ReadableError,
-    SendDatagramError, StreamEvent, Streams, UnknownStream, WriteError,
+    SendDatagramError, SendStream, StreamEvent, Streams, UnknownStream, WriteError,
 };
 
 mod config;
