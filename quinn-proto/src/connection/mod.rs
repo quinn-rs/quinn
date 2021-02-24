@@ -2346,7 +2346,22 @@ where
 
                             if self.has_0rtt() {
                                 if !self.crypto.early_data_accepted().unwrap() {
-                                    self.reject_0rtt();
+                                    debug_assert!(self.side.is_client());
+                                    debug!("0-RTT rejected");
+                                    self.accepted_0rtt = false;
+                                    self.streams.zero_rtt_rejected();
+
+                                    // Discard already-queued frames
+                                    self.spaces[SpaceId::Data].pending = Retransmits::default();
+
+                                    // Discard 0-RTT packets
+                                    let sent_packets = mem::replace(
+                                        &mut self.spaces[SpaceId::Data].sent_packets,
+                                        BTreeMap::new(),
+                                    );
+                                    for (_, packet) in sent_packets {
+                                        self.remove_in_flight(SpaceId::Data, &packet);
+                                    }
                                 } else {
                                     self.accepted_0rtt = true;
                                     params.validate_resumption_from(&self.peer_params)?;
@@ -3291,24 +3306,6 @@ where
                 .map_or(false, |x| x.challenge_pending)
             || self.path_response.is_some()
             || !self.datagrams.outgoing.is_empty()
-    }
-
-    /// Reset state to account for 0-RTT being ignored by the server
-    fn reject_0rtt(&mut self) {
-        debug_assert!(self.side.is_client());
-        debug!("0-RTT rejected");
-        self.accepted_0rtt = false;
-        self.streams.zero_rtt_rejected();
-        // Discard already-queued frames
-        self.spaces[SpaceId::Data].pending = Retransmits::default();
-        // Discard 0-RTT packets
-        let sent_packets = mem::replace(
-            &mut self.spaces[SpaceId::Data].sent_packets,
-            BTreeMap::new(),
-        );
-        for (_, packet) in sent_packets {
-            self.remove_in_flight(SpaceId::Data, &packet);
-        }
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
