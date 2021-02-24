@@ -619,8 +619,22 @@ impl StreamsState {
             return Some(StreamEvent::Opened { dir });
         }
 
-        if let Some(id) = self.poll_unblocked() {
-            return Some(StreamEvent::Writable { id });
+        if !self.flow_blocked() {
+            while let Some(id) = self.connection_blocked.pop() {
+                let stream = match self.send.get_mut(&id) {
+                    None => continue,
+                    Some(s) => s,
+                };
+
+                debug_assert!(stream.connection_blocked);
+                stream.connection_blocked = false;
+
+                // If it's no longer sensible to write to a stream (even to detect an error) then don't
+                // report it.
+                if stream.is_writable() {
+                    return Some(StreamEvent::Writable { id });
+                }
+            }
         }
 
         self.events.pop_front()
@@ -628,31 +642,6 @@ impl StreamsState {
 
     pub fn take_max_streams_dirty(&mut self, dir: Dir) -> bool {
         mem::replace(&mut self.max_streams_dirty[dir as usize], false)
-    }
-
-    /// Fetch a stream for which a write previously failed due to *connection-level* flow control or
-    /// send window limits which no longer apply.
-    fn poll_unblocked(&mut self) -> Option<StreamId> {
-        if self.flow_blocked() {
-            // Everything's still blocked
-            return None;
-        }
-
-        while let Some(id) = self.connection_blocked.pop() {
-            let stream = match self.send.get_mut(&id) {
-                None => continue,
-                Some(s) => s,
-            };
-            debug_assert!(stream.connection_blocked);
-            stream.connection_blocked = false;
-            // If it's no longer sensible to write to a stream (even to detect an error) then don't
-            // report it.
-            if stream.is_writable() {
-                return Some(id);
-            }
-        }
-
-        None
     }
 
     /// Check for errors entailed by the peer's use of `id` as a send stream
