@@ -175,7 +175,7 @@ impl Recv {
         }
     }
 
-    fn receiving_unknown_size(&self) -> bool {
+    pub(super) fn receiving_unknown_size(&self) -> bool {
         matches!(self.state, RecvState::Recv { size: None })
     }
 
