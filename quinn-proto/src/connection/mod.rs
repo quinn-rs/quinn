@@ -14,7 +14,6 @@ use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
-    bytes_source::{ByteSlice, BytesArray, BytesSource},
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::BufMutExt,
@@ -30,8 +29,8 @@ use crate::{
         EndpointEventInner, IssuedCid,
     },
     transport_parameters::TransportParameters,
-    Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt, Written,
-    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    Dir, Frame, Side, Transmit, TransportError, TransportErrorCode, VarInt, MAX_STREAM_COUNT,
+    MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 mod assembler;
@@ -57,10 +56,12 @@ mod stats;
 pub use stats::ConnectionStats;
 
 mod streams;
+#[cfg(fuzzing)]
 pub use streams::StreamsState;
+#[cfg(not(fuzzing))]
+use streams::StreamsState;
 pub use streams::{
-    Chunks, FinishError, ReadError, ReadableError, ShouldTransmit, StreamEvent, UnknownStream,
-    WriteError,
+    FinishError, ReadError, ShouldTransmit, StreamEvent, Streams, UnknownStream, WriteError, Chunks, ReadableError,
 };
 
 mod timer;
@@ -343,6 +344,16 @@ where
     #[must_use]
     pub fn poll_endpoint_events(&mut self) -> Option<EndpointEvent> {
         self.endpoint_events.pop_front().map(EndpointEvent)
+    }
+
+    /// Provide control over streams
+    #[must_use]
+    pub fn streams(&mut self) -> Streams<'_> {
+        Streams {
+            state: &mut self.streams,
+            pending: &mut self.spaces[SpaceId::Data].pending,
+            conn_state: &self.state,
+        }
     }
 
     /// Returns packets to transmit
@@ -853,83 +864,6 @@ where
         }
     }
 
-    /// Open a single stream if possible
-    ///
-    /// Returns `None` if the streams in the given direction are currently exhausted.
-    pub fn open(&mut self, dir: Dir) -> Option<StreamId> {
-        if self.state.is_closed() {
-            return None;
-        }
-        // TODO: Queue STREAM_ID_BLOCKED if this fails
-        let id = self.streams.open(dir)?;
-        Some(id)
-    }
-
-    /// Accept a remotely initiated stream of a certain directionality, if possible
-    ///
-    /// Returns `None` if there are no new incoming streams for this connection.
-    pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
-        let id = self.streams.accept(dir)?;
-        Some(id)
-    }
-
-    /// Read from the given recv stream
-    ///
-    /// `max_length` limits the maximum size of the returned `Bytes` value; passing `usize::MAX`
-    /// will yield the best performance. `ordered` will make sure the returned chunk's offset will
-    /// have an offset exactly equal to the previously returned offset plus the previously returned
-    /// bytes' length.
-    ///
-    /// Yields `Ok(None)` if the stream was finished. Otherwise, yields a segment of data and its
-    /// offset in the stream. If `ordered` is `false`, segments may be received in any order, and
-    /// the `Chunk`'s `offset` field can be used to determine ordering in the caller.
-    ///
-    /// While most applications will prefer to consume stream data in order, unordered reads can
-    /// improve performance when packet loss occurs and data cannot be retransmitted before the flow
-    /// control window is filled. On any given stream, you can switch from ordered to unordered
-    /// reads, but ordered reads on streams that have seen previous unordered reads will return
-    /// `ReadError::IllegalOrderedRead`.
-    pub fn read(&mut self, id: StreamId, ordered: bool) -> Result<Chunks, ReadableError> {
-        self.streams
-            .read(id, ordered, &mut self.spaces[SpaceId::Data].pending)
-    }
-
-    /// Send data on the given stream
-    ///
-    /// Returns the number of bytes successfully written.
-    pub fn write(&mut self, stream: StreamId, data: &[u8]) -> Result<usize, WriteError> {
-        let mut source = ByteSlice::from_slice(data);
-        Ok(self.write_source(stream, &mut source)?.bytes)
-    }
-
-    /// Send data on the given stream
-    ///
-    /// Returns the number of bytes and chunks successfully written.
-    /// Note that this method might also write a partial chunk. In this case
-    /// [`Written::chunks`] will not count this chunk as fully written. However
-    /// the chunk will be advanced and contain only non-written data after the call.
-    pub fn write_chunks(
-        &mut self,
-        stream: StreamId,
-        data: &mut [Bytes],
-    ) -> Result<Written, WriteError> {
-        let mut source = BytesArray::from_chunks(data);
-        Ok(self.write_source(stream, &mut source)?)
-    }
-
-    fn write_source<B: BytesSource>(
-        &mut self,
-        stream: StreamId,
-        data: &mut B,
-    ) -> Result<Written, WriteError> {
-        assert!(stream.dir() == Dir::Bi || stream.initiator() == self.side);
-        if self.state.is_closed() {
-            trace!(%stream, "write blocked; connection draining");
-            return Err(WriteError::Blocked);
-        }
-        self.streams.write(stream, data)
-    }
-
     /// Returns connection statistics
     pub fn stats(&self) -> ConnectionStats {
         let mut stats = self.stats;
@@ -937,45 +871,6 @@ where
         stats.path.cwnd = self.path.congestion.window();
 
         stats
-    }
-
-    /// Stop accepting data on the given receive stream
-    ///
-    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
-    /// attempts to operate on a stream will yield `UnknownStream` errors.
-    pub fn stop(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
-        assert!(
-            id.dir() == Dir::Bi || id.initiator() != self.side,
-            "only streams supporting incoming data may be stopped"
-        );
-        // Only bother if there's data we haven't received yet
-        let result = self.streams.stop(id)?;
-        if result.stop_sending.should_transmit() {
-            let space = &mut self.spaces[SpaceId::Data];
-            space
-                .pending
-                .stop_sending
-                .push(frame::StopSending { id, error_code });
-        }
-        if result.max_data.should_transmit() {
-            self.spaces[SpaceId::Data].pending.max_data = true;
-        }
-        Ok(())
-    }
-
-    /// Check if this stream was stopped, get the reason if it was
-    pub fn stopped(&mut self, id: StreamId) -> Result<Option<VarInt>, UnknownStream> {
-        self.streams.stop_reason(id)
-    }
-
-    /// Finish a send stream, signalling that no more data will be sent.
-    ///
-    /// If this fails, no [`StreamEvent::Finished`] will be generated.
-    ///
-    /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
-    pub fn finish(&mut self, id: StreamId) -> Result<(), FinishError> {
-        self.streams.finish(id)?;
-        Ok(())
     }
 
     /// Queue an unreliable, unordered datagram for immediate transmission
@@ -1048,11 +943,6 @@ where
     /// Get a session reference
     pub fn crypto_session(&self) -> &S {
         &self.crypto
-    }
-
-    /// The number of streams that may have unacknowledged data.
-    pub fn send_streams(&self) -> usize {
-        self.streams.send_streams()
     }
 
     /// Whether the connection is in the process of being established
@@ -1544,56 +1434,6 @@ where
         if let Some(t) = self.local_cid_state.next_timeout() {
             self.timers.set(Timer::PushNewCid, t);
         }
-    }
-
-    /// Abandon transmitting data on a stream
-    ///
-    /// # Panics
-    /// - when applied to a receive stream
-    pub fn reset(&mut self, stream_id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
-        assert!(
-            stream_id.dir() == Dir::Bi || stream_id.initiator() == self.side,
-            "only streams supporting outgoing data may be reset"
-        );
-
-        self.streams.reset(stream_id)?;
-
-        self.spaces[SpaceId::Data]
-            .pending
-            .reset_stream
-            .push((stream_id, error_code));
-        Ok(())
-    }
-
-    /// Set the priority of a stream
-    ///
-    /// # Panics
-    /// - when applied to a receive stream
-    pub fn set_priority(
-        &mut self,
-        stream_id: StreamId,
-        priority: i32,
-    ) -> Result<(), UnknownStream> {
-        assert!(
-            stream_id.dir() == Dir::Bi || stream_id.initiator() == self.side,
-            "only streams supporting outgoing data may change priority"
-        );
-
-        self.streams.set_priority(stream_id, priority)?;
-        Ok(())
-    }
-
-    /// Get the priority of a stream
-    ///
-    /// # Panics
-    /// - when applied to a receive stream
-    pub fn priority(&mut self, stream_id: StreamId) -> Result<i32, UnknownStream> {
-        assert!(
-            stream_id.dir() == Dir::Bi || stream_id.initiator() == self.side,
-            "only streams supporting outgoing data have a priority"
-        );
-
-        Ok(self.streams.priority(stream_id)?)
     }
 
     /// Handle the already-decrypted first packet from the client

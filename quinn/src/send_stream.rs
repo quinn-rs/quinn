@@ -64,7 +64,7 @@ where
         if let Some(ref x) = conn.error {
             return Poll::Ready(Err(WriteError::ConnectionClosed(x.clone())));
         }
-        let n = match conn.inner.write(self.stream, buf) {
+        let n = match conn.inner.streams().write(self.stream, buf) {
             Ok(n) => n,
             Err(Blocked) => {
                 conn.blocked_writers.insert(self.stream, cx.waker().clone());
@@ -97,7 +97,7 @@ where
                 .map_err(|()| WriteError::ZeroRttRejected)?;
         }
         if self.finishing.is_none() {
-            conn.inner.finish(self.stream).map_err(|e| match e {
+            conn.inner.streams().finish(self.stream).map_err(|e| match e {
                 FinishError::UnknownStream => WriteError::UnknownStream,
                 FinishError::Stopped(error_code) => WriteError::Stopped(error_code),
             })?;
@@ -139,7 +139,7 @@ where
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return Ok(());
         }
-        conn.inner.reset(self.stream, error_code)?;
+        conn.inner.streams().reset(self.stream, error_code)?;
         conn.wake();
         Ok(())
     }
@@ -153,14 +153,14 @@ where
     /// impact on performance.
     pub fn set_priority(&self, priority: i32) -> Result<(), UnknownStream> {
         let mut conn = self.conn.lock("SendStream::set_priority");
-        conn.inner.set_priority(self.stream, priority)?;
+        conn.inner.streams().set_priority(self.stream, priority)?;
         Ok(())
     }
 
     /// Get the priority of the send stream
     pub fn priority(&self) -> Result<i32, UnknownStream> {
         let mut conn = self.conn.lock("SendStream::priority");
-        Ok(conn.inner.priority(self.stream)?)
+        Ok(conn.inner.streams().priority(self.stream)?)
     }
 
     /// Completes if/when the peer stops the stream, yielding the error code
@@ -177,7 +177,7 @@ where
                 .map_err(|()| StoppedError::ZeroRttRejected)?;
         }
 
-        match conn.inner.stopped(self.stream) {
+        match conn.inner.streams().stopped(self.stream) {
             Err(_) => Poll::Ready(Err(StoppedError::UnknownStream)),
             Ok(Some(error_code)) => Poll::Ready(Ok(error_code)),
             Ok(None) => {
@@ -241,10 +241,10 @@ where
             return;
         }
         if self.finishing.is_none() {
-            match conn.inner.finish(self.stream) {
+            match conn.inner.streams().finish(self.stream) {
                 Ok(()) => conn.wake(),
                 Err(FinishError::Stopped(reason)) => {
-                    if conn.inner.reset(self.stream, reason).is_ok() {
+                    if conn.inner.streams().reset(self.stream, reason).is_ok() {
                         conn.wake();
                     }
                 }
