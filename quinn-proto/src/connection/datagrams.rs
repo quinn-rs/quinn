@@ -46,6 +46,24 @@ impl DatagramState {
         Ok(was_empty)
     }
 
+    pub fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool {
+        let datagram = match self.outgoing.pop_front() {
+            Some(x) => x,
+            None => return false,
+        };
+
+        if buf.len() + datagram.size(true) > max_size {
+            // Future work: we could be more clever about cramming small datagrams into
+            // mostly-full packets when a larger one is queued first
+            self.outgoing.push_front(datagram);
+            return false;
+        }
+
+        self.outgoing_total -= datagram.data.len();
+        datagram.encode(true, buf);
+        true
+    }
+
     pub fn recv(&mut self) -> Option<Bytes> {
         let x = self.incoming.pop_front()?.data;
         self.recv_buffered -= x.len();
