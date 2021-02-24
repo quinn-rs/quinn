@@ -5,7 +5,8 @@ use libfuzzer_sys::fuzz_target;
 
 extern crate proto;
 use proto::fuzzing::{
-    ConnectionState, ResetStream, Retransmits, Streams, StreamsState, TransportParameters,
+    ConnectionState, ResetStream, Retransmits, SendStream, Streams, StreamsState,
+    TransportParameters,
 };
 use proto::{Dir, Side, StreamId, VarInt};
 
@@ -42,27 +43,31 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
         params.receive_window.into(),
         params.stream_receive_window.into(),
     );
-    let mut stream = Streams::new(&mut state, &mut pending, &conn_state);
 
     for operation in operations {
         match operation {
             Operation::Open => {
-                stream.open(params.dir);
+                Streams::new(&mut state, &conn_state).open(params.dir);
             }
             Operation::Accept(dir) => {
-                stream.accept(dir);
+                Streams::new(&mut state, &conn_state).accept(dir);
             }
             Operation::Finish(id) => {
-                let _ = stream.send(id).finish();
+                let _ = SendStream::new(id, &mut state, &mut pending, &conn_state).finish();
             }
             Operation::ReceivedStopSending(sid, err_code) => {
-                stream.state().received_stop_sending(sid, err_code);
+                Streams::new(&mut state, &conn_state)
+                    .state()
+                    .received_stop_sending(sid, err_code);
             }
             Operation::ReceivedReset(rs) => {
-                let _ = stream.state().received_reset(rs);
+                let _ = Streams::new(&mut state, &conn_state)
+                    .state()
+                    .received_reset(rs);
             }
             Operation::Reset(id) => {
-                let _ = stream.send(id).reset(0u32.into());
+                let _ =
+                    SendStream::new(id, &mut state, &mut pending, &conn_state).reset(0u32.into());
             }
         }
     }

@@ -27,22 +27,13 @@ pub use state::StreamsState;
 /// Access to streams
 pub struct Streams<'a> {
     pub(super) state: &'a mut StreamsState,
-    pub(super) pending: &'a mut Retransmits,
     pub(super) conn_state: &'a super::State,
 }
 
 impl<'a> Streams<'a> {
     #[cfg(fuzzing)]
-    pub fn new(
-        state: &'a mut StreamsState,
-        pending: &'a mut Retransmits,
-        conn_state: &'a super::State,
-    ) -> Self {
-        Self {
-            state,
-            pending,
-            conn_state,
-        }
+    pub fn new(state: &'a mut StreamsState, conn_state: &'a super::State) -> Self {
+        Self { state, conn_state }
     }
 
     /// Open a single stream if possible
@@ -82,6 +73,25 @@ impl<'a> Streams<'a> {
         Some(StreamId::new(!self.state.side, dir, x))
     }
 
+    #[cfg(fuzzing)]
+    pub fn state(&mut self) -> &mut StreamsState {
+        self.state
+    }
+
+    /// The number of streams that may have unacknowledged data.
+    pub fn send_streams(&self) -> usize {
+        self.state.send_streams
+    }
+}
+
+/// Access to streams
+pub struct RecvStream<'a> {
+    pub(super) id: StreamId,
+    pub(super) state: &'a mut StreamsState,
+    pub(super) pending: &'a mut Retransmits,
+}
+
+impl<'a> RecvStream<'a> {
     /// Read from the given recv stream
     ///
     /// `max_length` limits the maximum size of the returned `Bytes` value; passing `usize::MAX`
@@ -98,31 +108,26 @@ impl<'a> Streams<'a> {
     /// control window is filled. On any given stream, you can switch from ordered to unordered
     /// reads, but ordered reads on streams that have seen previous unordered reads will return
     /// `ReadError::IllegalOrderedRead`.
-    pub fn read(&mut self, id: StreamId, ordered: bool) -> Result<Chunks, ReadableError> {
-        Chunks::new(id, ordered, self.state, self.pending)
+    pub fn read(&mut self, ordered: bool) -> Result<Chunks, ReadableError> {
+        Chunks::new(self.id, ordered, self.state, self.pending)
     }
 
     /// Stop accepting data on the given receive stream
     ///
     /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
     /// attempts to operate on a stream will yield `UnknownStream` errors.
-    pub fn stop(&mut self, id: StreamId, error_code: VarInt) -> Result<(), UnknownStream> {
-        // Only bother if there's data we haven't received yet
-        assert!(
-            id.dir() == Dir::Bi || id.initiator() != self.state.side,
-            "only streams supporting incoming data may be stopped"
-        );
-
-        let stream = match self.state.recv.get_mut(&id) {
+    pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
+        let stream = match self.state.recv.get_mut(&self.id) {
             Some(s) => s,
             None => return Err(UnknownStream { _private: () }),
         };
 
         let (read_credits, stop_sending) = stream.stop()?;
         if stop_sending.should_transmit() {
-            self.pending
-                .stop_sending
-                .push(frame::StopSending { id, error_code });
+            self.pending.stop_sending.push(frame::StopSending {
+                id: self.id,
+                error_code,
+            });
         }
 
         if self.state.add_read_credits(read_credits).should_transmit() {
@@ -130,16 +135,6 @@ impl<'a> Streams<'a> {
         }
 
         Ok(())
-    }
-
-    #[cfg(fuzzing)]
-    pub fn state(&mut self) -> &mut StreamsState {
-        self.state
-    }
-
-    /// The number of streams that may have unacknowledged data.
-    pub fn send_streams(&self) -> usize {
-        self.state.send_streams
     }
 }
 
@@ -152,6 +147,21 @@ pub struct SendStream<'a> {
 }
 
 impl<'a> SendStream<'a> {
+    #[cfg(fuzzing)]
+    pub fn new(
+        id: StreamId,
+        state: &'a mut StreamsState,
+        pending: &'a mut Retransmits,
+        conn_state: &'a super::State,
+    ) -> Self {
+        Self {
+            id,
+            state,
+            pending,
+            conn_state,
+        }
+    }
+
     /// Send data on the given stream
     ///
     /// Returns the number of bytes successfully written.

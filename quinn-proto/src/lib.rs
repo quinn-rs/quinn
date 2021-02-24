@@ -45,7 +45,7 @@ pub use varint::{VarInt, VarIntBoundsExceeded};
 mod connection;
 pub use crate::connection::{
     Chunk, Chunks, ConnectionError, ConnectionStats, Event, FinishError, ReadError, ReadableError,
-    SendDatagramError, SendStream, StreamEvent, Streams, UnknownStream, WriteError,
+    RecvStream, SendDatagramError, SendStream, StreamEvent, Streams, UnknownStream, WriteError,
 };
 
 mod config;
@@ -111,7 +111,7 @@ use arbitrary::Arbitrary;
 #[cfg(fuzzing)]
 pub mod fuzzing {
     pub use crate::connection::{
-        FinishError, Retransmits, State as ConnectionState, Streams, StreamsState,
+        FinishError, Retransmits, SendStream, State as ConnectionState, Streams, StreamsState,
     };
     pub use crate::frame::ResetStream;
     pub use crate::packet::PartialDecode;

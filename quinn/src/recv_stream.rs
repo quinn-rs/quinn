@@ -213,7 +213,7 @@ where
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return Ok(());
         }
-        conn.inner.streams().stop(self.stream, error_code)?;
+        conn.inner.recv_stream(self.stream).stop(error_code)?;
         conn.wake();
         self.all_data_read = true;
         Ok(())
@@ -262,8 +262,8 @@ where
         let status = match self.reset.take() {
             Some(code) => ReadStatus::Failed(None, Reset(code)),
             None => {
-                let mut streams = conn.inner.streams();
-                let mut chunks = streams.read(self.stream, ordered)?;
+                let mut recv = conn.inner.recv_stream(self.stream);
+                let mut chunks = recv.read(ordered)?;
                 let status = read_fn(&mut chunks);
                 if chunks.finalize().should_transmit() {
                     conn.wake();
@@ -419,7 +419,7 @@ where
         }
         if !self.all_data_read {
             // Ignore UnknownStream errors
-            let _ = conn.inner.streams().stop(self.stream, 0u32.into());
+            let _ = conn.inner.recv_stream(self.stream).stop(0u32.into());
             conn.wake();
         }
     }
