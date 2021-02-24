@@ -2400,26 +2400,12 @@ where
                     // TODO: Cache, or perhaps forward to user?
                 }
                 Frame::Datagram(datagram) => {
-                    let window = match self.config.datagram_receive_buffer_size {
-                        None => {
-                            return Err(TransportError::PROTOCOL_VIOLATION(
-                                "unexpected DATAGRAM frame",
-                            ));
-                        }
-                        Some(x) => x,
-                    };
-                    if datagram.data.len() > window {
-                        return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
-                    }
-                    if self.datagrams.recv_buffered == 0 {
+                    if self
+                        .datagrams
+                        .received(datagram, &self.config.datagram_receive_buffer_size)?
+                    {
                         self.events.push_back(Event::DatagramReceived);
                     }
-                    while datagram.data.len() + self.datagrams.recv_buffered > window {
-                        debug!("dropping stale datagram");
-                        self.datagrams.recv();
-                    }
-                    self.datagrams.recv_buffered += datagram.data.len();
-                    self.datagrams.incoming.push_back(datagram);
                 }
                 Frame::HandshakeDone => {
                     if self.side.is_server() {
