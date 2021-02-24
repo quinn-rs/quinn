@@ -304,7 +304,7 @@ pub enum ReadError {
     /// The peer abandoned transmitting data on this stream.
     ///
     /// Carries an application-defined error code.
-    #[error("reset by peer: code {}", 0)]
+    #[error("reset by peer: code {0}")]
     Reset(VarInt),
     /// The stream has not been opened or was already stopped, finished, or reset
     #[error("unknown stream")]

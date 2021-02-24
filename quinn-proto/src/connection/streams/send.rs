@@ -142,7 +142,7 @@ pub enum WriteError {
     /// Carries an application-defined error code.
     ///
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
-    #[error("stopped by peer: code {}", 0)]
+    #[error("stopped by peer: code {0}")]
     Stopped(VarInt),
     /// The stream has not been opened or has already been finished or reset
     #[error("unknown stream")]
@@ -170,7 +170,7 @@ pub enum FinishError {
     /// Carries an application-defined error code.
     ///
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
-    #[error("stopped by peer: code {}", 0)]
+    #[error("stopped by peer: code {0}")]
     Stopped(VarInt),
     /// The stream has not been opened or was already finished or reset
     #[error("unknown stream")]

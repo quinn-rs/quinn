@@ -3365,10 +3365,10 @@ pub enum ConnectionError {
     #[error("{0}")]
     TransportError(#[from] TransportError),
     /// The peer's QUIC stack aborted the connection automatically
-    #[error("aborted by peer: {}", 0)]
+    #[error("aborted by peer: {0}")]
     ConnectionClosed(frame::ConnectionClose),
     /// The peer closed the connection
-    #[error("closed by peer: {}", 0)]
+    #[error("closed by peer: {0}")]
     ApplicationClosed(frame::ApplicationClose),
     /// The peer is unable to continue processing this connection, usually due to having restarted
     #[error("reset by peer")]
