@@ -306,7 +306,8 @@ impl Streams {
             return Ok(ShouldTransmit(false));
         }
 
-        let new_bytes = rs.ingest(frame, payload_len, self.data_recvd, self.local_max_data)?;
+        let (new_bytes, closed) =
+            rs.ingest(frame, payload_len, self.data_recvd, self.local_max_data)?;
         self.data_recvd = self.data_recvd.saturating_add(new_bytes);
 
         if !rs.stopped {
@@ -315,7 +316,7 @@ impl Streams {
         }
 
         // Stopped streams become closed instantly on FIN, so check whether we need to clean up
-        if rs.is_closed() {
+        if closed {
             self.recv.remove(&stream);
             self.stream_freed(stream, StreamHalf::Recv);
         }
