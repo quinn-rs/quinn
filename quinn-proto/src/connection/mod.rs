@@ -612,8 +612,6 @@ where
                         "tried to make a close packet when the connection wasn't closed"
                     ),
                 }
-                // A close frame in the initial space requires padding
-                pad_datagram = true;
                 coalesce = false;
                 // We don't want to send 2 close packets
                 close = false;
@@ -633,6 +631,8 @@ where
 
                 pad_datagram |= sent.requires_padding;
             }
+
+            pad_datagram |= space_id == SpaceId::Initial && self.side.is_client();
 
             // Don't increment space_idx.
             // We stay in the current space and check if there is more data to send.
@@ -2922,10 +2922,6 @@ where
         let mut sent = SentFrames::default();
         let space = &mut self.spaces[space_id];
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
-
-        if space_id == SpaceId::Initial && self.side.is_client() {
-            sent.requires_padding = true;
-        }
 
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
