@@ -4,7 +4,9 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 extern crate proto;
-use proto::fuzzing::{ResetStream, StreamsState, TransportParameters};
+use proto::fuzzing::{
+    ConnectionState, ResetStream, Retransmits, Streams, StreamsState, TransportParameters,
+};
 use proto::{Dir, Side, StreamId, VarInt};
 
 #[derive(Arbitrary, Debug)]
@@ -31,7 +33,8 @@ enum Operation {
 
 fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
     let (params, operations) = input;
-    let mut stream = StreamsState::new(
+    let (mut pending, conn_state) = (Retransmits::default(), ConnectionState::Established);
+    let mut state = StreamsState::new(
         params.side,
         params.max_remote_uni.into(),
         params.max_remote_bi.into(),
@@ -39,6 +42,7 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
         params.receive_window.into(),
         params.stream_receive_window.into(),
     );
+    let mut stream = Streams::new(&mut state, &mut pending, &conn_state);
 
     for operation in operations {
         match operation {
@@ -52,13 +56,13 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
                 let _ = stream.finish(id);
             }
             Operation::ReceivedStopSending(sid, err_code) => {
-                stream.received_stop_sending(sid, err_code);
+                stream.state().received_stop_sending(sid, err_code);
             }
             Operation::ReceivedReset(rs) => {
-                let _ = stream.received_reset(rs);
+                let _ = stream.state().received_reset(rs);
             }
             Operation::Reset(id) => {
-                let _ = stream.reset(id);
+                let _ = stream.reset(id, 0u32.into());
             }
         }
     }

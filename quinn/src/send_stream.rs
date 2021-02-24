@@ -97,10 +97,13 @@ where
                 .map_err(|()| WriteError::ZeroRttRejected)?;
         }
         if self.finishing.is_none() {
-            conn.inner.streams().finish(self.stream).map_err(|e| match e {
-                FinishError::UnknownStream => WriteError::UnknownStream,
-                FinishError::Stopped(error_code) => WriteError::Stopped(error_code),
-            })?;
+            conn.inner
+                .streams()
+                .finish(self.stream)
+                .map_err(|e| match e {
+                    FinishError::UnknownStream => WriteError::UnknownStream,
+                    FinishError::Stopped(error_code) => WriteError::Stopped(error_code),
+                })?;
             let (send, recv) = oneshot::channel();
             self.finishing = Some(recv);
             conn.finishing.insert(self.stream, send);

@@ -1,6 +1,5 @@
 use thiserror::Error;
 
-use super::ShouldTransmit;
 use crate::{
     bytes_source::BytesSource, connection::send_buffer::SendBuffer, frame, VarInt, Written,
 };
@@ -135,14 +134,6 @@ impl Send {
     pub(super) fn is_writable(&self) -> bool {
         matches!(self.state, SendState::Ready)
     }
-}
-
-/// Result of a successful `Streams::stop` call
-#[derive(Debug, Eq, PartialEq, Copy, Clone)]
-#[must_use = "A frame might need to be enqueued"]
-pub struct StopResult {
-    pub stop_sending: ShouldTransmit,
-    pub max_data: ShouldTransmit,
 }
 
 /// Errors triggered while writing to a send stream
