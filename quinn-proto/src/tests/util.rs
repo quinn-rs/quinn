@@ -179,6 +179,10 @@ impl Pair {
         self.client_conn_mut(ch).recv_stream(s)
     }
 
+    pub fn client_datagrams(&mut self, ch: ConnectionHandle) -> Datagrams<'_> {
+        self.client_conn_mut(ch).datagrams()
+    }
+
     pub fn server_conn_mut(&mut self, ch: ConnectionHandle) -> &mut Connection {
         self.server.connections.get_mut(&ch).unwrap()
     }
@@ -193,6 +197,10 @@ impl Pair {
 
     pub fn server_recv(&mut self, ch: ConnectionHandle, s: StreamId) -> RecvStream<'_> {
         self.server_conn_mut(ch).recv_stream(s)
+    }
+
+    pub fn server_datagrams(&mut self, ch: ConnectionHandle) -> Datagrams<'_> {
+        self.server_conn_mut(ch).datagrams()
     }
 }
 

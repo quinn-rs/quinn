@@ -80,7 +80,7 @@ use token::{ResetToken, RetryToken};
 pub mod generic {
     pub use crate::{
         config::{ClientConfig, EndpointConfig, ServerConfig},
-        connection::Connection,
+        connection::{Connection, Datagrams},
         endpoint::Endpoint,
     };
 }
@@ -93,6 +93,8 @@ mod rustls_impls {
     pub type Connection = generic::Connection<crypto::rustls::TlsSession>;
     /// A `ClientConfig` containing client-side rustls configuration
     pub type ClientConfig = generic::ClientConfig<crypto::rustls::TlsSession>;
+    /// A `Datagrams` using rustls for the cryptography protocol
+    pub type Datagrams<'a> = generic::Datagrams<'a, crypto::rustls::TlsSession>;
     /// An `Endpoint` using rustls for the cryptography protocol
     pub type Endpoint = generic::Endpoint<crypto::rustls::TlsSession>;
     /// A `ServerConfig` containing server-side rustls configuration

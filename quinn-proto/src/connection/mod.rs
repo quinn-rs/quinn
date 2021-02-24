@@ -41,7 +41,7 @@ use cid_state::CidState;
 
 mod datagrams;
 use datagrams::DatagramState;
-pub use datagrams::SendDatagramError;
+pub use datagrams::{Datagrams, SendDatagramError};
 
 mod pacing;
 
@@ -895,6 +895,11 @@ where
         }
     }
 
+    /// Control datagrams
+    pub fn datagrams(&mut self) -> Datagrams<'_, S> {
+        Datagrams { conn: self }
+    }
+
     /// Returns connection statistics
     pub fn stats(&self) -> ConnectionStats {
         let mut stats = self.stats;
@@ -902,59 +907,6 @@ where
         stats.path.cwnd = self.path.congestion.window();
 
         stats
-    }
-
-    /// Queue an unreliable, unordered datagram for immediate transmission
-    ///
-    /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
-    pub fn send_datagram(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
-        if self.config.datagram_receive_buffer_size.is_none() {
-            return Err(SendDatagramError::Disabled);
-        }
-        let max = self
-            .max_datagram_size()
-            .ok_or(SendDatagramError::UnsupportedByPeer)?;
-        while self.datagrams.outgoing_total > self.config.datagram_send_buffer_size {
-            let prev = self
-                .datagrams
-                .outgoing
-                .pop_front()
-                .expect("datagrams.outgoing_total desynchronized");
-            trace!(len = prev.data.len(), "dropping outgoing datagram");
-            self.datagrams.outgoing_total -= prev.data.len();
-        }
-        if data.len() > max {
-            return Err(SendDatagramError::TooLarge);
-        }
-        self.datagrams.outgoing_total += data.len();
-        self.datagrams.outgoing.push_back(Datagram { data });
-        Ok(())
-    }
-
-    /// Receive an unreliable, unordered datagram
-    pub fn recv_datagram(&mut self) -> Option<Bytes> {
-        self.datagrams.recv()
-    }
-
-    /// Compute the maximum size of datagrams that may passed to `send_datagram`
-    ///
-    /// Returns `None` if datagrams are unsupported by the peer or disabled locally.
-    ///
-    /// This may change over the lifetime of a connection according to variation in the path MTU
-    /// estimate. The peer can also enforce an arbitrarily small fixed limit, but if the peer's
-    /// limit is large this is guaranteed to be a little over a kilobyte at minimum.
-    ///
-    /// Not necessarily the maximum size of received datagrams.
-    pub fn max_datagram_size(&self) -> Option<usize> {
-        // This is usually 1182 bytes, but we shouldn't document that without a doctest.
-        let max_size = self.path.mtu as usize
-            - 1                 // flags byte
-            - self.rem_cids.active().len()
-            - 4                 // worst-case packet number size
-            - self.spaces[SpaceId::Data].crypto.as_ref().map_or_else(|| &self.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
-            - Datagram::SIZE_BOUND;
-        let limit = self.peer_params.max_datagram_frame_size?.into_inner();
-        Some(limit.min(max_size as u64) as usize)
     }
 
     /// Ping the remote endpoint
