@@ -1,5 +1,6 @@
 use std::collections::VecDeque;
 
+use bytes::Bytes;
 use thiserror::Error;
 
 use crate::frame::Datagram;
@@ -12,6 +13,14 @@ pub(super) struct DatagramState {
     pub(super) incoming: VecDeque<Datagram>,
     pub(super) outgoing: VecDeque<Datagram>,
     pub(super) outgoing_total: usize,
+}
+
+impl DatagramState {
+    pub fn recv(&mut self) -> Option<Bytes> {
+        let x = self.incoming.pop_front()?.data;
+        self.recv_buffered -= x.len();
+        Some(x)
+    }
 }
 
 /// Errors that can arise when sending a datagram

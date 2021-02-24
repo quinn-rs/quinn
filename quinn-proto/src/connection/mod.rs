@@ -933,9 +933,7 @@ where
 
     /// Receive an unreliable, unordered datagram
     pub fn recv_datagram(&mut self) -> Option<Bytes> {
-        let x = self.datagrams.incoming.pop_front()?.data;
-        self.datagrams.recv_buffered -= x.len();
-        Some(x)
+        self.datagrams.recv()
     }
 
     /// Compute the maximum size of datagrams that may passed to `send_datagram`
@@ -2418,7 +2416,7 @@ where
                     }
                     while datagram.data.len() + self.datagrams.recv_buffered > window {
                         debug!("dropping stale datagram");
-                        self.recv_datagram();
+                        self.datagrams.recv();
                     }
                     self.datagrams.recv_buffered += datagram.data.len();
                     self.datagrams.incoming.push_back(datagram);
