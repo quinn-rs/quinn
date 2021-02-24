@@ -865,13 +865,13 @@ where
         let ack_eliciting = builder.ack_eliciting;
         let exact_number = builder.exact_number;
         let space_id = builder.space;
-        let (size, _) = self.finish_packet(builder, buffer);
+        let (size, padded) = self.finish_packet(builder, buffer);
         let sent = match sent {
             Some(sent) => sent,
             None => return,
         };
 
-        let size = match sent.padding || ack_eliciting {
+        let size = match padded || ack_eliciting {
             true => size as u16,
             false => 0,
         };
@@ -3613,7 +3613,6 @@ struct SentFrames {
     retransmits: ThinRetransmits,
     acks: RangeSet,
     stream_frames: StreamMetaVec,
-    padding: bool,
     requires_padding: bool,
 }
 
