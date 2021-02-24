@@ -4,7 +4,7 @@ use std::mem;
 use thiserror::Error;
 use tracing::debug;
 
-use super::{Retransmits, ShouldTransmit, StreamHalf, StreamId, Streams, UnknownStream};
+use super::{Retransmits, ShouldTransmit, StreamHalf, StreamId, StreamsState, UnknownStream};
 use crate::connection::assembler::{Assembler, Chunk, IllegalOrderedRead};
 use crate::{frame, TransportError, VarInt};
 
@@ -202,7 +202,7 @@ impl Recv {
 pub struct Chunks<'a> {
     id: StreamId,
     ordered: bool,
-    streams: &'a mut Streams,
+    streams: &'a mut StreamsState,
     pending: &'a mut Retransmits,
     state: ChunksState,
     read: u64,
@@ -212,7 +212,7 @@ impl<'a> Chunks<'a> {
     pub(super) fn new(
         id: StreamId,
         ordered: bool,
-        streams: &'a mut Streams,
+        streams: &'a mut StreamsState,
         pending: &'a mut Retransmits,
     ) -> Result<Self, ReadableError> {
         let entry = match streams.recv.entry(id) {
@@ -318,7 +318,7 @@ impl<'a> Chunks<'a> {
         rs: &mut Recv,
         read: u64,
         id: StreamId,
-        streams: &mut Streams,
+        streams: &mut StreamsState,
         pending: &mut Retransmits,
     ) -> ShouldTransmit {
         let (_, max_stream_data) = rs.max_stream_data(streams.stream_receive_window);
