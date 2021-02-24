@@ -464,12 +464,19 @@ impl Streams {
     /// Returns a structure which indicates whether this action
     /// requires transmitting any frames.
     pub fn stop(&mut self, id: StreamId) -> Result<StopResult, UnknownStream> {
-        let stream = match self.recv.get_mut(&id) {
-            Some(s) => s,
-            None => return Err(UnknownStream { _private: () }),
+        let mut entry = match self.recv.entry(id) {
+            hash_map::Entry::Vacant(_) => return Err(UnknownStream { _private: () }),
+            hash_map::Entry::Occupied(e) => e,
         };
+        let stream = entry.get_mut();
 
         let (read_credits, stop_sending) = stream.stop()?;
+        if !stream.receiving_unknown_size() {
+            // We will not need to issue any additional flow control credit for this stream, so we
+            // can safely discard its state.
+            entry.remove();
+            self.stream_freed(id, StreamHalf::Recv);
+        }
         let max_data = self.add_read_credits(read_credits);
         Ok(StopResult {
             stop_sending,
