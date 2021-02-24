@@ -2228,233 +2228,7 @@ where
         number: Option<u64>,
         packet: Packet,
     ) -> Result<(), ConnectionError> {
-        match self.state {
-            State::Handshake(ref mut state) => {
-                match packet.header {
-                    Header::Retry {
-                        src_cid: rem_cid, ..
-                    } => {
-                        if self.side.is_server() {
-                            return Err(
-                                TransportError::PROTOCOL_VIOLATION("client sent Retry").into()
-                            );
-                        }
-
-                        if self.total_authed_packets > 1
-                            || packet.payload.len() <= 16 // token + 16 byte tag
-                            || !S::is_valid_retry(
-                                &self.rem_cids.active(),
-                                &packet.header_data,
-                                &packet.payload,
-                            )
-                        {
-                            trace!("discarding invalid Retry");
-                            // - After the client has received and processed an Initial or Retry
-                            //   packet from the server, it MUST discard any subsequent Retry
-                            //   packets that it receives.
-                            // - A client MUST discard a Retry packet with a zero-length Retry Token
-                            //   field.
-                            // - Clients MUST discard Retry packets that have a Retry Integrity Tag
-                            //   that cannot be validated
-                            return Ok(());
-                        }
-
-                        trace!("retrying with CID {}", rem_cid);
-                        let client_hello = state.client_hello.take().unwrap();
-                        self.retry_src_cid = Some(rem_cid);
-                        self.rem_cids.update_cid(rem_cid);
-                        self.rem_handshake_cid = rem_cid;
-
-                        let space = &mut self.spaces[SpaceId::Initial];
-                        if let Some(info) = space.sent_packets.remove(&0) {
-                            space.pending_acks.subtract(&info.acks);
-                            self.on_packet_acked(now, SpaceId::Initial, info);
-                        };
-
-                        self.discard_space(now, SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
-                        self.spaces[SpaceId::Initial] = PacketSpace {
-                            crypto: Some(S::initial_keys(&rem_cid, self.side)),
-                            next_packet_number: self.spaces[SpaceId::Initial].next_packet_number,
-                            crypto_offset: client_hello.len() as u64,
-                            ..PacketSpace::new(now)
-                        };
-                        self.spaces[SpaceId::Initial]
-                            .pending
-                            .crypto
-                            .push_back(frame::Crypto {
-                                offset: 0,
-                                data: client_hello,
-                            });
-
-                        // Retransmit all 0-RTT data
-                        let zero_rtt = mem::replace(
-                            &mut self.spaces[SpaceId::Data].sent_packets,
-                            BTreeMap::new(),
-                        );
-                        for (_, info) in zero_rtt {
-                            self.remove_in_flight(SpaceId::Data, &info);
-                            self.spaces[SpaceId::Data].pending |= info.retransmits;
-                        }
-                        self.streams.retransmit_all_for_0rtt();
-
-                        let token_len = packet.payload.len() - 16;
-                        self.state = State::Handshake(state::Handshake {
-                            token: Some(packet.payload.freeze().split_to(token_len)),
-                            rem_cid_set: false,
-                            client_hello: None,
-                        });
-                        Ok(())
-                    }
-                    Header::Long {
-                        ty: LongType::Handshake,
-                        src_cid: rem_cid,
-                        ..
-                    } => {
-                        if rem_cid != self.rem_handshake_cid {
-                            debug!(
-                                "discarding packet with mismatched remote CID: {} != {}",
-                                self.rem_handshake_cid, rem_cid
-                            );
-                            return Ok(());
-                        }
-                        self.path.validated = true;
-
-                        let state = state.clone();
-                        self.process_early_payload(now, packet)?;
-                        if self.state.is_closed() {
-                            return Ok(());
-                        }
-
-                        if self.crypto.is_handshaking() {
-                            trace!("handshake ongoing");
-                            self.state = State::Handshake(state::Handshake {
-                                token: None,
-                                ..state
-                            });
-                            return Ok(());
-                        }
-
-                        if self.side.is_client() {
-                            // Client-only beceause server params were set from the client's Initial
-                            let params = self.crypto.transport_parameters()?.ok_or_else(|| {
-                                TransportError {
-                                    code: TransportErrorCode::crypto(0x6d),
-                                    frame: None,
-                                    reason: "transport parameters missing".into(),
-                                }
-                            })?;
-
-                            if self.has_0rtt() {
-                                if !self.crypto.early_data_accepted().unwrap() {
-                                    debug_assert!(self.side.is_client());
-                                    debug!("0-RTT rejected");
-                                    self.accepted_0rtt = false;
-                                    self.streams.zero_rtt_rejected();
-
-                                    // Discard already-queued frames
-                                    self.spaces[SpaceId::Data].pending = Retransmits::default();
-
-                                    // Discard 0-RTT packets
-                                    let sent_packets = mem::replace(
-                                        &mut self.spaces[SpaceId::Data].sent_packets,
-                                        BTreeMap::new(),
-                                    );
-                                    for (_, packet) in sent_packets {
-                                        self.remove_in_flight(SpaceId::Data, &packet);
-                                    }
-                                } else {
-                                    self.accepted_0rtt = true;
-                                    params.validate_resumption_from(&self.peer_params)?;
-                                }
-                            }
-                            if let Some(token) = params.stateless_reset_token {
-                                self.endpoint_events
-                                    .push_back(EndpointEventInner::ResetToken(
-                                        self.path.remote,
-                                        token,
-                                    ));
-                            }
-                            self.validate_peer_params(&params)?;
-                            self.set_peer_params(params);
-                            self.issue_cids(now);
-                        } else {
-                            // Server-only
-                            self.spaces[SpaceId::Data].pending.handshake_done = true;
-                            self.discard_space(now, SpaceId::Handshake);
-                        }
-
-                        self.events.push_back(Event::Connected);
-                        self.state = State::Established;
-                        trace!("established");
-                        Ok(())
-                    }
-                    Header::Initial {
-                        src_cid: rem_cid, ..
-                    } => {
-                        if !state.rem_cid_set {
-                            trace!("switching remote CID to {}", rem_cid);
-                            let mut state = state.clone();
-                            self.rem_cids.update_cid(rem_cid);
-                            self.rem_handshake_cid = rem_cid;
-                            self.orig_rem_cid = rem_cid;
-                            state.rem_cid_set = true;
-                            self.state = State::Handshake(state);
-                        } else if rem_cid != self.rem_handshake_cid {
-                            debug!(
-                                "discarding packet with mismatched remote CID: {} != {}",
-                                self.rem_handshake_cid, rem_cid
-                            );
-                            return Ok(());
-                        }
-
-                        let starting_space = self.highest_space;
-                        self.process_early_payload(now, packet)?;
-
-                        if self.side.is_server()
-                            && starting_space == SpaceId::Initial
-                            && self.highest_space != SpaceId::Initial
-                        {
-                            let params = self.crypto.transport_parameters()?.ok_or_else(|| {
-                                TransportError {
-                                    code: TransportErrorCode::crypto(0x6d),
-                                    frame: None,
-                                    reason: "transport parameters missing".into(),
-                                }
-                            })?;
-                            self.validate_peer_params(&params)?;
-                            self.set_peer_params(params);
-                            self.issue_cids(now);
-                            self.init_0rtt();
-                        }
-                        Ok(())
-                    }
-                    Header::Long {
-                        ty: LongType::ZeroRtt,
-                        ..
-                    } => {
-                        self.process_payload(
-                            now,
-                            remote,
-                            number.unwrap(),
-                            packet.payload.freeze(),
-                        )?;
-                        Ok(())
-                    }
-                    Header::VersionNegotiate { .. } => {
-                        if self.total_authed_packets > 1 {
-                            return Ok(());
-                        }
-                        if packet.payload.chunks(4).any(is_supported_version) {
-                            return Ok(());
-                        }
-                        debug!("remote doesn't support our version");
-                        Err(ConnectionError::VersionMismatch)
-                    }
-                    Header::Short { .. } => unreachable!(
-                        "short packets received during handshake are discarded in handle_packet"
-                    ),
-                }
-            }
+        let state = match self.state {
             State::Established => {
                 match packet.header.space() {
                     SpaceId::Data => {
@@ -2462,7 +2236,7 @@ where
                     }
                     _ => self.process_early_payload(now, packet)?,
                 }
-                Ok(())
+                return Ok(());
             }
             State::Closed(_) => {
                 for frame in frame::Iter::new(packet.payload.freeze()) {
@@ -2478,9 +2252,227 @@ where
                         break;
                     }
                 }
+                return Ok(());
+            }
+            State::Draining | State::Drained => return Ok(()),
+            State::Handshake(ref mut state) => state,
+        };
+
+        match packet.header {
+            Header::Retry {
+                src_cid: rem_cid, ..
+            } => {
+                if self.side.is_server() {
+                    return Err(TransportError::PROTOCOL_VIOLATION("client sent Retry").into());
+                }
+
+                if self.total_authed_packets > 1
+                            || packet.payload.len() <= 16 // token + 16 byte tag
+                            || !S::is_valid_retry(
+                                &self.rem_cids.active(),
+                                &packet.header_data,
+                                &packet.payload,
+                            )
+                {
+                    trace!("discarding invalid Retry");
+                    // - After the client has received and processed an Initial or Retry
+                    //   packet from the server, it MUST discard any subsequent Retry
+                    //   packets that it receives.
+                    // - A client MUST discard a Retry packet with a zero-length Retry Token
+                    //   field.
+                    // - Clients MUST discard Retry packets that have a Retry Integrity Tag
+                    //   that cannot be validated
+                    return Ok(());
+                }
+
+                trace!("retrying with CID {}", rem_cid);
+                let client_hello = state.client_hello.take().unwrap();
+                self.retry_src_cid = Some(rem_cid);
+                self.rem_cids.update_cid(rem_cid);
+                self.rem_handshake_cid = rem_cid;
+
+                let space = &mut self.spaces[SpaceId::Initial];
+                if let Some(info) = space.sent_packets.remove(&0) {
+                    space.pending_acks.subtract(&info.acks);
+                    self.on_packet_acked(now, SpaceId::Initial, info);
+                };
+
+                self.discard_space(now, SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
+                self.spaces[SpaceId::Initial] = PacketSpace {
+                    crypto: Some(S::initial_keys(&rem_cid, self.side)),
+                    next_packet_number: self.spaces[SpaceId::Initial].next_packet_number,
+                    crypto_offset: client_hello.len() as u64,
+                    ..PacketSpace::new(now)
+                };
+                self.spaces[SpaceId::Initial]
+                    .pending
+                    .crypto
+                    .push_back(frame::Crypto {
+                        offset: 0,
+                        data: client_hello,
+                    });
+
+                // Retransmit all 0-RTT data
+                let zero_rtt = mem::replace(
+                    &mut self.spaces[SpaceId::Data].sent_packets,
+                    BTreeMap::new(),
+                );
+                for (_, info) in zero_rtt {
+                    self.remove_in_flight(SpaceId::Data, &info);
+                    self.spaces[SpaceId::Data].pending |= info.retransmits;
+                }
+                self.streams.retransmit_all_for_0rtt();
+
+                let token_len = packet.payload.len() - 16;
+                self.state = State::Handshake(state::Handshake {
+                    token: Some(packet.payload.freeze().split_to(token_len)),
+                    rem_cid_set: false,
+                    client_hello: None,
+                });
                 Ok(())
             }
-            State::Draining | State::Drained => Ok(()),
+            Header::Long {
+                ty: LongType::Handshake,
+                src_cid: rem_cid,
+                ..
+            } => {
+                if rem_cid != self.rem_handshake_cid {
+                    debug!(
+                        "discarding packet with mismatched remote CID: {} != {}",
+                        self.rem_handshake_cid, rem_cid
+                    );
+                    return Ok(());
+                }
+                self.path.validated = true;
+
+                let state = state.clone();
+                self.process_early_payload(now, packet)?;
+                if self.state.is_closed() {
+                    return Ok(());
+                }
+
+                if self.crypto.is_handshaking() {
+                    trace!("handshake ongoing");
+                    self.state = State::Handshake(state::Handshake {
+                        token: None,
+                        ..state
+                    });
+                    return Ok(());
+                }
+
+                if self.side.is_client() {
+                    // Client-only beceause server params were set from the client's Initial
+                    let params =
+                        self.crypto
+                            .transport_parameters()?
+                            .ok_or_else(|| TransportError {
+                                code: TransportErrorCode::crypto(0x6d),
+                                frame: None,
+                                reason: "transport parameters missing".into(),
+                            })?;
+
+                    if self.has_0rtt() {
+                        if !self.crypto.early_data_accepted().unwrap() {
+                            debug_assert!(self.side.is_client());
+                            debug!("0-RTT rejected");
+                            self.accepted_0rtt = false;
+                            self.streams.zero_rtt_rejected();
+
+                            // Discard already-queued frames
+                            self.spaces[SpaceId::Data].pending = Retransmits::default();
+
+                            // Discard 0-RTT packets
+                            let sent_packets = mem::replace(
+                                &mut self.spaces[SpaceId::Data].sent_packets,
+                                BTreeMap::new(),
+                            );
+                            for (_, packet) in sent_packets {
+                                self.remove_in_flight(SpaceId::Data, &packet);
+                            }
+                        } else {
+                            self.accepted_0rtt = true;
+                            params.validate_resumption_from(&self.peer_params)?;
+                        }
+                    }
+                    if let Some(token) = params.stateless_reset_token {
+                        self.endpoint_events
+                            .push_back(EndpointEventInner::ResetToken(self.path.remote, token));
+                    }
+                    self.validate_peer_params(&params)?;
+                    self.set_peer_params(params);
+                    self.issue_cids(now);
+                } else {
+                    // Server-only
+                    self.spaces[SpaceId::Data].pending.handshake_done = true;
+                    self.discard_space(now, SpaceId::Handshake);
+                }
+
+                self.events.push_back(Event::Connected);
+                self.state = State::Established;
+                trace!("established");
+                Ok(())
+            }
+            Header::Initial {
+                src_cid: rem_cid, ..
+            } => {
+                if !state.rem_cid_set {
+                    trace!("switching remote CID to {}", rem_cid);
+                    let mut state = state.clone();
+                    self.rem_cids.update_cid(rem_cid);
+                    self.rem_handshake_cid = rem_cid;
+                    self.orig_rem_cid = rem_cid;
+                    state.rem_cid_set = true;
+                    self.state = State::Handshake(state);
+                } else if rem_cid != self.rem_handshake_cid {
+                    debug!(
+                        "discarding packet with mismatched remote CID: {} != {}",
+                        self.rem_handshake_cid, rem_cid
+                    );
+                    return Ok(());
+                }
+
+                let starting_space = self.highest_space;
+                self.process_early_payload(now, packet)?;
+
+                if self.side.is_server()
+                    && starting_space == SpaceId::Initial
+                    && self.highest_space != SpaceId::Initial
+                {
+                    let params =
+                        self.crypto
+                            .transport_parameters()?
+                            .ok_or_else(|| TransportError {
+                                code: TransportErrorCode::crypto(0x6d),
+                                frame: None,
+                                reason: "transport parameters missing".into(),
+                            })?;
+                    self.validate_peer_params(&params)?;
+                    self.set_peer_params(params);
+                    self.issue_cids(now);
+                    self.init_0rtt();
+                }
+                Ok(())
+            }
+            Header::Long {
+                ty: LongType::ZeroRtt,
+                ..
+            } => {
+                self.process_payload(now, remote, number.unwrap(), packet.payload.freeze())?;
+                Ok(())
+            }
+            Header::VersionNegotiate { .. } => {
+                if self.total_authed_packets > 1 {
+                    return Ok(());
+                }
+                if packet.payload.chunks(4).any(is_supported_version) {
+                    return Ok(());
+                }
+                debug!("remote doesn't support our version");
+                Err(ConnectionError::VersionMismatch)
+            }
+            Header::Short { .. } => unreachable!(
+                "short packets received during handshake are discarded in handle_packet"
+            ),
         }
     }
 
