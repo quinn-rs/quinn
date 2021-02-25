@@ -274,7 +274,7 @@ impl fmt::Debug for TransportConfig {
             )
             .field("keep_alive_interval", &self.keep_alive_interval)
             .field("crypto_buffer_size", &self.crypto_buffer_size)
-            .field("allow_wpin", &self.allow_spin)
+            .field("allow_spin", &self.allow_spin)
             .field(
                 "datagram_receive_buffer_size",
                 &self.datagram_receive_buffer_size,
