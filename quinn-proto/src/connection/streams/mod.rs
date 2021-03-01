@@ -8,17 +8,14 @@ use thiserror::Error;
 use tracing::trace;
 
 use super::spaces::{Retransmits, ThinRetransmits};
-use crate::{
-    bytes_source::{ByteSlice, BytesArray, BytesSource},
-    frame, Dir, StreamId, VarInt, Written,
-};
+use crate::{frame, Dir, StreamId, VarInt};
 
 mod recv;
 use recv::Recv;
 pub use recv::{Chunks, ReadError, ReadableError};
 
 mod send;
-pub use send::{FinishError, WriteError};
+pub use send::{ByteSlice, BytesArray, BytesSource, FinishError, WriteError, Written};
 use send::{Send, SendState};
 
 mod state;
