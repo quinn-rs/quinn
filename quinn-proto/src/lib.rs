@@ -26,9 +26,6 @@ use std::{
     time::Duration,
 };
 
-mod bytes_source;
-pub use bytes_source::Written;
-
 mod cid_queue;
 #[doc(hidden)]
 pub mod coding;
@@ -44,8 +41,9 @@ pub use varint::{VarInt, VarIntBoundsExceeded};
 
 mod connection;
 pub use crate::connection::{
-    Chunk, Chunks, ConnectionError, ConnectionStats, Event, FinishError, ReadError, ReadableError,
-    RecvStream, SendDatagramError, SendStream, StreamEvent, Streams, UnknownStream, WriteError,
+    BytesSource, Chunk, Chunks, ConnectionError, ConnectionStats, Event, FinishError, ReadError,
+    ReadableError, RecvStream, SendDatagramError, SendStream, StreamEvent, Streams, UnknownStream,
+    WriteError, Written,
 };
 
 mod config;
