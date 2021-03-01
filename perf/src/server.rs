@@ -85,10 +85,7 @@ async fn handle(handshake: quinn::Connecting) -> Result<()> {
         ..
     } = handshake.await.context("handshake failed")?;
     debug!("{} connected", connection.remote_address());
-    tokio::select! {
-        x = drive_uni(connection, uni_streams) => x?,
-        x = drive_bi(bi_streams) => x?,
-    }
+    tokio::try_join!(drive_uni(connection, uni_streams), drive_bi(bi_streams))?;
     Ok(())
 }
 

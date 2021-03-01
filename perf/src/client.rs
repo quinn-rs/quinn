@@ -103,9 +103,15 @@ async fn run(opt: Opt) -> Result<()> {
         }
     });
 
+    let drive_fut = async {
+        tokio::try_join!(
+            drive_uni(connection.clone(), opt.uni_requests, opt.upload_size, opt.download_size),
+            drive_bi(connection.clone(), opt.bi_requests, opt.upload_size, opt.download_size)
+        )
+    };
+
     tokio::select! {
-        x = drive_uni(connection.clone(), opt.uni_requests, opt.upload_size, opt.download_size) => x?,
-        x = drive_bi(connection.clone(), opt.bi_requests, opt.upload_size, opt.download_size) => x?,
+        _ = drive_fut => {}
         _ = tokio::signal::ctrl_c() => {
             info!("shutting down");
             connection.close(0u32.into(), b"interrupted");
