@@ -5,8 +5,9 @@ use std::{
     task::{Context, Poll},
 };
 
+use bytes::Bytes;
 use futures::{channel::oneshot, io::AsyncWrite, ready, FutureExt};
-use proto::{ConnectionError, FinishError, StreamId};
+use proto::{ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
 
 use crate::{connection::ConnectionRef, recv_stream::UnknownStream, VarInt};
@@ -54,7 +55,36 @@ where
         WriteAll { stream: self, buf }
     }
 
-    fn poll_write(&mut self, cx: &mut Context, buf: &[u8]) -> Poll<Result<usize, WriteError>> {
+    /// Write chunks to the stream
+    ///
+    /// Yields the number of bytes and chunks written on success.
+    /// Congestion and flow control may cause this to be shorter than `buf.len()`,
+    /// indicating that only a prefix of `bufs` was written
+    pub fn write_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> WriteChunks<'a, S> {
+        WriteChunks { stream: self, bufs }
+    }
+
+    /// Convenience method to write a single chunk in its entirety to the stream
+    pub fn write_chunk(&mut self, buf: Bytes) -> WriteChunk<'_, S> {
+        WriteChunk {
+            stream: self,
+            buf: [buf],
+        }
+    }
+
+    /// Convenience method to write an entire list of chunks to the stream
+    pub fn write_all_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> WriteAllChunks<'a, S> {
+        WriteAllChunks {
+            stream: self,
+            bufs,
+            offset: 0,
+        }
+    }
+
+    fn execute_poll<F, R>(&mut self, cx: &mut Context, write_fn: F) -> Poll<Result<R, WriteError>>
+    where
+        F: FnOnce(&mut proto::SendStream) -> Result<R, proto::WriteError>,
+    {
         use proto::WriteError::*;
         let mut conn = self.conn.lock("SendStream::poll_write");
         if self.is_0rtt {
@@ -64,8 +94,9 @@ where
         if let Some(ref x) = conn.error {
             return Poll::Ready(Err(WriteError::ConnectionClosed(x.clone())));
         }
-        let n = match conn.inner.send_stream(self.stream).write(buf) {
-            Ok(n) => n,
+
+        let result = match write_fn(&mut conn.inner.send_stream(self.stream)) {
+            Ok(result) => result,
             Err(Blocked) => {
                 conn.blocked_writers.insert(self.stream, cx.waker().clone());
                 return Poll::Pending;
@@ -77,8 +108,9 @@ where
                 return Poll::Ready(Err(WriteError::UnknownStream));
             }
         };
+
         conn.wake();
-        Poll::Ready(Ok(n))
+        Poll::Ready(Ok(result))
     }
 
     /// Shut down the send stream gracefully.
@@ -201,7 +233,7 @@ where
     S: proto::crypto::Session,
 {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        SendStream::poll_write(self.get_mut(), cx, buf).map_err(Into::into)
+        SendStream::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
@@ -314,7 +346,8 @@ where
     type Output = Result<usize, WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        this.stream.poll_write(cx, this.buf)
+        let buf = this.buf;
+        this.stream.execute_poll(cx, |s| s.write(buf))
     }
 }
 
@@ -340,8 +373,90 @@ where
             if this.buf.is_empty() {
                 return Poll::Ready(Ok(()));
             }
-            let n = ready!(this.stream.poll_write(cx, this.buf))?;
+            let buf = this.buf;
+            let n = ready!(this.stream.execute_poll(cx, |s| s.write(buf)))?;
             this.buf = &this.buf[n..];
+        }
+    }
+}
+
+/// Future produced by [`SendStream::write_chunks()`].
+///
+/// [`SendStream::write_chunks()`]: crate::generic::SendStream::write_chunks
+pub struct WriteChunks<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut SendStream<S>,
+    bufs: &'a mut [Bytes],
+}
+
+impl<'a, S> Future for WriteChunks<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    type Output = Result<Written, WriteError>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let bufs = &mut *this.bufs;
+        this.stream.execute_poll(cx, |s| s.write_chunks(bufs))
+    }
+}
+
+/// Future produced by [`SendStream::write_chunk()`].
+///
+/// [`SendStream::write_chunk()`]: crate::generic::SendStream::write_chunk
+pub struct WriteChunk<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut SendStream<S>,
+    buf: [Bytes; 1],
+}
+
+impl<'a, S> Future for WriteChunk<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    type Output = Result<(), WriteError>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        loop {
+            if this.buf[0].is_empty() {
+                return Poll::Ready(Ok(()));
+            }
+            let bufs = &mut this.buf[..];
+            ready!(this.stream.execute_poll(cx, |s| s.write_chunks(bufs)))?;
+        }
+    }
+}
+
+/// Future produced by [`SendStream::write_all_chunks()`].
+///
+/// [`SendStream::write_all_chunks()`]: crate::generic::SendStream::write_all_chunks
+pub struct WriteAllChunks<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: &'a mut SendStream<S>,
+    bufs: &'a mut [Bytes],
+    offset: usize,
+}
+
+impl<'a, S> Future for WriteAllChunks<'a, S>
+where
+    S: proto::crypto::Session,
+{
+    type Output = Result<(), WriteError>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        loop {
+            if this.offset == this.bufs.len() {
+                return Poll::Ready(Ok(()));
+            }
+            let bufs = &mut this.bufs[this.offset..];
+            let written = ready!(this.stream.execute_poll(cx, |s| s.write_chunks(bufs)))?;
+            this.offset += written.chunks;
         }
     }
 }
