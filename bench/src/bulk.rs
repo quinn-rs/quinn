@@ -223,6 +223,7 @@ async fn send_data_on_stream(
     stream_size_mb: usize,
 ) -> Result<SendResult> {
     const DATA: &[u8] = &[0xAB; 1024 * 1024];
+    let bytes_data = Bytes::from_static(DATA);
 
     let start = Instant::now();
 
@@ -233,7 +234,7 @@ async fn send_data_on_stream(
 
     for _ in 0..stream_size_mb {
         stream
-            .write_all(DATA)
+            .write_chunk(bytes_data.clone())
             .await
             .context("failed sending data")?;
     }
