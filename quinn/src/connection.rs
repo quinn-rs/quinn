@@ -23,7 +23,8 @@ use tracing::info_span;
 use crate::{
     broadcast::{self, Broadcast},
     mutex::Mutex,
-    streams::{RecvStream, SendStream, WriteError},
+    recv_stream::RecvStream,
+    send_stream::{SendStream, WriteError},
     ConnectionEvent, EndpointEvent, VarInt,
 };
 
@@ -385,7 +386,7 @@ where
             return Err(SendDatagramError::ConnectionClosed(x.clone()));
         }
         use proto::SendDatagramError::*;
-        match conn.inner.send_datagram(data) {
+        match conn.inner.datagrams().send(data) {
             Ok(()) => {
                 conn.wake();
                 Ok(())
@@ -410,7 +411,11 @@ where
     ///
     /// [`send_datagram()`]: Connection::send_datagram
     pub fn max_datagram_size(&self) -> Option<usize> {
-        self.0.lock("max_datagram_size").inner.max_datagram_size()
+        self.0
+            .lock("max_datagram_size")
+            .inner
+            .datagrams()
+            .max_size()
     }
 
     /// The peer's UDP address
@@ -538,7 +543,7 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock("IncomingUniStreams::poll_next");
-        if let Some(x) = conn.inner.accept(Dir::Uni) {
+        if let Some(x) = conn.inner.streams().accept(Dir::Uni) {
             conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
             Poll::Ready(Some(Ok(RecvStream::new(self.0.clone(), x, false))))
@@ -567,7 +572,7 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock("IncomingBiStreams::poll_next");
-        if let Some(x) = conn.inner.accept(Dir::Bi) {
+        if let Some(x) = conn.inner.streams().accept(Dir::Bi) {
             let is_0rtt = conn.inner.is_handshaking();
             conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
@@ -598,7 +603,7 @@ where
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock("Datagrams::poll_next");
-        if let Some(x) = conn.inner.recv_datagram() {
+        if let Some(x) = conn.inner.datagrams().recv() {
             Poll::Ready(Some(Ok(x)))
         } else if let Some(ConnectionError::LocallyClosed) = conn.error {
             Poll::Ready(None)
@@ -632,7 +637,7 @@ where
         if let Some(ref e) = conn.error {
             return Poll::Ready(Err(e.clone()));
         }
-        if let Some(id) = conn.inner.open(Dir::Uni) {
+        if let Some(id) = conn.inner.streams().open(Dir::Uni) {
             let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
             drop(conn); // Release lock for clone
             return Poll::Ready(Ok(SendStream::new(this.conn.clone(), id, is_0rtt)));
@@ -663,7 +668,7 @@ where
         if let Some(ref e) = conn.error {
             return Poll::Ready(Err(e.clone()));
         }
-        if let Some(id) = conn.inner.open(Dir::Bi) {
+        if let Some(id) = conn.inner.streams().open(Dir::Bi) {
             let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
             drop(conn); // Release lock for clone
             return Poll::Ready(Ok((

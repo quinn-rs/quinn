@@ -56,7 +56,8 @@ mod connection;
 mod endpoint;
 mod mutex;
 mod platform;
-mod streams;
+mod recv_stream;
+mod send_stream;
 
 pub use proto::{
     crypto, ApplicationClose, Certificate, CertificateChain, Chunk, ConnectError, ConnectionClose,
@@ -65,7 +66,8 @@ pub use proto::{
 
 pub use crate::builders::EndpointError;
 pub use crate::connection::{SendDatagramError, ZeroRttAccepted};
-pub use crate::streams::{ReadError, ReadExactError, ReadToEndError, StoppedError, WriteError};
+pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError};
+pub use crate::send_stream::{StoppedError, WriteError};
 
 /// Types that are generic over the crypto protocol implementation
 pub mod generic {
@@ -75,7 +77,8 @@ pub mod generic {
         OpenBi, OpenUni,
     };
     pub use crate::endpoint::{Endpoint, Incoming};
-    pub use crate::streams::{Read, ReadExact, ReadToEnd, RecvStream, SendStream};
+    pub use crate::recv_stream::{Read, ReadChunk, ReadChunks, ReadExact, ReadToEnd, RecvStream};
+    pub use crate::send_stream::SendStream;
     pub use proto::generic::{ClientConfig, ServerConfig};
 }
 

@@ -1,2 +1,2 @@
 [build]
-rustflags = "--cfg fuzzing"
+rustflags = ["--cfg", "fuzzing"]

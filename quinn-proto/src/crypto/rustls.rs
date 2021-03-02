@@ -276,7 +276,7 @@ pub struct HandshakeData {
 
 impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
     fn new() -> Self {
-        let mut cfg = rustls::ClientConfig::new();
+        let mut cfg = rustls::ClientConfig::with_ciphersuites(&QUIC_CIPHER_SUITES);
         cfg.versions = vec![rustls::ProtocolVersion::TLSv1_3];
         cfg.enable_early_data = true;
         #[cfg(feature = "native-certs")]
@@ -320,7 +320,10 @@ impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
 
 impl crypto::ServerConfig<TlsSession> for Arc<rustls::ServerConfig> {
     fn new() -> Self {
-        let mut cfg = rustls::ServerConfig::new(rustls::NoClientAuth::new());
+        let mut cfg = rustls::ServerConfig::with_ciphersuites(
+            rustls::NoClientAuth::new(),
+            &QUIC_CIPHER_SUITES,
+        );
         cfg.versions = vec![rustls::ProtocolVersion::TLSv1_3];
         cfg.max_early_data_size = u32::max_value();
         Arc::new(cfg)
@@ -399,3 +402,17 @@ impl crypto::PacketKey for PacketKey {
         }
     }
 }
+
+/// Cipher suites suitable for QUIC
+///
+/// The list is equivalent to TLS1.3 ciphers.
+/// It matches the rustls prefernce list that was introduced with
+/// https://github.com/ctz/rustls/commit/7117a805e0104705da50259357d8effa7d599e37.
+/// This list prefers AES ciphers, which are hardware accelerated on most platforms.
+/// This list can be removed if the rustls dependency is updated to a new version
+/// which contains the linked change.
+static QUIC_CIPHER_SUITES: [&rustls::SupportedCipherSuite; 3] = [
+    &rustls::ciphersuite::TLS13_AES_256_GCM_SHA384,
+    &rustls::ciphersuite::TLS13_AES_128_GCM_SHA256,
+    &rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256,
+];

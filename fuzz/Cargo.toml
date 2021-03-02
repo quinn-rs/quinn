@@ -19,7 +19,6 @@ libfuzzer-sys = "0.3"
 features = ["arbitrary"]
 path = "../quinn-proto"
 package = "quinn-proto"
-version = "0.6.1"
 
 [[bin]]
 name = "streams"

@@ -1,5 +1,5 @@
 [package]
-name = "bench"
+name = "perf"
 version = "0.1.0"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>"]
 edition = "2018"
@@ -8,17 +8,22 @@ publish = false
 
 [dependencies]
 anyhow = "1.0.22"
-bytes = "1"
 futures = "0.3.8"
 hdrhistogram = { version = "7.2", default-features = false }
 quinn = { path = "../quinn" }
 rcgen = "0.8"
-rustls = "0.19"
+rustls = { version = "0.19", features = ["dangerous_configuration"] }
+webpki = "0.21"
 structopt = "0.3"
-tokio = { version = "1.0.1", features = ["rt"] }
+tokio = { version = "1.0.1", features = ["rt", "macros", "signal", "net", "sync"] }
 tracing = "0.1.10"
 tracing-subscriber = { version = "0.2.5", default-features = false, features = ["env-filter", "fmt", "ansi", "chrono"]}
+bytes = "1"
 
 [[bin]]
-name = "bulk"
-path = "src/bulk.rs"
+name = "server"
+path = "src/server.rs"
+
+[[bin]]
+name = "client"
+path = "src/client.rs"

@@ -1,5 +1,6 @@
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
+    str::FromStr,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -116,7 +117,13 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: O
         .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
         .unwrap();
 
-    let mut client_config = quinn::ClientConfigBuilder::default();
+    let mut config = quinn::ClientConfig::default();
+    let crypto_config = Arc::get_mut(&mut config.crypto).unwrap();
+
+    crypto_config.ciphersuites.clear();
+    crypto_config.ciphersuites.push(opt.cipher.as_rustls());
+
+    let mut client_config = quinn::ClientConfigBuilder::new(config);
     client_config
         .add_certificate_authority(server_cert)
         .unwrap();
@@ -216,6 +223,7 @@ async fn send_data_on_stream(
     stream_size_mb: usize,
 ) -> Result<SendResult> {
     const DATA: &[u8] = &[0xAB; 1024 * 1024];
+    let bytes_data = Bytes::from_static(DATA);
 
     let start = Instant::now();
 
@@ -226,7 +234,7 @@ async fn send_data_on_stream(
 
     for _ in 0..stream_size_mb {
         stream
-            .write_all(DATA)
+            .write_chunk(bytes_data.clone())
             .await
             .context("failed sending data")?;
     }
@@ -287,4 +295,39 @@ struct Opt {
     /// Whether to use the unordered read API
     #[structopt(long = "unordered")]
     read_unordered: bool,
+    /// Allows to configure the desired cipher suite
+    ///
+    /// Valid options are: aes128, aes256, chacha20
+    #[structopt(long = "cipher", default_value = "aes128")]
+    cipher: CipherSuite,
+}
+
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+enum CipherSuite {
+    AES128,
+    AES256,
+    CHACHA20,
+}
+
+impl CipherSuite {
+    fn as_rustls(self) -> &'static rustls::SupportedCipherSuite {
+        match self {
+            CipherSuite::AES128 => &rustls::ciphersuite::TLS13_AES_128_GCM_SHA256,
+            CipherSuite::AES256 => &rustls::ciphersuite::TLS13_AES_256_GCM_SHA384,
+            CipherSuite::CHACHA20 => &rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256,
+        }
+    }
+}
+
+impl FromStr for CipherSuite {
+    type Err = anyhow::Error;
+
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        match s.to_lowercase().as_str() {
+            "aes128" => Ok(CipherSuite::AES128),
+            "aes256" => Ok(CipherSuite::AES256),
+            "chacha20" => Ok(CipherSuite::CHACHA20),
+            _ => Err(anyhow::anyhow!("Unknown cipher suite {}", s)),
+        }
+    }
 }

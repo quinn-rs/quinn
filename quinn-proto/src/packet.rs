@@ -340,7 +340,10 @@ impl Header {
 
     /// Whether the packet is encrypted on the wire
     pub(crate) fn is_protected(&self) -> bool {
-        !matches!(*self, Header::Retry { .. } | Header::VersionNegotiate { .. })
+        !matches!(
+            *self,
+            Header::Retry { .. } | Header::VersionNegotiate { .. }
+        )
     }
 
     pub(crate) fn number(&self) -> Option<PacketNumber> {
@@ -387,7 +390,13 @@ impl Header {
     }
 
     pub(crate) fn is_0rtt(&self) -> bool {
-        matches!(*self, Header::Long { ty: LongType::ZeroRtt, .. })
+        matches!(
+            *self,
+            Header::Long {
+                ty: LongType::ZeroRtt,
+                ..
+            }
+        )
     }
 
     pub(crate) fn dst_cid(&self) -> &ConnectionId {

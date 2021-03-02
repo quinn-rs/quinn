@@ -40,8 +40,11 @@ mod varint;
 pub use varint::{VarInt, VarIntBoundsExceeded};
 
 mod connection;
-pub use crate::connection::{Chunk, ConnectionError, ConnectionStats, Event, SendDatagramError};
-pub use crate::connection::{FinishError, ReadError, StreamEvent, UnknownStream, WriteError};
+pub use crate::connection::{
+    BytesSource, Chunk, Chunks, ConnectionError, ConnectionStats, Event, FinishError, ReadError,
+    ReadableError, RecvStream, SendDatagramError, SendStream, StreamEvent, Streams, UnknownStream,
+    WriteError, Written,
+};
 
 mod config;
 pub use config::{ConfigError, TransportConfig};
@@ -75,7 +78,7 @@ use token::{ResetToken, RetryToken};
 pub mod generic {
     pub use crate::{
         config::{ClientConfig, EndpointConfig, ServerConfig},
-        connection::Connection,
+        connection::{Connection, Datagrams},
         endpoint::Endpoint,
     };
 }
@@ -88,6 +91,8 @@ mod rustls_impls {
     pub type Connection = generic::Connection<crypto::rustls::TlsSession>;
     /// A `ClientConfig` containing client-side rustls configuration
     pub type ClientConfig = generic::ClientConfig<crypto::rustls::TlsSession>;
+    /// A `Datagrams` using rustls for the cryptography protocol
+    pub type Datagrams<'a> = generic::Datagrams<'a, crypto::rustls::TlsSession>;
     /// An `Endpoint` using rustls for the cryptography protocol
     pub type Endpoint = generic::Endpoint<crypto::rustls::TlsSession>;
     /// A `ServerConfig` containing server-side rustls configuration
@@ -105,7 +110,9 @@ use arbitrary::Arbitrary;
 #[doc(hidden)]
 #[cfg(fuzzing)]
 pub mod fuzzing {
-    pub use crate::connection::{FinishError, Streams};
+    pub use crate::connection::{
+        FinishError, Retransmits, SendStream, State as ConnectionState, Streams, StreamsState,
+    };
     pub use crate::frame::ResetStream;
     pub use crate::packet::PartialDecode;
     pub use crate::transport_parameters::TransportParameters;
@@ -307,7 +314,7 @@ pub struct Transmit {
 const LOC_CID_COUNT: u64 = 8;
 const RESET_TOKEN_SIZE: usize = 16;
 const MAX_CID_SIZE: usize = 20;
-const MIN_INITIAL_SIZE: usize = 1200;
+const MIN_INITIAL_SIZE: u16 = 1200;
 const MIN_MTU: u16 = 1232;
 const TIMER_GRANULARITY: Duration = Duration::from_millis(1);
 /// Maximum number of streams that can be uniquely identified by a stream ID

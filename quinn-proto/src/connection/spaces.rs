@@ -21,8 +21,6 @@ where
     pub(crate) dedup: Dedup,
     /// Highest received packet number
     pub(crate) rx_packet: u64,
-    /// Time at which the above was received
-    pub(crate) rx_packet_time: Instant,
 
     /// Data to send
     pub(crate) pending: Retransmits,
@@ -78,7 +76,6 @@ where
             crypto: None,
             dedup: Dedup::new(),
             rx_packet: 0,
-            rx_packet_time: now,
 
             pending: Retransmits::default(),
             pending_acks: RangeSet::new(),
@@ -101,6 +98,44 @@ where
             in_flight: 0,
             sent_with_keys: 0,
         }
+    }
+
+    /// Queue data for a tail loss probe (or anti-amplification deadlock prevention) packet
+    ///
+    /// Probes are sent similarly to normal packets when an expect ACK has not arrived. We never
+    /// deem a packet lost until we receive an ACK that should have included it, but if a trailing
+    /// run of packets (or their ACKs) are lost, this might not happen in a timely fashion. We send
+    /// probe packets to force an ACK, and exempt them from congestion control to prevent a deadlock
+    /// when the congestion window is filled with lost tail packets.
+    ///
+    /// We prefer to send new data, to make the most efficient use of bandwidth. If there's no data
+    /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
+    /// in-flight data either, we're probably a client guarding against a handshake
+    /// anti-amplification deadlock and we just make something up.
+    pub(crate) fn maybe_queue_probe(&mut self) {
+        if self.loss_probes == 0 {
+            return;
+        }
+
+        // Retransmit the data of the oldest in-flight packet
+        if !self.pending.is_empty() {
+            // There's real data to send here, no need to make something up
+            return;
+        }
+
+        for packet in self.sent_packets.values_mut() {
+            if !packet.retransmits.is_empty() {
+                // Remove retransmitted data from the old packet so we don't end up retransmitting
+                // it *again* even if the copy we're sending now gets acknowledged.
+                self.pending |= mem::take(&mut packet.retransmits);
+                return;
+            }
+        }
+
+        // Nothing new to send and nothing to retransmit, so fall back on a ping. This should only
+        // happen in rare cases during the handshake when the server becomes blocked by
+        // anti-amplification.
+        self.ping_pending = true;
     }
 
     pub(crate) fn get_tx_number(&mut self) -> u64 {
@@ -182,7 +217,10 @@ pub(crate) struct SentPacket {
     /// Whether an acknowledgement is expected directly in response to this packet.
     pub(crate) ack_eliciting: bool,
     pub(crate) acks: RangeSet,
-    pub(crate) retransmits: Retransmits,
+    /// Data which needs to be retransmitted in case the packet is lost.
+    /// The data is boxed to minimize `SentPacket` size for the typical case of
+    /// packets only containing ACKs and STREAM frames.
+    pub(crate) retransmits: ThinRetransmits,
     /// Metadata for stream frames in a packet
     ///
     /// The actual application data is stored with the stream state.
@@ -276,6 +314,14 @@ impl ::std::ops::BitOrAssign for Retransmits {
     }
 }
 
+impl ::std::ops::BitOrAssign<ThinRetransmits> for Retransmits {
+    fn bitor_assign(&mut self, rhs: ThinRetransmits) {
+        if let Some(retransmits) = rhs.retransmits {
+            self.bitor_assign(*retransmits)
+        }
+    }
+}
+
 impl ::std::iter::FromIterator<Retransmits> for Retransmits {
     fn from_iter<T>(iter: T) -> Self
     where
@@ -286,6 +332,37 @@ impl ::std::iter::FromIterator<Retransmits> for Retransmits {
             result |= packet;
         }
         result
+    }
+}
+
+/// A variant of `Retransmits` which only allocates storage when required
+#[derive(Debug, Default, Clone)]
+pub struct ThinRetransmits {
+    retransmits: Option<Box<Retransmits>>,
+}
+
+impl ThinRetransmits {
+    /// Returns `true` if no retransmits are necessary
+    pub fn is_empty(&self) -> bool {
+        match &self.retransmits {
+            Some(retransmits) => retransmits.is_empty(),
+            None => true,
+        }
+    }
+
+    /// Returns a reference to the retransmits stored in this box
+    pub fn get(&self) -> Option<&Retransmits> {
+        self.retransmits.as_deref()
+    }
+
+    /// Returns a mutable reference to the stored retransmits
+    ///
+    /// This function will allocate a backing storage if required.
+    pub fn get_or_create(&mut self) -> &mut Retransmits {
+        if self.retransmits.is_none() {
+            self.retransmits = Some(Box::new(Retransmits::default()));
+        }
+        self.retransmits.as_deref_mut().unwrap()
     }
 }
 
@@ -414,5 +491,12 @@ mod test {
         assert!(!dedup.insert(WINDOW_SIZE + 1));
         assert_eq!(dedup.next, 2 * WINDOW_SIZE + 1);
         assert_eq!(dedup.window, 1 << (WINDOW_SIZE - 2));
+    }
+
+    #[test]
+    fn sent_packet_size() {
+        // The tracking state of sent packets should be minimal, and not grow
+        // over time.
+        assert!(std::mem::size_of::<SentPacket>() <= 128);
     }
 }

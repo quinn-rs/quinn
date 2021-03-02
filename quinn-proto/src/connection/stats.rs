@@ -11,6 +11,11 @@ pub struct UdpStats {
     pub datagrams: u64,
     /// The total amount of bytes which have been transferred inside UDP datagrams
     pub bytes: u64,
+    /// The amount of transmit calls which have been performed
+    ///
+    /// This can mismatch the amount of datagrams in case GSO is utilized for
+    /// transmitting data.
+    pub transmits: u64,
 }
 
 /// Statistics about frames transmitted or received on a connection

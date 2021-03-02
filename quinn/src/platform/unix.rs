@@ -347,7 +347,7 @@ pub fn caps() -> UdpCapabilities {
     *CAPABILITIES
 }
 
-const CMSG_LEN: usize = 80;
+const CMSG_LEN: usize = 88;
 
 fn prepare_msg(
     transmit: &Transmit,

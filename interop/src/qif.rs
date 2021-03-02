@@ -530,15 +530,13 @@ impl InputType {
             && ancestors[2] == OsStr::new("encoded")
     }
 
-    fn is_encoded_dir(path: &Path) -> Result<bool> {
+    fn is_encoded_dir(path: &Path) -> bool {
         if !path.is_dir() {
-            return Ok(false);
+            return false;
         }
 
-        Ok(
-            path.file_name().unwrap_or_default() == OsStr::new("encoded")
-                || path.file_name().unwrap_or_default() == OsStr::new("qpack-05"),
-        )
+        path.file_name().unwrap_or_default() == OsStr::new("encoded")
+            || path.file_name().unwrap_or_default() == OsStr::new("qpack-05")
     }
 
     fn is_qif_dir(path: &Path) -> Result<bool> {
@@ -581,7 +579,7 @@ impl InputType {
                     .unwrap()
                     .into(),
             ))
-        } else if InputType::is_encoded_dir(path)? {
+        } else if InputType::is_encoded_dir(path) {
             println!("encoder dir");
             InputType::EncodedDir(EncodedDir(path.to_path_buf()))
         } else if InputType::is_qif_dir(path)? {
