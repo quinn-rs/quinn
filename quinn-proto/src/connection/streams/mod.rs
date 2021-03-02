@@ -182,8 +182,7 @@ impl<'a> SendStream<'a> {
             return Err(WriteError::Blocked);
         }
 
-        let limit = (self.state.max_data - self.state.data_sent)
-            .min(self.state.send_window - self.state.unacked_data);
+        let limit = self.state.write_limit();
         let stream = self
             .state
             .send
