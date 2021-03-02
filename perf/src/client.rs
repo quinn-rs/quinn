@@ -1,12 +1,13 @@
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::StreamExt;
+use hdrhistogram::Histogram;
 use structopt::StructOpt;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
@@ -86,6 +87,8 @@ async fn run(opt: Opt) -> Result<()> {
             .set_certificate_verifier(SkipServerVerification::new());
     }
 
+    let stats = Arc::new(Mutex::new(Stats::default()));
+
     let quinn::NewConnection {
         connection,
         uni_streams,
@@ -104,12 +107,14 @@ async fn run(opt: Opt) -> Result<()> {
             drive_uni(
                 connection.clone(),
                 acceptor,
+                stats.clone(),
                 opt.uni_requests,
                 opt.upload_size,
                 opt.download_size
             ),
             drive_bi(
                 connection.clone(),
+                stats.clone(),
                 opt.bi_requests,
                 opt.upload_size,
                 opt.download_size
@@ -117,8 +122,19 @@ async fn run(opt: Opt) -> Result<()> {
         )
     };
 
+    let print_fut = async {
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            {
+                let guard = stats.lock().unwrap();
+                guard.print();
+            }
+        }
+    };
+
     tokio::select! {
         _ = drive_fut => {}
+        _ = print_fut => {}
         _ = tokio::signal::ctrl_c() => {
             info!("shutting down");
             connection.close(0u32.into(), b"interrupted");
@@ -167,6 +183,7 @@ async fn drain_stream(mut stream: quinn::RecvStream, stats: &mut RequestStats) -
 async fn drive_uni(
     connection: quinn::Connection,
     acceptor: UniAcceptor,
+    stats: Arc<Mutex<Stats>>,
     concurrency: u64,
     upload: u64,
     download: u64,
@@ -175,16 +192,25 @@ async fn drive_uni(
 
     loop {
         let permit = sem.clone().acquire_owned().await.unwrap();
-        let mut stats = RequestStats::new(upload, download);
+        let mut request_stats = RequestStats::new(upload, download);
         let send = connection.open_uni().await?;
         let acceptor = acceptor.clone();
+        let stats = stats.clone();
+
         debug!("sending request on {}", send.id());
         tokio::spawn(async move {
-            if let Err(e) = request_uni(send, acceptor, upload, download, &mut stats).await {
+            if let Err(e) = request_uni(send, acceptor, upload, download, &mut request_stats).await
+            {
                 error!("sending request failed: {:#}", e);
             } else {
-                stats.success = true;
+                request_stats.success = true;
             }
+
+            {
+                let mut guard = stats.lock().unwrap();
+                guard.record(request_stats);
+            }
+
             drop(permit);
         });
     }
@@ -236,6 +262,7 @@ async fn request(
 
 async fn drive_bi(
     connection: quinn::Connection,
+    stats: Arc<Mutex<Stats>>,
     concurrency: u64,
     upload: u64,
     download: u64,
@@ -244,15 +271,23 @@ async fn drive_bi(
 
     loop {
         let permit = sem.clone().acquire_owned().await.unwrap();
-        let mut stats = RequestStats::new(upload, download);
+        let mut request_stats = RequestStats::new(upload, download);
         let (send, recv) = connection.open_bi().await?;
+        let stats = stats.clone();
+
         debug!("sending request on {}", send.id());
         tokio::spawn(async move {
-            if let Err(e) = request_bi(send, recv, upload, download, &mut stats).await {
+            if let Err(e) = request_bi(send, recv, upload, download, &mut request_stats).await {
                 error!("request failed: {:#}", e);
             } else {
-                stats.success = true;
+                request_stats.success = true;
             }
+
+            {
+                let mut guard = stats.lock().unwrap();
+                guard.record(request_stats);
+            }
+
             drop(permit);
         });
     }
@@ -299,7 +334,6 @@ struct RequestStats {
     download_start: Option<Instant>,
     first_byte: Option<Instant>,
     download_end: Option<Instant>,
-    finish: Option<Instant>,
     upload_size: u64,
     download_size: u64,
     success: bool,
@@ -315,16 +349,120 @@ impl RequestStats {
             upload_size,
             download_size,
             download_end: None,
-            finish: None,
             success: false,
-        }
-    }
-
-    fn fbl(&self) -> Option<Duration> {
-        match self.first_byte {
-            Some(first_byte) => Some(first_byte.duration_since(self.start)),
-            None => None,
         }
     }
 }
 
+struct Stats {
+    /// Test start time
+    start: Instant,
+    /// Durations of complete requests
+    duration: Histogram<u64>,
+    /// Time from finishing the upload until receiving the first byte of the response
+    fbl: Histogram<u64>,
+    /// Throughput for uploads
+    upload_throughput: Histogram<u64>,
+    /// Throughput for downloads
+    download_throughput: Histogram<u64>,
+    /// The total amount of requests executed
+    requests: usize,
+    /// The amount of successful requests
+    success: usize,
+}
+
+impl Default for Stats {
+    fn default() -> Self {
+        Self {
+            start: Instant::now(),
+            duration: Histogram::new(3).unwrap(),
+            fbl: Histogram::new(3).unwrap(),
+            upload_throughput: Histogram::new(3).unwrap(),
+            download_throughput: Histogram::new(3).unwrap(),
+            requests: 0,
+            success: 0,
+        }
+    }
+}
+
+impl Stats {
+    pub fn record(&mut self, request: RequestStats) {
+        self.requests += 1;
+        self.success += if request.success { 1 } else { 0 };
+
+        // Record the remaining metrics only if the request is successful
+        // In this case all timings are available
+        if !request.success {
+            return;
+        }
+
+        let duration = request.download_end.unwrap().duration_since(request.start);
+        self.duration.record(duration.as_millis() as u64).unwrap();
+
+        let fbl = request
+            .first_byte
+            .unwrap()
+            .duration_since(request.download_start.unwrap());
+        self.fbl.record(fbl.as_millis() as u64).unwrap();
+
+        let download_duration = request
+            .download_end
+            .unwrap()
+            .duration_since(request.download_start.unwrap());
+        let download_bps = throughput_bps(download_duration, request.download_size);
+        self.download_throughput
+            .record(download_bps as u64)
+            .unwrap();
+
+        let upload_duration = request
+            .download_start
+            .unwrap()
+            .duration_since(request.upload_start.unwrap());
+        let upload_bps = throughput_bps(upload_duration, request.upload_size);
+        self.upload_throughput.record(upload_bps as u64).unwrap();
+    }
+
+    pub fn print(&self) {
+        let dt = self.start.elapsed();
+        let rps = self.requests as f64 / dt.as_secs_f64();
+
+        println!("Overall stats:");
+        println!(
+            "RPS: {} ({} requests in {:4.2?})",
+            rps as usize, self.requests, dt,
+        );
+        println!(
+            "Success rate: {:4.2}%",
+            100.0 * self.success as f64 / self.requests as f64,
+        );
+        println!();
+
+        println!("Stream metrics:\n");
+
+        println!("      │ Duration  │ FBL       | Upload Throughput | Download Throughput");
+        println!("──────┼───────────┼───────────┼───────────────────┼────────────────────");
+
+        let print_metric = |label: &'static str, get_metric: fn(&Histogram<u64>) -> u64| {
+            println!(
+                " {} │ {:>9} │ {:>9} │ {:11.2} MiB/s │ {:13.2} MiB/s",
+                label,
+                format!("{:.2?}", Duration::from_millis(get_metric(&self.duration))),
+                format!("{:.2?}", Duration::from_millis(get_metric(&self.fbl))),
+                get_metric(&self.upload_throughput) as f64 / 1024.0 / 1024.0,
+                get_metric(&self.download_throughput) as f64 / 1024.0 / 1024.0,
+            );
+        };
+
+        print_metric("AVG ", |hist| hist.mean() as u64);
+        print_metric("P0  ", |hist| hist.value_at_quantile(0.00));
+        print_metric("P10 ", |hist| hist.value_at_quantile(0.10));
+        print_metric("P50 ", |hist| hist.value_at_quantile(0.50));
+        print_metric("P90 ", |hist| hist.value_at_quantile(0.90));
+        print_metric("P100", |hist| hist.value_at_quantile(1.00));
+        println!();
+    }
+}
+
+fn throughput_bps(duration: Duration, size: u64) -> f64 {
+    (size as f64) / (duration.as_secs_f64())
+}
