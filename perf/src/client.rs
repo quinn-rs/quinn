@@ -84,7 +84,7 @@ async fn run(opt: Opt) -> Result<()> {
 
     let quinn::NewConnection {
         connection,
-        mut uni_streams,
+        uni_streams,
         ..
     } = endpoint
         .connect_with(cfg, &addr, &host_name)?
@@ -93,20 +93,23 @@ async fn run(opt: Opt) -> Result<()> {
 
     info!("established");
 
-    tokio::spawn(async move {
-        while let Some(Ok(stream)) = uni_streams.next().await {
-            tokio::spawn(async move {
-                if let Err(e) = drain_stream(stream).await {
-                    error!("reading response failed: {:#}", e);
-                }
-            });
-        }
-    });
+    let acceptor = UniAcceptor(Arc::new(tokio::sync::Mutex::new(uni_streams)));
 
     let drive_fut = async {
         tokio::try_join!(
-            drive_uni(connection.clone(), opt.uni_requests, opt.upload_size, opt.download_size),
-            drive_bi(connection.clone(), opt.bi_requests, opt.upload_size, opt.download_size)
+            drive_uni(
+                connection.clone(),
+                acceptor,
+                opt.uni_requests,
+                opt.upload_size,
+                opt.download_size
+            ),
+            drive_bi(
+                connection.clone(),
+                opt.bi_requests,
+                opt.upload_size,
+                opt.download_size
+            )
         )
     };
 
@@ -144,6 +147,7 @@ async fn drain_stream(mut stream: quinn::RecvStream) -> Result<()> {
 
 async fn drive_uni(
     connection: quinn::Connection,
+    acceptor: UniAcceptor,
     concurrency: u64,
     upload: u64,
     download: u64,
@@ -153,14 +157,33 @@ async fn drive_uni(
     loop {
         let permit = sem.clone().acquire_owned().await.unwrap();
         let send = connection.open_uni().await?;
+        let acceptor = acceptor.clone();
         trace!("sending request on {}", send.id());
         tokio::spawn(async move {
-            if let Err(e) = request(send, upload, download).await {
+            if let Err(e) = request_uni(send, acceptor, upload, download).await {
                 error!("sending request failed: {:#}", e);
             }
             drop(permit);
         });
     }
+}
+
+async fn request_uni(
+    send: quinn::SendStream,
+    acceptor: UniAcceptor,
+    upload: u64,
+    download: u64,
+) -> Result<()> {
+    request(send, upload, download).await?;
+    let recv = {
+        let mut guard = acceptor.0.lock().await;
+        guard
+            .next()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("End of stream"))
+    }??;
+    drain_stream(recv).await?;
+    Ok(())
 }
 
 async fn request(mut send: quinn::SendStream, mut upload: u64, download: u64) -> Result<()> {
@@ -209,6 +232,9 @@ async fn request_bi(
     drain_stream(recv).await?;
     Ok(())
 }
+
+#[derive(Clone)]
+struct UniAcceptor(Arc<tokio::sync::Mutex<quinn::IncomingUniStreams>>);
 
 struct SkipServerVerification;
 
