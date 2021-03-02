@@ -455,14 +455,13 @@ where
                 return None;
             }
             State::Draining | State::Closed(_) => {
-                // TODO: This seems to lose the `close` flag if it can't be
-                // immediately enqueued
-                if mem::replace(&mut self.close, false) {
-                    true
-                } else {
+                // self.close is only reset once the associated packet had been
+                // encoded successfully
+                if !self.close {
                     self.app_limited = true;
                     return None;
                 }
+                true
             }
             _ => false,
         };
@@ -664,6 +663,8 @@ where
                         "tried to make a close packet when the connection wasn't closed"
                     ),
                 }
+                // Don't send another close packet
+                self.close = false;
                 // `CONNECTION_CLOSE` is the final packet
                 break;
             }
