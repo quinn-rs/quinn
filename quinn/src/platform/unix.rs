@@ -19,14 +19,6 @@ type IpTosTy = libc::c_int;
 impl super::UdpExt for UdpSocket {
     fn init_ext(&self) -> io::Result<()> {
         // Safety
-        assert_eq!(
-            mem::size_of::<SocketAddrV4>(),
-            mem::size_of::<libc::sockaddr_in>()
-        );
-        assert_eq!(
-            mem::size_of::<SocketAddrV6>(),
-            mem::size_of::<libc::sockaddr_in6>()
-        );
         assert!(
             CMSG_LEN >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
         );
@@ -110,9 +102,25 @@ impl super::UdpExt for UdpSocket {
         let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
         let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
         let mut cmsgs = [cmsg::Aligned(MaybeUninit::uninit()); BATCH_SIZE];
+        // This assume_init looks a bit weird because one might think it
+        // assumes the SockAddr data to be initialized, but that call
+        // refers to the whole array, which itself is made up of MaybeUninit
+        // containers. Their presence protects the SockAddr inside from
+        // being assumed as initialized by the assume_init call.
+        // TODO: Replace this with uninit_array once it becomes MSRV-stable
+        let mut addrs: [MaybeUninit<socket2::SockAddr>; BATCH_SIZE] =
+            unsafe { MaybeUninit::uninit().assume_init() };
         for (i, transmit) in transmits.iter().enumerate().take(BATCH_SIZE) {
+            let dst_addr = unsafe {
+                std::ptr::write(
+                    addrs[i].as_mut_ptr(),
+                    socket2::SockAddr::from(transmit.destination),
+                );
+                &*addrs[i].as_ptr()
+            };
             prepare_msg(
                 transmit,
+                dst_addr,
                 &mut msgs[i].msg_hdr,
                 &mut iovecs[i],
                 &mut cmsgs[i],
@@ -145,7 +153,8 @@ impl super::UdpExt for UdpSocket {
         let mut ctrl = cmsg::Aligned(MaybeUninit::uninit());
         let mut sent = 0;
         while sent < transmits.len() {
-            prepare_msg(&transmits[sent], &mut hdr, &mut iov, &mut ctrl);
+            let addr = socket2::SockAddr::from(transmits[sent].destination);
+            prepare_msg(&transmits[sent], &addr, &mut hdr, &mut iov, &mut ctrl);
             let n = unsafe { libc::sendmsg(self.as_raw_fd(), &hdr, 0) };
             if n == -1 {
                 let e = io::Error::last_os_error();
@@ -231,6 +240,7 @@ const CMSG_LEN: usize = 24;
 
 fn prepare_msg(
     transmit: &Transmit,
+    dst_addr: &socket2::SockAddr,
     hdr: &mut libc::msghdr,
     iov: &mut libc::iovec,
     ctrl: &mut cmsg::Aligned<MaybeUninit<[u8; CMSG_LEN]>>,
@@ -238,12 +248,15 @@ fn prepare_msg(
     iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
     iov.iov_len = transmit.contents.len();
 
-    let (name, namelen) = match transmit.destination {
-        SocketAddr::V4(ref addr) => (addr as *const _ as _, mem::size_of::<libc::sockaddr_in>()),
-        SocketAddr::V6(ref addr) => (addr as *const _ as _, mem::size_of::<libc::sockaddr_in6>()),
-    };
-    hdr.msg_name = name;
-    hdr.msg_namelen = namelen as _;
+    // SAFETY: Casting the pointer to a mutable one is legal,
+    // as sendmsg is guaranteed to not alter the mutable pointer
+    // as per the POSIX spec. See the section on the sys/socket.h
+    // header for details. The type is only mutable in the first
+    // place because it is reused by recvmsg as well.
+    let name = dst_addr.as_ptr() as *mut libc::c_void;
+    let namelen = dst_addr.len();
+    hdr.msg_name = name as *mut _;
+    hdr.msg_namelen = namelen;
     hdr.msg_iov = iov;
     hdr.msg_iovlen = 1;
 
