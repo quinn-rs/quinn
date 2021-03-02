@@ -80,12 +80,24 @@ async fn run(opt: Opt) -> Result<()> {
     let mut cfg = quinn::ClientConfigBuilder::default();
     cfg.protocols(&[b"perf"]);
     let mut cfg = cfg.build();
+
+    let tls_config: &mut rustls::ClientConfig = Arc::get_mut(&mut cfg.crypto).unwrap();
     if opt.insecure {
-        let tls_cfg: &mut rustls::ClientConfig = Arc::get_mut(&mut cfg.crypto).unwrap();
-        tls_cfg
+        tls_config
             .dangerous()
             .set_certificate_verifier(SkipServerVerification::new());
     }
+    // Configure cipher suites for efficiency
+    tls_config.ciphersuites.clear();
+    tls_config
+        .ciphersuites
+        .push(&rustls::ciphersuite::TLS13_AES_128_GCM_SHA256);
+    tls_config
+        .ciphersuites
+        .push(&rustls::ciphersuite::TLS13_AES_256_GCM_SHA384);
+    tls_config
+        .ciphersuites
+        .push(&rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256);
 
     let stats = Arc::new(Mutex::new(Stats::default()));
 

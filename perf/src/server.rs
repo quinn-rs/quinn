@@ -1,4 +1,4 @@
-use std::{fs, net::SocketAddr, path::PathBuf};
+use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -57,7 +57,20 @@ async fn run(opt: Opt) -> Result<()> {
     server_config.certificate(cert, key).unwrap();
     server_config.protocols(&[b"perf"]);
 
-    let server_config = server_config.build();
+    let mut server_config = server_config.build();
+
+    // Configure cipher suites for efficiency
+    let tls_config = Arc::get_mut(&mut server_config.crypto).unwrap();
+    tls_config.ciphersuites.clear();
+    tls_config
+        .ciphersuites
+        .push(&rustls::ciphersuite::TLS13_AES_128_GCM_SHA256);
+    tls_config
+        .ciphersuites
+        .push(&rustls::ciphersuite::TLS13_AES_256_GCM_SHA384);
+    tls_config
+        .ciphersuites
+        .push(&rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256);
 
     let mut endpoint = quinn::EndpointBuilder::default();
     endpoint.listen(server_config);
