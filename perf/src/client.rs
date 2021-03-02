@@ -1,6 +1,7 @@
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::Arc,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context, Result};
@@ -35,6 +36,9 @@ struct Opt {
     /// Whether to skip certificate validation
     #[structopt(long)]
     insecure: bool,
+    /// The time to run in seconds
+    #[structopt(long, default_value = "60")]
+    duration: u64,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -118,6 +122,10 @@ async fn run(opt: Opt) -> Result<()> {
         _ = tokio::signal::ctrl_c() => {
             info!("shutting down");
             connection.close(0u32.into(), b"interrupted");
+        }
+        _ = tokio::time::sleep(Duration::from_secs(opt.duration)) => {
+            info!("shutting down");
+            connection.close(0u32.into(), b"done");
         }
     }
 
