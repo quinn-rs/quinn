@@ -255,13 +255,14 @@ async fn request(
 ) -> Result<()> {
     stats.upload_start = Some(Instant::now());
     send.write_all(&download.to_be_bytes()).await?;
+
     const DATA: [u8; 1024 * 1024] = [42; 1024 * 1024];
     while upload > 0 {
-        let n = send
-            .write(&DATA[..upload.min(DATA.len() as u64) as usize])
+        let chunk_len = upload.min(DATA.len() as u64);
+        send.write_chunk(Bytes::from_static(&DATA[..chunk_len as usize]))
             .await
             .context("sending response")?;
-        upload -= n as u64;
+        upload -= chunk_len;
     }
     send.finish().await?;
 
