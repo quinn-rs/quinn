@@ -34,6 +34,7 @@ mio = "0.6"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.5.2" }
 rustls = { version = "0.16", features = ["quic"] }
 rustls-native-certs = { version = "0.1.0", optional = true }
+socket2 = "0.3"
 tracing = "0.1.10"
 tokio = { version = "0.2.1", features = ["io-driver", "time"] }
 webpki = "0.21"
