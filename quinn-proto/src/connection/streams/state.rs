@@ -651,7 +651,7 @@ impl StreamsState {
 
                 // If it's no longer sensible to write to a stream (even to detect an error) then don't
                 // report it.
-                if stream.is_writable() {
+                if stream.is_writable() && stream.max_data > stream.offset() {
                     return Some(StreamEvent::Writable { id });
                 }
             }
