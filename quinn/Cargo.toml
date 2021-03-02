@@ -24,6 +24,21 @@ lock_tracking = []
 native-certs = ["proto/native-certs"]
 tls-rustls = ["rustls", "webpki", "proto/tls-rustls"]
 
+#Re-export tokio features:
+tokio-full = ["tokio/full"]
+tokio-fs = ["tokio/fs"]
+tokio-io-util = ["tokio/io-util"]
+tokio-io-std = ["tokio/io-std"]
+tokio-macros = ["tokio/macros"]
+tokio-net = ["tokio/net"]
+tokio-process = ["tokio/process"]
+tokio-rt = ["tokio/rt"]
+tokio-rt-multi-thread = ["tokio/rt-multi-thread"]
+tokio-signal = ["tokio/signal"]
+tokio-sync = ["tokio/sync"]
+tokio-test-util = ["tokio/test-util"]
+tokio-time = ["tokio/time"]
+
 [badges]
 codecov = { repository = "djc/quinn" }
 maintenance = { status = "experimental" }
