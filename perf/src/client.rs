@@ -9,7 +9,7 @@ use bytes::Bytes;
 use futures::StreamExt;
 use structopt::StructOpt;
 use tokio::sync::Semaphore;
-use tracing::{error, info, trace};
+use tracing::{debug, error, info};
 
 /// Connects to a QUIC perf server and maintains a specified pattern of requests until interrupted
 #[derive(StructOpt)]
@@ -136,7 +136,7 @@ async fn run(opt: Opt) -> Result<()> {
     Ok(())
 }
 
-async fn drain_stream(mut stream: quinn::RecvStream) -> Result<()> {
+async fn drain_stream(mut stream: quinn::RecvStream, stats: &mut RequestStats) -> Result<()> {
     #[rustfmt::skip]
     let mut bufs = [
         Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
@@ -148,8 +148,19 @@ async fn drain_stream(mut stream: quinn::RecvStream) -> Result<()> {
         Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
     ];
-    while stream.read_chunks(&mut bufs[..]).await?.is_some() {}
-    trace!("response finished on {}", stream.id());
+    while stream.read_chunks(&mut bufs[..]).await?.is_some() {
+        if stats.first_byte.is_none() {
+            stats.first_byte = Some(Instant::now());
+        }
+    }
+
+    let now = Instant::now();
+    if stats.first_byte.is_none() {
+        stats.first_byte = Some(now);
+    }
+    stats.download_end = Some(now);
+
+    debug!("response finished on {}", stream.id());
     Ok(())
 }
 
@@ -164,12 +175,15 @@ async fn drive_uni(
 
     loop {
         let permit = sem.clone().acquire_owned().await.unwrap();
+        let mut stats = RequestStats::new(upload, download);
         let send = connection.open_uni().await?;
         let acceptor = acceptor.clone();
-        trace!("sending request on {}", send.id());
+        debug!("sending request on {}", send.id());
         tokio::spawn(async move {
-            if let Err(e) = request_uni(send, acceptor, upload, download).await {
+            if let Err(e) = request_uni(send, acceptor, upload, download, &mut stats).await {
                 error!("sending request failed: {:#}", e);
+            } else {
+                stats.success = true;
             }
             drop(permit);
         });
@@ -181,8 +195,9 @@ async fn request_uni(
     acceptor: UniAcceptor,
     upload: u64,
     download: u64,
+    stats: &mut RequestStats,
 ) -> Result<()> {
-    request(send, upload, download).await?;
+    request(send, upload, download, stats).await?;
     let recv = {
         let mut guard = acceptor.0.lock().await;
         guard
@@ -190,11 +205,17 @@ async fn request_uni(
             .await
             .ok_or_else(|| anyhow::anyhow!("End of stream"))
     }??;
-    drain_stream(recv).await?;
+    drain_stream(recv, stats).await?;
     Ok(())
 }
 
-async fn request(mut send: quinn::SendStream, mut upload: u64, download: u64) -> Result<()> {
+async fn request(
+    mut send: quinn::SendStream,
+    mut upload: u64,
+    download: u64,
+    stats: &mut RequestStats,
+) -> Result<()> {
+    stats.upload_start = Some(Instant::now());
     send.write_all(&download.to_be_bytes()).await?;
     let buf = [42; 4 * 1024];
     while upload > 0 {
@@ -205,7 +226,11 @@ async fn request(mut send: quinn::SendStream, mut upload: u64, download: u64) ->
         upload -= n as u64;
     }
     send.finish().await?;
-    trace!("upload finished on {}", send.id());
+
+    let now = Instant::now();
+    stats.download_start = Some(now);
+
+    debug!("upload finished on {}", send.id());
     Ok(())
 }
 
@@ -219,11 +244,14 @@ async fn drive_bi(
 
     loop {
         let permit = sem.clone().acquire_owned().await.unwrap();
+        let mut stats = RequestStats::new(upload, download);
         let (send, recv) = connection.open_bi().await?;
-        trace!("sending request on {}", send.id());
+        debug!("sending request on {}", send.id());
         tokio::spawn(async move {
-            if let Err(e) = request_bi(send, recv, upload, download).await {
+            if let Err(e) = request_bi(send, recv, upload, download, &mut stats).await {
                 error!("request failed: {:#}", e);
+            } else {
+                stats.success = true;
             }
             drop(permit);
         });
@@ -235,9 +263,10 @@ async fn request_bi(
     recv: quinn::RecvStream,
     upload: u64,
     download: u64,
+    stats: &mut RequestStats,
 ) -> Result<()> {
-    request(send, upload, download).await?;
-    drain_stream(recv).await?;
+    request(send, upload, download, stats).await?;
+    drain_stream(recv, stats).await?;
     Ok(())
 }
 
@@ -263,3 +292,39 @@ impl rustls::ServerCertVerifier for SkipServerVerification {
         Ok(rustls::ServerCertVerified::assertion())
     }
 }
+
+struct RequestStats {
+    start: Instant,
+    upload_start: Option<Instant>,
+    download_start: Option<Instant>,
+    first_byte: Option<Instant>,
+    download_end: Option<Instant>,
+    finish: Option<Instant>,
+    upload_size: u64,
+    download_size: u64,
+    success: bool,
+}
+
+impl RequestStats {
+    pub fn new(upload_size: u64, download_size: u64) -> Self {
+        Self {
+            start: Instant::now(),
+            upload_start: None,
+            download_start: None,
+            first_byte: None,
+            upload_size,
+            download_size,
+            download_end: None,
+            finish: None,
+            success: false,
+        }
+    }
+
+    fn fbl(&self) -> Option<Duration> {
+        match self.first_byte {
+            Some(first_byte) => Some(first_byte.duration_since(self.start)),
+            None => None,
+        }
+    }
+}
+
