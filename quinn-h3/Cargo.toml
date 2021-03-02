@@ -32,8 +32,8 @@ http = "0.2"
 http-body = "0.4"
 lazy_static = "1"
 pin-project = "1.0.2"
-quinn-proto = { path = "../quinn-proto", version = "0.6.0" }
-quinn = { path = "../quinn", version = "0.6.0", features = ["tls-rustls"] }
+quinn-proto = { path = "../quinn-proto", version = "0.7" }
+quinn = { path = "../quinn", version = "0.7", features = ["tls-rustls"] }
 rustls = { version = "0.19", features = ["quic"] }
 thiserror = "1.0.21"
 tokio = "1.0.1"
