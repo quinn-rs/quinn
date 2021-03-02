@@ -243,10 +243,10 @@ async fn request(
 ) -> Result<()> {
     stats.upload_start = Some(Instant::now());
     send.write_all(&download.to_be_bytes()).await?;
-    let buf = [42; 4 * 1024];
+    const DATA: [u8; 1024 * 1024] = [42; 1024 * 1024];
     while upload > 0 {
         let n = send
-            .write(&buf[..upload.min(buf.len() as u64) as usize])
+            .write(&DATA[..upload.min(DATA.len() as u64) as usize])
             .await
             .context("sending response")?;
         upload -= n as u64;

@@ -160,10 +160,10 @@ async fn drain_stream(mut stream: quinn::RecvStream) -> Result<()> {
 }
 
 async fn respond(mut bytes: u64, mut stream: quinn::SendStream) -> Result<()> {
-    let buf = [42; 4 * 1024];
+    const DATA: [u8; 1024 * 1024] = [42; 1024 * 1024];
     while bytes > 0 {
         let n = stream
-            .write(&buf[..bytes.min(buf.len() as u64) as usize])
+            .write(&DATA[..bytes.min(DATA.len() as u64) as usize])
             .await
             .context("sending response")?;
         bytes -= n as u64;
