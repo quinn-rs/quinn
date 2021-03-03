@@ -1,6 +1,6 @@
 [package]
 name = "quinn"
-version = "0.6.1"
+version = "0.6.2"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>"]
 license = "MIT/Apache-2.0"
 repository = "https://github.com/djc/quinn"
