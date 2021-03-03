@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -11,6 +11,9 @@ use hdrhistogram::Histogram;
 use structopt::StructOpt;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
+
+mod socket;
+use socket::bind_socket;
 
 /// Connects to a QUIC perf server and maintains a specified pattern of requests until interrupted
 #[derive(StructOpt)]
@@ -40,6 +43,12 @@ struct Opt {
     /// The time to run in seconds
     #[structopt(long, default_value = "60")]
     duration: u64,
+    /// Send buffer size in bytes
+    #[structopt(long, default_value = "2097152")]
+    send_buffer_size: usize,
+    /// Receive buffer size in bytes
+    #[structopt(long, default_value = "2097152")]
+    recv_buffer_size: usize,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -71,11 +80,22 @@ async fn run(opt: Opt) -> Result<()> {
 
     info!("connecting to {} at {}", host_name, addr);
 
+    let socket = bind_socket(
+        SocketAddr::new(
+            if addr.is_ipv4() {
+                IpAddr::V4(Ipv4Addr::UNSPECIFIED)
+            } else {
+                IpAddr::V6(Ipv6Addr::UNSPECIFIED)
+            },
+            0,
+        ),
+        opt.send_buffer_size,
+        opt.recv_buffer_size,
+    )?;
+
     let endpoint = quinn::EndpointBuilder::default();
 
-    let (endpoint, _) = endpoint
-        .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0))
-        .context("binding endpoint")?;
+    let (endpoint, _) = endpoint.with_socket(socket).context("binding endpoint")?;
 
     let mut cfg = quinn::ClientConfigBuilder::default();
     cfg.protocols(&[b"perf"]);

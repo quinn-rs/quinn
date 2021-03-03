@@ -6,6 +6,9 @@ use futures::StreamExt;
 use structopt::StructOpt;
 use tracing::{debug, error, info};
 
+mod socket;
+use socket::bind_socket;
+
 #[derive(StructOpt)]
 #[structopt(name = "server")]
 struct Opt {
@@ -18,6 +21,12 @@ struct Opt {
     /// TLS certificate in PEM format
     #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
     cert: Option<PathBuf>,
+    /// Send buffer size in bytes
+    #[structopt(long, default_value = "2097152")]
+    send_buffer_size: usize,
+    /// Receive buffer size in bytes
+    #[structopt(long, default_value = "2097152")]
+    recv_buffer_size: usize,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -75,7 +84,9 @@ async fn run(opt: Opt) -> Result<()> {
     let mut endpoint = quinn::EndpointBuilder::default();
     endpoint.listen(server_config);
 
-    let (endpoint, mut incoming) = endpoint.bind(&opt.listen).context("binding endpoint")?;
+    let socket = bind_socket(opt.listen, opt.send_buffer_size, opt.recv_buffer_size)?;
+
+    let (endpoint, mut incoming) = endpoint.with_socket(socket).context("creating endpoint")?;
 
     info!("listening on {}", endpoint.local_addr().unwrap());
 
