@@ -2,7 +2,7 @@ use std::{
     io,
     io::IoSliceMut,
     mem::{self, MaybeUninit},
-    net::{IpAddr, SocketAddr, SocketAddrV4, SocketAddrV6},
+    net::{IpAddr, SocketAddr},
     os::unix::io::AsRawFd,
     ptr,
     task::{Context, Poll},
@@ -73,16 +73,6 @@ impl UdpSocket {
 }
 
 fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
-    // Safety
-    assert_eq!(
-        mem::size_of::<SocketAddrV4>(),
-        mem::size_of::<libc::sockaddr_in>()
-    );
-    assert_eq!(
-        mem::size_of::<SocketAddrV6>(),
-        mem::size_of::<libc::sockaddr_in6>()
-    );
-
     let mut cmsg_platform_space = 0;
     if cfg!(target_os = "linux") {
         cmsg_platform_space +=
