@@ -4,7 +4,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use futures::StreamExt;
 use structopt::StructOpt;
-use tracing::{debug, error, info, trace};
+use tracing::{debug, error, info};
 
 #[derive(StructOpt)]
 #[structopt(name = "server")]
@@ -150,7 +150,7 @@ async fn read_req(mut stream: quinn::RecvStream) -> Result<u64> {
         .await
         .context("reading request")?;
     let n = u64::from_be_bytes(buf);
-    trace!("got req for {} bytes on {}", n, stream.id());
+    debug!("got req for {} bytes on {}", n, stream.id());
     drain_stream(stream).await?;
     Ok(n)
 }
@@ -168,7 +168,7 @@ async fn drain_stream(mut stream: quinn::RecvStream) -> Result<()> {
         Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
     ];
     while stream.read_chunks(&mut bufs[..]).await?.is_some() {}
-    trace!("finished reading {}", stream.id());
+    debug!("finished reading {}", stream.id());
     Ok(())
 }
 
@@ -183,6 +183,6 @@ async fn respond(mut bytes: u64, mut stream: quinn::SendStream) -> Result<()> {
             .context("sending response")?;
         bytes -= chunk_len;
     }
-    trace!("finished responding on {}", stream.id());
+    debug!("finished responding on {}", stream.id());
     Ok(())
 }
