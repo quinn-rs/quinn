@@ -13,6 +13,7 @@ hdrhistogram = { version = "7.2", default-features = false }
 quinn = { path = "../quinn" }
 rcgen = "0.8"
 rustls = { version = "0.19", features = ["dangerous_configuration"] }
+socket2 = "0.3"
 webpki = "0.21"
 structopt = "0.3"
 tokio = { version = "1.0.1", features = ["rt", "macros", "signal", "net", "sync"] }
