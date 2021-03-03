@@ -2440,6 +2440,7 @@ where
         };
         new_path.challenge = Some(self.rng.gen());
         new_path.challenge_pending = true;
+        let prev_pto = self.pto();
 
         let mut prev = mem::replace(&mut self.path, new_path);
         // Don't clobber the original path if the previous one hasn't been validated yet
@@ -2451,7 +2452,7 @@ where
 
         self.timers.set(
             Timer::PathValidation,
-            now + 3 * cmp::max(self.pto(), 2 * self.config.initial_rtt),
+            now + 3 * cmp::max(self.pto(), prev_pto),
         );
     }
 
