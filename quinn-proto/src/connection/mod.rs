@@ -636,7 +636,9 @@ where
             )?);
             coalesce = coalesce && !builder.short_header;
 
-            pad_datagram |= space_id == SpaceId::Initial && self.side.is_client();
+            // https://tools.ietf.org/html/draft-ietf-quic-transport-34#section-14.1
+            pad_datagram |=
+                space_id == SpaceId::Initial && (self.side.is_client() || ack_eliciting);
 
             if close {
                 trace!("sending CONNECTION_CLOSE");
