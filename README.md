@@ -4,7 +4,7 @@
 [![Crates.io](https://img.shields.io/crates/v/quinn.svg)](https://crates.io/crates/quinn)
 [![Build status](https://github.com/quinn-rs/quinn/workflows/CI/badge.svg)](https://github.com/djc/quinn/actions?query=workflow%3ACI)
 [![codecov](https://codecov.io/gh/quinn-rs/quinn/branch/main/graph/badge.svg)](https://codecov.io/gh/quinn-rs/quinn)
-[![Chat](https://img.shields.io/badge/chat-%23djc_quinn:gitter.im-%2346BC99?logo=matrix)](https://matrix.to/#/#djc_quinn:gitter.im)
+[![Chat](https://img.shields.io/badge/chat-%23quinn:matrix.org-%2346BC99?logo=matrix)](https://matrix.to/#/#quinn:matrix.org)
 [![Chat](https://badges.gitter.im/gitterHQ/gitter.svg)](https://gitter.im/djc/quinn)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
