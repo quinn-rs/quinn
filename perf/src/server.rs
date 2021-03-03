@@ -27,7 +27,7 @@ async fn main() {
     tracing_subscriber::fmt::init();
 
     if let Err(e) = run(opt).await {
-        error!("{}", e);
+        error!("{:#}", e);
     }
 }
 
