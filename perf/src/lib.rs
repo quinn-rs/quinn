@@ -10,15 +10,15 @@ pub fn bind_socket(
     recv_buffer_size: usize,
 ) -> Result<std::net::UdpSocket> {
     let socket = Socket::new(
-        if addr.is_ipv4() {
-            Domain::ipv4()
-        } else {
-            Domain::ipv6()
+        match addr.is_ipv4() {
+            true => Domain::ipv4(),
+            false => Domain::ipv6(),
         },
         Type::dgram(),
         Some(Protocol::udp()),
     )
     .context("create socket")?;
+
     socket
         .bind(&socket2::SockAddr::from(addr))
         .context("binding endpoint")?;
