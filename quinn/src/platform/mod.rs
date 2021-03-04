@@ -37,8 +37,10 @@ pub trait UdpExt {
 /// The capabilities a UDP socket suppports on a certain platform
 #[derive(Debug, Clone, Copy)]
 pub struct UdpCapabilities {
-    /// Whether the platform supports Generic Send Offload (GSO)
-    pub gso: bool,
+    /// The maximum amount of segments which can be transmitted if a platform
+    /// supports Generic Send Offload (GSO).
+    /// This is 1 if the platform doesn't support GSO.
+    pub max_gso_segments: usize,
 }
 
 #[derive(Debug, Copy, Clone)]

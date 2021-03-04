@@ -373,7 +373,7 @@ fn prepare_msg(
 
     if let Some(segment_size) = transmit.segment_size {
         debug_assert!(
-            caps().gso,
+            caps().max_gso_segments > 1,
             "Platform must support GSO for setting segment size"
         );
 
@@ -490,12 +490,12 @@ mod gso {
 
     /// Checks whether GSO support is available by setting the UDP_SEGMENT
     /// option on a socket
-    pub fn supports_gso() -> bool {
+    pub fn max_gso_segments() -> usize {
         const GSO_SIZE: libc::c_int = 1500;
 
         let socket = match std::net::UdpSocket::bind("[::]:0") {
             Ok(socket) => socket,
-            Err(_) => return false,
+            Err(_) => return 1,
         };
 
         let rc = unsafe {
@@ -508,7 +508,13 @@ mod gso {
             )
         };
 
-        rc != -1
+        if rc != -1 {
+            // As defined in linux/udp.h
+            // #define UDP_MAX_SEGMENTS        (1 << 6UL)
+            64
+        } else {
+            1
+        }
     }
 
     pub fn set_segment_size(encoder: &mut cmsg::Encoder, segment_size: u16) {
@@ -520,8 +526,8 @@ mod gso {
 mod gso {
     use super::*;
 
-    pub fn supports_gso() -> bool {
-        false
+    pub fn max_gso_segments() -> usize {
+        1
     }
 
     pub fn set_segment_size(_encoder: &mut cmsg::Encoder, _segment_size: u16) {
@@ -532,7 +538,7 @@ mod gso {
 lazy_static! {
     static ref CAPABILITIES: UdpCapabilities = {
         UdpCapabilities {
-            gso: gso::supports_gso(),
+            max_gso_segments: gso::max_gso_segments(),
         }
     };
 }
