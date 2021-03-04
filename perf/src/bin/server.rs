@@ -6,8 +6,7 @@ use futures::StreamExt;
 use structopt::StructOpt;
 use tracing::{debug, error, info};
 
-mod socket;
-use socket::bind_socket;
+use perf::bind_socket;
 
 #[derive(StructOpt)]
 #[structopt(name = "server")]
