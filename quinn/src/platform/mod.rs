@@ -19,7 +19,6 @@ mod imp;
 
 pub use imp::UdpSocket;
 
-#[allow(dead_code)] // TODO: Remove when used
 /// Returns the platforms UDP socket capabilities
 pub fn caps() -> UdpCapabilities {
     imp::caps()
