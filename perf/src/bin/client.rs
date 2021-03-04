@@ -12,8 +12,7 @@ use structopt::StructOpt;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
-mod socket;
-use socket::bind_socket;
+use perf::bind_socket;
 
 /// Connects to a QUIC perf server and maintains a specified pattern of requests until interrupted
 #[derive(StructOpt)]
