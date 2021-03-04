@@ -393,10 +393,13 @@ where
     /// - the application performed some I/O on the connection
     /// - a call was made to `handle_event`
     /// - a call was made to `handle_timeout`
+    ///
+    /// `max_datagrams` specifies how many datagrams can be returned inside a
+    /// single Transmit using GSO. This must be at least 1.
     #[must_use]
-    pub fn poll_transmit(&mut self, now: Instant) -> Option<Transmit> {
-        // This will become a parameter to `poll_transmit` in an additional update
-        const MAX_DATAGRAMS: usize = 1;
+    pub fn poll_transmit(&mut self, now: Instant, max_datagrams: usize) -> Option<Transmit> {
+        assert!(max_datagrams != 0);
+        let max_datagrams = max_datagrams.min(MAX_TRANSMIT_SEGMENTS);
 
         let mut num_datagrams = 0;
 
@@ -518,7 +521,7 @@ where
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
-                if buf_capacity >= self.path.mtu as usize * MAX_DATAGRAMS {
+                if buf_capacity >= self.path.mtu as usize * max_datagrams {
                     // No more datagrams allowed
                     break;
                 }
@@ -3094,6 +3097,12 @@ fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
 const MAX_BACKOFF_EXPONENT: u32 = 16;
 // Minimal remaining size to allow packet coalescing
 const MIN_PACKET_SPACE: usize = 40;
+/// The maximum amount of datagrams that are sent in a single transmit
+///
+/// This can be lower than the maximum platform capabilities, to avoid excessive
+/// memory allocations when calling `poll_transmit()`. Benchmarks have shown
+/// that numbers around 10 are a good compromise.
+const MAX_TRANSMIT_SEGMENTS: usize = 10;
 
 struct ZeroRttCrypto<S: crypto::Session> {
     header: S::HeaderKey,

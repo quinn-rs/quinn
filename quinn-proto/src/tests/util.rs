@@ -300,7 +300,7 @@ impl TestEndpoint {
                 endpoint_events.push((*ch, event));
             }
 
-            while let Some(x) = conn.poll_transmit(now) {
+            while let Some(x) = conn.poll_transmit(now, MAX_DATAGRAMS) {
                 self.outbound.extend(split_transmit(x));
             }
             self.timeout = conn.poll_timeout();
@@ -416,6 +416,9 @@ pub fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
         _ => None,
     }
 }
+
+/// The maximum of datagrams TestEndpoint will produce via `poll_transmit`
+const MAX_DATAGRAMS: usize = 10;
 
 fn split_transmit(transmit: Transmit) -> Vec<Transmit> {
     let segment_size = match transmit.segment_size {

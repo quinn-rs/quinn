@@ -23,6 +23,7 @@ use tracing::info_span;
 use crate::{
     broadcast::{self, Broadcast},
     mutex::Mutex,
+    platform::caps,
     recv_stream::RecvStream,
     send_stream::{SendStream, WriteError},
     ConnectionEvent, EndpointEvent, VarInt,
@@ -800,7 +801,10 @@ where
 {
     fn drive_transmit(&mut self) {
         let now = Instant::now();
-        while let Some(t) = self.inner.poll_transmit(now) {
+
+        let max_datagrams = caps().max_gso_segments;
+
+        while let Some(t) = self.inner.poll_transmit(now, max_datagrams) {
             // If the endpoint driver is gone, noop.
             let _ = self
                 .endpoint_events
