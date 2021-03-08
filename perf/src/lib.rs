@@ -19,6 +19,10 @@ pub fn bind_socket(
     )
     .context("create socket")?;
 
+    if addr.is_ipv6() {
+        socket.set_only_v6(false).context("set_only_v6")?;
+    }
+
     socket
         .bind(&socket2::SockAddr::from(addr))
         .context("binding endpoint")?;

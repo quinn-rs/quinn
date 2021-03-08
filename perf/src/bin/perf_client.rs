@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
@@ -80,14 +80,7 @@ async fn run(opt: Opt) -> Result<()> {
     info!("connecting to {} at {}", host_name, addr);
 
     let socket = bind_socket(
-        SocketAddr::new(
-            if addr.is_ipv4() {
-                IpAddr::V4(Ipv4Addr::UNSPECIFIED)
-            } else {
-                IpAddr::V6(Ipv6Addr::UNSPECIFIED)
-            },
-            0,
-        ),
+        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
         opt.send_buffer_size,
         opt.recv_buffer_size,
     )?;
