@@ -1088,4 +1088,30 @@ mod tests {
         assert_eq!(meta[1].id, id_mid);
         assert_eq!(meta[2].id, id_low);
     }
+
+    #[test]
+    fn stop_finished() {
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        // Server finishes stream
+        let _ = client
+            .received(
+                frame::Stream {
+                    id,
+                    offset: 0,
+                    fin: true,
+                    data: Bytes::from_static(&[0; 32]),
+                },
+                32,
+            )
+            .unwrap();
+        let mut pending = Retransmits::default();
+        let mut stream = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        stream.stop(0u32.into()).unwrap();
+        assert!(client.recv.get_mut(&id).is_none(), "stream is freed");
+    }
 }
