@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{BinaryHeap, VecDeque},
+    collections::{hash_map, BinaryHeap, VecDeque},
 };
 
 use bytes::Bytes;
@@ -114,10 +114,11 @@ impl<'a> RecvStream<'a> {
     /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
     /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
-        let stream = match self.state.recv.get_mut(&self.id) {
-            Some(s) => s,
-            None => return Err(UnknownStream { _private: () }),
+        let mut entry = match self.state.recv.entry(self.id) {
+            hash_map::Entry::Occupied(s) => s,
+            hash_map::Entry::Vacant(_) => return Err(UnknownStream { _private: () }),
         };
+        let stream = entry.get_mut();
 
         let (read_credits, stop_sending) = stream.stop()?;
         if stop_sending.should_transmit() {
@@ -125,6 +126,14 @@ impl<'a> RecvStream<'a> {
                 id: self.id,
                 error_code,
             });
+        }
+
+        // We need to keep stopped streams around until they're finished or reset so we can update
+        // connection-level flow control to account for discarded data. Otherwise, we can discard
+        // state immediately.
+        if !stream.receiving_unknown_size() {
+            entry.remove();
+            self.state.stream_freed(self.id, StreamHalf::Recv);
         }
 
         if self.state.add_read_credits(read_credits).should_transmit() {
