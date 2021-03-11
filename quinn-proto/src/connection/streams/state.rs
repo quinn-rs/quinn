@@ -381,7 +381,7 @@ impl StreamsState {
                 Some(x) => x,
                 None => continue,
             };
-            if !rs.is_receiving() {
+            if !rs.receiving_unknown_size() {
                 continue;
             }
             retransmits.get_or_create().max_stream_data.insert(id);
