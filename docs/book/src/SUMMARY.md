@@ -1,7 +1,7 @@
 # Summary
 
 - [Networking introduction](networking-introduction.md)
-- [Quic introduction](quic.md)
+- [QUIC introduction](quic.md)
 - [QUINN Introduction](quinn.md)
     - [Certificate Configuration](quinn/certificate.md)
     - [Connection Setup](quinn/set-up-connection.md)
