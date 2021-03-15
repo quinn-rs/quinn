@@ -130,6 +130,6 @@ crates will always be at least 6 months old at the time of release.
 [letsencrypt]: https://letsencrypt.org/
 [rcgen]: https://crates.io/crates/rcgen
 [examples]: https://github.com/djc/quinn/tree/main/quinn/examples
-[documentation]: https://github.com/djc/quinn/issues/865
+[documentation]: https://quinn-rs.github.io/quinn/networking-introduction.html
 [current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/32/
 [sans-io]: https://sans-io.readthedocs.io/how-to-sans-io.html
