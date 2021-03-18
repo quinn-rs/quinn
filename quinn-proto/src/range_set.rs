@@ -1,11 +1,11 @@
 use std::{
     cmp,
     cmp::Ordering,
-    collections::{
-        btree_map, BTreeMap,
+    collections::{btree_map, BTreeMap},
+    ops::{
         Bound::{Excluded, Included},
+        Range,
     },
-    ops::Range,
 };
 
 /// A set of u64 values optimized for long runs and random insert/delete/contains
