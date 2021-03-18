@@ -3,9 +3,11 @@ use std::{
     cmp::Ordering,
     collections::{
         btree_map, BTreeMap,
-        Bound::{Excluded, Included},
     },
-    ops::Range,
+    ops::{
+        Bound::{Excluded, Included},
+        Range,
+    },
 };
 
 /// A set of u64 values optimized for long runs and random insert/delete/contains
