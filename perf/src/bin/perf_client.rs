@@ -453,8 +453,8 @@ impl Stats {
 
         println!("Overall stats:");
         println!(
-            "RPS: {} ({} requests in {:4.2?})",
-            rps as usize, self.requests, dt,
+            "RPS: {:.2} ({} requests in {:4.2?})",
+            rps, self.requests, dt,
         );
         println!(
             "Success rate: {:4.2}%",
