@@ -36,7 +36,7 @@ libc = "0.2.69"
 mio = { version = "0.7.7", features = ["net"] }
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.7" }
 rustls = { version = "0.19", features = ["quic"], optional = true }
-socket2 = "0.3"
+socket2 = "0.4"
 thiserror = "1.0.21"
 tracing = "0.1.10"
 tokio = { version = "1.0.1", features = ["net", "rt", "rt-multi-thread", "time"] }
