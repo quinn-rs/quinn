@@ -9,15 +9,8 @@ pub fn bind_socket(
     send_buffer_size: usize,
     recv_buffer_size: usize,
 ) -> Result<std::net::UdpSocket> {
-    let socket = Socket::new(
-        match addr.is_ipv4() {
-            true => Domain::ipv4(),
-            false => Domain::ipv6(),
-        },
-        Type::dgram(),
-        Some(Protocol::udp()),
-    )
-    .context("create socket")?;
+    let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))
+        .context("create socket")?;
 
     if addr.is_ipv6() {
         socket.set_only_v6(false).context("set_only_v6")?;
