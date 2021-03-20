@@ -27,7 +27,7 @@ where
 {
     server_config: Option<ServerConfig<S>>,
     config: EndpointConfig<S>,
-    default_client_config: ClientConfig<S>,
+    default_client_config: Option<ClientConfig<S>>,
 }
 
 #[allow(missing_docs)]
@@ -40,7 +40,7 @@ where
         Self {
             server_config: None,
             config,
-            default_client_config,
+            default_client_config: Some(default_client_config),
         }
     }
 
@@ -82,7 +82,7 @@ where
         Ok((
             Endpoint {
                 inner: rc.clone(),
-                default_client_config: self.default_client_config,
+                default_client_config: self.default_client_config.unwrap_or_default(),
             },
             Incoming::new(rc),
         ))
@@ -100,7 +100,7 @@ where
     ///
     /// [`Endpoint::connect_with()`]: crate::generic::Endpoint::connect_with
     pub fn default_client_config(&mut self, config: ClientConfig<S>) -> &mut Self {
-        self.default_client_config = config;
+        self.default_client_config = Some(config);
         self
     }
 
@@ -124,7 +124,7 @@ where
         Self {
             server_config: None,
             config: EndpointConfig::default(),
-            default_client_config: ClientConfig::default(),
+            default_client_config: None,
         }
     }
 }
