@@ -87,7 +87,9 @@ async fn run(options: Opt) -> Result<()> {
         };
         let cert_chain = fs::read(cert_path).context("failed to read certificate chain")?;
         let cert_chain = if cert_path.extension().map_or(false, |x| x == "der") {
-            quinn::CertificateChain::from_certs(quinn::Certificate::from_der(&cert_chain))
+            quinn::CertificateChain::from_certs(Some(
+                quinn::Certificate::from_der(&cert_chain).unwrap(),
+            ))
         } else {
             quinn::CertificateChain::from_pem(&cert_chain)?
         };
