@@ -1275,7 +1275,7 @@ where
         let backoff = 2u32.pow(self.pto_count.min(MAX_BACKOFF_EXPONENT));
         let mut duration = self.path.rtt.pto_base() * backoff;
 
-        if self.in_flight.is_empty() {
+        if self.in_flight.ack_eliciting == 0 {
             debug_assert!(!self.peer_completed_address_validation());
             let space = match self.highest_space {
                 SpaceId::Handshake => SpaceId::Handshake,
@@ -1299,10 +1299,7 @@ where
             }
             let last_ack_eliciting = match self.spaces[space].time_of_last_ack_eliciting_packet {
                 Some(time) => time,
-                None => {
-                    debug_assert!(!self.peer_completed_address_validation());
-                    now
-                }
+                None => continue,
             };
             let pto = last_ack_eliciting + duration;
             if result.map_or(true, |(earliest_pto, _)| pto < earliest_pto) {
@@ -3050,11 +3047,6 @@ impl InFlight {
             bytes: 0,
             ack_eliciting: 0,
         }
-    }
-
-    /// Whether there are no "in flight" packets
-    fn is_empty(&self) -> bool {
-        self.bytes == 0
     }
 
     fn insert(&mut self, packet: &SentPacket) {
