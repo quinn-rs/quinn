@@ -1176,16 +1176,13 @@ where
             return;
         }
 
-        let (space, count) = self.pto_time_and_space(now).map_or_else(
-            // Handshake anti-deadlock packet
-            || {
-                debug_assert!(self.side.is_client() && self.highest_space <= SpaceId::Handshake);
-                (self.highest_space, 1)
-            },
-            // PTO
-            |(_, pto_space)| (pto_space, 2),
-        );
-
+        let (_, space) = match self.pto_time_and_space(now) {
+            Some(x) => x,
+            None => {
+                error!("PTO expired while unset");
+                return;
+            }
+        };
         trace!(
             in_flight = self.in_flight.bytes,
             count = self.pto_count,
@@ -1193,6 +1190,16 @@ where
             "PTO fired"
         );
 
+        let count = match self.in_flight.ack_eliciting {
+            // A PTO when we're not expecting any ACKs must be due to handshake anti-amplification
+            // deadlock preventions
+            0 => {
+                debug_assert!(!self.peer_completed_address_validation());
+                1
+            }
+            // Conventional loss probe
+            _ => 2,
+        };
         self.spaces[space].loss_probes = self.spaces[space].loss_probes.saturating_add(count);
         self.pto_count = self.pto_count.saturating_add(1);
         self.set_loss_detection_timer(now);
