@@ -1,6 +1,6 @@
 [package]
 name = "quinn"
-version = "0.7.0"
+version = "0.7.1"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/djc/quinn"
@@ -33,7 +33,7 @@ bytes = "1"
 futures = "0.3.8"
 libc = "0.2.69"
 mio = { version = "0.7.7", features = ["net"] }
-proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.7" }
+proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.7.1" }
 rustls = { version = "0.19", features = ["quic"], optional = true }
 socket2 = "0.3"
 thiserror = "1.0.21"
