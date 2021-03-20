@@ -1,5 +1,6 @@
 use std::{io, net::SocketAddr, sync::Arc};
 
+use once_cell::sync::OnceCell;
 use proto::{
     generic::{ClientConfig, EndpointConfig, ServerConfig},
     ConnectionIdGenerator,
@@ -82,7 +83,12 @@ where
         Ok((
             Endpoint {
                 inner: rc.clone(),
-                default_client_config: self.default_client_config.unwrap_or_default(),
+                // If a default client config hasn't been specified explicitly, leave the OnceCell
+                // empty so `Endpoint` can initialize it iff needed.
+                default_client_config: self
+                    .default_client_config
+                    .map(OnceCell::from)
+                    .unwrap_or_default(),
             },
             Incoming::new(rc),
         ))

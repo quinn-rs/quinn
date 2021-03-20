@@ -34,6 +34,7 @@ futures = "0.3.8"
 fxhash = "0.2.1"
 libc = "0.2.69"
 mio = { version = "0.7.7", features = ["net"] }
+once_cell = "1.7.2"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.7" }
 rustls = { version = "0.19", features = ["quic"], optional = true }
 socket2 = "0.4"

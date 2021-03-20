@@ -15,6 +15,7 @@ use std::{
 use bytes::Bytes;
 use futures::{channel::mpsc, StreamExt};
 use fxhash::FxHashMap;
+use once_cell::sync::OnceCell;
 use proto::{self as proto, generic::ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
 
 use crate::{
@@ -37,7 +38,7 @@ where
     S: proto::crypto::Session,
 {
     pub(crate) inner: EndpointRef<S>,
-    pub(crate) default_client_config: ClientConfig<S>,
+    pub(crate) default_client_config: OnceCell<ClientConfig<S>>,
 }
 
 impl<S> Endpoint<S>
@@ -62,7 +63,13 @@ where
         addr: &SocketAddr,
         server_name: &str,
     ) -> Result<Connecting<S>, ConnectError> {
-        self.connect_with(self.default_client_config.clone(), addr, server_name)
+        self.connect_with(
+            self.default_client_config
+                .get_or_init(ClientConfig::default)
+                .clone(),
+            addr,
+            server_name,
+        )
     }
 
     /// Connect to a remote endpoint using a custom configuration.
