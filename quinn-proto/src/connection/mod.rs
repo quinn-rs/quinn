@@ -1292,7 +1292,10 @@ where
             }
             let last_ack_eliciting = match self.spaces[space].time_of_last_ack_eliciting_packet {
                 Some(time) => time,
-                None => continue,
+                None => {
+                    debug_assert!(!self.peer_completed_address_validation());
+                    now
+                }
             };
             let pto = last_ack_eliciting + duration;
             if result.map_or(true, |(earliest_pto, _)| pto < earliest_pto) {

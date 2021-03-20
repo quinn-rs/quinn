@@ -15,6 +15,7 @@ use tracing::info;
 use super::*;
 use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
 use crate::crypto::Session as _;
+use crate::{Certificate, CertificateChain, PrivateKey};
 mod util;
 use util::*;
 
@@ -1715,4 +1716,49 @@ fn repeated_request_response() {
         assert_matches!(chunks.next(usize::MAX), Ok(None));
         let _ = chunks.finalize();
     }
+}
+
+/// Ensures that the client sends an anti-deadlock probe after an incomplete server's first flight
+#[test]
+fn handshake_anti_deadlock_probe() {
+    let _guard = subscribe();
+
+    // Configure a big fat certificate that can't fit inside the initial anti-amplification limit
+    let cert = rcgen::generate_simple_self_signed(
+        Some("localhost".into())
+            .into_iter()
+            .chain((0..1000).map(|x| format!("foo_{}", x)))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let key = PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
+    let cert = Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
+
+    let mut server = server_config();
+    server
+        .certificate(CertificateChain::from_certs(Some(cert.clone())), key)
+        .unwrap();
+    let mut client = client_config();
+    client.add_certificate_authority(cert).unwrap();
+    let mut pair = Pair::new(Default::default(), server);
+
+    let client_ch = pair.begin_connect(client);
+    // Client sends initial
+    pair.drive_client();
+    // Server sends first flight, gets blocked on anti-amplification
+    pair.drive_server();
+    // Client acks...
+    pair.drive_client();
+    // ...but it's lost, so the server doesn't get anti-amplification credit from it
+    pair.server.inbound.clear();
+    // Client sends an anti-deadlock probe, and the handshake completes as usual.
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Connected { .. })
+    );
 }
