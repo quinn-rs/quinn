@@ -1,3 +1,5 @@
+#![type_length_limit = "2121396"]
+
 use std::{
     ascii, cmp,
     ffi::OsStr,

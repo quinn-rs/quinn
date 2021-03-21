@@ -1,4 +1,5 @@
 #![allow(clippy::mutex_atomic, clippy::eval_order_dependence)]
+#![type_length_limit = "2121396"]
 
 use std::{
     env,
