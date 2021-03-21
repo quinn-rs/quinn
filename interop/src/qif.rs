@@ -1,3 +1,5 @@
+#![type_length_limit = "2121396"]
+
 /// Offline QPACK interop test tool
 ///
 /// QIF - Quic Interop File
