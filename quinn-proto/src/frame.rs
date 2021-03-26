@@ -383,13 +383,13 @@ pub struct EcnCounts {
 impl std::ops::AddAssign<EcnCodepoint> for EcnCounts {
     fn add_assign(&mut self, rhs: EcnCodepoint) {
         match rhs {
-            EcnCodepoint::ECT0 => {
+            EcnCodepoint::Ect0 => {
                 self.ect0 += 1;
             }
-            EcnCodepoint::ECT1 => {
+            EcnCodepoint::Ect1 => {
                 self.ect1 += 1;
             }
-            EcnCodepoint::CE => {
+            EcnCodepoint::Ce => {
                 self.ce += 1;
             }
         }

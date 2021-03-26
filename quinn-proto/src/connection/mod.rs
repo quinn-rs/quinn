@@ -717,7 +717,7 @@ where
             destination: self.path.remote,
             contents: buf,
             ecn: if self.path.sending_ecn {
-                Some(EcnCodepoint::ECT0)
+                Some(EcnCodepoint::Ect0)
             } else {
                 None
             },
