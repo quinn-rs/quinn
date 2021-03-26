@@ -304,17 +304,17 @@ struct Opt {
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum CipherSuite {
-    AES128,
-    AES256,
-    CHACHA20,
+    Aes128,
+    Aes256,
+    Chacha20,
 }
 
 impl CipherSuite {
     fn as_rustls(self) -> &'static rustls::SupportedCipherSuite {
         match self {
-            CipherSuite::AES128 => &rustls::ciphersuite::TLS13_AES_128_GCM_SHA256,
-            CipherSuite::AES256 => &rustls::ciphersuite::TLS13_AES_256_GCM_SHA384,
-            CipherSuite::CHACHA20 => &rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256,
+            CipherSuite::Aes128 => &rustls::ciphersuite::TLS13_AES_128_GCM_SHA256,
+            CipherSuite::Aes256 => &rustls::ciphersuite::TLS13_AES_256_GCM_SHA384,
+            CipherSuite::Chacha20 => &rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256,
         }
     }
 }
@@ -324,9 +324,9 @@ impl FromStr for CipherSuite {
 
     fn from_str(s: &str) -> Result<Self, Self::Err> {
         match s.to_lowercase().as_str() {
-            "aes128" => Ok(CipherSuite::AES128),
-            "aes256" => Ok(CipherSuite::AES256),
-            "chacha20" => Ok(CipherSuite::CHACHA20),
+            "aes128" => Ok(CipherSuite::Aes128),
+            "aes256" => Ok(CipherSuite::Aes256),
+            "chacha20" => Ok(CipherSuite::Chacha20),
             _ => Err(anyhow::anyhow!("Unknown cipher suite {}", s)),
         }
     }
