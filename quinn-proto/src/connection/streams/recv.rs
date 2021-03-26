@@ -259,11 +259,17 @@ impl<'a> Chunks<'a> {
             return Ok(Some(chunk));
         }
 
+        // Only remotely-initiated streams impact stream ID flow control
+        let max_streams_dirty = self.streams.side != self.id.initiator();
         match rs.state {
             RecvState::ResetRecvd { error_code, .. } => {
                 self.streams.stream_freed(self.id, StreamHalf::Recv);
-                self.pending
-                    .post_read(self.id, ShouldTransmit(false), ShouldTransmit(false), true);
+                self.pending.post_read(
+                    self.id,
+                    ShouldTransmit(false),
+                    ShouldTransmit(false),
+                    max_streams_dirty,
+                );
 
                 let err = ReadError::Reset(error_code);
                 self.state = ChunksState::Error(err.clone(), ShouldTransmit(true));
@@ -276,7 +282,7 @@ impl<'a> Chunks<'a> {
                         self.id,
                         ShouldTransmit(false),
                         ShouldTransmit(false),
-                        true,
+                        max_streams_dirty,
                     );
                     self.state = ChunksState::Finished(ShouldTransmit(true));
                     Ok(None)
