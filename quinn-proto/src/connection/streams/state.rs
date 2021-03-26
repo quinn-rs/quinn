@@ -778,6 +778,47 @@ mod tests {
     }
 
     #[test]
+    fn trivial_flow_control() {
+        let mut client = make(Side::Client);
+        let id = StreamId::new(Side::Server, Dir::Uni, 0);
+        let initial_max = client.local_max_data;
+        const MESSAGE_SIZE: usize = 2048;
+        assert_eq!(
+            client
+                .received(
+                    frame::Stream {
+                        id,
+                        offset: 0,
+                        fin: true,
+                        data: Bytes::from_static(&[0; MESSAGE_SIZE]),
+                    },
+                    2048
+                )
+                .unwrap(),
+            ShouldTransmit(false)
+        );
+        assert_eq!(client.data_recvd, 2048);
+        assert_eq!(client.local_max_data - initial_max, 0);
+
+        let mut pending = Retransmits::default();
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+
+        let mut chunks = recv.read(true).unwrap();
+        assert_eq!(
+            chunks.next(MESSAGE_SIZE).unwrap().unwrap().bytes.len(),
+            MESSAGE_SIZE
+        );
+        assert!(chunks.next(0).unwrap().is_none());
+        let _ = chunks.finalize();
+        assert!(pending.max_uni_stream_id);
+        assert_eq!(client.local_max_data - initial_max, MESSAGE_SIZE as u64);
+    }
+
+    #[test]
     fn reset_flow_control() {
         let mut client = make(Side::Client);
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
