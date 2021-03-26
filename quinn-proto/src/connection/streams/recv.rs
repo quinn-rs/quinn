@@ -308,7 +308,10 @@ impl<'a> Chunks<'a> {
             }
             ChunksState::Finished => {
                 debug_assert!(!drop);
-                ShouldTransmit(true)
+                // MAX_DATA may need to be issued, but MAX_STREAM_DATA is pointless
+                let max_data = self.streams.add_read_credits(self.read);
+                self.pending.max_data |= max_data.0;
+                max_data
             }
             ChunksState::Error(_, should_transmit) => {
                 debug_assert!(!drop);
