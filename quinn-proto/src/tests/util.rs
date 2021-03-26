@@ -11,6 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
+use assert_matches::assert_matches;
 use lazy_static::lazy_static;
 use rustls::KeyLogFile;
 use tracing::{info_span, trace};
