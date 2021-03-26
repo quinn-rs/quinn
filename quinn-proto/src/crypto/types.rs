@@ -18,7 +18,7 @@ impl Certificate {
 
     /// Parse a PEM-formatted certificate
     pub fn from_pem(pem: &[u8]) -> Result<Self, ParseError> {
-        let certs = pemfile::certs(&mut &pem[..]).map_err(|()| ParseError("invalid pem cert"))?;
+        let certs = pemfile::certs(&mut &*pem).map_err(|()| ParseError("invalid pem cert"))?;
         if let Some(pem) = certs.into_iter().next() {
             return Ok(Self { inner: pem });
         }
@@ -53,7 +53,7 @@ impl CertificateChain {
     /// ```
     pub fn from_pem(pem: &[u8]) -> Result<Self, ParseError> {
         Ok(Self {
-            certs: pemfile::certs(&mut &pem[..])
+            certs: pemfile::certs(&mut &*pem)
                 .map_err(|()| ParseError("malformed certificate chain"))?,
         })
     }
@@ -118,12 +118,12 @@ impl PrivateKey {
     /// let key = quinn_proto::PrivateKey::from_pem(&pem).expect("error parsing key");
     /// ```
     pub fn from_pem(pem: &[u8]) -> Result<Self, ParseError> {
-        let pkcs8 = pemfile::pkcs8_private_keys(&mut &pem[..])
+        let pkcs8 = pemfile::pkcs8_private_keys(&mut &*pem)
             .map_err(|()| ParseError("malformed PKCS #8 private key"))?;
         if let Some(x) = pkcs8.into_iter().next() {
             return Ok(Self { inner: x });
         }
-        let rsa = pemfile::rsa_private_keys(&mut &pem[..])
+        let rsa = pemfile::rsa_private_keys(&mut &*pem)
             .map_err(|()| ParseError("malformed PKCS #1 private key"))?;
         if let Some(x) = rsa.into_iter().next() {
             return Ok(Self { inner: x });

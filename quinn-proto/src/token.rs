@@ -87,7 +87,7 @@ impl<'a> RetryToken<'a> {
         retry_src_cid: &ConnectionId,
         additional_data: &'b mut [u8],
     ) -> &'b [u8] {
-        let mut cursor = &mut additional_data[..];
+        let mut cursor = &mut *additional_data;
         match address.ip() {
             IpAddr::V4(x) => cursor.put_slice(&x.octets()),
             IpAddr::V6(x) => cursor.put_slice(&x.octets()),
