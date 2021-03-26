@@ -246,8 +246,8 @@ impl<'a> Chunks<'a> {
                 self.state = ChunksState::Error(e.clone(), st);
                 return Err(e);
             }
-            ChunksState::Finished(st) => {
-                self.state = ChunksState::Finished(st);
+            ChunksState::Finished => {
+                self.state = ChunksState::Finished;
                 return Ok(None);
             }
             ChunksState::Finalized => panic!("must not call next() after finalize()"),
@@ -278,7 +278,7 @@ impl<'a> Chunks<'a> {
                         ShouldTransmit(false),
                         true,
                     );
-                    self.state = ChunksState::Finished(ShouldTransmit(true));
+                    self.state = ChunksState::Finished;
                     Ok(None)
                 } else {
                     let should_transmit =
@@ -306,7 +306,11 @@ impl<'a> Chunks<'a> {
                 self.streams.recv.insert(self.id, rs);
                 should_transmit
             }
-            ChunksState::Finished(should_transmit) | ChunksState::Error(_, should_transmit) => {
+            ChunksState::Finished => {
+                debug_assert!(!drop);
+                ShouldTransmit(true)
+            }
+            ChunksState::Error(_, should_transmit) => {
                 debug_assert!(!drop);
                 should_transmit
             }
@@ -337,7 +341,7 @@ impl<'a> Drop for Chunks<'a> {
 enum ChunksState {
     Readable(Recv),
     Error(ReadError, ShouldTransmit),
-    Finished(ShouldTransmit),
+    Finished,
     Finalized,
 }
 
