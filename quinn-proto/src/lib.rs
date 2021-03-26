@@ -269,9 +269,9 @@ impl StreamId {
     }
 }
 
-impl Into<VarInt> for StreamId {
-    fn into(self) -> VarInt {
-        unsafe { VarInt::from_u64_unchecked(self.0) }
+impl From<StreamId> for VarInt {
+    fn from(x: StreamId) -> VarInt {
+        unsafe { VarInt::from_u64_unchecked(x.0) }
     }
 }
 
