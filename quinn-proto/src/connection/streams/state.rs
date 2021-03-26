@@ -174,7 +174,6 @@ impl StreamsState {
         frame: frame::Stream,
         payload_len: usize,
     ) -> Result<ShouldTransmit, TransportError> {
-        trace!(id = %frame.id, offset = frame.offset, len = frame.data.len(), fin = frame.fin, "got stream");
         let stream = frame.id;
         self.validate_receive_id(stream).map_err(|e| {
             debug!("received illegal STREAM frame");
