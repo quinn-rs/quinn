@@ -2144,6 +2144,22 @@ where
             };
 
             self.stats.frame_rx.record(&frame);
+            // Crypto, Stream and Datagram frames are special cased in order no pollute
+            // the log with payload data
+            match &frame {
+                Frame::Crypto(f) => {
+                    trace!(offset = f.offset, len = f.data.len(), "got crypto frame");
+                }
+                Frame::Stream(f) => {
+                    trace!(id = %f.id, offset = f.offset, len = f.data.len(), fin = f.fin, "got stream frame");
+                }
+                Frame::Datagram(f) => {
+                    trace!(len = f.data.len(), "got datagram frame");
+                }
+                f => {
+                    trace!("got frame {:?}", f);
+                }
+            }
 
             let _guard = span.as_ref().map(|x| x.enter());
             if is_0rtt {
