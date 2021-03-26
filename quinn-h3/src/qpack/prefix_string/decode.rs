@@ -63,7 +63,7 @@ impl HuffmanDecoder {
             Err(err) => return Err(err),
         };
 
-        let at_value = match (&self.table[..]).get(value) {
+        let at_value = match self.table.get(value) {
             Some(x) => x,
             None => return Err(Error::Unhandled(bit_pos.clone(), value)),
         };
