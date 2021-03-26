@@ -215,14 +215,14 @@ impl Field {
         };
 
         Ok(match pseudo {
-            PseudoType::SCHEME => Field::Scheme(try_value(name, value)?),
-            PseudoType::AUTHORITY => Field::Authority(try_value(name, value)?),
-            PseudoType::PATH => Field::Path(try_value(name, value)?),
-            PseudoType::METHOD => Field::Method(
+            PseudoType::Scheme => Field::Scheme(try_value(name, value)?),
+            PseudoType::Authority => Field::Authority(try_value(name, value)?),
+            PseudoType::Path => Field::Path(try_value(name, value)?),
+            PseudoType::Method => Field::Method(
                 Method::from_bytes(value.as_ref())
                     .map_err(|_| Error::invalid_value(name, value))?,
             ),
-            PseudoType::STATUS => Field::Status(
+            PseudoType::Status => Field::Status(
                 StatusCode::from_bytes(value.as_ref())
                     .map_err(|_| Error::invalid_value(name, value))?,
             ),
@@ -328,11 +328,11 @@ macro_rules! pseudo_type {
 }
 
 pseudo_type![
-    (METHOD, b":method"),
-    (SCHEME, b":scheme"),
-    (AUTHORITY, b":authority"),
-    (PATH, b":path"),
-    (STATUS, b":status"),
+    (Method, b":method"),
+    (Scheme, b":scheme"),
+    (Authority, b":authority"),
+    (Path, b":path"),
+    (Status, b":status"),
 ];
 
 #[derive(Debug)]
