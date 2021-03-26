@@ -1380,7 +1380,6 @@ where
             Some(x) => x,
             None => return,
         };
-        trace!("authenticated");
         if self.side.is_server() {
             if self.spaces[SpaceId::Initial].crypto.is_some() && space_id == SpaceId::Handshake {
                 // A server stops sending and processing Initial packets when it receives its first Handshake packet.
