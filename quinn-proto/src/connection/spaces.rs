@@ -9,10 +9,9 @@ use std::{
 use fxhash::FxHashSet;
 
 use super::assembler::Assembler;
-use super::streams::ShouldTransmit;
 use crate::{
-    crypto, crypto::Keys, frame, packet::SpaceId, range_set::RangeSet, shared::IssuedCid, Dir,
-    StreamId, VarInt,
+    crypto, crypto::Keys, frame, packet::SpaceId, range_set::RangeSet, shared::IssuedCid, StreamId,
+    VarInt,
 };
 
 pub(crate) struct PacketSpace<S>
@@ -245,27 +244,6 @@ pub struct Retransmits {
 }
 
 impl Retransmits {
-    pub(crate) fn post_read(
-        &mut self,
-        id: StreamId,
-        max_data: ShouldTransmit,
-        max_stream_data: ShouldTransmit,
-        max_dirty: bool,
-    ) {
-        if max_data.should_transmit() {
-            self.max_data = true;
-        }
-        if max_stream_data.should_transmit() {
-            self.max_stream_data.insert(id);
-        }
-        if max_dirty {
-            match id.dir() {
-                Dir::Uni => self.max_uni_stream_id = true,
-                Dir::Bi => self.max_bi_stream_id = true,
-            }
-        }
-    }
-
     pub fn is_empty(&self) -> bool {
         !self.max_data
             && !self.max_uni_stream_id
