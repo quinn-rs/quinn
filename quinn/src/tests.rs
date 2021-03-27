@@ -8,6 +8,7 @@ use std::{
 };
 
 use futures::{future, StreamExt};
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tokio::{
     runtime::{Builder, Runtime},
     time::{Duration, Instant},
@@ -424,10 +425,14 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                 .await
                 .expect("connect");
             let (mut send, recv) = new_conn.connection.open_bi().await.expect("stream open");
-            send.write_all(b"foo").await.expect("write");
+            /// This is just an arbitrary number to generate deterministic test data
+            const SEED: u64 = 0x12345678;
+            let msg = gen_data(10 * 1024, SEED);
+            
+            send.write_all(&msg).await.expect("write");
             send.finish().await.expect("finish");
             let data = recv.read_to_end(usize::max_value()).await.expect("read");
-            assert_eq!(&data[..], b"foo");
+            assert_eq!(data[..], msg[..], "Data mismatch");
             new_conn.connection.close(0u32.into(), b"done");
             client.wait_idle().await;
         });
@@ -443,6 +448,13 @@ async fn echo((mut send, recv): (SendStream, RecvStream)) {
         .expect("read_to_end");
     send.write_all(&data).await.expect("send");
     let _ = send.finish().await;
+}
+
+fn gen_data(size: usize, seed: u64) -> Vec<u8> {
+    let mut rng: StdRng = SeedableRng::seed_from_u64(seed);
+    let mut buf = vec![0; size];
+    rng.fill_bytes(&mut buf);
+    buf
 }
 
 pub fn subscribe() -> tracing::subscriber::DefaultGuard {
