@@ -303,21 +303,19 @@ impl<'a> Chunks<'a> {
             !drop || matches!(state, ChunksState::Finalized),
             "finalize must be called before drop"
         );
-        let mut should_transmit = match state {
-            ChunksState::Readable(mut rs) => {
-                let (_, max_stream_data) = rs.max_stream_data(self.streams.stream_receive_window);
-                self.pending
-                    .post_read(self.id, ShouldTransmit(false), max_stream_data, false);
-                self.streams.recv.insert(self.id, rs);
-                max_stream_data.0
-            }
-            ChunksState::Finished => false,
-            ChunksState::Reset(_) => true,
-            ChunksState::Finalized => {
-                // Noop on repeated calls
-                return ShouldTransmit(false);
-            }
-        };
+        if let ChunksState::Finalized = state {
+            // Noop on repeated calls
+            return ShouldTransmit(false);
+        }
+
+        let mut should_transmit = matches!(state, ChunksState::Reset(_));
+        if let ChunksState::Readable(mut rs) = state {
+            let (_, max_stream_data) = rs.max_stream_data(self.streams.stream_receive_window);
+            self.pending
+                .post_read(self.id, ShouldTransmit(false), max_stream_data, false);
+            self.streams.recv.insert(self.id, rs);
+            should_transmit |= max_stream_data.0
+        }
 
         // Issue connection-level flow control credit for any data we read regardless of state
         let max_data = self.streams.add_read_credits(self.read);
