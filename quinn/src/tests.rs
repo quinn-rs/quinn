@@ -7,6 +7,7 @@ use std::{
     sync::Arc,
 };
 
+use bytes::Bytes;
 use futures::{future, StreamExt};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tokio::{
@@ -411,7 +412,9 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                 new_conn
                     .bi_streams
                     .take_while(|x| future::ready(x.is_ok()))
-                    .for_each(|s| echo(s.unwrap())),
+                    .for_each(|s| async {
+                        tokio::spawn(echo(s.unwrap()));
+                    }),
             );
             server.wait_idle().await;
         });
@@ -428,10 +431,15 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
             /// This is just an arbitrary number to generate deterministic test data
             const SEED: u64 = 0x12345678;
             let msg = gen_data(10 * 1024, SEED);
-            
-            send.write_all(&msg).await.expect("write");
-            send.finish().await.expect("finish");
-            let data = recv.read_to_end(usize::max_value()).await.expect("read");
+
+            let send_task = async {
+                send.write_all(&msg).await.expect("write");
+                send.finish().await.expect("finish");
+            };
+            let recv_task = async { recv.read_to_end(usize::max_value()).await.expect("read") };
+
+            let (_, data) = futures::join!(send_task, recv_task);
+
             assert_eq!(data[..], msg[..], "Data mismatch");
             new_conn.connection.close(0u32.into(), b"done");
             client.wait_idle().await;
@@ -441,12 +449,31 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
     runtime.block_on(handle).unwrap();
 }
 
-async fn echo((mut send, recv): (SendStream, RecvStream)) {
-    let data = recv
-        .read_to_end(usize::max_value())
-        .await
-        .expect("read_to_end");
-    send.write_all(&data).await.expect("send");
+async fn echo((mut send, mut recv): (SendStream, RecvStream)) {
+    loop {
+        // These are 32 buffers, for reading approximately 32kB at once
+        #[rustfmt::skip]
+        let mut bufs = [
+            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+            Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+        ];
+
+        match recv.read_chunks(&mut bufs).await.expect("read chunks") {
+            Some(n) => {
+                send.write_all_chunks(&mut bufs[..n])
+                    .await
+                    .expect("write chunks");
+            }
+            None => break,
+        }
+    }
+
     let _ = send.finish().await;
 }
 
