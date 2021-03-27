@@ -240,14 +240,12 @@ impl<'a> Chunks<'a> {
     ///
     /// Should call finalize() when done calling this.
     pub fn next(&mut self, max_length: usize) -> Result<Option<Chunk>, ReadError> {
-        let mut rs = match mem::replace(&mut self.state, ChunksState::Finalized) {
-            ChunksState::Readable(rs) => rs,
+        let rs = match self.state {
+            ChunksState::Readable(ref mut rs) => rs,
             ChunksState::Reset(error_code) => {
-                self.state = ChunksState::Reset(error_code);
                 return Err(ReadError::Reset(error_code));
             }
             ChunksState::Finished => {
-                self.state = ChunksState::Finished;
                 return Ok(None);
             }
             ChunksState::Finalized => panic!("must not call next() after finalize()"),
@@ -255,7 +253,6 @@ impl<'a> Chunks<'a> {
 
         if let Some(chunk) = rs.assembler.read(max_length, self.ordered) {
             self.read += chunk.bytes.len() as u64;
-            self.state = ChunksState::Readable(rs);
             return Ok(Some(chunk));
         }
 
@@ -276,7 +273,6 @@ impl<'a> Chunks<'a> {
                     // retrying a read harmlessly re-traces our steps back to returning
                     // `Err(Blocked)` again. The buffers can't refill and the stream's own state
                     // can't change so long as this `Chunks` exists.
-                    self.state = ChunksState::Readable(rs);
                     Err(ReadError::Blocked)
                 }
             }
