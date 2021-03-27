@@ -307,10 +307,12 @@ impl<'a> Chunks<'a> {
         match state {
             ChunksState::Readable(mut rs) => {
                 debug_assert!(!drop);
-                let should_transmit =
-                    Self::done(&mut rs, self.read, self.id, self.streams, self.pending);
+                let (_, max_stream_data) = rs.max_stream_data(self.streams.stream_receive_window);
+                let max_data = self.streams.add_read_credits(self.read);
+                self.pending
+                    .post_read(self.id, max_data, max_stream_data, false);
                 self.streams.recv.insert(self.id, rs);
-                should_transmit
+                ShouldTransmit(max_stream_data.0 | max_data.0)
             }
             ChunksState::Finished => {
                 debug_assert!(!drop);
@@ -325,19 +327,6 @@ impl<'a> Chunks<'a> {
             }
             ChunksState::Finalized => ShouldTransmit(false),
         }
-    }
-
-    fn done(
-        rs: &mut Recv,
-        read: u64,
-        id: StreamId,
-        streams: &mut StreamsState,
-        pending: &mut Retransmits,
-    ) -> ShouldTransmit {
-        let (_, max_stream_data) = rs.max_stream_data(streams.stream_receive_window);
-        let max_data = streams.add_read_credits(read);
-        pending.post_read(id, max_data, max_stream_data, false);
-        ShouldTransmit(max_stream_data.0 | max_data.0)
     }
 }
 
