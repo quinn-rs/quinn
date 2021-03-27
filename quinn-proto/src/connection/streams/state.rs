@@ -814,7 +814,8 @@ mod tests {
             MESSAGE_SIZE
         );
         assert!(chunks.next(0).unwrap().is_none());
-        let _ = chunks.finalize();
+        let should_transmit = chunks.finalize();
+        assert!(should_transmit.0);
         assert!(pending.max_uni_stream_id);
         assert_eq!(client.local_max_data - initial_max, MESSAGE_SIZE as u64);
     }
