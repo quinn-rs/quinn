@@ -51,7 +51,7 @@ pub struct StreamsState {
     /// Streams are only added to this list when a write fails.
     pub(super) connection_blocked: Vec<StreamId>,
     /// Connection-level flow control budget dictated by the peer
-    max_data: u64,
+    pub(super) max_data: u64,
     /// The initial receive window
     receive_window: u64,
     /// Limit on incoming data, which is transmitted through `MAX_DATA` frames

@@ -198,7 +198,10 @@ impl<'a> SendStream<'a> {
             .get_mut(&self.id)
             .ok_or(WriteError::UnknownStream)?;
         if limit == 0 {
-            trace!(stream = %self.id, "write blocked by connection-level flow control or send window");
+            trace!(
+                stream = %self.id, max_data = self.state.max_data, data_sent = self.state.data_sent,
+                "write blocked by connection-level flow control or send window"
+            );
             if !stream.connection_blocked {
                 stream.connection_blocked = true;
                 self.state.connection_blocked.push(self.id);
