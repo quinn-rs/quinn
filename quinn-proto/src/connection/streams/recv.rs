@@ -242,9 +242,9 @@ impl<'a> Chunks<'a> {
     pub fn next(&mut self, max_length: usize) -> Result<Option<Chunk>, ReadError> {
         let mut rs = match mem::replace(&mut self.state, ChunksState::Finalized) {
             ChunksState::Readable(rs) => rs,
-            ChunksState::Error(e, st) => {
-                self.state = ChunksState::Error(e.clone(), st);
-                return Err(e);
+            ChunksState::Reset(error_code) => {
+                self.state = ChunksState::Reset(error_code);
+                return Err(ReadError::Reset(error_code));
             }
             ChunksState::Finished => {
                 self.state = ChunksState::Finished;
@@ -271,9 +271,8 @@ impl<'a> Chunks<'a> {
                     max_streams_dirty,
                 );
 
-                let err = ReadError::Reset(error_code);
-                self.state = ChunksState::Error(err.clone(), ShouldTransmit(true));
-                Err(err)
+                self.state = ChunksState::Reset(error_code);
+                Err(ReadError::Reset(error_code))
             }
             RecvState::Recv { size } => {
                 if size == Some(rs.end) && rs.assembler.bytes_read() == rs.end {
@@ -287,10 +286,11 @@ impl<'a> Chunks<'a> {
                     self.state = ChunksState::Finished;
                     Ok(None)
                 } else {
-                    let should_transmit =
-                        Self::done(&mut rs, self.read, self.id, self.streams, self.pending);
-                    self.state = ChunksState::Error(ReadError::Blocked, should_transmit);
-                    self.streams.recv.insert(self.id, rs);
+                    // We don't need a distinct `ChunksState` variant for a blocked stream because
+                    // retrying a read harmlessly re-traces our steps back to returning
+                    // `Err(Blocked)` again. The buffers can't refill and the stream's own state
+                    // can't change so long as this `Chunks` exists.
+                    self.state = ChunksState::Readable(rs);
                     Err(ReadError::Blocked)
                 }
             }
@@ -319,9 +319,9 @@ impl<'a> Chunks<'a> {
                 self.pending.max_data |= max_data.0;
                 max_data
             }
-            ChunksState::Error(_, should_transmit) => {
+            ChunksState::Reset(_) => {
                 debug_assert!(!drop);
-                should_transmit
+                ShouldTransmit(true)
             }
             ChunksState::Finalized => ShouldTransmit(false),
         }
@@ -349,7 +349,7 @@ impl<'a> Drop for Chunks<'a> {
 
 enum ChunksState {
     Readable(Recv),
-    Error(ReadError, ShouldTransmit),
+    Reset(VarInt),
     Finished,
     Finalized,
 }
