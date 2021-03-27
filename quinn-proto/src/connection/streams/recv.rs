@@ -6,7 +6,7 @@ use tracing::debug;
 
 use super::{Retransmits, ShouldTransmit, StreamHalf, StreamId, StreamsState, UnknownStream};
 use crate::connection::assembler::{Assembler, Chunk, IllegalOrderedRead};
-use crate::{frame, TransportError, VarInt};
+use crate::{frame, Dir, TransportError, VarInt};
 
 #[derive(Debug, Default)]
 pub(super) struct Recv {
@@ -300,21 +300,26 @@ impl<'a> Chunks<'a> {
         }
 
         let mut should_transmit = matches!(state, ChunksState::Reset(_));
-        let mut max_stream_data = false;
-        let stream_id_issued = matches!(state, ChunksState::Finished | ChunksState::Reset(_))
-            && self.streams.side != self.id.initiator();
+        // We issue additional stream ID credit iff a remotely-initiated stream stream is finished or reset
+        if matches!(state, ChunksState::Finished | ChunksState::Reset(_))
+            && self.streams.side != self.id.initiator()
+        {
+            match self.id.dir() {
+                Dir::Uni => self.pending.max_uni_stream_id = true,
+                Dir::Bi => self.pending.max_bi_stream_id = true,
+            }
+        }
+
+        // If the stream hasn't finished, we may need to issue stream-level flow control credit
         if let ChunksState::Readable(mut rs) = state {
-            let (_, msd) = rs.max_stream_data(self.streams.stream_receive_window);
-            max_stream_data |= msd.0;
-            should_transmit |= msd.0;
+            let (_, max_stream_data) = rs.max_stream_data(self.streams.stream_receive_window);
+            should_transmit |= max_stream_data.0;
+            if max_stream_data.0 {
+                self.pending.max_stream_data.insert(self.id);
+            }
+            // Return the stream to storage for future use
             self.streams.recv.insert(self.id, rs);
         }
-        self.pending.post_read(
-            self.id,
-            ShouldTransmit(false),
-            ShouldTransmit(max_stream_data),
-            stream_id_issued,
-        );
 
         // Issue connection-level flow control credit for any data we read regardless of state
         let max_data = self.streams.add_read_credits(self.read);
