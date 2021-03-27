@@ -259,31 +259,16 @@ impl<'a> Chunks<'a> {
             return Ok(Some(chunk));
         }
 
-        // Only remotely-initiated streams impact stream ID flow control
-        let max_streams_dirty = self.streams.side != self.id.initiator();
         match rs.state {
             RecvState::ResetRecvd { error_code, .. } => {
                 debug_assert_eq!(self.read, 0, "reset streams have empty buffers");
                 self.streams.stream_freed(self.id, StreamHalf::Recv);
-                self.pending.post_read(
-                    self.id,
-                    ShouldTransmit(false),
-                    ShouldTransmit(false),
-                    max_streams_dirty,
-                );
-
                 self.state = ChunksState::Reset(error_code);
                 Err(ReadError::Reset(error_code))
             }
             RecvState::Recv { size } => {
                 if size == Some(rs.end) && rs.assembler.bytes_read() == rs.end {
                     self.streams.stream_freed(self.id, StreamHalf::Recv);
-                    self.pending.post_read(
-                        self.id,
-                        ShouldTransmit(false),
-                        ShouldTransmit(false),
-                        max_streams_dirty,
-                    );
                     self.state = ChunksState::Finished;
                     Ok(None)
                 } else {
@@ -315,13 +300,21 @@ impl<'a> Chunks<'a> {
         }
 
         let mut should_transmit = matches!(state, ChunksState::Reset(_));
+        let mut max_stream_data = false;
+        let stream_id_issued = matches!(state, ChunksState::Finished | ChunksState::Reset(_))
+            && self.streams.side != self.id.initiator();
         if let ChunksState::Readable(mut rs) = state {
-            let (_, max_stream_data) = rs.max_stream_data(self.streams.stream_receive_window);
-            self.pending
-                .post_read(self.id, ShouldTransmit(false), max_stream_data, false);
+            let (_, msd) = rs.max_stream_data(self.streams.stream_receive_window);
+            max_stream_data |= msd.0;
+            should_transmit |= msd.0;
             self.streams.recv.insert(self.id, rs);
-            should_transmit |= max_stream_data.0
         }
+        self.pending.post_read(
+            self.id,
+            ShouldTransmit(false),
+            ShouldTransmit(max_stream_data),
+            stream_id_issued,
+        );
 
         // Issue connection-level flow control credit for any data we read regardless of state
         let max_data = self.streams.add_read_credits(self.read);
