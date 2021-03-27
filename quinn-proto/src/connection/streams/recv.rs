@@ -298,9 +298,12 @@ impl<'a> Chunks<'a> {
 
     fn finalize_inner(&mut self, drop: bool) -> ShouldTransmit {
         let state = mem::replace(&mut self.state, ChunksState::Finalized);
+        debug_assert!(
+            !drop || matches!(state, ChunksState::Finalized),
+            "finalize must be called before drop"
+        );
         match state {
             ChunksState::Readable(mut rs) => {
-                debug_assert!(!drop);
                 let (_, max_stream_data) = rs.max_stream_data(self.streams.stream_receive_window);
                 let max_data = self.streams.add_read_credits(self.read);
                 self.pending
@@ -309,16 +312,12 @@ impl<'a> Chunks<'a> {
                 ShouldTransmit(max_stream_data.0 | max_data.0)
             }
             ChunksState::Finished => {
-                debug_assert!(!drop);
                 // MAX_DATA may need to be issued, but MAX_STREAM_DATA is pointless
                 let max_data = self.streams.add_read_credits(self.read);
                 self.pending.max_data |= max_data.0;
                 max_data
             }
-            ChunksState::Reset(_) => {
-                debug_assert!(!drop);
-                ShouldTransmit(true)
-            }
+            ChunksState::Reset(_) => ShouldTransmit(true),
             ChunksState::Finalized => ShouldTransmit(false),
         }
     }
