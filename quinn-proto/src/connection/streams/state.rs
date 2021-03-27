@@ -861,6 +861,22 @@ mod tests {
                 .unwrap(),
             ShouldTransmit(false)
         );
+
+        assert_eq!(client.data_recvd, 4096);
+        assert_eq!(client.local_max_data - initial_max, 4096);
+
+        // Ensure reading after a reset doesn't issue redundant credit
+        let mut recv = RecvStream {
+            id,
+            state: &mut client,
+            pending: &mut pending,
+        };
+        let mut chunks = recv.read(true).unwrap();
+        assert_eq!(
+            chunks.next(1024).unwrap_err(),
+            crate::ReadError::Reset(0u32.into())
+        );
+        let _ = chunks.finalize();
         assert_eq!(client.data_recvd, 4096);
         assert_eq!(client.local_max_data - initial_max, 4096);
     }

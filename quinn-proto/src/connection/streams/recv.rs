@@ -261,6 +261,7 @@ impl<'a> Chunks<'a> {
 
         match rs.state {
             RecvState::ResetRecvd { error_code, .. } => {
+                debug_assert_eq!(self.read, 0, "reset streams have empty buffers");
                 self.streams.stream_freed(self.id, StreamHalf::Recv);
                 self.pending
                     .post_read(self.id, ShouldTransmit(false), ShouldTransmit(false), true);
@@ -302,24 +303,27 @@ impl<'a> Chunks<'a> {
             !drop || matches!(state, ChunksState::Finalized),
             "finalize must be called before drop"
         );
-        match state {
+        let mut should_transmit = match state {
             ChunksState::Readable(mut rs) => {
                 let (_, max_stream_data) = rs.max_stream_data(self.streams.stream_receive_window);
-                let max_data = self.streams.add_read_credits(self.read);
                 self.pending
-                    .post_read(self.id, max_data, max_stream_data, false);
+                    .post_read(self.id, ShouldTransmit(false), max_stream_data, false);
                 self.streams.recv.insert(self.id, rs);
-                ShouldTransmit(max_stream_data.0 | max_data.0)
+                max_stream_data.0
             }
-            ChunksState::Finished => {
-                // MAX_DATA may need to be issued, but MAX_STREAM_DATA is pointless
-                let max_data = self.streams.add_read_credits(self.read);
-                self.pending.max_data |= max_data.0;
-                max_data
+            ChunksState::Finished => false,
+            ChunksState::Reset(_) => true,
+            ChunksState::Finalized => {
+                // Noop on repeated calls
+                return ShouldTransmit(false);
             }
-            ChunksState::Reset(_) => ShouldTransmit(true),
-            ChunksState::Finalized => ShouldTransmit(false),
-        }
+        };
+
+        // Issue connection-level flow control credit for any data we read regardless of state
+        let max_data = self.streams.add_read_credits(self.read);
+        self.pending.max_data |= max_data.0;
+        should_transmit |= max_data.0;
+        ShouldTransmit(should_transmit)
     }
 }
 
