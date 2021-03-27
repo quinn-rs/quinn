@@ -982,12 +982,14 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
 
     // Stream reset before read
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    info!("writing");
     assert_eq!(pair.client_send(client_ch, s).write(&msg), Ok(window_size));
     assert_eq!(
         pair.client_send(client_ch, s).write(&msg[window_size..]),
         Err(WriteError::Blocked)
     );
     pair.drive();
+    info!("resetting");
     pair.client_send(client_ch, s).reset(VarInt(42)).unwrap();
     pair.drive();
 
@@ -1000,6 +1002,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     let _ = chunks.finalize();
 
     // Happy path
+    info!("writing");
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
     assert_eq!(pair.client_send(client_ch, s).write(&msg), Ok(window_size));
     assert_eq!(
@@ -1029,8 +1032,10 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     }
     let _ = chunks.finalize();
 
+    info!("finished reading");
     assert_eq!(cursor, window_size);
     pair.drive();
+    info!("writing");
     assert_eq!(pair.client_send(client_ch, s).write(&msg), Ok(window_size));
     assert_eq!(
         pair.client_send(client_ch, s).write(&msg[window_size..]),
@@ -1059,6 +1064,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     }
     assert_eq!(cursor, window_size);
     let _ = chunks.finalize();
+    info!("finished reading");
 }
 
 #[test]
