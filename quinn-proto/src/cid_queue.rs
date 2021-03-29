@@ -49,8 +49,6 @@ impl CidQueue {
     }
 
     /// Returns the possibly-empty range of newly retired CIDs
-    // clippy will stop warning in 1.46+, https://github.com/rust-lang/rust-clippy/pull/5692
-    #[allow(clippy::reversed_empty_ranges)]
     pub fn retire_prior_to(&mut self, sequence: u64) -> Range<u64> {
         let n = match sequence.checked_sub(self.offset) {
             None => return 0..0,
