@@ -14,7 +14,7 @@ pub trait ConnectionIdGenerator: Send {
     /// issuer) to correlate them with other connection IDs for the same
     /// connection.
     fn generate_cid(&mut self) -> ConnectionId;
-    /// Returns the length of a CID for cononections created by this generator
+    /// Returns the length of a CID for connections created by this generator
     fn cid_len(&self) -> usize;
     /// Returns the lifetime of generated Connection IDs
     ///
