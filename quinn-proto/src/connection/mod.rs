@@ -331,6 +331,15 @@ where
         self.timers.next_timeout()
     }
 
+    /// Returns application-facing event.
+    ///
+    /// When calling `poll` an `Event::Stream` may be returned before an `Event::Connected`. To
+    /// wait for the handshake to complete before returning stream events this method can be
+    /// used. It will never return an `Event::Stream`.
+    pub fn poll_connection(&mut self) -> Option<Event> {
+        self.events.pop_front()
+    }
+
     /// Returns application-facing events
     ///
     /// Connections should be polled for events after:
