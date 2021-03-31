@@ -170,12 +170,12 @@ impl crypto::Session for TlsSession {
         })
     }
 
-    fn next_1rtt_keys(&mut self) -> KeyPair<Self::PacketKey> {
+    fn next_1rtt_keys(&mut self) -> Option<KeyPair<Self::PacketKey>> {
         let keys = (**self).next_1rtt_keys();
-        KeyPair {
+        Some(KeyPair {
             local: keys.local,
             remote: keys.remote,
-        }
+        })
     }
 
     fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {

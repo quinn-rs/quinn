@@ -1591,8 +1591,13 @@ where
         trace!("{:?} keys ready", space);
         if space == SpaceId::Data {
             // Precompute the first key update
-            self.next_crypto = Some(self.crypto.next_1rtt_keys());
+            self.next_crypto = Some(
+                self.crypto
+                    .next_1rtt_keys()
+                    .expect("handshake should be complete"),
+            );
         }
+
         self.spaces[space].crypto = Some(crypto);
         debug_assert!(space as usize > self.highest_space as usize);
         self.highest_space = space;
@@ -2788,7 +2793,10 @@ where
         // Generate keys for the key phase after the one we're switching to, store them in
         // `next_crypto`, make the contents of `next_crypto` current, and move the current keys into
         // `prev_crypto`.
-        let new = self.crypto.next_1rtt_keys();
+        let new = self
+            .crypto
+            .next_1rtt_keys()
+            .expect("only called for `Data` packets");
         let old = mem::replace(
             &mut self.spaces[SpaceId::Data]
                 .crypto

@@ -94,7 +94,7 @@ pub trait Session: Send + Sized {
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys<Self>>;
 
     /// Compute keys for the next key update
-    fn next_1rtt_keys(&mut self) -> KeyPair<Self::PacketKey>;
+    fn next_1rtt_keys(&mut self) -> Option<KeyPair<Self::PacketKey>>;
 
     /// Generate the integrity tag for a retry packet
     fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
