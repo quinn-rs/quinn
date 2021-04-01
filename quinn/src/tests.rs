@@ -20,7 +20,7 @@ use tracing_subscriber::EnvFilter;
 
 use super::{
     ClientConfigBuilder, Endpoint, Incoming, NewConnection, RecvStream, SendStream,
-    ServerConfigBuilder,
+    ServerConfigBuilder, TransportConfig,
 };
 
 #[test]
@@ -339,33 +339,97 @@ async fn zero_rtt() {
 
 #[test]
 fn echo_v6() {
-    run_echo(
-        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-        SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
-    );
+    run_echo(EchoArgs {
+        client_addr: SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+        server_addr: SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+        nr_streams: 1,
+        stream_size: 10 * 1024,
+        receive_window: None,
+        stream_receive_window: None,
+    });
 }
 
 #[test]
 fn echo_v4() {
-    run_echo(
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-    );
+    run_echo(EchoArgs {
+        client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+        server_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        nr_streams: 1,
+        stream_size: 10 * 1024,
+        receive_window: None,
+        stream_receive_window: None,
+    });
 }
 
 #[test]
 #[cfg(any(target_os = "linux", target_os = "macos"))] // Dual-stack sockets aren't the default anywhere else.
 fn echo_dualstack() {
-    run_echo(
-        SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-    );
+    run_echo(EchoArgs {
+        client_addr: SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
+        server_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        nr_streams: 1,
+        stream_size: 10 * 1024,
+        receive_window: None,
+        stream_receive_window: None,
+    });
 }
 
-fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
+#[test]
+fn stress_receive_window() {
+    run_echo(EchoArgs {
+        client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+        server_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        nr_streams: 50,
+        stream_size: 25 * 1024 + 11,
+        receive_window: Some(37),
+        stream_receive_window: Some(100 * 1024 * 1024),
+    });
+}
+
+#[test]
+fn stress_stream_receive_window() {
+    // Note that there is no point in runnning this with too many streams,
+    // since the window is only active within a stream
+    run_echo(EchoArgs {
+        client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+        server_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        nr_streams: 2,
+        stream_size: 250 * 1024 + 11,
+        receive_window: Some(100 * 1024 * 1024),
+        stream_receive_window: Some(37),
+    });
+}
+
+#[test]
+fn stress_both_windows() {
+    run_echo(EchoArgs {
+        client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
+        server_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        nr_streams: 50,
+        stream_size: 25 * 1024 + 11,
+        receive_window: Some(37),
+        stream_receive_window: Some(37),
+    });
+}
+
+fn run_echo(args: EchoArgs) {
     let _guard = subscribe();
     let runtime = rt_basic();
     let handle = {
+        // Use small receive windows
+        let mut transport_config = TransportConfig::default();
+        if let Some(receive_window) = args.receive_window {
+            transport_config.receive_window(receive_window).unwrap();
+        }
+        if let Some(stream_receive_window) = args.stream_receive_window {
+            transport_config
+                .stream_receive_window(stream_receive_window)
+                .unwrap();
+        }
+        transport_config.max_concurrent_bidi_streams(1).unwrap();
+        transport_config.max_concurrent_uni_streams(1).unwrap();
+        let transport_config = Arc::new(transport_config);
+
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
         let mut server_config = ServerConfigBuilder::default();
@@ -376,8 +440,10 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         server_config.certificate(cert_chain, key).unwrap();
 
         let mut server = Endpoint::builder();
-        server.listen(server_config.build());
-        let server_sock = UdpSocket::bind(server_addr).unwrap();
+        let mut server_config = server_config.build();
+        server_config.transport = transport_config.clone();
+        server.listen(server_config);
+        let server_sock = UdpSocket::bind(args.server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
         let (server, mut server_incoming) = {
             let _guard = runtime.enter();
@@ -387,11 +453,13 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
         let mut client_config = ClientConfigBuilder::default();
         client_config.add_certificate_authority(cert).unwrap();
         client_config.enable_keylog();
+        let mut client_config = client_config.build();
+        client_config.transport = transport_config;
         let mut client = Endpoint::builder();
-        client.default_client_config(client_config.build());
+        client.default_client_config(client_config);
         let (client, _) = {
             let _guard = runtime.enter();
-            client.bind(&client_addr).unwrap()
+            client.bind(&args.client_addr).unwrap()
         };
 
         let handle = runtime.spawn(async move {
@@ -420,7 +488,10 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
             server.wait_idle().await;
         });
 
-        info!("connecting from {} to {}", client_addr, server_addr);
+        info!(
+            "connecting from {} to {}",
+            args.client_addr, args.server_addr
+        );
         runtime.block_on(async move {
             let new_conn = client
                 .connect(&server_addr, "localhost")
@@ -428,26 +499,40 @@ fn run_echo(client_addr: SocketAddr, server_addr: SocketAddr) {
                 .instrument(info_span!("client"))
                 .await
                 .expect("connect");
-            let (mut send, recv) = new_conn.connection.open_bi().await.expect("stream open");
+
             /// This is just an arbitrary number to generate deterministic test data
             const SEED: u64 = 0x12345678;
-            let msg = gen_data(10 * 1024, SEED);
 
-            let send_task = async {
-                send.write_all(&msg).await.expect("write");
-                send.finish().await.expect("finish");
-            };
-            let recv_task = async { recv.read_to_end(usize::max_value()).await.expect("read") };
+            for i in 0..args.nr_streams {
+                println!("Opening stream {}", i);
+                let (mut send, recv) = new_conn.connection.open_bi().await.expect("stream open");
+                let msg = gen_data(args.stream_size, SEED);
 
-            let (_, data) = futures::join!(send_task, recv_task);
+                let send_task = async {
+                    send.write_all(&msg).await.expect("write");
+                    send.finish().await.expect("finish");
+                };
+                let recv_task = async { recv.read_to_end(usize::max_value()).await.expect("read") };
 
-            assert_eq!(data[..], msg[..], "Data mismatch");
+                let (_, data) = futures::join!(send_task, recv_task);
+
+                assert_eq!(data[..], msg[..], "Data mismatch");
+            }
             new_conn.connection.close(0u32.into(), b"done");
             client.wait_idle().await;
         });
         handle
     };
     runtime.block_on(handle).unwrap();
+}
+
+struct EchoArgs {
+    client_addr: SocketAddr,
+    server_addr: SocketAddr,
+    nr_streams: usize,
+    stream_size: usize,
+    receive_window: Option<u64>,
+    stream_receive_window: Option<u64>,
 }
 
 async fn echo((mut send, mut recv): (SendStream, RecvStream)) {
