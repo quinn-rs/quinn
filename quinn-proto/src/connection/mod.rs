@@ -23,7 +23,7 @@ use crate::{
     frame::{Close, Datagram, FrameStruct},
     is_supported_version,
     packet::{Header, LongType, Packet, PartialDecode, SpaceId},
-    range_set::RangeSet,
+    range_set::ArrayRangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
         EndpointEventInner, IssuedCid,
@@ -3138,7 +3138,7 @@ struct ZeroRttCrypto<S: crypto::Session> {
 #[derive(Default)]
 struct SentFrames {
     retransmits: ThinRetransmits,
-    acks: RangeSet,
+    acks: ArrayRangeSet,
     stream_frames: StreamMetaVec,
     requires_padding: bool,
 }

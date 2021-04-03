@@ -10,8 +10,8 @@ use fxhash::FxHashSet;
 
 use super::assembler::Assembler;
 use crate::{
-    crypto, crypto::Keys, frame, packet::SpaceId, range_set::RangeSet, shared::IssuedCid, StreamId,
-    VarInt,
+    crypto, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet, shared::IssuedCid,
+    StreamId, VarInt,
 };
 
 pub(crate) struct PacketSpace<S>
@@ -26,7 +26,7 @@ where
     /// Data to send
     pub(crate) pending: Retransmits,
     /// Packet numbers to acknowledge
-    pub(crate) pending_acks: RangeSet,
+    pub(crate) pending_acks: ArrayRangeSet,
     /// Set iff we have received a non-ack frame since the last ack-only packet we sent
     pub(crate) permit_ack_only: bool,
 
@@ -79,7 +79,7 @@ where
             rx_packet: 0,
 
             pending: Retransmits::default(),
-            pending_acks: RangeSet::new(),
+            pending_acks: ArrayRangeSet::new(),
             permit_ack_only: false,
 
             next_packet_number: 0,
@@ -217,7 +217,7 @@ pub(crate) struct SentPacket {
     pub(crate) size: u16,
     /// Whether an acknowledgement is expected directly in response to this packet.
     pub(crate) ack_eliciting: bool,
-    pub(crate) acks: RangeSet,
+    pub(crate) acks: ArrayRangeSet,
     /// Data which needs to be retransmitted in case the packet is lost.
     /// The data is boxed to minimize `SentPacket` size for the typical case of
     /// packets only containing ACKs and STREAM frames.
