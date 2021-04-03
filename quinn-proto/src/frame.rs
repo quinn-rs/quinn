@@ -8,7 +8,7 @@ use tinyvec::TinyVec;
 
 use crate::{
     coding::{self, BufExt, BufMutExt, UnexpectedEnd},
-    range_set::RangeSet,
+    range_set::ArrayRangeSet,
     shared::{ConnectionId, EcnCodepoint},
     Dir, ResetToken, StreamId, TransportError, TransportErrorCode, VarInt, MAX_CID_SIZE,
     RESET_TOKEN_SIZE,
@@ -342,7 +342,12 @@ impl<'a> IntoIterator for &'a Ack {
 }
 
 impl Ack {
-    pub fn encode<W: BufMut>(delay: u64, ranges: &RangeSet, ecn: Option<&EcnCounts>, buf: &mut W) {
+    pub fn encode<W: BufMut>(
+        delay: u64,
+        ranges: &ArrayRangeSet,
+        ecn: Option<&EcnCounts>,
+        buf: &mut W,
+    ) {
         let mut rest = ranges.iter().rev();
         let first = rest.next().unwrap();
         let largest = first.end - 1;
@@ -849,7 +854,7 @@ mod test {
     #[allow(clippy::range_plus_one)]
     fn ack_coding() {
         const PACKETS: &[u64] = &[1, 2, 3, 5, 10, 11, 14];
-        let mut ranges = RangeSet::new();
+        let mut ranges = ArrayRangeSet::new();
         for &packet in PACKETS {
             ranges.insert(packet..packet + 1);
         }

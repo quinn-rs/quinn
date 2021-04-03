@@ -317,98 +317,12 @@ impl Drop for Replace<'_> {
     }
 }
 
+/// This module contains tests which only apply for this `RangeSet` implementation
+///
+/// Tests which apply for all implementations can be found in the `tests.rs` module
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn merge_and_split() {
-        let mut set = RangeSet::new();
-        assert!(set.insert(0..2));
-        assert!(set.insert(2..4));
-        assert!(!set.insert(1..3));
-        assert_eq!(set.len(), 1);
-        assert_eq!(&set.elts().collect::<Vec<_>>()[..], [0, 1, 2, 3]);
-        assert!(!set.contains(4));
-        assert!(set.remove(2..3));
-        assert_eq!(set.len(), 2);
-        assert!(!set.contains(2));
-        assert_eq!(&set.elts().collect::<Vec<_>>()[..], [0, 1, 3]);
-    }
-
-    #[test]
-    fn double_merge_exact() {
-        let mut set = RangeSet::new();
-        assert!(set.insert(0..2));
-        assert!(set.insert(4..6));
-        assert_eq!(set.len(), 2);
-        assert!(set.insert(2..4));
-        assert_eq!(set.len(), 1);
-        assert_eq!(&set.elts().collect::<Vec<_>>()[..], [0, 1, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn single_merge_low() {
-        let mut set = RangeSet::new();
-        assert!(set.insert(0..2));
-        assert!(set.insert(4..6));
-        assert_eq!(set.len(), 2);
-        assert!(set.insert(2..3));
-        assert_eq!(set.len(), 2);
-        assert_eq!(&set.elts().collect::<Vec<_>>()[..], [0, 1, 2, 4, 5]);
-    }
-
-    #[test]
-    fn single_merge_high() {
-        let mut set = RangeSet::new();
-        assert!(set.insert(0..2));
-        assert!(set.insert(4..6));
-        assert_eq!(set.len(), 2);
-        assert!(set.insert(3..4));
-        assert_eq!(set.len(), 2);
-        assert_eq!(&set.elts().collect::<Vec<_>>()[..], [0, 1, 3, 4, 5]);
-    }
-
-    #[test]
-    fn double_merge_wide() {
-        let mut set = RangeSet::new();
-        assert!(set.insert(0..2));
-        assert!(set.insert(4..6));
-        assert_eq!(set.len(), 2);
-        assert!(set.insert(1..5));
-        assert_eq!(set.len(), 1);
-        assert_eq!(&set.elts().collect::<Vec<_>>()[..], [0, 1, 2, 3, 4, 5]);
-    }
-
-    #[test]
-    fn double_remove() {
-        let mut set = RangeSet::new();
-        assert!(set.insert(0..2));
-        assert!(set.insert(4..6));
-        assert!(set.remove(1..5));
-        assert_eq!(set.len(), 2);
-        assert_eq!(&set.elts().collect::<Vec<_>>()[..], [0, 5]);
-    }
-
-    #[test]
-    fn insert_multiple() {
-        let mut set = RangeSet::new();
-        assert!(set.insert(0..1));
-        assert!(set.insert(2..3));
-        assert!(set.insert(4..5));
-        assert!(set.insert(0..5));
-        assert_eq!(set.len(), 1);
-    }
-
-    #[test]
-    fn remove_multiple() {
-        let mut set = RangeSet::new();
-        assert!(set.insert(0..1));
-        assert!(set.insert(2..3));
-        assert!(set.insert(4..5));
-        assert!(set.remove(0..5));
-        assert!(set.is_empty());
-    }
 
     #[test]
     fn replace_contained() {
@@ -462,16 +376,5 @@ mod tests {
         assert_eq!(set.replace(0..2).collect::<Vec<_>>(), &[]);
         assert_eq!(set.len(), 1);
         assert_eq!(set.peek_min().unwrap(), 0..4);
-    }
-
-    #[test]
-    fn skip_empty_ranges() {
-        let mut set = RangeSet::new();
-        assert!(!set.insert(2..2));
-        assert_eq!(set.len(), 0);
-        assert!(!set.insert(4..4));
-        assert_eq!(set.len(), 0);
-        assert!(!set.insert(0..0));
-        assert_eq!(set.len(), 0);
     }
 }
