@@ -177,6 +177,8 @@ where
     timers: TimerTable,
     /// Number of packets received which could not be authenticated
     authentication_failures: u64,
+    /// Why the connection was lost, if it has been
+    error: Option<ConnectionError>,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -286,6 +288,7 @@ where
             idle_timeout: config.max_idle_timeout,
             timers: TimerTable::default(),
             authentication_failures: 0,
+            error: None,
 
             path_response: None,
             close: false,
@@ -344,6 +347,10 @@ where
 
         if let Some(x) = self.events.pop_front() {
             return Some(x);
+        }
+
+        if let Some(err) = self.error.take() {
+            return Some(Event::ConnectionLost { reason: err });
         }
 
         None
@@ -1779,7 +1786,7 @@ where
 
         // State transitions for error cases
         if let Err(conn_err) = result {
-            self.events.push_back(conn_err.clone().into());
+            self.error = Some(conn_err.clone());
             self.state = match conn_err {
                 ConnectionError::ApplicationClosed(reason) => State::closed(reason),
                 ConnectionError::ConnectionClosed(reason) => State::closed(reason),
@@ -2108,7 +2115,7 @@ where
                     self.on_ack_received(now, packet.header.space(), ack)?;
                 }
                 Frame::Close(reason) => {
-                    self.events.push_back(ConnectionError::from(reason).into());
+                    self.error = Some(reason.into());
                     self.state = State::Draining;
                     return Ok(());
                 }
@@ -2418,7 +2425,7 @@ where
         }
 
         if let Some(reason) = close {
-            self.events.push_back(ConnectionError::from(reason).into());
+            self.error = Some(reason.into());
             self.state = State::Draining;
             self.close = true;
         }
@@ -2901,7 +2908,7 @@ where
     /// Terminate the connection instantly, without sending a close packet
     fn kill(&mut self, reason: ConnectionError) {
         self.close_common();
-        self.events.push_back(reason.into());
+        self.error = Some(reason);
         self.state = State::Drained;
         self.endpoint_events.push_back(EndpointEventInner::Drained);
     }
@@ -3097,12 +3104,6 @@ pub enum Event {
     Stream(StreamEvent),
     /// One or more application datagrams have been received
     DatagramReceived,
-}
-
-impl From<ConnectionError> for Event {
-    fn from(x: ConnectionError) -> Self {
-        Event::ConnectionLost { reason: x }
-    }
 }
 
 struct PathResponse {
