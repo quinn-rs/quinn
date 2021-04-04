@@ -341,12 +341,12 @@ where
     /// - a call was made to `handle_timeout`
     #[must_use]
     pub fn poll(&mut self) -> Option<Event> {
-        if let Some(event) = self.streams.poll() {
-            return Some(Event::Stream(event));
-        }
-
         if let Some(x) = self.events.pop_front() {
             return Some(x);
+        }
+
+        if let Some(event) = self.streams.poll() {
+            return Some(Event::Stream(event));
         }
 
         if let Some(err) = self.error.take() {
