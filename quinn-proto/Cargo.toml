@@ -1,6 +1,6 @@
 [package]
 name = "quinn-proto"
-version = "0.7.1"
+version = "0.7.2"
 authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/djc/quinn"
