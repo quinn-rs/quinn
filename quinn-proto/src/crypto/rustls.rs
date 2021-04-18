@@ -110,7 +110,7 @@ impl crypto::Session for TlsSession {
         }
     }
 
-    fn read_handshake(&mut self, buf: &[u8]) -> Result<bool, TransportError> {
+    fn read_handshake(&mut self, buf: &[u8]) -> Result<(bool, Option<Keys<Self>>), TransportError> {
         self.read_hs(buf).map_err(|e| {
             if let Some(alert) = self.get_alert() {
                 TransportError {
@@ -140,10 +140,10 @@ impl crypto::Session for TlsSession {
                         reason: "ALPN negotiation failed".into(),
                     });
                 }
-                return Ok(true);
+                return Ok((true, None));
             }
         }
-        Ok(false)
+        Ok((false, None))
     }
 
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError> {

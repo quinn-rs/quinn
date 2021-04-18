@@ -1535,19 +1535,30 @@ where
             ));
         }
 
-        let space = &mut self.spaces[space];
-        let max = end.saturating_sub(space.crypto_stream.bytes_read());
+        let max = end.saturating_sub(self.spaces[space].crypto_stream.bytes_read());
         if max > self.config.crypto_buffer_size as u64 {
             return Err(TransportError::CRYPTO_BUFFER_EXCEEDED(""));
         }
 
-        space
+        self.spaces[space]
             .crypto_stream
             .insert(crypto.offset, crypto.data.clone(), payload_len);
-        while let Some(chunk) = space.crypto_stream.read(usize::MAX, true) {
+        while let Some(chunk) = self.spaces[space].crypto_stream.read(usize::MAX, true) {
             trace!("consumed {} CRYPTO bytes", chunk.bytes.len());
-            if self.crypto.read_handshake(&chunk.bytes)? {
+            let (handshake_ready, keys) = self.crypto.read_handshake(&chunk.bytes)?;
+            if handshake_ready {
                 self.events.push_back(Event::HandshakeDataReady);
+            }
+            if let Some(crypto) = keys {
+                match self.highest_space {
+                    SpaceId::Initial => {
+                        self.upgrade_crypto(SpaceId::Handshake, crypto);
+                    }
+                    SpaceId::Handshake => {
+                        self.upgrade_crypto(SpaceId::Data, crypto);
+                    }
+                    _ => unreachable!("got updated secrets during 1-RTT"),
+                }
             }
         }
 

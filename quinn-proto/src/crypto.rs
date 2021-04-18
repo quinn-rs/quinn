@@ -80,7 +80,7 @@ pub trait Session: Send + Sized {
     /// to send to the peer.
     ///
     /// On success, returns `true` iff `self.handshake_data()` has been populated.
-    fn read_handshake(&mut self, buf: &[u8]) -> Result<bool, TransportError>;
+    fn read_handshake(&mut self, buf: &[u8]) -> Result<(bool, Option<Keys<Self>>), TransportError>;
 
     /// The peer's QUIC transport parameters
     ///
