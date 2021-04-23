@@ -1554,7 +1554,12 @@ where
                 }
             }
             if outgoing.is_empty() {
-                break;
+                if space == self.highest_space {
+                    break;
+                } else {
+                    // Keys updated, check for more data to send
+                    continue;
+                }
             }
             let offset = self.spaces[space].crypto_offset;
             let outgoing = Bytes::from(outgoing);
