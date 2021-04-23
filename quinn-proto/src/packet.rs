@@ -1,9 +1,4 @@
-use std::{
-    cmp::Ordering,
-    io,
-    ops::{Range, RangeInclusive},
-    str,
-};
+use std::{cmp::Ordering, io, ops::Range, str};
 
 use bytes::{Buf, BufMut, Bytes, BytesMut};
 use thiserror::Error;
@@ -34,10 +29,10 @@ impl PartialDecode {
     pub fn new(
         bytes: BytesMut,
         local_cid_len: usize,
-        versions: RangeInclusive<u32>,
+        supported_versions: &[u32],
     ) -> Result<(Self, Option<BytesMut>), PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
-        let plain_header = PlainHeader::decode(&mut buf, local_cid_len, versions)?;
+        let plain_header = PlainHeader::decode(&mut buf, local_cid_len, supported_versions)?;
         let dgram_len = buf.get_ref().len();
         let packet_len = plain_header
             .payload_len()
@@ -522,7 +517,7 @@ impl PlainHeader {
     fn decode(
         buf: &mut io::Cursor<BytesMut>,
         local_cid_len: usize,
-        versions: RangeInclusive<u32>,
+        supported_versions: &[u32],
     ) -> Result<Self, PacketDecodeError> {
         let first = buf.get::<u8>()?;
         if first & LONG_HEADER_FORM == 0 {
@@ -554,7 +549,7 @@ impl PlainHeader {
                 });
             }
 
-            if !versions.contains(&version) {
+            if !supported_versions.contains(&version) {
                 return Err(PacketDecodeError::UnsupportedVersion {
                     src_cid,
                     dst_cid,
@@ -781,7 +776,7 @@ impl SpaceId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::DEFAULT_VERSION;
+    use crate::DEFAULT_SUPPORTED_VERSIONS;
     use hex_literal::hex;
     use std::io;
 
@@ -834,7 +829,7 @@ mod tests {
             src_cid: ConnectionId::new(&[]),
             dst_cid: dcid,
             token: Bytes::new(),
-            version: *DEFAULT_VERSION.start(),
+            version: *DEFAULT_SUPPORTED_VERSIONS.start(),
         };
         let encode = header.encode(&mut buf);
         let header_len = buf.len();
@@ -858,7 +853,8 @@ mod tests {
         );
 
         let server = TlsSession::initial_keys(&dcid, Side::Server);
-        let decode = PartialDecode::new(buf.as_slice().into(), 0, DEFAULT_VERSION)
+        let supported_versions: Vec<_> = DEFAULT_SUPPORTED_VERSIONS.into_iter().collect();
+        let decode = PartialDecode::new(buf.as_slice().into(), 0, &supported_versions)
             .unwrap()
             .0;
         let mut packet = decode.finish(Some(&server.header.remote)).unwrap();

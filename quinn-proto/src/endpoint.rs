@@ -169,7 +169,7 @@ where
         let (first_decode, remaining) = match PartialDecode::new(
             data,
             self.local_cid_generator.cid_len(),
-            self.config.supported_versions.clone(),
+            &self.config.supported_versions,
         ) {
             Ok(x) => x,
             Err(PacketDecodeError::UnsupportedVersion {
@@ -196,7 +196,7 @@ where
                 } else {
                     buf.write::<u32>(0x0a1a_2a4a);
                 }
-                buf.write(*self.config.supported_versions.start()); // supported version
+                buf.write(self.config.initial_version); // supported version
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
@@ -482,6 +482,7 @@ where
             self.local_cid_generator.as_ref(),
             now,
             self.config.supported_versions.clone(),
+            self.config.initial_version,
         );
         let id = self.connections.insert(ConnectionMeta {
             init_cid,
@@ -596,7 +597,7 @@ where
                 let header = Header::Retry {
                     src_cid: temp_loc_cid,
                     dst_cid: src_cid,
-                    version: *self.config.supported_versions.start(),
+                    version: self.config.initial_version,
                 };
 
                 let mut buf = Vec::new();
@@ -689,7 +690,7 @@ where
             src_cid: *local_id,
             number,
             token: Bytes::new(),
-            version: *self.config.supported_versions.start(),
+            version: self.config.initial_version,
         };
 
         let mut buf = Vec::<u8>::new();

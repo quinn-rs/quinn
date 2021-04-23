@@ -4,7 +4,6 @@ use std::{
     convert::TryInto,
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
-    ops::RangeInclusive,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -216,7 +215,9 @@ where
     /// Connection level statistics
     stats: ConnectionStats,
     /// Supported versions.
-    supported_versions: RangeInclusive<u32>,
+    supported_versions: Vec<u32>,
+    /// Initial version.
+    initial_version: u32,
 }
 
 impl<S> Connection<S>
@@ -234,7 +235,8 @@ where
         crypto: S,
         cid_gen: &dyn ConnectionIdGenerator,
         now: Instant,
-        supported_versions: RangeInclusive<u32>,
+        supported_versions: Vec<u32>,
+        initial_version: u32,
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
@@ -318,6 +320,7 @@ where
             rng,
             stats: ConnectionStats::default(),
             supported_versions,
+            initial_version,
         };
         if side.is_client() {
             // Kick off the connection
@@ -439,7 +442,7 @@ where
                     0,
                     false,
                     self,
-                    *self.supported_versions.start(),
+                    self.initial_version,
                 )?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::Type::PATH_CHALLENGE);
@@ -656,7 +659,7 @@ where
                 (num_datagrams - 1) * (self.path.mtu as usize),
                 ack_eliciting,
                 self,
-                *self.supported_versions.start(),
+                self.initial_version,
             )?);
             coalesce = coalesce && !builder.short_header;
 
@@ -1660,7 +1663,7 @@ where
             match PartialDecode::new(
                 data,
                 self.local_cid_state.cid_len(),
-                self.supported_versions.clone(),
+                &self.supported_versions,
             ) {
                 Ok((partial_decode, rest)) => {
                     remaining = rest;
