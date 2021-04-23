@@ -19,7 +19,6 @@
 #![allow(clippy::too_many_arguments)]
 
 use std::{
-    convert::TryInto,
     fmt,
     net::{IpAddr, SocketAddr},
     ops,
@@ -150,12 +149,7 @@ pub mod fuzzing {
 }
 
 /// The QUIC protocol version implemented
-const VERSION: std::ops::RangeInclusive<u32> = 0xff00_001d..=0xff00_0020;
-
-/// Whether a 4-byte slice represents a supported version number
-fn is_supported_version(x: &[u8]) -> bool {
-    VERSION.contains(&u32::from_be_bytes(x.try_into().unwrap()))
-}
+const DEFAULT_VERSION: std::ops::RangeInclusive<u32> = 0xff00_001d..=0xff00_0020;
 
 /// Whether an endpoint was the initiator of a connection
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]

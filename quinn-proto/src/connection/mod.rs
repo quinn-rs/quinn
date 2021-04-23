@@ -1,8 +1,10 @@
 use std::{
     cmp,
     collections::{BTreeMap, VecDeque},
+    convert::TryInto,
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
+    ops::RangeInclusive,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -21,7 +23,6 @@ use crate::{
     crypto::{self, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
-    is_supported_version,
     packet::{Header, LongType, Packet, PartialDecode, SpaceId},
     range_set::ArrayRangeSet,
     shared::{
@@ -214,6 +215,8 @@ where
     datagrams: DatagramState,
     /// Connection level statistics
     stats: ConnectionStats,
+    /// Supported versions.
+    supported_versions: RangeInclusive<u32>,
 }
 
 impl<S> Connection<S>
@@ -231,6 +234,7 @@ where
         crypto: S,
         cid_gen: &dyn ConnectionIdGenerator,
         now: Instant,
+        supported_versions: RangeInclusive<u32>,
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
@@ -313,6 +317,7 @@ where
             rem_cids: CidQueue::new(rem_cid),
             rng,
             stats: ConnectionStats::default(),
+            supported_versions,
         };
         if side.is_client() {
             // Kick off the connection
@@ -426,8 +431,16 @@ where
                 let mut buf = Vec::with_capacity(self.path.mtu as usize);
                 let buf_capacity = self.path.mtu as usize;
 
-                let mut builder =
-                    PacketBuilder::new(now, SpaceId::Data, &mut buf, buf_capacity, 0, false, self)?;
+                let mut builder = PacketBuilder::new(
+                    now,
+                    SpaceId::Data,
+                    &mut buf,
+                    buf_capacity,
+                    0,
+                    false,
+                    self,
+                    *self.supported_versions.start(),
+                )?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::Type::PATH_CHALLENGE);
                 buf.write(token);
@@ -643,6 +656,7 @@ where
                 (num_datagrams - 1) * (self.path.mtu as usize),
                 ack_eliciting,
                 self,
+                *self.supported_versions.start(),
             )?);
             coalesce = coalesce && !builder.short_header;
 
@@ -1643,7 +1657,11 @@ where
         self.path.total_recvd = self.path.total_recvd.saturating_add(data.len() as u64);
         let mut remaining = Some(data);
         while let Some(data) = remaining {
-            match PartialDecode::new(data, self.local_cid_state.cid_len()) {
+            match PartialDecode::new(
+                data,
+                self.local_cid_state.cid_len(),
+                self.supported_versions.clone(),
+            ) {
                 Ok((partial_decode, rest)) => {
                     remaining = rest;
                     self.handle_decode(now, remote, ecn, partial_decode);
@@ -2074,7 +2092,10 @@ where
                 if self.total_authed_packets > 1 {
                     return Ok(());
                 }
-                if packet.payload.chunks(4).any(is_supported_version) {
+                if packet.payload.chunks(4).any(|x| {
+                    self.supported_versions
+                        .contains(&u32::from_be_bytes(x.try_into().unwrap()))
+                }) {
                     return Ok(());
                 }
                 debug!("remote doesn't support our version");
