@@ -2092,10 +2092,11 @@ where
                 if self.total_authed_packets > 1 {
                     return Ok(());
                 }
-                if packet.payload.chunks(4).any(|x| {
+                let supported = packet.payload.chunks(4).any(|x| {
                     self.supported_versions
                         .contains(&u32::from_be_bytes(x.try_into().unwrap()))
-                }) {
+                });
+                if supported {
                     return Ok(());
                 }
                 debug!("remote doesn't support our version");
