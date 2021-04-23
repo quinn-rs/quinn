@@ -1569,7 +1569,7 @@ where
                     _ => unreachable!("got updated secrets during 1-RTT"),
                 }
             }
-            if outgoing.is_empty() {
+            if outgoing.is_empty() && space == self.highest_space {
                 break;
             }
             let offset = self.spaces[space].crypto_offset;
