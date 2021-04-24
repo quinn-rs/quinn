@@ -368,16 +368,17 @@ where
     }
 
     /// Override the supported quic versions.
-    pub fn supported_versions(&mut self, supported_versions: Vec<u32>) -> &mut Self {
+    pub fn supported_versions(
+        &mut self,
+        supported_versions: Vec<u32>,
+        initial_version: u32,
+    ) -> Result<&mut Self, ConfigError> {
+        if !supported_versions.contains(&initial_version) {
+            return Err(ConfigError::OutOfBounds);
+        }
         self.supported_versions = supported_versions;
-        self.initial_version = self.supported_versions[0];
-        self
-    }
-
-    /// Override the initial version.
-    pub fn initial_version(&mut self, initial_version: u32) -> &mut Self {
         self.initial_version = initial_version;
-        self
+        Ok(self)
     }
 }
 
