@@ -110,6 +110,7 @@ impl PartialDecode {
             dst_cid,
             src_cid,
             token_pos,
+            version,
             ..
         } = plain_header
         {
@@ -125,7 +126,7 @@ impl PartialDecode {
                     src_cid,
                     token,
                     number,
-                    version: Default::default(),
+                    version,
                 },
                 header_data,
                 payload: bytes,
