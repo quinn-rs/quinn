@@ -214,10 +214,8 @@ where
     datagrams: DatagramState,
     /// Connection level statistics
     stats: ConnectionStats,
-    /// Supported versions.
-    supported_versions: Vec<u32>,
-    /// Initial version.
-    initial_version: u32,
+    /// QUIC version used for the connection.
+    version: u32,
 }
 
 impl<S> Connection<S>
@@ -235,8 +233,7 @@ where
         crypto: S,
         cid_gen: &dyn ConnectionIdGenerator,
         now: Instant,
-        supported_versions: Vec<u32>,
-        initial_version: u32,
+        version: u32,
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
@@ -319,8 +316,7 @@ where
             rem_cids: CidQueue::new(rem_cid),
             rng,
             stats: ConnectionStats::default(),
-            supported_versions,
-            initial_version,
+            version,
         };
         if side.is_client() {
             // Kick off the connection
@@ -442,7 +438,7 @@ where
                     0,
                     false,
                     self,
-                    self.initial_version,
+                    self.version,
                 )?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::Type::PATH_CHALLENGE);
@@ -659,7 +655,7 @@ where
                 (num_datagrams - 1) * (self.path.mtu as usize),
                 ack_eliciting,
                 self,
-                self.initial_version,
+                self.version,
             )?);
             coalesce = coalesce && !builder.short_header;
 
@@ -1660,11 +1656,7 @@ where
         self.path.total_recvd = self.path.total_recvd.saturating_add(data.len() as u64);
         let mut remaining = Some(data);
         while let Some(data) = remaining {
-            match PartialDecode::new(
-                data,
-                self.local_cid_state.cid_len(),
-                &self.supported_versions,
-            ) {
+            match PartialDecode::new(data, self.local_cid_state.cid_len(), &[self.version]) {
                 Ok((partial_decode, rest)) => {
                     remaining = rest;
                     self.handle_decode(now, remote, ecn, partial_decode);
@@ -2095,10 +2087,10 @@ where
                 if self.total_authed_packets > 1 {
                     return Ok(());
                 }
-                let supported = packet.payload.chunks(4).any(|x| {
-                    self.supported_versions
-                        .contains(&u32::from_be_bytes(x.try_into().unwrap()))
-                });
+                let supported = packet
+                    .payload
+                    .chunks(4)
+                    .any(|x| self.version == u32::from_be_bytes(x.try_into().unwrap()));
                 if supported {
                     return Ok(());
                 }

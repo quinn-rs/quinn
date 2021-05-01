@@ -367,7 +367,7 @@ where
         self.max_udp_payload_size.into()
     }
 
-    /// Override the supported quic versions.
+    /// Override supported QUIC versions
     pub fn supported_versions(
         &mut self,
         supported_versions: Vec<u32>,

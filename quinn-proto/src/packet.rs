@@ -137,18 +137,23 @@ impl PartialDecode {
                 ty,
                 dst_cid,
                 src_cid,
+                version,
                 ..
             } => Header::Long {
                 ty,
                 dst_cid,
                 src_cid,
                 number: Self::decrypt_header(&mut buf, header_crypto.unwrap())?,
-                version: Default::default(),
+                version,
             },
-            Retry { dst_cid, src_cid } => Header::Retry {
+            Retry {
                 dst_cid,
                 src_cid,
-                version: Default::default(),
+                version,
+            } => Header::Retry {
+                dst_cid,
+                src_cid,
+                version,
             },
             Short { spin, dst_cid, .. } => {
                 let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
@@ -471,16 +476,19 @@ pub(crate) enum PlainHeader {
         src_cid: ConnectionId,
         token_pos: Range<usize>,
         len: u64,
+        version: u32,
     },
     Long {
         ty: LongType,
         dst_cid: ConnectionId,
         src_cid: ConnectionId,
         len: u64,
+        version: u32,
     },
     Retry {
         dst_cid: ConnectionId,
         src_cid: ConnectionId,
+        version: u32,
     },
     Short {
         first: u8,
@@ -569,14 +577,20 @@ impl PlainHeader {
                         src_cid,
                         token_pos: token_start..token_start + token_len,
                         len,
+                        version,
                     })
                 }
-                LongHeaderType::Retry => Ok(PlainHeader::Retry { dst_cid, src_cid }),
+                LongHeaderType::Retry => Ok(PlainHeader::Retry {
+                    dst_cid,
+                    src_cid,
+                    version,
+                }),
                 LongHeaderType::Standard(ty) => Ok(PlainHeader::Long {
                     ty,
                     dst_cid,
                     src_cid,
                     len: buf.get_var()?,
+                    version,
                 }),
             }
         }

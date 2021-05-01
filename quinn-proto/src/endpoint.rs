@@ -481,7 +481,6 @@ where
             tls,
             self.local_cid_generator.as_ref(),
             now,
-            self.config.supported_versions.clone(),
             self.config.initial_version,
         );
         let id = self.connections.insert(ConnectionMeta {
