@@ -1,7 +1,7 @@
 use std::{
     cmp,
     collections::{BTreeMap, VecDeque},
-    convert::TryInto,
+    convert::TryFrom,
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
     sync::Arc,
@@ -2090,7 +2090,10 @@ where
                 let supported = packet
                     .payload
                     .chunks(4)
-                    .any(|x| self.version == u32::from_be_bytes(x.try_into().unwrap()));
+                    .any(|x| match <[u8; 4]>::try_from(x) {
+                        Ok(version) => self.version == u32::from_be_bytes(version),
+                        Err(_) => false,
+                    });
                 if supported {
                     return Ok(());
                 }
