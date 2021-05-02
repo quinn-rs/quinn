@@ -315,8 +315,8 @@ where
             reset_key: Arc::new(reset_key),
             max_udp_payload_size: 1480u32.into(), // Typical internet MTU minus IPv4 and UDP overhead, rounded up to a multiple of 8
             connection_id_generator_factory: Arc::new(cid_factory),
-            initial_version: *DEFAULT_SUPPORTED_VERSIONS.start(),
-            supported_versions: DEFAULT_SUPPORTED_VERSIONS.into_iter().collect(),
+            initial_version: DEFAULT_SUPPORTED_VERSIONS[0],
+            supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
         }
     }
 

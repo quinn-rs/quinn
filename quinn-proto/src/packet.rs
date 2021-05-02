@@ -844,7 +844,7 @@ mod tests {
             src_cid: ConnectionId::new(&[]),
             dst_cid: dcid,
             token: Bytes::new(),
-            version: *DEFAULT_SUPPORTED_VERSIONS.start(),
+            version: DEFAULT_SUPPORTED_VERSIONS[0],
         };
         let encode = header.encode(&mut buf);
         let header_len = buf.len();
@@ -868,7 +868,7 @@ mod tests {
         );
 
         let server = TlsSession::initial_keys(&dcid, Side::Server);
-        let supported_versions: Vec<_> = DEFAULT_SUPPORTED_VERSIONS.into_iter().collect();
+        let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
         let decode = PartialDecode::new(buf.as_slice().into(), 0, &supported_versions)
             .unwrap()
             .0;
