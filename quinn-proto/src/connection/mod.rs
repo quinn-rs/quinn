@@ -595,7 +595,15 @@ where
                 // Allocate space for another datagram
                 buf_capacity += self.path.mtu as usize;
                 if buf.capacity() < buf_capacity {
-                    buf.reserve(buf_capacity - buf.capacity());
+                    // We reserve the maximum space for sending `max_datagrams` upfront
+                    // to avoid any reallocations if more datagrams have to be appended later on.
+                    // Benchmarks have shown shown a 5-10% throughput improvement
+                    // compared to continuously resizing the datagram buffer.
+                    // While this will lead to over-allocation for small transmits
+                    // (e.g. purely containing ACKs), modern memory allocators
+                    // (e.g. mimalloc and jemalloc) will pool certain allocation sizes
+                    // and therefore this is still rather efficient.
+                    buf.reserve(max_datagrams * self.path.mtu as usize - buf.capacity());
                 }
                 num_datagrams += 1;
                 coalesce = true;
