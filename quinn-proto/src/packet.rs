@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     coding::{self, BufExt, BufMutExt},
-    crypto, ConnectionId, VERSION,
+    crypto, ConnectionId,
 };
 
 // Due to packet number encryption, it is impossible to fully decode a header
@@ -29,9 +29,10 @@ impl PartialDecode {
     pub fn new(
         bytes: BytesMut,
         local_cid_len: usize,
+        supported_versions: &[u32],
     ) -> Result<(Self, Option<BytesMut>), PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
-        let plain_header = PlainHeader::decode(&mut buf, local_cid_len)?;
+        let plain_header = PlainHeader::decode(&mut buf, local_cid_len, supported_versions)?;
         let dgram_len = buf.get_ref().len();
         let packet_len = plain_header
             .payload_len()
@@ -109,6 +110,7 @@ impl PartialDecode {
             dst_cid,
             src_cid,
             token_pos,
+            version,
             ..
         } = plain_header
         {
@@ -124,6 +126,7 @@ impl PartialDecode {
                     src_cid,
                     token,
                     number,
+                    version,
                 },
                 header_data,
                 payload: bytes,
@@ -135,14 +138,24 @@ impl PartialDecode {
                 ty,
                 dst_cid,
                 src_cid,
+                version,
                 ..
             } => Header::Long {
                 ty,
                 dst_cid,
                 src_cid,
                 number: Self::decrypt_header(&mut buf, header_crypto.unwrap())?,
+                version,
             },
-            Retry { dst_cid, src_cid } => Header::Retry { dst_cid, src_cid },
+            Retry {
+                dst_cid,
+                src_cid,
+                version,
+            } => Header::Retry {
+                dst_cid,
+                src_cid,
+                version,
+            },
             Short { spin, dst_cid, .. } => {
                 let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
                 let key_phase = buf.get_ref()[0] & KEY_PHASE_BIT != 0;
@@ -219,16 +232,19 @@ pub(crate) enum Header {
         src_cid: ConnectionId,
         token: Bytes,
         number: PacketNumber,
+        version: u32,
     },
     Long {
         ty: LongType,
         dst_cid: ConnectionId,
         src_cid: ConnectionId,
         number: PacketNumber,
+        version: u32,
     },
     Retry {
         dst_cid: ConnectionId,
         src_cid: ConnectionId,
+        version: u32,
     },
     Short {
         spin: bool,
@@ -253,9 +269,10 @@ impl Header {
                 ref src_cid,
                 ref token,
                 number,
+                version,
             } => {
                 w.write(u8::from(LongHeaderType::Initial) | number.tag());
-                w.write(*VERSION.start());
+                w.write(version);
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 w.write_var(token.len() as u64);
@@ -273,9 +290,10 @@ impl Header {
                 ref dst_cid,
                 ref src_cid,
                 number,
+                version,
             } => {
                 w.write(u8::from(LongHeaderType::Standard(ty)) | number.tag());
-                w.write(*VERSION.start());
+                w.write(version);
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 w.write::<u16>(0); // Placeholder for payload length; see `set_payload_length`
@@ -289,9 +307,10 @@ impl Header {
             Retry {
                 ref dst_cid,
                 ref src_cid,
+                version,
             } => {
                 w.write(u8::from(LongHeaderType::Retry));
-                w.write(*VERSION.start());
+                w.write(version);
                 dst_cid.encode_long(w);
                 src_cid.encode_long(w);
                 PartialEncode {
@@ -458,16 +477,19 @@ pub(crate) enum PlainHeader {
         src_cid: ConnectionId,
         token_pos: Range<usize>,
         len: u64,
+        version: u32,
     },
     Long {
         ty: LongType,
         dst_cid: ConnectionId,
         src_cid: ConnectionId,
         len: u64,
+        version: u32,
     },
     Retry {
         dst_cid: ConnectionId,
         src_cid: ConnectionId,
+        version: u32,
     },
     Short {
         first: u8,
@@ -504,6 +526,7 @@ impl PlainHeader {
     fn decode(
         buf: &mut io::Cursor<BytesMut>,
         local_cid_len: usize,
+        supported_versions: &[u32],
     ) -> Result<Self, PacketDecodeError> {
         let first = buf.get::<u8>()?;
         if first & LONG_HEADER_FORM == 0 {
@@ -535,7 +558,7 @@ impl PlainHeader {
                 });
             }
 
-            if !VERSION.contains(&version) {
+            if !supported_versions.contains(&version) {
                 return Err(PacketDecodeError::UnsupportedVersion {
                     src_cid,
                     dst_cid,
@@ -555,14 +578,20 @@ impl PlainHeader {
                         src_cid,
                         token_pos: token_start..token_start + token_len,
                         len,
+                        version,
                     })
                 }
-                LongHeaderType::Retry => Ok(PlainHeader::Retry { dst_cid, src_cid }),
+                LongHeaderType::Retry => Ok(PlainHeader::Retry {
+                    dst_cid,
+                    src_cid,
+                    version,
+                }),
                 LongHeaderType::Standard(ty) => Ok(PlainHeader::Long {
                     ty,
                     dst_cid,
                     src_cid,
                     len: buf.get_var()?,
+                    version,
                 }),
             }
         }
@@ -762,6 +791,7 @@ impl SpaceId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::DEFAULT_SUPPORTED_VERSIONS;
     use hex_literal::hex;
     use std::io;
 
@@ -814,6 +844,7 @@ mod tests {
             src_cid: ConnectionId::new(&[]),
             dst_cid: dcid,
             token: Bytes::new(),
+            version: DEFAULT_SUPPORTED_VERSIONS[0],
         };
         let encode = header.encode(&mut buf);
         let header_len = buf.len();
@@ -837,7 +868,10 @@ mod tests {
         );
 
         let server = TlsSession::initial_keys(&dcid, Side::Server);
-        let decode = PartialDecode::new(buf.as_slice().into(), 0).unwrap().0;
+        let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
+        let decode = PartialDecode::new(buf.as_slice().into(), 0, &supported_versions)
+            .unwrap()
+            .0;
         let mut packet = decode.finish(Some(&server.header.remote)).unwrap();
         assert_eq!(
             packet.header_data[..],

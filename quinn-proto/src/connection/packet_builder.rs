@@ -38,6 +38,7 @@ impl PacketBuilder {
         datagram_start: usize,
         ack_eliciting: bool,
         conn: &mut Connection<S>,
+        version: u32,
     ) -> Option<PacketBuilder> {
         // Initiate key update if we're approaching the confidentiality limit
         let confidentiality_limit = conn.spaces[space_id]
@@ -94,12 +95,14 @@ impl PacketBuilder {
                 src_cid: conn.handshake_cid,
                 dst_cid: conn.rem_cids.active(),
                 number,
+                version,
             },
             SpaceId::Handshake => Header::Long {
                 ty: LongType::Handshake,
                 src_cid: conn.handshake_cid,
                 dst_cid: conn.rem_cids.active(),
                 number,
+                version,
             },
             SpaceId::Initial => Header::Initial {
                 src_cid: conn.handshake_cid,
@@ -109,6 +112,7 @@ impl PacketBuilder {
                     _ => Bytes::new(),
                 },
                 number,
+                version,
             },
         };
         let partial_encode = header.encode(buffer);
