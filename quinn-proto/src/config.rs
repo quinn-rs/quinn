@@ -9,7 +9,7 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
     crypto::{self, ClientConfig as _, HandshakeTokenKey as _, HmacKey as _, ServerConfig as _},
-    VarInt, VarIntBoundsExceeded,
+    VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -299,6 +299,8 @@ where
     /// Create a cid generator for local cid in Endpoint struct
     pub(crate) connection_id_generator_factory:
         Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
+    pub(crate) supported_versions: Vec<u32>,
+    pub(crate) initial_version: u32,
 }
 
 impl<S> EndpointConfig<S>
@@ -313,6 +315,8 @@ where
             reset_key: Arc::new(reset_key),
             max_udp_payload_size: 1480u32.into(), // Typical internet MTU minus IPv4 and UDP overhead, rounded up to a multiple of 8
             connection_id_generator_factory: Arc::new(cid_factory),
+            initial_version: DEFAULT_SUPPORTED_VERSIONS[0],
+            supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
         }
     }
 
@@ -362,6 +366,20 @@ where
     pub fn get_max_udp_payload_size(&self) -> u64 {
         self.max_udp_payload_size.into()
     }
+
+    /// Override supported QUIC versions
+    pub fn supported_versions(
+        &mut self,
+        supported_versions: Vec<u32>,
+        initial_version: u32,
+    ) -> Result<&mut Self, ConfigError> {
+        if !supported_versions.contains(&initial_version) {
+            return Err(ConfigError::OutOfBounds);
+        }
+        self.supported_versions = supported_versions;
+        self.initial_version = initial_version;
+        Ok(self)
+    }
 }
 
 impl<S: crypto::Session> fmt::Debug for EndpointConfig<S> {
@@ -370,6 +388,8 @@ impl<S: crypto::Session> fmt::Debug for EndpointConfig<S> {
             .field("reset_key", &"[ elided ]")
             .field("max_udp_payload_size", &self.max_udp_payload_size)
             .field("cid_generator_factory", &"[ elided ]")
+            .field("supported_versions", &self.supported_versions)
+            .field("initial_version", &self.initial_version)
             .finish()
     }
 }
@@ -391,6 +411,8 @@ impl<S: crypto::Session> Clone for EndpointConfig<S> {
             reset_key: self.reset_key.clone(),
             max_udp_payload_size: self.max_udp_payload_size,
             connection_id_generator_factory: self.connection_id_generator_factory.clone(),
+            supported_versions: self.supported_versions.clone(),
+            initial_version: self.initial_version,
         }
     }
 }

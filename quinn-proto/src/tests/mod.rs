@@ -1,4 +1,5 @@
 use std::{
+    convert::TryInto,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
@@ -39,7 +40,9 @@ fn version_negotiate_server() {
     if let Some(Transmit { contents, .. }) = io {
         assert_ne!(contents[0] & 0x80, 0);
         assert_eq!(&contents[1..15], hex!("00000000 04 00000000 04 00000000"));
-        assert!(contents[15..].chunks(4).any(is_supported_version));
+        assert!(contents[15..].chunks(4).any(|x| {
+            DEFAULT_SUPPORTED_VERSIONS.contains(&u32::from_be_bytes(x.try_into().unwrap()))
+        }));
     }
     assert_matches!(server.poll_transmit(), None);
 }
