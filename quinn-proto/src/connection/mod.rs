@@ -2620,10 +2620,23 @@ where
                 Some(x) => x,
                 None => break,
             };
-            let len = cmp::min(
-                frame.data.len(),
-                max_size as usize - buf.len() - frame::Crypto::SIZE_BOUND,
-            );
+
+            // Calculate the maximum amount of crypto data we can store in the buffer.
+            // Since the offset is known, we can reserve the exact size required to encode it.
+            // For length we reserve 2bytes which allows to encode up to 2^14,
+            // which is more than what fits into normally sized QUIC frames.
+            let max_crypto_data_size = max_size
+                - buf.len()
+                - 1 // Frame Type
+                - VarInt::size(unsafe { VarInt::from_u64_unchecked(frame.offset) })
+                - 2; // Maximum encoded length for frame size, given we send less than 2^14 bytes
+
+            let len = frame
+                .data
+                .len()
+                .min(2usize.pow(14) - 1)
+                .min(max_crypto_data_size);
+
             let data = frame.data.split_to(len);
             let truncated = frame::Crypto {
                 offset: frame.offset,
