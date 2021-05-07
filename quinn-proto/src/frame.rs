@@ -1,5 +1,6 @@
 use std::{
-    fmt, io, mem,
+    fmt::{self, Write},
+    io, mem,
     ops::{Range, RangeInclusive},
 };
 
@@ -324,12 +325,34 @@ impl ApplicationClose {
     }
 }
 
-#[derive(Debug, Clone, Eq, PartialEq)]
+#[derive(Clone, Eq, PartialEq)]
 pub struct Ack {
     pub largest: u64,
     pub delay: u64,
     pub additional: Bytes,
     pub ecn: Option<EcnCounts>,
+}
+
+impl fmt::Debug for Ack {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut ranges = "[".to_string();
+        let mut first = true;
+        for range in self.iter() {
+            if !first {
+                ranges.push(',');
+            }
+            write!(ranges, "{:?}", range).unwrap();
+            first = false;
+        }
+        ranges.push(']');
+
+        f.debug_struct("Ack")
+            .field("largest", &self.largest)
+            .field("delay", &self.delay)
+            .field("ecn", &self.ecn)
+            .field("ranges", &ranges)
+            .finish()
+    }
 }
 
 impl<'a> IntoIterator for &'a Ack {
