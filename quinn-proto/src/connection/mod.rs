@@ -1066,21 +1066,19 @@ where
         };
 
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
-        let newly_acked = ack
-            .iter()
-            .flat_map(|range| {
-                self.spaces[space]
-                    .sent_packets
-                    .range(range)
-                    .map(|(&n, _)| n)
-            })
-            .collect::<Vec<_>>();
+        let mut newly_acked = ArrayRangeSet::new();
+        for range in ack.iter() {
+            for (&pn, _) in self.spaces[space].sent_packets.range(range) {
+                newly_acked.insert_one(pn);
+            }
+        }
+
         if newly_acked.is_empty() {
             return Ok(());
         }
 
         let mut ack_eliciting_acked = false;
-        for &packet in &newly_acked {
+        for packet in newly_acked.elts() {
             if let Some(info) = self.spaces[space].sent_packets.remove(&packet) {
                 self.spaces[space].pending_acks.subtract(&info.acks);
                 ack_eliciting_acked |= info.ack_eliciting;
