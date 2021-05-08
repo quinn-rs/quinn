@@ -1,4 +1,10 @@
-use std::{io, net::SocketAddr, sync::Arc};
+use std::{
+    convert::{Infallible, TryInto},
+    io,
+    marker::PhantomData,
+    net::SocketAddr,
+    sync::Arc,
+};
 
 use once_cell::sync::OnceCell;
 use proto::{
@@ -11,6 +17,7 @@ use tracing::error;
 use crate::{
     endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming},
     platform::UdpSocket,
+    transport::Socket,
 };
 #[cfg(feature = "rustls")]
 use crate::{Certificate, CertificateChain, PrivateKey};
@@ -22,30 +29,22 @@ use crate::{Certificate, CertificateChain, PrivateKey};
 /// [`Endpoint`]: crate::generic::Endpoint
 /// [`ClientConfigBuilder`]: crate::generic::ClientConfigBuilder
 #[derive(Clone, Debug)]
-pub struct EndpointBuilder<S>
+pub struct EndpointBuilder<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     server_config: Option<ServerConfig<S>>,
     config: EndpointConfig<S>,
     default_client_config: Option<ClientConfig<S>>,
+    socket_type: PhantomData<T>,
 }
 
-#[allow(missing_docs)]
-impl<S> EndpointBuilder<S>
+impl<S> EndpointBuilder<S, UdpSocket>
 where
     S: proto::crypto::Session + Send + 'static,
 {
-    /// Start a builder with a specific initial low-level configuration.
-    pub fn new(config: EndpointConfig<S>, default_client_config: ClientConfig<S>) -> Self {
-        Self {
-            server_config: None,
-            config,
-            default_client_config: Some(default_client_config),
-        }
-    }
-
-    /// Build an endpoint bound to `addr`
+    /// Build an endpoint bound to `addr` using an UDP socket
     ///
     /// Must be called from within a tokio runtime context. To avoid consuming the
     /// `EndpointBuilder`, call `clone()` first.
@@ -54,21 +53,45 @@ where
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
-    pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint<S>, Incoming<S>), EndpointError> {
-        let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
+    pub fn bind(
+        self,
+        addr: &SocketAddr,
+    ) -> Result<(Endpoint<S, UdpSocket>, Incoming<S, UdpSocket>), EndpointError> {
+        let socket = std::net::UdpSocket::bind(addr)?;
         self.with_socket(socket)
+    }
+}
+
+#[allow(missing_docs)]
+impl<S, T> EndpointBuilder<S, T>
+where
+    S: proto::crypto::Session + Send + 'static,
+    T: Socket,
+{
+    /// Start a builder with a specific initial low-level configuration.
+    pub fn new(config: EndpointConfig<S>, default_client_config: ClientConfig<S>) -> Self {
+        Self {
+            server_config: None,
+            config,
+            default_client_config: Some(default_client_config),
+            socket_type: PhantomData,
+        }
     }
 
     /// Build an endpoint around a pre-configured socket
     ///
     /// Must be called from within a tokio runtime context. To avoid consuming the
     /// `EndpointBuilder`, call `clone()` first.
-    pub fn with_socket(
+    pub fn with_socket<U>(
         self,
-        socket: std::net::UdpSocket,
-    ) -> Result<(Endpoint<S>, Incoming<S>), EndpointError> {
-        let addr = socket.local_addr().map_err(EndpointError::Socket)?;
-        let socket = UdpSocket::from_std(socket).map_err(EndpointError::Socket)?;
+        socket: U,
+    ) -> Result<(Endpoint<S, T>, Incoming<S, T>), EndpointError>
+    where
+        U: TryInto<T>,
+        EndpointError: From<<U as TryInto<T>>::Error>,
+    {
+        let socket = socket.try_into()?;
+        let addr = socket.local_ip_addr().map_err(EndpointError::Socket)?;
         let rc = EndpointRef::new(
             socket,
             proto::generic::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new)),
@@ -122,15 +145,17 @@ where
     }
 }
 
-impl<S> Default for EndpointBuilder<S>
+impl<S, T> Default for EndpointBuilder<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn default() -> Self {
         Self {
             server_config: None,
             config: EndpointConfig::default(),
             default_client_config: None,
+            socket_type: PhantomData,
         }
     }
 }
@@ -140,7 +165,13 @@ where
 pub enum EndpointError {
     /// An error during setup of the underlying UDP socket.
     #[error("failed to set up UDP socket: {0}")]
-    Socket(io::Error),
+    Socket(#[from] io::Error),
+}
+
+impl From<Infallible> for EndpointError {
+    fn from(x: Infallible) -> Self {
+        match x {}
+    }
 }
 
 /// Helper for constructing a [`ServerConfig`] to be passed to [`EndpointBuilder::listen()`] to

@@ -42,10 +42,14 @@ pub struct UdpCapabilities {
     pub max_gso_segments: usize,
 }
 
+/// Meta information regarding the received buffer
 #[derive(Debug, Copy, Clone)]
 pub struct RecvMeta {
+    /// The remote address where the buffer came from
     pub addr: SocketAddr,
+    /// The length of the buffer
     pub len: usize,
+    /// The ECN bit
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address which was encoded in this datagram
     pub dst_ip: Option<IpAddr>,

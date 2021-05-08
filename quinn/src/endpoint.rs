@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    convert::TryInto,
     future::Future,
     io,
     io::IoSliceMut,
@@ -22,8 +23,9 @@ use crate::{
     broadcast::{self, Broadcast},
     builders::EndpointBuilder,
     connection::Connecting,
-    platform::{RecvMeta, UdpSocket, BATCH_SIZE},
-    ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND,
+    platform::{RecvMeta, BATCH_SIZE},
+    transport::Socket,
+    ConnectionEvent, EndpointError, EndpointEvent, VarInt, IO_LOOP_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -33,20 +35,22 @@ use crate::{
 ///
 /// May be cloned to obtain another handle to the same endpoint.
 #[derive(Debug)]
-pub struct Endpoint<S>
+pub struct Endpoint<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    pub(crate) inner: EndpointRef<S>,
+    pub(crate) inner: EndpointRef<S, T>,
     pub(crate) default_client_config: OnceCell<ClientConfig<S>>,
 }
 
-impl<S> Endpoint<S>
+impl<S, T> Endpoint<S, T>
 where
     S: proto::crypto::Session + 'static,
+    T: Socket,
 {
     /// Begin constructing an `Endpoint`
-    pub fn builder() -> EndpointBuilder<S> {
+    pub fn builder() -> EndpointBuilder<S, T> {
         EndpointBuilder::default()
     }
 
@@ -99,15 +103,19 @@ where
         Ok(endpoint.connections.insert(ch, conn))
     }
 
-    /// Switch to a new UDP socket
+    /// Switch to a new (UDP) socket
     ///
     /// Allows the endpoint's address to be updated live, affecting all active connections. Incoming
     /// connections and connections to servers unreachable from the new address will be lost.
     ///
-    /// On error, the old UDP socket is retained.
-    pub fn rebind(&self, socket: std::net::UdpSocket) -> io::Result<()> {
-        let addr = socket.local_addr()?;
-        let socket = UdpSocket::from_std(socket)?;
+    /// On error, the old (UDP) socket is retained.
+    pub fn rebind<U>(&self, socket: U) -> Result<(), EndpointError>
+    where
+        U: TryInto<T>,
+        EndpointError: From<<U as TryInto<T>>::Error>,
+    {
+        let socket = socket.try_into()?;
+        let addr = socket.local_ip_addr()?;
         let mut inner = self.inner.lock().unwrap();
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
@@ -166,9 +174,10 @@ where
     }
 }
 
-impl<S> Clone for Endpoint<S>
+impl<S, T> Clone for Endpoint<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn clone(&self) -> Self {
         Endpoint {
@@ -190,11 +199,14 @@ where
 /// have been dropped, or when an I/O error occurs.
 #[must_use = "endpoint drivers must be spawned for I/O to occur"]
 #[derive(Debug)]
-pub(crate) struct EndpointDriver<S: proto::crypto::Session>(pub(crate) EndpointRef<S>);
+pub(crate) struct EndpointDriver<S: proto::crypto::Session, T: Socket>(
+    pub(crate) EndpointRef<S, T>,
+);
 
-impl<S> Future for EndpointDriver<S>
+impl<S, T> Future for EndpointDriver<S, T>
 where
     S: proto::crypto::Session + 'static,
+    T: Socket,
 {
     type Output = Result<(), io::Error>;
 
@@ -227,9 +239,10 @@ where
     }
 }
 
-impl<S> Drop for EndpointDriver<S>
+impl<S, T> Drop for EndpointDriver<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn drop(&mut self) {
         let mut endpoint = self.0.lock().unwrap();
@@ -244,11 +257,12 @@ where
 }
 
 #[derive(Debug)]
-pub(crate) struct EndpointInner<S>
+pub(crate) struct EndpointInner<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    socket: UdpSocket,
+    socket: T,
     inner: proto::generic::Endpoint<S>,
     outgoing: VecDeque<proto::Transmit>,
     incoming: VecDeque<Connecting<S>>,
@@ -264,9 +278,10 @@ where
     idle: Broadcast,
 }
 
-impl<S> EndpointInner<S>
+impl<S, T> EndpointInner<S, T>
 where
     S: proto::crypto::Session + 'static,
+    T: Socket,
 {
     fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
         let mut recvd = 0;
@@ -340,7 +355,7 @@ where
             if self.outgoing.is_empty() {
                 return Ok(false);
             }
-            match self.socket.poll_send(cx, self.outgoing.as_slices().0) {
+            match self.socket.poll_send(cx, self.outgoing.as_mut_slices().0) {
                 Poll::Ready(Ok(n)) => {
                     self.outgoing.drain(..n);
                     calls += 1;
@@ -436,20 +451,22 @@ fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
 
 /// Stream of incoming connections.
 #[derive(Debug)]
-pub struct Incoming<S: proto::crypto::Session>(EndpointRef<S>);
+pub struct Incoming<S: proto::crypto::Session, T: Socket>(EndpointRef<S, T>);
 
-impl<S> Incoming<S>
+impl<S, T> Incoming<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    pub(crate) fn new(inner: EndpointRef<S>) -> Self {
+    pub(crate) fn new(inner: EndpointRef<S, T>) -> Self {
         Self(inner)
     }
 }
 
-impl<S> futures::Stream for Incoming<S>
+impl<S, T> futures::Stream for Incoming<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     type Item = Connecting<S>;
 
@@ -469,9 +486,10 @@ where
     }
 }
 
-impl<S> Drop for Incoming<S>
+impl<S, T> Drop for Incoming<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn drop(&mut self) {
         let endpoint = &mut *self.0.lock().unwrap();
@@ -481,13 +499,16 @@ where
 }
 
 #[derive(Debug)]
-pub(crate) struct EndpointRef<S: proto::crypto::Session>(Arc<Mutex<EndpointInner<S>>>);
+pub(crate) struct EndpointRef<S: proto::crypto::Session, T: Socket>(
+    Arc<Mutex<EndpointInner<S, T>>>,
+);
 
-impl<S> EndpointRef<S>
+impl<S, T> EndpointRef<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    pub(crate) fn new(socket: UdpSocket, inner: proto::generic::Endpoint<S>, ipv6: bool) -> Self {
+    pub(crate) fn new(socket: T, inner: proto::generic::Endpoint<S>, ipv6: bool) -> Self {
         let recv_buf =
             vec![0; inner.config().get_max_udp_payload_size().min(64 * 1024) as usize * BATCH_SIZE];
         let (sender, events) = mpsc::unbounded();
@@ -513,9 +534,10 @@ where
     }
 }
 
-impl<S> Clone for EndpointRef<S>
+impl<S, T> Clone for EndpointRef<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn clone(&self) -> Self {
         self.0.lock().unwrap().ref_count += 1;
@@ -523,9 +545,10 @@ where
     }
 }
 
-impl<S> Drop for EndpointRef<S>
+impl<S, T> Drop for EndpointRef<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn drop(&mut self) {
         let endpoint = &mut *self.0.lock().unwrap();
@@ -542,11 +565,12 @@ where
     }
 }
 
-impl<S> std::ops::Deref for EndpointRef<S>
+impl<S, T> std::ops::Deref for EndpointRef<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    type Target = Mutex<EndpointInner<S>>;
+    type Target = Mutex<EndpointInner<S, T>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }

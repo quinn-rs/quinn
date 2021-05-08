@@ -1,0 +1,3 @@
+edition = "2018"
+# merge_imports=true
+report_fixme="Always"

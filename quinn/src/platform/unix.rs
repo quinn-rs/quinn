@@ -1,4 +1,5 @@
 use std::{
+    convert::TryFrom,
     io,
     io::IoSliceMut,
     mem::{self, MaybeUninit},
@@ -12,6 +13,8 @@ use futures::ready;
 use lazy_static::lazy_static;
 use proto::{EcnCodepoint, Transmit};
 use tokio::io::unix::AsyncFd;
+
+use crate::transport::Socket;
 
 use super::{cmsg, RecvMeta, UdpCapabilities};
 
@@ -29,8 +32,10 @@ pub struct UdpSocket {
     io: AsyncFd<mio::net::UdpSocket>,
 }
 
-impl UdpSocket {
-    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
+impl TryFrom<std::net::UdpSocket> for UdpSocket {
+    type Error = io::Error;
+
+    fn try_from(socket: std::net::UdpSocket) -> Result<Self, Self::Error> {
         socket.set_nonblocking(true)?;
         let io = mio::net::UdpSocket::from_std(socket);
         init(&io)?;
@@ -38,11 +43,13 @@ impl UdpSocket {
             io: AsyncFd::new(io)?,
         })
     }
+}
 
-    pub fn poll_send(
+impl Socket for UdpSocket {
+    fn poll_send(
         &self,
         cx: &mut Context,
-        transmits: &[Transmit],
+        transmits: &mut [Transmit],
     ) -> Poll<Result<usize, io::Error>> {
         loop {
             let mut guard = ready!(self.io.poll_write_ready(cx))?;
@@ -52,7 +59,7 @@ impl UdpSocket {
         }
     }
 
-    pub fn poll_recv(
+    fn poll_recv(
         &self,
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
@@ -67,7 +74,7 @@ impl UdpSocket {
         }
     }
 
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+    fn local_addr(&self) -> io::Result<SocketAddr> {
         self.io.get_ref().local_addr()
     }
 }

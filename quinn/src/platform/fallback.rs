@@ -1,4 +1,5 @@
 use std::{
+    convert::TryFrom,
     io::{self, IoSliceMut},
     net::SocketAddr,
     task::{Context, Poll},
@@ -7,6 +8,8 @@ use std::{
 use futures::ready;
 use proto::Transmit;
 use tokio::io::ReadBuf;
+
+use crate::transport::Socket;
 
 use super::RecvMeta;
 
@@ -19,18 +22,22 @@ pub struct UdpSocket {
     io: tokio::net::UdpSocket,
 }
 
-impl UdpSocket {
-    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
+impl TryFrom<std::net::UdpSocket> for UdpSocket {
+    type Error = io::Error;
+
+    fn try_from(socket: std::net::UdpSocket) -> Result<Self, Self::Error> {
         socket.set_nonblocking(true)?;
         Ok(UdpSocket {
             io: tokio::net::UdpSocket::from_std(socket)?,
         })
     }
+}
 
-    pub fn poll_send(
+impl Socket for UdpSocket {
+    fn poll_send(
         &self,
         cx: &mut Context,
-        transmits: &[Transmit],
+        transmits: &mut [Transmit],
     ) -> Poll<Result<usize, io::Error>> {
         let mut sent = 0;
         for transmit in transmits {
@@ -52,7 +59,7 @@ impl UdpSocket {
         Poll::Ready(Ok(sent))
     }
 
-    pub fn poll_recv(
+    fn poll_recv(
         &self,
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
@@ -70,7 +77,7 @@ impl UdpSocket {
         Poll::Ready(Ok(1))
     }
 
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
+    fn local_addr(&self) -> io::Result<SocketAddr> {
         self.io.local_addr()
     }
 }

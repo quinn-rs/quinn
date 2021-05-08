@@ -65,27 +65,65 @@ pub use proto::{
     VarInt,
 };
 
-pub use crate::builders::EndpointError;
-pub use crate::connection::{SendDatagramError, ZeroRttAccepted};
-pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError};
-pub use crate::send_stream::{StoppedError, WriteError};
+pub use crate::{
+    builders::EndpointError,
+    connection::{SendDatagramError, ZeroRttAccepted},
+    recv_stream::{ReadError, ReadExactError, ReadToEndError},
+    send_stream::{StoppedError, WriteError},
+};
 
 /// Types that are generic over the crypto protocol implementation
 pub mod generic {
-    pub use crate::builders::{ClientConfigBuilder, EndpointBuilder, ServerConfigBuilder};
-    pub use crate::connection::{
-        Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
-        OpenBi, OpenUni,
+    pub use crate::{
+        builders::{ClientConfigBuilder, EndpointBuilder, ServerConfigBuilder},
+        connection::{
+            Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams,
+            NewConnection, OpenBi, OpenUni,
+        },
+        endpoint::{Endpoint, Incoming},
+        recv_stream::{Read, ReadChunk, ReadChunks, ReadExact, ReadToEnd, RecvStream},
+        send_stream::SendStream,
     };
-    pub use crate::endpoint::{Endpoint, Incoming};
-    pub use crate::recv_stream::{Read, ReadChunk, ReadChunks, ReadExact, ReadToEnd, RecvStream};
-    pub use crate::send_stream::SendStream;
     pub use proto::generic::{ClientConfig, ServerConfig};
+}
+
+/// Traits and implementations for underlying connection on which QUIC packets transmit.
+pub mod transport {
+    pub use crate::platform::{RecvMeta, UdpSocket};
+    use proto::Transmit;
+    use std::{
+        io::{IoSliceMut, Result},
+        net::{IpAddr, SocketAddr},
+        task::{Context, Poll},
+    };
+
+    /// A socket that abstracts the underlying connection
+    pub trait Socket: Send + 'static {
+        /// Poll the underlying connection to send `Transmit`, return the number of successfully transmitted `Transmit`.
+        fn poll_send(&self, cx: &mut Context, transmits: &mut [Transmit]) -> Poll<Result<usize>>;
+
+        /// Poll the underlying connection to receive, return the number of received bufs.
+        fn poll_recv(
+            &self,
+            cx: &mut Context,
+            bufs: &mut [IoSliceMut<'_>],
+            meta: &mut [RecvMeta],
+        ) -> Poll<Result<usize>>;
+
+        /// The socket address of the local endpoint, return `Unsupported`[`std::io::ErrorKind::Unsupported`]
+        /// if the connection doesn't support socket address (e.g. ICMP)
+        fn local_addr(&self) -> Result<SocketAddr>;
+
+        /// The IP address of the local endpoint.
+        fn local_ip_addr(&self) -> Result<IpAddr> {
+            self.local_addr().and_then(|x| Ok(x.ip()))
+        }
+    }
 }
 
 #[cfg(feature = "rustls")]
 mod rustls_impls {
-    use crate::generic;
+    use crate::{generic, platform::UdpSocket};
     use proto::crypto::rustls::TlsSession;
 
     /// A `ClientConfig` using rustls for the cryptography protocol
@@ -95,8 +133,8 @@ mod rustls_impls {
 
     /// A `ClientConfigBuilder` using rustls for the cryptography protocol
     pub type ClientConfigBuilder = generic::ClientConfigBuilder<TlsSession>;
-    /// An `EndpointBuilder` using rustls for the cryptography protocol
-    pub type EndpointBuilder = generic::EndpointBuilder<TlsSession>;
+    /// An `EndpointBuilder` using rustls for the cryptography protocol and UDP socket for underlying connection.
+    pub type EndpointBuilder = generic::EndpointBuilder<TlsSession, UdpSocket>;
     /// A `ServerConfigBuilder` using rustls for the cryptography protocol
     pub type ServerConfigBuilder = generic::ServerConfigBuilder<TlsSession>;
 
@@ -117,10 +155,10 @@ mod rustls_impls {
     /// An `OpenUni` using rustls for the cryptography protocol
     pub type OpenUni = generic::OpenUni<TlsSession>;
 
-    /// An `Endpoint` using rustls for the cryptography protocol
-    pub type Endpoint = generic::Endpoint<TlsSession>;
-    /// An `Incoming` using rustls for the cryptography protocol
-    pub type Incoming = generic::Incoming<TlsSession>;
+    /// An `Endpoint` using rustls for the cryptography protocol and UDP socket for underlying connection.
+    pub type Endpoint = generic::Endpoint<TlsSession, UdpSocket>;
+    /// An `Incoming` using rustls for the cryptography protocol and UDP socket for underlying connection.
+    pub type Incoming = generic::Incoming<TlsSession, UdpSocket>;
 
     /// A `Read` using rustls for the cryptography protocol
     pub type Read<'a> = generic::Read<'a, TlsSession>;
