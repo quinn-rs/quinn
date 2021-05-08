@@ -11,7 +11,7 @@ use proto::{Chunk, Chunks, ConnectionError, ReadableError, StreamId};
 use thiserror::Error;
 use tokio::io::ReadBuf;
 
-use crate::{connection::ConnectionRef, VarInt};
+use crate::{connection::ConnectionRef, transport::Socket, VarInt};
 
 /// A stream that can only be used to receive data
 ///
@@ -25,22 +25,24 @@ use crate::{connection::ConnectionRef, VarInt};
 /// [`read_unordered()`]: RecvStream::read_unordered
 /// [`stop()`]: RecvStream::stop
 #[derive(Debug)]
-pub struct RecvStream<S>
+pub struct RecvStream<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    conn: ConnectionRef<S>,
+    conn: ConnectionRef<S, T>,
     stream: StreamId,
     is_0rtt: bool,
     all_data_read: bool,
     reset: Option<VarInt>,
 }
 
-impl<S> RecvStream<S>
+impl<S, T> RecvStream<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    pub(crate) fn new(conn: ConnectionRef<S>, stream: StreamId, is_0rtt: bool) -> Self {
+    pub(crate) fn new(conn: ConnectionRef<S, T>, stream: StreamId, is_0rtt: bool) -> Self {
         Self {
             conn,
             stream,
@@ -63,7 +65,7 @@ where
     ///   location other than the start of the receive buffer, making it impossible for future
     ///
     /// [`read_unordered()`]: RecvStream::read_unordered
-    pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'a, S> {
+    pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'a, S, T> {
         Read {
             stream: self,
             buf: ReadBuf::new(buf),
@@ -75,7 +77,7 @@ where
     /// See [`read()`] for details.
     ///
     /// [`read()`]: RecvStream::read
-    pub fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExact<'a, S> {
+    pub fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExact<'a, S, T> {
         ReadExact {
             stream: self,
             buf: ReadBuf::new(buf),
@@ -122,7 +124,7 @@ where
     ///
     /// Slightly more efficient than `read` due to not copying. Chunk boundaries do not correspond
     /// to peer writes, and hence cannot be used as framing.
-    pub fn read_chunk(&mut self, max_length: usize, ordered: bool) -> ReadChunk<'_, S> {
+    pub fn read_chunk(&mut self, max_length: usize, ordered: bool) -> ReadChunk<'_, S, T> {
         ReadChunk {
             stream: self,
             max_length,
@@ -151,7 +153,7 @@ where
     ///
     /// Slightly more efficient than `read` due to not copying. Chunk boundaries
     /// do not correspond to peer writes, and hence cannot be used as framing.
-    pub fn read_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> ReadChunks<'a, S> {
+    pub fn read_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> ReadChunks<'a, S, T> {
         ReadChunks { stream: self, bufs }
     }
 
@@ -194,7 +196,7 @@ where
     /// arbitrary data.
     ///
     /// [`ReadToEndError::TooLong`]: crate::ReadToEndError::TooLong
-    pub fn read_to_end(self, size_limit: usize) -> ReadToEnd<S> {
+    pub fn read_to_end(self, size_limit: usize) -> ReadToEnd<S, T> {
         ReadToEnd {
             stream: self,
             size_limit,
@@ -238,14 +240,14 @@ where
     /// the detailed read semantics for the calling function with a particular return type.
     /// The closure can read from the passed `&mut Chunks` and has to return the status after
     /// reading: the amount of data read, and the status after the final read call.
-    fn poll_read_generic<T, U>(
+    fn poll_read_generic<F, U>(
         &mut self,
         cx: &mut Context,
         ordered: bool,
-        mut read_fn: T,
+        mut read_fn: F,
     ) -> Poll<Result<Option<U>, ReadError>>
     where
-        T: FnMut(&mut Chunks) -> ReadStatus<U>,
+        F: FnMut(&mut Chunks) -> ReadStatus<U>,
     {
         use proto::ReadError::*;
         if self.all_data_read {
@@ -320,20 +322,22 @@ impl<T> From<(Option<T>, Option<proto::ReadError>)> for ReadStatus<T> {
 /// Future produced by [`RecvStream::read_to_end()`].
 ///
 /// [`RecvStream::read_to_end()`]: crate::generic::RecvStream::read_to_end
-pub struct ReadToEnd<S>
+pub struct ReadToEnd<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    stream: RecvStream<S>,
+    stream: RecvStream<S, T>,
     read: Vec<(Bytes, u64)>,
     start: u64,
     end: u64,
     size_limit: usize,
 }
 
-impl<S> Future for ReadToEnd<S>
+impl<S, T> Future for ReadToEnd<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     type Output = Result<Vec<u8>, ReadToEndError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -379,9 +383,10 @@ pub enum ReadToEndError {
     TooLong,
 }
 
-impl<S> AsyncRead for RecvStream<S>
+impl<S, T> AsyncRead for RecvStream<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -394,9 +399,10 @@ where
     }
 }
 
-impl<S> tokio::io::AsyncRead for RecvStream<S>
+impl<S, T> tokio::io::AsyncRead for RecvStream<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -408,9 +414,10 @@ where
     }
 }
 
-impl<S> Drop for RecvStream<S>
+impl<S, T> Drop for RecvStream<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn drop(&mut self) {
         let mut conn = self.conn.lock("RecvStream::drop");
@@ -479,17 +486,19 @@ impl From<ReadError> for io::Error {
 /// Future produced by [`RecvStream::read()`].
 ///
 /// [`RecvStream::read()`]: crate::generic::RecvStream::read
-pub struct Read<'a, S>
+pub struct Read<'a, S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    stream: &'a mut RecvStream<S>,
+    stream: &'a mut RecvStream<S, T>,
     buf: ReadBuf<'a>,
 }
 
-impl<'a, S> Future for Read<'a, S>
+impl<'a, S, T> Future for Read<'a, S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     type Output = Result<Option<usize>, ReadError>;
 
@@ -506,17 +515,19 @@ where
 /// Future produced by [`RecvStream::read_exact()`].
 ///
 /// [`RecvStream::read_exact()`]: crate::generic::RecvStream::read_exact
-pub struct ReadExact<'a, S>
+pub struct ReadExact<'a, S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    stream: &'a mut RecvStream<S>,
+    stream: &'a mut RecvStream<S, T>,
     buf: ReadBuf<'a>,
 }
 
-impl<'a, S> Future for ReadExact<'a, S>
+impl<'a, S, T> Future for ReadExact<'a, S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     type Output = Result<(), ReadExactError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -548,18 +559,20 @@ pub enum ReadExactError {
 /// Future produced by [`RecvStream::read_chunk()`].
 ///
 /// [`RecvStream::read_chunk()`]: crate::generic::RecvStream::read_chunk
-pub struct ReadChunk<'a, S>
+pub struct ReadChunk<'a, S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    stream: &'a mut RecvStream<S>,
+    stream: &'a mut RecvStream<S, T>,
     max_length: usize,
     ordered: bool,
 }
 
-impl<'a, S> Future for ReadChunk<'a, S>
+impl<'a, S, T> Future for ReadChunk<'a, S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     type Output = Result<Option<Chunk>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -571,17 +584,19 @@ where
 /// Future produced by [`RecvStream::read_chunks()`].
 ///
 /// [`RecvStream::read_chunks()`]: crate::generic::RecvStream::read_chunks
-pub struct ReadChunks<'a, S>
+pub struct ReadChunks<'a, S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    stream: &'a mut RecvStream<S>,
+    stream: &'a mut RecvStream<S, T>,
     bufs: &'a mut [Bytes],
 }
 
-impl<'a, S> Future for ReadChunks<'a, S>
+impl<'a, S, T> Future for ReadChunks<'a, S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     type Output = Result<Option<usize>, ReadError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {

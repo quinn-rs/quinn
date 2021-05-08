@@ -91,7 +91,7 @@ where
         EndpointError: From<<U as TryInto<T>>::Error>,
     {
         let socket = socket.try_into()?;
-        let addr = socket.local_ip_addr().map_err(EndpointError::Socket)?;
+        let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let rc = EndpointRef::new(
             socket,
             proto::generic::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new)),

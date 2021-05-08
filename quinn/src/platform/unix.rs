@@ -16,7 +16,7 @@ use tokio::io::unix::AsyncFd;
 
 use crate::transport::Socket;
 
-use super::{cmsg, RecvMeta, UdpCapabilities};
+use super::{cmsg, RecvMeta, SocketCapabilities};
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
@@ -76,6 +76,10 @@ impl Socket for UdpSocket {
 
     fn local_addr(&self) -> io::Result<SocketAddr> {
         self.io.get_ref().local_addr()
+    }
+
+    fn caps() -> SocketCapabilities {
+        caps()
     }
 }
 
@@ -339,8 +343,7 @@ fn recv(
     Ok(1)
 }
 
-/// Returns the platforms UDP socket capabilities
-pub fn caps() -> UdpCapabilities {
+pub fn caps() -> SocketCapabilities {
     *CAPABILITIES
 }
 
@@ -543,8 +546,8 @@ mod gso {
 }
 
 lazy_static! {
-    static ref CAPABILITIES: UdpCapabilities = {
-        UdpCapabilities {
+    static ref CAPABILITIES: SocketCapabilities = {
+        SocketCapabilities {
             max_gso_segments: gso::max_gso_segments(),
         }
     };

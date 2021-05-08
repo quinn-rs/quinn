@@ -89,11 +89,12 @@ pub mod generic {
 
 /// Traits and implementations for underlying connection on which QUIC packets transmit.
 pub mod transport {
+    use crate::platform::SocketCapabilities;
     pub use crate::platform::{RecvMeta, UdpSocket};
     use proto::Transmit;
     use std::{
         io::{IoSliceMut, Result},
-        net::{IpAddr, SocketAddr},
+        net::SocketAddr,
         task::{Context, Poll},
     };
 
@@ -110,13 +111,15 @@ pub mod transport {
             meta: &mut [RecvMeta],
         ) -> Poll<Result<usize>>;
 
-        /// The socket address of the local endpoint, return `Unsupported`[`std::io::ErrorKind::Unsupported`]
+        /// The socket address of the local endpoint, return an arbitrary port with the IP address
         /// if the connection doesn't support socket address (e.g. ICMP)
         fn local_addr(&self) -> Result<SocketAddr>;
 
-        /// The IP address of the local endpoint.
-        fn local_ip_addr(&self) -> Result<IpAddr> {
-            self.local_addr().and_then(|x| Ok(x.ip()))
+        /// Returns the platforms (UDP) socket capabilities. Default to 1 for max_gso_segments.
+        fn caps() -> SocketCapabilities {
+            SocketCapabilities {
+                max_gso_segments: 1,
+            }
         }
     }
 }
@@ -139,21 +142,21 @@ mod rustls_impls {
     pub type ServerConfigBuilder = generic::ServerConfigBuilder<TlsSession>;
 
     /// A `Connecting` using rustls for the cryptography protocol
-    pub type Connecting = generic::Connecting<TlsSession>;
+    pub type Connecting = generic::Connecting<TlsSession, UdpSocket>;
     /// A `Connection` using rustls for the cryptography protocol
-    pub type Connection = generic::Connection<TlsSession>;
+    pub type Connection = generic::Connection<TlsSession, UdpSocket>;
     /// A `Datagrams` using rustls for the cryptography protocol
-    pub type Datagrams = generic::Datagrams<TlsSession>;
+    pub type Datagrams = generic::Datagrams<TlsSession, UdpSocket>;
     /// An `IncomingBiStreams` using rustls for the cryptography protocol
-    pub type IncomingBiStreams = generic::IncomingBiStreams<TlsSession>;
+    pub type IncomingBiStreams = generic::IncomingBiStreams<TlsSession, UdpSocket>;
     /// An `IncomingUniStreams` using rustls for the cryptography protocol
-    pub type IncomingUniStreams = generic::IncomingUniStreams<TlsSession>;
+    pub type IncomingUniStreams = generic::IncomingUniStreams<TlsSession, UdpSocket>;
     /// A `NewConnection` using rustls for the cryptography protocol
-    pub type NewConnection = generic::NewConnection<TlsSession>;
+    pub type NewConnection = generic::NewConnection<TlsSession, UdpSocket>;
     /// An `OpenBi` using rustls for the cryptography protocol
-    pub type OpenBi = generic::OpenBi<TlsSession>;
+    pub type OpenBi = generic::OpenBi<TlsSession, UdpSocket>;
     /// An `OpenUni` using rustls for the cryptography protocol
-    pub type OpenUni = generic::OpenUni<TlsSession>;
+    pub type OpenUni = generic::OpenUni<TlsSession, UdpSocket>;
 
     /// An `Endpoint` using rustls for the cryptography protocol and UDP socket for underlying connection.
     pub type Endpoint = generic::Endpoint<TlsSession, UdpSocket>;
@@ -161,15 +164,15 @@ mod rustls_impls {
     pub type Incoming = generic::Incoming<TlsSession, UdpSocket>;
 
     /// A `Read` using rustls for the cryptography protocol
-    pub type Read<'a> = generic::Read<'a, TlsSession>;
+    pub type Read<'a> = generic::Read<'a, TlsSession, UdpSocket>;
     /// A `ReadExact` using rustls for the cryptography protocol
-    pub type ReadExact<'a> = generic::ReadExact<'a, TlsSession>;
+    pub type ReadExact<'a> = generic::ReadExact<'a, TlsSession, UdpSocket>;
     /// A `ReadToEnd` using rustls for the cryptography protocol
-    pub type ReadToEnd = generic::ReadToEnd<TlsSession>;
+    pub type ReadToEnd = generic::ReadToEnd<TlsSession, UdpSocket>;
     /// A `RecvStream` using rustls for the cryptography protocol
-    pub type RecvStream = generic::RecvStream<TlsSession>;
+    pub type RecvStream = generic::RecvStream<TlsSession, UdpSocket>;
     /// A `SendStream` using rustls for the cryptography protocol
-    pub type SendStream = generic::SendStream<TlsSession>;
+    pub type SendStream = generic::SendStream<TlsSession, UdpSocket>;
 }
 
 #[cfg(feature = "rustls")]

@@ -66,7 +66,7 @@ where
         &self,
         addr: &SocketAddr,
         server_name: &str,
-    ) -> Result<Connecting<S>, ConnectError> {
+    ) -> Result<Connecting<S, T>, ConnectError> {
         self.connect_with(
             self.default_client_config
                 .get_or_init(ClientConfig::default)
@@ -86,7 +86,7 @@ where
         config: ClientConfig<S>,
         addr: &SocketAddr,
         server_name: &str,
-    ) -> Result<Connecting<S>, ConnectError> {
+    ) -> Result<Connecting<S, T>, ConnectError> {
         let mut endpoint = self.inner.lock().unwrap();
         if endpoint.driver_lost {
             return Err(ConnectError::EndpointStopping);
@@ -115,7 +115,7 @@ where
         EndpointError: From<<U as TryInto<T>>::Error>,
     {
         let socket = socket.try_into()?;
-        let addr = socket.local_ip_addr()?;
+        let addr = socket.local_addr()?;
         let mut inner = self.inner.lock().unwrap();
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
@@ -265,7 +265,7 @@ where
     socket: T,
     inner: proto::generic::Endpoint<S>,
     outgoing: VecDeque<proto::Transmit>,
-    incoming: VecDeque<Connecting<S>>,
+    incoming: VecDeque<Connecting<S, T>>,
     incoming_reader: Option<Waker>,
     driver: Option<Waker>,
     ipv6: bool,
@@ -420,11 +420,11 @@ struct ConnectionSet {
 }
 
 impl ConnectionSet {
-    fn insert<S: proto::crypto::Session + 'static>(
+    fn insert<S: proto::crypto::Session + 'static, T: Socket>(
         &mut self,
         handle: ConnectionHandle,
         conn: proto::generic::Connection<S>,
-    ) -> Connecting<S> {
+    ) -> Connecting<S, T> {
         let (send, recv) = mpsc::unbounded();
         if let Some((error_code, ref reason)) = self.close {
             send.unbounded_send(ConnectionEvent::Close {
@@ -468,7 +468,7 @@ where
     S: proto::crypto::Session,
     T: Socket,
 {
-    type Item = Connecting<S>;
+    type Item = Connecting<S, T>;
 
     #[allow(unused_mut)] // MSRV
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {

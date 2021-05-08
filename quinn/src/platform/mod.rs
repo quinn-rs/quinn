@@ -19,11 +19,6 @@ mod imp;
 
 pub use imp::UdpSocket;
 
-/// Returns the platforms UDP socket capabilities
-pub fn caps() -> UdpCapabilities {
-    imp::caps()
-}
-
 /// Number of UDP packets to send/receive at a time
 pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
 
@@ -33,9 +28,9 @@ pub trait UdpExt {
     fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize>;
 }
 
-/// The capabilities a UDP socket suppports on a certain platform
+/// The capabilities a (UDP) socket suppports on a certain platform
 #[derive(Debug, Clone, Copy)]
-pub struct UdpCapabilities {
+pub struct SocketCapabilities {
     /// The maximum amount of segments which can be transmitted if a platform
     /// supports Generic Send Offload (GSO).
     /// This is 1 if the platform doesn't support GSO.

@@ -82,11 +82,4 @@ impl Socket for UdpSocket {
     }
 }
 
-/// Returns the platforms UDP socket capabilities
-pub fn caps() -> super::UdpCapabilities {
-    super::UdpCapabilities {
-        max_gso_segments: 1,
-    }
-}
-
 pub const BATCH_SIZE: usize = 1;

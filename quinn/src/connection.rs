@@ -1,6 +1,7 @@
 use std::{
     fmt,
     future::Future,
+    marker::PhantomData,
     mem,
     net::{IpAddr, SocketAddr},
     pin::Pin,
@@ -23,33 +24,35 @@ use tracing::info_span;
 use crate::{
     broadcast::{self, Broadcast},
     mutex::Mutex,
-    platform::caps,
     recv_stream::RecvStream,
     send_stream::{SendStream, WriteError},
+    transport::Socket,
     ConnectionEvent, EndpointEvent, VarInt,
 };
 
 /// In-progress connection attempt future
 #[derive(Debug)]
-pub struct Connecting<S>
+pub struct Connecting<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    conn: Option<ConnectionRef<S>>,
+    conn: Option<ConnectionRef<S, T>>,
     connected: oneshot::Receiver<bool>,
     handshake_data_ready: Option<oneshot::Receiver<()>>,
 }
 
-impl<S> Connecting<S>
+impl<S, T> Connecting<S, T>
 where
     S: proto::crypto::Session + 'static,
+    T: Socket,
 {
     pub(crate) fn new(
         handle: ConnectionHandle,
         conn: proto::generic::Connection<S>,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
-    ) -> Connecting<S> {
+    ) -> Connecting<S, T> {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
         let conn = ConnectionRef::new(
@@ -95,7 +98,7 @@ where
     /// ticket is found, `self` is returned unmodified.
     ///
     /// For incoming connections, a 0.5-RTT connection will always be successfully constructed.
-    pub fn into_0rtt(mut self) -> Result<(NewConnection<S>, ZeroRttAccepted), Self> {
+    pub fn into_0rtt(mut self) -> Result<(NewConnection<S, T>, ZeroRttAccepted), Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
         let conn = (self.conn.as_mut().unwrap()).lock("into_0rtt");
@@ -153,11 +156,12 @@ where
     }
 }
 
-impl<S> Future for Connecting<S>
+impl<S, T> Future for Connecting<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    type Output = Result<NewConnection<S>, ConnectionError>;
+    type Output = Result<NewConnection<S, T>, ConnectionError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.connected.poll_unpin(cx).map(|_| {
             let conn = self.conn.take().unwrap();
@@ -175,15 +179,17 @@ where
     }
 }
 
-impl<S> Connecting<S>
+impl<S, T> Connecting<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     /// The peer's UDP address.
     ///
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn remote_address(&self) -> SocketAddr {
-        let conn_ref: &ConnectionRef<S> = &self.conn.as_ref().expect("used after yielding Ready");
+        let conn_ref: &ConnectionRef<S, T> =
+            &self.conn.as_ref().expect("used after yielding Ready");
         conn_ref.lock("remote_address").inner.remote_address()
     }
 }
@@ -226,12 +232,13 @@ let NewConnection { connection, .. } = { new_connection };
 /// [`Connection::close()`]: crate::generic::Connection::close
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct NewConnection<S>
+pub struct NewConnection<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     /// Handle for interacting with the connection
-    pub connection: Connection<S>,
+    pub connection: Connection<S, T>,
     /// Unidirectional streams initiated by the peer, in the order they were opened
     ///
     /// Note that data for separate streams may be delivered in any order. In other words, reading
@@ -239,18 +246,19 @@ where
     /// details.
     ///
     /// [`IncomingUniStreams`]: crate::generic::IncomingUniStreams
-    pub uni_streams: IncomingUniStreams<S>,
+    pub uni_streams: IncomingUniStreams<S, T>,
     /// Bidirectional streams initiated by the peer, in the order they were opened
-    pub bi_streams: IncomingBiStreams<S>,
+    pub bi_streams: IncomingBiStreams<S, T>,
     /// Unordered, unreliable datagrams sent by the peer
-    pub datagrams: Datagrams<S>,
+    pub datagrams: Datagrams<S, T>,
 }
 
-impl<S> NewConnection<S>
+impl<S, T> NewConnection<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    fn new(conn: ConnectionRef<S>) -> Self {
+    fn new(conn: ConnectionRef<S, T>) -> Self {
         Self {
             connection: Connection(conn.clone()),
             uni_streams: IncomingUniStreams(conn.clone()),
@@ -272,11 +280,12 @@ where
 /// packets still in flight from the peer are handled gracefully.
 #[must_use = "connection drivers must be spawned for their connections to function"]
 #[derive(Debug)]
-struct ConnectionDriver<S: proto::crypto::Session>(ConnectionRef<S>);
+struct ConnectionDriver<S: proto::crypto::Session, T: Socket>(ConnectionRef<S, T>);
 
-impl<S> Future for ConnectionDriver<S>
+impl<S, T> Future for ConnectionDriver<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     type Output = ();
 
@@ -326,18 +335,19 @@ where
 ///
 /// [`Connection::close()`]: Connection::close
 #[derive(Debug)]
-pub struct Connection<S: proto::crypto::Session>(ConnectionRef<S>);
+pub struct Connection<S: proto::crypto::Session, T: Socket>(ConnectionRef<S, T>);
 
-impl<S> Connection<S>
+impl<S, T> Connection<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     /// Initiate a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
-    pub fn open_uni(&self) -> OpenUni<S> {
+    pub fn open_uni(&self) -> OpenUni<S, T> {
         OpenUni {
             conn: self.0.clone(),
             state: broadcast::State::default(),
@@ -349,7 +359,7 @@ where
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
-    pub fn open_bi(&self) -> OpenBi<S> {
+    pub fn open_bi(&self) -> OpenBi<S, T> {
         OpenBi {
             conn: self.0.clone(),
             state: broadcast::State::default(),
@@ -514,9 +524,10 @@ where
     }
 }
 
-impl<S> Clone for Connection<S>
+impl<S, T> Clone for Connection<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn clone(&self) -> Self {
         Connection(self.0.clone())
@@ -534,13 +545,14 @@ where
 /// performance, an application should be prepared to fully process later streams before any data is
 /// received on earlier streams.
 #[derive(Debug)]
-pub struct IncomingUniStreams<S: proto::crypto::Session>(ConnectionRef<S>);
+pub struct IncomingUniStreams<S: proto::crypto::Session, T: Socket>(ConnectionRef<S, T>);
 
-impl<S> futures::Stream for IncomingUniStreams<S>
+impl<S, T> futures::Stream for IncomingUniStreams<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    type Item = Result<RecvStream<S>, ConnectionError>;
+    type Item = Result<RecvStream<S, T>, ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock("IncomingUniStreams::poll_next");
@@ -563,13 +575,14 @@ where
 ///
 /// See `IncomingUniStreams` for information about incoming streams in general.
 #[derive(Debug)]
-pub struct IncomingBiStreams<S: proto::crypto::Session>(ConnectionRef<S>);
+pub struct IncomingBiStreams<S: proto::crypto::Session, T: Socket>(ConnectionRef<S, T>);
 
-impl<S> futures::Stream for IncomingBiStreams<S>
+impl<S, T> futures::Stream for IncomingBiStreams<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    type Item = Result<(SendStream<S>, RecvStream<S>), ConnectionError>;
+    type Item = Result<(SendStream<S, T>, RecvStream<S, T>), ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock("IncomingBiStreams::poll_next");
@@ -594,11 +607,12 @@ where
 
 /// Stream of unordered, unreliable datagrams sent by the peer
 #[derive(Debug)]
-pub struct Datagrams<S: proto::crypto::Session>(ConnectionRef<S>);
+pub struct Datagrams<S: proto::crypto::Session, T: Socket>(ConnectionRef<S, T>);
 
-impl<S> futures::Stream for Datagrams<S>
+impl<S, T> futures::Stream for Datagrams<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     type Item = Result<Bytes, ConnectionError>;
 
@@ -618,19 +632,21 @@ where
 }
 
 /// A future that will resolve into an opened outgoing unidirectional stream
-pub struct OpenUni<S>
+pub struct OpenUni<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    conn: ConnectionRef<S>,
+    conn: ConnectionRef<S, T>,
     state: broadcast::State,
 }
 
-impl<S> Future for OpenUni<S>
+impl<S, T> Future for OpenUni<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    type Output = Result<SendStream<S>, ConnectionError>;
+    type Output = Result<SendStream<S, T>, ConnectionError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -649,19 +665,21 @@ where
 }
 
 /// A future that will resolve into an opened outgoing bidirectional stream
-pub struct OpenBi<S>
+pub struct OpenBi<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    conn: ConnectionRef<S>,
+    conn: ConnectionRef<S, T>,
     state: broadcast::State,
 }
 
-impl<S> Future for OpenBi<S>
+impl<S, T> Future for OpenBi<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    type Output = Result<(SendStream<S>, RecvStream<S>), ConnectionError>;
+    type Output = Result<(SendStream<S, T>, RecvStream<S, T>), ConnectionError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -683,11 +701,12 @@ where
 }
 
 #[derive(Debug)]
-pub struct ConnectionRef<S: proto::crypto::Session>(Arc<Mutex<ConnectionInner<S>>>);
+pub struct ConnectionRef<S: proto::crypto::Session, T: Socket>(Arc<Mutex<ConnectionInner<S, T>>>);
 
-impl<S> ConnectionRef<S>
+impl<S, T> ConnectionRef<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn new(
         handle: ConnectionHandle,
@@ -719,6 +738,7 @@ where
             stopped: FxHashMap::default(),
             error: None,
             ref_count: 0,
+            socket_type: PhantomData,
         })))
     }
 
@@ -727,9 +747,10 @@ where
     }
 }
 
-impl<S> Clone for ConnectionRef<S>
+impl<S, T> Clone for ConnectionRef<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn clone(&self) -> Self {
         self.lock("clone").ref_count += 1;
@@ -737,9 +758,10 @@ where
     }
 }
 
-impl<S> Drop for ConnectionRef<S>
+impl<S, T> Drop for ConnectionRef<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn drop(&mut self) {
         let conn = &mut *self.lock("drop");
@@ -756,19 +778,21 @@ where
     }
 }
 
-impl<S> std::ops::Deref for ConnectionRef<S>
+impl<S, T> std::ops::Deref for ConnectionRef<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
-    type Target = Mutex<ConnectionInner<S>>;
+    type Target = Mutex<ConnectionInner<S, T>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub struct ConnectionInner<S>
+pub struct ConnectionInner<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     pub(crate) inner: proto::generic::Connection<S>,
     driver: Option<Waker>,
@@ -793,16 +817,18 @@ where
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
+    socket_type: PhantomData<T>,
 }
 
-impl<S> ConnectionInner<S>
+impl<S, T> ConnectionInner<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn drive_transmit(&mut self) {
         let now = Instant::now();
 
-        let max_datagrams = caps().max_gso_segments;
+        let max_datagrams = T::caps().max_gso_segments;
 
         while let Some(t) = self.inner.poll_transmit(now, max_datagrams) {
             // If the endpoint driver is gone, noop.
@@ -1028,9 +1054,10 @@ where
     }
 }
 
-impl<S> Drop for ConnectionInner<S>
+impl<S, T> Drop for ConnectionInner<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn drop(&mut self) {
         if !self.inner.is_drained() {
@@ -1043,9 +1070,10 @@ where
     }
 }
 
-impl<S> fmt::Debug for ConnectionInner<S>
+impl<S, T> fmt::Debug for ConnectionInner<S, T>
 where
     S: proto::crypto::Session,
+    T: Socket,
 {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ConnectionInner")
