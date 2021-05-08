@@ -80,10 +80,7 @@ impl CidQueue {
     fn iter(&self) -> impl Iterator<Item = (usize, CidData)> + '_ {
         (1..Self::LEN).filter_map(move |step| {
             let index = (self.cursor + step) % Self::LEN;
-            match self.buffer[index] {
-                Some(cid_data) => Some((step, cid_data)),
-                None => None,
-            }
+            self.buffer[index].map(|cid_data| (step, cid_data))
         })
     }
 
