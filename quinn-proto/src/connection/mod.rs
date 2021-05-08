@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::{BTreeMap, VecDeque},
+    collections::VecDeque,
     convert::TryFrom,
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
@@ -1647,7 +1647,7 @@ where
         space.crypto = None;
         space.time_of_last_ack_eliciting_packet = None;
         space.loss_time = None;
-        let sent_packets = mem::replace(&mut space.sent_packets, BTreeMap::new());
+        let sent_packets = mem::take(&mut space.sent_packets);
         for (_, packet) in sent_packets.into_iter() {
             self.remove_in_flight(space_id, &packet);
         }
@@ -1946,10 +1946,7 @@ where
                     });
 
                 // Retransmit all 0-RTT data
-                let zero_rtt = mem::replace(
-                    &mut self.spaces[SpaceId::Data].sent_packets,
-                    BTreeMap::new(),
-                );
+                let zero_rtt = mem::take(&mut self.spaces[SpaceId::Data].sent_packets);
                 for (_, info) in zero_rtt {
                     self.remove_in_flight(SpaceId::Data, &info);
                     self.spaces[SpaceId::Data].pending |= info.retransmits;
@@ -2015,10 +2012,8 @@ where
                             self.spaces[SpaceId::Data].pending = Retransmits::default();
 
                             // Discard 0-RTT packets
-                            let sent_packets = mem::replace(
-                                &mut self.spaces[SpaceId::Data].sent_packets,
-                                BTreeMap::new(),
-                            );
+                            let sent_packets =
+                                mem::take(&mut self.spaces[SpaceId::Data].sent_packets);
                             for (_, packet) in sent_packets {
                                 self.remove_in_flight(SpaceId::Data, &packet);
                             }

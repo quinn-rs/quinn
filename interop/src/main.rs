@@ -433,7 +433,8 @@ impl State {
         Arc::make_mut(&mut crypto)
             .dangerous()
             .set_certificate_verifier(Arc::new(InteropVerifier(saw_cert.clone())));
-        let client_config = quinn::ClientConfig { crypto, transport };
+
+        let client_config = quinn::ClientConfig { transport, crypto };
 
         let conn = match self
             .endpoint
@@ -697,7 +698,7 @@ impl State {
         Arc::make_mut(&mut crypto)
             .dangerous()
             .set_certificate_verifier(Arc::new(InteropVerifier(saw_cert.clone())));
-        let client_config = quinn::ClientConfig { crypto, transport };
+        let client_config = quinn::ClientConfig { transport, crypto };
 
         let conn = match self
             .h3_client
