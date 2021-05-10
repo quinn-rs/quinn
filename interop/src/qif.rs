@@ -523,7 +523,7 @@ impl InputType {
         let ancestors = path
             .ancestors()
             .map(Path::file_name)
-            .filter_map(|e| e)
+            .flatten()
             .take(3)
             .collect::<Vec<_>>();
 

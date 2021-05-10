@@ -175,7 +175,7 @@ impl ConnectionInner {
             t.wake();
         }
 
-        let requests = mem::replace(&mut self.blocked_streams, BTreeMap::new());
+        let requests = mem::take(&mut self.blocked_streams);
         for (_, waker) in requests.into_iter().map(|(_, v)| v).flatten() {
             waker.wake();
         }
