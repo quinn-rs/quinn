@@ -329,7 +329,7 @@ where
     }
 
     fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
-        let mut calls = 0;
+        let mut transmits = 0;
         loop {
             while self.outgoing.len() < BATCH_SIZE {
                 match self.inner.poll_transmit() {
@@ -343,8 +343,10 @@ where
             match self.socket.poll_send(cx, self.outgoing.as_slices().0) {
                 Poll::Ready(Ok(n)) => {
                     self.outgoing.drain(..n);
-                    calls += 1;
-                    if calls == IO_LOOP_BOUND {
+                    // We count transmits instead of `poll_send` calls since the cost
+                    // of a `sendmmsg` still linearily increases with number of packets.
+                    transmits += n;
+                    if transmits >= IO_LOOP_BOUND {
                         return Ok(true);
                     }
                 }
