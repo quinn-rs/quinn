@@ -200,28 +200,33 @@ where
 
     #[allow(unused_mut)] // MSRV
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let endpoint = &mut *self.0.lock().unwrap();
+        let mut endpoint = self.0.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());
         }
-        loop {
-            let now = Instant::now();
-            let mut keep_going = false;
-            keep_going |= endpoint.drive_recv(cx, now)?;
-            endpoint.handle_events(cx);
-            keep_going |= endpoint.drive_send(cx)?;
-            if !keep_going {
-                break;
-            }
-        }
+
+        let now = Instant::now();
+        let mut keep_going = false;
+        keep_going |= endpoint.drive_recv(cx, now)?;
+        endpoint.handle_events(cx);
+        keep_going |= endpoint.drive_send(cx)?;
+
         if !endpoint.incoming.is_empty() {
             if let Some(task) = endpoint.incoming_reader.take() {
                 task.wake();
             }
         }
+
         if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
             Poll::Ready(Ok(()))
         } else {
+            drop(endpoint);
+            // If there is more work to do schedule the endpoint task again.
+            // `wake_by_ref()` is called outside the lock to minimize
+            // lock contention on a multithreaded runtime.
+            if keep_going {
+                cx.waker().wake_by_ref();
+            }
             Poll::Pending
         }
     }
