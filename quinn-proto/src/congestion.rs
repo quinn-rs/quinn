@@ -3,7 +3,10 @@
 use std::time::Instant;
 
 mod new_reno;
+mod cubic;
+
 pub use new_reno::{NewReno, NewRenoConfig};
+pub use cubic::{Cubic, CubicConfig};
 
 /// Common interface for different congestion controllers
 pub trait Controller: Send {
