@@ -138,13 +138,15 @@
                         </a>
                         
                         
+                        
+
                     </div>
                 </div>
 
                 
                 <div id="search-wrapper" class="hidden">
                     <form id="searchbar-outer" class="searchbar-outer">
-                        <input type="search" name="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
+                        <input type="search" id="searchbar" name="searchbar" placeholder="Search this book ..." aria-controls="searchresults-outer" aria-describedby="searchresults-header">
                     </form>
                     <div id="searchresults-outer" class="searchresults-outer hidden">
                         <div id="searchresults-header" class="searchresults-header"></div>
@@ -202,7 +204,7 @@ To improve on this, HTTP 2 introduced request multiplexing within a TCP data str
 However, data loss of a single packet will still block all response streams because they exist within the context of a single TCP stream.</p>
 <h3 id="connection-setup-duration"><a class="header" href="#connection-setup-duration">Connection Setup Duration</a></h3>
 <p>In the usual TCP + TLS + HTTP stack, TCP needs 6 handshake messages to set up a session between server and client. TLS performs its own, sending 4 messages for setting up an initial connection over TLS 1.3. By integrating the transport protocol and TLS handshakes, QUIC can make connection setup more efficient.</p>
-<h1 id="the-quic-protocol"><a class="header" href="#the-quic-protocol">The QUIC protocol</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="the-quic-protocol"><a class="header" href="#the-quic-protocol">The QUIC protocol</a></h1>
 <p><a href="https://en.wikipedia.org/wiki/QUIC">QUIC</a> is a general-purpose network protocol built on top of UDP.
 The protocol is still under development and standardized by the <a href="https://www.ietf.org/">IETF</a>. 
 Quinn strives to implement the latest <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-transport/">draft</a> but may lag a bit behind. Although QUIC is still in a draft phase, 
@@ -222,7 +224,7 @@ possible with existing protocols as they are hampered by legacy clients and midd
 <p>While QUIC's intentions are originally web-oriented, it offers interesting opportunities in other areas like game networking.
 One thing is for sure, QUIC has many great potentials and will serve us in the future with HTTP/3. </p>
 <p>In the upcoming chapter we will be discussing various aspects of QUIC also in relation to Quinn. </p>
-<h1 align="center"><img width="500" src="https://raw.githubusercontent.com/quinn-rs/quinn/51a3cea225670757cb844a342428e4e1341d9f13/docs/thumbnail.svg" /></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 align="center"><img width="500" src="https://raw.githubusercontent.com/quinn-rs/quinn/51a3cea225670757cb844a342428e4e1341d9f13/docs/thumbnail.svg" /></h1>
 <p><a href="https://docs.rs/quinn/"><img src="https://docs.rs/quinn/badge.svg" alt="Documentation" /></a>
 <a href="https://crates.io/crates/quinn"><img src="https://img.shields.io/crates/v/quinn.svg" alt="Crates.io" /></a>
 <a href="https://github.com/djc/quinn/actions?query=workflow%3ACI"><img src="https://github.com/quinn-rs/quinn/workflows/CI/badge.svg" alt="Build status" /></a>
@@ -321,7 +323,7 @@ crates will always be at least 6 months old at the time of release.</p>
 <li><strong>Benjamin Saunders</strong> - <em>Project owner &amp; founder</em></li>
 <li><strong>Jean-Christophe Begue</strong> - <em>Project collaborator, author of the HTTP/3 Implementation</em></li>
 </ul>
-<h1 id="certificates-1"><a class="header" href="#certificates-1">Certificates</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="certificates-1"><a class="header" href="#certificates-1">Certificates</a></h1>
 <p>In this chapter, we discuss the configuration of the certificates that are <strong>required</strong> for a working Quinn connection. </p>
 <p>As QUIC uses TLS 1.3 for authentication of connections, the server needs to provide the client with a certificate confirming its identity, and the client must be configured to trust the certificates it receives from the server. </p>
 <h2 id="insecure-connection"><a class="header" href="#insecure-connection">Insecure Connection</a></h2>
@@ -446,7 +448,7 @@ builder.add_certificate_authority(certificate)?;
 <p>This is the only thing you need to do for your client to trust a server certificate. </p>
 <p><br><hr></p>
 <p><a href="quinn/set-up-connection.html">Next</a>, let's have a look at how to set up a connection. </p>
-<h1 id="connection-setup"><a class="header" href="#connection-setup">Connection Setup</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="connection-setup"><a class="header" href="#connection-setup">Connection Setup</a></h1>
 <p>In the <a href="quinn/certificate.html">previous chapter</a> we looked at how to configure a certificate.
 This aspect is omitted in this chapter to prevent duplication. 
 But <strong>remember</strong> that this is required to get your <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a> up and running. 
@@ -518,7 +520,7 @@ The <code>SERVER_NAME</code> argument is the DNS name, matching the certificate 
 </span></code></pre></pre>
 <p><br><hr></p>
 <p><a href="quinn/data-transfer.html">Next up</a>, let's have a look at sending data over this connection.</p>
-<h1 id="data-transfer"><a class="header" href="#data-transfer">Data Transfer</a></h1>
+<div id="chapter_begin" style="break-before: page; page-break-before: always;"></div><h1 id="data-transfer"><a class="header" href="#data-transfer">Data Transfer</a></h1>
 <p>The <a href="quinn/set-up-connection.html">previous chapter</a> explained how to set up an <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a>
 and then get access to a <a href="https://docs.rs/quinn/latest/quinn/generic/struct.NewConnection.html">NewConnection</a> instance.
 This chapter continues with the subject of sending data over this connection.</p>
