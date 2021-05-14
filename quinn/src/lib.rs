@@ -50,9 +50,9 @@ mod send_stream;
 mod work_limiter;
 
 pub use proto::{
-    crypto, ApplicationClose, Chunk, ClientConfig, ConfigError, ConnectError, ConnectionClose,
-    ConnectionError, EndpointConfig, IdleTimeout, ServerConfig, StreamId, Transmit,
-    TransportConfig, VarInt,
+    congestion, crypto, ApplicationClose, Chunk, ClientConfig, ConfigError, ConnectError,
+    ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout, ServerConfig, StreamId,
+    Transmit, TransportConfig, VarInt,
 };
 
 pub use crate::connection::{

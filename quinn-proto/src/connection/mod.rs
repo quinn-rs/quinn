@@ -48,7 +48,7 @@ mod pacing;
 mod packet_builder;
 use packet_builder::PacketBuilder;
 
-mod paths;
+pub(crate) mod paths;
 use paths::PathData;
 
 mod send_buffer;
@@ -74,6 +74,7 @@ pub use streams::{
 };
 
 mod timer;
+use crate::congestion::Controller;
 use timer::{Timer, TimerTable};
 
 /// Protocol state and logic for a single QUIC connection
@@ -127,7 +128,6 @@ pub struct Connection {
     /// The "real" local IP address which was was used to receive the initial packet.
     /// This is only populated for the server case, and if known
     local_ip: Option<IpAddr>,
-
     path: PathData,
     prev_path: Option<PathData>,
     state: State,
@@ -757,7 +757,11 @@ impl Connection {
             if pad_datagram {
                 builder.pad_to(MIN_INITIAL_SIZE);
             }
+            let last_packet_number = builder.exact_number;
             builder.finish_and_track(now, self, sent_frames, &mut buf);
+            self.path
+                .congestion
+                .on_sent(now, buf.len() as u64, last_packet_number);
         }
 
         self.app_limited = buf.is_empty() && !congestion_blocked;
@@ -1083,6 +1087,11 @@ impl Connection {
         self.path.rtt.get()
     }
 
+    /// Current state of this connection's congestion controller, for debugging purposes
+    pub fn congestion_state(&self) -> &dyn Controller {
+        self.path.congestion.as_ref()
+    }
+
     fn on_ack_received(
         &mut self,
         now: Instant,
@@ -1131,6 +1140,13 @@ impl Connection {
                 self.on_packet_acked(now, space, info);
             }
         }
+
+        self.path.congestion.on_end_acks(
+            now,
+            self.in_flight.bytes,
+            self.app_limited,
+            self.spaces[space].largest_acked_packet,
+        );
 
         if new_largest && ack_eliciting_acked {
             let ack_delay = if space != SpaceId::Data {
@@ -1196,7 +1212,7 @@ impl Connection {
                 self.stats.path.congestion_events += 1;
                 self.path
                     .congestion
-                    .on_congestion_event(now, largest_sent_time, false);
+                    .on_congestion_event(now, largest_sent_time, false, 0);
             }
         }
     }
@@ -1213,7 +1229,7 @@ impl Connection {
                 info.time_sent,
                 info.size.into(),
                 self.app_limited,
-                self.path.rtt.get(),
+                &self.path.rtt,
             );
         }
 
@@ -1290,6 +1306,7 @@ impl Connection {
         let lost_send_time = now - loss_delay;
         let largest_acked_packet = self.spaces[pn_space].largest_acked_packet.unwrap();
         let packet_threshold = self.config.packet_threshold as u64;
+        let mut size_of_lost_packets = 0u64;
 
         let space = &mut self.spaces[pn_space];
         space.loss_time = None;
@@ -1297,6 +1314,7 @@ impl Connection {
             if info.time_sent <= lost_send_time || largest_acked_packet >= packet + packet_threshold
             {
                 lost_packets.push(packet);
+                size_of_lost_packets += info.size as u64;
             } else {
                 let next_loss_time = info.time_sent + loss_delay;
                 space.loss_time = Some(
@@ -1336,6 +1354,7 @@ impl Connection {
                     now,
                     largest_lost_sent,
                     in_persistent_congestion,
+                    size_of_lost_packets,
                 );
             }
         }
@@ -2945,7 +2964,7 @@ impl Connection {
 
     /// Number of bytes worth of non-ack-only packets that may be sent
     #[cfg(test)]
-    pub(crate) fn congestion_state(&self) -> u64 {
+    pub(crate) fn congestion_window(&self) -> u64 {
         self.path
             .congestion
             .window()
