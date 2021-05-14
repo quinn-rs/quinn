@@ -538,7 +538,7 @@ impl PlainHeader {
             Ok(PlainHeader::Short {
                 first,
                 spin,
-                dst_cid: ConnectionId::new(&buf.copy_to_bytes(local_cid_len)),
+                dst_cid: ConnectionId::from_buf(buf, local_cid_len),
             })
         } else {
             let version = buf.get::<u32>()?;
