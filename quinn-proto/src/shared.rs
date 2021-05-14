@@ -75,7 +75,20 @@ impl ConnectionId {
             len: bytes.len() as u8,
             bytes: [0; MAX_CID_SIZE],
         };
-        res.bytes[..bytes.len()].clone_from_slice(&bytes);
+        res.bytes[..bytes.len()].copy_from_slice(bytes);
+        res
+    }
+
+    /// Constructs cid by reading `len` bytes from a `Buf`
+    ///
+    /// Callers need to assure that `buf.remaining() >= len`
+    pub(crate) fn from_buf(buf: &mut impl Buf, len: usize) -> Self {
+        debug_assert!(len <= MAX_CID_SIZE);
+        let mut res = Self {
+            len: len as u8,
+            bytes: [0; MAX_CID_SIZE],
+        };
+        buf.copy_to_slice(&mut res[..len]);
         res
     }
 
@@ -83,7 +96,7 @@ impl ConnectionId {
     pub(crate) fn decode_long(buf: &mut impl Buf) -> Option<Self> {
         let len = buf.get::<u8>().ok()? as usize;
         match len > MAX_CID_SIZE || buf.remaining() < len {
-            false => Some(ConnectionId::new(&buf.copy_to_bytes(len))),
+            false => Some(Self::from_buf(buf, len)),
             true => None,
         }
     }
