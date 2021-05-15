@@ -1,9 +1,8 @@
 use std::sync::Arc;
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
 use super::{Controller, ControllerFactory};
 use std::cmp;
-
 
 /// CUBIC Constants.
 ///
@@ -47,21 +46,18 @@ impl State {
     fn w_cubic(&self, t: Duration, max_datagram_size: u64) -> f64 {
         let w_max = self.w_max / max_datagram_size as f64;
 
-        (C * (t.as_secs_f64() - self.k).powi(3) + w_max) *
-            max_datagram_size as f64
+        (C * (t.as_secs_f64() - self.k).powi(3) + w_max) * max_datagram_size as f64
     }
 
     // W_est(t) = w_max * beta_cubic + 3 * (1 - beta_cubic) / (1 + beta_cubic) *
     // (t / RTT) (Eq. 4)
     fn w_est(&self, t: Duration, rtt: Duration, max_datagram_size: u64) -> f64 {
         let w_max = self.w_max / max_datagram_size as f64;
-        (w_max * BETA_CUBIC +
-            3.0 * (1.0 - BETA_CUBIC) / (1.0 + BETA_CUBIC) * t.as_secs_f64() /
-                rtt.as_secs_f64()) *
-            max_datagram_size as f64
+        (w_max * BETA_CUBIC
+            + 3.0 * (1.0 - BETA_CUBIC) / (1.0 + BETA_CUBIC) * t.as_secs_f64() / rtt.as_secs_f64())
+            * max_datagram_size as f64
     }
 }
-
 
 /// A simple, standard congestion controller
 #[derive(Debug, Clone)]
@@ -95,8 +91,20 @@ impl Cubic {
 }
 
 impl Controller for Cubic {
-    fn on_ack(&mut self, now: Instant, sent: Instant, bytes: u64, app_limited: bool, min_rtt: Duration) {
-        if app_limited || self.recovery_start_time.map(|recovery_start_time| sent <= recovery_start_time).unwrap_or(false) {
+    fn on_ack(
+        &mut self,
+        now: Instant,
+        sent: Instant,
+        bytes: u64,
+        app_limited: bool,
+        min_rtt: Duration,
+    ) {
+        if app_limited
+            || self
+                .recovery_start_time
+                .map(|recovery_start_time| sent <= recovery_start_time)
+                .unwrap_or(false)
+        {
             return;
         }
 
@@ -117,7 +125,6 @@ impl Controller for Cubic {
             // Congestion avoidance.
             let ca_start_time;
 
-
             match self.recovery_start_time {
                 Some(t) => ca_start_time = t,
                 None => {
@@ -131,14 +138,17 @@ impl Controller for Cubic {
                 }
             }
 
-
             let t = now - ca_start_time;
 
             // w_cubic(t + rtt)
-            let w_cubic = self.cubic_state.w_cubic(t + min_rtt, self.config.max_datagram_size);
+            let w_cubic = self
+                .cubic_state
+                .w_cubic(t + min_rtt, self.config.max_datagram_size);
 
             // w_est(t)
-            let w_est = self.cubic_state.w_est(t, min_rtt, self.config.max_datagram_size);
+            let w_est = self
+                .cubic_state
+                .w_est(t, min_rtt, self.config.max_datagram_size);
 
             let mut cubic_cwnd = self.window;
 
@@ -147,8 +157,8 @@ impl Controller for Cubic {
                 cubic_cwnd = cmp::max(cubic_cwnd, w_est as u64);
             } else if cubic_cwnd < w_cubic as u64 {
                 // Concave region or convex region use same increment.
-                let cubic_inc = (w_cubic - cubic_cwnd as f64) / cubic_cwnd as f64 *
-                    self.config.max_datagram_size as f64;
+                let cubic_inc = (w_cubic - cubic_cwnd as f64) / cubic_cwnd as f64
+                    * self.config.max_datagram_size as f64;
 
                 cubic_cwnd += cubic_inc as u64;
             }
@@ -166,8 +176,17 @@ impl Controller for Cubic {
         }
     }
 
-    fn on_congestion_event(&mut self, now: Instant, sent: Instant, _is_persistent_congestion: bool) {
-        if self.recovery_start_time.map(|recovery_start_time| sent <= recovery_start_time).unwrap_or(false) {
+    fn on_congestion_event(
+        &mut self,
+        now: Instant,
+        sent: Instant,
+        _is_persistent_congestion: bool,
+    ) {
+        if self
+            .recovery_start_time
+            .map(|recovery_start_time| sent <= recovery_start_time)
+            .unwrap_or(false)
+        {
             return;
         }
 
@@ -176,8 +195,7 @@ impl Controller for Cubic {
         // Fast convergence
         if self.cubic_state.w_max < self.cubic_state.w_last_max {
             self.cubic_state.w_last_max = self.cubic_state.w_max;
-            self.cubic_state.w_max =
-                self.cubic_state.w_max as f64 * (1.0 + BETA_CUBIC) / 2.0;
+            self.cubic_state.w_max = self.cubic_state.w_max as f64 * (1.0 + BETA_CUBIC) / 2.0;
         } else {
             self.cubic_state.w_last_max = self.cubic_state.w_max;
         }
@@ -191,8 +209,7 @@ impl Controller for Cubic {
         self.window = self.ssthresh;
         self.cubic_state.k = self.cubic_state.cubic_k(self.config.max_datagram_size);
 
-        self.cubic_state.cwnd_inc =
-            (self.cubic_state.cwnd_inc as f64 * BETA_CUBIC) as u64;
+        self.cubic_state.cwnd_inc = (self.cubic_state.cwnd_inc as f64 * BETA_CUBIC) as u64;
     }
 
     fn window(&self) -> u64 {

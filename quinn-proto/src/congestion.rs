@@ -1,12 +1,12 @@
 //! Logic for controlling the rate at which data is sent
 
-use std::time::{Instant, Duration};
+use std::time::{Duration, Instant};
 
-mod new_reno;
 mod cubic;
+mod new_reno;
 
-pub use new_reno::{NewReno, NewRenoConfig};
 pub use cubic::{Cubic, CubicConfig};
+pub use new_reno::{NewReno, NewRenoConfig};
 
 /// Common interface for different congestion controllers
 pub trait Controller: Send {
@@ -14,7 +14,14 @@ pub trait Controller: Send {
     ///
     /// `app_limited` indicates whether the connection was blocked on outgoing
     /// application data prior to receiving these acknowledgements.
-    fn on_ack(&mut self, now: Instant, sent: Instant, bytes: u64, app_limited: bool, min_rtt: Duration);
+    fn on_ack(
+        &mut self,
+        now: Instant,
+        sent: Instant,
+        bytes: u64,
+        app_limited: bool,
+        min_rtt: Duration,
+    );
 
     /// Packets were deemed lost or marked congested
     ///
