@@ -1164,7 +1164,7 @@ where
             // path, so as to ignore any ACKs from older paths still coming in.
             self.path
                 .congestion
-                .on_ack(now, info.time_sent, info.size.into(), self.app_limited);
+                .on_ack(now, info.time_sent, info.size.into(), self.app_limited, self.path.rtt.get());
         }
 
         // Update state for confirmed delivery of frames

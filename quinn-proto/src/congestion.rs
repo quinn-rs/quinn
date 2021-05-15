@@ -1,6 +1,6 @@
 //! Logic for controlling the rate at which data is sent
 
-use std::time::Instant;
+use std::time::{Instant, Duration};
 
 mod new_reno;
 mod cubic;
@@ -14,7 +14,7 @@ pub trait Controller: Send {
     ///
     /// `app_limited` indicates whether the connection was blocked on outgoing
     /// application data prior to receiving these acknowledgements.
-    fn on_ack(&mut self, now: Instant, sent: Instant, bytes: u64, app_limited: bool);
+    fn on_ack(&mut self, now: Instant, sent: Instant, bytes: u64, app_limited: bool, min_rtt: Duration);
 
     /// Packets were deemed lost or marked congested
     ///

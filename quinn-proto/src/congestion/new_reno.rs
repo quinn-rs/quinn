@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Instant, Duration};
 
 use super::{Controller, ControllerFactory};
 
@@ -33,7 +33,7 @@ impl NewReno {
 }
 
 impl Controller for NewReno {
-    fn on_ack(&mut self, _now: Instant, sent: Instant, bytes: u64, app_limited: bool) {
+    fn on_ack(&mut self, _now: Instant, sent: Instant, bytes: u64, app_limited: bool, _min_rtt: Duration) {
         if app_limited || sent <= self.recovery_start_time {
             return;
         }

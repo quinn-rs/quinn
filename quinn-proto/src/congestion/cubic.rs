@@ -94,10 +94,8 @@ impl Cubic {
     }
 }
 
-const MIN_RTT: Duration = Duration::from_millis(500); // TODO @frank inject this
-
 impl Controller for Cubic {
-    fn on_ack(&mut self, now: Instant, sent: Instant, bytes: u64, app_limited: bool) {
+    fn on_ack(&mut self, now: Instant, sent: Instant, bytes: u64, app_limited: bool, min_rtt: Duration) {
         if app_limited || self.recovery_start_time.map(|recovery_start_time| sent <= recovery_start_time).unwrap_or(false) {
             return;
         }
@@ -137,10 +135,10 @@ impl Controller for Cubic {
             let t = now - ca_start_time;
 
             // w_cubic(t + rtt)
-            let w_cubic = self.cubic_state.w_cubic(t + MIN_RTT, self.config.max_datagram_size);
+            let w_cubic = self.cubic_state.w_cubic(t + min_rtt, self.config.max_datagram_size);
 
             // w_est(t)
-            let w_est = self.cubic_state.w_est(t, MIN_RTT, self.config.max_datagram_size);
+            let w_est = self.cubic_state.w_est(t, min_rtt, self.config.max_datagram_size);
 
             let mut cubic_cwnd = self.window;
 
