@@ -274,7 +274,6 @@ fn transport_config(opt: &Opt) -> quinn::TransportConfig {
     config
         .max_concurrent_uni_streams(opt.max_streams as u64)
         .unwrap();
-    config.congestion_controller_factory(Arc::new(quinn_proto::congestion::CubicConfig::default()));
     config
 }
 

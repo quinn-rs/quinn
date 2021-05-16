@@ -12,7 +12,6 @@ bytes = "1"
 futures = "0.3.8"
 hdrhistogram = { version = "7.2", default-features = false }
 quinn = { path = "../quinn" }
-quinn-proto = { path = "../quinn-proto" }
 rcgen = "0.8"
 rustls = "0.19"
 structopt = "0.3"
