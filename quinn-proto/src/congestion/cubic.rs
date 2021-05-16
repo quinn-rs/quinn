@@ -97,7 +97,7 @@ impl Controller for Cubic {
         sent: Instant,
         bytes: u64,
         app_limited: bool,
-        min_rtt: Duration,
+        rtt: Duration,
     ) {
         if app_limited
             || self
@@ -143,12 +143,12 @@ impl Controller for Cubic {
             // w_cubic(t + rtt)
             let w_cubic = self
                 .cubic_state
-                .w_cubic(t + min_rtt, self.config.max_datagram_size);
+                .w_cubic(t + rtt, self.config.max_datagram_size);
 
             // w_est(t)
             let w_est = self
                 .cubic_state
-                .w_est(t, min_rtt, self.config.max_datagram_size);
+                .w_est(t, rtt, self.config.max_datagram_size);
 
             let mut cubic_cwnd = self.window;
 

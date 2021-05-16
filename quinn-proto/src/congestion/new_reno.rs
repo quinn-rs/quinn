@@ -39,7 +39,7 @@ impl Controller for NewReno {
         sent: Instant,
         bytes: u64,
         app_limited: bool,
-        _min_rtt: Duration,
+        _rtt: Duration,
     ) {
         if app_limited || sent <= self.recovery_start_time {
             return;

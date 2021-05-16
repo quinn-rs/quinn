@@ -20,7 +20,7 @@ pub trait Controller: Send {
         sent: Instant,
         bytes: u64,
         app_limited: bool,
-        min_rtt: Duration,
+        rtt: Duration,
     );
 
     /// Packets were deemed lost or marked congested
