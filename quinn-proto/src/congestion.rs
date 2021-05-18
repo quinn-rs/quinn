@@ -14,14 +14,7 @@ pub trait Controller: Send {
     ///
     /// `app_limited` indicates whether the connection was blocked on outgoing
     /// application data prior to receiving these acknowledgements.
-    fn on_ack(
-        &mut self,
-        now: Instant,
-        sent: Instant,
-        bytes: u64,
-        app_limited: bool,
-        rtt: Duration,
-    );
+    fn on_ack(&mut self, now: Instant, sent: Instant, bytes: u64, app_limited: bool, rtt: Duration);
 
     /// Packets were deemed lost or marked congested
     ///

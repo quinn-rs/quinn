@@ -39,7 +39,7 @@ impl State {
     // K = cbrt(w_max * (1 - beta_cubic) / C) (Eq. 2)
     fn cubic_k(&self, max_datagram_size: u64) -> f64 {
         let w_max = self.w_max / max_datagram_size as f64;
-        libm::cbrt(w_max * (1.0 - BETA_CUBIC) / C)
+        (w_max * (1.0 - BETA_CUBIC) / C).cbrt()
     }
 
     // W_cubic(t) = C * (t - K)^3 - w_max (Eq. 1)
