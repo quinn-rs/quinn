@@ -71,8 +71,6 @@ pub struct Cubic {
     /// The time when QUIC first detects a loss, causing it to enter recovery. When a packet sent
     /// after this time is acknowledged, QUIC exits recovery.
     recovery_start_time: Option<Instant>,
-    /// Bytes which had been acked by the peer since leaving slow start
-    bytes_acked: u64,
     cubic_state: State,
 }
 
@@ -84,7 +82,6 @@ impl Cubic {
             ssthresh: u64::MAX,
             recovery_start_time: None,
             config,
-            bytes_acked: 0,
             cubic_state: Default::default(),
         }
     }
@@ -111,16 +108,6 @@ impl Controller for Cubic {
         if self.window < self.ssthresh {
             // Slow start
             self.window += bytes;
-
-            if self.window >= self.ssthresh {
-                // Exiting slow start
-                // Initialize `bytes_acked` for congestion avoidance. The idea
-                // here is that any bytes over `sshthresh` will already be counted
-                // towards the congestion avoidance phase - independent of when
-                // how close to `sshthresh` the `window` was when switching states,
-                // and independent of datagram sizes.
-                self.bytes_acked = self.window - self.ssthresh;
-            }
         } else {
             // Congestion avoidance.
             let ca_start_time;
