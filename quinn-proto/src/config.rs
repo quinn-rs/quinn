@@ -492,9 +492,10 @@ where
         self
     }
 
-    /// Maximum number of incoming connections to buffer.
+    /// Maximum number of simultaneous connections to accept.
     ///
-    /// Accepting a connection removes it from the buffer, so this does not need to be large.
+    /// New incoming connections are only accepted if the total number of incoming or outgoing
+    /// connections is less than this. Outgoing connections are unaffected.
     pub fn concurrent_connections(&mut self, value: u32) -> &mut Self {
         self.concurrent_connections = value;
         self
