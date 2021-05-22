@@ -16,13 +16,10 @@ use crate::{connection::ConnectionRef, VarInt};
 /// A stream that can only be used to receive data
 ///
 /// `stop(0)` is implicitly called on drop unless:
-/// - A variant of [`ReadError`] has been emitted by [`read()`], [`read_exact()`] or [`read_unordered()`]
+/// - A variant of [`ReadError`] has been yielded by a read call
 /// - [`stop()`] was called explicitly
 ///
 /// [`ReadError`]: crate::ReadError
-/// [`read()`]: RecvStream::read
-/// [`read_exact()`]: RecvStream::read_exact
-/// [`read_unordered()`]: RecvStream::read_unordered
 /// [`stop()`]: RecvStream::stop
 #[derive(Debug)]
 pub struct RecvStream<S>
@@ -53,16 +50,6 @@ where
     /// Read data contiguously from the stream.
     ///
     /// Yields the number of bytes read into `buf` on success, or `None` if the stream was finished.
-    ///
-    /// Applications involving bulk data transfer should consider using unordered reads for
-    /// improved performance.
-    ///
-    /// # Panics
-    /// - If used after [`read_unordered()`] on the same stream.
-    ///   This is forbidden because an unordered read could consume a segment of data from a
-    ///   location other than the start of the receive buffer, making it impossible for future
-    ///
-    /// [`read_unordered()`]: RecvStream::read_unordered
     pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'a, S> {
         Read {
             stream: self,
@@ -117,8 +104,8 @@ where
     /// offset in the stream. If `ordered` is `true`, the chunk's offset will be immediately after
     /// the last data yielded by `read()` or `read_chunk()`. If `ordered` is `false`, segments may
     /// be received in any order, and the `Chunk`'s `offset` field can be used to determine
-    /// ordering in the caller. Unordered reads have reduced overhead and higher throughput, and
-    /// should therefore be preferred when applicable.
+    /// ordering in the caller. Unordered reads are less prone to head-of-line blocking within a
+    /// stream, but require the application to manage reassembling the original data.
     ///
     /// Slightly more efficient than `read` due to not copying. Chunk boundaries do not correspond
     /// to peer writes, and hence cannot be used as framing.
