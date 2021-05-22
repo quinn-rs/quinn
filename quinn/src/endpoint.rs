@@ -208,7 +208,7 @@ where
         let now = Instant::now();
         let mut keep_going = false;
         keep_going |= endpoint.drive_recv(cx, now)?;
-        endpoint.handle_events(cx);
+        keep_going |= endpoint.handle_events(cx);
         keep_going |= endpoint.drive_send(cx)?;
 
         if !endpoint.incoming.is_empty() {
@@ -368,9 +368,10 @@ where
         }
     }
 
-    fn handle_events(&mut self, cx: &mut Context) {
+    fn handle_events(&mut self, cx: &mut Context) -> bool {
         use EndpointEvent::*;
-        loop {
+
+        for _ in 0..IO_LOOP_BOUND {
             match self.events.poll_next_unpin(cx) {
                 Poll::Ready(Some((ch, event))) => match event {
                     Proto(e) => {
@@ -394,10 +395,12 @@ where
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
-                    return;
+                    return false;
                 }
             }
         }
+
+        true
     }
 }
 
