@@ -287,25 +287,24 @@ where
         let span = info_span!("drive", id = conn.handle.0);
         let _guard = span.enter();
 
-        loop {
-            let mut keep_going = false;
-            if let Err(e) = conn.process_conn_events(cx) {
-                conn.terminate(e);
-                return Poll::Ready(());
-            }
-            conn.drive_transmit();
-            // If a timer expires, there might be more to transmit. When we transmit something, we
-            // might need to reset a timer. Hence, we must loop until neither happens.
-            keep_going |= conn.drive_timer(cx);
-            conn.forward_endpoint_events();
-            conn.forward_app_events();
-            if !keep_going || conn.inner.is_drained() {
-                break;
-            }
+        if let Err(e) = conn.process_conn_events(cx) {
+            conn.terminate(e);
+            return Poll::Ready(());
         }
+        let mut keep_going = conn.drive_transmit();
+        // If a timer expires, there might be more to transmit. When we transmit something, we
+        // might need to reset a timer. Hence, we must loop until neither happens.
+        keep_going |= conn.drive_timer(cx);
+        conn.forward_endpoint_events();
+        conn.forward_app_events();
 
         if !conn.inner.is_drained() {
-            conn.driver = Some(cx.waker().clone());
+            if keep_going {
+                // If the connection hasn't processed all tasks, schedule it again
+                cx.waker().wake_by_ref();
+            } else {
+                conn.driver = Some(cx.waker().clone());
+            }
             return Poll::Pending;
         }
         if conn.error.is_none() {
@@ -799,17 +798,32 @@ impl<S> ConnectionInner<S>
 where
     S: proto::crypto::Session,
 {
-    fn drive_transmit(&mut self) {
+    fn drive_transmit(&mut self) -> bool {
         let now = Instant::now();
+        let mut transmits = 0;
 
         let max_datagrams = caps().max_gso_segments;
 
         while let Some(t) = self.inner.poll_transmit(now, max_datagrams) {
+            transmits += match t.segment_size {
+                None => 1,
+                Some(s) => (t.contents.len() + s - 1) / s, // round up
+            };
             // If the endpoint driver is gone, noop.
             let _ = self
                 .endpoint_events
                 .unbounded_send((self.handle, EndpointEvent::Transmit(t)));
+
+            if transmits >= MAX_TRANSMIT_DATAGRAMS {
+                // TODO: What isn't ideal here yet is that if we don't poll all
+                // datagrams that could be sent we don't go into the `app_limited`
+                // state and CWND continues to grow until we get here the next time.
+                // See https://github.com/quinn-rs/quinn/issues/1126
+                return true;
+            }
         }
+
+        false
     }
 
     fn forward_endpoint_events(&mut self) {
@@ -1073,3 +1087,9 @@ pub enum SendDatagramError {
     #[error("connection closed: {0}")]
     ConnectionClosed(#[source] ConnectionError),
 }
+
+/// The maximum amount of datagrams which will be produced in a single `drive_transmit` call
+///
+/// This limits the amount of CPU resources consumed by datagram generation,
+/// and allows other tasks (like receiving ACKs) to run in between.
+const MAX_TRANSMIT_DATAGRAMS: usize = 20;
