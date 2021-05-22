@@ -48,6 +48,9 @@ struct Opt {
     /// Receive buffer size in bytes
     #[structopt(long, default_value = "2097152")]
     recv_buffer_size: usize,
+    /// Specify the local socket address
+    #[structopt(long)]
+    local_addr: Option<SocketAddr>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -79,17 +82,18 @@ async fn run(opt: Opt) -> Result<()> {
 
     info!("connecting to {} at {}", host_name, addr);
 
-    let bind_addr = if addr.is_ipv4() {
-        Ipv4Addr::UNSPECIFIED.into()
-    } else {
-        Ipv6Addr::UNSPECIFIED.into()
-    };
+    let bind_addr = opt.local_addr.unwrap_or_else(|| {
+        let unspec = if addr.is_ipv4() {
+            Ipv4Addr::UNSPECIFIED.into()
+        } else {
+            Ipv6Addr::UNSPECIFIED.into()
+        };
+        SocketAddr::new(unspec, 0)
+    });
 
-    let socket = bind_socket(
-        SocketAddr::new(bind_addr, 0),
-        opt.send_buffer_size,
-        opt.recv_buffer_size,
-    )?;
+    info!("local addr {:?}", bind_addr);
+
+    let socket = bind_socket(bind_addr, opt.send_buffer_size, opt.recv_buffer_size)?;
 
     let endpoint = quinn::EndpointBuilder::default();
 
