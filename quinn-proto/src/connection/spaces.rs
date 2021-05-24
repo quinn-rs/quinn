@@ -148,10 +148,11 @@ where
         x
     }
 
-    pub(crate) fn can_send(&self) -> bool {
-        !self.pending.is_empty()
-            || (self.permit_ack_only && !self.pending_acks.is_empty())
-            || self.ping_pending
+    pub(crate) fn can_send(&self) -> SendableFrames {
+        let acks = self.permit_ack_only && !self.pending_acks.is_empty();
+        let other = !self.pending.is_empty() || self.ping_pending;
+
+        SendableFrames { acks, other }
     }
 
     /// Verifies sanity of an ECN block and returns whether congestion was encountered.
@@ -410,6 +411,28 @@ impl Dedup {
             // Left of window
             true
         }
+    }
+}
+
+/// Indicates which data is available for sending
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub(crate) struct SendableFrames {
+    pub acks: bool,
+    pub other: bool,
+}
+
+impl SendableFrames {
+    /// Returns that no data is available for sending
+    pub fn empty() -> Self {
+        Self {
+            acks: false,
+            other: false,
+        }
+    }
+
+    /// Whether no data is sendable
+    pub fn is_empty(&self) -> bool {
+        !self.acks && !self.other
     }
 }
 

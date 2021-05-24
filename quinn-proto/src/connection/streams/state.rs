@@ -295,7 +295,9 @@ impl StreamsState {
     }
 
     pub fn can_send(&self) -> bool {
-        !self.pending.is_empty()
+        self.pending
+            .peek()
+            .map_or(false, |head| !head.queue.borrow().is_empty())
     }
 
     pub fn write_control_frames(
@@ -435,6 +437,7 @@ impl StreamsState {
                 break;
             }
 
+            let num_levels = self.pending.len();
             let mut level = match self.pending.peek_mut() {
                 Some(x) => x,
                 None => break,
@@ -447,8 +450,11 @@ impl StreamsState {
             let id = match level.queue.get_mut().pop_front() {
                 Some(x) => x,
                 None => {
-                    PeekMut::pop(level);
-                    continue;
+                    debug_assert!(
+                        num_levels == 1,
+                        "An empty queue is only allowed for a single level"
+                    );
+                    break;
                 }
             };
             let stream = match self.send.get_mut(&id) {
@@ -473,13 +479,26 @@ impl StreamsState {
             if fin {
                 stream.fin_pending = false;
             }
+
             if stream.is_pending() {
                 if level.priority == stream.priority {
+                    // Enqueue for the same level
                     level.queue.get_mut().push_back(id);
                 } else {
-                    drop(level);
+                    // Enqueue for a different level. If the current level is empty, drop it
+                    if level.queue.borrow().is_empty() && num_levels != 1 {
+                        // We keep the last level around even in empty form so that
+                        // the next insert doesn't have to reallocate the queue
+                        PeekMut::pop(level);
+                    } else {
+                        drop(level);
+                    }
                     push_pending(&mut self.pending, id, stream.priority);
                 }
+            } else if level.queue.borrow().is_empty() && num_levels != 1 {
+                // We keep the last level around even in empty form so that
+                // the next insert doesn't have to reallocate the queue
+                PeekMut::pop(level);
             }
 
             let meta = frame::StreamMeta { id, offsets, fin };
@@ -1157,6 +1176,76 @@ mod tests {
         assert_eq!(meta[0].id, id_high);
         assert_eq!(meta[1].id, id_mid);
         assert_eq!(meta[2].id, id_low);
+
+        assert!(!server.can_send());
+        assert_eq!(server.pending.len(), 1);
+    }
+
+    #[test]
+    fn requeue_stream_priority() {
+        let mut server = make(Side::Server);
+        server.set_params(&TransportParameters {
+            initial_max_streams_bidi: 3u32.into(),
+            initial_max_data: 1000u32.into(),
+            initial_max_stream_data_bidi_remote: 1000u32.into(),
+            ..Default::default()
+        });
+
+        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
+        let mut streams = Streams {
+            state: &mut server,
+            conn_state: &state,
+        };
+
+        let id_high = streams.open(Dir::Bi).unwrap();
+        let id_mid = streams.open(Dir::Bi).unwrap();
+
+        let mut mid = SendStream {
+            id: id_mid,
+            state: &mut server,
+            pending: &mut pending,
+            conn_state: &state,
+        };
+        assert_eq!(mid.write(b"mid").unwrap(), 3);
+        assert_eq!(server.pending.len(), 1);
+
+        let mut high = SendStream {
+            id: id_high,
+            state: &mut server,
+            pending: &mut pending,
+            conn_state: &state,
+        };
+        high.set_priority(1).unwrap();
+        assert_eq!(high.write(&[0; 200]).unwrap(), 200);
+        assert_eq!(server.pending.len(), 2);
+
+        // Requeue the high priority stream to lowest priority. The initial send
+        // still uses high priority since it's queued that way. After that it will
+        // switch to low priority
+        let mut high = SendStream {
+            id: id_high,
+            state: &mut server,
+            pending: &mut pending,
+            conn_state: &state,
+        };
+        high.set_priority(-1).unwrap();
+
+        let mut buf = Vec::with_capacity(1000);
+        let meta = server.write_stream_frames(&mut buf, 40);
+        assert_eq!(meta.len(), 1);
+        assert_eq!(meta[0].id, id_high);
+
+        // After requeuing we should end up with 2 priorities - not 3
+        assert_eq!(server.pending.len(), 2);
+
+        // Send the remaining data. The initial mid priority one should go first now
+        let meta = server.write_stream_frames(&mut buf, 1000);
+        assert_eq!(meta.len(), 2);
+        assert_eq!(meta[0].id, id_mid);
+        assert_eq!(meta[1].id, id_high);
+
+        assert!(!server.can_send());
+        assert_eq!(server.pending.len(), 1);
     }
 
     #[test]
