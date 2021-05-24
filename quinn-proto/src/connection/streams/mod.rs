@@ -310,6 +310,21 @@ fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: 
             return;
         }
     }
+
+    // If there is only a single level and it's empty, repurpose it for the
+    // required priority
+    if pending.len() == 1 {
+        if let Some(mut first) = pending.peek_mut() {
+            let mut queue = first.queue.borrow_mut();
+            if queue.is_empty() {
+                queue.push_back(id);
+                drop(queue);
+                first.priority = priority;
+                return;
+            }
+        }
+    }
+
     let mut queue = VecDeque::new();
     queue.push_back(id);
     pending.push(PendingLevel {
