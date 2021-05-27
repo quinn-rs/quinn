@@ -23,7 +23,8 @@ use crate::{
     builders::EndpointBuilder,
     connection::Connecting,
     platform::{RecvMeta, UdpSocket, BATCH_SIZE},
-    ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND,
+    work_limiter::WorkLimiter,
+    ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -265,6 +266,7 @@ where
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
     driver_lost: bool,
+    recv_limiter: WorkLimiter,
     recv_buf: Box<[u8]>,
     idle: Broadcast,
 }
@@ -274,7 +276,7 @@ where
     S: proto::crypto::Session + 'static,
 {
     fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
-        let mut recvd = 0;
+        self.recv_limiter.start_cycle();
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
         let mut iovs = MaybeUninit::<[IoSliceMut<'a>; BATCH_SIZE]>::uninit();
         self.recv_buf
@@ -290,7 +292,7 @@ where
         loop {
             match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
-                    recvd += msgs;
+                    self.recv_limiter.record_work(msgs);
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
                         let data = buf[0..meta.len].into();
                         match self
@@ -326,10 +328,13 @@ where
                     return Err(e);
                 }
             }
-            if recvd >= IO_LOOP_BOUND {
+            if !self.recv_limiter.allow_work() {
+                self.recv_limiter.finish_cycle();
                 return Ok(true);
             }
         }
+
+        self.recv_limiter.finish_cycle();
         Ok(false)
     }
 
@@ -518,6 +523,7 @@ where
             ref_count: 0,
             driver_lost: false,
             recv_buf: recv_buf.into(),
+            recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
             idle: Broadcast::new(),
         })))
     }
