@@ -50,6 +50,8 @@ let (endpoint, _) = builder.bind(&\"[::]:0\".parse().unwrap()).unwrap();
 //! encryption alone.
 #![warn(missing_docs)]
 
+use std::time::Duration;
+
 mod broadcast;
 mod builders;
 mod connection;
@@ -58,6 +60,7 @@ mod mutex;
 mod platform;
 mod recv_stream;
 mod send_stream;
+mod work_limiter;
 
 pub use proto::{
     crypto, ApplicationClose, Certificate, CertificateChain, Chunk, ConfigError, ConnectError,
@@ -160,3 +163,11 @@ enum EndpointEvent {
 /// This helps ensure we don't starve anything when the CPU is slower than the link.
 /// Value is selected by picking a low number which didn't degrade throughput in benchmarks.
 const IO_LOOP_BOUND: usize = 160;
+
+/// The maximum amount of time that should be spent in `recvmsg()` calls per endpoint iteration
+///
+/// 50us are chosen so that an endpoint iteration with a 50us sendmsg limit blocks
+/// the runtime for a maximum of about 100us.
+/// Going much lower does not yield any noticeable difference, since a single `recvmmsg`
+/// batch of size 32 was observed to take 30us on some systems.
+const RECV_TIME_BOUND: Duration = Duration::from_micros(50);
