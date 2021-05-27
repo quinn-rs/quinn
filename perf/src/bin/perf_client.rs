@@ -51,6 +51,9 @@ struct Opt {
     /// Specify the local socket address
     #[structopt(long)]
     local_addr: Option<SocketAddr>,
+    /// Whether to print connection statistics
+    #[structopt(long)]
+    conn_stats: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -162,6 +165,9 @@ async fn run(opt: Opt) -> Result<()> {
             {
                 let guard = stats.lock().unwrap();
                 guard.print();
+                if opt.conn_stats {
+                    println!("{:?}\n", connection.stats());
+                }
             }
         }
     };
