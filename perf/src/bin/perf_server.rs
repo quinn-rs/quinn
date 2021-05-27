@@ -1,4 +1,4 @@
-use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc};
+use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -26,6 +26,9 @@ struct Opt {
     /// Receive buffer size in bytes
     #[structopt(long, default_value = "2097152")]
     recv_buffer_size: usize,
+    /// Whether to print connection statistics
+    #[structopt(long)]
+    conn_stats: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -89,9 +92,12 @@ async fn run(opt: Opt) -> Result<()> {
 
     info!("listening on {}", endpoint.local_addr().unwrap());
 
+    let opt = Arc::new(opt);
+
     while let Some(handshake) = incoming.next().await {
+        let opt = opt.clone();
         tokio::spawn(async move {
-            if let Err(e) = handle(handshake).await {
+            if let Err(e) = handle(handshake, opt).await {
                 error!("connection lost: {:#}", e);
             }
         });
@@ -100,7 +106,7 @@ async fn run(opt: Opt) -> Result<()> {
     Ok(())
 }
 
-async fn handle(handshake: quinn::Connecting) -> Result<()> {
+async fn handle(handshake: quinn::Connecting, opt: Arc<Opt>) -> Result<()> {
     let quinn::NewConnection {
         uni_streams,
         bi_streams,
@@ -108,7 +114,22 @@ async fn handle(handshake: quinn::Connecting) -> Result<()> {
         ..
     } = handshake.await.context("handshake failed")?;
     debug!("{} connected", connection.remote_address());
-    tokio::try_join!(drive_uni(connection, uni_streams), drive_bi(bi_streams))?;
+    tokio::try_join!(
+        drive_uni(connection.clone(), uni_streams),
+        drive_bi(bi_streams),
+        conn_stats(connection, opt)
+    )?;
+    Ok(())
+}
+
+async fn conn_stats(connection: quinn::Connection, opt: Arc<Opt>) -> Result<()> {
+    if opt.conn_stats {
+        loop {
+            tokio::time::sleep(Duration::from_secs(2)).await;
+            println!("{:?}\n", connection.stats());
+        }
+    }
+
     Ok(())
 }
 
