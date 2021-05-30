@@ -65,7 +65,7 @@ async fn main() -> Result<()> {
                 }
             };
 
-            // Handle each request concurently
+            // Handle each request concurrently
             while let Some(request) = incoming_request.next().await {
                 tokio::spawn(async move {
                     if let Err(e) = handle_request(request).await {
