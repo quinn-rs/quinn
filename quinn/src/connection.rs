@@ -31,6 +31,7 @@ use crate::{
 
 /// In-progress connection attempt future
 #[derive(Debug)]
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct Connecting<S>
 where
     S: proto::crypto::Session,
@@ -192,6 +193,7 @@ where
 ///
 /// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
 /// value is meaningless.
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct ZeroRttAccepted(oneshot::Receiver<bool>);
 
 impl Future for ZeroRttAccepted {
@@ -617,6 +619,7 @@ where
 }
 
 /// A future that will resolve into an opened outgoing unidirectional stream
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct OpenUni<S>
 where
     S: proto::crypto::Session,
@@ -648,6 +651,7 @@ where
 }
 
 /// A future that will resolve into an opened outgoing bidirectional stream
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct OpenBi<S>
 where
     S: proto::crypto::Session,

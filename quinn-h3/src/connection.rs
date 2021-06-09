@@ -29,6 +29,7 @@ use crate::{
     Error, Settings,
 };
 
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub(crate) struct ConnectionDriver(pub(crate) ConnectionRef);
 
 impl Future for ConnectionDriver {

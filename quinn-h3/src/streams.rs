@@ -45,6 +45,7 @@ impl TryFrom<(StreamType, RecvStream)> for NewUni {
     }
 }
 
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct RecvUni {
     inner: Option<RecvUniInner>,
 }
@@ -106,6 +107,7 @@ impl Future for RecvUni {
 
 pub struct PushStream(FrameStream);
 
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct SendUni {
     ty: StreamType,
     state: SendUniState,

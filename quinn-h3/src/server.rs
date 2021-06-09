@@ -301,6 +301,7 @@ impl Stream for IncomingConnection {
 ///
 /// [`Stream`]: https://docs.rs/futures/*/futures/stream/trait.Stream.html
 /// [`IncomingRequest`]: struct.IncomingRequest.html
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct Connecting {
     connecting: quinn::Connecting,
     settings: Settings,
@@ -564,6 +565,7 @@ impl Stream for IncomingRequest {
 /// [`http_body::Body`]: https://docs.rs/http-body/*/http_body/trait.Body.html
 /// [`RecvBody`]: ../struct.RecvBody.html
 /// [`reject`]: #method.reject
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct RecvRequest {
     conn: ConnectionRef,
     recv: Option<RecvData>,
