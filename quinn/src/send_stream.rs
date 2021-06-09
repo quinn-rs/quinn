@@ -291,6 +291,7 @@ where
 }
 
 /// Future produced by `SendStream::finish`
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct Finish<'a, S>
 where
     S: proto::crypto::Session,
@@ -310,6 +311,7 @@ where
 }
 
 /// Future produced by `SendStream::stopped`
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct Stopped<'a, S>
 where
     S: proto::crypto::Session,
@@ -331,6 +333,7 @@ where
 /// Future produced by [`SendStream::write()`].
 ///
 /// [`SendStream::write()`]: crate::generic::SendStream::write
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct Write<'a, S>
 where
     S: proto::crypto::Session,
@@ -354,6 +357,7 @@ where
 /// Future produced by [`SendStream::write_all()`].
 ///
 /// [`SendStream::write_all()`]: crate::generic::SendStream::write_all
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct WriteAll<'a, S>
 where
     S: proto::crypto::Session,
@@ -383,6 +387,7 @@ where
 /// Future produced by [`SendStream::write_chunks()`].
 ///
 /// [`SendStream::write_chunks()`]: crate::generic::SendStream::write_chunks
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct WriteChunks<'a, S>
 where
     S: proto::crypto::Session,
@@ -406,6 +411,7 @@ where
 /// Future produced by [`SendStream::write_chunk()`].
 ///
 /// [`SendStream::write_chunk()`]: crate::generic::SendStream::write_chunk
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct WriteChunk<'a, S>
 where
     S: proto::crypto::Session,
@@ -434,6 +440,7 @@ where
 /// Future produced by [`SendStream::write_all_chunks()`].
 ///
 /// [`SendStream::write_all_chunks()`]: crate::generic::SendStream::write_all_chunks
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct WriteAllChunks<'a, S>
 where
     S: proto::crypto::Session,

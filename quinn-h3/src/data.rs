@@ -33,6 +33,7 @@ use crate::{
 ///
 /// [`Sender::send_response`]: crate::server::Sender::send_response()
 #[pin_project(project = SendDataProj)]
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct SendData<B, P> {
     headers: Option<Header>,
     #[pin]
@@ -249,6 +250,7 @@ where
     }
 }
 
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct RecvData {
     state: RecvDataState,
     conn: ConnectionRef,
@@ -326,6 +328,7 @@ impl Future for RecvData {
     }
 }
 
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct DecodeHeaders {
     frame: Option<HeadersFrame>,
     conn: ConnectionRef,

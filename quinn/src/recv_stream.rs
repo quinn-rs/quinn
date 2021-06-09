@@ -307,6 +307,7 @@ impl<T> From<(Option<T>, Option<proto::ReadError>)> for ReadStatus<T> {
 /// Future produced by [`RecvStream::read_to_end()`].
 ///
 /// [`RecvStream::read_to_end()`]: crate::generic::RecvStream::read_to_end
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct ReadToEnd<S>
 where
     S: proto::crypto::Session,
@@ -466,6 +467,7 @@ impl From<ReadError> for io::Error {
 /// Future produced by [`RecvStream::read()`].
 ///
 /// [`RecvStream::read()`]: crate::generic::RecvStream::read
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct Read<'a, S>
 where
     S: proto::crypto::Session,
@@ -493,6 +495,7 @@ where
 /// Future produced by [`RecvStream::read_exact()`].
 ///
 /// [`RecvStream::read_exact()`]: crate::generic::RecvStream::read_exact
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct ReadExact<'a, S>
 where
     S: proto::crypto::Session,
@@ -535,6 +538,7 @@ pub enum ReadExactError {
 /// Future produced by [`RecvStream::read_chunk()`].
 ///
 /// [`RecvStream::read_chunk()`]: crate::generic::RecvStream::read_chunk
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct ReadChunk<'a, S>
 where
     S: proto::crypto::Session,
@@ -558,6 +562,7 @@ where
 /// Future produced by [`RecvStream::read_chunks()`].
 ///
 /// [`RecvStream::read_chunks()`]: crate::generic::RecvStream::read_chunks
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct ReadChunks<'a, S>
 where
     S: proto::crypto::Session,

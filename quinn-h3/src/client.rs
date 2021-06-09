@@ -289,6 +289,7 @@ impl Client {
 /// established [`Connection`].
 ///
 /// [`Connection`]: struct.Connection.html
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct Connecting {
     connecting: quinn::Connecting,
     settings: Settings,
@@ -510,6 +511,7 @@ impl Drop for Connection {
 
 /// Send a request
 #[pin_project(project = SendRequestProj)]
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct SendRequest<B, D> {
     conn: ConnectionRef,
     request: Option<Request<B>>,
@@ -675,6 +677,7 @@ enum SendRequestState<B, D> {
 /// [`Connection::send_request()`]: struct.Connection.htm#method.send_request
 /// [`Response`]: https://docs.rs/http/*/http/response/index.html
 /// [`RecvBody`]: ../struct.RecvBody.html
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct RecvResponse {
     state: RecvResponseState,
     conn: ConnectionRef,
