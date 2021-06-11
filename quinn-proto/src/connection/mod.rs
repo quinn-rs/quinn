@@ -725,13 +725,9 @@ where
             );
             pad_datagram |= sent.requires_padding;
 
-            // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
-            // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
-            // the need for subtler logic to avoid double-transmitting acks all the time.
-            // This reset needs to happen before we check whether more data
-            // is available in this space - because otherwise it would return
-            // `true` purely due to the ACKs.
-            self.spaces[space_id].permit_ack_only &= sent.acks.is_empty();
+            if !sent.acks.is_empty() {
+                self.spaces[space_id].pending_acks.acks_sent();
+            }
 
             // Keep information about the packet around until it gets finalized
             sent_frames = Some(sent);
@@ -1456,9 +1452,6 @@ where
         }
         let space = &mut self.spaces[space_id];
         space.pending_acks.insert_one(packet);
-        if space.pending_acks.len() > MAX_ACK_BLOCKS {
-            space.pending_acks.pop_min();
-        }
         if packet >= space.rx_packet {
             space.rx_packet = packet;
             // Update outgoing spin bit, inverting iff we're the client
@@ -2166,7 +2159,9 @@ where
             match frame {
                 Frame::Ack(_) | Frame::Padding | Frame::Close(Close::Connection(_)) => {}
                 _ => {
-                    self.spaces[packet.header.space()].permit_ack_only = true;
+                    self.spaces[packet.header.space()]
+                        .pending_acks
+                        .ack_eliciting_frame_received();
                 }
             }
             // Process frames
@@ -2252,7 +2247,9 @@ where
             match frame {
                 Frame::Ack(_) | Frame::Padding | Frame::Close(_) => {}
                 _ => {
-                    self.spaces[SpaceId::Data].permit_ack_only = true;
+                    self.spaces[SpaceId::Data]
+                        .pending_acks
+                        .ack_eliciting_frame_received();
                 }
             }
             // Check whether this could be a probing packet
@@ -2603,7 +2600,7 @@ where
 
         // ACK
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
-        if !space.pending_acks.is_empty() {
+        if !space.pending_acks.ranges().is_empty() {
             debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
             trace!("ACK");
             let ecn = if self.receiving_ecn {
@@ -2611,8 +2608,8 @@ where
             } else {
                 None
             };
-            frame::Ack::encode(0, &space.pending_acks, ecn, buf);
-            sent.acks = space.pending_acks.clone();
+            sent.acks = space.pending_acks.ranges().clone();
+            frame::Ack::encode(0, &sent.acks, ecn, buf);
             self.stats.frame_tx.acks += 1;
         }
 
@@ -3120,9 +3117,6 @@ mod state {
         pub reason: Close,
     }
 }
-
-/// Ensures we can always fit all our ACKs in a single minimum-MTU packet with room to spare
-const MAX_ACK_BLOCKS: usize = 64;
 
 struct PrevCrypto<K>
 where
