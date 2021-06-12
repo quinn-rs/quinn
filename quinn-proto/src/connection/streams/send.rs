@@ -92,8 +92,16 @@ impl Send {
     }
 
     /// Handle STOP_SENDING
-    pub(super) fn stop(&mut self, error_code: VarInt) {
-        self.stop_reason = Some(error_code);
+    ///
+    /// Returns true if the stream was stopped due to this frame, and false
+    /// if it had been stopped before
+    pub(super) fn try_stop(&mut self, error_code: VarInt) -> bool {
+        if self.stop_reason.is_none() {
+            self.stop_reason = Some(error_code);
+            true
+        } else {
+            false
+        }
     }
 
     /// Returns whether the stream has been finished and all data has been acknowledged by the peer

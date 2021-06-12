@@ -274,10 +274,12 @@ impl StreamsState {
             Some(ss) => ss,
             None => return,
         };
-        self.events
-            .push_back(StreamEvent::Stopped { id, error_code });
-        stream.stop(error_code);
-        self.on_stream_frame(false, id);
+
+        if stream.try_stop(error_code) {
+            self.events
+                .push_back(StreamEvent::Stopped { id, error_code });
+            self.on_stream_frame(false, id);
+        }
     }
 
     pub fn reset_acked(&mut self, id: StreamId) {
@@ -1070,12 +1072,22 @@ mod tests {
             conn_state: &state,
         };
 
-        let reason = 0u32.into();
-        stream.state.received_stop_sending(id, reason);
-        assert_eq!(stream.write(&[]), Err(WriteError::Stopped(reason)));
+        let error_code = 0u32.into();
+        stream.state.received_stop_sending(id, error_code);
+        assert!(stream
+            .state
+            .events
+            .contains(&StreamEvent::Stopped { id, error_code }));
+        stream.state.events.clear();
+
+        assert_eq!(stream.write(&[]), Err(WriteError::Stopped(error_code)));
 
         stream.reset(0u32.into()).unwrap();
         assert_eq!(stream.write(&[]), Err(WriteError::UnknownStream));
+
+        // A duplicate frame is a no-op
+        stream.state.received_stop_sending(id, error_code);
+        assert!(stream.state.events.is_empty());
     }
 
     #[test]
