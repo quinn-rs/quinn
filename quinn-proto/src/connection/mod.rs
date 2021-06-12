@@ -806,12 +806,15 @@ where
 
                 self.stats.udp_rx.datagrams += 1;
                 self.stats.udp_rx.bytes += first_decode.len() as u64;
-                self.path.total_recvd = self
-                    .path
-                    .total_recvd
-                    .saturating_add(first_decode.len() as u64);
+                let data_len = first_decode.len();
 
                 self.handle_decode(now, remote, ecn, first_decode);
+                // The current `path` might have changed inside `handle_decode`,
+                // since the packet could have triggered a migration. Make sure
+                // the data received is accounted for the most recent path by accessing
+                // `path` after `handle_decode`.
+                self.path.total_recvd = self.path.total_recvd.saturating_add(data_len as u64);
+
                 if let Some(data) = remaining {
                     self.stats.udp_rx.bytes += data.len() as u64;
                     self.handle_coalesced(now, remote, ecn, data);
@@ -2897,6 +2900,12 @@ where
     #[cfg(test)]
     pub(crate) fn using_ecn(&self) -> bool {
         self.path.sending_ecn
+    }
+
+    /// The number of received bytes in the current path
+    #[cfg(test)]
+    pub(crate) fn total_recvd(&self) -> u64 {
+        self.path.total_recvd
     }
 
     #[cfg(test)]

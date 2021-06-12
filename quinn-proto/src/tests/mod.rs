@@ -963,6 +963,13 @@ fn migration() {
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
     pair.client_conn_mut(client_ch).ping();
+
+    // Assert that just receiving the ping message is accounted into the servers
+    // anti-amplification budget
+    pair.drive_client();
+    pair.drive_server();
+    assert_ne!(pair.server_conn_mut(server_ch).total_recvd(), 0);
+
     pair.drive();
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
     assert_eq!(
