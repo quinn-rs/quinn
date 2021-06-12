@@ -345,7 +345,7 @@ impl Ord for PendingLevel {
 }
 
 /// Application events about streams
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 pub enum StreamEvent {
     /// One or more new streams has been opened
     Opened {
