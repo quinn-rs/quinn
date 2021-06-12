@@ -59,7 +59,7 @@ impl State {
     }
 }
 
-/// A simple, standard congestion controller
+/// The RFC8312 congestion controller, as widely used for TCP
 #[derive(Debug, Clone)]
 pub struct Cubic {
     config: Arc<CubicConfig>,
@@ -154,7 +154,7 @@ impl Controller for Cubic {
             self.cubic_state.cwnd_inc += cubic_cwnd - self.window;
 
             // cwnd_inc can be more than 1 MSS in the late stage of max probing.
-            // however QUIC recovery draft 7.4 (Congestion Avoidance) limits
+            // however RFC9002 §7.3.3 (Congestion Avoidance) limits
             // the increase of cwnd to 1 max_datagram_size per cwnd acknowledged.
             if self.cubic_state.cwnd_inc as u64 >= self.config.max_datagram_size {
                 self.window += self.config.max_datagram_size;
