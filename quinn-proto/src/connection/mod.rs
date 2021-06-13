@@ -2278,13 +2278,8 @@ where
                             prev_path.challenge = None;
                             prev_path.challenge_pending = false;
                         }
-                    } else if let Some(ref prev_path) = self.prev_path {
-                        if prev_path.challenge == Some(token) && remote == prev_path.remote {
-                            warn!("spurious migration detected");
-                            self.timers.stop(Timer::PathValidation);
-                            self.path = self.prev_path.take().unwrap();
-                            self.path.challenge = None;
-                        }
+                    } else {
+                        debug!(token, "ignoring invalid PATH_RESPONSE");
                     }
                 }
                 Frame::MaxData(bytes) => {
