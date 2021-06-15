@@ -88,7 +88,8 @@ async fn client_send_body() {
     let conn = helper.make_connection().await;
     let (req, resp) = conn.send_request(post("/", "the body"));
     req.await.expect("request");
-    resp.await.expect("recv response");
+    let mut response = resp.await.unwrap();
+    assert_eq!(&response.body_mut().read_to_end().await.unwrap()[..], b"");
     drop(conn);
 
     assert_eq!(timeout_join(server_handle).await, "the body");
@@ -104,7 +105,8 @@ async fn client_send_stream_body() {
     let conn = helper.make_connection().await;
     let (req, resp) = conn.send_request(post("/", "the body"));
     req.await.expect("request");
-    let _ = resp.await.unwrap();
+    let mut response = resp.await.unwrap();
+    assert_eq!(&response.body_mut().read_to_end().await.unwrap()[..], b"");
     drop(conn);
 
     assert_eq!(timeout_join(server_handle).await, "the body");
