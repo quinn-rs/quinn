@@ -678,28 +678,51 @@ where
 
             if close {
                 trace!("sending CONNECTION_CLOSE");
-                match self.state {
-                    State::Closed(state::Closed { ref reason }) => {
-                        if space_id == SpaceId::Data {
-                            reason.encode(&mut buf, builder.max_size)
-                        } else {
-                            frame::ConnectionClose {
-                                error_code: TransportErrorCode::APPLICATION_ERROR,
-                                frame_type: None,
-                                reason: Bytes::new(),
+                // Encode ACKs before the ConnectionClose message, to give the receiver
+                // a better approximate on what data has been processed. This is
+                // especially important with ack delay, since the peer might not
+                // have gotten any other ACK for the data earlier on.
+                if !self.spaces[space_id].pending_acks.ranges().is_empty() {
+                    Self::populate_acks(
+                        self.receiving_ecn,
+                        &mut SentFrames::default(),
+                        &mut self.spaces[space_id],
+                        &mut buf,
+                        &mut self.stats,
+                    );
+                }
+
+                // Since there only 64 ACK frames there will always be enough space
+                // to encode the ConnectionClose frame too. However we still have the
+                // check here to prevent crashes if something changes.
+                debug_assert!(
+                    buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size,
+                    "ACKs should leave space for ConnectionClose"
+                );
+                if buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size {
+                    match self.state {
+                        State::Closed(state::Closed { ref reason }) => {
+                            if space_id == SpaceId::Data {
+                                reason.encode(&mut buf, builder.max_size)
+                            } else {
+                                frame::ConnectionClose {
+                                    error_code: TransportErrorCode::APPLICATION_ERROR,
+                                    frame_type: None,
+                                    reason: Bytes::new(),
+                                }
+                                .encode(&mut buf, builder.max_size)
                             }
-                            .encode(&mut buf, builder.max_size)
                         }
+                        State::Draining => frame::ConnectionClose {
+                            error_code: TransportErrorCode::NO_ERROR,
+                            frame_type: None,
+                            reason: Bytes::new(),
+                        }
+                        .encode(&mut buf, builder.max_size),
+                        _ => unreachable!(
+                            "tried to make a close packet when the connection wasn't closed"
+                        ),
                     }
-                    State::Draining => frame::ConnectionClose {
-                        error_code: TransportErrorCode::NO_ERROR,
-                        frame_type: None,
-                        reason: Bytes::new(),
-                    }
-                    .encode(&mut buf, builder.max_size),
-                    _ => unreachable!(
-                        "tried to make a close packet when the connection wasn't closed"
-                    ),
                 }
                 // Don't send another close packet
                 self.close = false;
