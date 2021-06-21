@@ -100,12 +100,14 @@ where
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
         let conn = (self.conn.as_mut().unwrap()).lock("into_0rtt");
-        if conn.inner.has_0rtt() || conn.inner.side().is_server() {
-            drop(conn);
+
+        let is_ok = conn.inner.has_0rtt() || conn.inner.side().is_server();
+        drop(conn);
+
+        if is_ok {
             let conn = self.conn.take().unwrap();
             Ok((NewConnection::new(conn), ZeroRttAccepted(self.connected)))
         } else {
-            drop(conn);
             Err(self)
         }
     }

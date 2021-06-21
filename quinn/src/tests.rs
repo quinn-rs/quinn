@@ -330,7 +330,7 @@ async fn zero_rtt() {
         .await
         .expect("read_to_end");
     assert_eq!(msg, MSG);
-    assert_eq!(zero_rtt.await, true);
+    assert!(zero_rtt.await);
 
     drop(uni_streams);
 
