@@ -85,17 +85,16 @@ fn write_bits(out: &mut [u8], pos: &BitWindow, value: u8) {
     debug_assert!(pos.bit < 8);
     debug_assert!(pos.count <= 8);
     debug_assert!(pos.count > 0);
+    debug_assert_eq!(out[pos.byte as usize] | PAD_LEFT[pos.bit as usize], 255);
 
     if (pos.bit + pos.count) <= 8 {
         // Bits to be written to fit in a single byte
-        debug_assert_eq!(out[pos.byte as usize] | PAD_LEFT[pos.bit as usize], 255);
         let pad_left = out[pos.byte as usize] | PAD_RIGHT[(8 - pos.bit) as usize];
         let shifted = value << (8 - pos.bit - pos.count) | PAD_LEFT[pos.bit as usize];
         let pad_right = PAD_RIGHT[(8 - pos.count - pos.bit) as usize];
         out[pos.byte as usize] = (pad_left & shifted) | pad_right;
     } else {
         // Bits to be written to span two bytes
-        debug_assert_eq!(out[pos.byte as usize] | PAD_LEFT[pos.bit as usize], 255);
         let split = 8 - pos.bit;
         let pad_left = out[pos.byte as usize] | PAD_RIGHT[split as usize];
         let shifted = (value >> (pos.count - split)) | PAD_LEFT[pos.bit as usize];

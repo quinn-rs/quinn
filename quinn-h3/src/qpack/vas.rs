@@ -273,16 +273,16 @@ mod tests {
     #[test]
     fn evicted() {
         let mut vas = VirtualAddressSpace::default();
-        assert_eq!(vas.evicted(0), false);
-        assert_eq!(vas.evicted(1), false);
+        assert!(!vas.evicted(0));
+        assert!(!vas.evicted(1));
         vas.add();
         vas.add();
-        assert_eq!(vas.evicted(1), false);
+        assert!(!vas.evicted(1));
         vas.drop();
-        assert_eq!(vas.evicted(0), false);
-        assert_eq!(vas.evicted(1), true);
-        assert_eq!(vas.evicted(2), false);
+        assert!(!vas.evicted(0));
+        assert!(vas.evicted(1));
+        assert!(!vas.evicted(2));
         vas.drop();
-        assert_eq!(vas.evicted(2), true);
+        assert!(vas.evicted(2));
     }
 }

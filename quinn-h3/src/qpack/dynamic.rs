@@ -1090,7 +1090,7 @@ mod tests {
         }
 
         for idx in 1..4 {
-            assert_eq!(table.is_tracked(idx), true);
+            assert!(table.is_tracked(idx));
             assert_eq!(table.track_map.get(&1), Some(&1));
         }
         let track_blocks = table.track_blocks;
