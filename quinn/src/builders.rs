@@ -201,13 +201,7 @@ where
     }
 }
 
-/// Helper for creating new outgoing connections.
-///
-/// If the `native-certs` and `ct-logs` features are enabled, [`ClientConfigBuilder::default()`] will
-/// construct a configuration that trusts the host OS certificate store and uses built-in
-/// certificate transparency logs respectively. These features are both enabled by default.
-///
-/// [`ClientConfigBuilder::default()`]: #method.default
+/// Helper for creating new outgoing connections
 pub struct ClientConfigBuilder<S>
 where
     S: proto::crypto::Session,

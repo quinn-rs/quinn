@@ -63,24 +63,30 @@ impl SkipServerVerification {
     }
 }
 
-impl rustls::ServerCertVerifier for SkipServerVerification {
+impl rustls::client::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,
-        _roots: &rustls::RootCertStore,
-        _presented_certs: &[rustls::Certificate],
-        _dns_name: webpki::DNSNameRef,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
         _ocsp_response: &[u8],
-    ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
-        Ok(rustls::ServerCertVerified::assertion())
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
     }
 }
 
 fn configure_client() -> ClientConfig {
-    let mut cfg = ClientConfig::with_root_certificates(vec![]).unwrap();
-    let tls_cfg: &mut rustls::ClientConfig = Arc::get_mut(&mut cfg.crypto).unwrap();
-    // this is only available when compiled with "dangerous_configuration" feature
-    tls_cfg
-        .dangerous()
-        .set_certificate_verifier(SkipServerVerification::new());
-    cfg
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_custom_certificate_verifier(SkipServerVerification::new())
+        .with_no_client_auth();
+    crypto.alpn_protocols = vec![b"perf".to_vec()];
+
+    let transport = Arc::new(quinn::TransportConfig::default());
+    ClientConfig {
+        crypto: Arc::new(crypto),
+        transport,
+    }
 }

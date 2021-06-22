@@ -17,8 +17,8 @@ maintenance = { status = "experimental" }
 
 [features]
 default = ["tls-rustls"]
-tls-rustls = ["rustls", "webpki", "ring"]
-# Trust the contents of the OS certificate store by default
+tls-rustls = ["rustls", "webpki", "ring", "rustls-pemfile"]
+# Provides `ClientConfig::with_native_roots()` convenience method
 native-certs = ["rustls-native-certs"]
 
 [dependencies]
@@ -30,13 +30,14 @@ ring = { version = "0.16.7", optional = true }
 # If rustls gets updated to a new version which contains
 # https://github.com/ctz/rustls/commit/7117a805e0104705da50259357d8effa7d599e37
 # the custom cipher list in `quinn-proto/src/crypto/rustls.rs` can be removed.
-rustls = { version = "0.19", features = ["quic"], optional = true }
+rustls = { version = "0.20", features = ["quic"], optional = true }
 rustls-native-certs = { version = "0.6", optional = true }
+rustls-pemfile = { version = "0.2.1", optional = true }
 slab = "0.4"
 thiserror = "1.0.21"
 tinyvec = { version = "1.1", features = ["alloc"] }
 tracing = "0.1.10"
-webpki = { version = "0.21", default-features = false, optional = true }
+webpki = { version = "0.22", default-features = false, optional = true }
 
 [dev-dependencies]
 assert_matches = "1.1"

@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use rustls::RootCertStore;
 use structopt::StructOpt;
 use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
@@ -57,12 +58,20 @@ pub async fn connect_client(
         .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
         .unwrap();
 
-    let mut client_config = quinn::ClientConfig::with_root_certificates(vec![server_cert]).unwrap();
-    client_config.transport = Arc::new(transport_config(&opt));
+    let mut roots = RootCertStore::empty();
+    roots.add_parsable_certificates(&[server_cert.as_der().to_owned()]);
+    let crypto = rustls::ClientConfig::builder()
+        .with_cipher_suites(&[opt.cipher.as_rustls()])
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
 
-    let crypto_config = Arc::get_mut(&mut client_config.crypto).unwrap();
-    crypto_config.ciphersuites.clear();
-    crypto_config.ciphersuites.push(opt.cipher.as_rustls());
+    let client_config = quinn::ClientConfig {
+        crypto: Arc::new(crypto),
+        transport: Arc::new(transport_config(&opt)),
+    };
 
     let quinn::NewConnection { connection, .. } = endpoint
         .connect_with(client_config, &server_addr, "localhost")
@@ -208,11 +217,11 @@ pub enum CipherSuite {
 }
 
 impl CipherSuite {
-    pub fn as_rustls(self) -> &'static rustls::SupportedCipherSuite {
+    pub fn as_rustls(self) -> rustls::SupportedCipherSuite {
         match self {
-            CipherSuite::Aes128 => &rustls::ciphersuite::TLS13_AES_128_GCM_SHA256,
-            CipherSuite::Aes256 => &rustls::ciphersuite::TLS13_AES_256_GCM_SHA384,
-            CipherSuite::Chacha20 => &rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256,
+            CipherSuite::Aes128 => rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+            CipherSuite::Aes256 => rustls::cipher_suite::TLS13_AES_256_GCM_SHA384,
+            CipherSuite::Chacha20 => rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
         }
     }
 }

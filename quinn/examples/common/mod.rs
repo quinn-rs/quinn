@@ -47,7 +47,7 @@ pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Incoming, Vec<u8>)
 fn configure_client(server_certs: &[&[u8]]) -> Result<ClientConfig, Box<dyn Error>> {
     let certs = server_certs
         .iter()
-        .map(|der| Certificate::from_der(der))
+        .map(|&der| Certificate::from_der(der))
         .collect::<Result<Vec<_>, _>>()?;
     Ok(ClientConfig::with_root_certificates(certs)?)
 }

@@ -38,9 +38,6 @@ struct Opt {
     /// Number of bytes to transmit, in addition to the request header
     #[structopt(long, default_value = "1048576")]
     upload_size: u64,
-    /// Whether to skip certificate validation
-    #[structopt(long)]
-    insecure: bool,
     /// The time to run in seconds
     #[structopt(long, default_value = "60")]
     duration: u64,
@@ -111,27 +108,20 @@ async fn run(opt: Opt) -> Result<()> {
 
     let (endpoint, _) = endpoint.with_socket(socket).context("binding endpoint")?;
 
-    let mut cfg = quinn::ClientConfig::with_root_certificates(vec![]).unwrap();
-    let tls_config = Arc::get_mut(&mut cfg.crypto).unwrap();
-    tls_config.alpn_protocols = vec![b"perf".to_vec()];
+    let mut crypto = rustls::ClientConfig::builder()
+        .with_cipher_suites(perf::PERF_CIPHER_SUITES)
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_custom_certificate_verifier(SkipServerVerification::new())
+        .with_no_client_auth();
+    crypto.alpn_protocols = vec![b"perf".to_vec()];
 
-    let tls_config: &mut rustls::ClientConfig = Arc::get_mut(&mut cfg.crypto).unwrap();
-    if opt.insecure {
-        tls_config
-            .dangerous()
-            .set_certificate_verifier(SkipServerVerification::new());
-    }
-    // Configure cipher suites for efficiency
-    tls_config.ciphersuites.clear();
-    tls_config
-        .ciphersuites
-        .push(&rustls::ciphersuite::TLS13_AES_128_GCM_SHA256);
-    tls_config
-        .ciphersuites
-        .push(&rustls::ciphersuite::TLS13_AES_256_GCM_SHA384);
-    tls_config
-        .ciphersuites
-        .push(&rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256);
+    let transport = Arc::new(quinn::TransportConfig::default());
+    let cfg = quinn::ClientConfig {
+        crypto: Arc::new(crypto),
+        transport,
+    };
 
     let stream_stats = OpenStreamStats::default();
 
@@ -375,14 +365,16 @@ impl SkipServerVerification {
     }
 }
 
-impl rustls::ServerCertVerifier for SkipServerVerification {
+impl rustls::client::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,
-        _roots: &rustls::RootCertStore,
-        _presented_certs: &[rustls::Certificate],
-        _dns_name: webpki::DNSNameRef,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
         _ocsp_response: &[u8],
-    ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
-        Ok(rustls::ServerCertVerified::assertion())
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
     }
 }

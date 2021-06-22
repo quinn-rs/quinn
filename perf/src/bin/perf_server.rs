@@ -47,38 +47,34 @@ async fn run(opt: Opt) -> Result<()> {
         (&Some(ref key), &Some(ref cert)) => {
             let key = fs::read(key).context("reading key")?;
             let cert = fs::read(cert).expect("reading cert");
-            (
-                quinn::PrivateKey::from_pem(&key).context("parsing key")?,
-                quinn::CertificateChain::from_pem(&cert).context("parsing cert")?,
-            )
+
+            let mut certs = Vec::new();
+            for cert in rustls_pemfile::certs(&mut cert.as_ref()).context("parsing cert")? {
+                certs.push(rustls::Certificate(cert));
+            }
+
+            (rustls::PrivateKey(key), certs)
         }
         _ => {
             let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
             (
-                quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap(),
-                quinn::CertificateChain::from_certs(vec![quinn::Certificate::from_der(
-                    &cert.serialize_der().unwrap(),
-                )
-                .unwrap()]),
+                rustls::PrivateKey(cert.serialize_private_key_der()),
+                vec![rustls::Certificate(cert.serialize_der().unwrap())],
             )
         }
     };
 
-    // Configure cipher suites for efficiency
-    let mut server_config = quinn::ServerConfig::with_single_cert(cert, key).unwrap();
-    let tls_config = Arc::get_mut(&mut server_config.crypto).unwrap();
-    tls_config.alpn_protocols = vec![b"perf".to_vec()];
-    tls_config.ciphersuites.clear();
-    tls_config
-        .ciphersuites
-        .push(&rustls::ciphersuite::TLS13_AES_128_GCM_SHA256);
-    tls_config
-        .ciphersuites
-        .push(&rustls::ciphersuite::TLS13_AES_256_GCM_SHA384);
-    tls_config
-        .ciphersuites
-        .push(&rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256);
+    let mut crypto = rustls::ServerConfig::builder()
+        .with_cipher_suites(perf::PERF_CIPHER_SUITES)
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(cert, key)
+        .unwrap();
+    crypto.alpn_protocols = vec![b"perf".to_vec()];
 
+    let server_config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
     let mut endpoint = quinn::EndpointBuilder::default();
     endpoint.listen(server_config);
 
