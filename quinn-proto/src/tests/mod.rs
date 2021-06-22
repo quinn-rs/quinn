@@ -1739,16 +1739,7 @@ fn repeated_request_response() {
 fn handshake_anti_deadlock_probe() {
     let _guard = subscribe();
 
-    // Configure a big fat certificate that can't fit inside the initial anti-amplification limit
-    let cert = rcgen::generate_simple_self_signed(
-        Some("localhost".into())
-            .into_iter()
-            .chain((0..1000).map(|x| format!("foo_{}", x)))
-            .collect::<Vec<_>>(),
-    )
-    .unwrap();
-    let key = PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
-    let cert = Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
+    let (cert, key) = big_cert_and_key();
 
     let mut server = server_config();
     server
@@ -1777,4 +1768,53 @@ fn handshake_anti_deadlock_probe() {
         pair.client_conn_mut(client_ch).poll(),
         Some(Event::Connected { .. })
     );
+}
+
+/// Ensures that the server can respond with 3 initial packets during the handshake
+/// before the anti-amplification limit kicks in when MTUs are similar.
+#[test]
+fn server_can_send_3_inital_packets() {
+    let _guard = subscribe();
+
+    let (cert, key) = big_cert_and_key();
+
+    let mut server = server_config();
+    server
+        .certificate(CertificateChain::from_certs(Some(cert.clone())), key)
+        .unwrap();
+    let mut client = client_config();
+    client.add_certificate_authority(cert).unwrap();
+    let mut pair = Pair::new(Default::default(), server);
+
+    let client_ch = pair.begin_connect(client);
+    // Client sends initial
+    pair.drive_client();
+    // Server sends first flight, gets blocked on anti-amplification
+    pair.drive_server();
+    // Server should have queued 3 packets at this time
+    assert_eq!(pair.client.inbound.len(), 3);
+
+    pair.drive();
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Connected { .. })
+    );
+}
+
+/// Generate a big fat certificate that can't fit inside the initial anti-amplification limit
+fn big_cert_and_key() -> (Certificate, PrivateKey) {
+    let cert = rcgen::generate_simple_self_signed(
+        Some("localhost".into())
+            .into_iter()
+            .chain((0..1000).map(|x| format!("foo_{}", x)))
+            .collect::<Vec<_>>(),
+    )
+    .unwrap();
+    let key = PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
+    let cert = Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
+    (cert, key)
 }

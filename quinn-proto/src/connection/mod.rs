@@ -546,11 +546,14 @@ where
                 }
 
                 // Anti-amplification is only based on `total_sent`, which gets
-                // updated at the end of this method. Therefore we pass the accumulated
-                // amount of datagrams and bytes here.
+                // updated at the end of this method. Therefore we pass the amount
+                // of bytes for datagrams that are already created, as well as 1 byte
+                // for starting another datagram. If there is any anti-amplification
+                // budget left, we always allow a full MTU to be sent
+                // (see https://github.com/quinn-rs/quinn/issues/1082)
                 if self
                     .path
-                    .anti_amplification_blocked(self.path.mtu as u64 * (num_datagrams + 1) as u64)
+                    .anti_amplification_blocked(self.path.mtu as u64 * num_datagrams as u64 + 1)
                 {
                     trace!("blocked by anti-amplification");
                     break;
@@ -801,8 +804,7 @@ where
                     return;
                 }
 
-                let was_anti_amplification_blocked =
-                    self.path.anti_amplification_blocked(self.path.mtu as u64);
+                let was_anti_amplification_blocked = self.path.anti_amplification_blocked(1);
 
                 self.stats.udp_rx.datagrams += 1;
                 self.stats.udp_rx.bytes += first_decode.len() as u64;
@@ -1360,7 +1362,7 @@ where
             return;
         }
 
-        if self.path.anti_amplification_blocked(self.path.mtu.into()) {
+        if self.path.anti_amplification_blocked(1) {
             // We wouldn't be able to send anything, so don't bother.
             self.timers.stop(Timer::LossDetection);
             return;
