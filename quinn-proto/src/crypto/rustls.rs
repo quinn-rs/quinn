@@ -1,19 +1,16 @@
-use std::{
-    io,
-    ops::{Deref, DerefMut},
-    str,
-    sync::Arc,
-};
+use std::{convert::TryInto, io, str, sync::Arc};
 
 use bytes::BytesMut;
-use ring::{aead, aead::quic::HeaderProtectionKey, hkdf, hmac};
-pub use rustls::TLSError;
+use ring::{aead, hkdf, hmac};
+pub use rustls::Error;
 use rustls::{
     self,
-    quic::{ClientQuicExt, PacketKey, ServerQuicExt},
-    Session,
+    quic::{
+        ClientQuicExt, HeaderProtectionKey, KeyChange, PacketKey, QuicExt, Secrets, ServerQuicExt,
+        Version,
+    },
+    Connection,
 };
-use webpki::DNSNameRef;
 
 use crate::{
     crypto::{self, CryptoError, ExportKeyingMaterialError, KeyPair, Keys},
@@ -22,24 +19,18 @@ use crate::{
 };
 
 /// A rustls TLS session
-#[derive(Debug)]
 pub struct TlsSession {
     using_alpn: bool,
     got_handshake_data: bool,
-    inner: SessionKind,
-}
-
-#[derive(Debug)]
-enum SessionKind {
-    Client(rustls::ClientSession),
-    Server(rustls::ServerSession),
+    next_secrets: Option<Secrets>,
+    inner: Connection,
 }
 
 impl TlsSession {
     fn side(&self) -> Side {
         match self.inner {
-            SessionKind::Client(_) => Side::Client,
-            SessionKind::Server(_) => Side::Server,
+            Connection::Client(_) => Side::Client,
+            Connection::Server(_) => Side::Server,
         }
     }
 }
@@ -55,13 +46,7 @@ impl crypto::Session for TlsSession {
     type ServerConfig = Arc<rustls::ServerConfig>;
 
     fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys<Self> {
-        const INITIAL_SALT: [u8; 20] = [
-            0xaf, 0xbf, 0xec, 0x28, 0x99, 0x93, 0xd2, 0x4c, 0x9e, 0x97, 0x86, 0xf1, 0x9c, 0x61,
-            0x11, 0xe0, 0x43, 0x90, 0xa8, 0x99,
-        ];
-
-        let salt = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &INITIAL_SALT);
-        let keys = rustls::quic::Keys::initial(&salt, dst_cid, side.is_client());
+        let keys = rustls::quic::Keys::initial(Version::V1Draft, dst_cid, side.is_client());
         Keys {
             header: KeyPair {
                 local: keys.local.header,
@@ -79,40 +64,37 @@ impl crypto::Session for TlsSession {
             return None;
         }
         Some(HandshakeData {
-            protocol: self.get_alpn_protocol().map(|x| x.into()),
+            protocol: self.inner.alpn_protocol().map(|x| x.into()),
             server_name: match self.inner {
-                SessionKind::Client(_) => None,
-                SessionKind::Server(ref session) => session.get_sni_hostname().map(|x| x.into()),
+                Connection::Client(_) => None,
+                Connection::Server(ref session) => session.sni_hostname().map(|x| x.into()),
             },
         })
     }
 
     fn peer_identity(&self) -> Option<CertificateChain> {
-        self.get_peer_certificates().map(|v| v.into())
+        self.inner.peer_certificates().map(|v| v.to_vec().into())
     }
 
     fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::PacketKey)> {
-        let keys = self.get_0rtt_keys()?;
+        let keys = self.inner.zero_rtt_keys()?;
         Some((keys.header, keys.packet))
     }
 
     fn early_data_accepted(&self) -> Option<bool> {
         match self.inner {
-            SessionKind::Client(ref session) => Some(session.is_early_data_accepted()),
+            Connection::Client(ref session) => Some(session.is_early_data_accepted()),
             _ => None,
         }
     }
 
     fn is_handshaking(&self) -> bool {
-        match self.inner {
-            SessionKind::Client(ref session) => session.is_handshaking(),
-            SessionKind::Server(ref session) => session.is_handshaking(),
-        }
+        self.inner.is_handshaking()
     }
 
     fn read_handshake(&mut self, buf: &[u8]) -> Result<bool, TransportError> {
-        self.read_hs(buf).map_err(|e| {
-            if let Some(alert) = self.get_alert() {
+        self.inner.read_hs(buf).map_err(|e| {
+            if let Some(alert) = self.inner.alert() {
                 TransportError {
                     code: TransportErrorCode::crypto(alert.get_u8()),
                     frame: None,
@@ -127,12 +109,12 @@ impl crypto::Session for TlsSession {
             // ready on incoming connections, or ALPN negotiation completing on outgoing
             // connections.
             let have_server_name = match self.inner {
-                SessionKind::Client(_) => false,
-                SessionKind::Server(ref session) => session.get_sni_hostname().is_some(),
+                Connection::Client(_) => false,
+                Connection::Server(ref session) => session.sni_hostname().is_some(),
             };
-            if self.get_alpn_protocol().is_some() || have_server_name || !self.is_handshaking() {
+            if self.inner.alpn_protocol().is_some() || have_server_name || !self.is_handshaking() {
                 self.got_handshake_data = true;
-                if self.using_alpn && self.get_alpn_protocol().is_none() {
+                if self.using_alpn && self.inner.alpn_protocol().is_none() {
                     // rustls ignores total ALPN failure for compat, but QUIC gets a fresh start
                     return Err(TransportError {
                         code: TransportErrorCode::crypto(0x78),
@@ -147,7 +129,7 @@ impl crypto::Session for TlsSession {
     }
 
     fn transport_parameters(&self) -> Result<Option<TransportParameters>, TransportError> {
-        match self.get_quic_transport_parameters() {
+        match self.inner.quic_transport_parameters() {
             None => Ok(None),
             Some(buf) => match TransportParameters::read(self.side(), &mut io::Cursor::new(buf)) {
                 Ok(params) => Ok(Some(params)),
@@ -157,7 +139,14 @@ impl crypto::Session for TlsSession {
     }
 
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys<Self>> {
-        let keys = self.write_hs(buf)?;
+        let keys = match self.inner.write_hs(buf)? {
+            KeyChange::Handshake { keys } => keys,
+            KeyChange::OneRtt { keys, next } => {
+                self.next_secrets = Some(next);
+                keys
+            }
+        };
+
         Some(Keys {
             header: KeyPair {
                 local: keys.local.header,
@@ -171,7 +160,8 @@ impl crypto::Session for TlsSession {
     }
 
     fn next_1rtt_keys(&mut self) -> Option<KeyPair<Self::PacketKey>> {
-        let keys = (**self).next_1rtt_keys();
+        let secrets = self.next_secrets.as_mut()?;
+        let keys = secrets.next_packet_keys();
         Some(KeyPair {
             local: keys.local,
             remote: keys.remote,
@@ -226,32 +216,9 @@ impl crypto::Session for TlsSession {
         label: &[u8],
         context: &[u8],
     ) -> Result<(), ExportKeyingMaterialError> {
-        let session: &dyn rustls::Session = match &self.inner {
-            SessionKind::Client(s) => s,
-            SessionKind::Server(s) => s,
-        };
-        session
+        self.inner
             .export_keying_material(output, label, Some(context))
             .map_err(|_| ExportKeyingMaterialError)
-    }
-}
-
-impl Deref for TlsSession {
-    type Target = dyn rustls::Session;
-    fn deref(&self) -> &Self::Target {
-        match self.inner {
-            SessionKind::Client(ref session) => session,
-            SessionKind::Server(ref session) => session,
-        }
-    }
-}
-
-impl DerefMut for TlsSession {
-    fn deref_mut(&mut self) -> &mut (dyn rustls::Session + 'static) {
-        match self.inner {
-            SessionKind::Client(ref mut session) => session,
-            SessionKind::Server(ref mut session) => session,
-        }
     }
 }
 
@@ -261,6 +228,36 @@ const RETRY_INTEGRITY_KEY: [u8; 16] = [
 const RETRY_INTEGRITY_NONCE: [u8; 12] = [
     0xe5, 0x49, 0x30, 0xf9, 0x7f, 0x21, 0x36, 0xf0, 0x53, 0x0a, 0x8c, 0x1c,
 ];
+
+impl crypto::HeaderKey for HeaderProtectionKey {
+    fn decrypt(&self, pn_offset: usize, packet: &mut [u8]) {
+        let (header, sample) = packet.split_at_mut(pn_offset + 4);
+        let (first, rest) = header.split_at_mut(1);
+        let pn_end = Ord::min(pn_offset + 3, rest.len());
+        self.decrypt_in_place(
+            &sample[..self.sample_size()],
+            &mut first[0],
+            &mut rest[pn_offset - 1..pn_end],
+        )
+        .unwrap();
+    }
+
+    fn encrypt(&self, pn_offset: usize, packet: &mut [u8]) {
+        let (header, sample) = packet.split_at_mut(pn_offset + 4);
+        let (first, rest) = header.split_at_mut(1);
+        let pn_end = Ord::min(pn_offset + 3, rest.len());
+        self.encrypt_in_place(
+            &sample[..self.sample_size()],
+            &mut first[0],
+            &mut rest[pn_offset - 1..pn_end],
+        )
+        .unwrap();
+    }
+
+    fn sample_size(&self) -> usize {
+        self.sample_len()
+    }
+}
 
 /// Authentication data for (rustls) TLS session
 pub struct HandshakeData {
@@ -280,16 +277,21 @@ impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
         server_name: &str,
         params: &TransportParameters,
     ) -> Result<TlsSession, ConnectError> {
-        let pki_server_name = DNSNameRef::try_from_ascii_str(server_name)
-            .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?;
         Ok(TlsSession {
             using_alpn: !self.alpn_protocols.is_empty(),
             got_handshake_data: false,
-            inner: SessionKind::Client(rustls::ClientSession::new_quic(
-                self,
-                pki_server_name,
-                to_vec(params),
-            )),
+            next_secrets: None,
+            inner: Connection::Client(
+                rustls::ClientConnection::new_quic(
+                    self.clone(),
+                    Version::V1Draft,
+                    server_name
+                        .try_into()
+                        .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?,
+                    to_vec(params),
+                )
+                .unwrap(),
+            ),
         })
     }
 }
@@ -299,7 +301,11 @@ impl crypto::ServerConfig<TlsSession> for Arc<rustls::ServerConfig> {
         TlsSession {
             using_alpn: !self.alpn_protocols.is_empty(),
             got_handshake_data: false,
-            inner: SessionKind::Server(rustls::ServerSession::new_quic(self, to_vec(params))),
+            next_secrets: None,
+            inner: Connection::Server(
+                rustls::ServerConnection::new_quic(self.clone(), Version::V1Draft, to_vec(params))
+                    .unwrap(),
+            ),
         }
     }
 }
@@ -312,15 +318,9 @@ fn to_vec(params: &TransportParameters) -> Vec<u8> {
 
 impl crypto::PacketKey for PacketKey {
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize) {
-        let (header, payload) = buf.split_at_mut(header_len);
-        let (payload, tag_storage) =
-            payload.split_at_mut(payload.len() - self.key.algorithm().tag_len());
-        let aad = aead::Aad::from(header);
-        let nonce = self.iv.nonce_for(packet);
-        let tag = self
-            .key
-            .seal_in_place_separate_tag(nonce, aad, payload)
-            .unwrap();
+        let (header, payload_tag) = buf.split_at_mut(header_len);
+        let (payload, tag_storage) = payload_tag.split_at_mut(payload_tag.len() - self.tag_len());
+        let tag = self.encrypt_in_place(packet, &*header, payload).unwrap();
         tag_storage.copy_from_slice(tag.as_ref());
     }
 
@@ -330,42 +330,24 @@ impl crypto::PacketKey for PacketKey {
         header: &[u8],
         payload: &mut BytesMut,
     ) -> Result<(), CryptoError> {
-        if payload.len() < self.key.algorithm().tag_len() {
-            return Err(CryptoError);
-        }
-
-        let payload_len = payload.len();
-        let aad = aead::Aad::from(header);
-        let nonce = self.iv.nonce_for(packet);
-        self.key.open_in_place(nonce, aad, payload.as_mut())?;
-        payload.truncate(payload_len - self.key.algorithm().tag_len());
+        let plain = self
+            .decrypt_in_place(packet, &*header, payload.as_mut())
+            .map_err(|_| CryptoError)?;
+        let plain_len = plain.len();
+        payload.truncate(plain_len);
         Ok(())
     }
 
     fn tag_len(&self) -> usize {
-        self.key.algorithm().tag_len()
+        self.tag_len()
     }
 
     fn confidentiality_limit(&self) -> u64 {
-        let cipher = self.key.algorithm();
-        if cipher == &aead::AES_128_GCM || cipher == &aead::AES_256_GCM {
-            2u64.pow(23)
-        } else if cipher == &aead::CHACHA20_POLY1305 {
-            u64::MAX
-        } else {
-            panic!("unknown cipher")
-        }
+        self.confidentiality_limit()
     }
 
     fn integrity_limit(&self) -> u64 {
-        let cipher = self.key.algorithm();
-        if cipher == &aead::AES_128_GCM || cipher == &aead::AES_256_GCM {
-            2u64.pow(52)
-        } else if cipher == &aead::CHACHA20_POLY1305 {
-            2u64.pow(36)
-        } else {
-            panic!("unknown cipher")
-        }
+        self.integrity_limit()
     }
 }
 
@@ -377,8 +359,8 @@ impl crypto::PacketKey for PacketKey {
 /// This list prefers AES ciphers, which are hardware accelerated on most platforms.
 /// This list can be removed if the rustls dependency is updated to a new version
 /// which contains the linked change.
-pub(crate) static QUIC_CIPHER_SUITES: [&rustls::SupportedCipherSuite; 3] = [
-    &rustls::ciphersuite::TLS13_AES_256_GCM_SHA384,
-    &rustls::ciphersuite::TLS13_AES_128_GCM_SHA256,
-    &rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256,
+pub(crate) static QUIC_CIPHER_SUITES: [rustls::SupportedCipherSuite; 3] = [
+    rustls::cipher_suite::TLS13_AES_256_GCM_SHA384,
+    rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
+    rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
 ];

@@ -438,6 +438,6 @@ fn split_transmit(transmit: Transmit) -> Vec<Transmit> {
 lazy_static! {
     pub static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
     pub static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
-    static ref CERTIFICATE: rcgen::Certificate =
+    pub(crate) static ref CERTIFICATE: rcgen::Certificate =
         rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
 }
