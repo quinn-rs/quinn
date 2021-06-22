@@ -1194,9 +1194,13 @@ where
         if info.ack_eliciting && self.path.challenge.is_none() {
             // Only pass ACKs to the congestion controller if we are not validating the current
             // path, so as to ignore any ACKs from older paths still coming in.
-            self.path
-                .congestion
-                .on_ack(now, info.time_sent, info.size.into(), self.app_limited);
+            self.path.congestion.on_ack(
+                now,
+                info.time_sent,
+                info.size.into(),
+                self.app_limited,
+                self.path.rtt.get(),
+            );
         }
 
         // Update state for confirmed delivery of frames
