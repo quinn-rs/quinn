@@ -614,15 +614,17 @@ impl ClientConfig<crypto::rustls::TlsSession> {
     /// Create a client configuration that trusts the platform's native roots
     #[cfg(feature = "native-certs")]
     pub fn with_native_roots() -> Self {
-        let roots = match rustls_native_certs::load_native_certs() {
-            Ok(roots) => roots,
-            Err((Some(roots), e)) => {
-                tracing::warn!("couldn't load some default trust roots: {}", e);
-                roots
+        let mut roots = rustls::RootCertStore::empty();
+        match rustls_native_certs::load_native_certs() {
+            Ok(certs) => {
+                for cert in certs {
+                    if let Err(e) = roots.add(&rustls::Certificate(cert.0)) {
+                        tracing::warn!("failed to parse trust anchor: {}", e);
+                    }
+                }
             }
-            Err((None, e)) => {
+            Err(e) => {
                 tracing::warn!("couldn't load any default trust roots: {}", e);
-                rustls::RootCertStore::empty()
             }
         };
 
