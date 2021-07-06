@@ -31,8 +31,8 @@ use crate::{
         EndpointEventInner, IssuedCid,
     },
     transport_parameters::TransportParameters,
-    ResetToken, RetryToken, Side, Transmit, TransportError, MAX_CID_SIZE, MIN_INITIAL_SIZE,
-    MIN_MTU, RESET_TOKEN_SIZE,
+    ResetToken, RetryToken, Side, Transmit, TransportError, INITIAL_MAX_UDP_PAYLOAD_SIZE,
+    MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -694,7 +694,9 @@ where
 
         let mut buf = Vec::<u8>::new();
         let partial_encode = header.encode(&mut buf);
-        let max_len = MIN_MTU as usize - partial_encode.header_len - crypto.packet.local.tag_len();
+        let max_len = INITIAL_MAX_UDP_PAYLOAD_SIZE as usize
+            - partial_encode.header_len
+            - crypto.packet.local.tag_len();
         frame::Close::from(reason).encode(&mut buf, max_len);
         buf.resize(buf.len() + crypto.packet.local.tag_len(), 0);
         partial_encode.finish(
