@@ -10,14 +10,11 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use futures::{future, StreamExt};
-use hyper::body::HttpBody as _;
+use http_body::Body;
 use lazy_static::lazy_static;
-use quinn_h3::Settings;
 use structopt::StructOpt;
-use tracing::{debug, error, info, info_span, warn};
+use tracing::{error, info, info_span, warn};
 use tracing_futures::Instrument as _;
-
-use quinn_h3::Body;
 
 #[derive(StructOpt, Debug)]
 #[structopt(name = "interop")]
@@ -29,8 +26,6 @@ struct Opt {
     port: Option<u16>,
     #[structopt(long)]
     retry_port: Option<u16>,
-    #[structopt(long)]
-    h3: bool,
     #[structopt(long)]
     hq: bool,
     #[structopt(long)]
@@ -44,11 +39,10 @@ struct Opt {
 
 impl Opt {
     fn alpn(&self) -> Option<Alpn> {
-        match (self.h3, self.hq, self.siduck) {
-            (false, false, false) => None,
-            (true, false, false) => Some(Alpn::H3),
-            (false, true, false) => Some(Alpn::Hq),
-            (false, false, true) => Some(Alpn::SiDuck),
+        match (self.hq, self.siduck) {
+            (false, false) => None,
+            (true, false) => Some(Alpn::Hq),
+            (false, true) => Some(Alpn::SiDuck),
             _ => panic!("conflicting protocol options"),
         }
     }
@@ -57,18 +51,14 @@ impl Opt {
 #[derive(Clone)]
 enum Alpn {
     Hq,
-    H3,
-    HqH3,
     SiDuck,
 }
 
 impl From<&Alpn> for Vec<Vec<u8>> {
     fn from(alpn: &Alpn) -> Vec<Vec<u8>> {
         match alpn {
-            Alpn::H3 => vec![quinn_h3::ALPN.into()],
             Alpn::Hq => vec![b"hq-29"[..].into()],
             Alpn::SiDuck => vec![b"siduck-00"[..].into()],
-            Alpn::HqH3 => vec![b"hq-29"[..].into(), quinn_h3::ALPN.into()],
         }
     }
 }
@@ -91,33 +81,13 @@ impl Peer {
             host: host_str,
             port: 4433,
             retry_port: 4434,
-            alpn: Alpn::HqH3,
+            alpn: Alpn::Hq,
             sequential: false,
         }
     }
 
     fn name<T: Into<String>>(mut self, name: T) -> Self {
         self.name = name.into();
-        self
-    }
-
-    fn port(mut self, port: u16) -> Self {
-        self.port = port;
-        self
-    }
-
-    fn retry_port(mut self, port: u16) -> Self {
-        self.retry_port = port;
-        self
-    }
-
-    fn h3(mut self) -> Self {
-        self.alpn = Alpn::H3;
-        self
-    }
-
-    fn hq(mut self) -> Self {
-        self.alpn = Alpn::Hq;
         self
     }
 
@@ -133,36 +103,13 @@ impl Peer {
 
 lazy_static! {
     static ref PEERS: Vec<Peer> = vec![
-        Peer::new("quant.eggert.org").name("quant").hq(),
-        Peer::new("nghttp2.org").name("nghttp2").h3(),
-        Peer::new("fb.mvfst.net").name("mvfst").h3(),
-        Peer::new("test.privateoctopus.com").name("picoquic").h3(),
-        Peer::new("quic.westus.cloudapp.azure.com")
-            .name("msquic")
-            .h3()
-            .port(443),
-        Peer::new("quic.westus.cloudapp.azure.com")
-            .name("msquic-hq")
-            .hq(),
-        Peer::new("f5quic.com").name("f5"),
-        Peer::new("quic.ogre.com").name("ATS"),
-        Peer::new("quic.tech").name("quiche-http/0.9").hq(),
-        Peer::new("quic.tech")
-            .name("quiche")
-            .h3()
-            .port(8443)
-            .retry_port(8444),
-        Peer::new("http3-test.litespeedtech.com")
-            .name("lsquic")
-            .h3(),
-        Peer::new("cloudflare-quic.com")
-            .name("ngx_quic")
-            .h3()
-            .port(443),
-        Peer::new("quic.aiortc.org").name("aioquic").h3().port(443),
-        Peer::new("quic.rocks").name("gQuic"),
-        Peer::new("mew.org").name("Haskell QUIC").h3(),
-        Peer::new("quic.examp1e.net").name("quicly").hq(),
+        // Peer::new("quant.eggert.org").name("quant"), no supported version
+        // Peer::new("quic.westus.cloudapp.azure.com").name("msquic-hq"), timed out
+        // Peer::new("f5quic.com").name("f5"), no application protocol
+        // Peer::new("quic.ogre.com").name("ATS"), timed out
+        Peer::new("quic.tech").name("quiche-http/0.9"),
+        // Peer::new("quic.rocks").name("gQuic"), timed out
+        // Peer::new("quic.examp1e.net").name("quicly"), timed out
     ];
 }
 
@@ -186,7 +133,7 @@ async fn main() {
             port: opt.port.unwrap_or(4433),
             retry_port: opt.retry_port.unwrap_or(4434),
             sequential: opt.seq,
-            alpn: opt.alpn().unwrap_or(Alpn::HqH3),
+            alpn: opt.alpn().unwrap_or(Alpn::Hq),
         }]
     } else if opt.name.is_some() {
         let name = opt.name.as_ref().unwrap();
@@ -236,7 +183,6 @@ async fn run(peer: &Peer, keylog: bool) -> Result<String> {
     let result = match peer.alpn {
         Alpn::Hq => state.run_hq().instrument(info_span!("hq")).await?.format(),
         Alpn::SiDuck => state.run_siduck().instrument(info_span!("siduck")).await?,
-        Alpn::H3 | Alpn::HqH3 => state.run_h3().instrument(info_span!("h3")).await?.format(),
     };
     Ok(result)
 }
@@ -247,7 +193,6 @@ struct State {
     remote: SocketAddr,
     host: String,
     peer: Peer,
-    h3_client: Option<quinn_h3::client::Client>,
 }
 
 impl State {
@@ -277,49 +222,6 @@ impl State {
             );
             Ok(build_result(
                 core, key_update, rebind, retry, throughput, None, None,
-            ))
-        }
-    }
-
-    async fn run_h3(self) -> Result<InteropResult> {
-        // We run core on its own first to ensure the 0-RTT token can be used reliably
-        let core = self.core_h3().instrument(info_span!("core")).await;
-        if self.peer.sequential {
-            Ok(build_result(
-                core,
-                self.key_update_h3()
-                    .instrument(info_span!("key_update"))
-                    .await,
-                self.rebind_h3().instrument(info_span!("rebind")).await,
-                self.retry_h3().instrument(info_span!("retry")).await,
-                self.throughput_h3()
-                    .instrument(info_span!("throughput"))
-                    .await,
-                Some(self.h3().instrument(info_span!("h3")).await),
-                Some(
-                    self.dynamic_encoding()
-                        .instrument(info_span!("dynamic_encoding"))
-                        .await,
-                ),
-            ))
-        } else {
-            let (key_update, rebind, retry, throughput, h3, dynamic_encoding) = tokio::join!(
-                self.key_update_h3().instrument(info_span!("key_update")),
-                self.rebind_h3().instrument(info_span!("rebind")),
-                self.retry_h3().instrument(info_span!("retry")),
-                self.throughput_h3().instrument(info_span!("throughput")),
-                self.h3().instrument(info_span!("h3")),
-                self.dynamic_encoding()
-                    .instrument(info_span!("dynamic_encoding")),
-            );
-            Ok(build_result(
-                core,
-                key_update,
-                rebind,
-                retry,
-                throughput,
-                Some(h3),
-                Some(dynamic_encoding),
             ))
         }
     }
@@ -388,16 +290,7 @@ impl State {
 
         let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
 
-        let h3_client = match peer.alpn {
-            Alpn::Hq => None,
-            _ => {
-                let mut h3_client = quinn_h3::client::Builder::default();
-                h3_client.settings(Settings::new());
-                Some(h3_client.endpoint(endpoint.clone()))
-            }
-        };
         Ok(State {
-            h3_client,
             host: host.into(),
             peer: peer.clone(),
             client_config,
@@ -594,218 +487,6 @@ impl State {
         }
         Ok(())
     }
-
-    async fn h3(&self) -> Result<()> {
-        if let Alpn::Hq = self.peer.alpn {
-            return Err(anyhow!("H3 not implemented on this peer"));
-        }
-        let conn = self
-            .h3_client
-            .as_ref()
-            .unwrap()
-            .connect(&self.remote, &self.host)?
-            .await
-            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-
-        h3_get(&conn, &self.peer.uri("/"))
-            .await
-            .map_err(|e| anyhow!("h3 request failed: {}", e))?;
-        conn.close();
-        Ok(())
-    }
-
-    async fn throughput_h3(&self) -> Result<()> {
-        if let Alpn::Hq = self.peer.alpn {
-            return Err(anyhow!("H3 not implemented on this peer"));
-        }
-
-        for size in [5_000_000, 10_000_000usize].iter() {
-            let uri = self.peer.uri(&format!("/{}", size));
-            let conn = self
-                .h3_client
-                .as_ref()
-                .unwrap()
-                .connect(&self.remote, &self.host)?
-                .await
-                .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-
-            let start = Instant::now();
-            h3_get(&conn, &uri).await.context("h3 request failed")?;
-            let elapsed_h3 = start.elapsed();
-            conn.close();
-
-            let mut h2 = hyper::client::Builder::default();
-            h2.http2_only(true);
-            let mut http = hyper::client::connect::HttpConnector::new();
-            http.enforce_http(false);
-            let client = h2.build::<_, hyper::Body>(hyper_rustls::HttpsConnector::from((
-                http,
-                self.client_config.crypto.clone(),
-            )));
-            let response = client.get(self.peer.uri("/")).await?;
-            let _ = hyper::body::to_bytes(response).await?;
-
-            let start = Instant::now();
-            let mut response = client.get(uri.clone()).await?;
-            let mut total_len = 0usize;
-            while let Some(b) = response.body_mut().data().await {
-                total_len += b?.len()
-            }
-            if total_len != *size {
-                return Err(anyhow!("h2 {} responded {} B", uri, total_len));
-            }
-            let elapsed_h2 = start.elapsed();
-
-            let percentage = (elapsed_h3.as_nanos() as f64 - elapsed_h2.as_nanos() as f64)
-                / elapsed_h2.as_nanos() as f64
-                * 100.0;
-            info!(
-                size = size,
-                h3 = elapsed_h3.as_millis() as usize,
-                h2 = elapsed_h2.as_millis() as usize,
-                "h3 time {:+.2}% of h2's",
-                percentage
-            );
-            if percentage > 10.0 {
-                return Err(anyhow!("Throughput {} is {:+.2}% slower", size, percentage));
-            }
-        }
-        Ok(())
-    }
-
-    async fn core_h3(&self) -> Result<InteropResult> {
-        let mut result = InteropResult::default();
-
-        let conn = self
-            .h3_client
-            .as_ref()
-            .unwrap()
-            .connect(&self.remote, &self.host)?
-            .await
-            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-        result.handshake = true;
-        h3_get(&conn, &self.peer.uri("/"))
-            .await
-            .map_err(|e| anyhow!("simple request failed: {}", e))?;
-        result.stream_data = true;
-        conn.close();
-
-        let saw_cert = Arc::new(Mutex::new(false));
-        let quinn::ClientConfig {
-            mut crypto,
-            transport,
-        } = self.client_config.clone();
-        Arc::make_mut(&mut crypto)
-            .dangerous()
-            .set_certificate_verifier(Arc::new(InteropVerifier(saw_cert.clone())));
-        let client_config = quinn::ClientConfig { transport, crypto };
-
-        let conn = match self
-            .h3_client
-            .as_ref()
-            .unwrap()
-            .connect_with(client_config, &self.remote, &self.host)?
-            .into_0rtt()
-        {
-            Ok((conn, _)) => {
-                h3_get(&conn, &self.peer.uri("/"))
-                    .await
-                    .map_err(|e| anyhow!("0-RTT request failed: {}", e))?;
-                result.zero_rtt = true;
-                conn
-            }
-            Err(connecting) => {
-                info!("0-RTT unsupported");
-                connecting
-                    .await
-                    .map_err(|e| anyhow!("failed to connect: {}", e))?
-            }
-        };
-        result.resumption = !*saw_cert.lock().unwrap();
-        conn.close();
-
-        self.endpoint.wait_idle().await;
-
-        result.close = true;
-
-        Ok(result)
-    }
-
-    async fn key_update_h3(&self) -> Result<()> {
-        let conn = self
-            .h3_client
-            .as_ref()
-            .unwrap()
-            .connect(&self.remote, &self.host)?
-            .await
-            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-        // Make sure some traffic has gone both ways before the key update
-        h3_get(&conn, &self.peer.uri("/"))
-            .await
-            .map_err(|e| anyhow!("request failed before key update: {}", e))?;
-        conn.force_key_update();
-        h3_get(&conn, &self.peer.uri("/"))
-            .await
-            .map_err(|e| anyhow!("request failed after key update: {}", e))?;
-        conn.close();
-        Ok(())
-    }
-
-    async fn retry_h3(&self) -> Result<()> {
-        let mut remote = self.remote;
-        remote.set_port(self.peer.retry_port);
-
-        let conn = self
-            .h3_client
-            .as_ref()
-            .unwrap()
-            .connect(&remote, &self.host)?
-            .await
-            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-        h3_get(&conn, &self.peer.uri("/"))
-            .await
-            .map_err(|e| anyhow!("request failed on retry port: {}", e))?;
-        conn.close();
-        Ok(())
-    }
-
-    async fn rebind_h3(&self) -> Result<()> {
-        let (endpoint, _) = quinn::Endpoint::builder().bind(&"[::]:0".parse().unwrap())?;
-
-        let h3_client = quinn_h3::client::Builder::default().endpoint(self.endpoint.clone());
-        let conn = h3_client
-            .connect(&self.remote, &self.host)?
-            .await
-            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-        let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
-        endpoint.rebind(socket)?;
-        h3_get(&conn, &self.peer.uri("/"))
-            .await
-            .map_err(|e| anyhow!("request failed on retry port: {}", e))?;
-        conn.close();
-        Ok(())
-    }
-
-    async fn dynamic_encoding(&self) -> Result<()> {
-        let conn = self
-            .h3_client
-            .as_ref()
-            .unwrap()
-            .connect(&self.remote, &self.host)?
-            .await
-            .map_err(|e| anyhow!("h3 failed to connect: {}", e))?;
-        h3_get(&conn, &self.peer.uri("/"))
-            .await
-            .map_err(|e| anyhow!("request failed before key update: {}", e))?;
-        h3_get(&conn, &self.peer.uri("/"))
-            .await
-            .map_err(|e| anyhow!("request failed before key update: {}", e))?;
-        if !conn.had_refs() {
-            return Err(anyhow!("No dynamic table entry was referenced"));
-        }
-        conn.close();
-        Ok(())
-    }
 }
 
 #[derive(Default)]
@@ -904,17 +585,6 @@ fn build_result(
         None => (),
     }
     result
-}
-
-async fn h3_get(conn: &quinn_h3::client::Connection, uri: &http::Uri) -> Result<usize> {
-    let (request, response) = conn.send_request(http::Request::get(uri).body(Body::from(()))?);
-    request.await?;
-
-    let mut resp = response.await?;
-    debug!("resp: {:?}", resp);
-    let body = resp.body_mut().read_to_end().await?;
-
-    Ok(body.len())
 }
 
 async fn hq_get(stream: (quinn::SendStream, quinn::RecvStream), path: &str) -> Result<Vec<u8>> {

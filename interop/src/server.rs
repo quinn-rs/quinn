@@ -23,7 +23,6 @@ use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
 use quinn::SendStream;
-use quinn_h3::{self, server::RecvRequest, Body};
 use sync::Arc;
 
 #[derive(StructOpt, Debug, Clone)]
@@ -78,7 +77,7 @@ async fn main() -> Result<()> {
 
     let mut server_config = quinn::ServerConfigBuilder::default();
     server_config.certificate(cert_chain, key)?;
-    server_config.protocols(&[quinn_h3::ALPN, b"hq-29", b"siduck-00"]);
+    server_config.protocols(&[b"hq-29", b"siduck-00"]);
 
     let main = server(server_config.clone(), SocketAddr::new(opt.listen, 4433));
     let default = server(server_config.clone(), SocketAddr::new(opt.listen, 443));
@@ -111,7 +110,6 @@ async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> 
             println!("server received connection");
 
             let result = match &proto[..] {
-                quinn_h3::ALPN => h3_handle_connection(connecting).await,
                 b"hq-29" => hq_handle_connection(connecting).await,
                 b"siduck-00" => siduck_handle_connection(connecting).await,
                 _ => unreachable!("unsupported protocol"),
@@ -121,88 +119,6 @@ async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> 
             }
         });
     }
-    Ok(())
-}
-
-async fn h3_handle_connection(connecting: quinn::Connecting) -> Result<()> {
-    let connecting = quinn_h3::server::Connecting::from(connecting);
-    let mut incoming = match connecting.into_0rtt() {
-        Ok((c, _)) => c,
-        Err(c) => c.await.context("accept failed")?,
-    };
-    tokio::spawn(async move {
-        while let Some(request) = incoming.next().await {
-            tokio::spawn(async move {
-                if let Err(e) = h3_handle_request(request).await {
-                    eprintln!("request error: {}", e)
-                }
-            });
-        }
-    });
-
-    Ok(())
-}
-
-async fn h3_handle_request(recv_request: RecvRequest) -> Result<()> {
-    let (mut request, sender) = recv_request.await?;
-    println!("received request: {:?}", request);
-
-    let body = request.body_mut().read_to_end().await?;
-    println!("received body: {}", String::from_utf8_lossy(&body));
-
-    if let Some(trailers) = request.body_mut().trailers().await? {
-        println!("received trailers: {:?}", trailers);
-    }
-
-    match request.uri().path() {
-        "/" => h3_home(sender).await?,
-        path => match parse_size(path) {
-            Ok(n) => h3_payload(sender, n).await?,
-            Err(_) => h3_home(sender).await?,
-        },
-    };
-
-    Ok(())
-}
-
-async fn h3_home(mut sender: quinn_h3::server::Sender) -> Result<()> {
-    let response = Response::builder()
-        .status(StatusCode::OK)
-        .header("server", VERSION)
-        .body(Body::from(HOME))
-        .expect("failed to build response");
-    sender
-        .send_response(response)
-        .await
-        .map_err(|e| anyhow!("failed to send response: {:?}", e))?;
-    Ok(())
-}
-
-async fn h3_payload(mut sender: quinn_h3::server::Sender, len: usize) -> Result<()> {
-    if len > 1_000_000_000 {
-        let response = Response::builder()
-            .status(StatusCode::BAD_REQUEST)
-            .header("server", VERSION)
-            .body(Body::from(format!("requested {}: too large", len).as_ref()))
-            .expect("failed to build response");
-        sender.send_response(response).await?;
-        return Ok(());
-    }
-
-    let mut buf = TEXT.repeat(len / TEXT.len() + 1);
-    buf.truncate(len);
-
-    let response = Response::builder()
-        .status(StatusCode::OK)
-        .header("server", VERSION)
-        .body(Body::from(Bytes::from(buf)))
-        .expect("failed to build response");
-
-    sender
-        .send_response(response)
-        .await
-        .map_err(|e| anyhow!("failed to send response: {:?}", e))?;
-
     Ok(())
 }
 
@@ -456,8 +372,6 @@ const HOME: &str = r##"
   </body>
 </html>
 "##;
-
-const VERSION: &str = "quinn-h3:0.0.1";
 
 /// https://tools.ietf.org/html/draft-pardue-quic-siduck-00
 async fn siduck_handle_connection(conn: quinn::Connecting) -> Result<()> {
