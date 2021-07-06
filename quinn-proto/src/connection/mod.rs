@@ -427,8 +427,8 @@ where
                     SpaceId::Data,
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
-                let mut buf = Vec::with_capacity(self.path.mtu as usize);
-                let buf_capacity = self.path.mtu as usize;
+                let mut buf = Vec::with_capacity(self.path.max_udp_payload_size as usize);
+                let buf_capacity = self.path.max_udp_payload_size as usize;
 
                 let mut builder = PacketBuilder::new(
                     now,
@@ -541,7 +541,7 @@ where
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
-                if buf_capacity >= self.path.mtu as usize * max_datagrams {
+                if buf_capacity >= self.path.max_udp_payload_size as usize * max_datagrams {
                     // No more datagrams allowed
                     break;
                 }
@@ -552,10 +552,9 @@ where
                 // for starting another datagram. If there is any anti-amplification
                 // budget left, we always allow a full MTU to be sent
                 // (see https://github.com/quinn-rs/quinn/issues/1082)
-                if self
-                    .path
-                    .anti_amplification_blocked(self.path.mtu as u64 * num_datagrams as u64 + 1)
-                {
+                if self.path.anti_amplification_blocked(
+                    self.path.max_udp_payload_size as u64 * num_datagrams as u64 + 1,
+                ) {
                     trace!("blocked by anti-amplification");
                     break;
                 }
@@ -569,9 +568,9 @@ where
                     } else {
                         0
                     } as u64;
-                    debug_assert!(untracked_bytes <= self.path.mtu as u64);
+                    debug_assert!(untracked_bytes <= self.path.max_udp_payload_size as u64);
 
-                    let bytes_to_send = u64::from(self.path.mtu) + untracked_bytes;
+                    let bytes_to_send = u64::from(self.path.max_udp_payload_size) + untracked_bytes;
                     if self.in_flight.bytes + bytes_to_send >= self.path.congestion.window() {
                         space_idx += 1;
                         congestion_blocked = true;
@@ -585,7 +584,7 @@ where
                     if let Some(delay) = self.path.pacing.delay(
                         smoothed_rtt,
                         bytes_to_send,
-                        self.path.mtu,
+                        self.path.max_udp_payload_size,
                         self.path.congestion.window(),
                         now,
                     ) {
@@ -601,7 +600,7 @@ where
                 if let Some(mut builder) = builder.take() {
                     // Pad the packet to make it suitable for sending with GSO
                     // which will always send the maximum PDU.
-                    builder.pad_to(self.path.mtu);
+                    builder.pad_to(self.path.max_udp_payload_size);
 
                     builder.finish_and_track(now, self, sent_frames.take(), &mut buf);
 
@@ -609,7 +608,7 @@ where
                 }
 
                 // Allocate space for another datagram
-                buf_capacity += self.path.mtu as usize;
+                buf_capacity += self.path.max_udp_payload_size as usize;
                 if buf.capacity() < buf_capacity {
                     // We reserve the maximum space for sending `max_datagrams` upfront
                     // to avoid any reallocations if more datagrams have to be appended later on.
@@ -619,7 +618,9 @@ where
                     // (e.g. purely containing ACKs), modern memory allocators
                     // (e.g. mimalloc and jemalloc) will pool certain allocation sizes
                     // and therefore this is still rather efficient.
-                    buf.reserve(max_datagrams * self.path.mtu as usize - buf.capacity());
+                    buf.reserve(
+                        max_datagrams * self.path.max_udp_payload_size as usize - buf.capacity(),
+                    );
                 }
                 num_datagrams += 1;
                 coalesce = true;
@@ -664,7 +665,7 @@ where
                 space_id,
                 &mut buf,
                 buf_capacity,
-                (num_datagrams - 1) * (self.path.mtu as usize),
+                (num_datagrams - 1) * (self.path.max_udp_payload_size as usize),
                 ack_eliciting,
                 self,
                 self.version,
@@ -717,7 +718,8 @@ where
                 !(sent.is_ack_only()
                     && !can_send.acks
                     && can_send.other
-                    && (buf_capacity - builder.datagram_start) == self.path.mtu as _),
+                    && (buf_capacity - builder.datagram_start)
+                        == self.path.max_udp_payload_size as _),
                 "SendableFrames was {:?}, but only ACKs have been written",
                 can_send
             );
@@ -769,7 +771,7 @@ where
             },
             segment_size: match num_datagrams {
                 1 => None,
-                _ => Some(self.path.mtu as usize),
+                _ => Some(self.path.max_udp_payload_size as usize),
             },
             src_ip: self.local_ip,
         })

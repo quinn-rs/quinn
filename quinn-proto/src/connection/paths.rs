@@ -1,7 +1,7 @@
 use std::{cmp, net::SocketAddr, time::Duration, time::Instant};
 
 use super::pacing::Pacer;
-use crate::{congestion, MIN_MTU, TIMER_GRANULARITY};
+use crate::{congestion, INITIAL_MAX_UDP_PAYLOAD_SIZE, TIMER_GRANULARITY};
 
 /// Description of a particular network path
 pub struct PathData {
@@ -24,7 +24,7 @@ pub struct PathData {
     pub total_sent: u64,
     /// Total size of all UDP datagrams received on this path
     pub total_recvd: u64,
-    pub mtu: u16,
+    pub max_udp_payload_size: u16,
 }
 
 impl PathData {
@@ -39,14 +39,19 @@ impl PathData {
             remote,
             rtt: RttEstimator::new(initial_rtt),
             sending_ecn: true,
-            pacing: Pacer::new(initial_rtt, congestion.initial_window(), MIN_MTU, now),
+            pacing: Pacer::new(
+                initial_rtt,
+                congestion.initial_window(),
+                INITIAL_MAX_UDP_PAYLOAD_SIZE,
+                now,
+            ),
             congestion,
             challenge: None,
             challenge_pending: false,
             validated,
             total_sent: 0,
             total_recvd: 0,
-            mtu: MIN_MTU,
+            max_udp_payload_size: INITIAL_MAX_UDP_PAYLOAD_SIZE,
         }
     }
 
@@ -56,7 +61,12 @@ impl PathData {
         PathData {
             remote,
             rtt: prev.rtt,
-            pacing: Pacer::new(smoothed_rtt, congestion.window(), prev.mtu, now),
+            pacing: Pacer::new(
+                smoothed_rtt,
+                congestion.window(),
+                prev.max_udp_payload_size,
+                now,
+            ),
             sending_ecn: true,
             congestion,
             challenge: None,
@@ -64,7 +74,7 @@ impl PathData {
             validated: false,
             total_sent: 0,
             total_recvd: 0,
-            mtu: prev.mtu,
+            max_udp_payload_size: prev.max_udp_payload_size,
         }
     }
 

@@ -21,8 +21,13 @@ pub struct Pacer {
 
 impl Pacer {
     /// Obtains a new [`Pacer`].
-    pub fn new(smoothed_rtt: Duration, window: u64, mtu: u16, now: Instant) -> Self {
-        let capacity = optimal_capacity(smoothed_rtt, window, mtu);
+    pub fn new(
+        smoothed_rtt: Duration,
+        window: u64,
+        max_udp_payload_size: u16,
+        now: Instant,
+    ) -> Self {
+        let capacity = optimal_capacity(smoothed_rtt, window, max_udp_payload_size);
         Self {
             capacity,
             last_window: window,
@@ -123,7 +128,7 @@ impl Pacer {
 /// tokens for the extra-elapsed time can be stored.
 ///
 /// Too long burst intervals make pacing less effective.
-fn optimal_capacity(smoothed_rtt: Duration, window: u64, mtu: u16) -> u64 {
+fn optimal_capacity(smoothed_rtt: Duration, window: u64, max_udp_payload_size: u16) -> u64 {
     let rtt = smoothed_rtt.as_nanos().max(1);
 
     let capacity = ((window as u128 * BURST_INTERVAL_NANOS) / rtt) as u64;
@@ -131,8 +136,8 @@ fn optimal_capacity(smoothed_rtt: Duration, window: u64, mtu: u16) -> u64 {
     // Small bursts are less efficient (no GSO), could increase latency and don't effectively
     // use the channel's buffer capacity. Large bursts might block the connection on sending.
     capacity
-        .max(MIN_BURST_SIZE * mtu as u64)
-        .min(MAX_BURST_SIZE * mtu as u64)
+        .max(MIN_BURST_SIZE * max_udp_payload_size as u64)
+        .min(MAX_BURST_SIZE * max_udp_payload_size as u64)
 }
 
 /// The burst interval
