@@ -180,6 +180,8 @@ impl Controller for Cubic {
         self.recovery_start_time = Some(now);
 
         // Fast convergence
+        #[allow(clippy::branches_sharing_code)]
+        // https://github.com/rust-lang/rust-clippy/issues/7198
         if self.cubic_state.w_max < self.cubic_state.w_last_max {
             self.cubic_state.w_last_max = self.cubic_state.w_max;
             self.cubic_state.w_max = self.cubic_state.w_max as f64 * (1.0 + BETA_CUBIC) / 2.0;
