@@ -14,11 +14,8 @@ use rustls::internal::msgs::enums::AlertDescription;
 use tracing::info;
 
 use super::*;
+use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
 use crate::crypto::Session as _;
-use crate::{
-    cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
-    crypto::rustls::QUIC_CIPHER_SUITES,
-};
 use crate::{Certificate, CertificateChain, PrivateKey};
 mod util;
 use util::*;
@@ -337,7 +334,7 @@ fn reject_missing_client_cert() {
     let cert = util::CERTIFICATE.serialize_der().unwrap();
 
     let config = rustls::ServerConfig::builder()
-        .with_cipher_suites(&QUIC_CIPHER_SUITES)
+        .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()
         .with_protocol_versions(&[&rustls::version::TLS13])
         .unwrap()
