@@ -75,9 +75,10 @@ async fn main() -> Result<()> {
         _ => quinn::CertificateChain::from_pem(&cert_chain)?,
     };
 
-    let mut server_config = quinn::ServerConfigBuilder::default();
-    server_config.certificate(cert_chain, key)?;
-    server_config.protocols(&[b"hq-29", b"siduck-00"]);
+    let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key)?;
+    Arc::get_mut(&mut server_config.crypto)
+        .unwrap()
+        .alpn_protocols = vec![b"hq-29".to_vec(), b"siduck-00".to_vec()];
 
     let main = server(server_config.clone(), SocketAddr::new(opt.listen, 4433));
     let default = server(server_config.clone(), SocketAddr::new(opt.listen, 443));
@@ -89,11 +90,10 @@ async fn main() -> Result<()> {
     Ok(())
 }
 
-async fn server(server_config: quinn::ServerConfigBuilder, addr: SocketAddr) -> Result<()> {
+async fn server(mut server_config: quinn::ServerConfig, addr: SocketAddr) -> Result<()> {
     let mut transport = quinn::TransportConfig::default();
     transport.send_window(1024 * 1024 * 3);
     transport.receive_window((1024_u32 * 1024).into());
-    let mut server_config = server_config.build();
     server_config.transport = Arc::new(transport);
 
     let mut endpoint_builder = quinn::Endpoint::builder();
@@ -280,8 +280,8 @@ async fn h2_handle(request: hyper::Request<hyper::Body>) -> Result<hyper::Respon
     })
 }
 
-async fn h2_server(server_config: quinn::ServerConfigBuilder) -> Result<()> {
-    let mut tls_cfg = (*server_config.build().crypto).clone();
+async fn h2_server(server_config: quinn::ServerConfig) -> Result<()> {
+    let mut tls_cfg = (*server_config.crypto).clone();
     tls_cfg.set_protocols(&[b"h2".to_vec(), b"http/1.1".to_vec()]);
     let tls_acceptor = TlsAcceptor::from(sync::Arc::new(tls_cfg));
 

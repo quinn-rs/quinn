@@ -9,8 +9,6 @@ use tracing::error;
 use udp::UdpSocket;
 
 use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
-#[cfg(feature = "rustls")]
-use crate::{CertificateChain, PrivateKey};
 
 /// A helper for constructing an [`Endpoint`].
 ///
@@ -178,16 +176,6 @@ impl ServerConfigBuilder<proto::crypto::rustls::TlsSession> {
         self
     }
 
-    /// Set the certificate chain that will be presented to clients.
-    pub fn certificate(
-        &mut self,
-        cert_chain: CertificateChain,
-        key: PrivateKey,
-    ) -> Result<&mut Self, rustls::TLSError> {
-        self.config.certificate(cert_chain, key)?;
-        Ok(self)
-    }
-
     /// Set the application-layer protocols to accept, in order of descending preference.
     ///
     /// When set, clients which don't declare support for at least one of the supplied protocols will be rejected.
@@ -209,17 +197,6 @@ where
     fn clone(&self) -> Self {
         Self {
             config: self.config.clone(),
-        }
-    }
-}
-
-impl<S> Default for ServerConfigBuilder<S>
-where
-    S: proto::crypto::Session,
-{
-    fn default() -> Self {
-        Self {
-            config: ServerConfig::default(),
         }
     }
 }

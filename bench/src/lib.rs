@@ -30,12 +30,8 @@ pub fn server_endpoint(
     key: quinn::PrivateKey,
     opt: &Opt,
 ) -> (SocketAddr, quinn::Incoming) {
-    let mut server_config = quinn::ServerConfigBuilder::default();
-    server_config
-        .certificate(quinn::CertificateChain::from_certs(vec![cert]), key)
-        .unwrap();
-
-    let mut server_config = server_config.build();
+    let cert_chain = quinn::CertificateChain::from_certs(vec![cert]);
+    let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
     server_config.transport = Arc::new(transport_config(opt));
 
     let mut endpoint = quinn::EndpointBuilder::default();

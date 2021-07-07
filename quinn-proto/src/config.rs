@@ -8,7 +8,7 @@ use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
-    crypto::{self, HandshakeTokenKey as _, HmacKey as _, ServerConfig as _},
+    crypto::{self, HandshakeTokenKey as _, HmacKey as _},
     VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS,
 };
 
@@ -469,10 +469,10 @@ where
     S: crypto::Session,
 {
     /// Create a default config with a particular `master_key`
-    pub fn new(prk: S::HandshakeTokenKey) -> Self {
+    pub fn new(crypto: S::ServerConfig, prk: S::HandshakeTokenKey) -> Self {
         Self {
             transport: Arc::new(TransportConfig::default()),
-            crypto: S::ServerConfig::new(),
+            crypto,
 
             token_key: Arc::new(prk),
             use_stateless_retry: false,
@@ -525,14 +525,38 @@ where
 
 #[cfg(feature = "rustls")]
 impl ServerConfig<crypto::rustls::TlsSession> {
-    /// Set the certificate chain that will be presented to clients
-    pub fn certificate(
-        &mut self,
+    /// Create a server config with the given certificate chain to be presented to clients
+    ///
+    /// Uses a randomized handshake token key.
+    pub fn with_single_cert(
         cert_chain: CertificateChain,
         key: PrivateKey,
-    ) -> Result<&mut Self, rustls::TLSError> {
-        Arc::make_mut(&mut self.crypto).set_single_cert(cert_chain.certs, key.inner)?;
-        Ok(self)
+    ) -> Result<Self, rustls::TLSError> {
+        let mut crypto = rustls::ServerConfig::with_ciphersuites(
+            rustls::NoClientAuth::new(),
+            &crypto::rustls::QUIC_CIPHER_SUITES,
+        );
+
+        crypto.versions = vec![rustls::ProtocolVersion::TLSv1_3];
+        crypto.set_single_cert(cert_chain.certs, key.inner)?;
+        crypto.max_early_data_size = u32::max_value();
+
+        Ok(Self::with_crypto(Arc::new(crypto)))
+    }
+
+    /// Create a server config with the given [`rustls::ServerConfig`]
+    ///
+    /// Uses a randomized handshake token key.
+    pub fn with_crypto(crypto: Arc<rustls::ServerConfig>) -> Self {
+        let rng = &mut rand::thread_rng();
+        let mut master_key = [0u8; 64];
+        rng.fill_bytes(&mut master_key);
+        let master_key =
+            <crypto::rustls::TlsSession as crypto::Session>::HandshakeTokenKey::from_secret(
+                &master_key,
+            );
+
+        Self::new(crypto, master_key)
     }
 }
 
@@ -550,20 +574,6 @@ where
             .field("concurrent_connections", &self.concurrent_connections)
             .field("migration", &self.migration)
             .finish()
-    }
-}
-
-impl<S> Default for ServerConfig<S>
-where
-    S: crypto::Session,
-{
-    fn default() -> Self {
-        let rng = &mut rand::thread_rng();
-
-        let mut master_key = [0u8; 64];
-        rng.fill_bytes(&mut master_key);
-
-        Self::new(S::HandshakeTokenKey::from_secret(&master_key))
     }
 }
 

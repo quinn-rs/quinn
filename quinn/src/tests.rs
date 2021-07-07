@@ -22,7 +22,7 @@ use tracing_subscriber::EnvFilter;
 
 use super::{
     ClientConfig, ClientConfigBuilder, Endpoint, Incoming, NewConnection, RecvStream, SendStream,
-    ServerConfigBuilder, TransportConfig,
+    TransportConfig,
 };
 
 #[test]
@@ -233,13 +233,12 @@ async fn accept_after_close() {
 fn endpoint() -> (Endpoint, Incoming) {
     let mut endpoint = Endpoint::builder();
 
-    let mut server_config = ServerConfigBuilder::default();
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
     let cert = crate::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
     let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
-    server_config.certificate(cert_chain, key).unwrap();
-    endpoint.listen(server_config.build());
+    let server_config = crate::ServerConfig::with_single_cert(cert_chain, key).unwrap();
+    endpoint.listen(server_config);
 
     let client_config = ClientConfig::with_root_certificates(vec![cert]).unwrap();
     endpoint.default_client_config(client_config);
@@ -431,15 +430,13 @@ fn run_echo(args: EchoArgs) {
 
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
-        let mut server_config = ServerConfigBuilder::default();
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
         let cert = crate::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
         let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
-        server_config.certificate(cert_chain, key).unwrap();
+        let mut server_config = crate::ServerConfig::with_single_cert(cert_chain, key).unwrap();
 
         let mut server = Endpoint::builder();
-        let mut server_config = server_config.build();
         server_config.transport = transport_config.clone();
         server.listen(server_config);
         let server_sock = UdpSocket::bind(args.server_addr).unwrap();

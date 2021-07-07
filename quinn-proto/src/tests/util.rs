@@ -376,20 +376,13 @@ impl Write for TestWriter {
 }
 
 pub fn server_config() -> ServerConfig {
-    let key = CERTIFICATE.serialize_private_key_der();
-    let cert = CERTIFICATE.serialize_pem().unwrap();
+    let cert = Certificate::from_der(&CERTIFICATE.serialize_der().unwrap()).unwrap();
+    let key = PrivateKey::from_der(&CERTIFICATE.serialize_private_key_der()).unwrap();
+    server_config_with_cert(cert, key)
+}
 
-    let mut crypto = crypto::ServerConfig::new();
-    Arc::make_mut(&mut crypto)
-        .set_single_cert(
-            rustls::internal::pemfile::certs(&mut cert.as_bytes()).unwrap(),
-            rustls::PrivateKey(key.to_vec()),
-        )
-        .unwrap();
-    ServerConfig {
-        crypto,
-        ..Default::default()
-    }
+pub fn server_config_with_cert(cert: Certificate, key: PrivateKey) -> ServerConfig {
+    ServerConfig::with_single_cert(CertificateChain::from_certs(vec![cert]), key).unwrap()
 }
 
 pub fn client_config() -> ClientConfig {

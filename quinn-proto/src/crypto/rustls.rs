@@ -295,16 +295,6 @@ impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
 }
 
 impl crypto::ServerConfig<TlsSession> for Arc<rustls::ServerConfig> {
-    fn new() -> Self {
-        let mut cfg = rustls::ServerConfig::with_ciphersuites(
-            rustls::NoClientAuth::new(),
-            &QUIC_CIPHER_SUITES,
-        );
-        cfg.versions = vec![rustls::ProtocolVersion::TLSv1_3];
-        cfg.max_early_data_size = u32::max_value();
-        Arc::new(cfg)
-    }
-
     fn start_session(&self, params: &TransportParameters) -> TlsSession {
         TlsSession {
             using_alpn: !self.alpn_protocols.is_empty(),
