@@ -16,7 +16,7 @@ use tracing::info;
 use super::*;
 use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
 use crate::crypto::Session as _;
-use crate::{Certificate, CertificateChain, PrivateKey};
+use crate::{Certificate, PrivateKey};
 mod util;
 use util::*;
 
@@ -1764,11 +1764,7 @@ fn handshake_anti_deadlock_probe() {
     let _guard = subscribe();
 
     let (cert, key) = big_cert_and_key();
-
-    let mut server = server_config();
-    server
-        .certificate(CertificateChain::from_certs(Some(cert.clone())), key)
-        .unwrap();
+    let server = server_config_with_cert(cert.clone(), key);
     let client = client_config_with_certs(vec![cert]);
     let mut pair = Pair::new(Default::default(), server);
 
@@ -1800,11 +1796,7 @@ fn server_can_send_3_inital_packets() {
     let _guard = subscribe();
 
     let (cert, key) = big_cert_and_key();
-
-    let mut server = server_config();
-    server
-        .certificate(CertificateChain::from_certs(Some(cert.clone())), key)
-        .unwrap();
+    let server = server_config_with_cert(cert.clone(), key);
     let client = client_config_with_certs(vec![cert]);
     let mut pair = Pair::new(Default::default(), server);
 

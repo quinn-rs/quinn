@@ -64,14 +64,10 @@ async fn run(opt: Opt) -> Result<()> {
         }
     };
 
-    let mut server_config = quinn::ServerConfigBuilder::default();
-    server_config.certificate(cert, key).unwrap();
-    server_config.protocols(&[b"perf"]);
-
-    let mut server_config = server_config.build();
-
     // Configure cipher suites for efficiency
+    let mut server_config = quinn::ServerConfig::with_single_cert(cert, key).unwrap();
     let tls_config = Arc::get_mut(&mut server_config.crypto).unwrap();
+    tls_config.alpn_protocols = vec![b"perf".to_vec()];
     tls_config.ciphersuites.clear();
     tls_config
         .ciphersuites

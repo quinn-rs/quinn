@@ -144,14 +144,9 @@ fn configure_connector(node_cert: &[u8]) -> quinn::ClientConfig {
 fn configure_listener() -> (quinn::ServerConfig, Vec<u8>) {
     let (our_cert_der, our_priv_key) = gen_cert();
     let our_cert = unwrap!(quinn::Certificate::from_der(&our_cert_der));
+    let our_cert_chain = quinn::CertificateChain::from_certs(vec![our_cert]);
+    let mut our_cfg = quinn::ServerConfig::with_single_cert(our_cert_chain, our_priv_key).unwrap();
 
-    let our_cfg = Default::default();
-    let mut our_cfg_builder = quinn::ServerConfigBuilder::new(our_cfg);
-    unwrap!(our_cfg_builder.certificate(
-        quinn::CertificateChain::from_certs(vec![our_cert]),
-        our_priv_key
-    ));
-    let mut our_cfg = our_cfg_builder.build();
     let transport_config = unwrap!(Arc::get_mut(&mut our_cfg.transport));
     transport_config.max_idle_timeout(Some(Duration::from_secs(20).try_into().unwrap()));
 

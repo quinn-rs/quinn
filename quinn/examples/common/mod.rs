@@ -3,7 +3,6 @@
 
 use quinn::{
     Certificate, CertificateChain, ClientConfig, Endpoint, Incoming, PrivateKey, ServerConfig,
-    ServerConfigBuilder, TransportConfig,
 };
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
@@ -60,16 +59,14 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let cert_der = cert.serialize_der().unwrap();
     let priv_key = cert.serialize_private_key_der();
     let priv_key = PrivateKey::from_der(&priv_key)?;
+    let cert_chain = CertificateChain::from_certs(vec![Certificate::from_der(&cert_der)?]);
 
-    let mut transport_config = TransportConfig::default();
-    transport_config.max_concurrent_uni_streams(0_u8.into());
-    let mut server_config = ServerConfig::default();
-    server_config.transport = Arc::new(transport_config);
-    let mut cfg_builder = ServerConfigBuilder::new(server_config);
-    let cert = Certificate::from_der(&cert_der)?;
-    cfg_builder.certificate(CertificateChain::from_certs(vec![cert]), priv_key)?;
+    let mut server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
+    Arc::get_mut(&mut server_config.transport)
+        .unwrap()
+        .max_concurrent_uni_streams(0_u8.into());
 
-    Ok((cfg_builder.build(), cert_der))
+    Ok((server_config, cert_der))
 }
 
 #[allow(unused)]
