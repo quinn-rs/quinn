@@ -56,7 +56,7 @@ impl<'a, S: Session> Datagrams<'a, S> {
     ///
     /// Not necessarily the maximum size of received datagrams.
     pub fn max_size(&self) -> Option<usize> {
-        // This is usually 1182 bytes, but we shouldn't document that without a doctest.
+        // This is usually 1162 bytes, but we shouldn't document that without a doctest.
         let max_size = self.conn.path.max_udp_payload_size as usize
             - 1                 // flags byte
             - self.conn.rem_cids.active().len()
