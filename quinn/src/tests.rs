@@ -21,7 +21,7 @@ use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
 use super::{
-    ClientConfigBuilder, Endpoint, Incoming, NewConnection, RecvStream, SendStream,
+    ClientConfig, ClientConfigBuilder, Endpoint, Incoming, NewConnection, RecvStream, SendStream,
     ServerConfigBuilder, TransportConfig,
 };
 
@@ -36,7 +36,7 @@ fn handshake_timeout() {
             .unwrap()
     };
 
-    let mut client_config = crate::ClientConfig::default();
+    let mut client_config = crate::ClientConfig::with_root_certificates(vec![]).unwrap();
     const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
     let mut transport_config = crate::TransportConfig::default();
     transport_config
@@ -68,7 +68,7 @@ fn handshake_timeout() {
 async fn close_endpoint() {
     let _guard = subscribe();
     let mut endpoint = Endpoint::builder();
-    endpoint.default_client_config(ClientConfigBuilder::default().build());
+    endpoint.default_client_config(ClientConfig::with_root_certificates(vec![]).unwrap());
     let (endpoint, incoming) = endpoint
         .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
@@ -241,9 +241,8 @@ fn endpoint() -> (Endpoint, Incoming) {
     server_config.certificate(cert_chain, key).unwrap();
     endpoint.listen(server_config.build());
 
-    let mut client_config = ClientConfigBuilder::default();
-    client_config.add_certificate_authority(cert).unwrap();
-    endpoint.default_client_config(client_config.build());
+    let client_config = ClientConfig::with_root_certificates(vec![cert]).unwrap();
+    endpoint.default_client_config(client_config);
 
     let (x, y) = endpoint
         .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
@@ -450,10 +449,10 @@ fn run_echo(args: EchoArgs) {
             server.with_socket(server_sock).unwrap()
         };
 
-        let mut client_config = ClientConfigBuilder::default();
-        client_config.add_certificate_authority(cert).unwrap();
-        client_config.enable_keylog();
-        let mut client_config = client_config.build();
+        let client_config = ClientConfig::with_root_certificates(vec![cert]).unwrap();
+        let mut client_config_builder = ClientConfigBuilder::new(client_config);
+        client_config_builder.enable_keylog();
+        let mut client_config = client_config_builder.build();
         client_config.transport = transport_config;
         let mut client = Endpoint::builder();
         client.default_client_config(client_config);

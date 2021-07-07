@@ -10,7 +10,7 @@ use tokio::runtime::{Builder, Runtime};
 use tracing::error_span;
 use tracing_futures::Instrument as _;
 
-use quinn::{ClientConfigBuilder, Endpoint, ServerConfigBuilder};
+use quinn::{Endpoint, ServerConfigBuilder};
 
 benchmark_group!(
     benches,
@@ -89,12 +89,9 @@ impl Context {
         let mut server_config = ServerConfigBuilder::new(server_config);
         server_config.certificate(cert_chain, key).unwrap();
 
-        let mut client_config = ClientConfigBuilder::default();
-        client_config.add_certificate_authority(cert).unwrap();
-
         Self {
             server_config: server_config.build(),
-            client_config: client_config.build(),
+            client_config: quinn::ClientConfig::with_root_certificates(vec![cert]).unwrap(),
         }
     }
 

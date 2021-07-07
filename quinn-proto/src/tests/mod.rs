@@ -319,7 +319,7 @@ fn reject_self_signed_server_cert() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     info!("connecting");
-    let client_ch = pair.begin_connect(ClientConfig::default());
+    let client_ch = pair.begin_connect(client_config_with_certs(vec![]));
     pair.drive();
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
@@ -1769,8 +1769,7 @@ fn handshake_anti_deadlock_probe() {
     server
         .certificate(CertificateChain::from_certs(Some(cert.clone())), key)
         .unwrap();
-    let mut client = client_config();
-    client.add_certificate_authority(cert).unwrap();
+    let client = client_config_with_certs(vec![cert]);
     let mut pair = Pair::new(Default::default(), server);
 
     let client_ch = pair.begin_connect(client);
@@ -1806,8 +1805,7 @@ fn server_can_send_3_inital_packets() {
     server
         .certificate(CertificateChain::from_certs(Some(cert.clone())), key)
         .unwrap();
-    let mut client = client_config();
-    client.add_certificate_authority(cert).unwrap();
+    let client = client_config_with_certs(vec![cert]);
     let mut pair = Pair::new(Default::default(), server);
 
     let client_ch = pair.begin_connect(client);

@@ -5,7 +5,7 @@
 use futures_util::StreamExt;
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
-use quinn::{ClientConfig, ClientConfigBuilder, Endpoint};
+use quinn::{ClientConfig, Endpoint};
 
 mod common;
 use common::make_server_endpoint;
@@ -76,7 +76,7 @@ impl rustls::ServerCertVerifier for SkipServerVerification {
 }
 
 fn configure_client() -> ClientConfig {
-    let mut cfg = ClientConfigBuilder::default().build();
+    let mut cfg = ClientConfig::with_root_certificates(vec![]).unwrap();
     let tls_cfg: &mut rustls::ClientConfig = Arc::get_mut(&mut cfg.crypto).unwrap();
     // this is only available when compiled with "dangerous_configuration" feature
     tls_cfg

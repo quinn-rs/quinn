@@ -15,9 +15,7 @@ edition = "2018"
 all-features = true
 
 [features]
-default = ["native-certs", "certificate-transparency", "tls-rustls"]
-# Use Google's list of CT logs to enable certificate transparency checks
-certificate-transparency = ["proto/certificate-transparency"]
+default = ["native-certs", "tls-rustls"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Trust the contents of the OS certificate store by default
