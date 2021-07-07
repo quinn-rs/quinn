@@ -8,7 +8,7 @@ use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
-    crypto::{self, ClientConfig as _, HandshakeTokenKey as _, HmacKey as _, ServerConfig as _},
+    crypto::{self, HandshakeTokenKey as _, HmacKey as _, ServerConfig as _},
     VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS,
 };
 
@@ -601,27 +601,45 @@ where
 
 #[cfg(feature = "rustls")]
 impl ClientConfig<crypto::rustls::TlsSession> {
-    /// Add a trusted certificate authority
-    pub fn add_certificate_authority(
-        &mut self,
-        cert: Certificate,
-    ) -> Result<&mut Self, webpki::Error> {
-        let anchor = webpki::trust_anchor_util::cert_der_as_trust_anchor(&cert.inner.0)?;
-        Arc::make_mut(&mut self.crypto)
-            .root_store
-            .add_server_trust_anchors(&webpki::TLSServerTrustAnchors(&[anchor]));
-        Ok(self)
-    }
-}
+    /// Create a client configuration that trusts the platform's native roots
+    #[cfg(feature = "native-certs")]
+    pub fn with_native_roots() -> Self {
+        let roots = match rustls_native_certs::load_native_certs() {
+            Ok(roots) => roots,
+            Err((Some(roots), e)) => {
+                tracing::warn!("couldn't load some default trust roots: {}", e);
+                roots
+            }
+            Err((None, e)) => {
+                tracing::warn!("couldn't load any default trust roots: {}", e);
+                rustls::RootCertStore::empty()
+            }
+        };
 
-impl<S> Default for ClientConfig<S>
-where
-    S: crypto::Session,
-{
-    fn default() -> Self {
+        Self::new(roots)
+    }
+
+    /// Create a client configuration that trusts specified trust anchors
+    pub fn with_root_certificates(
+        certs: impl IntoIterator<Item = Certificate>,
+    ) -> Result<Self, webpki::Error> {
+        let mut roots = rustls::RootCertStore::empty();
+        for cert in certs {
+            roots.add(&cert.inner)?;
+        }
+
+        Ok(Self::new(roots))
+    }
+
+    fn new(roots: rustls::RootCertStore) -> Self {
+        let mut cfg = rustls::ClientConfig::with_ciphersuites(&crypto::rustls::QUIC_CIPHER_SUITES);
+        cfg.versions = vec![rustls::ProtocolVersion::TLSv1_3];
+        cfg.enable_early_data = true;
+        cfg.root_store = roots;
+
         Self {
-            transport: Default::default(),
-            crypto: S::ClientConfig::new(),
+            transport: Arc::new(TransportConfig::default()),
+            crypto: Arc::new(cfg),
         }
     }
 }

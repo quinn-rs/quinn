@@ -275,30 +275,6 @@ pub struct HandshakeData {
 }
 
 impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
-    fn new() -> Self {
-        let mut cfg = rustls::ClientConfig::with_ciphersuites(&QUIC_CIPHER_SUITES);
-        cfg.versions = vec![rustls::ProtocolVersion::TLSv1_3];
-        cfg.enable_early_data = true;
-        #[cfg(feature = "native-certs")]
-        match rustls_native_certs::load_native_certs() {
-            Ok(x) => {
-                cfg.root_store = x;
-            }
-            Err((Some(x), e)) => {
-                cfg.root_store = x;
-                tracing::warn!("couldn't load some default trust roots: {}", e);
-            }
-            Err((None, e)) => {
-                tracing::warn!("couldn't load any default trust roots: {}", e);
-            }
-        }
-        #[cfg(feature = "certificate-transparency")]
-        {
-            cfg.ct_logs = Some(&ct_logs::LOGS);
-        }
-        Arc::new(cfg)
-    }
-
     fn start_session(
         &self,
         server_name: &str,
@@ -411,7 +387,7 @@ impl crypto::PacketKey for PacketKey {
 /// This list prefers AES ciphers, which are hardware accelerated on most platforms.
 /// This list can be removed if the rustls dependency is updated to a new version
 /// which contains the linked change.
-static QUIC_CIPHER_SUITES: [&rustls::SupportedCipherSuite; 3] = [
+pub(crate) static QUIC_CIPHER_SUITES: [&rustls::SupportedCipherSuite; 3] = [
     &rustls::ciphersuite::TLS13_AES_256_GCM_SHA384,
     &rustls::ciphersuite::TLS13_AES_128_GCM_SHA256,
     &rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256,

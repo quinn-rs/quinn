@@ -61,18 +61,12 @@ pub async fn connect_client(
         .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
         .unwrap();
 
-    let mut config = quinn::ClientConfig::default();
-    let crypto_config = Arc::get_mut(&mut config.crypto).unwrap();
+    let mut client_config = quinn::ClientConfig::with_root_certificates(vec![server_cert]).unwrap();
+    client_config.transport = Arc::new(transport_config(&opt));
 
+    let crypto_config = Arc::get_mut(&mut client_config.crypto).unwrap();
     crypto_config.ciphersuites.clear();
     crypto_config.ciphersuites.push(opt.cipher.as_rustls());
-
-    let mut client_config = quinn::ClientConfigBuilder::new(config);
-    client_config
-        .add_certificate_authority(server_cert)
-        .unwrap();
-    let mut client_config = client_config.build();
-    client_config.transport = Arc::new(transport_config(&opt));
 
     let quinn::NewConnection { connection, .. } = endpoint
         .connect_with(client_config, &server_addr, "localhost")

@@ -111,9 +111,9 @@ async fn run(opt: Opt) -> Result<()> {
 
     let (endpoint, _) = endpoint.with_socket(socket).context("binding endpoint")?;
 
-    let mut cfg = quinn::ClientConfigBuilder::default();
-    cfg.protocols(&[b"perf"]);
-    let mut cfg = cfg.build();
+    let mut cfg = quinn::ClientConfig::with_root_certificates(vec![]).unwrap();
+    let tls_config = Arc::get_mut(&mut cfg.crypto).unwrap();
+    tls_config.alpn_protocols = vec![b"perf".to_vec()];
 
     let tls_config: &mut rustls::ClientConfig = Arc::get_mut(&mut cfg.crypto).unwrap();
     if opt.insecure {

@@ -2,8 +2,8 @@
 //! Commonly used code in most examples.
 
 use quinn::{
-    Certificate, CertificateChain, ClientConfig, ClientConfigBuilder, Endpoint, Incoming,
-    PrivateKey, ServerConfig, ServerConfigBuilder, TransportConfig,
+    Certificate, CertificateChain, ClientConfig, Endpoint, Incoming, PrivateKey, ServerConfig,
+    ServerConfigBuilder, TransportConfig,
 };
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
@@ -46,11 +46,11 @@ pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Incoming, Vec<u8>)
 ///
 /// - server_certs: a list of trusted certificates in DER format.
 fn configure_client(server_certs: &[&[u8]]) -> Result<ClientConfig, Box<dyn Error>> {
-    let mut cfg_builder = ClientConfigBuilder::default();
-    for cert in server_certs {
-        cfg_builder.add_certificate_authority(Certificate::from_der(cert)?)?;
-    }
-    Ok(cfg_builder.build())
+    let certs = server_certs
+        .iter()
+        .map(|der| Certificate::from_der(der))
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(ClientConfig::with_root_certificates(certs)?)
 }
 
 /// Returns default server configuration along with its certificate.
