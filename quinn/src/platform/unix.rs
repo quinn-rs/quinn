@@ -212,21 +212,28 @@ fn send(io: &mio::net::UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
             &mut cmsgs[i],
         );
     }
+    let num_transmits = transmits.len().min(BATCH_SIZE);
+
     loop {
-        let n = unsafe {
-            libc::sendmmsg(
-                io.as_raw_fd(),
-                msgs.as_mut_ptr(),
-                transmits.len().min(BATCH_SIZE) as _,
-                0,
-            )
-        };
+        let n =
+            unsafe { libc::sendmmsg(io.as_raw_fd(), msgs.as_mut_ptr(), num_transmits as u32, 0) };
         if n == -1 {
             let e = io::Error::last_os_error();
-            if e.kind() == io::ErrorKind::Interrupted {
-                continue;
+            match e.kind() {
+                io::ErrorKind::Interrupted => {
+                    // Retry the transmission
+                    continue;
+                }
+                io::ErrorKind::PermissionDenied => {
+                    // Transmissions can fail with permission errors for example
+                    // due to iptable rules. Those are not fatal errors, since the
+                    // configuration can be dynamically changed.
+                    // In this case we drop the outgoing packets and let higher
+                    // layers retransmit if required.
+                    return Ok(num_transmits);
+                }
+                _ => return Err(e),
             }
-            return Err(e);
         }
         return Ok(n as usize);
     }
@@ -244,16 +251,26 @@ fn send(io: &mio::net::UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
         let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
         if n == -1 {
             let e = io::Error::last_os_error();
-            if e.kind() == io::ErrorKind::Interrupted {
-                continue;
+            match e.kind() {
+                io::ErrorKind::Interrupted => {
+                    // Retry the transmission
+                }
+                io::ErrorKind::PermissionDenied => {
+                    // Transmissions can fail with permission errors for example
+                    // due to iptable rules. Those are not fatal errors, since the
+                    // configuration can be dynamically changed.
+                    // In this case we drop the outgoing packets and let higher
+                    // layers retransmit if required.
+                    sent += 1;
+                }
+                _ if sent != 0 => {
+                    // We need to report that some packets were sent in this case, so we rely on
+                    // errors being either harmlessly transient (in the case of WouldBlock) or
+                    // recurring on the next call.
+                    return Ok(sent);
+                }
+                _ => return Err(e),
             }
-            if sent != 0 {
-                // We need to report that some packets were sent in this case, so we rely on
-                // errors being either harmlessly transient (in the case of WouldBlock) or
-                // recurring on the next call.
-                return Ok(sent);
-            }
-            return Err(e);
         } else {
             sent += 1;
         }
