@@ -363,9 +363,6 @@ where
                 Poll::Pending => {
                     return Ok(false);
                 }
-                Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::PermissionDenied => {
-                    return Ok(false);
-                }
                 Poll::Ready(Err(e)) => {
                     return Err(e);
                 }
