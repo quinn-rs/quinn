@@ -1451,7 +1451,7 @@ where
             }
         }
         let space = &mut self.spaces[space_id];
-        space.pending_acks.insert_one(packet);
+        space.pending_acks.insert_one(packet, now);
         if packet >= space.rx_packet {
             space.rx_packet = packet;
             // Update outgoing spin bit, inverting iff we're the client
@@ -2599,18 +2599,8 @@ where
         }
 
         // ACK
-        // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         if !space.pending_acks.ranges().is_empty() {
-            debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
-            trace!("ACK");
-            let ecn = if self.receiving_ecn {
-                Some(&space.ecn_counters)
-            } else {
-                None
-            };
-            sent.acks = space.pending_acks.ranges().clone();
-            frame::Ack::encode(0, &sent.acks, ecn, buf);
-            self.stats.frame_tx.acks += 1;
+            Self::populate_acks(self.receiving_ecn, &mut sent, space, buf, &mut self.stats);
         }
 
         // PATH_CHALLENGE
@@ -2745,6 +2735,40 @@ where
         }
 
         sent
+    }
+
+    /// Write pending ACKs into a buffer
+    ///
+    /// This method assumes ACKs are pending, and should only be called if
+    /// `!PendingAcks::ranges().is_empty()` returns `true`.
+    fn populate_acks(
+        receiving_ecn: bool,
+        sent: &mut SentFrames,
+        space: &mut PacketSpace<S>,
+        buf: &mut Vec<u8>,
+        stats: &mut ConnectionStats,
+    ) {
+        debug_assert!(!space.pending_acks.ranges().is_empty());
+
+        // 0-RTT packets must never carry acks (which would have to be of handshake packets)
+        debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
+        let ecn = if receiving_ecn {
+            Some(&space.ecn_counters)
+        } else {
+            None
+        };
+        sent.acks = space.pending_acks.ranges().clone();
+
+        let delay_micros = space.pending_acks.ack_delay().as_micros() as u64;
+
+        // TODO: This should come frome `TransportConfig` if that gets configurable
+        let ack_delay_exp = TransportParameters::default().ack_delay_exponent;
+        let delay = delay_micros >> ack_delay_exp.into_inner();
+
+        trace!("ACK {:?}, Delay = {}us", sent.acks, delay);
+
+        frame::Ack::encode(delay as _, &sent.acks, ecn, buf);
+        stats.frame_tx.acks += 1;
     }
 
     fn close_common(&mut self) {

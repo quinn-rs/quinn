@@ -139,7 +139,6 @@ impl TransportParameters {
                     .try_into()
                     .expect("setter guarantees this is in-bounds")
             }),
-            max_ack_delay: 0u32.into(),
             disable_active_migration: server_config.map_or(false, |c| !c.migration),
             active_connection_id_limit: if cid_gen.cid_len() == 0 {
                 2 // i.e. default, i.e. unsent

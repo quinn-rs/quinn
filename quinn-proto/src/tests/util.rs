@@ -260,10 +260,10 @@ impl TestEndpoint {
         }
 
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
-            let (_, ecn, packet) = self.inbound.pop_front().unwrap();
+            let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
             if let Some((ch, event)) =
                 self.endpoint
-                    .handle(now, remote, None, ecn, packet.as_slice().into())
+                    .handle(recv_time, remote, None, ecn, packet.as_slice().into())
             {
                 match event {
                     DatagramEvent::NewConnection(conn) => {

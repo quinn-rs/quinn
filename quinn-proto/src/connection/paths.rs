@@ -113,7 +113,7 @@ impl RttEstimator {
         self.min = cmp::min(self.min, self.latest);
         // Based on RFC6298.
         if let Some(smoothed) = self.smoothed {
-            let adjusted_rtt = if self.min + ack_delay < self.latest {
+            let adjusted_rtt = if self.min + ack_delay <= self.latest {
                 self.latest - ack_delay
             } else {
                 self.latest

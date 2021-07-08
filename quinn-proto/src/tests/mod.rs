@@ -869,7 +869,7 @@ fn instant_close_2() {
 #[test]
 fn idle_timeout() {
     let _guard = subscribe();
-    const IDLE_TIMEOUT: Duration = Duration::from_millis(10);
+    const IDLE_TIMEOUT: Duration = Duration::from_millis(100);
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
             max_idle_timeout: Some(IDLE_TIMEOUT),

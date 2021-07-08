@@ -3,7 +3,7 @@ use std::{
     collections::{BTreeMap, VecDeque},
     mem,
     ops::{Index, IndexMut},
-    time::Instant,
+    time::{Duration, Instant},
 };
 
 use fxhash::FxHashSet;
@@ -437,12 +437,23 @@ impl SendableFrames {
 pub(crate) struct PendingAcks {
     permit_ack_only: bool,
     ranges: ArrayRangeSet,
+    /// This value will be used for calculating ACK delay once it is implemented
+    ///
+    /// ACK delay will be the delay between when a packet arrived (`latest_incoming`)
+    /// and between it will be allowed to be acknowledged (`can_send() == true`).
+    latest_incoming: Option<Instant>,
+    ack_delay: Duration,
 }
 
 impl PendingAcks {
     /// Whether any ACK frames can be sent
     pub fn can_send(&self) -> bool {
         self.permit_ack_only && !self.ranges.is_empty()
+    }
+
+    /// Returns the duration the acknowledgement of the latest incoming packet has been delayed
+    pub fn ack_delay(&self) -> Duration {
+        self.ack_delay
     }
 
     /// Should be called whenever an ACK eliciting frame was received
@@ -466,8 +477,10 @@ impl PendingAcks {
     }
 
     /// Insert one packet that needs to be acknowledged
-    pub fn insert_one(&mut self, packet: u64) {
+    pub fn insert_one(&mut self, packet: u64, now: Instant) {
         self.ranges.insert_one(packet);
+        self.latest_incoming = Some(now);
+
         if self.ranges.len() > MAX_ACK_BLOCKS {
             self.ranges.pop_min();
         }
