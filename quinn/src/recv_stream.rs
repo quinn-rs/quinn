@@ -486,7 +486,7 @@ where
         let this = self.get_mut();
         ready!(this.stream.poll_read(cx, &mut this.buf))?;
         match this.buf.filled().len() {
-            0 => Poll::Ready(Ok(None)),
+            0 if this.buf.capacity() != 0 => Poll::Ready(Ok(None)),
             n => Poll::Ready(Ok(Some(n))),
         }
     }
