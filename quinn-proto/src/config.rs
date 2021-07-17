@@ -244,7 +244,7 @@ impl Default for TransportConfig {
             datagram_receive_buffer_size: Some(STREAM_RWND as usize),
             datagram_send_buffer_size: 1024 * 1024,
 
-            congestion_controller_factory: Box::new(Arc::new(congestion::NewRenoConfig::default())),
+            congestion_controller_factory: Box::new(Arc::new(congestion::CubicConfig::default())),
         }
     }
 }
