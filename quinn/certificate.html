@@ -212,7 +212,7 @@ This example uses <a href="https://github.com/est31/rcgen">rcgen</a> to generate
     fs::write(&amp;cert_path, &amp;serialized_certificate).context(&quot;failed to write certificate&quot;)?;
     fs::write(&amp;key_path, &amp;serialized_key).context(&quot;failed to write private key&quot;)?;
 
-    let cert = quinn::Certificate::from_der(&amp;cert)?;
+    let cert = quinn::Certificate::from_der(&amp;serialized_certificate)?;
     let key = quinn::PrivateKey::from_der(&amp;serialized_key)?;
     Ok((cert, key))
 }
