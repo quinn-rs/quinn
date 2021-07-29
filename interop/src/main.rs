@@ -179,7 +179,7 @@ async fn main() {
 }
 
 async fn run(peer: &Peer, keylog: bool) -> Result<String> {
-    let state = State::try_new(&peer, keylog)?;
+    let state = State::try_new(peer, keylog)?;
     let result = match peer.alpn {
         Alpn::Hq => state.run_hq().instrument(info_span!("hq")).await?.format(),
         Alpn::SiDuck => state.run_siduck().instrument(info_span!("siduck")).await?,
@@ -589,7 +589,7 @@ fn build_result(
 
 async fn hq_get(stream: (quinn::SendStream, quinn::RecvStream), path: &str) -> Result<Vec<u8>> {
     let (mut send, recv) = stream;
-    send.write_all(&format!("GET {}\r\n", path).as_bytes())
+    send.write_all(format!("GET {}\r\n", path).as_bytes())
         .await
         .map_err(|e| anyhow!("failed to send request: {}", e))?;
     send.finish()

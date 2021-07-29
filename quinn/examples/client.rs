@@ -101,12 +101,12 @@ async fn run(options: Opt) -> Result<()> {
     let host = options
         .host
         .as_ref()
-        .map_or_else(|| url.host_str(), |x| Some(&x))
+        .map_or_else(|| url.host_str(), |x| Some(x))
         .ok_or_else(|| anyhow!("no hostname specified"))?;
 
     eprintln!("connecting to {} at {}", host, remote);
     let new_conn = endpoint
-        .connect(&remote, &host)?
+        .connect(&remote, host)?
         .await
         .map_err(|e| anyhow!("failed to connect: {}", e))?;
     eprintln!("connected at {:?}", start.elapsed());

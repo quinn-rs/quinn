@@ -186,7 +186,7 @@ where
     ///
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn remote_address(&self) -> SocketAddr {
-        let conn_ref: &ConnectionRef<S> = &self.conn.as_ref().expect("used after yielding Ready");
+        let conn_ref: &ConnectionRef<S> = self.conn.as_ref().expect("used after yielding Ready");
         conn_ref.lock("remote_address").inner.remote_address()
     }
 }

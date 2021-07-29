@@ -130,7 +130,7 @@ async fn write_to_peer(conn: quinn::Connection, data: Vec<u8>) -> Result<(), Wri
 /// Builds client configuration. Trusts given node certificate.
 fn configure_connector(node_cert: &[u8]) -> quinn::ClientConfig {
     let mut peer_cfg_builder = quinn::ClientConfigBuilder::default();
-    let their_cert = unwrap!(quinn::Certificate::from_der(&node_cert));
+    let their_cert = unwrap!(quinn::Certificate::from_der(node_cert));
     unwrap!(peer_cfg_builder.add_certificate_authority(their_cert));
     let mut peer_cfg = peer_cfg_builder.build();
     let transport_config = unwrap!(Arc::get_mut(&mut peer_cfg.transport));

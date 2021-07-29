@@ -474,7 +474,7 @@ where
 
     /// Private key used to authenticate data included in handshake tokens.
     pub fn token_key(&mut self, master_key: &[u8]) -> Result<&mut Self, ConfigError> {
-        self.token_key = Arc::new(S::HandshakeTokenKey::from_secret(&master_key));
+        self.token_key = Arc::new(S::HandshakeTokenKey::from_secret(master_key));
         Ok(self)
     }
 

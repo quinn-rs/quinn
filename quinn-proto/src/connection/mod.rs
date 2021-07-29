@@ -1300,7 +1300,7 @@ where
             self.lost_packets += lost_packets.len() as u64;
             trace!("packets lost: {:?}", lost_packets);
             for packet in &lost_packets {
-                let info = self.spaces[pn_space].sent_packets.remove(&packet).unwrap(); // safe: lost_packets is populated just above
+                let info = self.spaces[pn_space].sent_packets.remove(packet).unwrap(); // safe: lost_packets is populated just above
                 self.remove_in_flight(pn_space, &info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);

@@ -131,7 +131,7 @@ async fn run(opt: Opt) -> Result<()> {
         uni_streams,
         ..
     } = endpoint
-        .connect_with(cfg, &addr, &host_name)?
+        .connect_with(cfg, &addr, host_name)?
         .await
         .context("connecting")?;
 
