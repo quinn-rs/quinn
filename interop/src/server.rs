@@ -208,7 +208,7 @@ async fn hq_process_get(mut send: SendStream, x: &[u8]) -> Result<()> {
             }
         }
         Ok(_) | Err(_) => {
-            send.write_all(&HOME.as_bytes())
+            send.write_all(HOME.as_bytes())
                 .await
                 .map_err(|e| anyhow!("failed to send response: {}", e))?;
         }

@@ -48,7 +48,7 @@ pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Incoming, Vec<u8>)
 fn configure_client(server_certs: &[&[u8]]) -> Result<ClientConfig, Box<dyn Error>> {
     let mut cfg_builder = ClientConfigBuilder::default();
     for cert in server_certs {
-        cfg_builder.add_certificate_authority(Certificate::from_der(&cert)?)?;
+        cfg_builder.add_certificate_authority(Certificate::from_der(cert)?)?;
     }
     Ok(cfg_builder.build())
 }

@@ -311,7 +311,7 @@ impl Iterator for Replace<'_> {
 impl Drop for Replace<'_> {
     fn drop(&mut self) {
         // Ensure we drain all remaining overlapping ranges
-        while let Some(_) = self.next() {}
+        for _ in &mut *self {}
         // Insert the final aggregate range
         self.set.0.insert(self.range.start, self.range.end);
     }

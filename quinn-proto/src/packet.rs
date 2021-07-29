@@ -52,7 +52,7 @@ impl PartialDecode {
 
     /// The underlying partially-decoded packet data
     pub(crate) fn data(&self) -> &[u8] {
-        &self.buf.get_ref()
+        self.buf.get_ref()
     }
 
     pub(crate) fn has_long_header(&self) -> bool {

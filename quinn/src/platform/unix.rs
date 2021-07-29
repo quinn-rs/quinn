@@ -450,7 +450,7 @@ fn decode_recv(
     let mut ecn_bits = 0;
     let mut dst_ip = None;
 
-    let cmsg_iter = unsafe { cmsg::Iter::new(&hdr) };
+    let cmsg_iter = unsafe { cmsg::Iter::new(hdr) };
     for cmsg in cmsg_iter {
         match (cmsg.cmsg_level, cmsg.cmsg_type) {
             // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.

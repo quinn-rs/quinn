@@ -145,7 +145,7 @@ where
                     self.connection_ids_initial.remove(&conn.init_cid);
                 }
                 for cid in conn.loc_cids.values() {
-                    self.connection_ids.remove(&cid);
+                    self.connection_ids.remove(cid);
                 }
                 self.connection_remotes.remove(&conn.initial_remote);
                 if let Some((remote, token)) = conn.reset_token {
