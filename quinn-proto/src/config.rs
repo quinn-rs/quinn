@@ -440,7 +440,7 @@ where
     /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
     pub(crate) use_stateless_retry: bool,
     /// Microseconds after a stateless retry token was issued for which it's considered valid.
-    pub(crate) retry_token_lifetime: u64,
+    pub(crate) retry_token_lifetime: Duration,
 
     /// Maximum number of concurrent connections
     pub(crate) concurrent_connections: u32,
@@ -464,7 +464,7 @@ where
 
             token_key: Arc::new(prk),
             use_stateless_retry: false,
-            retry_token_lifetime: 15_000_000,
+            retry_token_lifetime: Duration::from_secs(15),
 
             concurrent_connections: 100_000,
 
@@ -486,8 +486,8 @@ where
         self
     }
 
-    /// Microseconds after a stateless retry token was issued for which it's considered valid.
-    pub fn retry_token_lifetime(&mut self, value: u64) -> &mut Self {
+    /// Duration after a stateless retry token was issued for which it's considered valid.
+    pub fn retry_token_lifetime(&mut self, value: Duration) -> &mut Self {
         self.retry_token_lifetime = value;
         self
     }

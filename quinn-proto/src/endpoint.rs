@@ -5,7 +5,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
     sync::Arc,
-    time::{Duration, Instant, SystemTime},
+    time::{Instant, SystemTime},
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -617,11 +617,7 @@ where
 
             match RetryToken::from_bytes(&*server_config.token_key, &remote, &dst_cid, &token) {
                 Ok(token)
-                    if token.issued
-                        + Duration::from_micros(
-                            self.server_config.as_ref().unwrap().retry_token_lifetime,
-                        )
-                        > SystemTime::now() =>
+                    if token.issued + server_config.retry_token_lifetime > SystemTime::now() =>
                 {
                     (Some(dst_cid), token.orig_dst_cid)
                 }
