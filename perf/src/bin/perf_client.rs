@@ -13,6 +13,7 @@ use tracing::{debug, error, info};
 
 use perf::bind_socket;
 use perf::stats::{OpenStreamStats, Stats};
+use std::path::PathBuf;
 
 /// Connects to a QUIC perf server and maintains a specified pattern of requests until interrupted
 #[derive(StructOpt)]
@@ -57,6 +58,9 @@ struct Opt {
     /// Whether to print connection statistics
     #[structopt(long)]
     conn_stats: bool,
+    /// File path to output JSON statistics to. If the file is '-', stdout will be used
+    #[structopt(long)]
+    json: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -197,7 +201,9 @@ async fn run(opt: Opt) -> Result<()> {
 
     endpoint.wait_idle().await;
 
-    // TODO: Print stats
+    if let Some(path) = opt.json {
+        stats.print_json(path.as_path())?;
+    }
 
     Ok(())
 }

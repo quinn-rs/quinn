@@ -13,6 +13,8 @@ hdrhistogram = { version = "7.2", default-features = false }
 quinn = { path = "../quinn" }
 rcgen = "0.8"
 rustls = { version = "0.19", features = ["dangerous_configuration"] }
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 socket2 = "0.4"
 webpki = "0.21"
 structopt = "0.3"
