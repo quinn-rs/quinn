@@ -1,6 +1,6 @@
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::{Arc, Mutex},
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -12,7 +12,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use perf::bind_socket;
-use perf::stats::{RequestStats, Stats};
+use perf::stats::{OpenStreamStats, Stats};
 
 /// Connects to a QUIC perf server and maintains a specified pattern of requests until interrupted
 #[derive(StructOpt)]
@@ -42,6 +42,9 @@ struct Opt {
     /// The time to run in seconds
     #[structopt(long, default_value = "60")]
     duration: u64,
+    /// The interval in seconds at which stats are reported
+    #[structopt(long, default_value = "1")]
+    interval: u64,
     /// Send buffer size in bytes
     #[structopt(long, default_value = "2097152")]
     send_buffer_size: usize,
@@ -124,7 +127,7 @@ async fn run(opt: Opt) -> Result<()> {
         .ciphersuites
         .push(&rustls::ciphersuite::TLS13_CHACHA20_POLY1305_SHA256);
 
-    let stats = Arc::new(Mutex::new(Stats::default()));
+    let stream_stats = OpenStreamStats::default();
 
     let quinn::NewConnection {
         connection,
@@ -144,14 +147,14 @@ async fn run(opt: Opt) -> Result<()> {
             drive_uni(
                 connection.clone(),
                 acceptor,
-                stats.clone(),
+                stream_stats.clone(),
                 opt.uni_requests,
                 opt.upload_size,
                 opt.download_size
             ),
             drive_bi(
                 connection.clone(),
-                stats.clone(),
+                stream_stats.clone(),
                 opt.bi_requests,
                 opt.upload_size,
                 opt.download_size
@@ -159,12 +162,18 @@ async fn run(opt: Opt) -> Result<()> {
         )
     };
 
-    let print_fut = async {
+    let mut stats = Stats::default();
+
+    let stats_fut = async {
+        let interval_duration = Duration::from_secs(opt.interval);
+
         loop {
-            tokio::time::sleep(Duration::from_secs(2)).await;
+            let start = Instant::now();
+            tokio::time::sleep(interval_duration).await;
             {
-                let guard = stats.lock().unwrap();
-                guard.print();
+                stats.on_interval(start, &stream_stats);
+
+                stats.print();
                 if opt.conn_stats {
                     println!("{:?}\n", connection.stats());
                 }
@@ -174,12 +183,13 @@ async fn run(opt: Opt) -> Result<()> {
 
     tokio::select! {
         _ = drive_fut => {}
-        _ = print_fut => {}
+        _ = stats_fut => {}
         _ = tokio::signal::ctrl_c() => {
             info!("shutting down");
             connection.close(0u32.into(), b"interrupted");
         }
-        _ = tokio::time::sleep(Duration::from_secs(opt.duration)) => {
+        // Add a small duration so the final interval can be reported
+        _ = tokio::time::sleep(Duration::from_secs(opt.duration) + Duration::from_millis(200)) => {
             info!("shutting down");
             connection.close(0u32.into(), b"done");
         }
@@ -192,7 +202,11 @@ async fn run(opt: Opt) -> Result<()> {
     Ok(())
 }
 
-async fn drain_stream(mut stream: quinn::RecvStream, stats: &mut RequestStats) -> Result<()> {
+async fn drain_stream(
+    mut stream: quinn::RecvStream,
+    download: u64,
+    stream_stats: OpenStreamStats,
+) -> Result<()> {
     #[rustfmt::skip]
     let mut bufs = [
         Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
@@ -204,17 +218,24 @@ async fn drain_stream(mut stream: quinn::RecvStream, stats: &mut RequestStats) -
         Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
         Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
     ];
-    while stream.read_chunks(&mut bufs[..]).await?.is_some() {
-        if stats.first_byte.is_none() {
-            stats.first_byte = Some(Instant::now());
+    let download_start = Instant::now();
+    let recv_stream_stats = stream_stats.new_receiver(&stream, download);
+
+    let mut first_byte = true;
+
+    while let Some(size) = stream.read_chunks(&mut bufs[..]).await? {
+        if first_byte {
+            recv_stream_stats.on_first_byte(download_start.elapsed());
+            first_byte = false;
         }
+        let bytes_received = bufs[..size].iter().map(|b| b.len()).sum();
+        recv_stream_stats.on_bytes(bytes_received);
     }
 
-    let now = Instant::now();
-    if stats.first_byte.is_none() {
-        stats.first_byte = Some(now);
+    if first_byte {
+        recv_stream_stats.on_first_byte(download_start.elapsed());
     }
-    stats.download_end = Some(now);
+    recv_stream_stats.finish(download_start.elapsed());
 
     debug!("response finished on {}", stream.id());
     Ok(())
@@ -223,7 +244,7 @@ async fn drain_stream(mut stream: quinn::RecvStream, stats: &mut RequestStats) -
 async fn drive_uni(
     connection: quinn::Connection,
     acceptor: UniAcceptor,
-    stats: Arc<Mutex<Stats>>,
+    stream_stats: OpenStreamStats,
     concurrency: u64,
     upload: u64,
     download: u64,
@@ -232,23 +253,14 @@ async fn drive_uni(
 
     loop {
         let permit = sem.clone().acquire_owned().await.unwrap();
-        let mut request_stats = RequestStats::new(upload, download);
         let send = connection.open_uni().await?;
         let acceptor = acceptor.clone();
-        let stats = stats.clone();
+        let stream_stats = stream_stats.clone();
 
         debug!("sending request on {}", send.id());
         tokio::spawn(async move {
-            if let Err(e) = request_uni(send, acceptor, upload, download, &mut request_stats).await
-            {
+            if let Err(e) = request_uni(send, acceptor, upload, download, stream_stats).await {
                 error!("sending request failed: {:#}", e);
-            } else {
-                request_stats.success = true;
-            }
-
-            {
-                let mut guard = stats.lock().unwrap();
-                guard.record(request_stats);
             }
 
             drop(permit);
@@ -261,9 +273,9 @@ async fn request_uni(
     acceptor: UniAcceptor,
     upload: u64,
     download: u64,
-    stats: &mut RequestStats,
+    stream_stats: OpenStreamStats,
 ) -> Result<()> {
-    request(send, upload, download, stats).await?;
+    request(send, upload, download, stream_stats.clone()).await?;
     let recv = {
         let mut guard = acceptor.0.lock().await;
         guard
@@ -271,7 +283,7 @@ async fn request_uni(
             .await
             .ok_or_else(|| anyhow::anyhow!("End of stream"))
     }??;
-    drain_stream(recv, stats).await?;
+    drain_stream(recv, download, stream_stats).await?;
     Ok(())
 }
 
@@ -279,10 +291,16 @@ async fn request(
     mut send: quinn::SendStream,
     mut upload: u64,
     download: u64,
-    stats: &mut RequestStats,
+    stream_stats: OpenStreamStats,
 ) -> Result<()> {
-    stats.upload_start = Some(Instant::now());
+    let upload_start = Instant::now();
     send.write_all(&download.to_be_bytes()).await?;
+    if upload == 0 {
+        send.finish().await?;
+        return Ok(());
+    }
+
+    let send_stream_stats = stream_stats.new_sender(&send, upload);
 
     const DATA: [u8; 1024 * 1024] = [42; 1024 * 1024];
     while upload > 0 {
@@ -290,12 +308,11 @@ async fn request(
         send.write_chunk(Bytes::from_static(&DATA[..chunk_len as usize]))
             .await
             .context("sending response")?;
+        send_stream_stats.on_bytes(chunk_len as usize);
         upload -= chunk_len;
     }
     send.finish().await?;
-
-    let now = Instant::now();
-    stats.download_start = Some(now);
+    send_stream_stats.finish(upload_start.elapsed());
 
     debug!("upload finished on {}", send.id());
     Ok(())
@@ -303,7 +320,7 @@ async fn request(
 
 async fn drive_bi(
     connection: quinn::Connection,
-    stats: Arc<Mutex<Stats>>,
+    stream_stats: OpenStreamStats,
     concurrency: u64,
     upload: u64,
     download: u64,
@@ -312,21 +329,13 @@ async fn drive_bi(
 
     loop {
         let permit = sem.clone().acquire_owned().await.unwrap();
-        let mut request_stats = RequestStats::new(upload, download);
         let (send, recv) = connection.open_bi().await?;
-        let stats = stats.clone();
+        let stream_stats = stream_stats.clone();
 
         debug!("sending request on {}", send.id());
         tokio::spawn(async move {
-            if let Err(e) = request_bi(send, recv, upload, download, &mut request_stats).await {
+            if let Err(e) = request_bi(send, recv, upload, download, stream_stats).await {
                 error!("request failed: {:#}", e);
-            } else {
-                request_stats.success = true;
-            }
-
-            {
-                let mut guard = stats.lock().unwrap();
-                guard.record(request_stats);
             }
 
             drop(permit);
@@ -339,10 +348,10 @@ async fn request_bi(
     recv: quinn::RecvStream,
     upload: u64,
     download: u64,
-    stats: &mut RequestStats,
+    stream_stats: OpenStreamStats,
 ) -> Result<()> {
-    request(send, upload, download, stats).await?;
-    drain_stream(recv, stats).await?;
+    request(send, upload, download, stream_stats.clone()).await?;
+    drain_stream(recv, download, stream_stats).await?;
     Ok(())
 }
 
