@@ -2,13 +2,15 @@ use std::{
     io::{self, IoSliceMut},
     net::SocketAddr,
     task::{Context, Poll},
+    time::Instant,
 };
 
 use futures::ready;
 use proto::Transmit;
 use tokio::io::ReadBuf;
+use tracing::warn;
 
-use super::RecvMeta;
+use super::{log_sendmsg_error, RecvMeta, IO_ERROR_LOG_INTERVAL};
 
 /// Tokio-compatible UDP socket with some useful specializations.
 ///
@@ -17,18 +19,21 @@ use super::RecvMeta;
 #[derive(Debug)]
 pub struct UdpSocket {
     io: tokio::net::UdpSocket,
+    last_send_error: Instant,
 }
 
 impl UdpSocket {
     pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
         socket.set_nonblocking(true)?;
+        let now = Instant::now();
         Ok(UdpSocket {
             io: tokio::net::UdpSocket::from_std(socket)?,
+            last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
         })
     }
 
     pub fn poll_send(
-        &self,
+        &mut self,
         cx: &mut Context,
         transmits: &[Transmit],
     ) -> Poll<Result<usize, io::Error>> {
@@ -45,7 +50,19 @@ impl UdpSocket {
                 // errors being either harmlessly transient (in the case of WouldBlock) or
                 // recurring on the next call.
                 Poll::Ready(Err(_)) | Poll::Pending if sent != 0 => return Poll::Ready(Ok(sent)),
-                Poll::Ready(Err(e)) => return Poll::Ready(Err(e)),
+                Poll::Ready(Err(e)) => {
+                    // WouldBlock is expected to be returned as `Poll::Pending`
+                    debug_assert!(e.kind() != io::ErrorKind::WouldBlock);
+
+                    // Errors are ignored, since they will ususally be handled
+                    // by higher level retransmits and timeouts.
+                    // - PermissionDenied errors have been observed due to iptable rules.
+                    //   Those are not fatal errors, since the
+                    //   configuration can be dynamically changed.
+                    // - Destination unreachable errors have been observed for other
+                    log_sendmsg_error(&mut self.last_send_error, e, transmit);
+                    sent += 1;
+                }
                 Poll::Pending => return Poll::Pending,
             }
         }

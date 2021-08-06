@@ -6,6 +6,7 @@ use std::{
     os::unix::io::AsRawFd,
     ptr,
     task::{Context, Poll},
+    time::Instant,
 };
 
 use futures::ready;
@@ -13,7 +14,7 @@ use lazy_static::lazy_static;
 use proto::{EcnCodepoint, Transmit};
 use tokio::io::unix::AsyncFd;
 
-use super::{cmsg, RecvMeta, UdpCapabilities};
+use super::{cmsg, log_sendmsg_error, RecvMeta, UdpCapabilities, IO_ERROR_LOG_INTERVAL};
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
@@ -27,6 +28,7 @@ type IpTosTy = libc::c_int;
 #[derive(Debug)]
 pub struct UdpSocket {
     io: AsyncFd<mio::net::UdpSocket>,
+    last_send_error: Instant,
 }
 
 impl UdpSocket {
@@ -34,19 +36,22 @@ impl UdpSocket {
         socket.set_nonblocking(true)?;
         let io = mio::net::UdpSocket::from_std(socket);
         init(&io)?;
+        let now = Instant::now();
         Ok(UdpSocket {
             io: AsyncFd::new(io)?,
+            last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
         })
     }
 
     pub fn poll_send(
-        &self,
+        &mut self,
         cx: &mut Context,
         transmits: &[Transmit],
     ) -> Poll<Result<usize, io::Error>> {
         loop {
+            let last_send_error = &mut self.last_send_error;
             let mut guard = ready!(self.io.poll_write_ready(cx))?;
-            if let Ok(res) = guard.try_io(|io| send(io.get_ref(), transmits)) {
+            if let Ok(res) = guard.try_io(|io| send(io.get_ref(), last_send_error, transmits)) {
                 return Poll::Ready(res);
             }
         }
@@ -184,7 +189,11 @@ fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn send(io: &mio::net::UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
+fn send(
+    io: &mio::net::UdpSocket,
+    last_send_error: &mut Instant,
+    transmits: &[Transmit],
+) -> io::Result<usize> {
     let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
     let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
     let mut cmsgs = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
@@ -224,15 +233,22 @@ fn send(io: &mio::net::UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
                     // Retry the transmission
                     continue;
                 }
-                io::ErrorKind::PermissionDenied => {
-                    // Transmissions can fail with permission errors for example
-                    // due to iptable rules. Those are not fatal errors, since the
-                    // configuration can be dynamically changed.
-                    // In this case we drop the outgoing packets and let higher
-                    // layers retransmit if required.
-                    return Ok(num_transmits);
+                io::ErrorKind::WouldBlock => return Err(e),
+                _ => {
+                    // Other errors are ignored, since they will ususally be handled
+                    // by higher level retransmits and timeouts.
+                    // - PermissionDenied errors have been observed due to iptable rules.
+                    //   Those are not fatal errors, since the
+                    //   configuration can be dynamically changed.
+                    // - Destination unreachable errors have been observed for other
+                    log_sendmsg_error(last_send_error, e, &transmits[0]);
+
+                    // The ERRORS section in https://man7.org/linux/man-pages/man2/sendmmsg.2.html
+                    // describes that errors will only be returned if no message could be transmitted
+                    // at all. Therefore drop the first (problematic) message,
+                    // and retry the remaining ones.
+                    return Ok(num_transmits.min(1));
                 }
-                _ => return Err(e),
             }
         }
         return Ok(n as usize);
@@ -240,7 +256,11 @@ fn send(io: &mio::net::UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn send(io: &mio::net::UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
+fn send(
+    io: &mio::net::UdpSocket,
+    last_send_error: &mut Instant,
+    transmits: &[Transmit],
+) -> io::Result<usize> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iov: libc::iovec = unsafe { mem::zeroed() };
     let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
@@ -255,21 +275,18 @@ fn send(io: &mio::net::UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
                 io::ErrorKind::Interrupted => {
                     // Retry the transmission
                 }
-                io::ErrorKind::PermissionDenied => {
-                    // Transmissions can fail with permission errors for example
-                    // due to iptable rules. Those are not fatal errors, since the
-                    // configuration can be dynamically changed.
-                    // In this case we drop the outgoing packets and let higher
-                    // layers retransmit if required.
+                io::ErrorKind::WouldBlock if sent != 0 => return Ok(sent),
+                io::ErrorKind::WouldBlock => return Err(e),
+                _ => {
+                    // Other errors are ignored, since they will ususally be handled
+                    // by higher level retransmits and timeouts.
+                    // - PermissionDenied errors have been observed due to iptable rules.
+                    //   Those are not fatal errors, since the
+                    //   configuration can be dynamically changed.
+                    // - Destination unreachable errors have been observed for other
+                    log_sendmsg_error(last_send_error, e, &transmits[sent]);
                     sent += 1;
                 }
-                _ if sent != 0 => {
-                    // We need to report that some packets were sent in this case, so we rely on
-                    // errors being either harmlessly transient (in the case of WouldBlock) or
-                    // recurring on the next call.
-                    return Ok(sent);
-                }
-                _ => return Err(e),
             }
         } else {
             sent += 1;
