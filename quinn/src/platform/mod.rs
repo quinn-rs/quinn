@@ -1,10 +1,7 @@
 //! Uniform interface to send/recv UDP packets with ECN information.
-use std::{
-    io::{self, IoSliceMut},
-    net::{IpAddr, Ipv6Addr, SocketAddr},
-};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
-use proto::{EcnCodepoint, Transmit};
+use proto::EcnCodepoint;
 
 #[cfg(unix)]
 mod cmsg;
@@ -26,12 +23,6 @@ pub fn caps() -> UdpCapabilities {
 
 /// Number of UDP packets to send/receive at a time
 pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
-
-pub trait UdpExt {
-    fn init_ext(&self) -> io::Result<()>;
-    fn send_ext(&self, transmits: &[Transmit]) -> io::Result<usize>;
-    fn recv_ext(&self, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize>;
-}
 
 /// The capabilities a UDP socket suppports on a certain platform
 #[derive(Debug, Clone, Copy)]
