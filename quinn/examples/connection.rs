@@ -3,7 +3,7 @@
 //! Checkout the `README.md` for guidance.
 
 // Provides the async `next()` method on `incoming` below
-use futures::StreamExt;
+use futures_util::StreamExt;
 
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};

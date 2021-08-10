@@ -8,7 +8,8 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{future, StreamExt};
+use futures_util::future;
+use futures_util::StreamExt;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tokio::{
     runtime::{Builder, Runtime},
@@ -514,7 +515,7 @@ fn run_echo(args: EchoArgs) {
                 };
                 let recv_task = async { recv.read_to_end(usize::max_value()).await.expect("read") };
 
-                let (_, data) = futures::join!(send_task, recv_task);
+                let (_, data) = futures_util::join!(send_task, recv_task);
 
                 assert_eq!(data[..], msg[..], "Data mismatch");
             }

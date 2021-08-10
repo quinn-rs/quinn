@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures_util::StreamExt;
 use hdrhistogram::Histogram;
 use structopt::StructOpt;
 use tokio::sync::Semaphore;

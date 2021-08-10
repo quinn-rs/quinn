@@ -1,14 +1,14 @@
-use bytes::Bytes;
-use futures_channel::oneshot;
-use futures_core::ready;
-use futures_util::{io::AsyncWrite, FutureExt};
-use proto::{ConnectionError, FinishError, StreamId, Written};
 use std::{
     future::Future,
     io,
     pin::Pin,
     task::{Context, Poll},
 };
+
+use bytes::Bytes;
+use futures_channel::oneshot;
+use futures_util::{io::AsyncWrite, ready, FutureExt};
+use proto::{ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
 
 use crate::{connection::ConnectionRef, recv_stream::UnknownStream, VarInt};

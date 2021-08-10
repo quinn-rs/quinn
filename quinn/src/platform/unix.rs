@@ -8,7 +8,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures_core::ready;
+use futures_util::ready;
 use lazy_static::lazy_static;
 use proto::{EcnCodepoint, Transmit};
 use tokio::io::unix::AsyncFd;

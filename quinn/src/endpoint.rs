@@ -460,7 +460,7 @@ where
     }
 }
 
-impl<S> futures_core::stream::Stream for Incoming<S>
+impl<S> futures_util::stream::Stream for Incoming<S>
 where
     S: proto::crypto::Session,
 {

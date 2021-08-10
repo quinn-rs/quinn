@@ -11,7 +11,7 @@
 #![cfg_attr(
     feature = "rustls",
     doc = "```no_run
-# use futures::TryFutureExt;
+# use futures_util::TryFutureExt;
 let mut builder = quinn::Endpoint::builder();
 // ... configure builder ...
 // Ensure you're inside a tokio runtime context

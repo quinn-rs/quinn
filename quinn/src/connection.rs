@@ -537,7 +537,7 @@ where
 #[derive(Debug)]
 pub struct IncomingUniStreams<S: proto::crypto::Session>(ConnectionRef<S>);
 
-impl<S> futures_core::stream::Stream for IncomingUniStreams<S>
+impl<S> futures_util::stream::Stream for IncomingUniStreams<S>
 where
     S: proto::crypto::Session,
 {
@@ -566,7 +566,7 @@ where
 #[derive(Debug)]
 pub struct IncomingBiStreams<S: proto::crypto::Session>(ConnectionRef<S>);
 
-impl<S> futures_core::stream::Stream for IncomingBiStreams<S>
+impl<S> futures_util::stream::Stream for IncomingBiStreams<S>
 where
     S: proto::crypto::Session,
 {
@@ -597,7 +597,7 @@ where
 #[derive(Debug)]
 pub struct Datagrams<S: proto::crypto::Session>(ConnectionRef<S>);
 
-impl<S> futures_core::stream::Stream for Datagrams<S>
+impl<S> futures_util::stream::Stream for Datagrams<S>
 where
     S: proto::crypto::Session,
 {
