@@ -10,10 +10,8 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{
-    channel::{mpsc, oneshot},
-    FutureExt, StreamExt,
-};
+use futures_channel::{mpsc, oneshot};
+use futures_util::{FutureExt, StreamExt};
 use fxhash::FxHashMap;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use thiserror::Error;
@@ -539,7 +537,7 @@ where
 #[derive(Debug)]
 pub struct IncomingUniStreams<S: proto::crypto::Session>(ConnectionRef<S>);
 
-impl<S> futures::Stream for IncomingUniStreams<S>
+impl<S> futures_core::stream::Stream for IncomingUniStreams<S>
 where
     S: proto::crypto::Session,
 {
@@ -568,7 +566,7 @@ where
 #[derive(Debug)]
 pub struct IncomingBiStreams<S: proto::crypto::Session>(ConnectionRef<S>);
 
-impl<S> futures::Stream for IncomingBiStreams<S>
+impl<S> futures_core::stream::Stream for IncomingBiStreams<S>
 where
     S: proto::crypto::Session,
 {
@@ -599,7 +597,7 @@ where
 #[derive(Debug)]
 pub struct Datagrams<S: proto::crypto::Session>(ConnectionRef<S>);
 
-impl<S> futures::Stream for Datagrams<S>
+impl<S> futures_core::stream::Stream for Datagrams<S>
 where
     S: proto::crypto::Session,
 {

@@ -6,7 +6,8 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{io::AsyncRead, ready};
+use futures_core::ready;
+use futures_util::AsyncRead;
 use proto::{Chunk, Chunks, ConnectionError, ReadableError, StreamId};
 use thiserror::Error;
 use tokio::io::ReadBuf;
