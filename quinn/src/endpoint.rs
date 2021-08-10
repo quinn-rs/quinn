@@ -13,7 +13,8 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures::{channel::mpsc, StreamExt};
+use futures_channel::mpsc;
+use futures_util::StreamExt;
 use fxhash::FxHashMap;
 use once_cell::sync::OnceCell;
 use proto::{self as proto, generic::ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
@@ -155,7 +156,7 @@ where
     /// [`Incoming`]: crate::generic::Incoming
     pub async fn wait_idle(&self) {
         let mut state = broadcast::State::default();
-        futures::future::poll_fn(|cx| {
+        futures_util::future::poll_fn(|cx| {
             let endpoint = &mut *self.inner.lock().unwrap();
             if endpoint.connections.is_empty() {
                 return Poll::Ready(());
@@ -459,7 +460,7 @@ where
     }
 }
 
-impl<S> futures::Stream for Incoming<S>
+impl<S> futures_core::stream::Stream for Incoming<S>
 where
     S: proto::crypto::Session,
 {

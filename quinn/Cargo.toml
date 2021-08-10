@@ -30,7 +30,9 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 bytes = "1"
-futures = "0.3.8"
+futures-channel = "0.3.11"
+futures-core = "0.3.11"
+futures-util = "0.3.11"
 fxhash = "0.2.1"
 libc = "0.2.69"
 mio = { version = "0.7.7", features = ["net"] }
