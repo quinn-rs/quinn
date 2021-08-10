@@ -13,7 +13,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context as _, Result};
 use bytes::Bytes;
-use futures::{ready, Future, StreamExt, TryFutureExt};
+use futures_util::{ready, Future, StreamExt, TryFutureExt};
 use http::{Response, StatusCode};
 use hyper::service::{make_service_fn, service_fn};
 use structopt::{self, StructOpt};

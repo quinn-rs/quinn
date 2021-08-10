@@ -5,7 +5,7 @@ use std::{
 };
 
 use bencher::{benchmark_group, benchmark_main, Bencher};
-use futures::StreamExt;
+use futures_util::StreamExt;
 use tokio::runtime::{Builder, Runtime};
 use tracing::error_span;
 use tracing_futures::Instrument as _;

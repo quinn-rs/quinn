@@ -5,7 +5,7 @@ use std::{
 };
 
 use crc::crc32;
-use futures::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
+use futures_util::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use quinn::{ConnectionError, ReadError, WriteError};
 use rand::{self, RngCore};
 use tokio::runtime::Builder;

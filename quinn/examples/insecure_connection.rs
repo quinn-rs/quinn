@@ -2,7 +2,7 @@
 //!
 //! Checkout the `README.md` for guidance.
 
-use futures::StreamExt;
+use futures_util::StreamExt;
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
 use quinn::{ClientConfig, ClientConfigBuilder, Endpoint};

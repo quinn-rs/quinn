@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use futures::{StreamExt, TryFutureExt};
+use futures_util::{StreamExt, TryFutureExt};
 use structopt::{self, StructOpt};
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;

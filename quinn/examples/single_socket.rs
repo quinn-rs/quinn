@@ -2,7 +2,7 @@
 //!
 //! Checkout the `README.md` for guidance.
 
-use futures::StreamExt;
+use futures_util::StreamExt;
 use std::{error::Error, net::SocketAddr};
 
 use quinn::Endpoint;
@@ -25,7 +25,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     // connect to multiple endpoints using the same socket/endpoint
-    futures::future::join_all(vec![
+    futures_util::future::join_all(vec![
         run_client(&client, addr1),
         run_client(&client, addr2),
         run_client(&client, addr3),

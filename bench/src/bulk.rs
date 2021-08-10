@@ -7,7 +7,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures::StreamExt;
+use futures_util::StreamExt;
 use hdrhistogram::Histogram;
 use structopt::StructOpt;
 use tokio::runtime::{Builder, Runtime};
@@ -141,7 +141,7 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: O
 
     let connection = Arc::new(connection);
 
-    let mut ops = futures::stream::iter((0..opt.streams).map(|_| {
+    let mut ops = futures_util::stream::iter((0..opt.streams).map(|_| {
         let connection = connection.clone();
         async move { send_data_on_stream(connection, opt.stream_size_mb).await }
     }))

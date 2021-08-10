@@ -9,7 +9,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use futures::{future, StreamExt};
+use futures_util::{future, StreamExt};
 use http_body::Body;
 use lazy_static::lazy_static;
 use structopt::StructOpt;

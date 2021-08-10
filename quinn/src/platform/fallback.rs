@@ -4,7 +4,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use futures::ready;
+use futures_util::ready;
 use proto::Transmit;
 use tokio::io::ReadBuf;
 
