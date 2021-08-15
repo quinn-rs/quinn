@@ -7,7 +7,7 @@
 //! implementations of the `crypto::Session` trait.
 
 use std::{
-    convert::{TryFrom, TryInto},
+    convert::TryFrom,
     net::{Ipv4Addr, Ipv6Addr, SocketAddrV4, SocketAddrV6},
 };
 
@@ -134,11 +134,7 @@ impl TransportParameters {
             initial_max_stream_data_bidi_remote: config.stream_receive_window,
             initial_max_stream_data_uni: config.stream_receive_window,
             max_udp_payload_size: endpoint_config.max_udp_payload_size,
-            max_idle_timeout: config.max_idle_timeout.map_or(0u32.into(), |x| {
-                x.as_millis()
-                    .try_into()
-                    .expect("setter guarantees this is in-bounds")
-            }),
+            max_idle_timeout: config.max_idle_timeout.unwrap_or(VarInt(0)),
             disable_active_migration: server_config.map_or(false, |c| !c.migration),
             active_connection_id_limit: if cid_gen.cid_len() == 0 {
                 2 // i.e. default, i.e. unsent

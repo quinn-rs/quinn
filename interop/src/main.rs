@@ -2,6 +2,7 @@
 #![type_length_limit = "2121396"]
 
 use std::{
+    convert::TryInto,
     env,
     net::{SocketAddr, ToSocketAddrs},
     sync::{Arc, Mutex},
@@ -276,10 +277,8 @@ impl State {
         }
         let mut transport = quinn::TransportConfig::default();
         transport.send_window(1024 * 1024 * 2);
-        transport.receive_window(1024 * 1024 * 2).unwrap();
-        transport
-            .max_idle_timeout(Some(Duration::from_secs(1)))
-            .unwrap();
+        transport.receive_window((1024_u32 * 1024 * 2).into());
+        transport.max_idle_timeout(Some(Duration::from_secs(1).try_into().unwrap()));
         let client_config = quinn::ClientConfig {
             crypto: Arc::new(tls_config),
             transport: Arc::new(transport),

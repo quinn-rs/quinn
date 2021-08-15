@@ -64,7 +64,7 @@ fn main() {
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 async fn run(options: Opt) -> Result<()> {
     let mut transport_config = quinn::TransportConfig::default();
-    transport_config.max_concurrent_uni_streams(0).unwrap();
+    transport_config.max_concurrent_uni_streams(0_u8.into());
     let mut server_config = quinn::ServerConfig::default();
     server_config.transport = Arc::new(transport_config);
     let mut server_config = quinn::ServerConfigBuilder::new(server_config);

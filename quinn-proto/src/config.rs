@@ -27,7 +27,7 @@ use crate::{
 pub struct TransportConfig {
     pub(crate) max_concurrent_bidi_streams: VarInt,
     pub(crate) max_concurrent_uni_streams: VarInt,
-    pub(crate) max_idle_timeout: Option<Duration>,
+    pub(crate) max_idle_timeout: Option<VarInt>,
     pub(crate) stream_receive_window: VarInt,
     pub(crate) receive_window: VarInt,
     pub(crate) send_window: u64,
@@ -54,15 +54,15 @@ impl TransportConfig {
     ///
     /// Worst-case memory use is directly proportional to `max_concurrent_bidi_streams *
     /// stream_receive_window`, with an upper bound proportional to `receive_window`.
-    pub fn max_concurrent_bidi_streams(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
-        self.max_concurrent_bidi_streams = value.try_into()?;
-        Ok(self)
+    pub fn max_concurrent_bidi_streams(&mut self, value: VarInt) -> &mut Self {
+        self.max_concurrent_bidi_streams = value;
+        self
     }
 
     /// Variant of `max_concurrent_bidi_streams` affecting unidirectional streams
-    pub fn max_concurrent_uni_streams(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
-        self.max_concurrent_uni_streams = value.try_into()?;
-        Ok(self)
+    pub fn max_concurrent_uni_streams(&mut self, value: VarInt) -> &mut Self {
+        self.max_concurrent_uni_streams = value;
+        self
     }
 
     /// Maximum duration of inactivity to accept before timing out the connection.
@@ -72,12 +72,24 @@ impl TransportConfig {
     ///
     /// **WARNING**: If a peer or its network path malfunctions or acts maliciously, an infinite
     /// idle timeout can result in permanently hung futures!
-    pub fn max_idle_timeout(&mut self, value: Option<Duration>) -> Result<&mut Self, ConfigError> {
-        if value.map_or(false, |x| x.as_millis() > VarInt::MAX.0 as u128) {
-            return Err(ConfigError::OutOfBounds);
-        }
-        self.max_idle_timeout = value;
-        Ok(self)
+    ///
+    /// ```
+    /// # use std::{convert::TryInto, time::Duration};
+    /// # use quinn_proto::{TransportConfig, VarInt, VarIntBoundsExceeded};
+    /// # fn main() -> Result<(), VarIntBoundsExceeded> {
+    /// let mut config = TransportConfig::default();
+    ///
+    /// // Set the idle timeout as `VarInt`-encoded milliseconds
+    /// config.max_idle_timeout(Some(VarInt::from_u32(10_000).into()));
+    ///
+    /// // Set the idle timeout as a `Duration`
+    /// config.max_idle_timeout(Some(Duration::from_secs(10).try_into()?));
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn max_idle_timeout(&mut self, value: Option<IdleTimeout>) -> &mut Self {
+        self.max_idle_timeout = value.map(|t| t.0);
+        self
     }
 
     /// Maximum number of bytes the peer may transmit without acknowledgement on any one stream
@@ -88,9 +100,9 @@ impl TransportConfig {
     /// stream doesn't monopolize receive buffers, which may otherwise occur if the application
     /// chooses not to read from a large stream for a time while still requiring data on other
     /// streams.
-    pub fn stream_receive_window(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
-        self.stream_receive_window = value.try_into()?;
-        Ok(self)
+    pub fn stream_receive_window(&mut self, value: VarInt) -> &mut Self {
+        self.stream_receive_window = value;
+        self
     }
 
     /// Maximum number of bytes the peer may transmit across all streams of a connection before
@@ -99,9 +111,9 @@ impl TransportConfig {
     /// This should be set to at least the expected connection latency multiplied by the maximum
     /// desired throughput. Larger values can be useful to allow maximum throughput within a
     /// stream while another is blocked.
-    pub fn receive_window(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
-        self.receive_window = value.try_into()?;
-        Ok(self)
+    pub fn receive_window(&mut self, value: VarInt) -> &mut Self {
+        self.receive_window = value;
+        self
     }
 
     /// Maximum number of bytes to transmit to a peer without acknowledgment
@@ -227,7 +239,7 @@ impl Default for TransportConfig {
         TransportConfig {
             max_concurrent_bidi_streams: 100u32.into(),
             max_concurrent_uni_streams: 100u32.into(),
-            max_idle_timeout: Some(Duration::from_millis(10_000)),
+            max_idle_timeout: Some(VarInt(10_000)),
             stream_receive_window: STREAM_RWND.into(),
             receive_window: VarInt::MAX,
             send_window: (8 * STREAM_RWND).into(),
@@ -657,5 +669,40 @@ impl From<TryFromIntError> for ConfigError {
 impl From<VarIntBoundsExceeded> for ConfigError {
     fn from(_: VarIntBoundsExceeded) -> Self {
         ConfigError::OutOfBounds
+    }
+}
+
+/// Maximum duration of inactivity to accept before timing out the connection.
+///
+/// This wraps an underlying [`VarInt`], representing the duration in milliseconds. Values can be
+/// constructed by converting directly from `VarInt`, or using `TryFrom<Duration>`.
+///
+/// ```
+/// # use std::{convert::TryFrom, time::Duration};
+/// # use quinn_proto::{IdleTimeout, VarIntBoundsExceeded, VarInt};
+/// # fn main() -> Result<(), VarIntBoundsExceeded> {
+/// // A `VarInt`-encoded value in milliseconds
+/// let timeout = IdleTimeout::from(VarInt::from_u32(10_000));
+///
+/// // Try to convert a `Duration` into a `VarInt`-encoded timeout
+/// let timeout = IdleTimeout::try_from(Duration::from_secs(10))?;
+/// # Ok(())
+/// # }
+/// ```
+#[derive(Default, Copy, Clone, Eq, Hash, Ord, PartialEq, PartialOrd)]
+pub struct IdleTimeout(VarInt);
+
+impl From<VarInt> for IdleTimeout {
+    fn from(inner: VarInt) -> Self {
+        Self(inner)
+    }
+}
+
+impl std::convert::TryFrom<Duration> for IdleTimeout {
+    type Error = VarIntBoundsExceeded;
+
+    fn try_from(timeout: Duration) -> Result<Self, Self::Error> {
+        let inner = VarInt::try_from(timeout.as_millis())?;
+        Ok(Self(inner))
     }
 }

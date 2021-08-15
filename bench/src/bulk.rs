@@ -1,4 +1,5 @@
 use std::{
+    convert::TryInto,
     net::{IpAddr, Ipv6Addr, SocketAddr},
     str::FromStr,
     sync::Arc,
@@ -271,9 +272,7 @@ fn transport_config(opt: &Opt) -> quinn::TransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
     let mut config = quinn::TransportConfig::default();
-    config
-        .max_concurrent_uni_streams(opt.max_streams as u64)
-        .unwrap();
+    config.max_concurrent_uni_streams(opt.max_streams.try_into().unwrap());
     config
 }
 

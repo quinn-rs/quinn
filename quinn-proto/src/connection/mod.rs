@@ -173,7 +173,7 @@ where
     /// Whether the idle timer should be reset the next time an ack-eliciting packet is transmitted.
     permit_idle_reset: bool,
     /// Negotiated idle timeout
-    idle_timeout: Option<Duration>,
+    idle_timeout: Option<VarInt>,
     timers: TimerTable,
     /// Number of packets received which could not be authenticated
     authentication_failures: u64,
@@ -1485,7 +1485,7 @@ where
     fn reset_idle_timeout(&mut self, now: Instant) {
         let timeout = match self.idle_timeout {
             None => return,
-            Some(x) => x,
+            Some(x) => Duration::from_millis(x.0),
         };
         if self.state.is_closed() {
             self.timers.stop(Timer::Idle);
@@ -2823,11 +2823,11 @@ where
 
     fn set_peer_params(&mut self, params: TransportParameters) {
         self.streams.set_params(&params);
-        self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout.0) {
-            (None, 0) => None,
-            (None, x) => Some(Duration::from_millis(x)),
-            (Some(x), 0) => Some(x),
-            (Some(x), y) => Some(cmp::min(x, Duration::from_millis(y))),
+        self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
+            (None, VarInt(0)) => None,
+            (None, x) => Some(x),
+            (Some(x), VarInt(0)) => Some(x),
+            (Some(x), y) => Some(cmp::min(x, y)),
         };
         if let Some(ref info) = params.preferred_address {
             self.rem_cids.insert(IssuedCid {
