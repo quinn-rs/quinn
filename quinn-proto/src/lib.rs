@@ -46,7 +46,7 @@ pub use crate::connection::{
 };
 
 mod config;
-pub use config::{ConfigError, TransportConfig};
+pub use config::{ConfigError, IdleTimeout, TransportConfig};
 
 pub mod crypto;
 #[cfg(feature = "rustls")]

@@ -64,8 +64,8 @@ mod work_limiter;
 
 pub use proto::{
     crypto, ApplicationClose, Certificate, CertificateChain, Chunk, ConfigError, ConnectError,
-    ConnectionClose, ConnectionError, ParseError, PrivateKey, StreamId, Transmit, TransportConfig,
-    VarInt,
+    ConnectionClose, ConnectionError, IdleTimeout, ParseError, PrivateKey, StreamId, Transmit,
+    TransportConfig, VarInt,
 };
 
 pub use crate::builders::EndpointError;

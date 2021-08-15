@@ -1,6 +1,7 @@
 #![cfg(feature = "rustls")]
 
 use std::{
+    convert::TryInto,
     io,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, UdpSocket},
     str,
@@ -39,8 +40,7 @@ fn handshake_timeout() {
     const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
     let mut transport_config = crate::TransportConfig::default();
     transport_config
-        .max_idle_timeout(Some(IDLE_TIMEOUT))
-        .unwrap()
+        .max_idle_timeout(Some(IDLE_TIMEOUT.try_into().unwrap()))
         .initial_rtt(Duration::from_millis(10));
     client_config.transport = Arc::new(transport_config);
 
@@ -420,15 +420,13 @@ fn run_echo(args: EchoArgs) {
         // Use small receive windows
         let mut transport_config = TransportConfig::default();
         if let Some(receive_window) = args.receive_window {
-            transport_config.receive_window(receive_window).unwrap();
+            transport_config.receive_window(receive_window.try_into().unwrap());
         }
         if let Some(stream_receive_window) = args.stream_receive_window {
-            transport_config
-                .stream_receive_window(stream_receive_window)
-                .unwrap();
+            transport_config.stream_receive_window(stream_receive_window.try_into().unwrap());
         }
-        transport_config.max_concurrent_bidi_streams(1).unwrap();
-        transport_config.max_concurrent_uni_streams(1).unwrap();
+        transport_config.max_concurrent_bidi_streams(1_u8.into());
+        transport_config.max_concurrent_uni_streams(1_u8.into());
         let transport_config = Arc::new(transport_config);
 
         // We don't use the `endpoint` helper here because we want two different endpoints with
