@@ -57,7 +57,6 @@ mod builders;
 mod connection;
 mod endpoint;
 mod mutex;
-mod platform;
 mod recv_stream;
 mod send_stream;
 mod work_limiter;
