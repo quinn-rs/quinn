@@ -30,6 +30,7 @@ This library is at [draft 32][current-draft].
 
 - **quinn:** High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)
 - **quinn-proto:** Deterministic state machine of the protocol which performs [**no** I/O][sans-io] internally and is suitable for use with custom event loops (and potentially a C or C++ API).
+- **quinn-udp:** UDP sockets with ECN information tuned for the protocol.
 - **quinn-h3:** Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.
 - **bench:** Benchmarks without any framework.
 - **interop:** Tooling that helps to run interoperability tests.
