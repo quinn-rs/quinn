@@ -13,6 +13,7 @@ use tracing::{debug, error, info};
 
 use perf::bind_socket;
 use perf::stats::{OpenStreamStats, Stats};
+#[cfg(feature = "json-output")]
 use std::path::PathBuf;
 
 /// Connects to a QUIC perf server and maintains a specified pattern of requests until interrupted
@@ -59,6 +60,7 @@ struct Opt {
     #[structopt(long)]
     conn_stats: bool,
     /// File path to output JSON statistics to. If the file is '-', stdout will be used
+    #[cfg(feature = "json-output")]
     #[structopt(long)]
     json: Option<PathBuf>,
 }
@@ -201,6 +203,7 @@ async fn run(opt: Opt) -> Result<()> {
 
     endpoint.wait_idle().await;
 
+    #[cfg(feature = "json-output")]
     if let Some(path) = opt.json {
         stats.print_json(path.as_path())?;
     }

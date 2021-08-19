@@ -1,11 +1,10 @@
 use hdrhistogram::Histogram;
 use quinn::StreamId;
-use std::fs::File;
-use std::io;
-use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant, SystemTime};
+#[cfg(feature = "json-output")]
+use {std::fs::File, std::io, std::path::Path};
 
 pub struct Stats {
     /// Test start time
@@ -121,6 +120,7 @@ impl Stats {
         println!();
     }
 
+    #[cfg(feature = "json-output")]
     pub fn print_json(&self, path: &Path) -> io::Result<()> {
         match path {
             path if path == Path::new("-") => json::print(self, std::io::stdout()),
@@ -245,6 +245,7 @@ fn throughput_bytes_per_second(duration_in_micros: u64, size: u64) -> f64 {
     (size as f64) / (duration_in_micros as f64 / 1000000.0)
 }
 
+#[cfg(feature = "json-output")]
 mod json {
     use crate::stats;
     use crate::stats::{Stats, StreamIntervalStats};

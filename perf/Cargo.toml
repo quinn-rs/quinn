@@ -6,6 +6,11 @@ edition = "2018"
 license = "MIT OR Apache-2.0"
 publish = false
 
+[features]
+default = ["json-output"]
+# Allow for json output from the perf client
+json-output = ["serde", "serde_json"]
+
 [dependencies]
 anyhow = "1.0.22"
 futures-util = "0.3.11"
@@ -13,8 +18,8 @@ hdrhistogram = { version = "7.2", default-features = false }
 quinn = { path = "../quinn" }
 rcgen = "0.8"
 rustls = { version = "0.19", features = ["dangerous_configuration"] }
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1.0", features = ["derive"], optional = true  }
+serde_json = { version = "1.0", optional = true }
 socket2 = "0.4"
 webpki = "0.21"
 structopt = "0.3"
