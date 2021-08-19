@@ -4,7 +4,7 @@ use std::{
     ops::{Range, RangeInclusive},
 };
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tinyvec::TinyVec;
 
 use crate::{
@@ -443,7 +443,7 @@ pub struct Stream {
     pub id: StreamId,
     pub offset: u64,
     pub fin: bool,
-    pub data: Bytes,
+    pub data: BytesMut,
 }
 
 impl FrameStruct for Stream {
@@ -500,7 +500,7 @@ pub type StreamMetaVec = TinyVec<[StreamMeta; 1]>;
 #[derive(Debug, Clone)]
 pub struct Crypto {
     pub offset: u64,
-    pub data: Bytes,
+    pub data: BytesMut,
 }
 
 impl Crypto {
@@ -551,14 +551,14 @@ impl Iter {
         }
     }
 
-    fn take_len(&mut self) -> Result<Bytes, UnexpectedEnd> {
+    fn take_len(&mut self) -> Result<BytesMut, UnexpectedEnd> {
         let len = self.bytes.get_var()?;
         if len > self.bytes.remaining() as u64 {
             return Err(UnexpectedEnd);
         }
         let start = self.bytes.position() as usize;
         self.bytes.advance(len as usize);
-        Ok(self.bytes.get_ref().slice(start..(start + len as usize)))
+        Ok(BytesMut::from(&self.bytes.get_ref()[start..(start + len as usize)]))
     }
 
     fn try_next(&mut self) -> Result<Frame, IterErr> {
@@ -581,11 +581,11 @@ impl Iter {
                         Some(Type(x))
                     }
                 },
-                reason: self.take_len()?,
+                reason: self.take_len()?.freeze(),
             })),
             Type::APPLICATION_CLOSE => Frame::Close(Close::Application(ApplicationClose {
                 error_code: self.bytes.get()?,
-                reason: self.take_len()?,
+                reason: self.take_len()?.freeze(),
             })),
             Type::MAX_DATA => Frame::MaxData(self.bytes.get()?),
             Type::MAX_STREAM_DATA => Frame::MaxStreamData {
@@ -680,7 +680,7 @@ impl Iter {
                 data: self.take_len()?,
             }),
             Type::NEW_TOKEN => Frame::NewToken {
-                token: self.take_len()?,
+                token: self.take_len()?.freeze(),
             },
             Type::HANDSHAKE_DONE => Frame::HandshakeDone,
             _ => {
@@ -710,11 +710,12 @@ impl Iter {
         })
     }
 
-    fn take_remaining(&mut self) -> Bytes {
+    fn take_remaining(&mut self) -> BytesMut {
         let mut x = mem::replace(self.bytes.get_mut(), Bytes::new());
         x.advance(self.bytes.position() as usize);
         self.bytes.set_position(0);
-        x
+        // TODO: Replace this memcopy by changing-out the inner Cursor<Bytes> (Already on the TODO list)
+        BytesMut::from(&x[..])
     }
 }
 
@@ -843,7 +844,7 @@ pub const RETIRE_CONNECTION_ID_SIZE_BOUND: usize = 9;
 #[derive(Debug, Clone)]
 pub struct Datagram {
     /// Payload
-    pub data: Bytes,
+    pub data: BytesMut,
 }
 
 impl FrameStruct for Datagram {

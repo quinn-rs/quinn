@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use bytes::Bytes;
+use bytes::BytesMut;
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -21,7 +21,7 @@ impl<'a, S: Session> Datagrams<'a, S> {
     /// Queue an unreliable, unordered datagram for immediate transmission
     ///
     /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
-    pub fn send(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
+    pub fn send(&mut self, data: BytesMut) -> Result<(), SendDatagramError> {
         if self.conn.config.datagram_receive_buffer_size.is_none() {
             return Err(SendDatagramError::Disabled);
         }
@@ -68,7 +68,7 @@ impl<'a, S: Session> Datagrams<'a, S> {
     }
 
     /// Receive an unreliable, unordered datagram
-    pub fn recv(&mut self) -> Option<Bytes> {
+    pub fn recv(&mut self) -> Option<BytesMut> {
         self.conn.datagrams.recv()
     }
 }
@@ -131,7 +131,7 @@ impl DatagramState {
         true
     }
 
-    pub fn recv(&mut self) -> Option<Bytes> {
+    pub fn recv(&mut self) -> Option<BytesMut> {
         let x = self.incoming.pop_front()?.data;
         self.recv_buffered -= x.len();
         Some(x)

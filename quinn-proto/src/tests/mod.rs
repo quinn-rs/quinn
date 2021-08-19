@@ -6,7 +6,7 @@ use std::{
 };
 
 use assert_matches::assert_matches;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use hex_literal::hex;
 use rand::RngCore;
 use ring::hmac;
@@ -1562,7 +1562,7 @@ fn datagram_unsupported() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(pair.client_datagrams(client_ch).max_size(), None);
 
-    match pair.client_datagrams(client_ch).send(Bytes::new()) {
+    match pair.client_datagrams(client_ch).send(BytesMut::new()) {
         Err(SendDatagramError::UnsupportedByPeer) => {}
         Err(e) => panic!("unexpected error: {}", e),
         Ok(_) => panic!("unexpected success"),
