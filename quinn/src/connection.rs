@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures_channel::{mpsc, oneshot};
 use futures_util::{FutureExt, StreamExt};
 use fxhash::FxHashMap;
@@ -382,7 +382,7 @@ where
     /// Application datagrams are a low-level primitive. They may be lost or delivered out of order,
     /// and `data` must both fit inside a single QUIC packet and be smaller than the maximum
     /// dictated by the peer.
-    pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
+    pub fn send_datagram(&self, data: BytesMut) -> Result<(), SendDatagramError> {
         let conn = &mut *self.0.lock("send_datagram");
         if let Some(ref x) = conn.error {
             return Err(SendDatagramError::ConnectionClosed(x.clone()));
@@ -601,7 +601,7 @@ impl<S> futures_util::stream::Stream for Datagrams<S>
 where
     S: proto::crypto::Session,
 {
-    type Item = Result<Bytes, ConnectionError>;
+    type Item = Result<BytesMut, ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock("Datagrams::poll_next");

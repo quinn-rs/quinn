@@ -162,7 +162,7 @@ where
 
                 match chunks.next(usize::MAX) {
                     Ok(Some(chunk)) => {
-                        bufs[read] = chunk.bytes;
+                        bufs[read] = chunk.bytes.freeze();
                         read += 1;
                     }
                     res => return (if read == 0 { None } else { Some(read) }, res.err()).into(),
@@ -334,7 +334,7 @@ where
                         return Poll::Ready(Err(ReadToEndError::TooLong));
                     }
                     self.end = self.end.max(end);
-                    self.read.push((chunk.bytes, chunk.offset));
+                    self.read.push((chunk.bytes.freeze(), chunk.offset));
                 }
                 None => {
                     if self.end == 0 {
