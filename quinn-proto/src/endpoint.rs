@@ -18,7 +18,7 @@ use tracing::{debug, trace, warn};
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     coding::BufMutExt,
-    config::{ClientConfig, ConfigError, EndpointConfig, ServerConfig},
+    config::{ClientConfig, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionError},
     crypto::{
         self, ClientConfig as ClientCryptoConfig, Keys, PacketKey,
@@ -847,9 +847,6 @@ pub enum ConnectError {
     /// The domain name supplied was malformed
     #[error("invalid DNS name: {0}")]
     InvalidDnsName(String),
-    /// The transport configuration was invalid
-    #[error("transport configuration error: {0}")]
-    Config(#[source] ConfigError),
     /// The remote [`SocketAddr`] supplied was malformed
     ///
     /// Examples include attempting to connect to port 0, or using an inappropriate address family.
