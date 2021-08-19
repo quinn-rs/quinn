@@ -22,12 +22,12 @@ use proto::{
     generic::{ClientConfig, ServerConfig},
     ConnectError, ConnectionHandle, DatagramEvent,
 };
+use udp::{RecvMeta, UdpSocket, BATCH_SIZE};
 
 use crate::{
     broadcast::{self, Broadcast},
     builders::EndpointBuilder,
     connection::Connecting,
-    platform::{RecvMeta, UdpSocket, BATCH_SIZE},
     work_limiter::WorkLimiter,
     ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND, SEND_TIME_BOUND,
 };

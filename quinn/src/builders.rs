@@ -7,11 +7,9 @@ use proto::{
 };
 use thiserror::Error;
 use tracing::error;
+use udp::UdpSocket;
 
-use crate::{
-    endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming},
-    platform::UdpSocket,
-};
+use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
 #[cfg(feature = "rustls")]
 use crate::{Certificate, CertificateChain, PrivateKey};
 
