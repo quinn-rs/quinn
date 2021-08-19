@@ -17,11 +17,11 @@ use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent
 use thiserror::Error;
 use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use tracing::info_span;
+use udp::caps;
 
 use crate::{
     broadcast::{self, Broadcast},
     mutex::Mutex,
-    platform::caps,
     recv_stream::RecvStream,
     send_stream::{SendStream, WriteError},
     ConnectionEvent, EndpointEvent, VarInt,
