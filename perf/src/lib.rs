@@ -4,6 +4,7 @@ use anyhow::{Context, Result};
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::warn;
 
+#[cfg_attr(not(feature = "json-output"), allow(dead_code))]
 pub mod stats;
 
 pub fn bind_socket(
