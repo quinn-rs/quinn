@@ -342,8 +342,8 @@ pub struct IllegalOrderedRead;
 mod test {
     use super::*;
     use assert_matches::assert_matches;
-    use std::iter::FromIterator;
     use bytes::Bytes;
+    use std::iter::FromIterator;
 
     #[test]
     fn assemble_ordered() {

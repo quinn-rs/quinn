@@ -17,8 +17,8 @@ use crate::{
 
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
-use std::ops::Deref;
 use std::io::Cursor;
+use std::ops::Deref;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Type(u64);
@@ -559,7 +559,9 @@ impl Iter {
         }
         let start = self.bytes.position() as usize;
         self.bytes.advance(len as usize);
-        Ok(BytesMut::from(&self.bytes.get_ref()[start..(start + len as usize)]))
+        Ok(BytesMut::from(
+            &self.bytes.get_ref()[start..(start + len as usize)],
+        ))
     }
 
     fn try_next(&mut self) -> Result<Frame, IterErr> {
@@ -844,14 +846,14 @@ pub enum Datagram {
     /// Used to designate an outgoing immutable buffer
     Outgoing(Bytes),
     /// Used to designate an incoming mutable buffer
-    Incoming(BytesMut)
+    Incoming(BytesMut),
 }
 
 impl Datagram {
     pub(crate) fn assert_incoming(self) -> BytesMut {
         match self {
             Self::Incoming(ret) => ret,
-            _ => panic!("Asserted datagram was incoming type, but was actually outgoing type")
+            _ => panic!("Asserted datagram was incoming type, but was actually outgoing type"),
         }
     }
 }
@@ -862,7 +864,7 @@ impl Deref for Datagram {
     fn deref(&self) -> &Self::Target {
         match self {
             Self::Outgoing(bytes) => &bytes[..],
-            Self::Incoming(bytes) => &bytes[..]
+            Self::Incoming(bytes) => &bytes[..],
         }
     }
 }

@@ -42,7 +42,10 @@ impl<'a, S: Session> Datagrams<'a, S> {
             return Err(SendDatagramError::TooLarge);
         }
         self.conn.datagrams.outgoing_total += data.len();
-        self.conn.datagrams.outgoing.push_back(Datagram::Outgoing(data));
+        self.conn
+            .datagrams
+            .outgoing
+            .push_back(Datagram::Outgoing(data));
         Ok(())
     }
 
