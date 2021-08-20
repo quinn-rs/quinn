@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use bytes::BytesMut;
+use bytes::{Bytes, BytesMut};
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -21,7 +21,7 @@ impl<'a, S: Session> Datagrams<'a, S> {
     /// Queue an unreliable, unordered datagram for immediate transmission
     ///
     /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
-    pub fn send(&mut self, data: BytesMut) -> Result<(), SendDatagramError> {
+    pub fn send(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
         if self.conn.config.datagram_receive_buffer_size.is_none() {
             return Err(SendDatagramError::Disabled);
         }
@@ -35,14 +35,14 @@ impl<'a, S: Session> Datagrams<'a, S> {
                 .outgoing
                 .pop_front()
                 .expect("datagrams.outgoing_total desynchronized");
-            trace!(len = prev.data.len(), "dropping outgoing datagram");
-            self.conn.datagrams.outgoing_total -= prev.data.len();
+            trace!(len = prev.len(), "dropping outgoing datagram");
+            self.conn.datagrams.outgoing_total -= prev.len();
         }
         if data.len() > max {
             return Err(SendDatagramError::TooLarge);
         }
         self.conn.datagrams.outgoing_total += data.len();
-        self.conn.datagrams.outgoing.push_back(Datagram { data });
+        self.conn.datagrams.outgoing.push_back(Datagram::Outgoing(data));
         Ok(())
     }
 
@@ -98,17 +98,17 @@ impl DatagramState {
             Some(x) => *x,
         };
 
-        if datagram.data.len() > window {
+        if datagram.len() > window {
             return Err(TransportError::PROTOCOL_VIOLATION("oversized datagram"));
         }
 
         let was_empty = self.recv_buffered == 0;
-        while datagram.data.len() + self.recv_buffered > window {
+        while datagram.len() + self.recv_buffered > window {
             debug!("dropping stale datagram");
             self.recv();
         }
 
-        self.recv_buffered += datagram.data.len();
+        self.recv_buffered += datagram.len();
         self.incoming.push_back(datagram);
         Ok(was_empty)
     }
@@ -126,13 +126,13 @@ impl DatagramState {
             return false;
         }
 
-        self.outgoing_total -= datagram.data.len();
+        self.outgoing_total -= datagram.len();
         datagram.encode(true, buf);
         true
     }
 
     pub fn recv(&mut self) -> Option<BytesMut> {
-        let x = self.incoming.pop_front()?.data;
+        let x = self.incoming.pop_front()?.assert_incoming();
         self.recv_buffered -= x.len();
         Some(x)
     }

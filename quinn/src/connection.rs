@@ -382,7 +382,7 @@ where
     /// Application datagrams are a low-level primitive. They may be lost or delivered out of order,
     /// and `data` must both fit inside a single QUIC packet and be smaller than the maximum
     /// dictated by the peer.
-    pub fn send_datagram(&self, data: BytesMut) -> Result<(), SendDatagramError> {
+    pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
         let conn = &mut *self.0.lock("send_datagram");
         if let Some(ref x) = conn.error {
             return Err(SendDatagramError::ConnectionClosed(x.clone()));
