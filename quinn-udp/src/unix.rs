@@ -34,20 +34,8 @@ pub fn init(io: &UdpSocket) -> io::Result<SocketType> {
 
     let addr = io.local_addr()?;
     let only_v6 = if addr.is_ipv6() {
-        unsafe {
-            let mut only_v6: libc::c_int = 0;
-            let rc = libc::getsockopt(
-                io.as_raw_fd(),
-                libc::IPPROTO_IPV6,
-                libc::IPV6_V6ONLY,
-                &mut only_v6 as *mut _ as _,
-                mem::size_of_val(&only_v6) as _,
-            );
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
-            only_v6 != 0
-        }
+        let socket = socket2::SockRef::from(io);
+        socket.only_v6()?
     } else {
         false
     };
