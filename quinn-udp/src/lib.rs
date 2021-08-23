@@ -56,17 +56,6 @@ impl Default for RecvMeta {
     }
 }
 
-/// Socket type.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum SocketType {
-    /// Socket is bound to an ip4 address.
-    Ipv4,
-    /// Socket is bound to an ip6 address and is not dual stack.
-    Ipv6Only,
-    /// Socket is bound to an ip6 address and supports ip4 packets.
-    Ipv6,
-}
-
 /// Log at most 1 IO error per minute
 const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
 

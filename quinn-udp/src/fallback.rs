@@ -1,14 +1,11 @@
-use crate::{RecvMeta, SocketType};
+use crate::RecvMeta;
 use proto::Transmit;
 
 use std::io::{IoSliceMut, Result};
 
-pub fn init(socket: &std::net::UdpSocket) -> Result<SocketType> {
-    Ok(if socket.local_addr()?.is_ipv4() {
-        SocketType::Ipv4
-    } else {
-        SocketType::Ipv6Only
-    })
+pub fn init(_socket: &std::net::UdpSocket) -> Result<()> {
+    // We do nothing with the given socket.
+    Ok(())
 }
 
 pub fn send(socket: &std::net::UdpSocket, transmits: &[Transmit]) -> Result<usize> {

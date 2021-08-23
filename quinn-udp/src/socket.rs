@@ -1,5 +1,5 @@
 use proto::{Transmit};
-use crate::{RecvMeta, SocketType, UdpCapabilities};
+use crate::{RecvMeta, UdpCapabilities};
 use async_io::Async;
 use futures_lite::future::poll_fn;
 use std::io::{IoSliceMut, Result};
@@ -15,7 +15,6 @@ use crate::platform as platform;
 #[derive(Debug)]
 pub struct UdpSocket {
     inner: Async<std::net::UdpSocket>,
-    ty: SocketType,
 }
 
 impl UdpSocket {
@@ -27,20 +26,15 @@ impl UdpSocket {
     }
 
     pub fn from_std(socket: std::net::UdpSocket) -> Result<Self> {
-        let ty = platform::init(&socket)?;
+        platform::init(&socket)?;
         Ok(Self {
             inner: Async::new(socket)?,
-            ty,
         })
     }
 
     pub fn bind(addr: SocketAddr) -> Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         Self::from_std(socket)
-    }
-
-    pub fn socket_type(&self) -> SocketType {
-        self.ty
     }
 
     pub fn local_addr(&self) -> Result<SocketAddr> {

@@ -8,14 +8,14 @@ use std::{
 };
 
 use proto::{EcnCodepoint, Transmit};
-use crate::{cmsg, RecvMeta, SocketType};
+use crate::{cmsg, RecvMeta};
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
 #[cfg(not(target_os = "freebsd"))]
 type IpTosTy = libc::c_int;
 
-pub fn init(io: &UdpSocket) -> io::Result<SocketType> {
+pub fn init(io: &UdpSocket) -> io::Result<()> {
     let mut cmsg_platform_space = 0;
     if cfg!(target_os = "linux") {
         cmsg_platform_space +=
@@ -134,13 +134,7 @@ pub fn init(io: &UdpSocket) -> io::Result<SocketType> {
         }
     }
 
-    Ok(if addr.is_ipv4() {
-        SocketType::Ipv4
-    } else if only_v6 {
-        SocketType::Ipv6Only
-    } else {
-        SocketType::Ipv6
-    })
+    Ok(())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
