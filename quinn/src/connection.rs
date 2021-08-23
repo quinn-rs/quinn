@@ -17,7 +17,7 @@ use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent
 use thiserror::Error;
 use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use tracing::info_span;
-use udp::caps;
+use udp::UdpSocket;
 
 use crate::{
     broadcast::{self, Broadcast},
@@ -806,7 +806,9 @@ where
         let now = Instant::now();
         let mut transmits = 0;
 
-        let max_datagrams = caps().max_gso_segments;
+        let max_datagrams = UdpSocket::capabilities()
+            .expect("could not get capabilities")
+            .max_gso_segments;
 
         while let Some(t) = self.inner.poll_transmit(now, max_datagrams) {
             transmits += match t.segment_size {

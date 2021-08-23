@@ -2,82 +2,20 @@ use std::{
     io,
     io::IoSliceMut,
     mem::{self, MaybeUninit},
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, SocketAddr, UdpSocket},
     os::unix::io::AsRawFd,
     ptr,
-    task::{Context, Poll},
-    time::Instant,
 };
 
-use futures_util::ready;
-use lazy_static::lazy_static;
 use proto::{EcnCodepoint, Transmit};
-use tokio::io::unix::AsyncFd;
-
-use super::{cmsg, log_sendmsg_error, RecvMeta, UdpCapabilities, IO_ERROR_LOG_INTERVAL};
+use crate::{cmsg, RecvMeta, SocketType};
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
 #[cfg(not(target_os = "freebsd"))]
 type IpTosTy = libc::c_int;
 
-/// Tokio-compatible UDP socket with some useful specializations.
-///
-/// Unlike a standard tokio UDP socket, this allows ECN bits to be read and written on some
-/// platforms.
-#[derive(Debug)]
-pub struct UdpSocket {
-    io: AsyncFd<mio::net::UdpSocket>,
-    last_send_error: Instant,
-}
-
-impl UdpSocket {
-    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
-        socket.set_nonblocking(true)?;
-        let io = mio::net::UdpSocket::from_std(socket);
-        init(&io)?;
-        let now = Instant::now();
-        Ok(UdpSocket {
-            io: AsyncFd::new(io)?,
-            last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
-        })
-    }
-
-    pub fn poll_send(
-        &mut self,
-        cx: &mut Context,
-        transmits: &[Transmit],
-    ) -> Poll<Result<usize, io::Error>> {
-        loop {
-            let last_send_error = &mut self.last_send_error;
-            let mut guard = ready!(self.io.poll_write_ready(cx))?;
-            if let Ok(res) = guard.try_io(|io| send(io.get_ref(), last_send_error, transmits)) {
-                return Poll::Ready(res);
-            }
-        }
-    }
-
-    pub fn poll_recv(
-        &self,
-        cx: &mut Context,
-        bufs: &mut [IoSliceMut<'_>],
-        meta: &mut [RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        debug_assert!(!bufs.is_empty());
-        loop {
-            let mut guard = ready!(self.io.poll_read_ready(cx))?;
-            if let Ok(res) = guard.try_io(|io| recv(io.get_ref(), bufs, meta)) {
-                return Poll::Ready(res);
-            }
-        }
-    }
-
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.io.get_ref().local_addr()
-    }
-}
-
-fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
+pub fn init(io: &UdpSocket) -> io::Result<SocketType> {
     let mut cmsg_platform_space = 0;
     if cfg!(target_os = "linux") {
         cmsg_platform_space +=
@@ -95,26 +33,45 @@ fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
     );
 
     let addr = io.local_addr()?;
-
-    // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
-    if addr.is_ipv4() || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !io.only_v6()?) {
-        let on: libc::c_int = 1;
-        let rc = unsafe {
-            libc::setsockopt(
+    let only_v6 = if addr.is_ipv6() {
+        unsafe {
+            let mut only_v6: libc::c_int = 0;
+            let rc = libc::getsockopt(
                 io.as_raw_fd(),
-                libc::IPPROTO_IP,
-                libc::IP_RECVTOS,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
-        if rc == -1 {
-            return Err(io::Error::last_os_error());
+                libc::IPPROTO_IPV6,
+                libc::IPV6_V6ONLY,
+                &mut only_v6 as *mut _ as _,
+                mem::size_of_val(&only_v6) as _,
+            );
+            if rc == -1 {
+                return Err(io::Error::last_os_error());
+            }
+            only_v6 != 0
         }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        if addr.is_ipv4() {
+    } else {
+        false
+    };
+
+    if addr.is_ipv4() || !only_v6 {
+        // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
+        if !cfg!(any(target_os = "macos", target_os = "ios")) {
+            let on: libc::c_int = 1;
+            let rc = unsafe {
+                libc::setsockopt(
+                    io.as_raw_fd(),
+                    libc::IPPROTO_IP,
+                    libc::IP_RECVTOS,
+                    &on as *const _ as _,
+                    mem::size_of_val(&on) as _,
+                )
+            };
+            if rc == -1 {
+                return Err(io::Error::last_os_error());
+            }
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
             let rc = unsafe {
                 libc::setsockopt(
                     io.as_raw_fd(),
@@ -141,7 +98,25 @@ fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
             if rc == -1 {
                 return Err(io::Error::last_os_error());
             }
-        } else if addr.is_ipv6() {
+        }
+    }
+    if addr.is_ipv6() {
+        let on: libc::c_int = 1;
+        let rc = unsafe {
+            libc::setsockopt(
+                io.as_raw_fd(),
+                libc::IPPROTO_IPV6,
+                libc::IPV6_RECVTCLASS,
+                &on as *const _ as _,
+                mem::size_of_val(&on) as _,
+            )
+        };
+        if rc == -1 {
+            return Err(io::Error::last_os_error());
+        }
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        {
             let rc = unsafe {
                 libc::setsockopt(
                     io.as_raw_fd(),
@@ -170,30 +145,18 @@ fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
             }
         }
     }
-    if addr.is_ipv6() {
-        let on: libc::c_int = 1;
-        let rc = unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::IPPROTO_IPV6,
-                libc::IPV6_RECVTCLASS,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
-        if rc == -1 {
-            return Err(io::Error::last_os_error());
-        }
-    }
-    Ok(())
+
+    Ok(if addr.is_ipv4() {
+        SocketType::Ipv4
+    } else if only_v6 {
+        SocketType::Ipv6Only
+    } else {
+        SocketType::Ipv6
+    })
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn send(
-    io: &mio::net::UdpSocket,
-    last_send_error: &mut Instant,
-    transmits: &[Transmit],
-) -> io::Result<usize> {
+pub fn send(io: &UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
     let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
     let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
     let mut cmsgs = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
@@ -221,46 +184,28 @@ fn send(
             &mut cmsgs[i],
         );
     }
-    let num_transmits = transmits.len().min(BATCH_SIZE);
-
     loop {
-        let n =
-            unsafe { libc::sendmmsg(io.as_raw_fd(), msgs.as_mut_ptr(), num_transmits as u32, 0) };
+        let n = unsafe {
+            libc::sendmmsg(
+                io.as_raw_fd(),
+                msgs.as_mut_ptr(),
+                transmits.len().min(BATCH_SIZE) as _,
+                0,
+            )
+        };
         if n == -1 {
             let e = io::Error::last_os_error();
-            match e.kind() {
-                io::ErrorKind::Interrupted => {
-                    // Retry the transmission
-                    continue;
-                }
-                io::ErrorKind::WouldBlock => return Err(e),
-                _ => {
-                    // Other errors are ignored, since they will ususally be handled
-                    // by higher level retransmits and timeouts.
-                    // - PermissionDenied errors have been observed due to iptable rules.
-                    //   Those are not fatal errors, since the
-                    //   configuration can be dynamically changed.
-                    // - Destination unreachable errors have been observed for other
-                    log_sendmsg_error(last_send_error, e, &transmits[0]);
-
-                    // The ERRORS section in https://man7.org/linux/man-pages/man2/sendmmsg.2.html
-                    // describes that errors will only be returned if no message could be transmitted
-                    // at all. Therefore drop the first (problematic) message,
-                    // and retry the remaining ones.
-                    return Ok(num_transmits.min(1));
-                }
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
             }
+            return Err(e);
         }
         return Ok(n as usize);
     }
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn send(
-    io: &mio::net::UdpSocket,
-    last_send_error: &mut Instant,
-    transmits: &[Transmit],
-) -> io::Result<usize> {
+pub fn send(io: &UdpSocket, transmits: &[Transmit]) -> io::Result<usize> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iov: libc::iovec = unsafe { mem::zeroed() };
     let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
@@ -271,23 +216,16 @@ fn send(
         let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
         if n == -1 {
             let e = io::Error::last_os_error();
-            match e.kind() {
-                io::ErrorKind::Interrupted => {
-                    // Retry the transmission
-                }
-                io::ErrorKind::WouldBlock if sent != 0 => return Ok(sent),
-                io::ErrorKind::WouldBlock => return Err(e),
-                _ => {
-                    // Other errors are ignored, since they will ususally be handled
-                    // by higher level retransmits and timeouts.
-                    // - PermissionDenied errors have been observed due to iptable rules.
-                    //   Those are not fatal errors, since the
-                    //   configuration can be dynamically changed.
-                    // - Destination unreachable errors have been observed for other
-                    log_sendmsg_error(last_send_error, e, &transmits[sent]);
-                    sent += 1;
-                }
+            if e.kind() == io::ErrorKind::Interrupted {
+                continue;
             }
+            if sent != 0 {
+                // We need to report that some packets were sent in this case, so we rely on
+                // errors being either harmlessly transient (in the case of WouldBlock) or
+                // recurring on the next call.
+                return Ok(sent);
+            }
+            return Err(e);
         } else {
             sent += 1;
         }
@@ -296,8 +234,8 @@ fn send(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn recv(
-    io: &mio::net::UdpSocket,
+pub fn recv(
+    io: &UdpSocket,
     bufs: &mut [IoSliceMut<'_>],
     meta: &mut [RecvMeta],
 ) -> io::Result<usize> {
@@ -339,8 +277,8 @@ fn recv(
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn recv(
-    io: &mio::net::UdpSocket,
+pub fn recv(
+    io: &UdpSocket,
     bufs: &mut [IoSliceMut<'_>],
     meta: &mut [RecvMeta],
 ) -> io::Result<usize> {
@@ -364,11 +302,6 @@ fn recv(
     };
     meta[0] = decode_recv(&name, &hdr, n as usize);
     Ok(1)
-}
-
-/// Returns the platforms UDP socket capabilities
-pub fn caps() -> UdpCapabilities {
-    *CAPABILITIES
 }
 
 const CMSG_LEN: usize = 88;
@@ -405,37 +338,32 @@ fn prepare_msg(
         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
     }
 
+    #[cfg(target_os = "linux")]
     if let Some(segment_size) = transmit.segment_size {
-        debug_assert!(
-            caps().max_gso_segments > 1,
-            "Platform must support GSO for setting segment size"
-        );
-
-        gso::set_segment_size(&mut encoder, segment_size as u16);
+        encoder.push(libc::SOL_UDP, libc::UDP_SEGMENT, segment_size as u16);
     }
 
+    #[cfg(any(target_os = "linux", target_os = "android"))]
     if let Some(ip) = &transmit.src_ip {
-        if cfg!(target_os = "linux") {
-            match ip {
-                IpAddr::V4(v4) => {
-                    let pktinfo = libc::in_pktinfo {
-                        ipi_ifindex: 0,
-                        ipi_spec_dst: libc::in_addr {
-                            s_addr: u32::from_ne_bytes(v4.octets()),
-                        },
-                        ipi_addr: libc::in_addr { s_addr: 0 },
-                    };
-                    encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
-                }
-                IpAddr::V6(v6) => {
-                    let pktinfo = libc::in6_pktinfo {
-                        ipi6_ifindex: 0,
-                        ipi6_addr: libc::in6_addr {
-                            s6_addr: v6.octets(),
-                        },
-                    };
-                    encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
-                }
+        match ip {
+            IpAddr::V4(v4) => {
+                let pktinfo = libc::in_pktinfo {
+                    ipi_ifindex: 0,
+                    ipi_spec_dst: libc::in_addr {
+                        s_addr: u32::from_ne_bytes(v4.octets()),
+                    },
+                    ipi_addr: libc::in_addr { s_addr: 0 },
+                };
+                encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
+            }
+            IpAddr::V6(v6) => {
+                let pktinfo = libc::in6_pktinfo {
+                    ipi6_ifindex: 0,
+                    ipi6_addr: libc::in6_addr {
+                        s6_addr: v6.octets(),
+                    },
+                };
+                encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
             }
         }
     }
@@ -504,8 +432,8 @@ fn decode_recv(
     };
 
     RecvMeta {
-        len,
         addr,
+        len,
         ecn: EcnCodepoint::from_bits(ecn_bits),
         dst_ip,
     }
@@ -519,60 +447,30 @@ pub const BATCH_SIZE: usize = 32;
 pub const BATCH_SIZE: usize = 1;
 
 #[cfg(target_os = "linux")]
-mod gso {
-    use super::*;
-
-    /// Checks whether GSO support is available by setting the UDP_SEGMENT
-    /// option on a socket
-    pub fn max_gso_segments() -> usize {
-        const GSO_SIZE: libc::c_int = 1500;
-
-        let socket = match std::net::UdpSocket::bind("[::]:0") {
-            Ok(socket) => socket,
-            Err(_) => return 1,
-        };
-
-        let rc = unsafe {
-            libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_UDP,
-                libc::UDP_SEGMENT,
-                &GSO_SIZE as *const _ as _,
-                mem::size_of_val(&GSO_SIZE) as _,
-            )
-        };
-
-        if rc != -1 {
-            // As defined in linux/udp.h
-            // #define UDP_MAX_SEGMENTS        (1 << 6UL)
-            64
-        } else {
-            1
-        }
-    }
-
-    pub fn set_segment_size(encoder: &mut cmsg::Encoder, segment_size: u16) {
-        encoder.push(libc::SOL_UDP, libc::UDP_SEGMENT, segment_size);
-    }
+pub fn max_gso_segments() -> io::Result<usize> {
+    // Checks whether GSO support is availably by setting the UDP_SEGMENT
+    // option on a socket.
+    const GSO_SIZE: libc::c_int = 1500;
+    let socket = UdpSocket::bind("[::]:0")?;
+    let res = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            libc::SOL_UDP,
+            libc::UDP_SEGMENT,
+            &GSO_SIZE as *const _ as _,
+            mem::size_of_val(&GSO_SIZE) as _,
+        )
+    };
+    Ok(if res != -1 {
+        // As defined in linux/udp.h
+        // #define UDP_MAX_SEGMENTS ........(1 << 6UL)
+        64
+    } else {
+        1
+    })
 }
 
 #[cfg(not(target_os = "linux"))]
-mod gso {
-    use super::*;
-
-    pub fn max_gso_segments() -> usize {
-        1
-    }
-
-    pub fn set_segment_size(_encoder: &mut cmsg::Encoder, _segment_size: u16) {
-        panic!("Setting a segment size is not supported on current platform");
-    }
-}
-
-lazy_static! {
-    static ref CAPABILITIES: UdpCapabilities = {
-        UdpCapabilities {
-            max_gso_segments: gso::max_gso_segments(),
-        }
-    };
+pub fn max_gso_segments() -> io::Result<usize> {
+    Ok(1)
 }

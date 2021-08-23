@@ -9,24 +9,22 @@ use tracing::warn;
 
 #[cfg(unix)]
 mod cmsg;
+
+mod socket;
+
 #[cfg(unix)]
 #[path = "unix.rs"]
-mod imp;
+mod platform;
 
 // No ECN support
 #[cfg(not(unix))]
 #[path = "fallback.rs"]
-mod imp;
+mod platform;
 
-pub use imp::UdpSocket;
+pub use socket::UdpSocket;
 
-/// Returns the platforms UDP socket capabilities
-pub fn caps() -> UdpCapabilities {
-    imp::caps()
-}
-
-/// Number of UDP packets to send/receive at a time
-pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
+/// Number of UDP packets to send/receive at a time when using sendmmsg/recvmmsg.
+pub const BATCH_SIZE: usize = platform::BATCH_SIZE;
 
 /// The capabilities a UDP socket suppports on a certain platform
 #[derive(Debug, Clone, Copy)]
@@ -56,6 +54,17 @@ impl Default for RecvMeta {
             dst_ip: None,
         }
     }
+}
+
+/// Socket type.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum SocketType {
+    /// Socket is bound to an ip4 address.
+    Ipv4,
+    /// Socket is bound to an ip6 address and is not dual stack.
+    Ipv6Only,
+    /// Socket is bound to an ip6 address and supports ip4 packets.
+    Ipv6,
 }
 
 /// Log at most 1 IO error per minute

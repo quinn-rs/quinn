@@ -1,7 +1,7 @@
 [package]
 name = "quinn-udp"
 version = "0.7.0"
-authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>"]
+authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>", "David Craven <david@craven.ch>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
 description = "UDP sockets with ECN information for the QUIC transport protocol"
@@ -17,13 +17,18 @@ all-features = true
 maintenance = { status = "experimental" }
 
 [dependencies]
-futures-util = { version = "0.3.11", features = ["io"] }
+async-io = "1.3.1"
+futures-lite = "1.11.3"
 libc = "0.2.69"
-mio = { version = "0.7.7", features = ["net"] }
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.7" }
 socket2 = "0.4"
 tracing = "0.1.10"
-tokio = { version = "1.0.1", features = ["net"] }
 
 [target.'cfg(unix)'.dependencies]
 lazy_static = "1"
+
+[dev-dependencies]
+anyhow = "1.0.40"
+async-global-executor = "2.0.2"
+env_logger = "0.8.3"
+log = "0.4.14"
