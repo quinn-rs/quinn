@@ -1,11 +1,7 @@
 //! Uniform interface to send/recv UDP packets with ECN information.
-use std::{
-    net::{IpAddr, Ipv6Addr, SocketAddr},
-    time::{Duration, Instant},
-};
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 
-use proto::{EcnCodepoint, Transmit};
-use tracing::warn;
+use proto::EcnCodepoint;
 
 #[cfg(unix)]
 mod cmsg;
@@ -53,26 +49,5 @@ impl Default for RecvMeta {
             ecn: None,
             dst_ip: None,
         }
-    }
-}
-
-/// Log at most 1 IO error per minute
-const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
-
-/// Logs a warning message when sendmsg fails
-///
-/// Logging will only be performed if at least [`IO_ERROR_LOG_INTERVAL`]
-/// has elapsed since the last error was logged.
-fn log_sendmsg_error(
-    last_send_error: &mut Instant,
-    err: impl core::fmt::Debug,
-    transmit: &Transmit,
-) {
-    let now = Instant::now();
-    if now.saturating_duration_since(*last_send_error) > IO_ERROR_LOG_INTERVAL {
-        *last_send_error = now;
-        warn!(
-        "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, enc: {:?}, len: {:?}, segment_size: {:?} }}",
-            err, transmit.destination, transmit.src_ip, transmit.ecn, transmit.contents.len(), transmit.segment_size);
     }
 }

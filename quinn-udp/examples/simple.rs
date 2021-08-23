@@ -7,7 +7,7 @@ use quinn_udp::{RecvMeta, UdpSocket, BATCH_SIZE};
 
 fn main() -> Result<()> {
     env_logger::init();
-    let socket1 = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0).into())?;
+    let mut socket1 = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0).into())?;
     let socket2 = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0).into())?;
     let addr2 = socket2.local_addr()?;
 
