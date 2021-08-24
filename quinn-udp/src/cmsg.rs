@@ -71,10 +71,7 @@ impl<'a> Drop for Encoder<'a> {
 /// `cmsg` must refer to a cmsg containing a payload of type `T`
 pub unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
     assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
-    debug_assert!(
-        cmsg.cmsg_len as usize <=
-        libc::CMSG_LEN(mem::size_of::<T>() as _) as usize
-    );
+    debug_assert!(cmsg.cmsg_len as usize <= libc::CMSG_LEN(mem::size_of::<T>() as _) as usize);
     ptr::read(libc::CMSG_DATA(cmsg) as *const T)
 }
 

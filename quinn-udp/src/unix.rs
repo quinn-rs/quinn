@@ -7,8 +7,8 @@ use std::{
     ptr,
 };
 
-use proto::{EcnCodepoint, Transmit};
 use crate::{cmsg, RecvMeta};
+use proto::{EcnCodepoint, Transmit};
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;

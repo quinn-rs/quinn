@@ -1,9 +1,9 @@
 use anyhow::Result;
+use proto::{EcnCodepoint, Transmit};
+use quinn_udp::{RecvMeta, UdpSocket, BATCH_SIZE};
 use std::io::IoSliceMut;
 use std::net::Ipv4Addr;
 use std::time::Instant;
-use proto::{EcnCodepoint, Transmit};
-use quinn_udp::{RecvMeta, UdpSocket, BATCH_SIZE};
 
 fn main() -> Result<()> {
     env_logger::init();

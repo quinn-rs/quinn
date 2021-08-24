@@ -1,14 +1,14 @@
-use proto::{Transmit};
 use crate::{RecvMeta, UdpCapabilities};
 use async_io::Async;
 use futures_lite::future::poll_fn;
-use std::io::{IoSliceMut, Result, self};
+use proto::Transmit;
+use std::io::{self, IoSliceMut, Result};
 use std::net::SocketAddr;
 use std::task::{Context, Poll};
 use std::time::{Duration, Instant};
 use tracing::warn;
 
-use crate::platform as platform;
+use crate::platform;
 
 /// Async-io-compatible UDP socket with some useful specializations.
 ///
@@ -66,14 +66,13 @@ impl UdpSocket {
             Ok(len) => Poll::Ready(Ok(len)),
             Err(err) => {
                 match err.kind() {
-                    | io::ErrorKind::Interrupted
-                    | io::ErrorKind::WouldBlock => {},
+                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock => {}
                     _ => {
                         log_sendmsg_error(&mut self.last_send_error, &err, &transmits[0]);
                     }
                 }
                 Poll::Ready(Err(err))
-            },
+            }
         }
     }
 
