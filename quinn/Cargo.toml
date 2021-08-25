@@ -30,7 +30,7 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 bytes = "1"
-futures-util = { version = "0.3.11", features = ["io"] }
+futures-util = { version = "0.3.11", default-features = false, features = ["io"] }
 futures-channel = "0.3.11"
 fxhash = "0.2.1"
 libc = "0.2.69"
@@ -42,7 +42,7 @@ socket2 = "0.4"
 thiserror = "1.0.21"
 tracing = "0.1.10"
 tokio = { version = "1.0.1", features = ["net", "rt", "time"] }
-webpki = { version = "0.21", optional = true }
+webpki = { version = "0.21", default-features = false, optional = true }
 
 [target.'cfg(unix)'.dependencies]
 lazy_static = "1"
