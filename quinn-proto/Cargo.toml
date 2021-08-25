@@ -40,7 +40,7 @@ slab = "0.4"
 thiserror = "1.0.21"
 tinyvec = { version = "1.1", features = ["alloc"] }
 tracing = "0.1.10"
-webpki = { version = "0.21", optional = true }
+webpki = { version = "0.21", default-features = false, optional = true }
 
 [dev-dependencies]
 assert_matches = "1.1"
