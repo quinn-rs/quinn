@@ -8,7 +8,6 @@ use std::{
 use futures_util::ready;
 use proto::Transmit;
 use tokio::io::ReadBuf;
-use tracing::warn;
 
 use super::{log_sendmsg_error, RecvMeta, IO_ERROR_LOG_INTERVAL};
 
