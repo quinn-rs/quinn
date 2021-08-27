@@ -502,7 +502,7 @@ pub type StreamMetaVec = TinyVec<[StreamMeta; 1]>;
 #[derive(Debug, Clone)]
 pub struct Crypto {
     pub offset: u64,
-    pub data: BytesMut,
+    pub data: Bytes,
 }
 
 impl Crypto {
@@ -680,7 +680,7 @@ impl Iter {
             }
             Type::CRYPTO => Frame::Crypto(Crypto {
                 offset: self.bytes.get_var()?,
-                data: self.take_len()?,
+                data: self.take_len()?.freeze(),
             }),
             Type::NEW_TOKEN => Frame::NewToken {
                 token: self.take_len()?.freeze(),

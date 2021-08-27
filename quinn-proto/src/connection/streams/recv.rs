@@ -64,7 +64,8 @@ impl Recv {
 
         self.end = self.end.max(end);
         if !self.stopped {
-            self.assembler.insert(frame.offset, frame.data, payload_len);
+            self.assembler
+                .insert(frame.offset, frame.data.freeze(), payload_len);
         } else {
             self.assembler.set_bytes_read(end);
         }

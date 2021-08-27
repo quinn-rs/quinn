@@ -1651,10 +1651,10 @@ where
                 }
             }
             let offset = self.spaces[space].crypto_offset;
-            let outgoing = BytesMut::from(&outgoing[..]);
+            let outgoing = Bytes::from(outgoing);
             if let State::Handshake(ref mut state) = self.state {
                 if space == SpaceId::Initial && offset == 0 && self.side.is_client() {
-                    state.client_hello = Some(outgoing.clone().freeze());
+                    state.client_hello = Some(outgoing.clone());
                 }
             }
             self.spaces[space].crypto_offset += outgoing.len() as u64;
@@ -1971,7 +1971,7 @@ where
                 }
 
                 trace!("retrying with CID {}", rem_cid);
-                let client_hello = BytesMut::from(&state.client_hello.take().unwrap() as &[u8]);
+                let client_hello = state.client_hello.take().unwrap();
                 self.retry_src_cid = Some(rem_cid);
                 self.rem_cids.update_cid(rem_cid);
                 self.rem_handshake_cid = rem_cid;
