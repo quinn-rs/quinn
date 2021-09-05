@@ -228,6 +228,68 @@ async fn accept_after_close() {
     assert!(receiver.connection.open_uni().await.is_err());
 }
 
+#[tokio::test]
+async fn read_to_end_into() {
+    let _guard = subscribe();
+    let (endpoint, mut incoming) = endpoint();
+
+    const FIRST: &[u8] = b"first";
+    const SECOND: &[u8] = b"second";
+    const THIRD: &[u8] = b"third";
+
+    let sender = endpoint
+        .connect(&endpoint.local_addr().unwrap(), "localhost")
+        .unwrap()
+        .await
+        .expect("connect")
+        .connection;
+    let mut s = sender.open_uni().await.unwrap();
+    s.write_all(FIRST).await.unwrap();
+    s.write_all(SECOND).await.unwrap();
+    s.finish().await.unwrap();
+
+    let mut receiver = incoming
+        .next()
+        .await
+        .expect("endpoint")
+        .await
+        .expect("connection");
+
+    let mut stream = receiver
+        .uni_streams
+        .next()
+        .await
+        .expect("incoming streams")
+        .expect("missing stream");
+
+    let mut first = [0; FIRST.len()];
+    let mut second = [0; 100];
+
+    stream.read_exact(&mut first).await.expect("recv");
+    assert_eq!(first, FIRST);
+    let bytes_read = stream.read_to_end_into(&mut second).await.expect("recv");
+    assert_eq!(bytes_read, SECOND.len());
+    assert_eq!(&second[..bytes_read], SECOND);
+
+    let mut s = sender.open_uni().await.unwrap();
+    s.write_all(THIRD).await.unwrap();
+    s.finish().await.unwrap();
+
+    let mut third = [0; 100];
+
+    let bytes_read = receiver
+        .uni_streams
+        .next()
+        .await
+        .expect("incoming streams")
+        .expect("missing stream")
+        .read_to_end_into(&mut third).await.expect("recv");
+
+    assert_eq!(bytes_read, THIRD.len());
+    assert_eq!(&third[..bytes_read], THIRD);
+
+}
+
 /// Construct an endpoint suitable for connecting to itself
 fn endpoint() -> (Endpoint, Incoming) {
     let mut endpoint = Endpoint::builder();

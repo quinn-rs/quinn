@@ -191,6 +191,25 @@ where
         }
     }
 
+    /// Convenience method to read all remaining data into a buffer
+    ///
+    /// The returned future fails with [`ReadToEndError::TooLong`] if it's longer than
+    /// `buffer.len()` bytes. Uses unordered reads to be more efficient than using `AsyncRead`
+    /// would allow.
+    ///
+    /// If unordered reads have already been made, the resulting buffer may have gaps containing
+    /// arbitrary data.
+    ///
+    /// [`ReadToEndError::TooLong`]: crate::ReadToEndError::TooLong
+    pub fn read_to_end_into(self, buf: &mut [u8]) -> ReadToEndInto<S> {
+        ReadToEndInto {
+            stream: self,
+            buf,
+            start: u64::max_value(),
+            end: 0,
+        }
+    }
+
     /// Stop accepting data
     ///
     /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
@@ -348,6 +367,60 @@ where
                         buffer[offset..offset + data.len()].copy_from_slice(&data);
                     }
                     return Poll::Ready(Ok(buffer));
+                }
+            }
+        }
+    }
+}
+
+/// Future produced by [`RecvStream::read_to_end_into()`].
+///
+/// [`RecvStream::read_to_end_into()`]: crate::generic::RecvStream::read_to_end_into
+#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
+pub struct ReadToEndInto<'buf, S>
+where
+    S: proto::crypto::Session,
+{
+    stream: RecvStream<S>,
+    buf: &'buf mut [u8],
+    start: u64,
+    end: u64,
+}
+
+impl<'buf, S> Future for ReadToEndInto<'buf, S>
+where
+    S: proto::crypto::Session,
+{
+    type Output = Result<usize, ReadToEndError>;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        loop {
+            match ready!(self.stream.poll_read_chunk(cx, usize::MAX, false))? {
+                Some(chunk) => {
+                    if self.start == u64::max_value() {
+                        self.start = chunk.offset;
+                    } else if chunk.offset < self.start {
+                        let existing = (self.end - self.start) as usize;
+                        let push = (self.start - chunk.offset) as usize;
+                        if push > self.buf.len() - existing {
+                            return Poll::Ready(Err(ReadToEndError::TooLong));
+                        }
+                        self.buf.copy_within(0..existing, push);
+                        self.start = chunk.offset;
+                    }
+                    let chunk_end = chunk.bytes.len() as u64 + chunk.offset;
+                    if chunk_end - self.start > self.buf.len() as u64 {
+                        return Poll::Ready(Err(ReadToEndError::TooLong));
+                    }
+                    let offset = (chunk.offset - self.start) as usize;
+                    self.buf[offset..offset + chunk.bytes.len()].copy_from_slice(&chunk.bytes);
+                    self.end = self.end.max(chunk_end);
+                }
+                None => {
+                    return Poll::Ready(Ok(if self.end == 0 {
+                        0
+                    } else {
+                        (self.end - self.start) as usize
+                    }));
                 }
             }
         }
