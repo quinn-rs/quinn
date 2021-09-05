@@ -194,11 +194,14 @@ where
     /// Convenience method to read all remaining data into a buffer
     ///
     /// The returned future fails with [`ReadToEndError::TooLong`] if it's longer than
-    /// `buffer.len()` bytes. Uses unordered reads to be more efficient than using `AsyncRead`
+    /// `buf.len()` bytes. Uses unordered reads to be more efficient than using `AsyncRead`
     /// would allow.
     ///
     /// If unordered reads have already been made, the resulting buffer may have gaps containing
     /// arbitrary data.
+    ///
+    /// Returns the number of bytes read - if fewer than `buf.len()` bytes were left in
+    /// the stream, the remaining bytes in the buffer will not have been changed.
     ///
     /// [`ReadToEndError::TooLong`]: crate::ReadToEndError::TooLong
     pub fn read_to_end_into(self, buf: &mut [u8]) -> ReadToEndInto<S> {
