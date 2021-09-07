@@ -36,7 +36,7 @@ fxhash = "0.2.1"
 libc = "0.2.69"
 mio = { version = "0.7.7", features = ["net"] }
 once_cell = "1.7.2"
-proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.7" }
+proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.7", default-features = false }
 rustls = { version = "0.19", features = ["quic"], optional = true }
 socket2 = "0.4"
 thiserror = "1.0.21"
@@ -52,6 +52,7 @@ anyhow = "1.0.22"
 crc = "1.8.1"
 bencher = "0.1.5"
 directories-next = "2"
+futures-util = { version = "0.3.11", default-features = false, features = ["async-await-macro"] }
 rand = "0.8"
 rcgen = "0.8"
 structopt = "0.3.0"
