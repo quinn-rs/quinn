@@ -135,7 +135,8 @@ impl DatagramState {
     }
 
     pub fn recv(&mut self) -> Option<BytesMut> {
-        let x = self.incoming.pop_front()?.assert_incoming();
+        // We can unwrap without panicking below since we are popping from the incoming field
+        let x = self.incoming.pop_front()?.assert_incoming().unwrap();
         self.recv_buffered -= x.len();
         Some(x)
     }

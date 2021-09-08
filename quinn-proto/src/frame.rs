@@ -517,7 +517,8 @@ impl Crypto {
 }
 
 pub struct Iter {
-    bytes: Cursor<BytesMut>,
+    // TODO: ditch io::Cursor after bytes 0.5
+    bytes: io::Cursor<BytesMut>,
     last_ty: Option<Type>,
 }
 
@@ -850,10 +851,10 @@ pub enum Datagram {
 }
 
 impl Datagram {
-    pub(crate) fn assert_incoming(self) -> BytesMut {
+    pub(crate) fn assert_incoming(self) -> Option<BytesMut> {
         match self {
-            Self::Incoming(ret) => ret,
-            _ => panic!("Asserted datagram was incoming type, but was actually outgoing type"),
+            Self::Incoming(ret) => Some(ret),
+            _ => None,
         }
     }
 }
