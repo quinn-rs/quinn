@@ -1917,14 +1917,14 @@ where
             State::Established => {
                 match packet.header.space() {
                     SpaceId::Data => {
-                        self.process_payload(now, remote, number.unwrap(), packet.payload.freeze())?
+                        self.process_payload(now, remote, number.unwrap(), packet.payload)?
                     }
                     _ => self.process_early_payload(now, packet)?,
                 }
                 return Ok(());
             }
             State::Closed(_) => {
-                for frame in frame::Iter::new(packet.payload.freeze()) {
+                for frame in frame::Iter::new(packet.payload) {
                     if let Frame::Padding = frame {
                         continue;
                     };
@@ -2135,7 +2135,7 @@ where
                 ty: LongType::ZeroRtt,
                 ..
             } => {
-                self.process_payload(now, remote, number.unwrap(), packet.payload.freeze())?;
+                self.process_payload(now, remote, number.unwrap(), packet.payload)?;
                 Ok(())
             }
             Header::VersionNegotiate { .. } => {
@@ -2169,7 +2169,7 @@ where
     ) -> Result<(), TransportError> {
         debug_assert_ne!(packet.header.space(), SpaceId::Data);
         let payload_len = packet.payload.len();
-        for frame in frame::Iter::new(packet.payload.freeze()) {
+        for frame in frame::Iter::new(packet.payload) {
             let span = match frame {
                 Frame::Padding => continue,
                 _ => Some(trace_span!("frame", ty = %frame.ty())),
@@ -2224,7 +2224,7 @@ where
         now: Instant,
         remote: SocketAddr,
         number: u64,
-        payload: Bytes,
+        payload: BytesMut,
     ) -> Result<(), TransportError> {
         let is_0rtt = self.spaces[SpaceId::Data].crypto.is_none();
         let mut is_probing_packet = true;
@@ -2247,7 +2247,7 @@ where
                     trace!(id = %f.id, offset = f.offset, len = f.data.len(), fin = f.fin, "got stream frame");
                 }
                 Frame::Datagram(f) => {
-                    trace!(len = f.data.len(), "got datagram frame");
+                    trace!(len = f.len(), "got datagram frame");
                 }
                 f => {
                     trace!("got frame {:?}", f);

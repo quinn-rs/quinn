@@ -1,5 +1,4 @@
-mod bulk_stream;
-
+#![allow(dead_code)]
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
     str::FromStr,
@@ -17,8 +16,6 @@ use tracing::{info, trace};
 
 fn main() {
     let opt = Opt::from_args();
-    let (server_done_tx, server_done_rx) = tokio::sync::oneshot::channel();
-
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -50,56 +47,73 @@ fn main() {
     let server_addr = endpoint.local_addr().unwrap();
     drop(endpoint); // Ensure server shuts down when finished
     let thread = std::thread::spawn(move || {
-        if let Err(e) = runtime.block_on(server(incoming, opt, server_done_tx)) {
+        if let Err(e) = runtime.block_on(server(incoming, opt)) {
             eprintln!("server failed: {:#}", e);
         }
     });
 
     let runtime = rt();
-    if let Err(e) = runtime.block_on(client(server_addr, cert, opt, server_done_rx)) {
+    if let Err(e) = runtime.block_on(client(server_addr, cert, opt)) {
         eprintln!("client failed: {:#}", e);
     }
 
     thread.join().expect("server thread");
 }
 
-async fn server(
-    mut incoming: quinn::Incoming,
-    opt: Opt,
-    server_done_tx: tokio::sync::oneshot::Sender<()>,
-) -> Result<()> {
+async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
     let handshake = incoming.next().await.unwrap();
     let quinn::NewConnection {
-        mut datagrams,
+        mut uni_streams,
         connection,
         ..
     } = handshake.await.context("handshake failed")?;
 
-    let mut count = 0;
+    let mut result = Ok(());
 
-    while let Some(res) = datagrams.next().await {
-        //println!("SERVER RECV {}", count);
-        let _ = res?;
-        count += 1;
-        if count == opt.num_packets - 1 {
-            server_done_tx.send(()).unwrap();
-            break;
-        }
+    loop {
+        let mut stream = match uni_streams.next().await {
+            None => break,
+            Some(Err(quinn::ConnectionError::ApplicationClosed(_))) => break,
+            Some(Err(e)) => {
+                result = Err(e).context("accepting stream failed");
+                break;
+            }
+            Some(Ok(stream)) => stream,
+        };
+        trace!("stream established");
+
+        let _: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
+            if opt.read_unordered {
+                while stream.read_chunk(usize::MAX, false).await?.is_some() {}
+            } else {
+                // These are 32 buffers, for reading approximately 32kB at once
+                #[rustfmt::skip]
+                    let mut bufs = [
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                    Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
+                ];
+
+                while stream.read_chunks(&mut bufs[..]).await?.is_some() {}
+            }
+
+            Ok(())
+        });
     }
 
     if opt.stats {
         println!("\nServer connection stats:\n{:#?}", connection.stats());
     }
 
-    Ok(())
+    result
 }
 
-async fn client(
-    server_addr: SocketAddr,
-    server_cert: quinn::Certificate,
-    opt: Opt,
-    server_done_rx: tokio::sync::oneshot::Receiver<()>,
-) -> Result<()> {
+async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: Opt) -> Result<()> {
     let (endpoint, _) = quinn::EndpointBuilder::default()
         .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
         .unwrap();
@@ -128,30 +142,35 @@ async fn client(
 
     let connection = Arc::new(connection);
 
+    let mut ops = futures_util::stream::iter((0..opt.streams).map(|_| {
+        let connection = connection.clone();
+        async move { send_data_on_stream(connection, opt.stream_size_mb).await }
+    }))
+    .buffer_unordered(opt.max_streams);
+
     let mut total_size = 0;
     let mut duration_hist = Histogram::<u64>::new(3).unwrap();
     let mut throughput_hist = Histogram::<u64>::new(3).unwrap();
 
     let mut result = Ok(());
 
-    let stream_result =
-        send_data_on_stream(connection.clone(), opt.num_packets, server_done_rx).await;
-    info!("stream finished: {:?}", stream_result);
-    match stream_result {
-        Ok(stream_result) => {
-            total_size += stream_result.size;
+    while let Some(stream_result) = ops.next().await {
+        info!("stream finished: {:?}", stream_result);
+        match stream_result {
+            Ok(stream_result) => {
+                total_size += stream_result.size;
 
-            duration_hist
-                .record(stream_result.duration.as_millis() as u64)
-                .unwrap();
-            throughput_hist
-                .record(stream_result.throughput as u64)
-                .unwrap();
-        }
-        Err(e) => {
-            println!("Client ERR: {:?}", e.to_string());
-            if result.is_ok() {
-                result = Err(e);
+                duration_hist
+                    .record(stream_result.duration.as_millis() as u64)
+                    .unwrap();
+                throughput_hist
+                    .record(stream_result.throughput as u64)
+                    .unwrap();
+            }
+            Err(e) => {
+                if result.is_ok() {
+                    result = Err(e);
+                }
             }
         }
     }
@@ -189,9 +208,9 @@ async fn client(
 
     // Explicit close of the connection, since handles can still be around due
     // to `Arc`ing them
-    //connection.close(0u32.into(), b"Benchmark done");
+    connection.close(0u32.into(), b"Benchmark done");
 
-    //endpoint.wait_idle().await;
+    endpoint.wait_idle().await;
 
     if opt.stats {
         println!("\nClient connection stats:\n{:#?}", connection.stats());
@@ -202,25 +221,29 @@ async fn client(
 
 async fn send_data_on_stream(
     connection: Arc<quinn::Connection>,
-    num_packets: usize,
-    server_done_rx: tokio::sync::oneshot::Receiver<()>,
+    stream_size_mb: usize,
 ) -> Result<SendResult> {
-    const DATA: &[u8] = &[0xAB; 256];
+    const DATA: &[u8] = &[0xAB; 1024 * 1024];
     let bytes_data = Bytes::from_static(DATA);
 
     let start = Instant::now();
 
-    for _ in 0..num_packets {
-        connection
-            .send_datagram(bytes_data.clone())
+    let mut stream = connection
+        .open_uni()
+        .await
+        .context("failed to open stream")?;
+
+    for _ in 0..stream_size_mb {
+        stream
+            .write_chunk(bytes_data.clone())
+            .await
             .context("failed sending data")?;
     }
 
-    println!("Client awaiting server packet ...");
-    server_done_rx.await?;
+    stream.finish().await.context("failed finishing stream")?;
 
     let duration = start.elapsed();
-    let size = DATA.len() * num_packets;
+    let size = DATA.len() * stream_size_mb;
     let throughput = throughput_bps(duration, size as u64);
 
     Ok(SendResult {
@@ -249,7 +272,6 @@ fn transport_config(opt: &Opt) -> quinn::TransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
     let mut config = quinn::TransportConfig::default();
-
     config
         .max_concurrent_uni_streams(opt.max_streams as u64)
         .unwrap()
@@ -269,8 +291,9 @@ struct Opt {
     /// The amount of concurrent streams which should be used
     #[structopt(long = "max_streams", short = "m", default_value = "1")]
     max_streams: usize,
-    #[structopt(long = "num_packets", short = "p", default_value = "4096")]
-    num_packets: usize,
+    /// The amount of data to transfer on a stream in megabytes
+    #[structopt(long = "stream_size", default_value = "1024")]
+    stream_size_mb: usize,
     /// Show connection stats the at the end of the benchmark
     #[structopt(long = "stats")]
     stats: bool,

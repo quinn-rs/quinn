@@ -4,7 +4,7 @@ use std::{
     ops::{Range, RangeInclusive},
 };
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tinyvec::TinyVec;
 
 use crate::{
@@ -17,6 +17,8 @@ use crate::{
 
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
+use std::io::Cursor;
+use std::ops::Deref;
 
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct Type(u64);
@@ -443,7 +445,7 @@ pub struct Stream {
     pub id: StreamId,
     pub offset: u64,
     pub fin: bool,
-    pub data: Bytes,
+    pub data: BytesMut,
 }
 
 impl FrameStruct for Stream {
@@ -516,7 +518,7 @@ impl Crypto {
 
 pub struct Iter {
     // TODO: ditch io::Cursor after bytes 0.5
-    bytes: io::Cursor<Bytes>,
+    bytes: io::Cursor<BytesMut>,
     last_ty: Option<Type>,
 }
 
@@ -544,21 +546,23 @@ impl From<UnexpectedEnd> for IterErr {
 }
 
 impl Iter {
-    pub fn new(payload: Bytes) -> Self {
+    pub fn new(payload: BytesMut) -> Self {
         Iter {
             bytes: io::Cursor::new(payload),
             last_ty: None,
         }
     }
 
-    fn take_len(&mut self) -> Result<Bytes, UnexpectedEnd> {
+    fn take_len(&mut self) -> Result<BytesMut, UnexpectedEnd> {
         let len = self.bytes.get_var()?;
         if len > self.bytes.remaining() as u64 {
             return Err(UnexpectedEnd);
         }
         let start = self.bytes.position() as usize;
         self.bytes.advance(len as usize);
-        Ok(self.bytes.get_ref().slice(start..(start + len as usize)))
+        Ok(BytesMut::from(
+            &self.bytes.get_ref()[start..(start + len as usize)],
+        ))
     }
 
     fn try_next(&mut self) -> Result<Frame, IterErr> {
@@ -581,11 +585,11 @@ impl Iter {
                         Some(Type(x))
                     }
                 },
-                reason: self.take_len()?,
+                reason: self.take_len()?.freeze(),
             })),
             Type::APPLICATION_CLOSE => Frame::Close(Close::Application(ApplicationClose {
                 error_code: self.bytes.get()?,
-                reason: self.take_len()?,
+                reason: self.take_len()?.freeze(),
             })),
             Type::MAX_DATA => Frame::MaxData(self.bytes.get()?),
             Type::MAX_STREAM_DATA => Frame::MaxStreamData {
@@ -633,7 +637,7 @@ impl Iter {
                 Frame::Ack(Ack {
                     delay,
                     largest,
-                    additional: self.bytes.get_ref().slice(start..end),
+                    additional: Bytes::copy_from_slice(&self.bytes.get_ref()[start..end] as &[u8]),
                     ecn: if ty != Type::ACK_ECN {
                         None
                     } else {
@@ -677,10 +681,10 @@ impl Iter {
             }
             Type::CRYPTO => Frame::Crypto(Crypto {
                 offset: self.bytes.get_var()?,
-                data: self.take_len()?,
+                data: self.take_len()?.freeze(),
             }),
             Type::NEW_TOKEN => Frame::NewToken {
-                token: self.take_len()?,
+                token: self.take_len()?.freeze(),
             },
             Type::HANDSHAKE_DONE => Frame::HandshakeDone,
             _ => {
@@ -696,13 +700,11 @@ impl Iter {
                         },
                     })
                 } else if let Some(d) = ty.datagram() {
-                    Frame::Datagram(Datagram {
-                        data: if d.len() {
-                            self.take_len()?
-                        } else {
-                            self.take_remaining()
-                        },
-                    })
+                    Frame::Datagram(Datagram::Incoming(if d.len() {
+                        self.take_len()?
+                    } else {
+                        self.take_remaining()
+                    }))
                 } else {
                     return Err(IterErr::InvalidFrameId);
                 }
@@ -710,8 +712,8 @@ impl Iter {
         })
     }
 
-    fn take_remaining(&mut self) -> Bytes {
-        let mut x = mem::replace(self.bytes.get_mut(), Bytes::new());
+    fn take_remaining(&mut self) -> BytesMut {
+        let mut x = mem::replace(self.bytes.get_mut(), BytesMut::new());
         x.advance(self.bytes.position() as usize);
         self.bytes.set_position(0);
         x
@@ -728,7 +730,7 @@ impl Iterator for Iter {
             Ok(x) => Some(x),
             Err(e) => {
                 // Corrupt frame, skip it and everything that follows
-                self.bytes = io::Cursor::new(Bytes::new());
+                self.bytes = io::Cursor::new(BytesMut::new());
                 Some(Frame::Invalid {
                     ty: self.last_ty.unwrap(),
                     reason: e.reason(),
@@ -738,7 +740,7 @@ impl Iterator for Iter {
     }
 }
 
-fn scan_ack_blocks(buf: &mut io::Cursor<Bytes>, largest: u64, n: usize) -> Result<(), IterErr> {
+fn scan_ack_blocks(buf: &mut Cursor<BytesMut>, largest: u64, n: usize) -> Result<(), IterErr> {
     let first_block = buf.get_var()?;
     let mut smallest = largest.checked_sub(first_block).ok_or(IterErr::Malformed)?;
     for _ in 0..n {
@@ -841,9 +843,31 @@ pub const RETIRE_CONNECTION_ID_SIZE_BOUND: usize = 9;
 
 /// An unreliable datagram
 #[derive(Debug, Clone)]
-pub struct Datagram {
-    /// Payload
-    pub data: Bytes,
+pub enum Datagram {
+    /// Used to designate an outgoing immutable buffer
+    Outgoing(Bytes),
+    /// Used to designate an incoming mutable buffer
+    Incoming(BytesMut),
+}
+
+impl Datagram {
+    pub(crate) fn assert_incoming(self) -> Option<BytesMut> {
+        match self {
+            Self::Incoming(ret) => Some(ret),
+            _ => None,
+        }
+    }
+}
+
+impl Deref for Datagram {
+    type Target = [u8];
+
+    fn deref(&self) -> &Self::Target {
+        match self {
+            Self::Outgoing(bytes) => &bytes[..],
+            Self::Incoming(bytes) => &bytes[..],
+        }
+    }
 }
 
 impl FrameStruct for Datagram {
@@ -855,17 +879,17 @@ impl Datagram {
         out.write(Type(*DATAGRAM_TYS.start() | if length { 1 } else { 0 })); // 1 byte
         if length {
             // Safe to unwrap because we check length sanity before queueing datagrams
-            out.write(VarInt::from_u64(self.data.len() as u64).unwrap()); // <= 8 bytes
+            out.write(VarInt::from_u64(self.len() as u64).unwrap()); // <= 8 bytes
         }
-        out.put_slice(&self.data);
+        out.put_slice(&self[..]);
     }
 
     pub(crate) fn size(&self, length: bool) -> usize {
         1 + if length {
-            VarInt::from_u64(self.data.len() as u64).unwrap().size()
+            VarInt::from_u64(self.len() as u64).unwrap().size()
         } else {
             0
-        } + self.data.len()
+        } + self.len()
     }
 }
 
@@ -888,7 +912,7 @@ mod test {
             ce: 12,
         };
         Ack::encode(42, &ranges, Some(&ECN), &mut buf);
-        let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
+        let frames = Iter::new(BytesMut::from(&buf[..])).collect::<Vec<_>>();
         assert_eq!(frames.len(), 1);
         match frames[0] {
             Frame::Ack(ref ack) => {

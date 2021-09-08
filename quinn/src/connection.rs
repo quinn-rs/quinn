@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use futures_channel::{mpsc, oneshot};
 use futures_util::{FutureExt, StreamExt};
 use fxhash::FxHashMap;
@@ -601,7 +601,7 @@ impl<S> futures_util::stream::Stream for Datagrams<S>
 where
     S: proto::crypto::Session,
 {
-    type Item = Result<Bytes, ConnectionError>;
+    type Item = Result<BytesMut, ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         let mut conn = self.0.lock("Datagrams::poll_next");

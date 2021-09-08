@@ -785,7 +785,8 @@ mod tests {
         connection::State as ConnState, connection::Streams, ReadableError, RecvStream, SendStream,
         TransportErrorCode, WriteError,
     };
-    use bytes::Bytes;
+    use bytes::BytesMut;
+    use std::iter::FromIterator;
 
     fn make(side: Side) -> StreamsState {
         StreamsState::new(
@@ -811,7 +812,7 @@ mod tests {
                         id,
                         offset: 0,
                         fin: true,
-                        data: Bytes::from_static(&[0; MESSAGE_SIZE]),
+                        data: BytesMut::from_iter(&[0; MESSAGE_SIZE]),
                     },
                     2048
                 )
@@ -852,7 +853,7 @@ mod tests {
                         id,
                         offset: 0,
                         fin: false,
-                        data: Bytes::from_static(&[0; 2048]),
+                        data: BytesMut::from_iter(&[0; 2048]),
                     },
                     2048
                 )
@@ -915,7 +916,7 @@ mod tests {
                         id,
                         offset: 4096,
                         fin: false,
-                        data: Bytes::from_static(&[0; 0]),
+                        data: BytesMut::from_iter(&[0; 0]),
                     },
                     0
                 )
@@ -978,7 +979,7 @@ mod tests {
                         id,
                         offset: 0,
                         fin: false,
-                        data: Bytes::from_static(&[0; 32]),
+                        data: BytesMut::from_iter(&[0; 32]),
                     },
                     32
                 )
@@ -1010,7 +1011,7 @@ mod tests {
                         id,
                         offset: 32,
                         fin: true,
-                        data: Bytes::from_static(&[0; 16]),
+                        data: BytesMut::from_iter(&[0; 16]),
                     },
                     16
                 )
@@ -1033,7 +1034,7 @@ mod tests {
                         id,
                         offset: 0,
                         fin: false,
-                        data: Bytes::from_static(&[0; 32])
+                        data: BytesMut::from_iter(&[0; 32])
                     },
                     32
                 )
@@ -1259,7 +1260,7 @@ mod tests {
                     id,
                     offset: 0,
                     fin: true,
-                    data: Bytes::from_static(&[0; 32]),
+                    data: BytesMut::from_iter(&[0; 32]),
                 },
                 32,
             )
