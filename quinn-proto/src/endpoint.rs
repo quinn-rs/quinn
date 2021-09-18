@@ -109,6 +109,11 @@ where
         self.transmits.pop_front()
     }
 
+    /// Replace the server configuration, affecting new incoming connections only
+    pub fn set_server_config(&mut self, server_config: Option<Arc<ServerConfig<S>>>) {
+        self.server_config = server_config;
+    }
+
     /// Process `EndpointEvent`s emitted from related `Connection`s
     ///
     /// In turn, processing this event may return a `ConnectionEvent` for the same `Connection`.
