@@ -17,7 +17,11 @@ use futures_channel::mpsc;
 use futures_util::StreamExt;
 use fxhash::FxHashMap;
 use once_cell::sync::OnceCell;
-use proto::{self as proto, generic::ClientConfig, ConnectError, ConnectionHandle, DatagramEvent};
+use proto::{
+    self as proto,
+    generic::{ClientConfig, ServerConfig},
+    ConnectError, ConnectionHandle, DatagramEvent,
+};
 
 use crate::{
     broadcast::{self, Broadcast},
@@ -114,6 +118,17 @@ where
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
         Ok(())
+    }
+
+    /// Replace the server configuration, affecting new incoming connections only
+    ///
+    /// Useful for e.g. refreshing TLS certificates without disrupting existing connections.
+    pub fn set_server_config(&self, server_config: Option<ServerConfig<S>>) {
+        self.inner
+            .lock()
+            .unwrap()
+            .inner
+            .set_server_config(server_config.map(Arc::new))
     }
 
     /// Get the local `SocketAddr` the underlying socket is bound to
