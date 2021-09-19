@@ -171,3 +171,6 @@ const IO_LOOP_BOUND: usize = 160;
 /// Going much lower does not yield any noticeable difference, since a single `recvmmsg`
 /// batch of size 32 was observed to take 30us on some systems.
 const RECV_TIME_BOUND: Duration = Duration::from_micros(50);
+
+/// The maximum amount of time that should be spent in `sendmsg()` calls per endpoint iteration
+const SEND_TIME_BOUND: Duration = Duration::from_micros(50);

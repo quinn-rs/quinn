@@ -25,7 +25,7 @@ use crate::{
     connection::Connecting,
     platform::{RecvMeta, UdpSocket, BATCH_SIZE},
     work_limiter::WorkLimiter,
-    ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND,
+    ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND, SEND_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -269,6 +269,7 @@ where
     driver_lost: bool,
     recv_limiter: WorkLimiter,
     recv_buf: Box<[u8]>,
+    send_limiter: WorkLimiter,
     idle: Broadcast,
 }
 
@@ -340,35 +341,42 @@ where
     }
 
     fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
-        let mut transmits = 0;
-        loop {
+        self.send_limiter.start_cycle();
+
+        let result = loop {
             while self.outgoing.len() < BATCH_SIZE {
                 match self.inner.poll_transmit() {
                     Some(x) => self.outgoing.push_back(x),
                     None => break,
                 }
             }
+
             if self.outgoing.is_empty() {
-                return Ok(false);
+                break Ok(false);
             }
+
+            if !self.send_limiter.allow_work() {
+                break Ok(true);
+            }
+
             match self.socket.poll_send(cx, self.outgoing.as_slices().0) {
                 Poll::Ready(Ok(n)) => {
                     self.outgoing.drain(..n);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearily increases with number of packets.
-                    transmits += n;
-                    if transmits >= IO_LOOP_BOUND {
-                        return Ok(true);
-                    }
+                    self.send_limiter.record_work(n);
                 }
                 Poll::Pending => {
-                    return Ok(false);
+                    break Ok(false);
                 }
                 Poll::Ready(Err(e)) => {
-                    return Err(e);
+                    break Err(e);
                 }
             }
-        }
+        };
+
+        self.send_limiter.finish_cycle();
+        result
     }
 
     fn handle_events(&mut self, cx: &mut Context) -> bool {
@@ -522,6 +530,7 @@ where
             driver_lost: false,
             recv_buf: recv_buf.into(),
             recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
+            send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
             idle: Broadcast::new(),
         })))
     }
