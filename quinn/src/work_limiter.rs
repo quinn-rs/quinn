@@ -94,16 +94,21 @@ impl WorkLimiter {
 
             let time_per_work_item_nanos = (elapsed.as_nanos()) as f64 / self.completed as f64;
 
+            // Calculate the time per work item. We set this to at least 1ns to avoid
+            // dividing by 0 when calculating the allowed amount of work items.
             self.smoothed_time_per_work_item_nanos = if self.allowed == 0 {
                 // Initial estimate
                 time_per_work_item_nanos
             } else {
                 // Smoothed estimate
                 (7.0 * self.smoothed_time_per_work_item_nanos + time_per_work_item_nanos) / 8.0
-            };
+            }
+            .max(1.0);
 
-            self.allowed = ((self.desired_cycle_time.as_nanos()) as f64
-                / self.smoothed_time_per_work_item_nanos) as usize;
+            // Allow at least 1 work item in order to make progress
+            self.allowed = (((self.desired_cycle_time.as_nanos()) as f64
+                / self.smoothed_time_per_work_item_nanos) as usize)
+                .max(1);
         }
 
         self.cycle = self.cycle.wrapping_add(1);
