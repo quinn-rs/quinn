@@ -154,6 +154,9 @@ pub fn transport_config(opt: &Opt) -> quinn::TransportConfig {
 #[derive(StructOpt, Debug, Clone, Copy)]
 #[structopt(name = "bulk")]
 pub struct Opt {
+    /// The total number of clients which should be created
+    #[structopt(long = "clients", short = "c", default_value = "1")]
+    pub clients: usize,
     /// The total number of streams which should be created
     #[structopt(long = "streams", short = "n", default_value = "1")]
     pub streams: usize,
