@@ -6,8 +6,9 @@ use structopt::StructOpt;
 use tracing::{info, trace};
 
 use bench::{
-    configure_tracing_subscriber, connect_client, drain_stream, rt, server_endpoint,
-    stats::{throughput_bps, Stats, TransferResult},
+    configure_tracing_subscriber, connect_client, drain_stream, rt, send_data_on_stream,
+    server_endpoint,
+    stats::{Stats, TransferResult},
     Opt,
 };
 
@@ -39,7 +40,7 @@ fn main() {
 async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
     let handshake = incoming.next().await.unwrap();
     let quinn::NewConnection {
-        mut uni_streams,
+        mut bi_streams,
         connection,
         ..
     } = handshake.await.context("handshake failed")?;
@@ -47,7 +48,7 @@ async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
     let mut result = Ok(());
 
     loop {
-        let mut stream = match uni_streams.next().await {
+        let (mut send_stream, mut recv_stream) = match bi_streams.next().await {
             None => break,
             Some(Err(quinn::ConnectionError::ApplicationClosed(_))) => break,
             Some(Err(e)) => {
@@ -58,8 +59,11 @@ async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
         };
         trace!("stream established");
 
-        let _: tokio::task::JoinHandle<Result<usize>> =
-            tokio::spawn(async move { drain_stream(&mut stream, opt.read_unordered).await });
+        let _: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
+            drain_stream(&mut recv_stream, opt.read_unordered).await?;
+            send_data_on_stream(&mut send_stream, opt.download_size).await?;
+            Ok(())
+        });
     }
 
     if opt.stats {
@@ -76,21 +80,28 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: O
 
     let connection = Arc::new(connection);
 
-    let mut ops = futures_util::stream::iter((0..opt.streams).map(|_| {
-        let connection = connection.clone();
-        async move { send_data_on_stream(connection, opt.stream_size_mb).await }
-    }))
-    .buffer_unordered(opt.max_streams);
+    let mut ops =
+        futures_util::stream::iter(
+            (0..opt.streams).map(|_| {
+                let connection = connection.clone();
+                async move {
+                    handle_client_stream(connection, opt.upload_size, opt.read_unordered).await
+                }
+            }),
+        )
+        .buffer_unordered(opt.max_streams);
 
-    let mut stats = Stats::default();
+    let mut upload_stats = Stats::default();
+    let mut download_stats = Stats::default();
 
     let mut result = Ok(());
 
     while let Some(stream_result) = ops.next().await {
         info!("stream finished: {:?}", stream_result);
         match stream_result {
-            Ok(stream_result) => {
-                stats.stream_finished(stream_result);
+            Ok((upload_result, download_result)) => {
+                upload_stats.stream_finished(upload_result);
+                download_stats.stream_finished(download_result);
             }
             Err(e) => {
                 if result.is_ok() {
@@ -100,8 +111,14 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: O
         }
     }
 
-    stats.total_duration = start.elapsed();
-    stats.print("upload");
+    upload_stats.total_duration = start.elapsed();
+    download_stats.total_duration = start.elapsed();
+    if upload_stats.total_size != 0 {
+        upload_stats.print("upload");
+    }
+    if download_stats.total_size != 0 {
+        download_stats.print("download");
+    }
 
     // Explicit close of the connection, since handles can still be around due
     // to `Arc`ing them
@@ -116,26 +133,25 @@ async fn client(server_addr: SocketAddr, server_cert: quinn::Certificate, opt: O
     result
 }
 
-async fn send_data_on_stream(
+async fn handle_client_stream(
     connection: Arc<quinn::Connection>,
-    stream_size_mb: usize,
-) -> Result<TransferResult> {
+    upload_size: usize,
+    read_unordered: bool,
+) -> Result<(TransferResult, TransferResult)> {
     let start = Instant::now();
 
-    let mut stream = connection
-        .open_uni()
+    let (mut send_stream, mut recv_stream) = connection
+        .open_bi()
         .await
         .context("failed to open stream")?;
 
-    bench::send_data_on_stream(&mut stream, stream_size_mb).await?;
+    send_data_on_stream(&mut send_stream, upload_size).await?;
 
-    let duration = start.elapsed();
-    let size = 1024 * 1024 * stream_size_mb;
-    let throughput = throughput_bps(duration, size as u64);
+    let upload_result = TransferResult::new(start.elapsed(), upload_size);
 
-    Ok(TransferResult {
-        duration,
-        size,
-        throughput,
-    })
+    let start = Instant::now();
+    let size = drain_stream(&mut recv_stream, read_unordered).await?;
+    let download_result = TransferResult::new(start.elapsed(), size);
+
+    Ok((upload_result, download_result))
 }

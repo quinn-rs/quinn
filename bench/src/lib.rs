@@ -112,16 +112,23 @@ pub async fn drain_stream(stream: &mut quinn::RecvStream, read_unordered: bool) 
     Ok(read)
 }
 
-pub async fn send_data_on_stream(
-    stream: &mut quinn::SendStream,
-    stream_size_mb: usize,
-) -> Result<()> {
+pub async fn send_data_on_stream(stream: &mut quinn::SendStream, stream_size: usize) -> Result<()> {
     const DATA: &[u8] = &[0xAB; 1024 * 1024];
     let bytes_data = Bytes::from_static(DATA);
 
-    for _ in 0..stream_size_mb {
+    let full_chunks = stream_size / DATA.len();
+    let remaining = stream_size % DATA.len();
+
+    for _ in 0..full_chunks {
         stream
             .write_chunk(bytes_data.clone())
+            .await
+            .context("failed sending data")?;
+    }
+
+    if remaining != 0 {
+        stream
+            .write_chunk(bytes_data.slice(0..remaining))
             .await
             .context("failed sending data")?;
     }
@@ -152,9 +159,12 @@ pub struct Opt {
     /// The amount of concurrent streams which should be used
     #[structopt(long = "max_streams", short = "m", default_value = "1")]
     pub max_streams: usize,
-    /// The amount of data to transfer on a stream in megabytes
-    #[structopt(long = "stream_size", default_value = "1024")]
-    pub stream_size_mb: usize,
+    /// Number of bytes to transmit from server to client
+    #[structopt(long, default_value = "1073741824")]
+    pub download_size: usize,
+    /// Number of bytes to transmit from client to server
+    #[structopt(long, default_value = "0")]
+    pub upload_size: usize,
     /// Show connection stats the at the end of the benchmark
     #[structopt(long = "stats")]
     pub stats: bool,
