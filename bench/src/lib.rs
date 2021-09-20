@@ -1,6 +1,7 @@
 use std::{
     convert::TryInto,
     net::{IpAddr, Ipv6Addr, SocketAddr},
+    num::ParseIntError,
     str::FromStr,
     sync::Arc,
 };
@@ -160,10 +161,16 @@ pub struct Opt {
     #[structopt(long = "max_streams", short = "m", default_value = "1")]
     pub max_streams: usize,
     /// Number of bytes to transmit from server to client
-    #[structopt(long, default_value = "1073741824")]
+    ///
+    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10GiB
+    /// will transfer 10GiB.
+    #[structopt(long, default_value = "1G", parse(try_from_str = parse_byte_size))]
     pub download_size: usize,
     /// Number of bytes to transmit from client to server
-    #[structopt(long, default_value = "0")]
+    ///
+    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10GiB
+    /// will transfer 10GiB.
+    #[structopt(long, default_value = "0", parse(try_from_str = parse_byte_size))]
     pub upload_size: usize,
     /// Show connection stats the at the end of the benchmark
     #[structopt(long = "stats")]
@@ -176,6 +183,28 @@ pub struct Opt {
     /// Valid options are: aes128, aes256, chacha20
     #[structopt(long = "cipher", default_value = "aes128")]
     pub cipher: CipherSuite,
+}
+
+fn parse_byte_size(s: &str) -> Result<usize, ParseIntError> {
+    let s = s.trim();
+
+    let multiplier = match s.chars().last() {
+        Some('T') => 1024 * 1024 * 1024 * 1024,
+        Some('G') => 1024 * 1024 * 1024,
+        Some('M') => 1024 * 1024,
+        Some('k') => 1024,
+        _ => 1,
+    };
+
+    let s = if multiplier != 1 {
+        &s[..s.len() - 1]
+    } else {
+        s
+    };
+
+    let base: usize = usize::from_str(s)?;
+
+    Ok(base * multiplier)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
