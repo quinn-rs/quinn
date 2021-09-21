@@ -229,6 +229,7 @@ This library is at <a href="https://datatracker.ietf.org/doc/draft-ietf-quic-tra
 <ul>
 <li><strong>quinn:</strong> High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)</li>
 <li><strong>quinn-proto:</strong> Deterministic state machine of the protocol which performs <a href="https://sans-io.readthedocs.io/how-to-sans-io.html"><strong>no</strong> I/O</a> internally and is suitable for use with custom event loops (and potentially a C or C++ API).</li>
+<li><strong>quinn-udp:</strong> UDP sockets with ECN information tuned for the protocol.</li>
 <li><strong>quinn-h3:</strong> Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.</li>
 <li><strong>bench:</strong> Benchmarks without any framework.</li>
 <li><strong>interop:</strong> Tooling that helps to run interoperability tests.</li>
