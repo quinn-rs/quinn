@@ -16,7 +16,6 @@ use bytes::Bytes;
 use futures_channel::mpsc;
 use futures_util::StreamExt;
 use fxhash::FxHashMap;
-use once_cell::sync::OnceCell;
 use proto::{
     self as proto,
     generic::{ClientConfig, ServerConfig},
@@ -44,7 +43,7 @@ where
     S: proto::crypto::Session,
 {
     pub(crate) inner: EndpointRef<S>,
-    pub(crate) default_client_config: OnceCell<ClientConfig<S>>,
+    pub(crate) default_client_config: Option<ClientConfig<S>>,
 }
 
 impl<S> Endpoint<S>
@@ -69,13 +68,12 @@ where
         addr: &SocketAddr,
         server_name: &str,
     ) -> Result<Connecting<S>, ConnectError> {
-        self.connect_with(
-            self.default_client_config
-                .get_or_init(ClientConfig::default)
-                .clone(),
-            addr,
-            server_name,
-        )
+        let config = match &self.default_client_config {
+            Some(config) => config.clone(),
+            None => return Err(ConnectError::NoDefaultClientConfig),
+        };
+
+        self.connect_with(config, addr, server_name)
     }
 
     /// Connect to a remote endpoint using a custom configuration.
