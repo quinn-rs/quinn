@@ -67,7 +67,8 @@ fn handshake_timeout() {
 #[tokio::test]
 async fn close_endpoint() {
     let _guard = subscribe();
-    let endpoint = Endpoint::builder();
+    let mut endpoint = Endpoint::builder();
+    endpoint.default_client_config(ClientConfigBuilder::default().build());
     let (endpoint, incoming) = endpoint
         .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
         .unwrap();
