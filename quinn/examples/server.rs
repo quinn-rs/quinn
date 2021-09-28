@@ -135,9 +135,11 @@ async fn run(options: Opt) -> Result<()> {
         info!("connection incoming");
         let root_clone = root.clone();
         tokio::spawn(async move {
-            handle_connection(root_clone, conn).unwrap_or_else(move |e| {
-                error!("connection failed: {reason}", reason = e.to_string())
-            })
+            handle_connection(root_clone, conn)
+                .unwrap_or_else(move |e| {
+                    error!("connection failed: {reason}", reason = e.to_string())
+                })
+                .await
         });
     }
 
@@ -179,6 +181,7 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
                 handle_request(root_clone, stream)
                     .unwrap_or_else(move |e| error!("failed: {reason}", reason = e.to_string()))
                     .instrument(info_span!("request"))
+                    .await
             });
         }
         Ok(())
