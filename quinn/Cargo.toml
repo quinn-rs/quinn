@@ -37,7 +37,7 @@ thiserror = "1.0.21"
 tracing = "0.1.10"
 tokio = { version = "1.0.1", features = ["rt", "time"] }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.7" }
-webpki = { version = "0.21", default-features = false, optional = true }
+webpki = { version = "0.22", default-features = false, optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.22"
