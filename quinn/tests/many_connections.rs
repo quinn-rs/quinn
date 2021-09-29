@@ -5,7 +5,7 @@ use std::{
     time::Duration,
 };
 
-use crc::crc32;
+use crc::Crc;
 use futures_util::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use quinn::{ConnectionError, ReadError, WriteError};
 use rand::{self, RngCore};
@@ -40,6 +40,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
 
     let expected_messages = 50;
 
+    let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
     let shared2 = shared.clone();
     let read_incoming_data = incoming_conns
         .filter_map(|connect| connect.map(|x| x.ok()))
@@ -69,7 +70,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let client_cfg = configure_connector(&listener_cert);
 
     for _ in 0..expected_messages {
-        let data = random_data_with_hash(1024 * 1024);
+        let data = random_data_with_hash(1024 * 1024, &crc);
         let shared = shared.clone();
         let task = unwrap!(endpoint.connect_with(client_cfg.clone(), &listener_addr, "localhost"))
             .map_err(WriteError::ConnectionClosed)
@@ -94,9 +95,10 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
 }
 
 async fn read_from_peer(stream: quinn::RecvStream) -> Result<(), quinn::ConnectionError> {
+    let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
     match stream.read_to_end(1024 * 1024 * 5).await {
         Ok(data) => {
-            assert!(hash_correct(&data));
+            assert!(hash_correct(&data, &crc));
             Ok(())
         }
         Err(e) => {
@@ -169,9 +171,9 @@ fn gen_cert() -> (Vec<u8>, quinn::PrivateKey) {
 }
 
 /// Constructs a buffer with random bytes of given size prefixed with a hash of this data.
-fn random_data_with_hash(size: usize) -> Vec<u8> {
+fn random_data_with_hash(size: usize, crc: &Crc<u32>) -> Vec<u8> {
     let mut data = random_vec(size + 4);
-    let hash = crc32::checksum_ieee(&data[4..]);
+    let hash = crc.checksum(&data[4..]);
     // write hash in big endian
     data[0] = (hash >> 24) as u8;
     data[1] = ((hash >> 16) & 0xff) as u8;
@@ -181,12 +183,12 @@ fn random_data_with_hash(size: usize) -> Vec<u8> {
 }
 
 /// Checks if given data buffer hash is correct. Hash itself is a 4 byte prefix in the data.
-fn hash_correct(data: &[u8]) -> bool {
+fn hash_correct(data: &[u8], crc: &Crc<u32>) -> bool {
     let encoded_hash = ((data[0] as u32) << 24)
         | ((data[1] as u32) << 16)
         | ((data[2] as u32) << 8)
         | data[3] as u32;
-    let actual_hash = crc32::checksum_ieee(&data[4..]);
+    let actual_hash = crc.checksum(&data[4..]);
     encoded_hash == actual_hash
 }
 
