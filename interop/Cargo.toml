@@ -18,7 +18,7 @@ hyper-rustls = "0.22.1"
 lazy_static = "1"
 quinn = { path = "../quinn" }
 quinn-proto = { path = "../quinn-proto" }
-rustls = { version = "0.19", features = ["dangerous_configuration"] }
+rustls = { version = "0.20", features = ["dangerous_configuration"] }
 structopt = "0.3.0"
 tokio = { version = "1.0.1", features = ["io-util", "macros", "rt", "rt-multi-thread"] }
 tokio-rustls = "0.22"
