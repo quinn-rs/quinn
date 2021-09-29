@@ -41,7 +41,7 @@ webpki = { version = "0.21", default-features = false, optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.22"
-crc = "1.8.1"
+crc = "2"
 bencher = "0.1.5"
 directories-next = "2"
 futures-util = { version = "0.3.11", default-features = false, features = ["async-await-macro"] }
