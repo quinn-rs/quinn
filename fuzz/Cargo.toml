@@ -1,9 +1,6 @@
 [package]
 name = "fuzz"
 version = "0.1.0"
-authors = [
-    "Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>",
-]
 publish = false
 license = "MIT OR Apache-2.0"
 edition = "2018"

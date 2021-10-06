@@ -1,7 +1,6 @@
 [package]
 name = "quinn-proto"
 version = "0.7.0"
-authors = ["Benjamin Saunders <ben.e.saunders@gmail.com>", "Dirkjan Ochtman <dirkjan@ochtman.nl>"]
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
 description = "State machine for the QUIC transport protocol"
