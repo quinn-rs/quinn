@@ -13,7 +13,7 @@ use rustls::{
 };
 
 use crate::{
-    crypto::{self, CryptoError, ExportKeyingMaterialError, KeyPair, Keys},
+    crypto::{self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys},
     transport_parameters::TransportParameters,
     CertificateChain, ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
 };
@@ -37,15 +37,14 @@ impl TlsSession {
 
 impl crypto::Session for TlsSession {
     type ClientConfig = Arc<rustls::ClientConfig>;
-    type HeaderKey = HeaderProtectionKey;
     type ServerConfig = Arc<rustls::ServerConfig>;
 
-    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys<Self> {
+    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys {
         let keys = rustls::quic::Keys::initial(Version::V1Draft, dst_cid, side.is_client());
         Keys {
             header: KeyPair {
-                local: keys.local.header,
-                remote: keys.remote.header,
+                local: Box::new(keys.local.header),
+                remote: Box::new(keys.remote.header),
             },
             packet: KeyPair {
                 local: Box::new(keys.local.packet),
@@ -73,9 +72,9 @@ impl crypto::Session for TlsSession {
             .map(|v| -> Box<dyn Any> { Box::new(CertificateChain::from(v.to_vec())) })
     }
 
-    fn early_crypto(&self) -> Option<(Self::HeaderKey, Box<dyn crypto::PacketKey>)> {
+    fn early_crypto(&self) -> Option<(Box<dyn HeaderKey>, Box<dyn crypto::PacketKey>)> {
         let keys = self.inner.zero_rtt_keys()?;
-        Some((keys.header, Box::new(keys.packet)))
+        Some((Box::new(keys.header), Box::new(keys.packet)))
     }
 
     fn early_data_accepted(&self) -> Option<bool> {
@@ -135,7 +134,7 @@ impl crypto::Session for TlsSession {
         }
     }
 
-    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys<Self>> {
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys> {
         let keys = match self.inner.write_hs(buf)? {
             KeyChange::Handshake { keys } => keys,
             KeyChange::OneRtt { keys, next } => {
@@ -146,8 +145,8 @@ impl crypto::Session for TlsSession {
 
         Some(Keys {
             header: KeyPair {
-                local: keys.local.header,
-                remote: keys.remote.header,
+                local: Box::new(keys.local.header),
+                remote: Box::new(keys.remote.header),
             },
             packet: KeyPair {
                 local: Box::new(keys.local.packet),

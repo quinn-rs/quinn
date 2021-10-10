@@ -19,7 +19,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
-    crypto::{self, KeyPair, Keys, PacketKey},
+    crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
     packet::{Header, LongType, Packet, PartialDecode, SpaceId},
@@ -139,7 +139,7 @@ where
     /// Whether or not 0-RTT was enabled during the handshake. Does not imply acceptance.
     zero_rtt_enabled: bool,
     /// Set if 0-RTT is supported, then cleared when no longer needed.
-    zero_rtt_crypto: Option<ZeroRttCrypto<S>>,
+    zero_rtt_crypto: Option<ZeroRttCrypto>,
     key_phase: bool,
     /// Transport parameters set by the peer
     peer_params: TransportParameters,
@@ -159,7 +159,7 @@ where
     /// Outgoing spin bit state
     spin: bool,
     /// Packet number spaces: initial, handshake, 1-RTT
-    spaces: [PacketSpace<S>; 3],
+    spaces: [PacketSpace; 3],
     /// Highest usable packet number space
     highest_space: SpaceId,
     /// 1-RTT keys used prior to a key update
@@ -1667,7 +1667,7 @@ where
     }
 
     /// Switch to stronger cryptography during handshake
-    fn upgrade_crypto(&mut self, space: SpaceId, crypto: Keys<S>) {
+    fn upgrade_crypto(&mut self, space: SpaceId, crypto: Keys) {
         debug_assert!(
             self.spaces[space].crypto.is_none(),
             "already reached packet space {:?}",
@@ -1738,14 +1738,14 @@ where
     ) {
         let header_crypto = if partial_decode.is_0rtt() {
             if let Some(ref crypto) = self.zero_rtt_crypto {
-                Some(&crypto.header)
+                Some(&*crypto.header)
             } else {
                 debug!("dropping unexpected 0-RTT packet");
                 return;
             }
         } else if let Some(space) = partial_decode.space() {
             if let Some(ref crypto) = self.spaces[space].crypto {
-                Some(&crypto.header.remote)
+                Some(&*crypto.header.remote)
             } else {
                 debug!(
                     "discarding unexpected {:?} packet ({} bytes)",
@@ -2767,7 +2767,7 @@ where
     fn populate_acks(
         receiving_ecn: bool,
         sent: &mut SentFrames,
-        space: &mut PacketSpace<S>,
+        space: &mut PacketSpace,
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
     ) {
@@ -3253,8 +3253,8 @@ const MIN_PACKET_SPACE: usize = 40;
 /// that numbers around 10 are a good compromise.
 const MAX_TRANSMIT_SEGMENTS: usize = 10;
 
-struct ZeroRttCrypto<S: crypto::Session> {
-    header: S::HeaderKey,
+struct ZeroRttCrypto {
+    header: Box<dyn HeaderKey>,
     packet: Box<dyn PacketKey>,
 }
 

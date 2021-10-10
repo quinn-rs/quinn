@@ -283,7 +283,7 @@ where
             }
 
             let crypto = S::initial_keys(&dst_cid, Side::Server);
-            return match first_decode.finish(Some(&crypto.header.remote)) {
+            return match first_decode.finish(Some(&*crypto.header.remote)) {
                 Ok(packet) => self
                     .handle_first_packet(now, remote, local_ip, ecn, packet, remaining, &crypto)
                     .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
@@ -507,7 +507,7 @@ where
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
         rest: Option<BytesMut>,
-        crypto: &Keys<S>,
+        crypto: &Keys,
     ) -> Option<(ConnectionHandle, Connection<S>)> {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
             Header::Initial {
@@ -602,7 +602,7 @@ where
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
                 buf.extend_from_slice(&S::retry_tag(&dst_cid, &buf));
-                encode.finish::<S::HeaderKey>(&mut buf, &crypto.header.local, None);
+                encode.finish(&mut buf, &*crypto.header.local, None);
 
                 self.transmits.push_back(Transmit {
                     destination: remote,
@@ -673,7 +673,7 @@ where
         &mut self,
         destination: SocketAddr,
         local_ip: Option<IpAddr>,
-        crypto: &Keys<S>,
+        crypto: &Keys,
         remote_id: &ConnectionId,
         local_id: &ConnectionId,
         reason: TransportError,
@@ -696,7 +696,7 @@ where
         buf.resize(buf.len() + crypto.packet.local.tag_len(), 0);
         partial_encode.finish(
             &mut buf,
-            &crypto.header.local,
+            &*crypto.header.local,
             Some((0, &*crypto.packet.local)),
         );
         self.transmits.push_back(Transmit {
