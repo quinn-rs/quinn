@@ -29,8 +29,6 @@ pub(crate) mod types;
 
 /// A cryptographic session (commonly TLS)
 pub trait Session: Send + Sized {
-    /// Cryptographic identity of the peer
-    type Identity: Sized;
     /// Type used to hold configuration for client sessions
     type ClientConfig: ClientConfig<Self>;
     /// Type used to sign various values
@@ -53,7 +51,7 @@ pub trait Session: Send + Sized {
     fn handshake_data(&self) -> Option<Box<dyn Any>>;
 
     /// Get the peer's identity, if available
-    fn peer_identity(&self) -> Option<Self::Identity>;
+    fn peer_identity(&self) -> Option<Box<dyn Any>>;
 
     /// Get the 0-RTT keys if available (clients only)
     ///

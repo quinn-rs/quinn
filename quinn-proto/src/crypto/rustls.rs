@@ -36,7 +36,6 @@ impl TlsSession {
 }
 
 impl crypto::Session for TlsSession {
-    type Identity = CertificateChain;
     type ClientConfig = Arc<rustls::ClientConfig>;
     type HmacKey = hmac::Key;
     type HandshakeTokenKey = hkdf::Prk;
@@ -71,8 +70,10 @@ impl crypto::Session for TlsSession {
         }))
     }
 
-    fn peer_identity(&self) -> Option<CertificateChain> {
-        self.inner.peer_certificates().map(|v| v.to_vec().into())
+    fn peer_identity(&self) -> Option<Box<dyn Any>> {
+        self.inner
+            .peer_certificates()
+            .map(|v| -> Box<dyn Any> { Box::new(CertificateChain::from(v.to_vec())) })
     }
 
     fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::PacketKey)> {
