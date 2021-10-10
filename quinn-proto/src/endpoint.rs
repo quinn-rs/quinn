@@ -282,7 +282,12 @@ where
                 return None;
             }
 
-            let crypto = S::initial_keys(&dst_cid, Side::Server);
+            let crypto = self
+                .server_config
+                .as_ref()
+                .unwrap()
+                .crypto
+                .initial_keys(&dst_cid, Side::Server);
             return match first_decode.finish(Some(&*crypto.header.remote)) {
                 Ok(packet) => self
                     .handle_first_packet(now, remote, local_ip, ecn, packet, remaining, &crypto)
@@ -601,7 +606,7 @@ where
                 let mut buf = Vec::new();
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
-                buf.extend_from_slice(&S::retry_tag(&dst_cid, &buf));
+                buf.extend_from_slice(&server_config.crypto.retry_tag(&dst_cid, &buf));
                 encode.finish(&mut buf, &*crypto.header.local, None);
 
                 self.transmits.push_back(Transmit {

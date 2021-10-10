@@ -30,7 +30,7 @@ pub(crate) mod types;
 /// A cryptographic session (commonly TLS)
 pub trait Session: Send + Sized {
     /// Create the initial set of keys given the client's initial destination ConnectionId
-    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys;
+    fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys;
 
     /// Get data negotiated during the handshake, if available
     ///
@@ -77,9 +77,6 @@ pub trait Session: Send + Sized {
 
     /// Compute keys for the next key update
     fn next_1rtt_keys(&mut self) -> Option<KeyPair<Box<dyn PacketKey>>>;
-
-    /// Generate the integrity tag for a retry packet
-    fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
 
     /// Verify the integrity of a retry packet
     fn is_valid_retry(&self, orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool;
@@ -134,6 +131,12 @@ where
 {
     /// Start a server session with this configuration
     fn start_session(self: Arc<Self>, params: &TransportParameters) -> S;
+
+    /// Create the initial set of keys given the client's initial destination ConnectionId
+    fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys;
+
+    /// Generate the integrity tag for a retry packet
+    fn retry_tag(&self, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
 }
 
 /// Keys used to protect packet payloads
