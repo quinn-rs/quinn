@@ -13,8 +13,8 @@ use std::{any::Any, str};
 use bytes::BytesMut;
 
 use crate::{
-    config::ConfigError, shared::ConnectionId, transport_parameters::TransportParameters,
-    ConnectError, Side, TransportError,
+    shared::ConnectionId, transport_parameters::TransportParameters, ConnectError, Side,
+    TransportError,
 };
 
 /// Cryptography interface based on *ring*
@@ -31,8 +31,6 @@ pub(crate) mod types;
 pub trait Session: Send + Sized {
     /// Type used to hold configuration for client sessions
     type ClientConfig: ClientConfig<Self>;
-    /// Type used to sign various values
-    type HmacKey: HmacKey;
     /// Key used to generate one-time-use handshake token keys
     type HandshakeTokenKey: HandshakeTokenKey;
     /// Type of keys used to protect packet headers
@@ -183,16 +181,11 @@ pub trait HeaderKey: Send {
 }
 
 /// A key for signing with HMAC-based algorithms
-pub trait HmacKey: Send + Sized + Sync {
-    /// Length of the key input
-    const KEY_LEN: usize;
-    /// Type of the signatures created by `sign()`
-    type Signature: AsRef<[u8]>;
-
-    /// Method for creating a key
-    fn new(key: &[u8]) -> Result<Self, ConfigError>;
+pub trait HmacKey: Send + Sync {
     /// Method for signing a message
-    fn sign(&self, data: &[u8]) -> Self::Signature;
+    fn sign(&self, data: &[u8], signature_out: &mut [u8]);
+    /// Length of `sign`'s output
+    fn signature_len(&self) -> usize;
     /// Method for verifying a message
     fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), CryptoError>;
 }

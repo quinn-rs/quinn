@@ -1,24 +1,14 @@
 use ring::{aead, hkdf, hmac};
 
-use crate::{
-    config::ConfigError,
-    crypto::{self, CryptoError},
-};
+use crate::crypto::{self, CryptoError};
 
 impl crypto::HmacKey for hmac::Key {
-    const KEY_LEN: usize = 64;
-    type Signature = hmac::Tag;
-
-    fn new(key: &[u8]) -> Result<Self, ConfigError> {
-        if key.len() == Self::KEY_LEN {
-            Ok(hmac::Key::new(hmac::HMAC_SHA256, key))
-        } else {
-            Err(ConfigError::OutOfBounds)
-        }
+    fn sign(&self, data: &[u8], out: &mut [u8]) {
+        out.copy_from_slice(hmac::sign(self, data).as_ref());
     }
 
-    fn sign(&self, data: &[u8]) -> Self::Signature {
-        hmac::sign(self, data)
+    fn signature_len(&self) -> usize {
+        32
     }
 
     fn verify(&self, data: &[u8], signature: &[u8]) -> Result<(), CryptoError> {

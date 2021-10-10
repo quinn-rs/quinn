@@ -8,7 +8,7 @@ use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
-    crypto::{self, HandshakeTokenKey as _, HmacKey as _},
+    crypto::{self, HandshakeTokenKey as _, HmacKey},
     VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS,
 };
 
@@ -300,11 +300,9 @@ impl fmt::Debug for TransportConfig {
 /// Global configuration for the endpoint, affecting all connections
 ///
 /// Default values should be suitable for most internet applications.
-pub struct EndpointConfig<S>
-where
-    S: crypto::Session,
-{
-    pub(crate) reset_key: Arc<S::HmacKey>,
+#[derive(Clone)]
+pub struct EndpointConfig {
+    pub(crate) reset_key: Arc<dyn HmacKey>,
     pub(crate) max_udp_payload_size: VarInt,
     /// CID generator factory
     ///
@@ -315,16 +313,13 @@ where
     pub(crate) initial_version: u32,
 }
 
-impl<S> EndpointConfig<S>
-where
-    S: crypto::Session,
-{
+impl EndpointConfig {
     /// Create a default config with a particular `reset_key`
-    pub fn new(reset_key: S::HmacKey) -> Self {
+    pub fn new(reset_key: Arc<dyn HmacKey>) -> Self {
         let cid_factory: fn() -> Box<dyn ConnectionIdGenerator> =
             || Box::new(RandomConnectionIdGenerator::default());
         Self {
-            reset_key: Arc::new(reset_key),
+            reset_key,
             max_udp_payload_size: 1480u32.into(), // Typical internet MTU minus IPv4 and UDP overhead, rounded up to a multiple of 8
             connection_id_generator_factory: Arc::new(cid_factory),
             initial_version: DEFAULT_SUPPORTED_VERSIONS[0],
@@ -352,9 +347,9 @@ where
 
     /// Private key used to send authenticated connection resets to peers who were
     /// communicating with a previous instance of this endpoint.
-    pub fn reset_key(&mut self, value: &[u8]) -> Result<&mut Self, ConfigError> {
-        self.reset_key = Arc::new(S::HmacKey::new(value)?);
-        Ok(self)
+    pub fn reset_key(&mut self, key: Arc<dyn HmacKey>) -> &mut Self {
+        self.reset_key = key;
+        self
     }
 
     /// Maximum UDP payload size accepted from peers. Excludes UDP and IP overhead.
@@ -394,7 +389,7 @@ where
     }
 }
 
-impl<S: crypto::Session> fmt::Debug for EndpointConfig<S> {
+impl fmt::Debug for EndpointConfig {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("EndpointConfig")
             .field("reset_key", &"[ elided ]")
@@ -406,26 +401,16 @@ impl<S: crypto::Session> fmt::Debug for EndpointConfig<S> {
     }
 }
 
-impl<S: crypto::Session> Default for EndpointConfig<S> {
+#[cfg(feature = "ring")]
+impl Default for EndpointConfig {
     fn default() -> Self {
-        let mut reset_key = vec![0; S::HmacKey::KEY_LEN];
+        let mut reset_key = [0; 64];
         rand::thread_rng().fill_bytes(&mut reset_key);
-        Self::new(
-            S::HmacKey::new(&reset_key)
-                .expect("HMAC key rejected random bytes; use EndpointConfig::new instead"),
-        )
-    }
-}
 
-impl<S: crypto::Session> Clone for EndpointConfig<S> {
-    fn clone(&self) -> Self {
-        Self {
-            reset_key: self.reset_key.clone(),
-            max_udp_payload_size: self.max_udp_payload_size,
-            connection_id_generator_factory: self.connection_id_generator_factory.clone(),
-            supported_versions: self.supported_versions.clone(),
-            initial_version: self.initial_version,
-        }
+        Self::new(Arc::new(ring::hmac::Key::new(
+            ring::hmac::HMAC_SHA256,
+            &reset_key,
+        )))
     }
 }
 

@@ -111,11 +111,12 @@ impl<'a> RetryToken<'a> {
 pub struct ResetToken([u8; RESET_TOKEN_SIZE]);
 
 impl ResetToken {
-    pub(crate) fn new(key: &impl HmacKey, id: &ConnectionId) -> Self {
-        let signature = key.sign(id);
+    pub(crate) fn new(key: &dyn HmacKey, id: &ConnectionId) -> Self {
+        let mut signature = vec![0; key.signature_len()];
+        key.sign(id, &mut signature);
         // TODO: Server ID??
         let mut result = [0; RESET_TOKEN_SIZE];
-        result.copy_from_slice(&signature.as_ref()[..RESET_TOKEN_SIZE]);
+        result.copy_from_slice(&signature[..RESET_TOKEN_SIZE]);
         result.into()
     }
 }

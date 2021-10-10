@@ -137,7 +137,7 @@ fn server_stateless_reset() {
     rng.fill_bytes(&mut reset_key);
     let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &reset_key);
 
-    let endpoint_config = Arc::new(EndpointConfig::new(reset_key));
+    let endpoint_config = Arc::new(EndpointConfig::new(Arc::new(reset_key)));
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (client_ch, _) = pair.connect();
@@ -166,7 +166,7 @@ fn client_stateless_reset() {
     rng.fill_bytes(&mut reset_key);
     let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &reset_key);
 
-    let endpoint_config = Arc::new(EndpointConfig::new(reset_key));
+    let endpoint_config = Arc::new(EndpointConfig::new(Arc::new(reset_key)));
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (_, server_ch) = pair.connect();

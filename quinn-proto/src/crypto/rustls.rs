@@ -1,7 +1,7 @@
 use std::{any::Any, convert::TryInto, io, str, sync::Arc};
 
 use bytes::BytesMut;
-use ring::{aead, hkdf, hmac};
+use ring::{aead, hkdf};
 pub use rustls::Error;
 use rustls::{
     self,
@@ -37,7 +37,6 @@ impl TlsSession {
 
 impl crypto::Session for TlsSession {
     type ClientConfig = Arc<rustls::ClientConfig>;
-    type HmacKey = hmac::Key;
     type HandshakeTokenKey = hkdf::Prk;
     type PacketKey = PacketKey;
     type HeaderKey = HeaderProtectionKey;

@@ -65,7 +65,7 @@ where
     connection_reset_tokens: ResetTokenTable,
     connections: Slab<ConnectionMeta>,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
-    config: Arc<EndpointConfig<S>>,
+    config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig<S>>>,
     /// Whether incoming connections should be unconditionally rejected by a server
     ///
@@ -80,10 +80,7 @@ where
     /// Create a new endpoint
     ///
     /// Returns `Err` if the configuration is invalid.
-    pub fn new(
-        config: Arc<EndpointConfig<S>>,
-        server_config: Option<Arc<ServerConfig<S>>>,
-    ) -> Self {
+    pub fn new(config: Arc<EndpointConfig>, server_config: Option<Arc<ServerConfig<S>>>) -> Self {
         Self {
             rng: StdRng::from_entropy(),
             transmits: VecDeque::new(),
@@ -720,7 +717,7 @@ where
     }
 
     /// Access the configuration used by this endpoint
-    pub fn config(&self) -> &EndpointConfig<S> {
+    pub fn config(&self) -> &EndpointConfig {
         &self.config
     }
 
