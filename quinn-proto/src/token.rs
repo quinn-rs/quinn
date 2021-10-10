@@ -8,7 +8,7 @@ use bytes::BufMut;
 
 use crate::{
     coding::{BufExt, BufMutExt},
-    crypto::{AeadKey, CryptoError, HandshakeTokenKey, HmacKey},
+    crypto::{CryptoError, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
     RESET_TOKEN_SIZE,
 };
