@@ -6,7 +6,7 @@ use tracing::{debug, trace};
 
 use super::Connection;
 use crate::{
-    crypto::{PacketKey, Session},
+    crypto::Session,
     frame::{Datagram, FrameStruct},
     packet::SpaceId,
     TransportError,

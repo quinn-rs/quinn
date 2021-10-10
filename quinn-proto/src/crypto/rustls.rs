@@ -37,7 +37,6 @@ impl TlsSession {
 
 impl crypto::Session for TlsSession {
     type ClientConfig = Arc<rustls::ClientConfig>;
-    type PacketKey = PacketKey;
     type HeaderKey = HeaderProtectionKey;
     type ServerConfig = Arc<rustls::ServerConfig>;
 
@@ -49,8 +48,8 @@ impl crypto::Session for TlsSession {
                 remote: keys.remote.header,
             },
             packet: KeyPair {
-                local: keys.local.packet,
-                remote: keys.remote.packet,
+                local: Box::new(keys.local.packet),
+                remote: Box::new(keys.remote.packet),
             },
         }
     }
@@ -74,9 +73,9 @@ impl crypto::Session for TlsSession {
             .map(|v| -> Box<dyn Any> { Box::new(CertificateChain::from(v.to_vec())) })
     }
 
-    fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::PacketKey)> {
+    fn early_crypto(&self) -> Option<(Self::HeaderKey, Box<dyn crypto::PacketKey>)> {
         let keys = self.inner.zero_rtt_keys()?;
-        Some((keys.header, keys.packet))
+        Some((keys.header, Box::new(keys.packet)))
     }
 
     fn early_data_accepted(&self) -> Option<bool> {
@@ -151,18 +150,18 @@ impl crypto::Session for TlsSession {
                 remote: keys.remote.header,
             },
             packet: KeyPair {
-                local: keys.local.packet,
-                remote: keys.remote.packet,
+                local: Box::new(keys.local.packet),
+                remote: Box::new(keys.remote.packet),
             },
         })
     }
 
-    fn next_1rtt_keys(&mut self) -> Option<KeyPair<Self::PacketKey>> {
+    fn next_1rtt_keys(&mut self) -> Option<KeyPair<Box<dyn crypto::PacketKey>>> {
         let secrets = self.next_secrets.as_mut()?;
         let keys = secrets.next_packet_keys();
         Some(KeyPair {
-            local: keys.local,
-            remote: keys.remote,
+            local: Box::new(keys.local),
+            remote: Box::new(keys.remote),
         })
     }
 

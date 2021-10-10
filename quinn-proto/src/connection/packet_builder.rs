@@ -6,7 +6,7 @@ use tracing::{trace, trace_span};
 
 use super::{spaces::SentPacket, Connection, SentFrames, State};
 use crate::{
-    crypto::{HeaderKey, PacketKey, Session},
+    crypto::{HeaderKey, Session},
     frame::{self, Close},
     packet::{Header, LongType, PacketNumber, PartialEncode, SpaceId},
     TransportError, TransportErrorCode,
@@ -217,10 +217,10 @@ impl PacketBuilder {
 
         let space = &conn.spaces[self.space];
         let (header_crypto, packet_crypto) = if let Some(ref crypto) = space.crypto {
-            (&crypto.header.local, &crypto.packet.local)
+            (&crypto.header.local, &*crypto.packet.local)
         } else if self.space == SpaceId::Data {
             let zero_rtt = conn.zero_rtt_crypto.as_ref().unwrap();
-            (&zero_rtt.header, &zero_rtt.packet)
+            (&zero_rtt.header, &*zero_rtt.packet)
         } else {
             unreachable!("tried to send {:?} packet without keys", self.space);
         };
