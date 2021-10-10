@@ -8,7 +8,7 @@ use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
-    crypto::{self, HandshakeTokenKey as _, HmacKey},
+    crypto::{self, HandshakeTokenKey, HmacKey},
     VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS,
 };
 
@@ -430,7 +430,7 @@ where
     pub crypto: S::ServerConfig,
 
     /// Used to generate one-time AEAD keys to protect handshake tokens
-    pub(crate) token_key: Arc<S::HandshakeTokenKey>,
+    pub(crate) token_key: Arc<dyn HandshakeTokenKey>,
 
     /// Whether to require clients to prove ownership of an address before committing resources.
     ///
@@ -453,13 +453,13 @@ impl<S> ServerConfig<S>
 where
     S: crypto::Session,
 {
-    /// Create a default config with a particular `master_key`
-    pub fn new(crypto: S::ServerConfig, prk: S::HandshakeTokenKey) -> Self {
+    /// Create a default config with a particular handshake token key
+    pub fn new(crypto: S::ServerConfig, token_key: Arc<dyn HandshakeTokenKey>) -> Self {
         Self {
             transport: Arc::new(TransportConfig::default()),
             crypto,
 
-            token_key: Arc::new(prk),
+            token_key,
             use_stateless_retry: false,
             retry_token_lifetime: Duration::from_secs(15),
 
@@ -470,8 +470,11 @@ where
     }
 
     /// Private key used to authenticate data included in handshake tokens.
-    pub fn token_key(&mut self, master_key: &[u8]) -> Result<&mut Self, ConfigError> {
-        self.token_key = Arc::new(S::HandshakeTokenKey::from_secret(master_key));
+    pub fn token_key(
+        &mut self,
+        value: Arc<dyn HandshakeTokenKey>,
+    ) -> Result<&mut Self, ConfigError> {
+        self.token_key = value;
         Ok(self)
     }
 
@@ -536,12 +539,9 @@ impl ServerConfig<crypto::rustls::TlsSession> {
         let rng = &mut rand::thread_rng();
         let mut master_key = [0u8; 64];
         rng.fill_bytes(&mut master_key);
-        let master_key =
-            <crypto::rustls::TlsSession as crypto::Session>::HandshakeTokenKey::from_secret(
-                &master_key,
-            );
+        let master_key = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
-        Self::new(crypto, master_key)
+        Self::new(crypto, Arc::new(master_key))
     }
 }
 
