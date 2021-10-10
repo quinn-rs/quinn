@@ -10,15 +10,12 @@ use fxhash::FxHashSet;
 
 use super::assembler::Assembler;
 use crate::{
-    crypto, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet, shared::IssuedCid,
-    StreamId, VarInt,
+    crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet, shared::IssuedCid, StreamId,
+    VarInt,
 };
 
-pub(crate) struct PacketSpace<S>
-where
-    S: crypto::Session,
-{
-    pub(crate) crypto: Option<Keys<S>>,
+pub(crate) struct PacketSpace {
+    pub(crate) crypto: Option<Keys>,
     pub(crate) dedup: Dedup,
     /// Highest received packet number
     pub(crate) rx_packet: u64,
@@ -66,10 +63,7 @@ where
     pub(crate) sent_with_keys: u64,
 }
 
-impl<S> PacketSpace<S>
-where
-    S: crypto::Session,
-{
+impl PacketSpace {
     pub(crate) fn new(now: Instant) -> Self {
         Self {
             crypto: None,
@@ -191,15 +185,15 @@ where
     }
 }
 
-impl<S: crypto::Session> Index<SpaceId> for [PacketSpace<S>; 3] {
-    type Output = PacketSpace<S>;
-    fn index(&self, space: SpaceId) -> &PacketSpace<S> {
+impl Index<SpaceId> for [PacketSpace; 3] {
+    type Output = PacketSpace;
+    fn index(&self, space: SpaceId) -> &PacketSpace {
         &self.as_ref()[space as usize]
     }
 }
 
-impl<S: crypto::Session> IndexMut<SpaceId> for [PacketSpace<S>; 3] {
-    fn index_mut(&mut self, space: SpaceId) -> &mut PacketSpace<S> {
+impl IndexMut<SpaceId> for [PacketSpace; 3] {
+    fn index_mut(&mut self, space: SpaceId) -> &mut PacketSpace {
         &mut self.as_mut()[space as usize]
     }
 }

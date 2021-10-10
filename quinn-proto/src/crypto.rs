@@ -31,13 +31,11 @@ pub(crate) mod types;
 pub trait Session: Send + Sized {
     /// Type used to hold configuration for client sessions
     type ClientConfig: ClientConfig<Self>;
-    /// Type of keys used to protect packet headers
-    type HeaderKey: HeaderKey;
     /// Type used to hold configuration for server sessions
     type ServerConfig: ServerConfig<Self>;
 
     /// Create the initial set of keys given the client's initial destination ConnectionId
-    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys<Self>;
+    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys;
 
     /// Get data negotiated during the handshake, if available
     ///
@@ -54,7 +52,7 @@ pub trait Session: Send + Sized {
     ///
     /// Returns `None` if the key material is not available. This might happen if you have
     /// not connected to this server before.
-    fn early_crypto(&self) -> Option<(Self::HeaderKey, Box<dyn PacketKey>)>;
+    fn early_crypto(&self) -> Option<(Box<dyn HeaderKey>, Box<dyn PacketKey>)>;
 
     /// If the 0-RTT-encrypted data has been accepted by the peer
     fn early_data_accepted(&self) -> Option<bool>;
@@ -80,7 +78,7 @@ pub trait Session: Send + Sized {
     ///
     /// When the handshake proceeds to the next phase, this method will return a new set of
     /// keys to encrypt data with.
-    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys<Self>>;
+    fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys>;
 
     /// Compute keys for the next key update
     fn next_1rtt_keys(&mut self) -> Option<KeyPair<Box<dyn PacketKey>>>;
@@ -114,12 +112,9 @@ pub struct KeyPair<T> {
 }
 
 /// A complete set of keys for a certain packet space
-pub struct Keys<S>
-where
-    S: Session,
-{
+pub struct Keys {
     /// Header protection keys
-    pub header: KeyPair<S::HeaderKey>,
+    pub header: KeyPair<Box<dyn HeaderKey>>,
     /// Packet protection keys
     pub packet: KeyPair<Box<dyn PacketKey>>,
 }
