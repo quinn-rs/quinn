@@ -82,7 +82,7 @@ pub trait Session: Send + Sized {
     fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
 
     /// Verify the integrity of a retry packet
-    fn is_valid_retry(orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool;
+    fn is_valid_retry(&self, orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool;
 
     /// Fill `output` with `output.len()` bytes of keying material derived
     /// from the [Session]'s secrets, using `label` and `context` for domain
