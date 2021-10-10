@@ -33,8 +33,6 @@ pub trait Session: Send + Sized {
     type ClientConfig: ClientConfig<Self>;
     /// Type of keys used to protect packet headers
     type HeaderKey: HeaderKey;
-    /// Type used to represent packet protection keys
-    type PacketKey: PacketKey;
     /// Type used to hold configuration for server sessions
     type ServerConfig: ServerConfig<Self>;
 
@@ -56,7 +54,7 @@ pub trait Session: Send + Sized {
     ///
     /// Returns `None` if the key material is not available. This might happen if you have
     /// not connected to this server before.
-    fn early_crypto(&self) -> Option<(Self::HeaderKey, Self::PacketKey)>;
+    fn early_crypto(&self) -> Option<(Self::HeaderKey, Box<dyn PacketKey>)>;
 
     /// If the 0-RTT-encrypted data has been accepted by the peer
     fn early_data_accepted(&self) -> Option<bool>;
@@ -85,7 +83,7 @@ pub trait Session: Send + Sized {
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<Keys<Self>>;
 
     /// Compute keys for the next key update
-    fn next_1rtt_keys(&mut self) -> Option<KeyPair<Self::PacketKey>>;
+    fn next_1rtt_keys(&mut self) -> Option<KeyPair<Box<dyn PacketKey>>>;
 
     /// Generate the integrity tag for a retry packet
     fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
@@ -123,7 +121,7 @@ where
     /// Header protection keys
     pub header: KeyPair<S::HeaderKey>,
     /// Packet protection keys
-    pub packet: KeyPair<S::PacketKey>,
+    pub packet: KeyPair<Box<dyn PacketKey>>,
 }
 
 /// Client-side configuration for the crypto protocol

@@ -163,12 +163,12 @@ where
     /// Highest usable packet number space
     highest_space: SpaceId,
     /// 1-RTT keys used prior to a key update
-    prev_crypto: Option<PrevCrypto<S::PacketKey>>,
+    prev_crypto: Option<PrevCrypto>,
     /// 1-RTT keys to be used for the next key update
     ///
     /// These are generated in advance to prevent timing attacks and/or DoS by third-party attackers
     /// spoofing key updates.
-    next_crypto: Option<KeyPair<S::PacketKey>>,
+    next_crypto: Option<KeyPair<Box<dyn PacketKey>>>,
     accepted_0rtt: bool,
     /// Whether the idle timer should be reset the next time an ack-eliciting packet is transmitted.
     permit_idle_reset: bool,
@@ -3165,13 +3165,10 @@ mod state {
     }
 }
 
-struct PrevCrypto<K>
-where
-    K: crypto::PacketKey,
-{
+struct PrevCrypto {
     /// The keys used for the previous key phase, temporarily retained to decrypt packets sent by
     /// the peer prior to its own key update.
-    crypto: KeyPair<K>,
+    crypto: KeyPair<Box<dyn PacketKey>>,
     /// The incoming packet that ends the interval for which these keys are applicable, and the time
     /// of its receipt.
     ///
@@ -3258,7 +3255,7 @@ const MAX_TRANSMIT_SEGMENTS: usize = 10;
 
 struct ZeroRttCrypto<S: crypto::Session> {
     header: S::HeaderKey,
-    packet: S::PacketKey,
+    packet: Box<dyn PacketKey>,
 }
 
 #[derive(Default)]

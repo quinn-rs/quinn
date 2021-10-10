@@ -438,9 +438,12 @@ pub(crate) struct PartialEncode {
 }
 
 impl PartialEncode {
-    pub(crate) fn finish<K, H>(self, buf: &mut [u8], header_crypto: &H, crypto: Option<(u64, &K)>)
-    where
-        K: crypto::PacketKey,
+    pub(crate) fn finish<H>(
+        self,
+        buf: &mut [u8],
+        header_crypto: &H,
+        crypto: Option<(u64, &dyn crypto::PacketKey)>,
+    ) where
         H: crypto::HeaderKey,
     {
         let PartialEncode { header_len, pn, .. } = self;
@@ -830,7 +833,7 @@ mod tests {
     #[test]
     fn header_encoding() {
         use crate::{
-            crypto::{rustls::TlsSession, PacketKey, Session},
+            crypto::{rustls::TlsSession, Session},
             Side,
         };
 
@@ -850,7 +853,7 @@ mod tests {
         encode.finish(
             &mut buf,
             &client.header.local,
-            Some((0, &client.packet.local)),
+            Some((0, &*client.packet.local)),
         );
 
         for byte in &buf {

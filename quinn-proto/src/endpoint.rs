@@ -20,10 +20,7 @@ use crate::{
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionError},
-    crypto::{
-        self, ClientConfig as ClientCryptoConfig, Keys, PacketKey,
-        ServerConfig as ServerCryptoConfig,
-    },
+    crypto::{self, ClientConfig as ClientCryptoConfig, Keys, ServerConfig as ServerCryptoConfig},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
@@ -605,7 +602,7 @@ where
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
                 buf.extend_from_slice(&S::retry_tag(&dst_cid, &buf));
-                encode.finish::<S::PacketKey, S::HeaderKey>(&mut buf, &crypto.header.local, None);
+                encode.finish::<S::HeaderKey>(&mut buf, &crypto.header.local, None);
 
                 self.transmits.push_back(Transmit {
                     destination: remote,
@@ -700,7 +697,7 @@ where
         partial_encode.finish(
             &mut buf,
             &crypto.header.local,
-            Some((0, &crypto.packet.local)),
+            Some((0, &*crypto.packet.local)),
         );
         self.transmits.push_back(Transmit {
             destination,
