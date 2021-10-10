@@ -1953,7 +1953,7 @@ where
 
                 if self.total_authed_packets > 1
                             || packet.payload.len() <= 16 // token + 16 byte tag
-                            || !S::is_valid_retry(
+                            || !self.crypto.is_valid_retry(
                                 &self.rem_cids.active(),
                                 &packet.header_data,
                                 &packet.payload,
