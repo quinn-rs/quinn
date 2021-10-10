@@ -1,4 +1,4 @@
-use std::{convert::TryInto, io, str, sync::Arc};
+use std::{any::Any, convert::TryInto, io, str, sync::Arc};
 
 use bytes::BytesMut;
 use ring::{aead, hkdf, hmac};
@@ -36,7 +36,6 @@ impl TlsSession {
 }
 
 impl crypto::Session for TlsSession {
-    type HandshakeData = HandshakeData;
     type Identity = CertificateChain;
     type ClientConfig = Arc<rustls::ClientConfig>;
     type HmacKey = hmac::Key;
@@ -59,17 +58,17 @@ impl crypto::Session for TlsSession {
         }
     }
 
-    fn handshake_data(&self) -> Option<HandshakeData> {
+    fn handshake_data(&self) -> Option<Box<dyn Any>> {
         if !self.got_handshake_data {
             return None;
         }
-        Some(HandshakeData {
+        Some(Box::new(HandshakeData {
             protocol: self.inner.alpn_protocol().map(|x| x.into()),
             server_name: match self.inner {
                 Connection::Client(_) => None,
                 Connection::Server(ref session) => session.sni_hostname().map(|x| x.into()),
             },
-        })
+        }))
     }
 
     fn peer_identity(&self) -> Option<CertificateChain> {

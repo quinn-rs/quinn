@@ -1,4 +1,5 @@
 use std::{
+    any::Any,
     fmt,
     future::Future,
     mem,
@@ -111,7 +112,12 @@ where
     }
 
     /// Parameters negotiated during the handshake
-    pub async fn handshake_data(&mut self) -> Result<S::HandshakeData, ConnectionError> {
+    ///
+    /// The dynamic type returned is determined by the configured
+    /// [`Session`](proto::crypto::Session). For the default `rustls` session, the return value can
+    /// be [`downcast`](Box::downcast) to a
+    /// [`crypto::rustls::HandshakeData`](crate::crypto::rustls::HandshakeData).
+    pub async fn handshake_data(&mut self) -> Result<Box<dyn Any>, ConnectionError> {
         // Taking &mut self allows us to use a single oneshot channel rather than dealing with
         // potentially many tasks waiting on the same event. It's a bit of a hack, but keeps things
         // simple.
@@ -459,10 +465,11 @@ where
     /// Parameters negotiated during the handshake
     ///
     /// Guaranteed to return `Some` on fully established connections or after
-    /// [`Connecting::handshake_data()`] succeeds.
+    /// [`Connecting::handshake_data()`] succeeds. See that method's documentations for details on
+    /// the returned value.
     ///
     /// [`Connection::handshake_data()`]: crate::generic::Connecting::handshake_data
-    pub fn handshake_data(&self) -> Option<S::HandshakeData> {
+    pub fn handshake_data(&self) -> Option<Box<dyn Any>> {
         self.0
             .lock("handshake_data")
             .inner
