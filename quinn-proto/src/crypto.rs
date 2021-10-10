@@ -197,7 +197,7 @@ pub trait HmacKey: Send + Sync {
 pub struct ExportKeyingMaterialError;
 
 /// A pseudo random key for HKDF
-pub trait HandshakeTokenKey: Send + Sized + Sync {
+pub trait HandshakeTokenKey: Send + Sync {
     /// AEAD key type
     type AeadKey: AeadKey;
 
@@ -209,10 +209,6 @@ pub trait HandshakeTokenKey: Send + Sized + Sync {
 
 /// A key for sealing data with AEAD-based algorithms
 pub trait AeadKey {
-    /// Length of AEAD Key
-    const KEY_LEN: usize;
-
-    // fn from_hkdf(master_key: &impl PseudoRandomKey, random_bytes: &[u8]) -> Self;
     /// Method for sealing message `data`
     fn seal(&self, data: &mut Vec<u8>, additional_data: &[u8]) -> Result<(), CryptoError>;
     /// Method for opening a sealed message `data`

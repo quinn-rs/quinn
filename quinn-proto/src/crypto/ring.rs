@@ -36,8 +36,6 @@ impl crypto::HandshakeTokenKey for hkdf::Prk {
 }
 
 impl crypto::AeadKey for aead::LessSafeKey {
-    const KEY_LEN: usize = 32;
-
     fn seal(&self, data: &mut Vec<u8>, additional_data: &[u8]) -> Result<(), CryptoError> {
         let aad = ring::aead::Aad::from(additional_data);
         let zero_nonce = ring::aead::Nonce::assume_unique_for_key([0u8; 12]);
