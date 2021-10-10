@@ -17,9 +17,7 @@ impl crypto::HmacKey for hmac::Key {
 }
 
 impl crypto::HandshakeTokenKey for hkdf::Prk {
-    type AeadKey = ring::aead::LessSafeKey;
-
-    fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Self::AeadKey {
+    fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Box<dyn crypto::AeadKey> {
         let mut key_buffer = [0u8; 32];
         let info = [random_bytes];
         let okm = self.expand(&info, hkdf::HKDF_SHA256).unwrap();
@@ -27,7 +25,7 @@ impl crypto::HandshakeTokenKey for hkdf::Prk {
         okm.fill(&mut key_buffer).unwrap();
 
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, &key_buffer).unwrap();
-        Self::AeadKey::new(key)
+        Box::new(aead::LessSafeKey::new(key))
     }
 
     fn from_secret(bytes: &[u8]) -> Self {

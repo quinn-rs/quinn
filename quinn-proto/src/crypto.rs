@@ -198,11 +198,8 @@ pub struct ExportKeyingMaterialError;
 
 /// A pseudo random key for HKDF
 pub trait HandshakeTokenKey: Send + Sync {
-    /// AEAD key type
-    type AeadKey: AeadKey;
-
     /// Derive AEAD using hkdf
-    fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Self::AeadKey;
+    fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Box<dyn AeadKey>;
     /// Method to build pseudo random key from existing bytes
     fn from_secret(secret: &[u8]) -> Self;
 }
