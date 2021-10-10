@@ -37,9 +37,6 @@ impl TlsSession {
 }
 
 impl crypto::Session for TlsSession {
-    type ClientConfig = rustls::ClientConfig;
-    type ServerConfig = rustls::ServerConfig;
-
     fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys {
         let keys = rustls::quic::Keys::initial(Version::V1Draft, dst_cid, side.is_client());
         Keys {
