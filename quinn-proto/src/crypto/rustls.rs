@@ -15,7 +15,8 @@ use rustls::{
 use crate::{
     crypto::{self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys},
     transport_parameters::TransportParameters,
-    CertificateChain, ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
+    CertificateChain, ConnectError, ConnectionId, PrivateKey, Side, TransportError,
+    TransportErrorCode,
 };
 
 /// A rustls TLS session
@@ -345,4 +346,40 @@ impl crypto::PacketKey for PacketKey {
     fn integrity_limit(&self) -> u64 {
         self.integrity_limit()
     }
+}
+
+/// Initialize a sane QUIC-compatible TLS client configuration
+///
+/// QUIC requires that TLS 1.3 be enabled. Advanced users can use any [`rustls::ClientConfig`] that
+/// satisfies this requirement.
+pub fn client_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
+    let mut cfg = rustls::ClientConfig::builder()
+        .with_safe_default_cipher_suites()
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+    cfg.enable_early_data = true;
+    cfg
+}
+
+/// Initialize a sane QUIC-compatible TLS server configuration
+///
+/// QUIC requires that TLS 1.3 be enabled, and that the maximum early data size is either 0 or
+/// `u32::MAX`. Advanced users can use any [`rustls::ServerConfig`] that satisfies these
+/// requirements.
+pub fn server_config(
+    cert_chain: CertificateChain,
+    key: PrivateKey,
+) -> Result<rustls::ServerConfig, Error> {
+    let mut cfg = rustls::ServerConfig::builder()
+        .with_safe_default_cipher_suites()
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain.certs, key.inner)?;
+    cfg.max_early_data_size = u32::MAX;
+    Ok(cfg)
 }
