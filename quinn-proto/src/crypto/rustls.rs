@@ -37,18 +37,8 @@ impl TlsSession {
 }
 
 impl crypto::Session for TlsSession {
-    fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys {
-        let keys = rustls::quic::Keys::initial(Version::V1Draft, dst_cid, side.is_client());
-        Keys {
-            header: KeyPair {
-                local: Box::new(keys.local.header),
-                remote: Box::new(keys.remote.header),
-            },
-            packet: KeyPair {
-                local: Box::new(keys.local.packet),
-                remote: Box::new(keys.remote.packet),
-            },
-        }
+    fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys {
+        initial_keys(dst_cid, side)
     }
 
     fn handshake_data(&self) -> Option<Box<dyn Any>> {
@@ -160,25 +150,6 @@ impl crypto::Session for TlsSession {
             local: Box::new(keys.local),
             remote: Box::new(keys.remote),
         })
-    }
-
-    fn retry_tag(orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
-        let mut pseudo_packet = Vec::with_capacity(packet.len() + orig_dst_cid.len() + 1);
-        pseudo_packet.push(orig_dst_cid.len() as u8);
-        pseudo_packet.extend_from_slice(orig_dst_cid);
-        pseudo_packet.extend_from_slice(packet);
-
-        let nonce = aead::Nonce::assume_unique_for_key(RETRY_INTEGRITY_NONCE);
-        let key = aead::LessSafeKey::new(
-            aead::UnboundKey::new(&aead::AES_128_GCM, &RETRY_INTEGRITY_KEY).unwrap(),
-        );
-
-        let tag = key
-            .seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut [])
-            .unwrap();
-        let mut result = [0; 16];
-        result.copy_from_slice(tag.as_ref());
-        result
     }
 
     fn is_valid_retry(&self, orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool {
@@ -301,12 +272,49 @@ impl crypto::ServerConfig<TlsSession> for rustls::ServerConfig {
             ),
         }
     }
+
+    fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys {
+        initial_keys(dst_cid, side)
+    }
+
+    fn retry_tag(&self, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
+        let mut pseudo_packet = Vec::with_capacity(packet.len() + orig_dst_cid.len() + 1);
+        pseudo_packet.push(orig_dst_cid.len() as u8);
+        pseudo_packet.extend_from_slice(orig_dst_cid);
+        pseudo_packet.extend_from_slice(packet);
+
+        let nonce = aead::Nonce::assume_unique_for_key(RETRY_INTEGRITY_NONCE);
+        let key = aead::LessSafeKey::new(
+            aead::UnboundKey::new(&aead::AES_128_GCM, &RETRY_INTEGRITY_KEY).unwrap(),
+        );
+
+        let tag = key
+            .seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut [])
+            .unwrap();
+        let mut result = [0; 16];
+        result.copy_from_slice(tag.as_ref());
+        result
+    }
 }
 
 fn to_vec(params: &TransportParameters) -> Vec<u8> {
     let mut bytes = Vec::new();
     params.write(&mut bytes);
     bytes
+}
+
+pub(crate) fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys {
+    let keys = rustls::quic::Keys::initial(Version::V1Draft, dst_cid, side.is_client());
+    Keys {
+        header: KeyPair {
+            local: Box::new(keys.local.header),
+            remote: Box::new(keys.remote.header),
+        },
+        packet: KeyPair {
+            local: Box::new(keys.local.packet),
+            remote: Box::new(keys.remote.packet),
+        },
+    }
 }
 
 impl crypto::PacketKey for PacketKey {

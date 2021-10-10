@@ -827,13 +827,10 @@ mod tests {
     #[cfg(feature = "rustls")]
     #[test]
     fn header_encoding() {
-        use crate::{
-            crypto::{rustls::TlsSession, Session},
-            Side,
-        };
+        use crate::{crypto::rustls::initial_keys, Side};
 
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
-        let client = TlsSession::initial_keys(&dcid, Side::Client);
+        let client = initial_keys(&dcid, Side::Client);
         let mut buf = Vec::new();
         let header = Header::Initial {
             number: PacketNumber::U8(0),
@@ -863,7 +860,7 @@ mod tests {
             )[..]
         );
 
-        let server = TlsSession::initial_keys(&dcid, Side::Server);
+        let server = initial_keys(&dcid, Side::Server);
         let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
         let decode = PartialDecode::new(buf.as_slice().into(), 0, &supported_versions)
             .unwrap()
