@@ -478,7 +478,11 @@ where
     }
 
     /// Cryptographic identity of the peer
-    pub fn peer_identity(&self) -> Option<S::Identity> {
+    ///
+    /// The dynamic type returned is determined by the configured
+    /// [`Session`](proto::crypto::Session). For the default `rustls` session, the return value can
+    /// be [`downcast`](Box::downcast) to a [`CertificateChain`](crate::CertificateChain).
+    pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
         self.0
             .lock("peer_identity")
             .inner
