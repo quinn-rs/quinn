@@ -31,8 +31,6 @@ pub(crate) mod types;
 pub trait Session: Send + Sized {
     /// Type used to hold configuration for client sessions
     type ClientConfig: ClientConfig<Self>;
-    /// Key used to generate one-time-use handshake token keys
-    type HandshakeTokenKey: HandshakeTokenKey;
     /// Type of keys used to protect packet headers
     type HeaderKey: HeaderKey;
     /// Type used to represent packet protection keys
@@ -200,8 +198,6 @@ pub struct ExportKeyingMaterialError;
 pub trait HandshakeTokenKey: Send + Sync {
     /// Derive AEAD using hkdf
     fn aead_from_hkdf(&self, random_bytes: &[u8]) -> Box<dyn AeadKey>;
-    /// Method to build pseudo random key from existing bytes
-    fn from_secret(secret: &[u8]) -> Self;
 }
 
 /// A key for sealing data with AEAD-based algorithms

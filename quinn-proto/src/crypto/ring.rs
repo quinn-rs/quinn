@@ -27,10 +27,6 @@ impl crypto::HandshakeTokenKey for hkdf::Prk {
         let key = aead::UnboundKey::new(&aead::AES_256_GCM, &key_buffer).unwrap();
         Box::new(aead::LessSafeKey::new(key))
     }
-
-    fn from_secret(bytes: &[u8]) -> Self {
-        hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(bytes)
-    }
 }
 
 impl crypto::AeadKey for aead::LessSafeKey {

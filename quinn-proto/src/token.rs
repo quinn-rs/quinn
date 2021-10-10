@@ -25,7 +25,7 @@ pub struct RetryToken<'a> {
 impl<'a> RetryToken<'a> {
     pub fn encode(
         &self,
-        key: &impl HandshakeTokenKey,
+        key: &dyn HandshakeTokenKey,
         address: &SocketAddr,
         retry_src_cid: &ConnectionId,
     ) -> Vec<u8> {
@@ -52,7 +52,7 @@ impl<'a> RetryToken<'a> {
     }
 
     pub fn from_bytes(
-        key: &impl HandshakeTokenKey,
+        key: &dyn HandshakeTokenKey,
         address: &SocketAddr,
         retry_src_cid: &ConnectionId,
         raw_token_bytes: &'a [u8],
@@ -158,7 +158,7 @@ mod test {
     fn token_sanity() {
         use super::*;
         use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
-        use crate::{crypto, MAX_CID_SIZE};
+        use crate::MAX_CID_SIZE;
 
         use rand::RngCore;
         use std::{
@@ -177,7 +177,7 @@ mod test {
         let mut master_key = vec![0u8; 64];
         rng.fill_bytes(&mut master_key);
 
-        let prk: ring::hkdf::Prk = crypto::HandshakeTokenKey::from_secret(&master_key);
+        let prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
@@ -199,7 +199,7 @@ mod test {
     fn invalid_token_returns_err() {
         use super::*;
         use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
-        use crate::{crypto, MAX_CID_SIZE};
+        use crate::MAX_CID_SIZE;
         use rand::RngCore;
         use std::net::Ipv6Addr;
 
@@ -211,7 +211,7 @@ mod test {
         let mut random_bytes = [0; 32];
         rng.fill_bytes(&mut random_bytes);
 
-        let prk: ring::hkdf::Prk = crypto::HandshakeTokenKey::from_secret(&master_key);
+        let prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
