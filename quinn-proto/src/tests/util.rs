@@ -376,24 +376,49 @@ impl Write for TestWriter {
 }
 
 pub fn server_config() -> ServerConfig {
-    let cert = Certificate::from_der(&CERTIFICATE.serialize_der().unwrap()).unwrap();
-    let key = PrivateKey::from_der(&CERTIFICATE.serialize_private_key_der()).unwrap();
-    server_config_with_cert(cert, key)
+    ServerConfig::with_crypto(Arc::new(server_crypto()))
 }
 
 pub fn server_config_with_cert(cert: Certificate, key: PrivateKey) -> ServerConfig {
-    ServerConfig::with_single_cert(CertificateChain::from_certs(vec![cert]), key).unwrap()
+    ServerConfig::with_crypto(Arc::new(server_crypto_with_cert(cert, key)))
+}
+
+pub fn server_crypto() -> rustls::ServerConfig {
+    let cert = Certificate::from_der(&CERTIFICATE.serialize_der().unwrap()).unwrap();
+    let key = PrivateKey::from_der(&CERTIFICATE.serialize_private_key_der()).unwrap();
+    server_crypto_with_cert(cert, key)
+}
+
+pub fn server_crypto_with_cert(cert: Certificate, key: PrivateKey) -> rustls::ServerConfig {
+    crate::crypto::rustls::server_config(CertificateChain::from_certs(vec![cert]), key).unwrap()
 }
 
 pub fn client_config() -> ClientConfig {
-    let cert = Certificate::from_der(&CERTIFICATE.serialize_der().unwrap()).unwrap();
-    client_config_with_certs(vec![cert])
+    ClientConfig {
+        transport: Default::default(),
+        crypto: Arc::new(client_crypto()),
+    }
 }
 
 pub fn client_config_with_certs(certs: Vec<Certificate>) -> ClientConfig {
-    let mut config = ClientConfig::with_root_certificates(certs).unwrap();
-    Arc::make_mut(&mut config.crypto).key_log = Arc::new(KeyLogFile::new());
-    Arc::make_mut(&mut config.crypto).enable_early_data = true;
+    ClientConfig {
+        transport: Default::default(),
+        crypto: Arc::new(client_crypto_with_certs(certs)),
+    }
+}
+
+pub fn client_crypto() -> rustls::ClientConfig {
+    let cert = Certificate::from_der(&CERTIFICATE.serialize_der().unwrap()).unwrap();
+    client_crypto_with_certs(vec![cert])
+}
+
+pub fn client_crypto_with_certs(certs: Vec<Certificate>) -> rustls::ClientConfig {
+    let mut roots = rustls::RootCertStore::empty();
+    for cert in certs {
+        roots.add(&cert.inner).unwrap();
+    }
+    let mut config = crate::crypto::rustls::client_config(roots);
+    config.key_log = Arc::new(KeyLogFile::new());
     config
 }
 

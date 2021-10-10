@@ -29,11 +29,6 @@ pub(crate) mod types;
 
 /// A cryptographic session (commonly TLS)
 pub trait Session: Send + Sized {
-    /// Type used to hold configuration for client sessions
-    type ClientConfig: ClientConfig<Self>;
-    /// Type used to hold configuration for server sessions
-    type ServerConfig: ServerConfig<Self>;
-
     /// Create the initial set of keys given the client's initial destination ConnectionId
     fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys;
 
@@ -120,7 +115,7 @@ pub struct Keys {
 }
 
 /// Client-side configuration for the crypto protocol
-pub trait ClientConfig<S>
+pub trait ClientConfig<S>: Send + Sync
 where
     S: Session,
 {

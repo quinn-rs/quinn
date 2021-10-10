@@ -461,18 +461,19 @@ fn zero_rtt_happypath() {
 #[test]
 fn zero_rtt_rejection() {
     let _guard = subscribe();
-    let mut server_config = server_config();
-    Arc::get_mut(&mut server_config.crypto)
-        .unwrap()
-        .alpn_protocols = vec!["foo".into(), "bar".into()];
+    let mut server_crypto = server_crypto();
+    server_crypto.alpn_protocols = vec!["foo".into(), "bar".into()];
+    let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
-    let mut client_config = client_config();
-    Arc::get_mut(&mut client_config.crypto)
-        .unwrap()
-        .alpn_protocols = vec!["foo".into()];
+    let mut client_crypto = client_crypto();
+    client_crypto.alpn_protocols = vec!["foo".into()];
+    let client_config = ClientConfig {
+        transport: Default::default(),
+        crypto: Arc::new(client_crypto.clone()),
+    };
 
     // Establish normal connection
-    let client_ch = pair.begin_connect(client_config.clone());
+    let client_ch = pair.begin_connect(client_config);
     pair.drive();
     let server_ch = pair.server.assert_accept();
     assert_matches!(
@@ -499,10 +500,11 @@ fn zero_rtt_rejection() {
     pair.server.connections.clear();
 
     // Changing protocols invalidates 0-RTT
-    Arc::get_mut(&mut client_config.crypto)
-        .unwrap()
-        .alpn_protocols = vec!["bar".into()];
-
+    client_crypto.alpn_protocols = vec!["bar".into()];
+    let client_config = ClientConfig {
+        transport: Default::default(),
+        crypto: Arc::new(client_crypto),
+    };
     info!("resuming session");
     let client_ch = pair.begin_connect(client_config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
@@ -534,15 +536,16 @@ fn zero_rtt_rejection() {
 #[test]
 fn alpn_success() {
     let _guard = subscribe();
-    let mut server_config = server_config();
-    Arc::get_mut(&mut server_config.crypto)
-        .unwrap()
-        .alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
+    let mut server_crypto = server_crypto();
+    server_crypto.alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
+    let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
-    let mut client_config = client_config();
-    Arc::get_mut(&mut client_config.crypto)
-        .unwrap()
-        .alpn_protocols = vec!["bar".into(), "quux".into(), "corge".into()];
+    let mut client_crypto = client_crypto();
+    client_crypto.alpn_protocols = vec!["bar".into(), "quux".into(), "corge".into()];
+    let client_config = ClientConfig {
+        transport: Default::default(),
+        crypto: Arc::new(client_crypto),
+    };
 
     // Establish normal connection
     let client_ch = pair.begin_connect(client_config);
@@ -571,10 +574,13 @@ fn alpn_success() {
 fn server_alpn_unset() {
     let _guard = subscribe();
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config());
-    let mut client_config = client_config();
-    Arc::get_mut(&mut client_config.crypto)
-        .unwrap()
-        .alpn_protocols = vec!["foo".into()];
+
+    let mut client_crypto = client_crypto();
+    client_crypto.alpn_protocols = vec!["foo".into()];
+    let client_config = ClientConfig {
+        transport: Default::default(),
+        crypto: Arc::new(client_crypto),
+    };
 
     let client_ch = pair.begin_connect(client_config);
     pair.drive();
@@ -587,10 +593,9 @@ fn server_alpn_unset() {
 #[test]
 fn client_alpn_unset() {
     let _guard = subscribe();
-    let mut server_config = server_config();
-    Arc::get_mut(&mut server_config.crypto)
-        .unwrap()
-        .alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
+    let mut server_crypto = server_crypto();
+    server_crypto.alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
+    let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
 
     let client_ch = pair.begin_connect(client_config());
@@ -603,15 +608,17 @@ fn client_alpn_unset() {
 
 #[test]
 fn alpn_mismatch() {
-    let mut server_config = server_config();
-    Arc::get_mut(&mut server_config.crypto)
-        .unwrap()
-        .alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
+    let mut server_crypto = server_crypto();
+    server_crypto.alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
+    let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
-    let mut client_config = client_config();
-    Arc::get_mut(&mut client_config.crypto)
-        .unwrap()
-        .alpn_protocols = vec!["quux".into(), "corge".into()];
+
+    let mut client_crypto = client_crypto();
+    client_crypto.alpn_protocols = vec!["quux".into(), "corge".into()];
+    let client_config = ClientConfig {
+        transport: Default::default(),
+        crypto: Arc::new(client_crypto),
+    };
 
     let client_ch = pair.begin_connect(client_config);
     pair.drive();
@@ -1590,16 +1597,20 @@ fn datagram_unsupported() {
 #[test]
 fn large_initial() {
     let _guard = subscribe();
-    let mut server_config = server_config();
-    Arc::get_mut(&mut server_config.crypto)
-        .unwrap()
-        .alpn_protocols = vec![vec![0, 0, 0, 42]];
+    let mut server_crypto = server_crypto();
+    server_crypto.alpn_protocols = vec![vec![0, 0, 0, 42]];
+    let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
+
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
-    let mut cfg = client_config();
+    let mut client_crypto = client_crypto();
     let protocols = (0..1000u32)
         .map(|x| x.to_be_bytes().to_vec())
         .collect::<Vec<_>>();
-    Arc::get_mut(&mut cfg.crypto).unwrap().alpn_protocols = protocols;
+    client_crypto.alpn_protocols = protocols;
+    let cfg = ClientConfig {
+        transport: Default::default(),
+        crypto: Arc::new(client_crypto),
+    };
     let client_ch = pair.begin_connect(cfg);
     pair.drive();
     let server_ch = pair.server.assert_accept();

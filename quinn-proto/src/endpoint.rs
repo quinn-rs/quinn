@@ -20,7 +20,7 @@ use crate::{
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionError},
-    crypto::{self, ClientConfig as ClientCryptoConfig, Keys, ServerConfig as ServerCryptoConfig},
+    crypto::{self, Keys},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
