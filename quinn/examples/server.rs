@@ -156,6 +156,7 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
         protocol = %connection
             .handshake_data()
             .unwrap()
+            .downcast::<quinn::crypto::rustls::HandshakeData>().unwrap()
             .protocol
             .map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
     );

@@ -561,6 +561,8 @@ fn alpn_success() {
         .client_conn_mut(client_ch)
         .crypto_session()
         .handshake_data()
+        .unwrap()
+        .downcast::<crate::crypto::rustls::HandshakeData>()
         .unwrap();
     assert_eq!(hd.protocol.unwrap(), &b"bar"[..]);
 }

@@ -8,7 +8,7 @@
 //! Note that usage of any protocol (version) other than TLS 1.3 does not conform to any
 //! published versions of the specification, and will not be supported in QUIC v1.
 
-use std::str;
+use std::{any::Any, str};
 
 use bytes::BytesMut;
 
@@ -29,9 +29,6 @@ pub(crate) mod types;
 
 /// A cryptographic session (commonly TLS)
 pub trait Session: Send + Sized {
-    /// Parameters determined when the handshake begins, e.g. server name and/or application
-    /// protocol
-    type HandshakeData;
     /// Cryptographic identity of the peer
     type Identity: Sized;
     /// Type used to hold configuration for client sessions
@@ -53,7 +50,7 @@ pub trait Session: Send + Sized {
     /// Get data negotiated during the handshake, if available
     ///
     /// Returns `None` until the connection emits `HandshakeDataReady`.
-    fn handshake_data(&self) -> Option<Self::HandshakeData>;
+    fn handshake_data(&self) -> Option<Box<dyn Any>>;
 
     /// Get the peer's identity, if available
     fn peer_identity(&self) -> Option<Self::Identity>;
