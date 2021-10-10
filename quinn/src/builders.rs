@@ -1,8 +1,8 @@
 use std::{io, net::SocketAddr, sync::Arc};
 
 use proto::{
-    generic::{ClientConfig, EndpointConfig, ServerConfig},
-    ConnectionIdGenerator,
+    generic::{ClientConfig, ServerConfig},
+    ConnectionIdGenerator, EndpointConfig,
 };
 use thiserror::Error;
 use tracing::error;
@@ -22,7 +22,7 @@ where
     S: proto::crypto::Session,
 {
     server_config: Option<ServerConfig<S>>,
-    config: EndpointConfig<S>,
+    config: EndpointConfig,
     default_client_config: Option<ClientConfig<S>>,
 }
 
@@ -32,7 +32,7 @@ where
     S: proto::crypto::Session + Send + 'static,
 {
     /// Start a builder with a specific initial low-level configuration
-    pub fn new(config: EndpointConfig<S>, default_client_config: Option<ClientConfig<S>>) -> Self {
+    pub fn new(config: EndpointConfig, default_client_config: Option<ClientConfig<S>>) -> Self {
         Self {
             server_config: None,
             config,
@@ -112,6 +112,7 @@ where
     }
 }
 
+#[cfg(feature = "tls-rustls")]
 impl<S> Default for EndpointBuilder<S>
 where
     S: proto::crypto::Session,

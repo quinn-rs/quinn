@@ -117,7 +117,7 @@ apply_params!(make_struct);
 impl TransportParameters {
     pub(crate) fn new<S>(
         config: &TransportConfig,
-        endpoint_config: &EndpointConfig<S>,
+        endpoint_config: &EndpointConfig,
         cid_gen: &dyn ConnectionIdGenerator,
         initial_src_cid: ConnectionId,
         server_config: Option<&ServerConfig<S>>,

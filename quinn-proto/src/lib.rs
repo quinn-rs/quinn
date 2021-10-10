@@ -46,7 +46,7 @@ pub use crate::connection::{
 };
 
 mod config;
-pub use config::{ConfigError, IdleTimeout, TransportConfig};
+pub use config::{ConfigError, EndpointConfig, IdleTimeout, TransportConfig};
 
 pub mod crypto;
 #[cfg(feature = "rustls")]
@@ -76,7 +76,7 @@ use token::{ResetToken, RetryToken};
 /// Types that are generic over the crypto protocol implementation
 pub mod generic {
     pub use crate::{
-        config::{ClientConfig, EndpointConfig, ServerConfig},
+        config::{ClientConfig, ServerConfig},
         connection::{Connection, Datagrams},
         endpoint::Endpoint,
     };
@@ -96,8 +96,6 @@ mod rustls_impls {
     pub type Endpoint = generic::Endpoint<crypto::rustls::TlsSession>;
     /// A `ServerConfig` containing server-side rustls configuration
     pub type ServerConfig = generic::ServerConfig<crypto::rustls::TlsSession>;
-    /// A `EndpointConfig` using rustls keys
-    pub type EndpointConfig = generic::EndpointConfig<crypto::rustls::TlsSession>;
 }
 
 #[cfg(feature = "rustls")]
