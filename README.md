@@ -33,7 +33,6 @@ This library is at [draft 32][current-draft].
 - **quinn-udp:** UDP sockets with ECN information tuned for the protocol.
 - **quinn-h3:** Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.
 - **bench:** Benchmarks without any framework.
-- **interop:** Tooling that helps to run interoperability tests.
 - **fuzz:** Fuzz tests.
 
 # Getting Started
