@@ -105,24 +105,22 @@ async fn run(options: Opt) -> Result<()> {
         (quinn::CertificateChain::from_certs(vec![cert]), key)
     };
 
-    let mut server_config = quinn::ServerConfig::with_single_cert(certs, key)?;
+    let mut server_crypto = quinn::crypto::rustls::server_config(certs, key)?;
+    server_crypto.alpn_protocols = common::ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
+    if options.keylog {
+        server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+    }
+
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
     Arc::get_mut(&mut server_config.transport)
         .unwrap()
         .max_concurrent_uni_streams(0_u8.into());
-
-    let mut server_config_builder = quinn::ServerConfigBuilder::new(server_config);
-    server_config_builder.protocols(common::ALPN_QUIC_HTTP);
-
-    if options.keylog {
-        server_config_builder.enable_keylog();
-    }
-
     if options.stateless_retry {
-        server_config_builder.use_stateless_retry(true);
+        server_config.use_stateless_retry(true);
     }
 
     let mut endpoint = quinn::Endpoint::builder();
-    endpoint.listen(server_config_builder.build());
+    endpoint.listen(server_config);
 
     let root = Arc::<Path>::from(options.root.clone());
     if !root.exists() {

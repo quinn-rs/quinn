@@ -21,7 +21,7 @@ use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
 use super::{
-    ClientConfig, ClientConfigBuilder, Endpoint, Incoming, NewConnection, RecvStream, SendStream,
+    crypto, ClientConfig, Endpoint, Incoming, NewConnection, RecvStream, SendStream,
     TransportConfig,
 };
 
@@ -432,7 +432,8 @@ fn run_echo(args: EchoArgs) {
         // different addresses.
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
         let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
-        let cert = crate::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
+        let cert_der = cert.serialize_der().unwrap();
+        let cert = crate::Certificate::from_der(&cert_der).unwrap();
         let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
         let mut server_config = crate::ServerConfig::with_single_cert(cert_chain, key).unwrap();
 
@@ -446,13 +447,16 @@ fn run_echo(args: EchoArgs) {
             server.with_socket(server_sock).unwrap()
         };
 
-        let client_config = ClientConfig::with_root_certificates(vec![cert]).unwrap();
-        let mut client_config_builder = ClientConfigBuilder::new(client_config);
-        client_config_builder.enable_keylog();
-        let mut client_config = client_config_builder.build();
-        client_config.transport = transport_config;
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(&rustls::Certificate(cert_der)).unwrap();
+        let mut client_crypto = crypto::rustls::client_config(roots);
+        client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+
         let mut client = Endpoint::builder();
-        client.default_client_config(client_config);
+        client.default_client_config(ClientConfig {
+            crypto: Arc::new(client_crypto),
+            transport: transport_config,
+        });
         let (client, _) = {
             let _guard = runtime.enter();
             client.bind(&args.client_addr).unwrap()

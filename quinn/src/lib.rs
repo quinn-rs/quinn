@@ -74,7 +74,7 @@ pub use crate::send_stream::{StoppedError, WriteError};
 
 /// Types that are generic over the crypto protocol implementation
 pub mod generic {
-    pub use crate::builders::{ClientConfigBuilder, EndpointBuilder, ServerConfigBuilder};
+    pub use crate::builders::EndpointBuilder;
     pub use crate::connection::{
         Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
         OpenBi, OpenUni,
@@ -95,12 +95,8 @@ mod rustls_impls {
     /// A `ServerConfig` using rustls for the cryptography protocol
     pub type ServerConfig = generic::ServerConfig<TlsSession>;
 
-    /// A `ClientConfigBuilder` using rustls for the cryptography protocol
-    pub type ClientConfigBuilder = generic::ClientConfigBuilder<TlsSession>;
     /// An `EndpointBuilder` using rustls for the cryptography protocol
     pub type EndpointBuilder = generic::EndpointBuilder<TlsSession>;
-    /// A `ServerConfigBuilder` using rustls for the cryptography protocol
-    pub type ServerConfigBuilder = generic::ServerConfigBuilder<TlsSession>;
 
     /// A `Connecting` using rustls for the cryptography protocol
     pub type Connecting = generic::Connecting<TlsSession>;
