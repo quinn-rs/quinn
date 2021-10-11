@@ -7,6 +7,7 @@ use std::{
     io::{self, Write},
     net::ToSocketAddrs,
     path::PathBuf,
+    sync::Arc,
     time::{Duration, Instant},
 };
 
@@ -67,14 +68,14 @@ async fn run(options: Opt) -> Result<()> {
         .next()
         .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
 
-    let mut certs = Vec::new();
+    let mut roots = rustls::RootCertStore::empty();
     if let Some(ca_path) = options.ca {
-        certs.push(quinn::Certificate::from_der(&fs::read(&ca_path)?)?);
+        roots.add(&rustls::Certificate(fs::read(&ca_path)?))?;
     } else {
         let dirs = directories_next::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
         match fs::read(dirs.data_local_dir().join("cert.der")) {
             Ok(cert) => {
-                certs.push(quinn::Certificate::from_der(&cert)?);
+                roots.add(&rustls::Certificate(cert))?;
             }
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
                 info!("local server certificate not found");
@@ -84,15 +85,18 @@ async fn run(options: Opt) -> Result<()> {
             }
         }
     }
+    let mut client_crypto = quinn::crypto::rustls::client_config(roots);
+
+    client_crypto.alpn_protocols = common::ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
+    if options.keylog {
+        client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+    }
 
     let mut endpoint = quinn::Endpoint::builder();
-    let client_config = quinn::ClientConfig::with_root_certificates(certs)?;
-    let mut client_config_builder = quinn::ClientConfigBuilder::new(client_config);
-    client_config_builder.protocols(common::ALPN_QUIC_HTTP);
-    if options.keylog {
-        client_config_builder.enable_keylog();
-    }
-    endpoint.default_client_config(client_config_builder.build());
+    endpoint.default_client_config(quinn::ClientConfig {
+        crypto: Arc::new(client_crypto),
+        transport: Default::default(),
+    });
 
     let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
 
