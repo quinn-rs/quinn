@@ -62,78 +62,22 @@ mod send_stream;
 mod work_limiter;
 
 pub use proto::{
-    crypto, ApplicationClose, Certificate, CertificateChain, Chunk, ConfigError, ConnectError,
-    ConnectionClose, ConnectionError, IdleTimeout, ParseError, PrivateKey, StreamId, Transmit,
-    TransportConfig, VarInt,
+    crypto, ApplicationClose, Certificate, CertificateChain, Chunk, ClientConfig, ConfigError,
+    ConnectError, ConnectionClose, ConnectionError, IdleTimeout, ParseError, PrivateKey,
+    ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
 };
 
-pub use crate::builders::EndpointError;
-pub use crate::connection::{SendDatagramError, ZeroRttAccepted};
-pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError};
-pub use crate::send_stream::{StoppedError, WriteError};
-
-/// Types that are generic over the crypto protocol implementation
-pub mod generic {
-    pub use crate::builders::EndpointBuilder;
-    pub use crate::connection::{
-        Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
-        OpenBi, OpenUni,
-    };
-    pub use crate::endpoint::{Endpoint, Incoming};
-    pub use crate::recv_stream::{Read, ReadChunk, ReadChunks, ReadExact, ReadToEnd, RecvStream};
-    pub use crate::send_stream::SendStream;
-    pub use proto::generic::{ClientConfig, ServerConfig};
-}
-
-#[cfg(feature = "rustls")]
-mod rustls_impls {
-    use crate::generic;
-    use proto::crypto::rustls::TlsSession;
-
-    /// A `ClientConfig` using rustls for the cryptography protocol
-    pub type ClientConfig = generic::ClientConfig<TlsSession>;
-    /// A `ServerConfig` using rustls for the cryptography protocol
-    pub type ServerConfig = generic::ServerConfig<TlsSession>;
-
-    /// An `EndpointBuilder` using rustls for the cryptography protocol
-    pub type EndpointBuilder = generic::EndpointBuilder<TlsSession>;
-
-    /// A `Connecting` using rustls for the cryptography protocol
-    pub type Connecting = generic::Connecting<TlsSession>;
-    /// A `Connection` using rustls for the cryptography protocol
-    pub type Connection = generic::Connection<TlsSession>;
-    /// A `Datagrams` using rustls for the cryptography protocol
-    pub type Datagrams = generic::Datagrams<TlsSession>;
-    /// An `IncomingBiStreams` using rustls for the cryptography protocol
-    pub type IncomingBiStreams = generic::IncomingBiStreams<TlsSession>;
-    /// An `IncomingUniStreams` using rustls for the cryptography protocol
-    pub type IncomingUniStreams = generic::IncomingUniStreams<TlsSession>;
-    /// A `NewConnection` using rustls for the cryptography protocol
-    pub type NewConnection = generic::NewConnection<TlsSession>;
-    /// An `OpenBi` using rustls for the cryptography protocol
-    pub type OpenBi = generic::OpenBi<TlsSession>;
-    /// An `OpenUni` using rustls for the cryptography protocol
-    pub type OpenUni = generic::OpenUni<TlsSession>;
-
-    /// An `Endpoint` using rustls for the cryptography protocol
-    pub type Endpoint = generic::Endpoint<TlsSession>;
-    /// An `Incoming` using rustls for the cryptography protocol
-    pub type Incoming = generic::Incoming<TlsSession>;
-
-    /// A `Read` using rustls for the cryptography protocol
-    pub type Read<'a> = generic::Read<'a, TlsSession>;
-    /// A `ReadExact` using rustls for the cryptography protocol
-    pub type ReadExact<'a> = generic::ReadExact<'a, TlsSession>;
-    /// A `ReadToEnd` using rustls for the cryptography protocol
-    pub type ReadToEnd = generic::ReadToEnd<TlsSession>;
-    /// A `RecvStream` using rustls for the cryptography protocol
-    pub type RecvStream = generic::RecvStream<TlsSession>;
-    /// A `SendStream` using rustls for the cryptography protocol
-    pub type SendStream = generic::SendStream<TlsSession>;
-}
-
-#[cfg(feature = "rustls")]
-pub use rustls_impls::*;
+pub use crate::builders::{EndpointBuilder, EndpointError};
+pub use crate::connection::{
+    Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
+    OpenBi, OpenUni, SendDatagramError, ZeroRttAccepted,
+};
+pub use crate::endpoint::{Endpoint, Incoming};
+pub use crate::recv_stream::{
+    Read, ReadChunk, ReadChunks, ReadError, ReadExact, ReadExactError, ReadToEnd, ReadToEndError,
+    RecvStream,
+};
+pub use crate::send_stream::{SendStream, StoppedError, WriteError};
 
 #[cfg(test)]
 mod tests;

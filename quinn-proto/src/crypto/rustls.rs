@@ -236,13 +236,13 @@ pub struct HandshakeData {
     pub server_name: Option<String>,
 }
 
-impl crypto::ClientConfig<TlsSession> for rustls::ClientConfig {
+impl crypto::ClientConfig for rustls::ClientConfig {
     fn start_session(
         self: Arc<Self>,
         server_name: &str,
         params: &TransportParameters,
-    ) -> Result<TlsSession, ConnectError> {
-        Ok(TlsSession {
+    ) -> Result<Box<dyn crypto::Session>, ConnectError> {
+        Ok(Box::new(TlsSession {
             using_alpn: !self.alpn_protocols.is_empty(),
             got_handshake_data: false,
             next_secrets: None,
@@ -257,20 +257,20 @@ impl crypto::ClientConfig<TlsSession> for rustls::ClientConfig {
                 )
                 .unwrap(),
             ),
-        })
+        }))
     }
 }
 
-impl crypto::ServerConfig<TlsSession> for rustls::ServerConfig {
-    fn start_session(self: Arc<Self>, params: &TransportParameters) -> TlsSession {
-        TlsSession {
+impl crypto::ServerConfig for rustls::ServerConfig {
+    fn start_session(self: Arc<Self>, params: &TransportParameters) -> Box<dyn crypto::Session> {
+        Box::new(TlsSession {
             using_alpn: !self.alpn_protocols.is_empty(),
             got_handshake_data: false,
             next_secrets: None,
             inner: Connection::Server(
                 rustls::ServerConnection::new_quic(self, Version::V1Draft, to_vec(params)).unwrap(),
             ),
-        }
+        })
     }
 
     fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys {

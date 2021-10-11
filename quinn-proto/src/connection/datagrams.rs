@@ -6,18 +6,17 @@ use tracing::{debug, trace};
 
 use super::Connection;
 use crate::{
-    crypto::Session,
     frame::{Datagram, FrameStruct},
     packet::SpaceId,
     TransportError,
 };
 
 /// API to control datagram traffic
-pub struct Datagrams<'a, S: Session> {
-    pub(super) conn: &'a mut Connection<S>,
+pub struct Datagrams<'a> {
+    pub(super) conn: &'a mut Connection,
 }
 
-impl<'a, S: Session> Datagrams<'a, S> {
+impl<'a> Datagrams<'a> {
     /// Queue an unreliable, unordered datagram for immediate transmission
     ///
     /// Returns `Err` iff a `len`-byte datagram cannot currently be sent

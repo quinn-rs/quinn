@@ -417,17 +417,15 @@ impl Default for EndpointConfig {
 /// Parameters governing incoming connections
 ///
 /// Default values should be suitable for most internet applications.
-pub struct ServerConfig<S>
-where
-    S: crypto::Session,
-{
+#[derive(Clone)]
+pub struct ServerConfig {
     /// Transport configuration to use for incoming connections
     pub transport: Arc<TransportConfig>,
 
     /// TLS configuration used for incoming connections.
     ///
     /// Must be set to use TLS 1.3 only.
-    pub crypto: Arc<dyn crypto::ServerConfig<S>>,
+    pub crypto: Arc<dyn crypto::ServerConfig>,
 
     /// Used to generate one-time AEAD keys to protect handshake tokens
     pub(crate) token_key: Arc<dyn HandshakeTokenKey>,
@@ -449,13 +447,10 @@ where
     pub(crate) migration: bool,
 }
 
-impl<S> ServerConfig<S>
-where
-    S: crypto::Session,
-{
+impl ServerConfig {
     /// Create a default config with a particular handshake token key
     pub fn new(
-        crypto: Arc<dyn crypto::ServerConfig<S>>,
+        crypto: Arc<dyn crypto::ServerConfig>,
         token_key: Arc<dyn HandshakeTokenKey>,
     ) -> Self {
         Self {
@@ -515,7 +510,7 @@ where
 }
 
 #[cfg(feature = "rustls")]
-impl ServerConfig<crypto::rustls::TlsSession> {
+impl ServerConfig {
     /// Create a server config with the given certificate chain to be presented to clients
     ///
     /// Uses a randomized handshake token key.
@@ -540,10 +535,7 @@ impl ServerConfig<crypto::rustls::TlsSession> {
     }
 }
 
-impl<S> fmt::Debug for ServerConfig<S>
-where
-    S: crypto::Session,
-{
+impl fmt::Debug for ServerConfig {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("ServerConfig<T>")
             .field("transport", &self.transport)
@@ -557,39 +549,20 @@ where
     }
 }
 
-impl<S> Clone for ServerConfig<S>
-where
-    S: crypto::Session,
-{
-    fn clone(&self) -> Self {
-        Self {
-            transport: self.transport.clone(),
-            crypto: self.crypto.clone(),
-            token_key: self.token_key.clone(),
-            use_stateless_retry: self.use_stateless_retry,
-            retry_token_lifetime: self.retry_token_lifetime,
-            concurrent_connections: self.concurrent_connections,
-            migration: self.migration,
-        }
-    }
-}
-
 /// Configuration for outgoing connections
 ///
 /// Default values should be suitable for most internet applications.
-pub struct ClientConfig<S>
-where
-    S: crypto::Session,
-{
+#[derive(Clone)]
+pub struct ClientConfig {
     /// Transport configuration to use
     pub transport: Arc<TransportConfig>,
 
     /// Cryptographic configuration to use
-    pub crypto: Arc<dyn crypto::ClientConfig<S>>,
+    pub crypto: Arc<dyn crypto::ClientConfig>,
 }
 
 #[cfg(feature = "rustls")]
-impl ClientConfig<crypto::rustls::TlsSession> {
+impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
     #[cfg(feature = "native-certs")]
     pub fn with_native_roots() -> Self {
@@ -630,22 +603,7 @@ impl ClientConfig<crypto::rustls::TlsSession> {
     }
 }
 
-impl<S> Clone for ClientConfig<S>
-where
-    S: crypto::Session,
-{
-    fn clone(&self) -> Self {
-        Self {
-            transport: self.transport.clone(),
-            crypto: self.crypto.clone(),
-        }
-    }
-}
-
-impl<S> fmt::Debug for ClientConfig<S>
-where
-    S: crypto::Session,
-{
+impl fmt::Debug for ClientConfig {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("ClientConfig<T>")
             .field("transport", &self.transport)

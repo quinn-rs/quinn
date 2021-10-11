@@ -20,7 +20,7 @@ use crate::{
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionError},
-    crypto::{self, Keys},
+    crypto::Keys,
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
@@ -37,10 +37,7 @@ use crate::{
 /// This object performs no I/O whatsoever. Instead, it generates a stream of packets to send via
 /// `poll_transmit`, and consumes incoming packets and connection-generated events via `handle` and
 /// `handle_event`.
-pub struct Endpoint<S>
-where
-    S: crypto::Session,
-{
+pub struct Endpoint {
     rng: StdRng,
     transmits: VecDeque<Transmit>,
     /// Identifies connections based on the initial DCID the peer utilized
@@ -63,21 +60,18 @@ where
     connections: Slab<ConnectionMeta>,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig>,
-    server_config: Option<Arc<ServerConfig<S>>>,
+    server_config: Option<Arc<ServerConfig>>,
     /// Whether incoming connections should be unconditionally rejected by a server
     ///
     /// Equivalent to a `ServerConfig.accept_buffer` of `0`, but can be changed after the endpoint is constructed.
     reject_new_connections: bool,
 }
 
-impl<S> Endpoint<S>
-where
-    S: crypto::Session,
-{
+impl Endpoint {
     /// Create a new endpoint
     ///
     /// Returns `Err` if the configuration is invalid.
-    pub fn new(config: Arc<EndpointConfig>, server_config: Option<Arc<ServerConfig<S>>>) -> Self {
+    pub fn new(config: Arc<EndpointConfig>, server_config: Option<Arc<ServerConfig>>) -> Self {
         Self {
             rng: StdRng::from_entropy(),
             transmits: VecDeque::new(),
@@ -104,7 +98,7 @@ where
     }
 
     /// Replace the server configuration, affecting new incoming connections only
-    pub fn set_server_config(&mut self, server_config: Option<Arc<ServerConfig<S>>>) {
+    pub fn set_server_config(&mut self, server_config: Option<Arc<ServerConfig>>) {
         self.server_config = server_config;
     }
 
@@ -163,7 +157,7 @@ where
         local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
-    ) -> Option<(ConnectionHandle, DatagramEvent<S>)> {
+    ) -> Option<(ConnectionHandle, DatagramEvent)> {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(
             data,
@@ -361,10 +355,10 @@ where
     /// Initiate a connection
     pub fn connect(
         &mut self,
-        config: ClientConfig<S>,
+        config: ClientConfig,
         remote: SocketAddr,
         server_name: &str,
-    ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
+    ) -> Result<(ConnectionHandle, Connection), ConnectError> {
         if self.is_full() {
             return Err(ConnectError::TooManyConnections);
         }
@@ -426,16 +420,16 @@ where
         rem_cid: ConnectionId,
         remote: SocketAddr,
         local_ip: Option<IpAddr>,
-        opts: ConnectionOpts<S>,
+        opts: ConnectionOpts,
         now: Instant,
-    ) -> Result<(ConnectionHandle, Connection<S>), ConnectError> {
+    ) -> Result<(ConnectionHandle, Connection), ConnectError> {
         let loc_cid = self.new_cid();
         let (server_config, tls, transport_config) = match opts {
             ConnectionOpts::Client {
                 config,
                 server_name,
             } => {
-                let params = TransportParameters::new::<S>(
+                let params = TransportParameters::new(
                     &config.transport,
                     &self.config,
                     self.local_cid_generator.as_ref(),
@@ -513,7 +507,7 @@ where
         mut packet: Packet,
         rest: Option<BytesMut>,
         crypto: &Keys,
-    ) -> Option<(ConnectionHandle, Connection<S>)> {
+    ) -> Option<(ConnectionHandle, Connection)> {
         let (src_cid, dst_cid, token, packet_number) = match packet.header {
             Header::Initial {
                 src_cid,
@@ -752,10 +746,7 @@ where
     }
 }
 
-impl<S> fmt::Debug for Endpoint<S>
-where
-    S: crypto::Session,
-{
+impl fmt::Debug for Endpoint {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Endpoint<T>")
             .field("rng", &self.rng)
@@ -812,19 +803,16 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
 }
 
 /// Event resulting from processing a single datagram
-pub enum DatagramEvent<S>
-where
-    S: crypto::Session,
-{
+pub enum DatagramEvent {
     /// The datagram is redirected to its `Connection`
     ConnectionEvent(ConnectionEvent),
     /// The datagram has resulted in starting a new `Connection`
-    NewConnection(Connection<S>),
+    NewConnection(Connection),
 }
 
-enum ConnectionOpts<S: crypto::Session> {
+enum ConnectionOpts {
     Client {
-        config: ClientConfig<S>,
+        config: ClientConfig,
         server_name: String,
     },
     Server {

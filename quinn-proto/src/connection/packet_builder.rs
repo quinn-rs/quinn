@@ -6,7 +6,6 @@ use tracing::{trace, trace_span};
 
 use super::{spaces::SentPacket, Connection, SentFrames, State};
 use crate::{
-    crypto::Session,
     frame::{self, Close},
     packet::{Header, LongType, PacketNumber, PartialEncode, SpaceId},
     TransportError, TransportErrorCode,
@@ -30,14 +29,14 @@ impl PacketBuilder {
     ///
     /// Marks the connection drained and returns `None` if the confidentiality limit would be
     /// violated.
-    pub fn new<S: Session>(
+    pub fn new(
         now: Instant,
         space_id: SpaceId,
         buffer: &mut Vec<u8>,
         buffer_capacity: usize,
         datagram_start: usize,
         ack_eliciting: bool,
-        conn: &mut Connection<S>,
+        conn: &mut Connection,
         version: u32,
     ) -> Option<PacketBuilder> {
         // Initiate key update if we're approaching the confidentiality limit
@@ -157,10 +156,10 @@ impl PacketBuilder {
         debug_assert!(self.min_size >= prev, "padding must not shrink datagram");
     }
 
-    pub fn finish_and_track<S: Session>(
+    pub fn finish_and_track(
         self,
         now: Instant,
-        conn: &mut Connection<S>,
+        conn: &mut Connection,
         sent: Option<SentFrames>,
         buffer: &mut Vec<u8>,
     ) {
@@ -204,9 +203,9 @@ impl PacketBuilder {
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
-    pub fn finish<S: Session>(
+    pub fn finish(
         self: PacketBuilder,
-        conn: &mut Connection<S>,
+        conn: &mut Connection,
         buffer: &mut Vec<u8>,
     ) -> (usize, bool) {
         let pad = buffer.len() < self.min_size;

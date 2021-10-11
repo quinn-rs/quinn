@@ -116,14 +116,11 @@ use timer::{Timer, TimerTable};
 /// with events of the same [`Instant`] may be interleaved in any order with a
 /// call to [`handle_event`](self::handle_event) at that same instant; however
 /// events or timeouts with different instants must not be interleaved.
-pub struct Connection<S>
-where
-    S: crypto::Session,
-{
-    server_config: Option<Arc<ServerConfig<S>>>,
+pub struct Connection {
+    server_config: Option<Arc<ServerConfig>>,
     config: Arc<TransportConfig>,
     rng: StdRng,
-    crypto: S,
+    crypto: Box<dyn crypto::Session>,
     /// The CID we initially chose, for use during the handshake
     handshake_cid: ConnectionId,
     /// The CID the peer initially chose, for use during the handshake
@@ -218,19 +215,16 @@ where
     version: u32,
 }
 
-impl<S> Connection<S>
-where
-    S: crypto::Session,
-{
+impl Connection {
     pub(crate) fn new(
-        server_config: Option<Arc<ServerConfig<S>>>,
+        server_config: Option<Arc<ServerConfig>>,
         config: Arc<TransportConfig>,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
         local_ip: Option<IpAddr>,
-        crypto: S,
+        crypto: Box<dyn crypto::Session>,
         cid_gen: &dyn ConnectionIdGenerator,
         now: Instant,
         version: u32,
@@ -983,7 +977,7 @@ where
     }
 
     /// Control datagrams
-    pub fn datagrams(&mut self) -> Datagrams<'_, S> {
+    pub fn datagrams(&mut self) -> Datagrams<'_> {
         Datagrams { conn: self }
     }
 
@@ -1009,8 +1003,8 @@ where
     }
 
     /// Get a session reference
-    pub fn crypto_session(&self) -> &S {
-        &self.crypto
+    pub fn crypto_session(&self) -> &dyn crypto::Session {
+        &*self.crypto
     }
 
     /// Whether the connection is in the process of being established
@@ -3042,10 +3036,7 @@ where
     }
 }
 
-impl<S> fmt::Debug for Connection<S>
-where
-    S: crypto::Session,
-{
+impl fmt::Debug for Connection {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("Connection")
             .field("handshake_cid", &self.handshake_cid)

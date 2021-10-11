@@ -40,13 +40,15 @@ pub use varint::{VarInt, VarIntBoundsExceeded};
 
 mod connection;
 pub use crate::connection::{
-    BytesSource, Chunk, Chunks, ConnectionError, ConnectionStats, Event, FinishError, ReadError,
-    ReadableError, RecvStream, SendDatagramError, SendStream, StreamEvent, Streams, UnknownStream,
-    WriteError, Written,
+    BytesSource, Chunk, Chunks, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
+    FinishError, ReadError, ReadableError, RecvStream, SendDatagramError, SendStream, StreamEvent,
+    Streams, UnknownStream, WriteError, Written,
 };
 
 mod config;
-pub use config::{ConfigError, EndpointConfig, IdleTimeout, TransportConfig};
+pub use config::{
+    ClientConfig, ConfigError, EndpointConfig, IdleTimeout, ServerConfig, TransportConfig,
+};
 
 pub mod crypto;
 #[cfg(feature = "rustls")]
@@ -57,7 +59,7 @@ use crate::frame::Frame;
 pub use crate::frame::{ApplicationClose, ConnectionClose, Datagram};
 
 mod endpoint;
-pub use crate::endpoint::{ConnectError, ConnectionHandle, DatagramEvent};
+pub use crate::endpoint::{ConnectError, ConnectionHandle, DatagramEvent, Endpoint};
 
 mod shared;
 pub use crate::shared::{ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent};
@@ -75,31 +77,8 @@ use token::{ResetToken, RetryToken};
 
 /// Types that are generic over the crypto protocol implementation
 pub mod generic {
-    pub use crate::{
-        config::{ClientConfig, ServerConfig},
-        connection::{Connection, Datagrams},
-        endpoint::Endpoint,
-    };
+    pub use crate::config::ClientConfig;
 }
-
-#[cfg(feature = "rustls")]
-mod rustls_impls {
-    use crate::{crypto, generic};
-
-    /// A `Connection` using rustls for the cryptography protocol
-    pub type Connection = generic::Connection<crypto::rustls::TlsSession>;
-    /// A `ClientConfig` containing client-side rustls configuration
-    pub type ClientConfig = generic::ClientConfig<crypto::rustls::TlsSession>;
-    /// A `Datagrams` using rustls for the cryptography protocol
-    pub type Datagrams<'a> = generic::Datagrams<'a, crypto::rustls::TlsSession>;
-    /// An `Endpoint` using rustls for the cryptography protocol
-    pub type Endpoint = generic::Endpoint<crypto::rustls::TlsSession>;
-    /// A `ServerConfig` containing server-side rustls configuration
-    pub type ServerConfig = generic::ServerConfig<crypto::rustls::TlsSession>;
-}
-
-#[cfg(feature = "rustls")]
-pub use crate::rustls_impls::*;
 
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;

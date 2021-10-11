@@ -1,9 +1,6 @@
 use std::{io, net::SocketAddr, sync::Arc};
 
-use proto::{
-    generic::{ClientConfig, ServerConfig},
-    ConnectionIdGenerator, EndpointConfig,
-};
+use proto::{ClientConfig, ConnectionIdGenerator, EndpointConfig, ServerConfig};
 use thiserror::Error;
 use tracing::error;
 use udp::UdpSocket;
@@ -12,24 +9,17 @@ use crate::endpoint::{Endpoint, EndpointDriver, EndpointRef, Incoming};
 
 /// A helper for constructing an [`Endpoint`].
 ///
-/// [`Endpoint`]: crate::generic::Endpoint
+/// [`Endpoint`]: crate::Endpoint
 #[derive(Clone, Debug)]
-pub struct EndpointBuilder<S>
-where
-    S: proto::crypto::Session,
-{
-    server_config: Option<ServerConfig<S>>,
+pub struct EndpointBuilder {
+    server_config: Option<ServerConfig>,
     config: EndpointConfig,
-    default_client_config: Option<ClientConfig<S>>,
+    default_client_config: Option<ClientConfig>,
 }
 
-#[allow(missing_docs)]
-impl<S> EndpointBuilder<S>
-where
-    S: proto::crypto::Session + Send + 'static,
-{
+impl EndpointBuilder {
     /// Start a builder with a specific initial low-level configuration
-    pub fn new(config: EndpointConfig, default_client_config: Option<ClientConfig<S>>) -> Self {
+    pub fn new(config: EndpointConfig, default_client_config: Option<ClientConfig>) -> Self {
         Self {
             server_config: None,
             config,
@@ -46,7 +36,7 @@ where
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
-    pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint<S>, Incoming<S>), EndpointError> {
+    pub fn bind(self, addr: &SocketAddr) -> Result<(Endpoint, Incoming), EndpointError> {
         let socket = std::net::UdpSocket::bind(addr).map_err(EndpointError::Socket)?;
         self.with_socket(socket)
     }
@@ -58,12 +48,12 @@ where
     pub fn with_socket(
         self,
         socket: std::net::UdpSocket,
-    ) -> Result<(Endpoint<S>, Incoming<S>), EndpointError> {
+    ) -> Result<(Endpoint, Incoming), EndpointError> {
         let addr = socket.local_addr().map_err(EndpointError::Socket)?;
         let socket = UdpSocket::from_std(socket).map_err(EndpointError::Socket)?;
         let rc = EndpointRef::new(
             socket,
-            proto::generic::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new)),
+            proto::Endpoint::new(Arc::new(self.config), self.server_config.map(Arc::new)),
             addr.is_ipv6(),
         );
         let driver = EndpointDriver(rc.clone());
@@ -82,7 +72,7 @@ where
     }
 
     /// Accept incoming connections.
-    pub fn listen(&mut self, config: ServerConfig<S>) -> &mut Self {
+    pub fn listen(&mut self, config: ServerConfig) -> &mut Self {
         self.server_config = Some(config);
         self
     }
@@ -91,8 +81,8 @@ where
     ///
     /// The default can be overriden by using [`Endpoint::connect_with()`].
     ///
-    /// [`Endpoint::connect_with()`]: crate::generic::Endpoint::connect_with
-    pub fn default_client_config(&mut self, config: ClientConfig<S>) -> &mut Self {
+    /// [`Endpoint::connect_with()`]: crate::Endpoint::connect_with
+    pub fn default_client_config(&mut self, config: ClientConfig) -> &mut Self {
         self.default_client_config = Some(config);
         self
     }
@@ -110,10 +100,7 @@ where
 }
 
 #[cfg(feature = "tls-rustls")]
-impl<S> Default for EndpointBuilder<S>
-where
-    S: proto::crypto::Session,
-{
+impl Default for EndpointBuilder {
     fn default() -> Self {
         Self {
             server_config: None,
