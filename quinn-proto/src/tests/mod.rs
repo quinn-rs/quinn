@@ -15,7 +15,6 @@ use tracing::info;
 
 use super::*;
 use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
-use crate::crypto::Session as _;
 use crate::{Certificate, CertificateChain, PrivateKey};
 mod util;
 use util::*;

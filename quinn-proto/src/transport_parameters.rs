@@ -19,7 +19,6 @@ use crate::{
     cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     config::{EndpointConfig, ServerConfig, TransportConfig},
-    crypto,
     shared::ConnectionId,
     ResetToken, Side, TransportError, VarInt, LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT,
     RESET_TOKEN_SIZE,
@@ -115,16 +114,13 @@ macro_rules! make_struct {
 apply_params!(make_struct);
 
 impl TransportParameters {
-    pub(crate) fn new<S>(
+    pub(crate) fn new(
         config: &TransportConfig,
         endpoint_config: &EndpointConfig,
         cid_gen: &dyn ConnectionIdGenerator,
         initial_src_cid: ConnectionId,
-        server_config: Option<&ServerConfig<S>>,
-    ) -> Self
-    where
-        S: crypto::Session,
-    {
+        server_config: Option<&ServerConfig>,
+    ) -> Self {
         TransportParameters {
             initial_src_cid: Some(initial_src_cid),
             initial_max_streams_bidi: config.max_concurrent_bidi_streams,

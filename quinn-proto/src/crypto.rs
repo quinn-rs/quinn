@@ -28,7 +28,7 @@ pub mod rustls;
 pub(crate) mod types;
 
 /// A cryptographic session (commonly TLS)
-pub trait Session: Send + Sized {
+pub trait Session: Send + 'static {
     /// Create the initial set of keys given the client's initial destination ConnectionId
     fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys;
 
@@ -112,25 +112,19 @@ pub struct Keys {
 }
 
 /// Client-side configuration for the crypto protocol
-pub trait ClientConfig<S>: Send + Sync
-where
-    S: Session,
-{
+pub trait ClientConfig: Send + Sync {
     /// Start a client session with this configuration
     fn start_session(
         self: Arc<Self>,
         server_name: &str,
         params: &TransportParameters,
-    ) -> Result<S, ConnectError>;
+    ) -> Result<Box<dyn Session>, ConnectError>;
 }
 
 /// Server-side configuration for the crypto protocol
-pub trait ServerConfig<S>: Send + Sync
-where
-    S: Session,
-{
+pub trait ServerConfig: Send + Sync {
     /// Start a server session with this configuration
-    fn start_session(self: Arc<Self>, params: &TransportParameters) -> S;
+    fn start_session(self: Arc<Self>, params: &TransportParameters) -> Box<dyn Session>;
 
     /// Create the initial set of keys given the client's initial destination ConnectionId
     fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys;

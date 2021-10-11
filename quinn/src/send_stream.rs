@@ -20,21 +20,15 @@ use crate::{connection::ConnectionRef, recv_stream::UnknownStream, VarInt};
 ///
 /// [`reset()`]: SendStream::reset
 #[derive(Debug)]
-pub struct SendStream<S>
-where
-    S: proto::crypto::Session,
-{
-    conn: ConnectionRef<S>,
+pub struct SendStream {
+    conn: ConnectionRef,
     stream: StreamId,
     is_0rtt: bool,
     finishing: Option<oneshot::Receiver<Option<WriteError>>>,
 }
 
-impl<S> SendStream<S>
-where
-    S: proto::crypto::Session,
-{
-    pub(crate) fn new(conn: ConnectionRef<S>, stream: StreamId, is_0rtt: bool) -> Self {
+impl SendStream {
+    pub(crate) fn new(conn: ConnectionRef, stream: StreamId, is_0rtt: bool) -> Self {
         Self {
             conn,
             stream,
@@ -47,12 +41,12 @@ where
     ///
     /// Yields the number of bytes written on success. Congestion and flow control may cause this to
     /// be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
-    pub fn write<'a>(&'a mut self, buf: &'a [u8]) -> Write<'a, S> {
+    pub fn write<'a>(&'a mut self, buf: &'a [u8]) -> Write<'a> {
         Write { stream: self, buf }
     }
 
     /// Convenience method to write an entire buffer to the stream
-    pub fn write_all<'a>(&'a mut self, buf: &'a [u8]) -> WriteAll<'a, S> {
+    pub fn write_all<'a>(&'a mut self, buf: &'a [u8]) -> WriteAll<'a> {
         WriteAll { stream: self, buf }
     }
 
@@ -61,12 +55,12 @@ where
     /// Yields the number of bytes and chunks written on success.
     /// Congestion and flow control may cause this to be shorter than `buf.len()`,
     /// indicating that only a prefix of `bufs` was written
-    pub fn write_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> WriteChunks<'a, S> {
+    pub fn write_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> WriteChunks<'a> {
         WriteChunks { stream: self, bufs }
     }
 
     /// Convenience method to write a single chunk in its entirety to the stream
-    pub fn write_chunk(&mut self, buf: Bytes) -> WriteChunk<'_, S> {
+    pub fn write_chunk(&mut self, buf: Bytes) -> WriteChunk<'_> {
         WriteChunk {
             stream: self,
             buf: [buf],
@@ -74,7 +68,7 @@ where
     }
 
     /// Convenience method to write an entire list of chunks to the stream
-    pub fn write_all_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> WriteAllChunks<'a, S> {
+    pub fn write_all_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> WriteAllChunks<'a> {
         WriteAllChunks {
             stream: self,
             bufs,
@@ -118,7 +112,7 @@ where
     ///
     /// No new data may be written after calling this method. Completes when the peer has
     /// acknowledged all sent data, retransmitting data as needed.
-    pub fn finish(&mut self) -> Finish<'_, S> {
+    pub fn finish(&mut self) -> Finish<'_> {
         Finish { stream: self }
     }
 
@@ -200,7 +194,7 @@ where
     }
 
     /// Completes if/when the peer stops the stream, yielding the error code
-    pub fn stopped(&mut self) -> Stopped<'_, S> {
+    pub fn stopped(&mut self) -> Stopped<'_> {
         Stopped { stream: self }
     }
 
@@ -229,10 +223,7 @@ where
     }
 }
 
-impl<S> AsyncWrite for SendStream<S>
-where
-    S: proto::crypto::Session,
-{
+impl AsyncWrite for SendStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
         SendStream::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
     }
@@ -246,10 +237,7 @@ where
     }
 }
 
-impl<S> tokio::io::AsyncWrite for SendStream<S>
-where
-    S: proto::crypto::Session,
-{
+impl tokio::io::AsyncWrite for SendStream {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -267,10 +255,7 @@ where
     }
 }
 
-impl<S> Drop for SendStream<S>
-where
-    S: proto::crypto::Session,
-{
+impl Drop for SendStream {
     fn drop(&mut self) {
         let mut conn = self.conn.lock("SendStream::drop");
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
@@ -293,17 +278,11 @@ where
 
 /// Future produced by `SendStream::finish`
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct Finish<'a, S>
-where
-    S: proto::crypto::Session,
-{
-    stream: &'a mut SendStream<S>,
+pub struct Finish<'a> {
+    stream: &'a mut SendStream,
 }
 
-impl<S> Future for Finish<'_, S>
-where
-    S: proto::crypto::Session,
-{
+impl Future for Finish<'_> {
     type Output = Result<(), WriteError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -313,17 +292,11 @@ where
 
 /// Future produced by `SendStream::stopped`
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct Stopped<'a, S>
-where
-    S: proto::crypto::Session,
-{
-    stream: &'a mut SendStream<S>,
+pub struct Stopped<'a> {
+    stream: &'a mut SendStream,
 }
 
-impl<S> Future for Stopped<'_, S>
-where
-    S: proto::crypto::Session,
-{
+impl Future for Stopped<'_> {
     type Output = Result<VarInt, StoppedError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -335,18 +308,12 @@ where
 ///
 /// [`SendStream::write()`]: crate::generic::SendStream::write
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct Write<'a, S>
-where
-    S: proto::crypto::Session,
-{
-    stream: &'a mut SendStream<S>,
+pub struct Write<'a> {
+    stream: &'a mut SendStream,
     buf: &'a [u8],
 }
 
-impl<'a, S> Future for Write<'a, S>
-where
-    S: proto::crypto::Session,
-{
+impl<'a> Future for Write<'a> {
     type Output = Result<usize, WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -359,18 +326,12 @@ where
 ///
 /// [`SendStream::write_all()`]: crate::generic::SendStream::write_all
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct WriteAll<'a, S>
-where
-    S: proto::crypto::Session,
-{
-    stream: &'a mut SendStream<S>,
+pub struct WriteAll<'a> {
+    stream: &'a mut SendStream,
     buf: &'a [u8],
 }
 
-impl<'a, S> Future for WriteAll<'a, S>
-where
-    S: proto::crypto::Session,
-{
+impl<'a> Future for WriteAll<'a> {
     type Output = Result<(), WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -389,18 +350,12 @@ where
 ///
 /// [`SendStream::write_chunks()`]: crate::generic::SendStream::write_chunks
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct WriteChunks<'a, S>
-where
-    S: proto::crypto::Session,
-{
-    stream: &'a mut SendStream<S>,
+pub struct WriteChunks<'a> {
+    stream: &'a mut SendStream,
     bufs: &'a mut [Bytes],
 }
 
-impl<'a, S> Future for WriteChunks<'a, S>
-where
-    S: proto::crypto::Session,
-{
+impl<'a> Future for WriteChunks<'a> {
     type Output = Result<Written, WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -413,18 +368,12 @@ where
 ///
 /// [`SendStream::write_chunk()`]: crate::generic::SendStream::write_chunk
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct WriteChunk<'a, S>
-where
-    S: proto::crypto::Session,
-{
-    stream: &'a mut SendStream<S>,
+pub struct WriteChunk<'a> {
+    stream: &'a mut SendStream,
     buf: [Bytes; 1],
 }
 
-impl<'a, S> Future for WriteChunk<'a, S>
-where
-    S: proto::crypto::Session,
-{
+impl<'a> Future for WriteChunk<'a> {
     type Output = Result<(), WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -442,19 +391,13 @@ where
 ///
 /// [`SendStream::write_all_chunks()`]: crate::generic::SendStream::write_all_chunks
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct WriteAllChunks<'a, S>
-where
-    S: proto::crypto::Session,
-{
-    stream: &'a mut SendStream<S>,
+pub struct WriteAllChunks<'a> {
+    stream: &'a mut SendStream,
     bufs: &'a mut [Bytes],
     offset: usize,
 }
 
-impl<'a, S> Future for WriteAllChunks<'a, S>
-where
-    S: proto::crypto::Session,
-{
+impl<'a> Future for WriteAllChunks<'a> {
     type Output = Result<(), WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
