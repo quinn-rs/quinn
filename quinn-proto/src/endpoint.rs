@@ -463,7 +463,7 @@ where
                 };
                 (
                     Some(config.clone()),
-                    config.crypto.start_session(&server_params),
+                    config.crypto.clone().start_session(&server_params),
                     config.transport.clone(),
                 )
             }

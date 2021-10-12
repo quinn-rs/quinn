@@ -427,7 +427,7 @@ where
     /// TLS configuration used for incoming connections.
     ///
     /// Must be set to use TLS 1.3 only.
-    pub crypto: S::ServerConfig,
+    pub crypto: Arc<S::ServerConfig>,
 
     /// Used to generate one-time AEAD keys to protect handshake tokens
     pub(crate) token_key: Arc<dyn HandshakeTokenKey>,
@@ -454,7 +454,7 @@ where
     S: crypto::Session,
 {
     /// Create a default config with a particular handshake token key
-    pub fn new(crypto: S::ServerConfig, token_key: Arc<dyn HandshakeTokenKey>) -> Self {
+    pub fn new(crypto: Arc<S::ServerConfig>, token_key: Arc<dyn HandshakeTokenKey>) -> Self {
         Self {
             transport: Arc::new(TransportConfig::default()),
             crypto,
@@ -557,7 +557,6 @@ where
 impl<S> Clone for ServerConfig<S>
 where
     S: crypto::Session,
-    S::ServerConfig: Clone,
 {
     fn clone(&self) -> Self {
         Self {
@@ -583,7 +582,7 @@ where
     pub transport: Arc<TransportConfig>,
 
     /// Cryptographic configuration to use
-    pub crypto: S::ClientConfig,
+    pub crypto: Arc<S::ClientConfig>,
 }
 
 #[cfg(feature = "rustls")]
@@ -631,7 +630,6 @@ impl ClientConfig<crypto::rustls::TlsSession> {
 impl<S> Clone for ClientConfig<S>
 where
     S: crypto::Session,
-    S::ClientConfig: Clone,
 {
     fn clone(&self) -> Self {
         Self {

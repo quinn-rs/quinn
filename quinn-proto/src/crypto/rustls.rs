@@ -37,8 +37,8 @@ impl TlsSession {
 }
 
 impl crypto::Session for TlsSession {
-    type ClientConfig = Arc<rustls::ClientConfig>;
-    type ServerConfig = Arc<rustls::ServerConfig>;
+    type ClientConfig = rustls::ClientConfig;
+    type ServerConfig = rustls::ServerConfig;
 
     fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys {
         let keys = rustls::quic::Keys::initial(Version::V1Draft, dst_cid, side.is_client());
@@ -268,9 +268,9 @@ pub struct HandshakeData {
     pub server_name: Option<String>,
 }
 
-impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
+impl crypto::ClientConfig<TlsSession> for rustls::ClientConfig {
     fn start_session(
-        &self,
+        self: Arc<Self>,
         server_name: &str,
         params: &TransportParameters,
     ) -> Result<TlsSession, ConnectError> {
@@ -280,7 +280,7 @@ impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
             next_secrets: None,
             inner: Connection::Client(
                 rustls::ClientConnection::new_quic(
-                    self.clone(),
+                    self,
                     Version::V1Draft,
                     server_name
                         .try_into()
@@ -293,15 +293,14 @@ impl crypto::ClientConfig<TlsSession> for Arc<rustls::ClientConfig> {
     }
 }
 
-impl crypto::ServerConfig<TlsSession> for Arc<rustls::ServerConfig> {
-    fn start_session(&self, params: &TransportParameters) -> TlsSession {
+impl crypto::ServerConfig<TlsSession> for rustls::ServerConfig {
+    fn start_session(self: Arc<Self>, params: &TransportParameters) -> TlsSession {
         TlsSession {
             using_alpn: !self.alpn_protocols.is_empty(),
             got_handshake_data: false,
             next_secrets: None,
             inner: Connection::Server(
-                rustls::ServerConnection::new_quic(self.clone(), Version::V1Draft, to_vec(params))
-                    .unwrap(),
+                rustls::ServerConnection::new_quic(self, Version::V1Draft, to_vec(params)).unwrap(),
             ),
         }
     }
