@@ -8,7 +8,7 @@
 //! Note that usage of any protocol (version) other than TLS 1.3 does not conform to any
 //! published versions of the specification, and will not be supported in QUIC v1.
 
-use std::{any::Any, str};
+use std::{any::Any, str, sync::Arc};
 
 use bytes::BytesMut;
 
@@ -120,25 +120,25 @@ pub struct Keys {
 }
 
 /// Client-side configuration for the crypto protocol
-pub trait ClientConfig<S>: Clone
+pub trait ClientConfig<S>
 where
     S: Session,
 {
     /// Start a client session with this configuration
     fn start_session(
-        &self,
+        self: Arc<Self>,
         server_name: &str,
         params: &TransportParameters,
     ) -> Result<S, ConnectError>;
 }
 
 /// Server-side configuration for the crypto protocol
-pub trait ServerConfig<S>: Clone + Send + Sync
+pub trait ServerConfig<S>: Send + Sync
 where
     S: Session,
 {
     /// Start a server session with this configuration
-    fn start_session(&self, params: &TransportParameters) -> S;
+    fn start_session(self: Arc<Self>, params: &TransportParameters) -> S;
 }
 
 /// Keys used to protect packet payloads
