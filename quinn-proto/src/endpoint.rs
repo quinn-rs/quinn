@@ -803,6 +803,7 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
 }
 
 /// Event resulting from processing a single datagram
+#[allow(clippy::large_enum_variant)] // Not passed around extensively
 pub enum DatagramEvent {
     /// The datagram is redirected to its `Connection`
     ConnectionEvent(ConnectionEvent),

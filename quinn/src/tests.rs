@@ -434,7 +434,7 @@ fn run_echo(args: EchoArgs) {
         let key = crate::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
         let cert_der = cert.serialize_der().unwrap();
         let cert = crate::Certificate::from_der(&cert_der).unwrap();
-        let cert_chain = crate::CertificateChain::from_certs(vec![cert.clone()]);
+        let cert_chain = crate::CertificateChain::from_certs(vec![cert]);
         let mut server_config = crate::ServerConfig::with_single_cert(cert_chain, key).unwrap();
 
         let mut server = Endpoint::builder();
