@@ -23,9 +23,6 @@ pub struct State {
 
     w_last_max: f64,
 
-    // Used in CUBIC fix (see on_packet_sent())
-    last_sent_time: Option<Instant>,
-
     // Store cwnd increment during congestion avoidance.
     cwnd_inc: u64,
 }
