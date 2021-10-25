@@ -492,7 +492,6 @@ pub(crate) enum PlainHeader {
         version: u32,
     },
     Short {
-        first: u8,
         spin: bool,
         dst_cid: ConnectionId,
     },
@@ -536,7 +535,6 @@ impl PlainHeader {
             }
 
             Ok(PlainHeader::Short {
-                first,
                 spin,
                 dst_cid: ConnectionId::from_buf(buf, local_cid_len),
             })
