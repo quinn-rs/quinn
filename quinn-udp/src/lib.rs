@@ -1,6 +1,7 @@
 //! Uniform interface to send/recv UDP packets with ECN information.
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
+    sync::atomic::{AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 
@@ -26,7 +27,7 @@ pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
 /// The capabilities a UDP socket suppports on a certain platform
 #[derive(Debug)]
 pub struct UdpState {
-    max_gso_segments: usize,
+    max_gso_segments: AtomicUsize,
 }
 
 impl UdpState {
@@ -37,10 +38,11 @@ impl UdpState {
     /// The maximum amount of segments which can be transmitted if a platform
     /// supports Generic Send Offload (GSO).
     ///
-    /// This is 1 if the platform doesn't support GSO.
+    /// This is 1 if the platform doesn't support GSO. Subject to change if errors are detected
+    /// while using GSO.
     #[inline]
     pub fn max_gso_segments(&self) -> usize {
-        self.max_gso_segments
+        self.max_gso_segments.load(Ordering::Relaxed)
     }
 }
 
