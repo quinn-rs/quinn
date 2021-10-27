@@ -23,6 +23,3 @@ proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.7" }
 socket2 = "0.4"
 tracing = "0.1.10"
 tokio = { version = "1.0.1", features = ["net"] }
-
-[target.'cfg(unix)'.dependencies]
-lazy_static = "1"

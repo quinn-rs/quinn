@@ -19,7 +19,7 @@ use fxhash::FxHashMap;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
-use udp::{RecvMeta, UdpSocket, BATCH_SIZE};
+use udp::{RecvMeta, UdpSocket, UdpState, BATCH_SIZE};
 
 use crate::{
     broadcast::{self, Broadcast},
@@ -92,7 +92,8 @@ impl Endpoint {
             *addr
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
-        Ok(endpoint.connections.insert(ch, conn))
+        let udp_state = endpoint.udp_state.clone();
+        Ok(endpoint.connections.insert(ch, conn, udp_state))
     }
 
     /// Switch to a new UDP socket
@@ -240,6 +241,7 @@ impl Drop for EndpointDriver {
 #[derive(Debug)]
 pub(crate) struct EndpointInner {
     socket: UdpSocket,
+    udp_state: Arc<UdpState>,
     inner: proto::Endpoint,
     outgoing: VecDeque<proto::Transmit>,
     incoming: VecDeque<Connecting>,
@@ -283,7 +285,9 @@ impl EndpointInner {
                             .handle(now, meta.addr, meta.dst_ip, meta.ecn, data)
                         {
                             Some((handle, DatagramEvent::NewConnection(conn))) => {
-                                let conn = self.connections.insert(handle, conn);
+                                let conn =
+                                    self.connections
+                                        .insert(handle, conn, self.udp_state.clone());
                                 self.incoming.push_back(conn);
                             }
                             Some((handle, DatagramEvent::ConnectionEvent(event))) => {
@@ -407,7 +411,12 @@ struct ConnectionSet {
 }
 
 impl ConnectionSet {
-    fn insert(&mut self, handle: ConnectionHandle, conn: proto::Connection) -> Connecting {
+    fn insert(
+        &mut self,
+        handle: ConnectionHandle,
+        conn: proto::Connection,
+        udp_state: Arc<UdpState>,
+    ) -> Connecting {
         let (send, recv) = mpsc::unbounded();
         if let Some((error_code, ref reason)) = self.close {
             send.unbounded_send(ConnectionEvent::Close {
@@ -417,7 +426,7 @@ impl ConnectionSet {
             .unwrap();
         }
         self.senders.insert(handle, send);
-        Connecting::new(handle, conn, self.sender.clone(), recv)
+        Connecting::new(handle, conn, self.sender.clone(), recv, udp_state)
     }
 
     fn is_empty(&self) -> bool {
@@ -479,6 +488,7 @@ impl EndpointRef {
         let (sender, events) = mpsc::unbounded();
         Self(Arc::new(Mutex::new(EndpointInner {
             socket,
+            udp_state: Arc::new(UdpState::new()),
             inner,
             ipv6,
             events,

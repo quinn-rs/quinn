@@ -10,11 +10,10 @@ use std::{
 };
 
 use futures_util::ready;
-use lazy_static::lazy_static;
 use proto::{EcnCodepoint, Transmit};
 use tokio::io::unix::AsyncFd;
 
-use super::{cmsg, log_sendmsg_error, RecvMeta, UdpCapabilities, IO_ERROR_LOG_INTERVAL};
+use super::{cmsg, log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
@@ -367,8 +366,10 @@ fn recv(
 }
 
 /// Returns the platforms UDP socket capabilities
-pub fn caps() -> UdpCapabilities {
-    *CAPABILITIES
+pub fn udp_state() -> UdpState {
+    UdpState {
+        max_gso_segments: gso::max_gso_segments(),
+    }
 }
 
 const CMSG_LEN: usize = 88;
@@ -406,11 +407,6 @@ fn prepare_msg(
     }
 
     if let Some(segment_size) = transmit.segment_size {
-        debug_assert!(
-            caps().max_gso_segments > 1,
-            "Platform must support GSO for setting segment size"
-        );
-
         gso::set_segment_size(&mut encoder, segment_size as u16);
     }
 
@@ -567,12 +563,4 @@ mod gso {
     pub fn set_segment_size(_encoder: &mut cmsg::Encoder, _segment_size: u16) {
         panic!("Setting a segment size is not supported on current platform");
     }
-}
-
-lazy_static! {
-    static ref CAPABILITIES: UdpCapabilities = {
-        UdpCapabilities {
-            max_gso_segments: gso::max_gso_segments(),
-        }
-    };
 }
