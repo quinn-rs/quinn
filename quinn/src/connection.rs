@@ -18,7 +18,7 @@ use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent
 use thiserror::Error;
 use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use tracing::info_span;
-use udp::caps;
+use udp::UdpState;
 
 use crate::{
     broadcast::{self, Broadcast},
@@ -43,6 +43,7 @@ impl Connecting {
         conn: proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
+        udp_state: Arc<UdpState>,
     ) -> Connecting {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
@@ -53,6 +54,7 @@ impl Connecting {
             conn_events,
             on_handshake_data_send,
             on_connected_send,
+            udp_state,
         );
 
         tokio::spawn(ConnectionDriver(conn.clone()));
@@ -659,6 +661,7 @@ impl ConnectionRef {
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         on_handshake_data: oneshot::Sender<()>,
         on_connected: oneshot::Sender<bool>,
+        udp_state: Arc<UdpState>,
     ) -> Self {
         Self(Arc::new(Mutex::new(ConnectionInner {
             inner: conn,
@@ -682,6 +685,7 @@ impl ConnectionRef {
             stopped: FxHashMap::default(),
             error: None,
             ref_count: 0,
+            udp_state,
         })))
     }
 
@@ -744,6 +748,7 @@ pub struct ConnectionInner {
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
+    udp_state: Arc<UdpState>,
 }
 
 impl ConnectionInner {
@@ -751,7 +756,7 @@ impl ConnectionInner {
         let now = Instant::now();
         let mut transmits = 0;
 
-        let max_datagrams = caps().max_gso_segments;
+        let max_datagrams = self.udp_state.max_gso_segments();
 
         while let Some(t) = self.inner.poll_transmit(now, max_datagrams) {
             transmits += match t.segment_size {

@@ -92,8 +92,8 @@ impl UdpSocket {
 }
 
 /// Returns the platforms UDP socket capabilities
-pub fn caps() -> super::UdpCapabilities {
-    super::UdpCapabilities {
+pub fn udp_state() -> super::UdpState {
+    super::UdpState {
         max_gso_segments: 1,
     }
 }
