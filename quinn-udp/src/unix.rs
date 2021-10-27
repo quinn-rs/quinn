@@ -5,6 +5,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     os::unix::io::AsRawFd,
     ptr,
+    sync::atomic::AtomicUsize,
     task::{Context, Poll},
     time::Instant,
 };
@@ -44,13 +45,16 @@ impl UdpSocket {
 
     pub fn poll_send(
         &mut self,
+        state: &UdpState,
         cx: &mut Context,
         transmits: &[Transmit],
     ) -> Poll<Result<usize, io::Error>> {
         loop {
             let last_send_error = &mut self.last_send_error;
             let mut guard = ready!(self.io.poll_write_ready(cx))?;
-            if let Ok(res) = guard.try_io(|io| send(io.get_ref(), last_send_error, transmits)) {
+            if let Ok(res) =
+                guard.try_io(|io| send(state, io.get_ref(), last_send_error, transmits))
+            {
                 return Poll::Ready(res);
             }
         }
@@ -189,6 +193,7 @@ fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 fn send(
+    state: &UdpState,
     io: &mio::net::UdpSocket,
     last_send_error: &mut Instant,
     transmits: &[Transmit],
@@ -234,6 +239,21 @@ fn send(
                 }
                 io::ErrorKind::WouldBlock => return Err(e),
                 _ => {
+                    // Some network adapters do not support GSO. Unfortunately, Linux offers no easy way
+                    // for us to detect this short of an I/O error when we try to actually send
+                    // datagrams using it.
+                    #[cfg(target_os = "linux")]
+                    if e.raw_os_error() == Some(libc::EIO) {
+                        // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
+                        // may already be in the pipeline, so we need to tolerate additional failures.
+                        if state.max_gso_segments() > 1 {
+                            tracing::error!("got EIO, halting segmentation offload");
+                            state
+                                .max_gso_segments
+                                .store(1, std::sync::atomic::Ordering::Relaxed);
+                        }
+                    }
+
                     // Other errors are ignored, since they will ususally be handled
                     // by higher level retransmits and timeouts.
                     // - PermissionDenied errors have been observed due to iptable rules.
@@ -256,6 +276,7 @@ fn send(
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn send(
+    _state: &UdpState,
     io: &mio::net::UdpSocket,
     last_send_error: &mut Instant,
     transmits: &[Transmit],
@@ -368,7 +389,7 @@ fn recv(
 /// Returns the platforms UDP socket capabilities
 pub fn udp_state() -> UdpState {
     UdpState {
-        max_gso_segments: gso::max_gso_segments(),
+        max_gso_segments: AtomicUsize::new(gso::max_gso_segments()),
     }
 }
 

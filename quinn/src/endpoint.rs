@@ -344,7 +344,10 @@ impl EndpointInner {
                 break Ok(true);
             }
 
-            match self.socket.poll_send(cx, self.outgoing.as_slices().0) {
+            match self
+                .socket
+                .poll_send(&self.udp_state, cx, self.outgoing.as_slices().0)
+            {
                 Poll::Ready(Ok(n)) => {
                     self.outgoing.drain(..n);
                     // We count transmits instead of `poll_send` calls since the cost

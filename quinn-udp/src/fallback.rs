@@ -9,7 +9,7 @@ use futures_util::ready;
 use proto::Transmit;
 use tokio::io::ReadBuf;
 
-use super::{log_sendmsg_error, RecvMeta, IO_ERROR_LOG_INTERVAL};
+use super::{log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
 
 /// Tokio-compatible UDP socket with some useful specializations.
 ///
@@ -33,6 +33,7 @@ impl UdpSocket {
 
     pub fn poll_send(
         &mut self,
+        _state: &UdpState,
         cx: &mut Context,
         transmits: &[Transmit],
     ) -> Poll<Result<usize, io::Error>> {
@@ -94,7 +95,7 @@ impl UdpSocket {
 /// Returns the platforms UDP socket capabilities
 pub fn udp_state() -> super::UdpState {
     super::UdpState {
-        max_gso_segments: 1,
+        max_gso_segments: std::sync::atomic::AtomicUsize::new(1),
     }
 }
 
