@@ -87,11 +87,10 @@ use timer::{Timer, TimerTable};
 ///
 /// - A. Simple getters, taking `&self`
 /// - B. Handlers for incoming events from the network or system, named `handle_*`.
-/// - C. State machine mutators, for incoming commands from the application. For
-///   convenience we refer to this as "performing I/O" below, however as per
-///   the design of this library none of the functions actually perform
-///   system-level I/O. For example, [`read`](self::read) and [`write`](self::write),
-///   but also things like [`reset`](self::reset).
+/// - C. State machine mutators, for incoming commands from the application. For convenience we
+///   refer to this as "performing I/O" below, however as per the design of this library none of the
+///   functions actually perform system-level I/O. For example, [`read`](RecvStream::read) and
+///   [`write`](SendStream::write), but also things like [`reset`](SendStream::reset).
 /// - D. Polling functions for outgoing events or actions for the caller to
 ///   take, named `poll_*`.
 ///
@@ -101,10 +100,10 @@ use timer::{Timer, TimerTable};
 /// passing it to the application or by making a system-level I/O call. You
 /// should call the polling functions in this order:
 ///
-/// 1. [`poll_transmit`](self::poll_transmit)
-/// 2. [`poll_timeout`](self::poll_timeout)
-/// 3. [`poll_endpoint_events`](self::poll_endpoint_events)
-/// 4. [`poll`](self::poll)
+/// 1. [`poll_transmit`](Self::poll_transmit)
+/// 2. [`poll_timeout`](Self::poll_timeout)
+/// 3. [`poll_endpoint_events`](Self::poll_endpoint_events)
+/// 4. [`poll`](Self::poll)
 ///
 /// Currently the only actual dependency is from (2) to (1), however additional
 /// dependencies may be added in future, so the above order is recommended.
@@ -112,9 +111,9 @@ use timer::{Timer, TimerTable};
 /// (A) may be called whenever desired.
 ///
 /// Care should be made to ensure that the input events represent monotonically
-/// increasing time. Specifically, calling [`handle_timeout`](self::handle_timeout)
+/// increasing time. Specifically, calling [`handle_timeout`](Self::handle_timeout)
 /// with events of the same [`Instant`] may be interleaved in any order with a
-/// call to [`handle_event`](self::handle_event) at that same instant; however
+/// call to [`handle_event`](Self::handle_event) at that same instant; however
 /// events or timeouts with different instants must not be interleaved.
 pub struct Connection<S>
 where
@@ -958,10 +957,10 @@ where
     ///
     /// This does not ensure delivery of outstanding data. It is the application's responsibility to
     /// call this only when all important communications have been completed, e.g. by calling
-    /// [`Connection::finish`] on outstanding streams and waiting for the corresponding
+    /// [`SendStream::finish`] on outstanding streams and waiting for the corresponding
     /// [`StreamEvent::Finished`] event.
     ///
-    /// If [`Connection::send_streams`] returns 0, all outstanding stream data has been
+    /// If [`Streams::send_streams`] returns 0, all outstanding stream data has been
     /// delivered. There may still be data from the peer that has not been received.
     ///
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
