@@ -66,6 +66,10 @@ jobs:
           toolchain: stable
           override: true
           components: clippy
+      - name: doc
+        run: cargo doc --no-deps
+        env:
+          RUSTDOCFLAGS: -Dwarnings
       - name: lint fuzz
         run: |
           cd fuzz
