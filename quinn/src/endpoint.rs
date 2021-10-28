@@ -23,10 +23,10 @@ use udp::{RecvMeta, UdpSocket, UdpState, BATCH_SIZE};
 
 use crate::{
     broadcast::{self, Broadcast},
-    builders::EndpointBuilder,
     connection::Connecting,
     work_limiter::WorkLimiter,
-    ConnectionEvent, EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND, SEND_TIME_BOUND,
+    ConnectionEvent, EndpointConfig, EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND,
+    SEND_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -42,9 +42,68 @@ pub struct Endpoint {
 }
 
 impl Endpoint {
-    /// Begin constructing an `Endpoint`
-    pub fn builder() -> EndpointBuilder {
-        EndpointBuilder::default()
+    /// Helper to construct an endpoint for use with outgoing connections only
+    ///
+    /// Must be called from within a tokio runtime context. Note that `addr` is the *local* address
+    /// to bind to, which should usually be a wildcard address like `0.0.0.0:0` or `[::]:0`, which
+    /// allow communication with any reachable IPv4 or IPv6 address respectively from an OS-assigned
+    /// port.
+    ///
+    /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
+    /// IPv6 address on Windows will not by default be able to communicate with IPv4
+    /// addresses. Portable applications should bind an address that matches the family they wish to
+    /// communicate within.
+    pub fn client(addr: &SocketAddr) -> io::Result<Self> {
+        let socket = std::net::UdpSocket::bind(addr)?;
+        Ok(Self::new(EndpointConfig::default(), None, socket)?.0)
+    }
+
+    /// Helper to construct an endpoint for use with both incoming and outgoing connections
+    ///
+    /// Must be called from within a tokio runtime context.
+    ///
+    /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
+    /// IPv6 address on Windows will not by default be able to communicate with IPv4
+    /// addresses. Portable applications should bind an address that matches the family they wish to
+    /// communicate within.
+    pub fn server(config: ServerConfig, addr: &SocketAddr) -> io::Result<(Self, Incoming)> {
+        let socket = std::net::UdpSocket::bind(addr)?;
+        Self::new(EndpointConfig::default(), Some(config), socket)
+    }
+
+    /// Construct an endpoint with arbitrary configuration
+    ///
+    /// Must be called from within a tokio runtime context.
+    pub fn new(
+        config: EndpointConfig,
+        server_config: Option<ServerConfig>,
+        socket: std::net::UdpSocket,
+    ) -> io::Result<(Self, Incoming)> {
+        let addr = socket.local_addr()?;
+        let socket = UdpSocket::from_std(socket)?;
+        let rc = EndpointRef::new(
+            socket,
+            proto::Endpoint::new(Arc::new(config), server_config.map(Arc::new)),
+            addr.is_ipv6(),
+        );
+        let driver = EndpointDriver(rc.clone());
+        tokio::spawn(async {
+            if let Err(e) = driver.await {
+                tracing::error!("I/O error: {}", e);
+            }
+        });
+        Ok((
+            Self {
+                inner: rc.clone(),
+                default_client_config: None,
+            },
+            Incoming::new(rc),
+        ))
+    }
+
+    /// Set the client configuration used by `connect`
+    pub fn set_default_client_config(&mut self, config: ClientConfig) {
+        self.default_client_config = Some(config);
     }
 
     /// Connect to a remote endpoint

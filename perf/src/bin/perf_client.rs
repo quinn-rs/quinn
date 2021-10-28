@@ -104,9 +104,7 @@ async fn run(opt: Opt) -> Result<()> {
 
     let socket = bind_socket(bind_addr, opt.send_buffer_size, opt.recv_buffer_size)?;
 
-    let endpoint = quinn::EndpointBuilder::default();
-
-    let (endpoint, _) = endpoint.with_socket(socket).context("binding endpoint")?;
+    let (endpoint, _) = quinn::Endpoint::new(Default::default(), None, socket)?;
 
     let mut crypto = rustls::ClientConfig::builder()
         .with_cipher_suites(perf::PERF_CIPHER_SUITES)

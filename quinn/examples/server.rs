@@ -140,15 +140,12 @@ async fn run(options: Opt) -> Result<()> {
         server_config.use_stateless_retry(true);
     }
 
-    let mut endpoint = quinn::Endpoint::builder();
-    endpoint.listen(server_config);
-
     let root = Arc::<Path>::from(options.root.clone());
     if !root.exists() {
         bail!("root path does not exist");
     }
 
-    let (endpoint, mut incoming) = endpoint.bind(&options.listen)?;
+    let (endpoint, mut incoming) = quinn::Endpoint::server(server_config, &options.listen)?;
     eprintln!("listening on {}", endpoint.local_addr()?);
 
     while let Some(conn) = incoming.next().await {

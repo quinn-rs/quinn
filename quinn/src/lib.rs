@@ -8,17 +8,6 @@
 //!
 //! The entry point of this crate is the [`Endpoint`](generic/struct.Endpoint.html).
 //!
-#![cfg_attr(
-    feature = "rustls",
-    doc = "```no_run
-# use futures_util::TryFutureExt;
-let mut builder = quinn::Endpoint::builder();
-// ... configure builder ...
-// Ensure you're inside a tokio runtime context
-let (endpoint, _) = builder.bind(&\"[::]:0\".parse().unwrap()).unwrap();
-// ... use endpoint ...
-```"
-)]
 //! # About QUIC
 //!
 //! A QUIC connection is an association between two endpoints. The endpoint which initiates the
@@ -53,7 +42,6 @@ let (endpoint, _) = builder.bind(&\"[::]:0\".parse().unwrap()).unwrap();
 use std::time::Duration;
 
 mod broadcast;
-mod builders;
 mod connection;
 mod endpoint;
 mod mutex;
@@ -67,7 +55,6 @@ pub use proto::{
     TransportConfig, VarInt,
 };
 
-pub use crate::builders::{EndpointBuilder, EndpointError};
 pub use crate::connection::{
     Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
     OpenBi, OpenUni, SendDatagramError, ZeroRttAccepted,

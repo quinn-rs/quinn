@@ -95,13 +95,11 @@ async fn run(options: Opt) -> Result<()> {
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
-    let mut endpoint = quinn::Endpoint::builder();
-    endpoint.default_client_config(quinn::ClientConfig {
+    let mut endpoint = quinn::Endpoint::client(&"[::]:0".parse().unwrap())?;
+    endpoint.set_default_client_config(quinn::ClientConfig {
         crypto: Arc::new(client_crypto),
         transport: Default::default(),
     });
-
-    let (endpoint, _) = endpoint.bind(&"[::]:0".parse().unwrap())?;
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();

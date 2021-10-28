@@ -100,12 +100,10 @@ impl Context {
         let addr = sock.local_addr().unwrap();
         let config = self.server_config.clone();
         let handle = thread::spawn(move || {
-            let mut endpoint = Endpoint::builder();
-            endpoint.listen(config);
             let runtime = rt();
             let (_, mut incoming) = {
                 let _guard = runtime.enter();
-                endpoint.with_socket(sock).unwrap()
+                Endpoint::new(Default::default(), Some(config), sock).unwrap()
             };
             let handle = runtime.spawn(
                 async move {
@@ -141,11 +139,9 @@ impl Context {
         server_addr: SocketAddr,
     ) -> (quinn::Endpoint, quinn::Connection, Runtime) {
         let runtime = rt();
-        let (endpoint, _) = {
+        let endpoint = {
             let _guard = runtime.enter();
-            Endpoint::builder()
-                .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
-                .unwrap()
+            Endpoint::client(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap()
         };
         let quinn::NewConnection { connection, .. } = runtime
             .block_on(async {

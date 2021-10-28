@@ -15,9 +15,8 @@ pub fn make_client_endpoint(
     server_certs: &[&[u8]],
 ) -> Result<Endpoint, Box<dyn Error>> {
     let client_cfg = configure_client(server_certs)?;
-    let mut endpoint_builder = Endpoint::builder();
-    endpoint_builder.default_client_config(client_cfg);
-    let (endpoint, _incoming) = endpoint_builder.bind(&bind_addr)?;
+    let mut endpoint = Endpoint::client(&bind_addr)?;
+    endpoint.set_default_client_config(client_cfg);
     Ok(endpoint)
 }
 
@@ -31,9 +30,7 @@ pub fn make_client_endpoint(
 #[allow(unused)]
 pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Incoming, Vec<u8>), Box<dyn Error>> {
     let (server_config, server_cert) = configure_server()?;
-    let mut endpoint_builder = Endpoint::builder();
-    endpoint_builder.listen(server_config);
-    let (_endpoint, incoming) = endpoint_builder.bind(&bind_addr)?;
+    let (_endpoint, incoming) = Endpoint::server(server_config, &bind_addr)?;
     Ok((incoming, server_cert))
 }
 
