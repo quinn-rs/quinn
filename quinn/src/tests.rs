@@ -21,8 +21,7 @@ use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
 use super::{
-    crypto, ClientConfig, Endpoint, Incoming, NewConnection, RecvStream, SendStream,
-    TransportConfig,
+    ClientConfig, Endpoint, Incoming, NewConnection, RecvStream, SendStream, TransportConfig,
 };
 
 #[test]
@@ -453,7 +452,10 @@ fn run_echo(args: EchoArgs) {
 
         let mut roots = rustls::RootCertStore::empty();
         roots.add(&cert).unwrap();
-        let mut client_crypto = crypto::rustls::client_config(roots);
+        let mut client_crypto = rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(roots)
+            .with_no_client_auth();
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
 
         let mut client = Endpoint::builder();

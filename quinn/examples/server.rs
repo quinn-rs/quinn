@@ -123,7 +123,10 @@ async fn run(options: Opt) -> Result<()> {
         (vec![cert], key)
     };
 
-    let mut server_crypto = quinn::crypto::rustls::server_config(certs, key)?;
+    let mut server_crypto = rustls::ServerConfig::builder()
+        .with_safe_defaults()
+        .with_no_client_auth()
+        .with_single_cert(certs, key)?;
     server_crypto.alpn_protocols = common::ALPN_QUIC_HTTP.iter().map(|&x| x.into()).collect();
     if options.keylog {
         server_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
