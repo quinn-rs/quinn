@@ -300,7 +300,7 @@ impl<T> From<(Option<T>, Option<proto::ReadError>)> for ReadStatus<T> {
 
 /// Future produced by [`RecvStream::read_to_end()`].
 ///
-/// [`RecvStream::read_to_end()`]: crate::generic::RecvStream::read_to_end
+/// [`RecvStream::read_to_end()`]: crate::RecvStream::read_to_end
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct ReadToEnd {
     stream: RecvStream,
@@ -344,7 +344,7 @@ impl Future for ReadToEnd {
 
 /// Error from the [`ReadToEnd`] future.
 ///
-/// [`ReadToEnd`]: crate::generic::ReadToEnd
+/// [`ReadToEnd`]: crate::ReadToEnd
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadToEndError {
     /// An error occurred during reading
@@ -417,7 +417,7 @@ pub enum ReadError {
     /// Can only occur on clients for 0-RTT streams, which can be opened using
     /// [`Connecting::into_0rtt()`].
     ///
-    /// [`Connecting::into_0rtt()`]: crate::generic::Connecting::into_0rtt()
+    /// [`Connecting::into_0rtt()`]: crate::Connecting::into_0rtt()
     #[error("0-RTT rejected")]
     ZeroRttRejected,
 }
@@ -445,7 +445,7 @@ impl From<ReadError> for io::Error {
 
 /// Future produced by [`RecvStream::read()`].
 ///
-/// [`RecvStream::read()`]: crate::generic::RecvStream::read
+/// [`RecvStream::read()`]: crate::RecvStream::read
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct Read<'a> {
     stream: &'a mut RecvStream,
@@ -467,7 +467,7 @@ impl<'a> Future for Read<'a> {
 
 /// Future produced by [`RecvStream::read_exact()`].
 ///
-/// [`RecvStream::read_exact()`]: crate::generic::RecvStream::read_exact
+/// [`RecvStream::read_exact()`]: crate::RecvStream::read_exact
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct ReadExact<'a> {
     stream: &'a mut RecvStream,
@@ -504,7 +504,7 @@ pub enum ReadExactError {
 
 /// Future produced by [`RecvStream::read_chunk()`].
 ///
-/// [`RecvStream::read_chunk()`]: crate::generic::RecvStream::read_chunk
+/// [`RecvStream::read_chunk()`]: crate::RecvStream::read_chunk
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct ReadChunk<'a> {
     stream: &'a mut RecvStream,
@@ -522,7 +522,7 @@ impl<'a> Future for ReadChunk<'a> {
 
 /// Future produced by [`RecvStream::read_chunks()`].
 ///
-/// [`RecvStream::read_chunks()`]: crate::generic::RecvStream::read_chunks
+/// [`RecvStream::read_chunks()`]: crate::RecvStream::read_chunks
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct ReadChunks<'a> {
     stream: &'a mut RecvStream,

@@ -306,7 +306,7 @@ impl Future for Stopped<'_> {
 
 /// Future produced by [`SendStream::write()`].
 ///
-/// [`SendStream::write()`]: crate::generic::SendStream::write
+/// [`SendStream::write()`]: crate::SendStream::write
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct Write<'a> {
     stream: &'a mut SendStream,
@@ -324,7 +324,7 @@ impl<'a> Future for Write<'a> {
 
 /// Future produced by [`SendStream::write_all()`].
 ///
-/// [`SendStream::write_all()`]: crate::generic::SendStream::write_all
+/// [`SendStream::write_all()`]: crate::SendStream::write_all
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct WriteAll<'a> {
     stream: &'a mut SendStream,
@@ -348,7 +348,7 @@ impl<'a> Future for WriteAll<'a> {
 
 /// Future produced by [`SendStream::write_chunks()`].
 ///
-/// [`SendStream::write_chunks()`]: crate::generic::SendStream::write_chunks
+/// [`SendStream::write_chunks()`]: crate::SendStream::write_chunks
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct WriteChunks<'a> {
     stream: &'a mut SendStream,
@@ -366,7 +366,7 @@ impl<'a> Future for WriteChunks<'a> {
 
 /// Future produced by [`SendStream::write_chunk()`].
 ///
-/// [`SendStream::write_chunk()`]: crate::generic::SendStream::write_chunk
+/// [`SendStream::write_chunk()`]: crate::SendStream::write_chunk
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct WriteChunk<'a> {
     stream: &'a mut SendStream,
@@ -389,7 +389,7 @@ impl<'a> Future for WriteChunk<'a> {
 
 /// Future produced by [`SendStream::write_all_chunks()`].
 ///
-/// [`SendStream::write_all_chunks()`]: crate::generic::SendStream::write_all_chunks
+/// [`SendStream::write_all_chunks()`]: crate::SendStream::write_all_chunks
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct WriteAllChunks<'a> {
     stream: &'a mut SendStream,
@@ -431,7 +431,7 @@ pub enum WriteError {
     /// Can only occur on clients for 0-RTT streams, which can be opened using
     /// [`Connecting::into_0rtt()`].
     ///
-    /// [`Connecting::into_0rtt()`]: crate::generic::Connecting::into_0rtt()
+    /// [`Connecting::into_0rtt()`]: crate::Connecting::into_0rtt()
     #[error("0-RTT rejected")]
     ZeroRttRejected,
 }
@@ -450,7 +450,7 @@ pub enum StoppedError {
     /// Can only occur on clients for 0-RTT streams, which can be opened using
     /// [`Connecting::into_0rtt()`].
     ///
-    /// [`Connecting::into_0rtt()`]: crate::generic::Connecting::into_0rtt()
+    /// [`Connecting::into_0rtt()`]: crate::Connecting::into_0rtt()
     #[error("0-RTT rejected")]
     ZeroRttRejected,
 }
