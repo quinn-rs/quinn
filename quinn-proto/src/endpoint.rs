@@ -847,7 +847,7 @@ pub enum ConnectError {
     InvalidRemoteAddress(SocketAddr),
     /// No default client configuration was set up
     ///
-    /// Use [`Endpoint::connect_with`] to specify a client configuration.
+    /// Use `Endpoint::connect_with` to specify a client configuration.
     #[error("no default client config")]
     NoDefaultClientConfig,
 }
