@@ -28,11 +28,9 @@ use super::{
 fn handshake_timeout() {
     let _guard = subscribe();
     let runtime = rt_threaded();
-    let (client, _) = {
+    let client = {
         let _guard = runtime.enter();
-        Endpoint::builder()
-            .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-            .unwrap()
+        Endpoint::client(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap()
     };
 
     let mut client_config =
@@ -67,15 +65,23 @@ fn handshake_timeout() {
 #[tokio::test]
 async fn close_endpoint() {
     let _guard = subscribe();
-    let mut endpoint = Endpoint::builder();
-    endpoint.default_client_config(ClientConfig::with_root_certificates(
+    let mut endpoint =
+        Endpoint::client(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    endpoint.set_default_client_config(ClientConfig::with_root_certificates(
         rustls::RootCertStore::empty(),
     ));
-    let (endpoint, incoming) = endpoint
-        .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+
+    let conn = endpoint
+        .connect(
+            &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
+            "localhost",
+        )
         .unwrap();
 
-    tokio::spawn(incoming.for_each(|_| future::ready(())));
+    tokio::spawn(async move {
+        let _ = conn.await;
+    });
+
     let conn = endpoint
         .connect(
             &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
@@ -99,7 +105,7 @@ fn local_addr() {
     let runtime = rt_basic();
     let (ep, _) = {
         let _guard = runtime.enter();
-        Endpoint::builder().with_socket(socket).unwrap()
+        Endpoint::new(Default::default(), None, socket).unwrap()
     };
     assert_eq!(
         addr,
@@ -233,23 +239,22 @@ async fn accept_after_close() {
 
 /// Construct an endpoint suitable for connecting to itself
 fn endpoint() -> (Endpoint, Incoming) {
-    let mut endpoint = Endpoint::builder();
-
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = rustls::PrivateKey(cert.serialize_private_key_der());
     let cert = rustls::Certificate(cert.serialize_der().unwrap());
     let server_config = crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
-    endpoint.listen(server_config);
 
     let mut roots = rustls::RootCertStore::empty();
     roots.add(&cert).unwrap();
+    let (mut endpoint, incoming) = Endpoint::server(
+        server_config,
+        &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+    )
+    .unwrap();
     let client_config = ClientConfig::with_root_certificates(roots);
-    endpoint.default_client_config(client_config);
+    endpoint.set_default_client_config(client_config);
 
-    let (x, y) = endpoint
-        .bind(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
-        .unwrap();
-    (x, y)
+    (endpoint, incoming)
 }
 
 #[tokio::test]
@@ -440,14 +445,12 @@ fn run_echo(args: EchoArgs) {
         let mut server_config =
             crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
 
-        let mut server = Endpoint::builder();
         server_config.transport = transport_config.clone();
-        server.listen(server_config);
         let server_sock = UdpSocket::bind(args.server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
         let (server, mut server_incoming) = {
             let _guard = runtime.enter();
-            server.with_socket(server_sock).unwrap()
+            Endpoint::new(Default::default(), Some(server_config), server_sock).unwrap()
         };
 
         let mut roots = rustls::RootCertStore::empty();
@@ -458,15 +461,14 @@ fn run_echo(args: EchoArgs) {
             .with_no_client_auth();
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
 
-        let mut client = Endpoint::builder();
-        client.default_client_config(ClientConfig {
+        let mut client = {
+            let _guard = runtime.enter();
+            Endpoint::client(&args.client_addr).unwrap()
+        };
+        client.set_default_client_config(ClientConfig {
             crypto: Arc::new(client_crypto),
             transport: transport_config,
         });
-        let (client, _) = {
-            let _guard = runtime.enter();
-            client.bind(&args.client_addr).unwrap()
-        };
 
         let handle = runtime.spawn(async move {
             let incoming = server_incoming.next().await.unwrap();

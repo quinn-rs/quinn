@@ -35,13 +35,13 @@ pub fn server_endpoint(
     let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
     server_config.transport = Arc::new(transport_config(opt));
 
-    let mut endpoint = quinn::EndpointBuilder::default();
-    endpoint.listen(server_config);
     let (endpoint, incoming) = {
         let _guard = rt.enter();
-        endpoint
-            .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
-            .unwrap()
+        quinn::Endpoint::server(
+            server_config,
+            &SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+        )
+        .unwrap()
     };
     let server_addr = endpoint.local_addr().unwrap();
     drop(endpoint); // Ensure server shuts down when finished
@@ -54,9 +54,8 @@ pub async fn connect_client(
     server_cert: rustls::Certificate,
     opt: Opt,
 ) -> Result<(quinn::Endpoint, quinn::Connection)> {
-    let (endpoint, _) = quinn::EndpointBuilder::default()
-        .bind(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0))
-        .unwrap();
+    let endpoint =
+        quinn::Endpoint::client(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
 
     let mut roots = RootCertStore::empty();
     roots.add(&server_cert)?;

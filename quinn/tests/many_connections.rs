@@ -30,11 +30,9 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let shared = Arc::new(Mutex::new(Shared { errors: vec![] }));
 
     let (cfg, listener_cert) = configure_listener();
-    let mut ep_builder = quinn::Endpoint::builder();
-    ep_builder.listen(cfg);
     let (endpoint, incoming_conns) = {
         let _guard = runtime.enter();
-        unwrap!(ep_builder.bind(&"127.0.0.1:0".parse().unwrap()))
+        quinn::Endpoint::server(cfg, &"127.0.0.1:0".parse().unwrap()).unwrap()
     };
     let listener_addr = unwrap!(endpoint.local_addr());
 

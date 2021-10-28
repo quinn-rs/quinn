@@ -75,12 +75,12 @@ async fn run(opt: Opt) -> Result<()> {
     crypto.alpn_protocols = vec![b"perf".to_vec()];
 
     let server_config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
-    let mut endpoint = quinn::EndpointBuilder::default();
-    endpoint.listen(server_config);
 
     let socket = bind_socket(opt.listen, opt.send_buffer_size, opt.recv_buffer_size)?;
 
-    let (endpoint, mut incoming) = endpoint.with_socket(socket).context("creating endpoint")?;
+    let (endpoint, mut incoming) =
+        quinn::Endpoint::new(Default::default(), Some(server_config), socket)
+            .context("creating endpoint")?;
 
     info!("listening on {}", endpoint.local_addr().unwrap());
 
