@@ -15,8 +15,7 @@ use rustls::{
 use crate::{
     crypto::{self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys},
     transport_parameters::TransportParameters,
-    CertificateChain, ConnectError, ConnectionId, PrivateKey, Side, TransportError,
-    TransportErrorCode,
+    ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
 };
 
 /// A rustls TLS session
@@ -57,7 +56,7 @@ impl crypto::Session for TlsSession {
     fn peer_identity(&self) -> Option<Box<dyn Any>> {
         self.inner
             .peer_certificates()
-            .map(|v| -> Box<dyn Any> { Box::new(CertificateChain::from(v.to_vec())) })
+            .map(|v| -> Box<dyn Any> { Box::new(v.to_vec()) })
     }
 
     fn early_crypto(&self) -> Option<(Box<dyn HeaderKey>, Box<dyn crypto::PacketKey>)> {
@@ -374,8 +373,8 @@ pub fn client_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
 /// `u32::MAX`. Advanced users can use any [`rustls::ServerConfig`] that satisfies these
 /// requirements.
 pub fn server_config(
-    cert_chain: CertificateChain,
-    key: PrivateKey,
+    cert_chain: Vec<rustls::Certificate>,
+    key: rustls::PrivateKey,
 ) -> Result<rustls::ServerConfig, Error> {
     let mut cfg = rustls::ServerConfig::builder()
         .with_safe_default_cipher_suites()
@@ -383,7 +382,7 @@ pub fn server_config(
         .with_protocol_versions(&[&rustls::version::TLS13])
         .unwrap()
         .with_no_client_auth()
-        .with_single_cert(cert_chain.certs, key.inner)?;
+        .with_single_cert(cert_chain, key)?;
     cfg.max_early_data_size = u32::MAX;
     Ok(cfg)
 }

@@ -66,15 +66,33 @@ async fn run(options: Opt) -> Result<()> {
     let (certs, key) = if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
         let key = fs::read(key_path).context("failed to read private key")?;
         let key = if key_path.extension().map_or(false, |x| x == "der") {
-            quinn::PrivateKey::from_der(&key)?
+            rustls::PrivateKey(key)
         } else {
-            quinn::PrivateKey::from_pem(&key)?
+            let pkcs8 = rustls_pemfile::pkcs8_private_keys(&mut &*key)
+                .context("malformed PKCS #8 private key")?;
+            match pkcs8.into_iter().next() {
+                Some(x) => rustls::PrivateKey(x),
+                None => {
+                    let rsa = rustls_pemfile::rsa_private_keys(&mut &*key)
+                        .context("malformed PKCS #1 private key")?;
+                    match rsa.into_iter().next() {
+                        Some(x) => rustls::PrivateKey(x),
+                        None => {
+                            anyhow::bail!("no private keys found");
+                        }
+                    }
+                }
+            }
         };
         let cert_chain = fs::read(cert_path).context("failed to read certificate chain")?;
         let cert_chain = if cert_path.extension().map_or(false, |x| x == "der") {
-            quinn::CertificateChain::from_certs(Some(quinn::Certificate::from_der(&cert_chain)?))
+            vec![rustls::Certificate(cert_chain)]
         } else {
-            quinn::CertificateChain::from_pem(&cert_chain)?
+            rustls_pemfile::certs(&mut &*cert_chain)
+                .context("invalid PEM-encoded certificate")?
+                .into_iter()
+                .map(rustls::Certificate)
+                .collect()
         };
 
         (cert_chain, key)
@@ -100,9 +118,9 @@ async fn run(options: Opt) -> Result<()> {
             }
         };
 
-        let key = quinn::PrivateKey::from_der(&key)?;
-        let cert = quinn::Certificate::from_der(&cert)?;
-        (quinn::CertificateChain::from_certs(vec![cert]), key)
+        let key = rustls::PrivateKey(key);
+        let cert = rustls::Certificate(cert);
+        (vec![cert], key)
     };
 
     let mut server_crypto = quinn::crypto::rustls::server_config(certs, key)?;

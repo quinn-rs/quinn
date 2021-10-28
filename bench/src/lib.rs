@@ -27,11 +27,11 @@ pub fn configure_tracing_subscriber() {
 /// Creates a server endpoint which runs on the given runtime
 pub fn server_endpoint(
     rt: &tokio::runtime::Runtime,
-    cert: quinn::Certificate,
-    key: quinn::PrivateKey,
+    cert: rustls::Certificate,
+    key: rustls::PrivateKey,
     opt: &Opt,
 ) -> (SocketAddr, quinn::Incoming) {
-    let cert_chain = quinn::CertificateChain::from_certs(vec![cert]);
+    let cert_chain = vec![cert];
     let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
     server_config.transport = Arc::new(transport_config(opt));
 
@@ -51,7 +51,7 @@ pub fn server_endpoint(
 /// Create a client endpoint and client connection
 pub async fn connect_client(
     server_addr: SocketAddr,
-    server_cert: quinn::Certificate,
+    server_cert: rustls::Certificate,
     opt: Opt,
 ) -> Result<(quinn::Endpoint, quinn::Connection)> {
     let (endpoint, _) = quinn::EndpointBuilder::default()
@@ -59,7 +59,7 @@ pub async fn connect_client(
         .unwrap();
 
     let mut roots = RootCertStore::empty();
-    roots.add_parsable_certificates(&[server_cert.as_der().to_owned()]);
+    roots.add(&server_cert)?;
     let crypto = rustls::ClientConfig::builder()
         .with_cipher_suites(&[opt.cipher.as_rustls()])
         .with_safe_default_kx_groups()

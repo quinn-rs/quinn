@@ -51,8 +51,6 @@ pub use config::{
 };
 
 pub mod crypto;
-#[cfg(feature = "rustls")]
-pub use crypto::types::*;
 
 mod frame;
 use crate::frame::Frame;

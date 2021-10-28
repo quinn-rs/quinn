@@ -23,9 +23,6 @@ pub(crate) mod ring;
 /// TLS interface based on rustls
 #[cfg(feature = "rustls")]
 pub mod rustls;
-/// Public interface TLS types
-#[cfg(feature = "rustls")]
-pub(crate) mod types;
 
 /// A cryptographic session (commonly TLS)
 pub trait Session: Send + 'static {
