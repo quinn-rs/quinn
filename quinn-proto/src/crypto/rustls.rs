@@ -355,7 +355,7 @@ impl crypto::PacketKey for PacketKey {
 ///
 /// QUIC requires that TLS 1.3 be enabled. Advanced users can use any [`rustls::ClientConfig`] that
 /// satisfies this requirement.
-pub fn client_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
+pub(crate) fn client_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
     let mut cfg = rustls::ClientConfig::builder()
         .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()
@@ -372,7 +372,7 @@ pub fn client_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
 /// QUIC requires that TLS 1.3 be enabled, and that the maximum early data size is either 0 or
 /// `u32::MAX`. Advanced users can use any [`rustls::ServerConfig`] that satisfies these
 /// requirements.
-pub fn server_config(
+pub(crate) fn server_config(
     cert_chain: Vec<rustls::Certificate>,
     key: rustls::PrivateKey,
 ) -> Result<rustls::ServerConfig, Error> {
