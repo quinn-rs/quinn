@@ -459,7 +459,7 @@ impl Connection {
     ///
     /// The dynamic type returned is determined by the configured
     /// [`Session`](proto::crypto::Session). For the default `rustls` session, the return value can
-    /// be [`downcast`](Box::downcast) to a [`CertificateChain`](crate::CertificateChain).
+    /// be [`downcast`](Box::downcast) to a <code>Vec<[rustls::Certificate](rustls::Certificate)></code>
     pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
         self.0
             .lock("peer_identity")

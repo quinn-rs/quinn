@@ -131,11 +131,10 @@ async fn write_to_peer(conn: quinn::Connection, data: Vec<u8>) -> Result<(), Wri
 }
 
 /// Builds client configuration. Trusts given node certificate.
-fn configure_connector(node_cert: &[u8]) -> quinn::ClientConfig {
-    let their_cert = unwrap!(quinn::Certificate::from_der(node_cert));
-    let mut peer_cfg = unwrap!(quinn::ClientConfig::with_root_certificates(vec![
-        their_cert
-    ],));
+fn configure_connector(node_cert: &rustls::Certificate) -> quinn::ClientConfig {
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(node_cert).unwrap();
+    let mut peer_cfg = quinn::ClientConfig::with_root_certificates(roots);
     let transport_config = unwrap!(Arc::get_mut(&mut peer_cfg.transport));
     transport_config.max_idle_timeout(Some(Duration::from_secs(20).try_into().unwrap()));
 
@@ -143,26 +142,23 @@ fn configure_connector(node_cert: &[u8]) -> quinn::ClientConfig {
 }
 
 /// Builds listener configuration along with its certificate.
-fn configure_listener() -> (quinn::ServerConfig, Vec<u8>) {
-    let (our_cert_der, our_priv_key) = gen_cert();
-    let our_cert = unwrap!(quinn::Certificate::from_der(&our_cert_der));
-    let our_cert_chain = quinn::CertificateChain::from_certs(vec![our_cert]);
-    let mut our_cfg = quinn::ServerConfig::with_single_cert(our_cert_chain, our_priv_key).unwrap();
+fn configure_listener() -> (quinn::ServerConfig, rustls::Certificate) {
+    let (our_cert, our_priv_key) = gen_cert();
+    let mut our_cfg =
+        quinn::ServerConfig::with_single_cert(vec![our_cert.clone()], our_priv_key).unwrap();
 
     let transport_config = unwrap!(Arc::get_mut(&mut our_cfg.transport));
     transport_config.max_idle_timeout(Some(Duration::from_secs(20).try_into().unwrap()));
 
-    (our_cfg, our_cert_der)
+    (our_cfg, our_cert)
 }
 
-fn gen_cert() -> (Vec<u8>, quinn::PrivateKey) {
+fn gen_cert() -> (rustls::Certificate, rustls::PrivateKey) {
     let cert = unwrap!(rcgen::generate_simple_self_signed(vec![
         "localhost".to_string()
     ]));
-    let key = unwrap!(quinn::PrivateKey::from_der(
-        &cert.serialize_private_key_der()
-    ));
-    (unwrap!(cert.serialize_der()), key)
+    let key = rustls::PrivateKey(cert.serialize_private_key_der());
+    (rustls::Certificate(unwrap!(cert.serialize_der())), key)
 }
 
 /// Constructs a buffer with random bytes of given size prefixed with a hash of this data.

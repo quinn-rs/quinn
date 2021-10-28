@@ -15,7 +15,6 @@ use tracing::info;
 
 use super::*;
 use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
-use crate::{Certificate, CertificateChain, PrivateKey};
 mod util;
 use util::*;
 
@@ -1846,7 +1845,7 @@ fn server_can_send_3_inital_packets() {
 }
 
 /// Generate a big fat certificate that can't fit inside the initial anti-amplification limit
-fn big_cert_and_key() -> (Certificate, PrivateKey) {
+fn big_cert_and_key() -> (rustls::Certificate, rustls::PrivateKey) {
     let cert = rcgen::generate_simple_self_signed(
         Some("localhost".into())
             .into_iter()
@@ -1854,7 +1853,7 @@ fn big_cert_and_key() -> (Certificate, PrivateKey) {
             .collect::<Vec<_>>(),
     )
     .unwrap();
-    let key = PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
-    let cert = Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
+    let key = rustls::PrivateKey(cert.serialize_private_key_der());
+    let cert = rustls::Certificate(cert.serialize_der().unwrap());
     (cert, key)
 }

@@ -78,18 +78,20 @@ impl Context {
     #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
     fn new() -> Self {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-        let key = quinn::PrivateKey::from_der(&cert.serialize_private_key_der()).unwrap();
-        let cert = quinn::Certificate::from_der(&cert.serialize_der().unwrap()).unwrap();
-        let cert_chain = quinn::CertificateChain::from_certs(vec![cert.clone()]);
+        let key = rustls::PrivateKey(cert.serialize_private_key_der());
+        let cert = rustls::Certificate(cert.serialize_der().unwrap());
 
-        let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
+        let mut server_config =
+            quinn::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
         Arc::get_mut(&mut server_config.transport)
             .unwrap()
             .max_concurrent_uni_streams(1024_u16.into());
 
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(&cert).unwrap();
         Self {
             server_config,
-            client_config: quinn::ClientConfig::with_root_certificates(vec![cert]).unwrap(),
+            client_config: quinn::ClientConfig::with_root_certificates(roots),
         }
     }
 

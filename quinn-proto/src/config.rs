@@ -3,8 +3,6 @@ use std::{convert::TryInto, fmt, num::TryFromIntError, sync::Arc, time::Duration
 use rand::RngCore;
 use thiserror::Error;
 
-#[cfg(feature = "rustls")]
-use crate::crypto::types::{Certificate, CertificateChain, PrivateKey};
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
@@ -515,8 +513,8 @@ impl ServerConfig {
     ///
     /// Uses a randomized handshake token key.
     pub fn with_single_cert(
-        cert_chain: CertificateChain,
-        key: PrivateKey,
+        cert_chain: Vec<rustls::Certificate>,
+        key: rustls::PrivateKey,
     ) -> Result<Self, rustls::Error> {
         let crypto = crypto::rustls::server_config(cert_chain, key)?;
         Ok(Self::with_crypto(Arc::new(crypto)))
@@ -580,22 +578,11 @@ impl ClientConfig {
             }
         };
 
-        Self::new(roots)
+        Self::with_root_certificates(roots)
     }
 
     /// Create a client configuration that trusts specified trust anchors
-    pub fn with_root_certificates(
-        certs: impl IntoIterator<Item = Certificate>,
-    ) -> Result<Self, webpki::Error> {
-        let mut roots = rustls::RootCertStore::empty();
-        for cert in certs {
-            roots.add(&cert.inner)?;
-        }
-
-        Ok(Self::new(roots))
-    }
-
-    fn new(roots: rustls::RootCertStore) -> Self {
+    pub fn with_root_certificates(roots: rustls::RootCertStore) -> Self {
         Self {
             transport: Arc::new(TransportConfig::default()),
             crypto: Arc::new(crypto::rustls::client_config(roots)),

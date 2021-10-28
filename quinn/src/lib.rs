@@ -62,9 +62,8 @@ mod send_stream;
 mod work_limiter;
 
 pub use proto::{
-    crypto, ApplicationClose, Certificate, CertificateChain, Chunk, ClientConfig, ConfigError,
-    ConnectError, ConnectionClose, ConnectionError, IdleTimeout, ParseError, PrivateKey,
-    ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
+    crypto, ApplicationClose, Chunk, ClientConfig, ConfigError, ConnectError, ConnectionClose,
+    ConnectionError, IdleTimeout, ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
 };
 
 pub use crate::builders::{EndpointBuilder, EndpointError};
