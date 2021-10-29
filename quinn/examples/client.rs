@@ -95,7 +95,7 @@ async fn run(options: Opt) -> Result<()> {
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
-    let mut endpoint = quinn::Endpoint::client(&"[::]:0".parse().unwrap())?;
+    let mut endpoint = quinn::Endpoint::client("[::]:0".parse().unwrap())?;
     endpoint.set_default_client_config(quinn::ClientConfig {
         crypto: Arc::new(client_crypto),
         transport: Default::default(),
@@ -112,7 +112,7 @@ async fn run(options: Opt) -> Result<()> {
 
     eprintln!("connecting to {} at {}", host, remote);
     let new_conn = endpoint
-        .connect(&remote, host)?
+        .connect(remote, host)?
         .await
         .map_err(|e| anyhow!("failed to connect: {}", e))?;
     eprintln!("connected at {:?}", start.elapsed());

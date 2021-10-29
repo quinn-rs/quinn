@@ -32,7 +32,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let (cfg, listener_cert) = configure_listener();
     let (endpoint, incoming_conns) = {
         let _guard = runtime.enter();
-        quinn::Endpoint::server(cfg, &"127.0.0.1:0".parse().unwrap()).unwrap()
+        quinn::Endpoint::server(cfg, "127.0.0.1:0".parse().unwrap()).unwrap()
     };
     let listener_addr = unwrap!(endpoint.local_addr());
 
@@ -70,7 +70,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     for _ in 0..expected_messages {
         let data = random_data_with_hash(1024 * 1024, &crc);
         let shared = shared.clone();
-        let task = unwrap!(endpoint.connect_with(client_cfg.clone(), &listener_addr, "localhost"))
+        let task = unwrap!(endpoint.connect_with(client_cfg.clone(), listener_addr, "localhost"))
             .map_err(WriteError::ConnectionClosed)
             .and_then(move |new_conn| write_to_peer(new_conn.connection, data))
             .unwrap_or_else(move |e| {

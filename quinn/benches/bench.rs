@@ -141,12 +141,12 @@ impl Context {
         let runtime = rt();
         let endpoint = {
             let _guard = runtime.enter();
-            Endpoint::client(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap()
+            Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap()
         };
         let quinn::NewConnection { connection, .. } = runtime
             .block_on(async {
                 endpoint
-                    .connect_with(self.client_config.clone(), &server_addr, "localhost")
+                    .connect_with(self.client_config.clone(), server_addr, "localhost")
                     .unwrap()
                     .instrument(error_span!("client"))
                     .await

@@ -39,7 +39,7 @@ pub fn server_endpoint(
         let _guard = rt.enter();
         quinn::Endpoint::server(
             server_config,
-            &SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
         )
         .unwrap()
     };
@@ -55,7 +55,7 @@ pub async fn connect_client(
     opt: Opt,
 ) -> Result<(quinn::Endpoint, quinn::Connection)> {
     let endpoint =
-        quinn::Endpoint::client(&SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
+        quinn::Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
 
     let mut roots = RootCertStore::empty();
     roots.add(&server_cert)?;
@@ -73,7 +73,7 @@ pub async fn connect_client(
     };
 
     let quinn::NewConnection { connection, .. } = endpoint
-        .connect_with(client_config, &server_addr, "localhost")
+        .connect_with(client_config, server_addr, "localhost")
         .unwrap()
         .await
         .context("unable to connect")?;

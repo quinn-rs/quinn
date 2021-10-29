@@ -30,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         mut uni_streams,
         ..
     } = endpoint
-        .connect(&server_addr, "localhost")
+        .connect(server_addr, "localhost")
         .unwrap()
         .await
         .unwrap();
