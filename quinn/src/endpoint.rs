@@ -53,7 +53,7 @@ impl Endpoint {
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
-    pub fn client(addr: &SocketAddr) -> io::Result<Self> {
+    pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         Ok(Self::new(EndpointConfig::default(), None, socket)?.0)
     }
@@ -66,7 +66,7 @@ impl Endpoint {
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
-    pub fn server(config: ServerConfig, addr: &SocketAddr) -> io::Result<(Self, Incoming)> {
+    pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<(Self, Incoming)> {
         let socket = std::net::UdpSocket::bind(addr)?;
         Self::new(EndpointConfig::default(), Some(config), socket)
     }
@@ -114,11 +114,7 @@ impl Endpoint {
     ///
     /// May fail immediately due to configuration errors, or in the future if the connection could
     /// not be established.
-    pub fn connect(
-        &self,
-        addr: &SocketAddr,
-        server_name: &str,
-    ) -> Result<Connecting, ConnectError> {
+    pub fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Connecting, ConnectError> {
         let config = match &self.default_client_config {
             Some(config) => config.clone(),
             None => return Err(ConnectError::NoDefaultClientConfig),
@@ -135,7 +131,7 @@ impl Endpoint {
     pub fn connect_with(
         &self,
         config: ClientConfig,
-        addr: &SocketAddr,
+        addr: SocketAddr,
         server_name: &str,
     ) -> Result<Connecting, ConnectError> {
         let mut endpoint = self.inner.lock().unwrap();
@@ -143,12 +139,12 @@ impl Endpoint {
             return Err(ConnectError::EndpointStopping);
         }
         if addr.is_ipv6() && !endpoint.ipv6 {
-            return Err(ConnectError::InvalidRemoteAddress(*addr));
+            return Err(ConnectError::InvalidRemoteAddress(addr));
         }
         let addr = if endpoint.ipv6 {
-            SocketAddr::V6(ensure_ipv6(*addr))
+            SocketAddr::V6(ensure_ipv6(addr))
         } else {
-            *addr
+            addr
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
         let udp_state = endpoint.udp_state.clone();

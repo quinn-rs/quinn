@@ -30,7 +30,7 @@ fn handshake_timeout() {
     let runtime = rt_threaded();
     let client = {
         let _guard = runtime.enter();
-        Endpoint::client(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap()
+        Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap()
     };
 
     let mut client_config =
@@ -47,7 +47,7 @@ fn handshake_timeout() {
         match client
             .connect_with(
                 client_config,
-                &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1),
+                SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1),
                 "localhost",
             )
             .unwrap()
@@ -66,14 +66,14 @@ fn handshake_timeout() {
 async fn close_endpoint() {
     let _guard = subscribe();
     let mut endpoint =
-        Endpoint::client(&SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+        Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
     endpoint.set_default_client_config(ClientConfig::with_root_certificates(
         rustls::RootCertStore::empty(),
     ));
 
     let conn = endpoint
         .connect(
-            &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
             "localhost",
         )
         .unwrap();
@@ -84,7 +84,7 @@ async fn close_endpoint() {
 
     let conn = endpoint
         .connect(
-            &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 1234),
             "localhost",
         )
         .unwrap();
@@ -137,7 +137,7 @@ fn read_after_close() {
     });
     runtime.block_on(async move {
         let mut new_conn = endpoint
-            .connect(&endpoint.local_addr().unwrap(), "localhost")
+            .connect(endpoint.local_addr().unwrap(), "localhost")
             .unwrap()
             .await
             .expect("connect");
@@ -167,7 +167,7 @@ fn export_keying_material() {
 
     runtime.block_on(async move {
         let outgoing_conn = endpoint
-            .connect(&endpoint.local_addr().unwrap(), "localhost")
+            .connect(endpoint.local_addr().unwrap(), "localhost")
             .unwrap()
             .await
             .expect("connect");
@@ -199,7 +199,7 @@ async fn accept_after_close() {
     const MSG: &[u8] = b"goodbye!";
 
     let sender = endpoint
-        .connect(&endpoint.local_addr().unwrap(), "localhost")
+        .connect(endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .await
         .expect("connect")
@@ -248,7 +248,7 @@ fn endpoint() -> (Endpoint, Incoming) {
     roots.add(&cert).unwrap();
     let (mut endpoint, incoming) = Endpoint::server(
         server_config,
-        &SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
     )
     .unwrap();
     let client_config = ClientConfig::with_root_certificates(roots);
@@ -283,7 +283,7 @@ async fn zero_rtt() {
     let NewConnection {
         mut uni_streams, ..
     } = endpoint
-        .connect(&endpoint.local_addr().unwrap(), "localhost")
+        .connect(endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
         .err()
@@ -317,7 +317,7 @@ async fn zero_rtt() {
         },
         zero_rtt,
     ) = endpoint
-        .connect(&endpoint.local_addr().unwrap(), "localhost")
+        .connect(endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
         .unwrap_or_else(|_| panic!("missing 0-RTT keys"));
@@ -463,7 +463,7 @@ fn run_echo(args: EchoArgs) {
 
         let mut client = {
             let _guard = runtime.enter();
-            Endpoint::client(&args.client_addr).unwrap()
+            Endpoint::client(args.client_addr).unwrap()
         };
         client.set_default_client_config(ClientConfig {
             crypto: Arc::new(client_crypto),
@@ -502,7 +502,7 @@ fn run_echo(args: EchoArgs) {
         );
         runtime.block_on(async move {
             let new_conn = client
-                .connect(&server_addr, "localhost")
+                .connect(server_addr, "localhost")
                 .unwrap()
                 .instrument(info_span!("client"))
                 .await
