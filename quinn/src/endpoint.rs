@@ -163,6 +163,13 @@ impl Endpoint {
         let mut inner = self.inner.lock().unwrap();
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
+
+        // Generate some activity so peers notice the rebind
+        for sender in inner.connections.senders.values() {
+            // Ignoring errors from dropped connections
+            let _ = sender.unbounded_send(ConnectionEvent::Ping);
+        }
+
         Ok(())
     }
 

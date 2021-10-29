@@ -793,6 +793,9 @@ impl ConnectionInner {
     fn process_conn_events(&mut self, cx: &mut Context) -> Result<(), ConnectionError> {
         loop {
             match self.conn_events.poll_next_unpin(cx) {
+                Poll::Ready(Some(ConnectionEvent::Ping)) => {
+                    self.inner.ping();
+                }
                 Poll::Ready(Some(ConnectionEvent::Proto(event))) => {
                     self.inner.handle_event(event);
                 }

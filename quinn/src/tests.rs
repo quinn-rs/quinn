@@ -608,3 +608,72 @@ fn rt_basic() -> Runtime {
 fn rt_threaded() -> Runtime {
     Builder::new_multi_thread().enable_all().build().unwrap()
 }
+
+#[tokio::test]
+async fn rebind_recv() {
+    let _guard = subscribe();
+
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let key = rustls::PrivateKey(cert.serialize_private_key_der());
+    let cert = rustls::Certificate(cert.serialize_der().unwrap());
+
+    let mut roots = rustls::RootCertStore::empty();
+    roots.add(&cert).unwrap();
+
+    let mut client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    client.set_default_client_config(ClientConfig {
+        crypto: Arc::new(
+            rustls::ClientConfig::builder()
+                .with_safe_defaults()
+                .with_root_certificates(roots)
+                .with_no_client_auth(),
+        ),
+        transport: Arc::new({
+            let mut cfg = TransportConfig::default();
+            cfg.max_concurrent_uni_streams(1u32.into());
+            cfg
+        }),
+    });
+
+    let server_config = crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
+    let (server, mut incoming) = Endpoint::server(
+        server_config,
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+    )
+    .unwrap();
+    let server_addr = server.local_addr().unwrap();
+
+    const MSG: &[u8; 5] = b"hello";
+
+    let write_send = Arc::new(tokio::sync::Notify::new());
+    let write_recv = write_send.clone();
+    let connected_send = Arc::new(tokio::sync::Notify::new());
+    let connected_recv = connected_send.clone();
+    let server = tokio::spawn(async move {
+        let NewConnection { connection, .. } = incoming.next().await.unwrap().await.unwrap();
+        info!("got conn");
+        connected_send.notify_one();
+        write_recv.notified().await;
+        let mut stream = connection.open_uni().await.unwrap();
+        stream.write_all(MSG).await.unwrap();
+        stream.finish().await.unwrap();
+    });
+
+    let NewConnection {
+        mut uni_streams, ..
+    } = client
+        .connect(server_addr, "localhost")
+        .unwrap()
+        .await
+        .unwrap();
+    info!("connected");
+    connected_recv.notified().await;
+    client
+        .rebind(UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap())
+        .unwrap();
+    info!("rebound");
+    write_send.notify_one();
+    let stream = uni_streams.next().await.unwrap().unwrap();
+    assert_eq!(stream.read_to_end(MSG.len()).await.unwrap(), MSG);
+    server.await.unwrap();
+}
