@@ -76,6 +76,7 @@ enum ConnectionEvent {
         reason: bytes::Bytes,
     },
     Proto(proto::ConnectionEvent),
+    Ping,
 }
 
 #[derive(Debug)]
