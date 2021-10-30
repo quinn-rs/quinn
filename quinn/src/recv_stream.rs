@@ -263,7 +263,7 @@ impl RecvStream {
                 Some(val) => Poll::Ready(Ok(Some(val))),
                 None => {
                     if let Some(ref x) = conn.error {
-                        return Poll::Ready(Err(ReadError::ConnectionClosed(x.clone())));
+                        return Poll::Ready(Err(ReadError::ConnectionLost(x.clone())));
                     }
                     conn.blocked_readers.insert(self.stream, cx.waker().clone());
                     Poll::Pending
@@ -400,9 +400,9 @@ pub enum ReadError {
     /// Carries an application-defined error code.
     #[error("stream reset by peer: error {0}")]
     Reset(VarInt),
-    /// The connection was closed.
-    #[error("connection closed: {0}")]
-    ConnectionClosed(ConnectionError),
+    /// The connection was lost.
+    #[error("connection lost: {0}")]
+    ConnectionLost(#[source] ConnectionError),
     /// The stream has already been stopped, finished, or reset
     #[error("unknown stream")]
     UnknownStream,
@@ -436,7 +436,7 @@ impl From<ReadError> for io::Error {
         use self::ReadError::*;
         let kind = match x {
             Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            ConnectionClosed(_) | UnknownStream => io::ErrorKind::NotConnected,
+            ConnectionLost(_) | UnknownStream => io::ErrorKind::NotConnected,
             IllegalOrderedRead => io::ErrorKind::InvalidInput,
         };
         io::Error::new(kind, x)

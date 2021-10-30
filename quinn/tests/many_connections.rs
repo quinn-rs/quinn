@@ -71,14 +71,14 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         let data = random_data_with_hash(1024 * 1024, &crc);
         let shared = shared.clone();
         let task = unwrap!(endpoint.connect_with(client_cfg.clone(), listener_addr, "localhost"))
-            .map_err(WriteError::ConnectionClosed)
+            .map_err(WriteError::ConnectionLost)
             .and_then(move |new_conn| write_to_peer(new_conn.connection, data))
             .unwrap_or_else(move |e| {
                 use quinn::ConnectionError::*;
                 match e {
-                    WriteError::ConnectionClosed(ApplicationClosed { .. })
-                    | WriteError::ConnectionClosed(Reset) => {}
-                    WriteError::ConnectionClosed(e) => shared.lock().unwrap().errors.push(e),
+                    WriteError::ConnectionLost(ApplicationClosed { .. })
+                    | WriteError::ConnectionLost(Reset) => {}
+                    WriteError::ConnectionLost(e) => shared.lock().unwrap().errors.push(e),
                     _ => panic!("unexpected write error"),
                 }
             });
@@ -108,22 +108,19 @@ async fn read_from_peer(stream: quinn::RecvStream) -> Result<(), quinn::Connecti
                 | Read(ZeroRttRejected)
                 | Read(IllegalOrderedRead) => unreachable!(),
                 Read(Reset(error_code)) => panic!("unexpected stream reset: {}", error_code),
-                Read(ConnectionClosed(e)) => Err(e),
+                Read(ConnectionLost(e)) => Err(e),
             }
         }
     }
 }
 
 async fn write_to_peer(conn: quinn::Connection, data: Vec<u8>) -> Result<(), WriteError> {
-    let mut s = conn
-        .open_uni()
-        .await
-        .map_err(WriteError::ConnectionClosed)?;
+    let mut s = conn.open_uni().await.map_err(WriteError::ConnectionLost)?;
     s.write_all(&data).await?;
     // Suppress finish errors, since the peer may close before ACKing
     match s.finish().await {
         Ok(()) => Ok(()),
-        Err(WriteError::ConnectionClosed(ConnectionError::ApplicationClosed { .. })) => Ok(()),
+        Err(WriteError::ConnectionLost(ConnectionError::ApplicationClosed { .. })) => Ok(()),
         Err(e) => Err(e),
     }
 }

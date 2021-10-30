@@ -87,7 +87,7 @@ impl SendStream {
                 .map_err(|()| WriteError::ZeroRttRejected)?;
         }
         if let Some(ref x) = conn.error {
-            return Poll::Ready(Err(WriteError::ConnectionClosed(x.clone())));
+            return Poll::Ready(Err(WriteError::ConnectionLost(x.clone())));
         }
 
         let result = match write_fn(&mut conn.inner.send_stream(self.stream)) {
@@ -152,7 +152,7 @@ impl SendStream {
                 // lock so that it is impossible for the stream to become finished between the above
                 // poll call and this check.
                 if let Some(ref x) = conn.error {
-                    return Poll::Ready(Err(WriteError::ConnectionClosed(x.clone())));
+                    return Poll::Ready(Err(WriteError::ConnectionLost(x.clone())));
                 }
                 Poll::Pending
             }
@@ -420,9 +420,9 @@ pub enum WriteError {
     /// Carries an application-defined error code.
     #[error("sending stopped by peer: error {0}")]
     Stopped(VarInt),
-    /// The connection was closed.
-    #[error("connection closed: {0}")]
-    ConnectionClosed(#[source] ConnectionError),
+    /// The connection was lost.
+    #[error("connection lost: {0}")]
+    ConnectionLost(#[source] ConnectionError),
     /// The stream has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
@@ -439,9 +439,9 @@ pub enum WriteError {
 /// Errors that arise while monitoring for a send stream stop from the peer
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum StoppedError {
-    /// The connection was closed.
-    #[error("connection closed: {0}")]
-    ConnectionClosed(#[source] ConnectionError),
+    /// The connection was lost.
+    #[error("connection lost: {0}")]
+    ConnectionLost(#[source] ConnectionError),
     /// The stream has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
@@ -460,7 +460,7 @@ impl From<WriteError> for io::Error {
         use self::WriteError::*;
         let kind = match x {
             Stopped(_) | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            ConnectionClosed(_) | UnknownStream => io::ErrorKind::NotConnected,
+            ConnectionLost(_) | UnknownStream => io::ErrorKind::NotConnected,
         };
         io::Error::new(kind, x)
     }
