@@ -1036,7 +1036,7 @@ pub enum SendDatagramError {
     TooLarge,
     /// The connection was lost
     #[error("connection lost")]
-    ConnectionLost(#[source] ConnectionError),
+    ConnectionLost(#[from] ConnectionError),
 }
 
 /// The maximum amount of datagrams which will be produced in a single `drive_transmit` call

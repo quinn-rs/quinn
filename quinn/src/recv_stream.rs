@@ -402,7 +402,7 @@ pub enum ReadError {
     Reset(VarInt),
     /// The connection was lost.
     #[error("connection lost")]
-    ConnectionLost(#[source] ConnectionError),
+    ConnectionLost(#[from] ConnectionError),
     /// The stream has already been stopped, finished, or reset
     #[error("unknown stream")]
     UnknownStream,
