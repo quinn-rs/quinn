@@ -369,7 +369,7 @@ impl Connection {
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
         let conn = &mut *self.0.lock("send_datagram");
         if let Some(ref x) = conn.error {
-            return Err(SendDatagramError::ConnectionClosed(x.clone()));
+            return Err(SendDatagramError::ConnectionLost(x.clone()));
         }
         use proto::SendDatagramError::*;
         match conn.inner.datagrams().send(data) {
@@ -966,7 +966,7 @@ impl ConnectionInner {
             x.wake();
         }
         for (_, x) in self.finishing.drain() {
-            let _ = x.send(Some(WriteError::ConnectionClosed(reason.clone())));
+            let _ = x.send(Some(WriteError::ConnectionLost(reason.clone())));
         }
         if let Some(x) = self.on_connected.take() {
             let _ = x.send(false);
@@ -1034,9 +1034,9 @@ pub enum SendDatagramError {
     /// exceeded.
     #[error("datagram too large")]
     TooLarge,
-    /// The connection was closed
-    #[error("connection closed: {0}")]
-    ConnectionClosed(#[source] ConnectionError),
+    /// The connection was lost
+    #[error("connection lost: {0}")]
+    ConnectionLost(#[source] ConnectionError),
 }
 
 /// The maximum amount of datagrams which will be produced in a single `drive_transmit` call
