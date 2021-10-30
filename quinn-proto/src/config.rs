@@ -46,7 +46,7 @@ pub struct TransportConfig {
 }
 
 impl TransportConfig {
-    /// Maximum number of bidirectional streams that may be open concurrently
+    /// Maximum number of incoming bidirectional streams that may be open concurrently
     ///
     /// Must be nonzero for the peer to open any bidirectional streams.
     ///
