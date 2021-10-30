@@ -415,18 +415,18 @@ impl<'a> Future for WriteAllChunks<'a> {
 /// Errors that arise from writing to a stream
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum WriteError {
-    /// The peer is no longer accepting data on this stream.
+    /// The peer is no longer accepting data on this stream
     ///
     /// Carries an application-defined error code.
     #[error("sending stopped by peer: error {0}")]
     Stopped(VarInt),
-    /// The connection was lost.
+    /// The connection was lost
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),
     /// The stream has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
-    /// This was a 0-RTT stream and the server rejected it.
+    /// This was a 0-RTT stream and the server rejected it
     ///
     /// Can only occur on clients for 0-RTT streams, which can be opened using
     /// [`Connecting::into_0rtt()`].
@@ -439,13 +439,13 @@ pub enum WriteError {
 /// Errors that arise while monitoring for a send stream stop from the peer
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum StoppedError {
-    /// The connection was lost.
+    /// The connection was lost
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),
     /// The stream has already been finished or reset
     #[error("unknown stream")]
     UnknownStream,
-    /// This was a 0-RTT stream and the server rejected it.
+    /// This was a 0-RTT stream and the server rejected it
     ///
     /// Can only occur on clients for 0-RTT streams, which can be opened using
     /// [`Connecting::into_0rtt()`].
