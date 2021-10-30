@@ -395,12 +395,12 @@ impl Drop for RecvStream {
 /// Errors that arise from reading from a stream.
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadError {
-    /// The peer abandoned transmitting data on this stream.
+    /// The peer abandoned transmitting data on this stream
     ///
     /// Carries an application-defined error code.
     #[error("stream reset by peer: error {0}")]
     Reset(VarInt),
-    /// The connection was lost.
+    /// The connection was lost
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),
     /// The stream has already been stopped, finished, or reset
@@ -412,7 +412,7 @@ pub enum ReadError {
     /// stream which cannot be recovered, making further ordered reads impossible.
     #[error("ordered read after unordered read")]
     IllegalOrderedRead,
-    /// This was a 0-RTT stream and the server rejected it.
+    /// This was a 0-RTT stream and the server rejected it
     ///
     /// Can only occur on clients for 0-RTT streams, which can be opened using
     /// [`Connecting::into_0rtt()`].
