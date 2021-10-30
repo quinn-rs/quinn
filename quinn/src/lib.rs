@@ -82,16 +82,6 @@ pub use crate::send_stream::{SendStream, StoppedError, WriteError};
 mod tests;
 
 #[derive(Debug)]
-enum ConnectionEvent {
-    Close {
-        error_code: VarInt,
-        reason: bytes::Bytes,
-    },
-    Proto(proto::ConnectionEvent),
-    Ping,
-}
-
-#[derive(Debug)]
 enum EndpointEvent {
     Proto(proto::EndpointEvent),
     Transmit(proto::Transmit),
