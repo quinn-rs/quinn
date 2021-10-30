@@ -401,7 +401,7 @@ pub enum ReadError {
     #[error("stream reset by peer: error {0}")]
     Reset(VarInt),
     /// The connection was lost.
-    #[error("connection lost: {0}")]
+    #[error("connection lost")]
     ConnectionLost(#[source] ConnectionError),
     /// The stream has already been stopped, finished, or reset
     #[error("unknown stream")]
@@ -498,7 +498,7 @@ pub enum ReadExactError {
     #[error("stream finished early")]
     FinishedEarly,
     /// A read error occurred
-    #[error("{0}")]
+    #[error(transparent)]
     ReadError(#[from] ReadError),
 }
 
