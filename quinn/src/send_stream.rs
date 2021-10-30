@@ -421,7 +421,7 @@ pub enum WriteError {
     #[error("sending stopped by peer: error {0}")]
     Stopped(VarInt),
     /// The connection was lost.
-    #[error("connection lost: {0}")]
+    #[error("connection lost")]
     ConnectionLost(#[source] ConnectionError),
     /// The stream has already been finished or reset
     #[error("unknown stream")]
@@ -440,7 +440,7 @@ pub enum WriteError {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum StoppedError {
     /// The connection was lost.
-    #[error("connection lost: {0}")]
+    #[error("connection lost")]
     ConnectionLost(#[source] ConnectionError),
     /// The stream has already been finished or reset
     #[error("unknown stream")]

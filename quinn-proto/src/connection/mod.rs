@@ -3050,7 +3050,7 @@ pub enum ConnectionError {
     #[error("peer doesn't implement any supported version")]
     VersionMismatch,
     /// The peer violated the QUIC specification as understood by this implementation
-    #[error("{0}")]
+    #[error(transparent)]
     TransportError(#[from] TransportError),
     /// The peer's QUIC stack aborted the connection automatically
     #[error("aborted by peer: {0}")]

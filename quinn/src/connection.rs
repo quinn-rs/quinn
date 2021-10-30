@@ -1035,7 +1035,7 @@ pub enum SendDatagramError {
     #[error("datagram too large")]
     TooLarge,
     /// The connection was lost
-    #[error("connection lost: {0}")]
+    #[error("connection lost")]
     ConnectionLost(#[source] ConnectionError),
 }
 
