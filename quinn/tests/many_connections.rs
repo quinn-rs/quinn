@@ -10,7 +10,6 @@ use futures_util::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use quinn::{ConnectionError, ReadError, WriteError};
 use rand::{self, RngCore};
 use tokio::runtime::Builder;
-use unwrap::unwrap;
 
 struct Shared {
     errors: Vec<ConnectionError>,
@@ -26,7 +25,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     )
     .unwrap();
 
-    let runtime = unwrap!(Builder::new_current_thread().enable_all().build());
+    let runtime = Builder::new_current_thread().enable_all().build().unwrap();
     let shared = Arc::new(Mutex::new(Shared { errors: vec![] }));
 
     let (cfg, listener_cert) = configure_listener();
@@ -34,7 +33,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
         let _guard = runtime.enter();
         quinn::Endpoint::server(cfg, "127.0.0.1:0".parse().unwrap()).unwrap()
     };
-    let listener_addr = unwrap!(endpoint.local_addr());
+    let listener_addr = endpoint.local_addr().unwrap();
 
     let expected_messages = 50;
 
@@ -70,7 +69,9 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     for _ in 0..expected_messages {
         let data = random_data_with_hash(1024 * 1024, &crc);
         let shared = shared.clone();
-        let task = unwrap!(endpoint.connect_with(client_cfg.clone(), listener_addr, "localhost"))
+        let task = endpoint
+            .connect_with(client_cfg.clone(), listener_addr, "localhost")
+            .unwrap()
             .map_err(WriteError::ConnectionLost)
             .and_then(move |new_conn| write_to_peer(new_conn.connection, data))
             .unwrap_or_else(move |e| {
@@ -130,7 +131,7 @@ fn configure_connector(node_cert: &rustls::Certificate) -> quinn::ClientConfig {
     let mut roots = rustls::RootCertStore::empty();
     roots.add(node_cert).unwrap();
     let mut peer_cfg = quinn::ClientConfig::with_root_certificates(roots);
-    let transport_config = unwrap!(Arc::get_mut(&mut peer_cfg.transport));
+    let transport_config = Arc::get_mut(&mut peer_cfg.transport).unwrap();
     transport_config.max_idle_timeout(Some(Duration::from_secs(20).try_into().unwrap()));
 
     peer_cfg
@@ -142,18 +143,16 @@ fn configure_listener() -> (quinn::ServerConfig, rustls::Certificate) {
     let mut our_cfg =
         quinn::ServerConfig::with_single_cert(vec![our_cert.clone()], our_priv_key).unwrap();
 
-    let transport_config = unwrap!(Arc::get_mut(&mut our_cfg.transport));
+    let transport_config = Arc::get_mut(&mut our_cfg.transport).unwrap();
     transport_config.max_idle_timeout(Some(Duration::from_secs(20).try_into().unwrap()));
 
     (our_cfg, our_cert)
 }
 
 fn gen_cert() -> (rustls::Certificate, rustls::PrivateKey) {
-    let cert = unwrap!(rcgen::generate_simple_self_signed(vec![
-        "localhost".to_string()
-    ]));
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
     let key = rustls::PrivateKey(cert.serialize_private_key_der());
-    (rustls::Certificate(unwrap!(cert.serialize_der())), key)
+    (rustls::Certificate(cert.serialize_der().unwrap()), key)
 }
 
 /// Constructs a buffer with random bytes of given size prefixed with a hash of this data.
