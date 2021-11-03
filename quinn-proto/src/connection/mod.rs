@@ -1162,7 +1162,7 @@ impl Connection {
         }
 
         // Must be called before crypto/pto_count are clobbered
-        self.detect_lost_packets(now, space);
+        self.detect_lost_packets(now, space, true);
 
         if self.peer_completed_address_validation() {
             self.pto_count = 0;
@@ -1264,7 +1264,7 @@ impl Connection {
     fn on_loss_detection_timeout(&mut self, now: Instant) {
         if let Some((_, pn_space)) = self.loss_time_and_space() {
             // Time threshold loss Detection
-            self.detect_lost_packets(now, pn_space);
+            self.detect_lost_packets(now, pn_space, false);
             self.set_loss_detection_timer(now);
             return;
         }
@@ -1298,7 +1298,7 @@ impl Connection {
         self.set_loss_detection_timer(now);
     }
 
-    fn detect_lost_packets(&mut self, now: Instant, pn_space: SpaceId) {
+    fn detect_lost_packets(&mut self, now: Instant, pn_space: SpaceId, due_to_ack: bool) {
         let mut lost_packets = Vec::<u64>::new();
         let rtt = self.path.rtt.conservative();
         let loss_delay = cmp::max(rtt.mul_f32(self.config.time_threshold), TIMER_GRANULARITY);
@@ -1331,7 +1331,7 @@ impl Connection {
             {
                 lost_packets.push(packet);
                 size_of_lost_packets += info.size as u64;
-                if info.ack_eliciting {
+                if info.ack_eliciting && due_to_ack {
                     match persistent_congestion_start {
                         // Two ACK-eliciting packets lost more than congestion_period apart, with no
                         // ACKed packets in between
