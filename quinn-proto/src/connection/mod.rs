@@ -1245,7 +1245,7 @@ impl Connection {
         }
     }
 
-    fn set_key_discard_timer(&mut self, now: Instant) {
+    fn set_key_discard_timer(&mut self, now: Instant, space: SpaceId) {
         let start = if self.zero_rtt_crypto.is_some() {
             now
         } else {
@@ -1257,7 +1257,8 @@ impl Connection {
                 .expect("update not acknowledged yet")
                 .1
         };
-        self.timers.set(Timer::KeyDiscard, start + self.pto() * 3);
+        self.timers
+            .set(Timer::KeyDiscard, start + self.pto(space) * 3);
     }
 
     fn on_loss_detection_timeout(&mut self, now: Instant) {
@@ -1449,8 +1450,12 @@ impl Connection {
     }
 
     /// Probe Timeout
-    fn pto(&self) -> Duration {
-        self.path.rtt.pto_base() + self.max_ack_delay()
+    fn pto(&self, space: SpaceId) -> Duration {
+        let max_ack_delay = match space {
+            SpaceId::Initial | SpaceId::Handshake => Duration::new(0, 0),
+            SpaceId::Data => self.max_ack_delay(),
+        };
+        self.path.rtt.pto_base() + max_ack_delay
     }
 
     fn on_packet_authenticated(
@@ -1464,7 +1469,7 @@ impl Connection {
     ) {
         self.total_authed_packets += 1;
         self.reset_keep_alive(now);
-        self.reset_idle_timeout(now);
+        self.reset_idle_timeout(now, space_id);
         self.permit_idle_reset = true;
         self.receiving_ecn |= ecn.is_some();
         if let Some(x) = ecn {
@@ -1482,7 +1487,7 @@ impl Connection {
             }
             if self.zero_rtt_crypto.is_some() && is_1rtt {
                 // Discard 0-RTT keys soon after receiving a 1-RTT packet
-                self.set_key_discard_timer(now)
+                self.set_key_discard_timer(now, space_id)
             }
         }
         let space = &mut self.spaces[space_id];
@@ -1494,7 +1499,7 @@ impl Connection {
         }
     }
 
-    fn reset_idle_timeout(&mut self, now: Instant) {
+    fn reset_idle_timeout(&mut self, now: Instant, space: SpaceId) {
         let timeout = match self.idle_timeout {
             None => return,
             Some(x) => Duration::from_millis(x.0),
@@ -1503,7 +1508,7 @@ impl Connection {
             self.timers.stop(Timer::Idle);
             return;
         }
-        let dt = cmp::max(timeout, 3 * self.pto());
+        let dt = cmp::max(timeout, 3 * self.pto(space));
         self.timers.set(Timer::Idle, now + dt);
     }
 
@@ -2558,7 +2563,7 @@ impl Connection {
         };
         new_path.challenge = Some(self.rng.gen());
         new_path.challenge_pending = true;
-        let prev_pto = self.pto();
+        let prev_pto = self.pto(SpaceId::Data);
 
         let mut prev = mem::replace(&mut self.path, new_path);
         // Don't clobber the original path if the previous one hasn't been validated yet
@@ -2570,7 +2575,7 @@ impl Connection {
 
         self.timers.set(
             Timer::PathValidation,
-            now + 3 * cmp::max(self.pto(), prev_pto),
+            now + 3 * cmp::max(self.pto(SpaceId::Data), prev_pto),
         );
     }
 
@@ -2814,7 +2819,8 @@ impl Connection {
     }
 
     fn set_close_timer(&mut self, now: Instant) {
-        self.timers.set(Timer::Close, now + 3 * self.pto());
+        self.timers
+            .set(Timer::Close, now + 3 * self.pto(self.highest_space));
     }
 
     /// Handle transport parameters received from the peer
@@ -2902,7 +2908,7 @@ impl Connection {
             if prev.end_packet.is_none() && key_phase == self.key_phase {
                 // Outgoing key update newly acknowledged
                 prev.end_packet = Some((number, now));
-                self.set_key_discard_timer(now);
+                self.set_key_discard_timer(now, space);
             }
         }
 
@@ -2924,7 +2930,7 @@ impl Connection {
             }
             trace!("key update authenticated");
             self.update_keys(Some((number, now)), true);
-            self.set_key_discard_timer(now);
+            self.set_key_discard_timer(now, space);
         }
 
         Ok(Some(number))
