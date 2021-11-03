@@ -164,7 +164,7 @@ impl Controller for Cubic {
         &mut self,
         now: Instant,
         sent: Instant,
-        _is_persistent_congestion: bool,
+        is_persistent_congestion: bool,
         _lost_bytes: u64,
     ) {
         if self
@@ -192,6 +192,21 @@ impl Controller for Cubic {
         self.cubic_state.k = self.cubic_state.cubic_k(self.config.max_datagram_size);
 
         self.cubic_state.cwnd_inc = (self.cubic_state.cwnd_inc as f64 * BETA_CUBIC) as u64;
+
+        if is_persistent_congestion {
+            self.recovery_start_time = None;
+            self.cubic_state.w_max = self.window as f64;
+
+            // 4.7 Timeout - reduce ssthresh based on BETA_CUBIC
+            self.ssthresh = cmp::max(
+                (self.window as f64 * BETA_CUBIC) as u64,
+                self.config.minimum_window,
+            );
+
+            self.cubic_state.cwnd_inc = 0;
+
+            self.window = self.config.minimum_window;
+        }
     }
 
     fn window(&self) -> u64 {
