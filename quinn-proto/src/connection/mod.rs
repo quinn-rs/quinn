@@ -1159,6 +1159,10 @@ impl Connection {
             };
             let rtt = instant_saturating_sub(now, self.spaces[space].largest_acked_packet_sent);
             self.path.rtt.update(ack_delay, rtt);
+            if self.path.first_packet_after_rtt_sample.is_none() {
+                self.path.first_packet_after_rtt_sample =
+                    Some((space, self.spaces[space].next_packet_number));
+            }
         }
 
         // Must be called before crypto/pto_count are clobbered
@@ -1338,7 +1342,12 @@ impl Connection {
                         Some(start) if info.time_sent - start > congestion_period => {
                             in_persistent_congestion = true;
                         }
-                        None => {
+                        // Persistent congestion must start after the first RTT sample
+                        None if self
+                            .path
+                            .first_packet_after_rtt_sample
+                            .map_or(false, |x| x < (pn_space, packet)) =>
+                        {
                             persistent_congestion_start = Some(info.time_sent);
                         }
                         _ => {}
