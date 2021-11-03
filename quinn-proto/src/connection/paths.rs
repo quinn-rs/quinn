@@ -1,7 +1,7 @@
 use std::{cmp, net::SocketAddr, time::Duration, time::Instant};
 
 use super::pacing::Pacer;
-use crate::{congestion, INITIAL_MAX_UDP_PAYLOAD_SIZE, TIMER_GRANULARITY};
+use crate::{congestion, packet::SpaceId, INITIAL_MAX_UDP_PAYLOAD_SIZE, TIMER_GRANULARITY};
 
 /// Description of a particular network path
 pub struct PathData {
@@ -25,6 +25,10 @@ pub struct PathData {
     /// Total size of all UDP datagrams received on this path
     pub total_recvd: u64,
     pub max_udp_payload_size: u16,
+    /// Packet number of the first packet sent after an RTT sample was collected on this path
+    ///
+    /// Used in persistent congestion determination.
+    pub first_packet_after_rtt_sample: Option<(SpaceId, u64)>,
 }
 
 impl PathData {
@@ -52,6 +56,7 @@ impl PathData {
             total_sent: 0,
             total_recvd: 0,
             max_udp_payload_size: INITIAL_MAX_UDP_PAYLOAD_SIZE,
+            first_packet_after_rtt_sample: None,
         }
     }
 
@@ -75,6 +80,7 @@ impl PathData {
             total_sent: 0,
             total_recvd: 0,
             max_udp_payload_size: prev.max_udp_payload_size,
+            first_packet_after_rtt_sample: prev.first_packet_after_rtt_sample,
         }
     }
 
