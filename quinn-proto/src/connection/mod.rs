@@ -1309,13 +1309,41 @@ impl Connection {
         let packet_threshold = self.config.packet_threshold as u64;
         let mut size_of_lost_packets = 0u64;
 
+        // InPersistentCongestion: Determine if all packets in the time period before the newest
+        // lost packet, including the edges, are marked lost. PTO computation must always
+        // include max ACK delay, i.e. operate as if in Data space (see RFC9001 §7.6.1).
+        let congestion_period =
+            self.pto(SpaceId::Data) * self.config.persistent_congestion_threshold;
+        let mut persistent_congestion_start: Option<Instant> = None;
+        let mut prev_packet = None;
+        let mut in_persistent_congestion = false;
+
         let space = &mut self.spaces[pn_space];
         space.loss_time = None;
+
         for (&packet, info) in space.sent_packets.range(0..largest_acked_packet) {
+            if prev_packet != Some(packet.wrapping_sub(1)) {
+                // An intervening packet was acknowledged
+                persistent_congestion_start = None;
+            }
+
             if info.time_sent <= lost_send_time || largest_acked_packet >= packet + packet_threshold
             {
                 lost_packets.push(packet);
                 size_of_lost_packets += info.size as u64;
+                if info.ack_eliciting {
+                    match persistent_congestion_start {
+                        // Two ACK-eliciting packets lost more than congestion_period apart, with no
+                        // ACKed packets in between
+                        Some(start) if info.time_sent - start > congestion_period => {
+                            in_persistent_congestion = true;
+                        }
+                        None => {
+                            persistent_congestion_start = Some(info.time_sent);
+                        }
+                        _ => {}
+                    }
+                }
             } else {
                 let next_loss_time = info.time_sent + loss_delay;
                 space.loss_time = Some(
@@ -1323,7 +1351,10 @@ impl Connection {
                         .loss_time
                         .map_or(next_loss_time, |x| cmp::min(x, next_loss_time)),
                 );
+                persistent_congestion_start = None;
             }
+
+            prev_packet = Some(packet);
         }
 
         // OnPacketsLost
@@ -1342,12 +1373,6 @@ impl Connection {
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_ack_eliciting = old_bytes_in_flight != self.in_flight.bytes;
-
-            // InPersistentCongestion: Determine if all packets in the time period before the newest
-            // lost packet, including the edges, are marked lost
-            let congestion_period = self.pto() * self.config.persistent_congestion_threshold;
-            let in_persistent_congestion = self.spaces[pn_space].largest_acked_packet_sent
-                < largest_lost_sent - congestion_period;
 
             if lost_ack_eliciting {
                 self.stats.path.congestion_events += 1;
