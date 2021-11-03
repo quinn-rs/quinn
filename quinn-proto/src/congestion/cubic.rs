@@ -186,8 +186,10 @@ impl Controller for Cubic {
             self.cubic_state.w_max = self.window as f64;
         }
 
-        self.ssthresh = (self.cubic_state.w_max * BETA_CUBIC) as u64;
-        self.ssthresh = cmp::max(self.ssthresh, self.config.minimum_window);
+        self.ssthresh = cmp::max(
+            (self.cubic_state.w_max * BETA_CUBIC) as u64,
+            self.config.minimum_window,
+        );
         self.window = self.ssthresh;
         self.cubic_state.k = self.cubic_state.cubic_k(self.config.max_datagram_size);
 
