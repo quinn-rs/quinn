@@ -16,14 +16,12 @@ const C: f64 = 0.4;
 /// CUBIC State Variables.
 ///
 /// We need to keep those variables across the connection.
-/// k, w_max, w_last_max is described in the RFC.
+/// k, w_max are described in the RFC.
 #[derive(Debug, Default, Clone)]
 pub struct State {
     k: f64,
 
     w_max: f64,
-
-    w_last_max: f64,
 
     // Store cwnd increment during congestion avoidance.
     cwnd_inc: u64,
@@ -182,14 +180,12 @@ impl Controller for Cubic {
         // Fast convergence
         #[allow(clippy::branches_sharing_code)]
         // https://github.com/rust-lang/rust-clippy/issues/7198
-        if self.cubic_state.w_max < self.cubic_state.w_last_max {
-            self.cubic_state.w_last_max = self.cubic_state.w_max;
-            self.cubic_state.w_max = self.cubic_state.w_max as f64 * (1.0 + BETA_CUBIC) / 2.0;
+        if (self.window as f64) < self.cubic_state.w_max {
+            self.cubic_state.w_max = self.window as f64 * (1.0 + BETA_CUBIC) / 2.0;
         } else {
-            self.cubic_state.w_last_max = self.cubic_state.w_max;
+            self.cubic_state.w_max = self.window as f64;
         }
 
-        self.cubic_state.w_max = self.window as f64;
         self.ssthresh = (self.cubic_state.w_max * BETA_CUBIC) as u64;
         self.ssthresh = cmp::max(self.ssthresh, self.config.minimum_window);
         self.window = self.ssthresh;
