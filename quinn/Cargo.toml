@@ -17,7 +17,7 @@ all-features = true
 default = ["native-certs", "tls-rustls"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
-# Trust the contents of the OS certificate store by default
+# Provides `ClientConfig::with_native_roots()` convenience method
 native-certs = ["proto/native-certs"]
 tls-rustls = ["rustls", "webpki", "proto/tls-rustls"]
 
