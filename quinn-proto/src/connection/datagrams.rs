@@ -62,7 +62,12 @@ impl<'a> Datagrams<'a> {
             - 4                 // worst-case packet number size
             - self.conn.spaces[SpaceId::Data].crypto.as_ref().map_or_else(|| &self.conn.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
             - Datagram::SIZE_BOUND;
-        let limit = self.conn.peer_params.max_datagram_frame_size?.into_inner();
+        let limit = self
+            .conn
+            .peer_params
+            .max_datagram_frame_size?
+            .into_inner()
+            .saturating_sub(Datagram::SIZE_BOUND as u64);
         Some(limit.min(max_size as u64) as usize)
     }
 
