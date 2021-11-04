@@ -383,6 +383,7 @@ fn echo_dualstack() {
 }
 
 #[test]
+#[cfg(not(tarpaulin))]
 fn stress_receive_window() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
@@ -395,6 +396,7 @@ fn stress_receive_window() {
 }
 
 #[test]
+#[cfg(not(tarpaulin))]
 fn stress_stream_receive_window() {
     // Note that there is no point in runnning this with too many streams,
     // since the window is only active within a stream
@@ -409,6 +411,7 @@ fn stress_stream_receive_window() {
 }
 
 #[test]
+#[cfg(not(tarpaulin))]
 fn stress_both_windows() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
