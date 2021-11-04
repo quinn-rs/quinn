@@ -294,10 +294,17 @@ impl StreamsState {
         }
     }
 
-    pub fn can_send(&self) -> bool {
-        self.pending
-            .peek()
-            .map_or(false, |head| !head.queue.borrow().is_empty())
+    /// Whether any stream data is queued, regardless of control frames
+    pub fn can_send_stream_data(&self) -> bool {
+        // Reset streams may linger in the pending stream list, but will never produce stream frames
+        self.pending.iter().any(|level| {
+            level
+                .queue
+                .borrow()
+                .iter()
+                .any(|id| self.send.get(id).map_or(false, |s| !s.is_reset()))
+        })
+    }
     }
 
     pub fn write_control_frames(
@@ -1177,7 +1184,7 @@ mod tests {
         assert_eq!(meta[1].id, id_mid);
         assert_eq!(meta[2].id, id_low);
 
-        assert!(!server.can_send());
+        assert!(!server.can_send_stream_data());
         assert_eq!(server.pending.len(), 1);
     }
 
@@ -1244,7 +1251,7 @@ mod tests {
         assert_eq!(meta[0].id, id_mid);
         assert_eq!(meta[1].id, id_high);
 
-        assert!(!server.can_send());
+        assert!(!server.can_send_stream_data());
         assert_eq!(server.pending.len(), 1);
     }
 
@@ -1272,5 +1279,35 @@ mod tests {
         };
         stream.stop(0u32.into()).unwrap();
         assert!(client.recv.get_mut(&id).is_none(), "stream is freed");
+    }
+
+    // Verify that a stream that's been reset doesn't cause the appearance of pending data
+    #[test]
+    fn reset_stream_cannot_send() {
+        let mut server = make(Side::Server);
+        server.set_params(&TransportParameters {
+            initial_max_streams_uni: 1u32.into(),
+            initial_max_data: 42u32.into(),
+            initial_max_stream_data_uni: 42u32.into(),
+            ..Default::default()
+        });
+        let (mut pending, state) = (Retransmits::default(), ConnState::Established);
+        let mut streams = Streams {
+            state: &mut server,
+            conn_state: &state,
+        };
+
+        let id = streams.open(Dir::Uni).unwrap();
+        let mut stream = SendStream {
+            id,
+            state: &mut server,
+            pending: &mut pending,
+            conn_state: &state,
+        };
+        stream.write(b"hello").unwrap();
+        stream.reset(0u32.into()).unwrap();
+
+        assert_eq!(pending.reset_stream, &[(id, 0u32.into())]);
+        assert!(!server.can_send_stream_data());
     }
 }

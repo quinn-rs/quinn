@@ -3028,7 +3028,7 @@ impl Connection {
     ///
     /// See also `self.space(SpaceId::Data).can_send()`
     fn can_send_1rtt(&self) -> bool {
-        self.streams.can_send()
+        self.streams.can_send_stream_data()
             || self.path.challenge_pending
             || self
                 .prev_path
