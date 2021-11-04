@@ -11,8 +11,7 @@
 
 # Pure-rust QUIC protocol implementation
 
-Quinn is a pure-rust, future-based implementation of the [QUIC][quic] transport protocol undergoing standardization by the IETF.
-This library is at [draft 32][current-draft].
+Quinn is a pure-rust, async-compatible implementation of the IETF [QUIC][quic] transport protocol.
 
 ## Features
 
@@ -24,14 +23,13 @@ This library is at [draft 32][current-draft].
 - Application-layer datagrams for small, unreliable messages
 - Future-based async API
 - Experimental HTTP over QUIC
-- The minimum supported Rust version is 1.47.0
+- Minimum supported Rust version of 1.51.0
 
 ## Overview
 
 - **quinn:** High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)
 - **quinn-proto:** Deterministic state machine of the protocol which performs [**no** I/O][sans-io] internally and is suitable for use with custom event loops (and potentially a C or C++ API).
 - **quinn-udp:** UDP sockets with ECN information tuned for the protocol.
-- **quinn-h3:** Contains an implementation of HTTP-3 and QPACK. It is split internally in a deterministic state machine and a tokio-based high-level async API.
 - **bench:** Benchmarks without any framework.
 - **fuzz:** Fuzz tests.
 
@@ -131,5 +129,4 @@ crates will always be at least 6 months old at the time of release.
 [rcgen]: https://crates.io/crates/rcgen
 [examples]: https://github.com/djc/quinn/tree/main/quinn/examples
 [documentation]: https://quinn-rs.github.io/quinn/networking-introduction.html
-[current-draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/32/
 [sans-io]: https://sans-io.readthedocs.io/how-to-sans-io.html
