@@ -14,7 +14,10 @@ use rustls::internal::msgs::enums::AlertDescription;
 use tracing::info;
 
 use super::*;
-use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
+use crate::{
+    cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
+    frame::FrameStruct,
+};
 mod util;
 use util::*;
 
@@ -1544,9 +1547,9 @@ fn datagram_recv_buffer_overflow() {
     let mut pair = Pair::new(Default::default(), server);
     let (client_ch, server_ch) = pair.connect();
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
-    assert_matches!(
+    assert_eq!(
         pair.client_conn_mut(client_ch).datagrams().max_size(),
-        Some(WINDOW)
+        Some(WINDOW - Datagram::SIZE_BOUND)
     );
 
     const DATA1: &[u8] = &[0xAB; (WINDOW / 3) + 1];
