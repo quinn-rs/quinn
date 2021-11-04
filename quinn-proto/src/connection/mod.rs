@@ -460,7 +460,7 @@ impl Connection {
 
         // If we need to send a probe, make sure we have something to send.
         for space in SpaceId::iter() {
-            self.spaces[space].maybe_queue_probe();
+            self.spaces[space].maybe_queue_probe(&self.streams);
         }
 
         // Check whether we need to send a close message
@@ -515,8 +515,8 @@ impl Connection {
                 continue;
             }
 
-            let mut ack_eliciting =
-                !self.spaces[space_id].pending.is_empty() || self.spaces[space_id].ping_pending;
+            let mut ack_eliciting = !self.spaces[space_id].pending.is_empty(&self.streams)
+                || self.spaces[space_id].ping_pending;
             if space_id == SpaceId::Data {
                 ack_eliciting |= self.can_send_1rtt();
             }
@@ -731,7 +731,7 @@ impl Connection {
             // only checked if the full MTU is available, so that lack of space in the datagram isn't
             // the reason for just writing ACKs.
             debug_assert!(
-                !(sent.is_ack_only()
+                !(sent.is_ack_only(&self.streams)
                     && !can_send.acks
                     && can_send.other
                     && (buf_capacity - builder.datagram_start)
@@ -796,7 +796,7 @@ impl Connection {
     /// Indicate what types of frames are ready to send for the given space
     fn space_can_send(&self, space_id: SpaceId) -> SendableFrames {
         if self.spaces[space_id].crypto.is_some() {
-            let can_send = self.spaces[space_id].can_send();
+            let can_send = self.spaces[space_id].can_send(&self.streams);
             if !can_send.is_empty() {
                 return can_send;
             }
@@ -814,7 +814,7 @@ impl Connection {
         }
 
         if self.zero_rtt_crypto.is_some() && self.side.is_client() {
-            let mut can_send = self.spaces[space_id].can_send();
+            let mut can_send = self.spaces[space_id].can_send(&self.streams);
             can_send.other |= self.can_send_1rtt();
             if !can_send.is_empty() {
                 return can_send;
@@ -1051,7 +1051,7 @@ impl Connection {
 
     /// Whether there are any pending retransmits
     pub fn has_pending_retransmits(&self) -> bool {
-        !self.spaces[SpaceId::Data].pending.is_empty()
+        !self.spaces[SpaceId::Data].pending.is_empty(&self.streams)
     }
 
     /// Look up whether we're the client or server of this Connection
@@ -3279,10 +3279,10 @@ struct SentFrames {
 
 impl SentFrames {
     /// Returns whether the packet contains only ACKs
-    pub fn is_ack_only(&self) -> bool {
+    pub fn is_ack_only(&self, streams: &StreamsState) -> bool {
         !self.acks.is_empty()
             && !self.non_retransmits
             && self.stream_frames.is_empty()
-            && self.retransmits.is_empty()
+            && self.retransmits.is_empty(streams)
     }
 }

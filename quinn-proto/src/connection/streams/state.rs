@@ -305,6 +305,12 @@ impl StreamsState {
                 .any(|id| self.send.get(id).map_or(false, |s| !s.is_reset()))
         })
     }
+
+    /// Whether MAX_STREAM_DATA frames could be sent for stream `id`
+    pub fn can_send_flow_control(&self, id: StreamId) -> bool {
+        self.recv
+            .get(&id)
+            .map_or(false, |s| s.receiving_unknown_size())
     }
 
     pub fn write_control_frames(

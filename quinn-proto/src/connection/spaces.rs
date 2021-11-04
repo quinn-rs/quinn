@@ -10,8 +10,8 @@ use fxhash::FxHashSet;
 
 use super::assembler::Assembler;
 use crate::{
-    crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet, shared::IssuedCid, StreamId,
-    VarInt,
+    connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
+    shared::IssuedCid, StreamId, VarInt,
 };
 
 pub(crate) struct PacketSpace {
@@ -104,19 +104,19 @@ impl PacketSpace {
     /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
     /// in-flight data either, we're probably a client guarding against a handshake
     /// anti-amplification deadlock and we just make something up.
-    pub(crate) fn maybe_queue_probe(&mut self) {
+    pub(crate) fn maybe_queue_probe(&mut self, streams: &StreamsState) {
         if self.loss_probes == 0 {
             return;
         }
 
         // Retransmit the data of the oldest in-flight packet
-        if !self.pending.is_empty() {
+        if !self.pending.is_empty(streams) {
             // There's real data to send here, no need to make something up
             return;
         }
 
         for packet in self.sent_packets.values_mut() {
-            if !packet.retransmits.is_empty() {
+            if !packet.retransmits.is_empty(streams) {
                 // Remove retransmitted data from the old packet so we don't end up retransmitting
                 // it *again* even if the copy we're sending now gets acknowledged.
                 self.pending |= mem::take(&mut packet.retransmits);
@@ -139,9 +139,9 @@ impl PacketSpace {
         x
     }
 
-    pub(crate) fn can_send(&self) -> SendableFrames {
+    pub(crate) fn can_send(&self, streams: &StreamsState) -> SendableFrames {
         let acks = self.pending_acks.can_send();
-        let other = !self.pending.is_empty() || self.ping_pending;
+        let other = !self.pending.is_empty(streams) || self.ping_pending;
 
         SendableFrames { acks, other }
     }
@@ -236,13 +236,16 @@ pub struct Retransmits {
 }
 
 impl Retransmits {
-    pub fn is_empty(&self) -> bool {
+    pub fn is_empty(&self, streams: &StreamsState) -> bool {
         !self.max_data
             && !self.max_uni_stream_id
             && !self.max_bi_stream_id
             && self.reset_stream.is_empty()
             && self.stop_sending.is_empty()
-            && self.max_stream_data.is_empty()
+            && self
+                .max_stream_data
+                .iter()
+                .all(|&id| !streams.can_send_flow_control(id))
             && self.crypto.is_empty()
             && self.new_cids.is_empty()
             && self.retire_cids.is_empty()
@@ -315,9 +318,9 @@ pub struct ThinRetransmits {
 
 impl ThinRetransmits {
     /// Returns `true` if no retransmits are necessary
-    pub fn is_empty(&self) -> bool {
+    pub fn is_empty(&self, streams: &StreamsState) -> bool {
         match &self.retransmits {
-            Some(retransmits) => retransmits.is_empty(),
+            Some(retransmits) => retransmits.is_empty(streams),
             None => true,
         }
     }
