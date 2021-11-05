@@ -315,7 +315,7 @@ impl Future for ConnectionDriver {
 /// May be cloned to obtain another handle to the same connection.
 ///
 /// [`Connection::close()`]: Connection::close
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Connection(ConnectionRef);
 
 impl Connection {
@@ -588,12 +588,6 @@ impl Connection {
         conn.inner.set_max_concurrent_streams(Dir::Bi, count);
         // May need to send MAX_STREAMS to make progress
         conn.wake();
-    }
-}
-
-impl Clone for Connection {
-    fn clone(&self) -> Self {
-        Connection(self.0.clone())
     }
 }
 
