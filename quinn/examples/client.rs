@@ -96,10 +96,7 @@ async fn run(options: Opt) -> Result<()> {
     }
 
     let mut endpoint = quinn::Endpoint::client("[::]:0".parse().unwrap())?;
-    endpoint.set_default_client_config(quinn::ClientConfig {
-        crypto: Arc::new(client_crypto),
-        transport: Default::default(),
-    });
+    endpoint.set_default_client_config(quinn::ClientConfig::new(Arc::new(client_crypto)));
 
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
