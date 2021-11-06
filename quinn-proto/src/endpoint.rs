@@ -189,7 +189,9 @@ impl Endpoint {
                 } else {
                     buf.write::<u32>(0x0a1a_2a4a);
                 }
-                buf.write(self.config.initial_version); // supported version
+                for &version in &self.config.supported_versions {
+                    buf.write(version);
+                }
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
