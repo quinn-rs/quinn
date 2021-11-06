@@ -308,7 +308,6 @@ pub struct EndpointConfig {
     pub(crate) connection_id_generator_factory:
         Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
     pub(crate) supported_versions: Vec<u32>,
-    pub(crate) initial_version: u32,
 }
 
 impl EndpointConfig {
@@ -320,7 +319,6 @@ impl EndpointConfig {
             reset_key,
             max_udp_payload_size: 1480u32.into(), // Typical internet MTU minus IPv4 and UDP overhead, rounded up to a multiple of 8
             connection_id_generator_factory: Arc::new(cid_factory),
-            initial_version: DEFAULT_SUPPORTED_VERSIONS[0],
             supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
         }
     }
@@ -373,17 +371,9 @@ impl EndpointConfig {
     }
 
     /// Override supported QUIC versions
-    pub fn supported_versions(
-        &mut self,
-        supported_versions: Vec<u32>,
-        initial_version: u32,
-    ) -> Result<&mut Self, ConfigError> {
-        if !supported_versions.contains(&initial_version) {
-            return Err(ConfigError::OutOfBounds);
-        }
+    pub fn supported_versions(&mut self, supported_versions: Vec<u32>) -> &mut Self {
         self.supported_versions = supported_versions;
-        self.initial_version = initial_version;
-        Ok(self)
+        self
     }
 }
 
@@ -394,7 +384,6 @@ impl fmt::Debug for EndpointConfig {
             .field("max_udp_payload_size", &self.max_udp_payload_size)
             .field("cid_generator_factory", &"[ elided ]")
             .field("supported_versions", &self.supported_versions)
-            .field("initial_version", &self.initial_version)
             .finish()
     }
 }
@@ -558,6 +547,9 @@ pub struct ClientConfig {
 
     /// Cryptographic configuration to use
     pub crypto: Arc<dyn crypto::ClientConfig>,
+
+    /// QUIC protocol version to use
+    pub(crate) version: u32,
 }
 
 impl ClientConfig {
@@ -566,7 +558,14 @@ impl ClientConfig {
         Self {
             transport: Default::default(),
             crypto,
+            version: 1,
         }
+    }
+
+    /// Set the QUIC version to use
+    pub fn version(&mut self, version: u32) -> &mut Self {
+        self.version = version;
+        self
     }
 }
 
@@ -603,6 +602,7 @@ impl fmt::Debug for ClientConfig {
         fmt.debug_struct("ClientConfig<T>")
             .field("transport", &self.transport)
             .field("crypto", &"ClientConfig { elided }")
+            .field("version", &self.version)
             .finish()
     }
 }
