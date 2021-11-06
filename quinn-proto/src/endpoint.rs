@@ -380,7 +380,7 @@ impl Endpoint {
         let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
         let (ch, conn) = self.add_connection(
-            self.config.initial_version,
+            config.version,
             remote_id,
             remote_id,
             remote,
