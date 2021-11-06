@@ -129,26 +129,15 @@ impl Pair {
     }
 
     pub fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
+        self.connect_with(client_config())
+    }
+
+    pub fn connect_with(&mut self, config: ClientConfig) -> (ConnectionHandle, ConnectionHandle) {
         info!("connecting");
-        let client_ch = self.begin_connect(client_config());
+        let client_ch = self.begin_connect(config);
         self.drive();
         let server_ch = self.server.assert_accept();
-        assert_matches!(
-            self.client_conn_mut(client_ch).poll(),
-            Some(Event::HandshakeDataReady)
-        );
-        assert_matches!(
-            self.client_conn_mut(client_ch).poll(),
-            Some(Event::Connected { .. })
-        );
-        assert_matches!(
-            self.server_conn_mut(server_ch).poll(),
-            Some(Event::HandshakeDataReady)
-        );
-        assert_matches!(
-            self.server_conn_mut(server_ch).poll(),
-            Some(Event::Connected { .. })
-        );
+        self.finish_connect(client_ch, server_ch);
         (client_ch, server_ch)
     }
 
@@ -162,6 +151,25 @@ impl Pair {
             .unwrap();
         self.client.connections.insert(client_ch, client_conn);
         client_ch
+    }
+
+    fn finish_connect(&mut self, client_ch: ConnectionHandle, server_ch: ConnectionHandle) {
+        assert_matches!(
+            self.client_conn_mut(client_ch).poll(),
+            Some(Event::HandshakeDataReady)
+        );
+        assert_matches!(
+            self.client_conn_mut(client_ch).poll(),
+            Some(Event::Connected { .. })
+        );
+        assert_matches!(
+            self.server_conn_mut(server_ch).poll(),
+            Some(Event::HandshakeDataReady)
+        );
+        assert_matches!(
+            self.server_conn_mut(server_ch).poll(),
+            Some(Event::Connected { .. })
+        );
     }
 
     pub fn client_conn_mut(&mut self, ch: ConnectionHandle) -> &mut Connection {
