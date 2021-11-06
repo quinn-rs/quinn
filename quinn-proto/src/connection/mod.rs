@@ -243,9 +243,7 @@ impl Connection {
             client_hello: None,
         });
         let mut rng = StdRng::from_entropy();
-        let path_validated = server_config
-            .as_ref()
-            .map_or(true, |c| c.use_stateless_retry);
+        let path_validated = server_config.as_ref().map_or(true, |c| c.use_retry);
         let mut this = Self {
             server_config,
             crypto,

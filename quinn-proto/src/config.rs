@@ -539,7 +539,7 @@ impl fmt::Debug for ServerConfig {
             .field("transport", &self.transport)
             .field("crypto", &"ServerConfig { elided }")
             .field("token_key", &"[ elided ]")
-            .field("use_stateless_retry", &self.use_stateless_retry)
+            .field("use_retry", &self.use_retry)
             .field("retry_token_lifetime", &self.retry_token_lifetime)
             .field("concurrent_connections", &self.concurrent_connections)
             .field("migration", &self.migration)
