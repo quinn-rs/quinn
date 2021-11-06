@@ -560,8 +560,7 @@ impl Endpoint {
         }
 
         if dst_cid.len() < 8
-            && (!server_config.use_stateless_retry
-                || dst_cid.len() != self.local_cid_generator.cid_len())
+            && (!server_config.use_retry || dst_cid.len() != self.local_cid_generator.cid_len())
         {
             debug!(
                 "rejecting connection due to invalid DCID length {}",
@@ -578,7 +577,7 @@ impl Endpoint {
             return None;
         }
 
-        let (retry_src_cid, orig_dst_cid) = if server_config.use_stateless_retry {
+        let (retry_src_cid, orig_dst_cid) = if server_config.use_retry {
             if token.is_empty() {
                 // First Initial
                 let mut random_bytes = vec![0u8; RetryToken::RANDOM_BYTES_LEN];
