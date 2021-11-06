@@ -394,17 +394,11 @@ pub fn server_crypto_with_cert(cert: Certificate, key: PrivateKey) -> rustls::Se
 }
 
 pub fn client_config() -> ClientConfig {
-    ClientConfig {
-        transport: Default::default(),
-        crypto: Arc::new(client_crypto()),
-    }
+    ClientConfig::new(Arc::new(client_crypto()))
 }
 
 pub fn client_config_with_certs(certs: Vec<rustls::Certificate>) -> ClientConfig {
-    ClientConfig {
-        transport: Default::default(),
-        crypto: Arc::new(client_crypto_with_certs(certs)),
-    }
+    ClientConfig::new(Arc::new(client_crypto_with_certs(certs)))
 }
 
 pub fn client_crypto() -> rustls::ClientConfig {

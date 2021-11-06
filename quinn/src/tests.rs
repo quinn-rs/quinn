@@ -468,10 +468,9 @@ fn run_echo(args: EchoArgs) {
             let _guard = runtime.enter();
             Endpoint::client(args.client_addr).unwrap()
         };
-        client.set_default_client_config(ClientConfig {
-            crypto: Arc::new(client_crypto),
-            transport: transport_config,
-        });
+        let mut client_config = ClientConfig::new(Arc::new(client_crypto));
+        client_config.transport = transport_config;
+        client.set_default_client_config(client_config);
 
         let handle = runtime.spawn(async move {
             let incoming = server_incoming.next().await.unwrap();
@@ -624,19 +623,18 @@ async fn rebind_recv() {
     roots.add(&cert).unwrap();
 
     let mut client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
-    client.set_default_client_config(ClientConfig {
-        crypto: Arc::new(
-            rustls::ClientConfig::builder()
-                .with_safe_defaults()
-                .with_root_certificates(roots)
-                .with_no_client_auth(),
-        ),
-        transport: Arc::new({
-            let mut cfg = TransportConfig::default();
-            cfg.max_concurrent_uni_streams(1u32.into());
-            cfg
-        }),
+    let mut client_config = ClientConfig::new(Arc::new(
+        rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_root_certificates(roots)
+            .with_no_client_auth(),
+    ));
+    client_config.transport = Arc::new({
+        let mut cfg = TransportConfig::default();
+        cfg.max_concurrent_uni_streams(1u32.into());
+        cfg
     });
+    client.set_default_client_config(client_config);
 
     let server_config = crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
     let (server, mut incoming) = Endpoint::server(

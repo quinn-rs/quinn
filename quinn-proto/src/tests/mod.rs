@@ -468,10 +468,7 @@ fn zero_rtt_rejection() {
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
     let mut client_crypto = client_crypto();
     client_crypto.alpn_protocols = vec!["foo".into()];
-    let client_config = ClientConfig {
-        transport: Default::default(),
-        crypto: Arc::new(client_crypto.clone()),
-    };
+    let client_config = ClientConfig::new(Arc::new(client_crypto.clone()));
 
     // Establish normal connection
     let client_ch = pair.begin_connect(client_config);
@@ -502,10 +499,7 @@ fn zero_rtt_rejection() {
 
     // Changing protocols invalidates 0-RTT
     client_crypto.alpn_protocols = vec!["bar".into()];
-    let client_config = ClientConfig {
-        transport: Default::default(),
-        crypto: Arc::new(client_crypto),
-    };
+    let client_config = ClientConfig::new(Arc::new(client_crypto));
     info!("resuming session");
     let client_ch = pair.begin_connect(client_config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
@@ -543,10 +537,7 @@ fn alpn_success() {
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
     let mut client_crypto = client_crypto();
     client_crypto.alpn_protocols = vec!["bar".into(), "quux".into(), "corge".into()];
-    let client_config = ClientConfig {
-        transport: Default::default(),
-        crypto: Arc::new(client_crypto),
-    };
+    let client_config = ClientConfig::new(Arc::new(client_crypto));
 
     // Establish normal connection
     let client_ch = pair.begin_connect(client_config);
@@ -578,10 +569,7 @@ fn server_alpn_unset() {
 
     let mut client_crypto = client_crypto();
     client_crypto.alpn_protocols = vec!["foo".into()];
-    let client_config = ClientConfig {
-        transport: Default::default(),
-        crypto: Arc::new(client_crypto),
-    };
+    let client_config = ClientConfig::new(Arc::new(client_crypto));
 
     let client_ch = pair.begin_connect(client_config);
     pair.drive();
@@ -616,10 +604,7 @@ fn alpn_mismatch() {
 
     let mut client_crypto = client_crypto();
     client_crypto.alpn_protocols = vec!["quux".into(), "corge".into()];
-    let client_config = ClientConfig {
-        transport: Default::default(),
-        crypto: Arc::new(client_crypto),
-    };
+    let client_config = ClientConfig::new(Arc::new(client_crypto));
 
     let client_ch = pair.begin_connect(client_config);
     pair.drive();
@@ -1608,10 +1593,7 @@ fn large_initial() {
         .map(|x| x.to_be_bytes().to_vec())
         .collect::<Vec<_>>();
     client_crypto.alpn_protocols = protocols;
-    let cfg = ClientConfig {
-        transport: Default::default(),
-        crypto: Arc::new(client_crypto),
-    };
+    let cfg = ClientConfig::new(Arc::new(client_crypto));
     let client_ch = pair.begin_connect(cfg);
     pair.drive();
     let server_ch = pair.server.assert_accept();

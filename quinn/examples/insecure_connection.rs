@@ -82,9 +82,5 @@ fn configure_client() -> ClientConfig {
         .with_no_client_auth();
     crypto.alpn_protocols = vec![b"perf".to_vec()];
 
-    let transport = Arc::new(quinn::TransportConfig::default());
-    ClientConfig {
-        crypto: Arc::new(crypto),
-        transport,
-    }
+    ClientConfig::new(Arc::new(crypto))
 }

@@ -115,11 +115,7 @@ async fn run(opt: Opt) -> Result<()> {
         .with_no_client_auth();
     crypto.alpn_protocols = vec![b"perf".to_vec()];
 
-    let transport = Arc::new(quinn::TransportConfig::default());
-    let cfg = quinn::ClientConfig {
-        crypto: Arc::new(crypto),
-        transport,
-    };
+    let cfg = quinn::ClientConfig::new(Arc::new(crypto));
 
     let stream_stats = OpenStreamStats::default();
 

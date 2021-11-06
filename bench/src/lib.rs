@@ -67,10 +67,8 @@ pub async fn connect_client(
         .with_root_certificates(roots)
         .with_no_client_auth();
 
-    let client_config = quinn::ClientConfig {
-        crypto: Arc::new(crypto),
-        transport: Arc::new(transport_config(&opt)),
-    };
+    let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
+    client_config.transport = Arc::new(transport_config(&opt));
 
     let quinn::NewConnection { connection, .. } = endpoint
         .connect_with(client_config, server_addr, "localhost")

@@ -551,12 +551,23 @@ impl fmt::Debug for ServerConfig {
 ///
 /// Default values should be suitable for most internet applications.
 #[derive(Clone)]
+#[non_exhaustive]
 pub struct ClientConfig {
     /// Transport configuration to use
     pub transport: Arc<TransportConfig>,
 
     /// Cryptographic configuration to use
     pub crypto: Arc<dyn crypto::ClientConfig>,
+}
+
+impl ClientConfig {
+    /// Create a default config with a particular cryptographic config
+    pub fn new(crypto: Arc<dyn crypto::ClientConfig>) -> Self {
+        Self {
+            transport: Default::default(),
+            crypto,
+        }
+    }
 }
 
 #[cfg(feature = "rustls")]
@@ -583,10 +594,7 @@ impl ClientConfig {
 
     /// Create a client configuration that trusts specified trust anchors
     pub fn with_root_certificates(roots: rustls::RootCertStore) -> Self {
-        Self {
-            transport: Arc::new(TransportConfig::default()),
-            crypto: Arc::new(crypto::rustls::client_config(roots)),
-        }
+        Self::new(Arc::new(crypto::rustls::client_config(roots)))
     }
 }
 
