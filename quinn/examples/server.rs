@@ -137,7 +137,7 @@ async fn run(options: Opt) -> Result<()> {
         .unwrap()
         .max_concurrent_uni_streams(0_u8.into());
     if options.stateless_retry {
-        server_config.use_stateless_retry(true);
+        server_config.use_retry(true);
     }
 
     let root = Arc::<Path>::from(options.root.clone());

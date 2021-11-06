@@ -123,7 +123,7 @@ fn stateless_retry() {
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
-            use_stateless_retry: true,
+            use_retry: true,
             ..server_config()
         },
     );
@@ -418,7 +418,7 @@ fn zero_rtt_happypath() {
     let mut pair = Pair::new(
         Default::default(),
         ServerConfig {
-            use_stateless_retry: true,
+            use_retry: true,
             ..server_config()
         },
     );
