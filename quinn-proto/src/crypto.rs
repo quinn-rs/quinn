@@ -113,6 +113,7 @@ pub trait ClientConfig: Send + Sync {
     /// Start a client session with this configuration
     fn start_session(
         self: Arc<Self>,
+        version: u32,
         server_name: &str,
         params: &TransportParameters,
     ) -> Result<Box<dyn Session>, ConnectError>;
@@ -121,13 +122,26 @@ pub trait ClientConfig: Send + Sync {
 /// Server-side configuration for the crypto protocol
 pub trait ServerConfig: Send + Sync {
     /// Start a server session with this configuration
-    fn start_session(self: Arc<Self>, params: &TransportParameters) -> Box<dyn Session>;
+    ///
+    /// Never called if `initial_keys` rejected `version`.
+    fn start_session(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+    ) -> Box<dyn Session>;
 
     /// Create the initial set of keys given the client's initial destination ConnectionId
-    fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys;
+    fn initial_keys(
+        &self,
+        version: u32,
+        dst_cid: &ConnectionId,
+        side: Side,
+    ) -> Result<Keys, UnsupportedVersion>;
 
     /// Generate the integrity tag for a retry packet
-    fn retry_tag(&self, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
+    ///
+    /// Never called if `initial_keys` rejected `version`.
+    fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
 }
 
 /// Keys used to protect packet payloads
@@ -197,3 +211,13 @@ pub trait AeadKey {
 /// Generic crypto errors
 #[derive(Debug)]
 pub struct CryptoError;
+
+/// Error indicating that the specified QUIC version is not supported
+#[derive(Debug)]
+pub struct UnsupportedVersion;
+
+impl From<UnsupportedVersion> for ConnectError {
+    fn from(_: UnsupportedVersion) -> Self {
+        ConnectError::UnsupportedVersion
+    }
+}
