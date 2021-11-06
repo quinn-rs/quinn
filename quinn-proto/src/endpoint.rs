@@ -20,7 +20,7 @@ use crate::{
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionError},
-    crypto::Keys,
+    crypto::{Keys, UnsupportedVersion},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
@@ -278,12 +278,22 @@ impl Endpoint {
                 return None;
             }
 
-            let crypto = self
-                .server_config
-                .as_ref()
-                .unwrap()
-                .crypto
-                .initial_keys(&dst_cid, Side::Server);
+            let crypto = match self.server_config.as_ref().unwrap().crypto.initial_keys(
+                first_decode.version().unwrap(),
+                &dst_cid,
+                Side::Server,
+            ) {
+                Ok(keys) => keys,
+                Err(UnsupportedVersion) => {
+                    // This probably indicates that the user set supported_versions incorrectly in
+                    // `EndpointConfig`.
+                    debug!(
+                        "ignoring initial packet version {:#x} unsupported by cryptographic layer",
+                        first_decode.version().unwrap()
+                    );
+                    return None;
+                }
+            };
             return match first_decode.finish(Some(&*crypto.header.remote)) {
                 Ok(packet) => self
                     .handle_first_packet(now, remote, local_ip, ecn, packet, remaining, &crypto)
@@ -370,6 +380,7 @@ impl Endpoint {
         let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
         let (ch, conn) = self.add_connection(
+            self.config.initial_version,
             remote_id,
             remote_id,
             remote,
@@ -418,6 +429,7 @@ impl Endpoint {
 
     fn add_connection(
         &mut self,
+        version: u32,
         init_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
@@ -440,7 +452,9 @@ impl Endpoint {
                 );
                 (
                     None,
-                    config.crypto.start_session(&server_name, &params)?,
+                    config
+                        .crypto
+                        .start_session(version, &server_name, &params)?,
                     config.transport,
                 )
             }
@@ -464,7 +478,7 @@ impl Endpoint {
                 };
                 (
                     Some(config.clone()),
-                    config.crypto.clone().start_session(&server_params),
+                    config.crypto.clone().start_session(version, &server_params),
                     config.transport.clone(),
                 )
             }
@@ -481,7 +495,7 @@ impl Endpoint {
             tls,
             self.local_cid_generator.as_ref(),
             now,
-            self.config.initial_version,
+            version,
         );
         let id = self.connections.insert(ConnectionMeta {
             init_cid,
@@ -510,14 +524,15 @@ impl Endpoint {
         rest: Option<BytesMut>,
         crypto: &Keys,
     ) -> Option<(ConnectionHandle, Connection)> {
-        let (src_cid, dst_cid, token, packet_number) = match packet.header {
+        let (src_cid, dst_cid, token, packet_number, version) = match packet.header {
             Header::Initial {
                 src_cid,
                 dst_cid,
                 ref token,
                 number,
+                version,
                 ..
-            } => (src_cid, dst_cid, token.clone(), number),
+            } => (src_cid, dst_cid, token.clone(), number, version),
             _ => panic!("non-initial packet in handle_first_packet()"),
         };
         let packet_number = packet_number.expand(0);
@@ -551,6 +566,7 @@ impl Endpoint {
         {
             debug!("refusing connection");
             self.initial_close(
+                version,
                 remote,
                 local_ip,
                 crypto,
@@ -569,6 +585,7 @@ impl Endpoint {
                 dst_cid.len()
             );
             self.initial_close(
+                version,
                 remote,
                 local_ip,
                 crypto,
@@ -595,13 +612,13 @@ impl Endpoint {
                 let header = Header::Retry {
                     src_cid: temp_loc_cid,
                     dst_cid: src_cid,
-                    version: self.config.initial_version,
+                    version,
                 };
 
                 let mut buf = Vec::new();
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
-                buf.extend_from_slice(&server_config.crypto.retry_tag(&dst_cid, &buf));
+                buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, &buf));
                 encode.finish(&mut buf, &*crypto.header.local, None);
 
                 self.transmits.push_back(Transmit {
@@ -623,6 +640,7 @@ impl Endpoint {
                 _ => {
                     debug!("rejecting invalid stateless retry token");
                     self.initial_close(
+                        version,
                         remote,
                         local_ip,
                         crypto,
@@ -639,6 +657,7 @@ impl Endpoint {
 
         let (ch, mut conn) = self
             .add_connection(
+                version,
                 dst_cid,
                 src_cid,
                 remote,
@@ -662,7 +681,15 @@ impl Endpoint {
                 debug!("handshake failed: {}", e);
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 if let ConnectionError::TransportError(e) = e {
-                    self.initial_close(remote, local_ip, crypto, &src_cid, &temp_loc_cid, e);
+                    self.initial_close(
+                        version,
+                        remote,
+                        local_ip,
+                        crypto,
+                        &src_cid,
+                        &temp_loc_cid,
+                        e,
+                    );
                 }
                 None
             }
@@ -671,6 +698,7 @@ impl Endpoint {
 
     fn initial_close(
         &mut self,
+        version: u32,
         destination: SocketAddr,
         local_ip: Option<IpAddr>,
         crypto: &Keys,
@@ -684,7 +712,7 @@ impl Endpoint {
             src_cid: *local_id,
             number,
             token: Bytes::new(),
-            version: self.config.initial_version,
+            version,
         };
 
         let mut buf = Vec::<u8>::new();
@@ -851,6 +879,9 @@ pub enum ConnectError {
     /// Use `Endpoint::connect_with` to specify a client configuration.
     #[error("no default client config")]
     NoDefaultClientConfig,
+    /// The cryptographic layer does not support the specified QUIC version
+    #[error("unsupported QUIC version")]
+    UnsupportedVersion,
 }
 
 /// Reset Tokens which are associated with peer socket addresses

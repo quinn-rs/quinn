@@ -96,6 +96,10 @@ impl PartialDecode {
         self.buf.get_ref().len()
     }
 
+    pub fn version(&self) -> Option<u32> {
+        self.plain_header.version()
+    }
+
     pub(crate) fn finish(
         self,
         header_crypto: Option<&dyn crypto::HeaderKey>,
@@ -592,6 +596,14 @@ impl PlainHeader {
             }
         }
     }
+
+    fn version(&self) -> Option<u32> {
+        use PlainHeader::*;
+        match *self {
+            Initial { version, .. } | Long { version, .. } | Retry { version, .. } => Some(version),
+            _ => None,
+        }
+    }
 }
 
 // An encoded packet number
@@ -828,9 +840,10 @@ mod tests {
     #[test]
     fn header_encoding() {
         use crate::{crypto::rustls::initial_keys, Side};
+        use rustls::quic::Version;
 
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
-        let client = initial_keys(&dcid, Side::Client);
+        let client = initial_keys(Version::V1, &dcid, Side::Client);
         let mut buf = Vec::new();
         let header = Header::Initial {
             number: PacketNumber::U8(0),
@@ -860,7 +873,7 @@ mod tests {
             )[..]
         );
 
-        let server = initial_keys(&dcid, Side::Server);
+        let server = initial_keys(Version::V1, &dcid, Side::Server);
         let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
         let decode = PartialDecode::new(buf.as_slice().into(), 0, &supported_versions)
             .unwrap()

@@ -13,13 +13,16 @@ use rustls::{
 };
 
 use crate::{
-    crypto::{self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys},
+    crypto::{
+        self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys, UnsupportedVersion,
+    },
     transport_parameters::TransportParameters,
     ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
 };
 
 /// A rustls TLS session
 pub struct TlsSession {
+    version: Version,
     using_alpn: bool,
     got_handshake_data: bool,
     next_secrets: Option<Secrets>,
@@ -37,7 +40,7 @@ impl TlsSession {
 
 impl crypto::Session for TlsSession {
     fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys {
-        initial_keys(dst_cid, side)
+        initial_keys(self.version, dst_cid, side)
     }
 
     fn handshake_data(&self) -> Option<Box<dyn Any>> {
@@ -165,10 +168,14 @@ impl crypto::Session for TlsSession {
         let tag_start = tag_start + pseudo_packet.len();
         pseudo_packet.extend_from_slice(payload);
 
-        let nonce = aead::Nonce::assume_unique_for_key(RETRY_INTEGRITY_NONCE);
-        let key = aead::LessSafeKey::new(
-            aead::UnboundKey::new(&aead::AES_128_GCM, &RETRY_INTEGRITY_KEY).unwrap(),
-        );
+        let (nonce, key) = match self.version {
+            Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
+            Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
+            _ => unreachable!(),
+        };
+
+        let nonce = aead::Nonce::assume_unique_for_key(nonce);
+        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
 
         let (aad, tag) = pseudo_packet.split_at_mut(tag_start);
         key.open_in_place(nonce, aead::Aad::from(aad), tag).is_ok()
@@ -186,10 +193,17 @@ impl crypto::Session for TlsSession {
     }
 }
 
-const RETRY_INTEGRITY_KEY: [u8; 16] = [
+const RETRY_INTEGRITY_KEY_DRAFT: [u8; 16] = [
+    0xcc, 0xce, 0x18, 0x7e, 0xd0, 0x9a, 0x09, 0xd0, 0x57, 0x28, 0x15, 0x5a, 0x6c, 0xb9, 0x6b, 0xe1,
+];
+const RETRY_INTEGRITY_NONCE_DRAFT: [u8; 12] = [
+    0xe5, 0x49, 0x30, 0xf9, 0x7f, 0x21, 0x36, 0xf0, 0x53, 0x0a, 0x8c, 0x1c,
+];
+
+const RETRY_INTEGRITY_KEY_V1: [u8; 16] = [
     0xbe, 0x0c, 0x69, 0x0b, 0x9f, 0x66, 0x57, 0x5a, 0x1d, 0x76, 0x6b, 0x54, 0xe3, 0x68, 0xc8, 0x4e,
 ];
-const RETRY_INTEGRITY_NONCE: [u8; 12] = [
+const RETRY_INTEGRITY_NONCE_V1: [u8; 12] = [
     0x46, 0x15, 0x99, 0xd3, 0x5d, 0x63, 0x2b, 0xf2, 0x23, 0x98, 0x25, 0xbb,
 ];
 
@@ -238,17 +252,20 @@ pub struct HandshakeData {
 impl crypto::ClientConfig for rustls::ClientConfig {
     fn start_session(
         self: Arc<Self>,
+        version: u32,
         server_name: &str,
         params: &TransportParameters,
     ) -> Result<Box<dyn crypto::Session>, ConnectError> {
+        let version = interpret_version(version)?;
         Ok(Box::new(TlsSession {
+            version,
             using_alpn: !self.alpn_protocols.is_empty(),
             got_handshake_data: false,
             next_secrets: None,
             inner: Connection::Client(
                 rustls::ClientConnection::new_quic(
                     self,
-                    Version::V1,
+                    version,
                     server_name
                         .try_into()
                         .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?,
@@ -261,31 +278,48 @@ impl crypto::ClientConfig for rustls::ClientConfig {
 }
 
 impl crypto::ServerConfig for rustls::ServerConfig {
-    fn start_session(self: Arc<Self>, params: &TransportParameters) -> Box<dyn crypto::Session> {
+    fn start_session(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+    ) -> Box<dyn crypto::Session> {
+        let version = interpret_version(version).unwrap();
         Box::new(TlsSession {
+            version,
             using_alpn: !self.alpn_protocols.is_empty(),
             got_handshake_data: false,
             next_secrets: None,
             inner: Connection::Server(
-                rustls::ServerConnection::new_quic(self, Version::V1, to_vec(params)).unwrap(),
+                rustls::ServerConnection::new_quic(self, version, to_vec(params)).unwrap(),
             ),
         })
     }
 
-    fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys {
-        initial_keys(dst_cid, side)
+    fn initial_keys(
+        &self,
+        version: u32,
+        dst_cid: &ConnectionId,
+        side: Side,
+    ) -> Result<Keys, UnsupportedVersion> {
+        let version = interpret_version(version)?;
+        Ok(initial_keys(version, dst_cid, side))
     }
 
-    fn retry_tag(&self, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
+    fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
+        let version = interpret_version(version).unwrap();
+        let (nonce, key) = match version {
+            Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
+            Version::V1Draft => (RETRY_INTEGRITY_NONCE_DRAFT, RETRY_INTEGRITY_KEY_DRAFT),
+            _ => unreachable!(),
+        };
+
         let mut pseudo_packet = Vec::with_capacity(packet.len() + orig_dst_cid.len() + 1);
         pseudo_packet.push(orig_dst_cid.len() as u8);
         pseudo_packet.extend_from_slice(orig_dst_cid);
         pseudo_packet.extend_from_slice(packet);
 
-        let nonce = aead::Nonce::assume_unique_for_key(RETRY_INTEGRITY_NONCE);
-        let key = aead::LessSafeKey::new(
-            aead::UnboundKey::new(&aead::AES_128_GCM, &RETRY_INTEGRITY_KEY).unwrap(),
-        );
+        let nonce = aead::Nonce::assume_unique_for_key(nonce);
+        let key = aead::LessSafeKey::new(aead::UnboundKey::new(&aead::AES_128_GCM, &key).unwrap());
 
         let tag = key
             .seal_in_place_separate_tag(nonce, aead::Aad::from(pseudo_packet), &mut [])
@@ -302,8 +336,8 @@ fn to_vec(params: &TransportParameters) -> Vec<u8> {
     bytes
 }
 
-pub(crate) fn initial_keys(dst_cid: &ConnectionId, side: Side) -> Keys {
-    let keys = rustls::quic::Keys::initial(Version::V1, dst_cid, side.is_client());
+pub(crate) fn initial_keys(version: Version, dst_cid: &ConnectionId, side: Side) -> Keys {
+    let keys = rustls::quic::Keys::initial(version, dst_cid, side.is_client());
     Keys {
         header: KeyPair {
             local: Box::new(keys.local.header),
@@ -385,4 +419,12 @@ pub(crate) fn server_config(
         .with_single_cert(cert_chain, key)?;
     cfg.max_early_data_size = u32::MAX;
     Ok(cfg)
+}
+
+fn interpret_version(version: u32) -> Result<Version, UnsupportedVersion> {
+    match version {
+        0xff00_001d..=0xff00_0020 => Ok(Version::V1Draft),
+        0x0000_0001 | 0xff00_0021..=0xff00_0022 => Ok(Version::V1),
+        _ => Err(UnsupportedVersion),
+    }
 }
