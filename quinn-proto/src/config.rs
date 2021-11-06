@@ -431,7 +431,7 @@ pub struct ServerConfig {
     /// Whether to require clients to prove ownership of an address before committing resources.
     ///
     /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
-    pub(crate) use_stateless_retry: bool,
+    pub(crate) use_retry: bool,
     /// Microseconds after a stateless retry token was issued for which it's considered valid.
     pub(crate) retry_token_lifetime: Duration,
 
@@ -456,7 +456,7 @@ impl ServerConfig {
             crypto,
 
             token_key,
-            use_stateless_retry: false,
+            use_retry: false,
             retry_token_lifetime: Duration::from_secs(15),
 
             concurrent_connections: 100_000,
@@ -477,8 +477,8 @@ impl ServerConfig {
     /// Whether to require clients to prove ownership of an address before committing resources.
     ///
     /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
-    pub fn use_stateless_retry(&mut self, value: bool) -> &mut Self {
-        self.use_stateless_retry = value;
+    pub fn use_retry(&mut self, value: bool) -> &mut Self {
+        self.use_retry = value;
         self
     }
 
