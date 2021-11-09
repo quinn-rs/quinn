@@ -121,15 +121,6 @@ pub trait ClientConfig: Send + Sync {
 
 /// Server-side configuration for the crypto protocol
 pub trait ServerConfig: Send + Sync {
-    /// Start a server session with this configuration
-    ///
-    /// Never called if `initial_keys` rejected `version`.
-    fn start_session(
-        self: Arc<Self>,
-        version: u32,
-        params: &TransportParameters,
-    ) -> Box<dyn Session>;
-
     /// Create the initial set of keys given the client's initial destination ConnectionId
     fn initial_keys(
         &self,
@@ -142,6 +133,15 @@ pub trait ServerConfig: Send + Sync {
     ///
     /// Never called if `initial_keys` rejected `version`.
     fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16];
+
+    /// Start a server session with this configuration
+    ///
+    /// Never called if `initial_keys` rejected `version`.
+    fn start_session(
+        self: Arc<Self>,
+        version: u32,
+        params: &TransportParameters,
+    ) -> Box<dyn Session>;
 }
 
 /// Keys used to protect packet payloads
