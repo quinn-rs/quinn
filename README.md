@@ -20,7 +20,6 @@ Quinn is a pure-rust, async-compatible implementation of the IETF [QUIC][quic] t
   [rustls][rustls] and [*ring*][ring]
 - Application-layer datagrams for small, unreliable messages
 - Future-based async API
-- Experimental HTTP over QUIC
 - Minimum supported Rust version of 1.51.0
 
 ## Overview
