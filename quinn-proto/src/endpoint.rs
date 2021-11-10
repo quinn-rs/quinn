@@ -438,49 +438,6 @@ impl Endpoint {
         }
     }
 
-    fn add_connection(
-        &mut self,
-        version: u32,
-        init_cid: ConnectionId,
-        loc_cid: ConnectionId,
-        rem_cid: ConnectionId,
-        remote: SocketAddr,
-        local_ip: Option<IpAddr>,
-        now: Instant,
-        tls: Box<dyn crypto::Session>,
-        server_config: Option<Arc<ServerConfig>>,
-        transport_config: Arc<TransportConfig>,
-    ) -> (ConnectionHandle, Connection) {
-        let conn = Connection::new(
-            server_config,
-            transport_config,
-            init_cid,
-            loc_cid,
-            rem_cid,
-            remote,
-            local_ip,
-            tls,
-            self.local_cid_generator.as_ref(),
-            now,
-            version,
-        );
-        let id = self.connections.insert(ConnectionMeta {
-            init_cid,
-            cids_issued: 0,
-            loc_cids: iter::once((0, loc_cid)).collect(),
-            initial_remote: remote,
-            reset_token: None,
-        });
-        let ch = ConnectionHandle(id);
-
-        if self.local_cid_generator.cid_len() > 0 {
-            self.connection_ids.insert(loc_cid, ch);
-        } else {
-            self.connection_remotes.insert(remote, ch);
-        }
-        (ch, conn)
-    }
-
     fn handle_first_packet(
         &mut self,
         now: Instant,
@@ -674,6 +631,50 @@ impl Endpoint {
                 None
             }
         }
+    }
+
+    fn add_connection(
+        &mut self,
+        version: u32,
+        init_cid: ConnectionId,
+        loc_cid: ConnectionId,
+        rem_cid: ConnectionId,
+        remote: SocketAddr,
+        local_ip: Option<IpAddr>,
+        now: Instant,
+        tls: Box<dyn crypto::Session>,
+        server_config: Option<Arc<ServerConfig>>,
+        transport_config: Arc<TransportConfig>,
+    ) -> (ConnectionHandle, Connection) {
+        let conn = Connection::new(
+            server_config,
+            transport_config,
+            init_cid,
+            loc_cid,
+            rem_cid,
+            remote,
+            local_ip,
+            tls,
+            self.local_cid_generator.as_ref(),
+            now,
+            version,
+        );
+
+        let id = self.connections.insert(ConnectionMeta {
+            init_cid,
+            cids_issued: 0,
+            loc_cids: iter::once((0, loc_cid)).collect(),
+            initial_remote: remote,
+            reset_token: None,
+        });
+
+        let ch = ConnectionHandle(id);
+        match self.local_cid_generator.cid_len() {
+            0 => self.connection_remotes.insert(remote, ch),
+            _ => self.connection_ids.insert(loc_cid, ch),
+        };
+
+        (ch, conn)
     }
 
     fn initial_close(
