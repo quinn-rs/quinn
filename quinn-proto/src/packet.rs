@@ -55,6 +55,13 @@ impl PartialDecode {
         self.buf.get_ref()
     }
 
+    pub(crate) fn initial_version(&self) -> Option<u32> {
+        match self.plain_header {
+            PlainHeader::Initial { version, .. } => Some(version),
+            _ => None,
+        }
+    }
+
     pub(crate) fn has_long_header(&self) -> bool {
         !matches!(self.plain_header, PlainHeader::Short { .. })
     }
@@ -94,10 +101,6 @@ impl PartialDecode {
     /// Length of QUIC packet being decoded
     pub fn len(&self) -> usize {
         self.buf.get_ref().len()
-    }
-
-    pub fn version(&self) -> Option<u32> {
-        self.plain_header.version()
     }
 
     pub(crate) fn finish(
@@ -594,14 +597,6 @@ impl PlainHeader {
                     version,
                 }),
             }
-        }
-    }
-
-    fn version(&self) -> Option<u32> {
-        use PlainHeader::*;
-        match *self {
-            Initial { version, .. } | Long { version, .. } | Retry { version, .. } => Some(version),
-            _ => None,
         }
     }
 }
