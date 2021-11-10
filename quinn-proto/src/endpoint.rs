@@ -624,25 +624,19 @@ impl Endpoint {
 
         let server_config = server_config.clone();
         let loc_cid = self.new_cid();
-        let params = TransportParameters::new(
+        let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
             self.local_cid_generator.as_ref(),
             loc_cid,
             Some(&server_config),
         );
-        let server_params = TransportParameters {
-            stateless_reset_token: Some(ResetToken::new(&*self.config.reset_key, &loc_cid)),
-            original_dst_cid: Some(orig_dst_cid),
-            retry_src_cid,
-            ..params
-        };
-        let tls = server_config
-            .crypto
-            .clone()
-            .start_session(version, &server_params);
-        let transport_config = server_config.transport.clone();
+        params.stateless_reset_token = Some(ResetToken::new(&*self.config.reset_key, &loc_cid));
+        params.original_dst_cid = Some(orig_dst_cid);
+        params.retry_src_cid = retry_src_cid;
 
+        let tls = server_config.crypto.clone().start_session(version, &params);
+        let transport_config = server_config.transport.clone();
         let (ch, mut conn) = self.add_connection(
             version,
             dst_cid,
