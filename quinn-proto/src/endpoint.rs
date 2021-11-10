@@ -87,10 +87,6 @@ impl Endpoint {
         }
     }
 
-    fn is_server(&self) -> bool {
-        self.server_config.is_some()
-    }
-
     /// Get the next packet to transmit
     #[must_use]
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
@@ -170,7 +166,7 @@ impl Endpoint {
                 dst_cid,
                 version,
             }) => {
-                if !self.is_server() {
+                if self.server_config.is_none() {
                     debug!("dropping packet with unsupported version");
                     return None;
                 }
@@ -259,11 +255,14 @@ impl Endpoint {
         // Potentially create a new connection
         //
 
-        if !self.is_server() {
-            debug!("packet for unrecognized connection {}", dst_cid);
-            self.stateless_reset(datagram_len, remote, local_ip, &dst_cid);
-            return None;
-        }
+        let server_config = match &self.server_config {
+            Some(config) => config,
+            None => {
+                debug!("packet for unrecognized connection {}", dst_cid);
+                self.stateless_reset(datagram_len, remote, local_ip, &dst_cid);
+                return None;
+            }
+        };
 
         if let Some(version) = first_decode.initial_version() {
             if datagram_len < MIN_INITIAL_SIZE as usize {
@@ -271,11 +270,10 @@ impl Endpoint {
                 return None;
             }
 
-            let crypto = match self.server_config.as_ref().unwrap().crypto.initial_keys(
-                version,
-                &dst_cid,
-                Side::Server,
-            ) {
+            let crypto = match server_config
+                .crypto
+                .initial_keys(version, &dst_cid, Side::Server)
+            {
                 Ok(keys) => keys,
                 Err(UnsupportedVersion) => {
                     // This probably indicates that the user set supported_versions incorrectly in
