@@ -265,21 +265,14 @@ impl Endpoint {
             return None;
         }
 
-        if first_decode.has_long_header() {
-            if !first_decode.is_initial() {
-                debug!(
-                    "ignoring non-initial packet for unknown connection {}",
-                    dst_cid
-                );
-                return None;
-            }
+        if let Some(version) = first_decode.initial_version() {
             if datagram_len < MIN_INITIAL_SIZE as usize {
                 debug!("ignoring short initial for connection {}", dst_cid);
                 return None;
             }
 
             let crypto = match self.server_config.as_ref().unwrap().crypto.initial_keys(
-                first_decode.version().unwrap(),
+                version,
                 &dst_cid,
                 Side::Server,
             ) {
@@ -289,7 +282,7 @@ impl Endpoint {
                     // `EndpointConfig`.
                     debug!(
                         "ignoring initial packet version {:#x} unsupported by cryptographic layer",
-                        first_decode.version().unwrap()
+                        version
                     );
                     return None;
                 }
@@ -303,6 +296,12 @@ impl Endpoint {
                     None
                 }
             };
+        } else if first_decode.has_long_header() {
+            debug!(
+                "ignoring non-initial packet for unknown connection {}",
+                dst_cid
+            );
+            return None;
         }
 
         //
