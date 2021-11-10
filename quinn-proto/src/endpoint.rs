@@ -20,7 +20,7 @@ use crate::{
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionError},
-    crypto::{Keys, UnsupportedVersion},
+    crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
@@ -28,8 +28,8 @@ use crate::{
         EndpointEventInner, IssuedCid,
     },
     transport_parameters::TransportParameters,
-    ResetToken, RetryToken, Side, Transmit, TransportError, INITIAL_MAX_UDP_PAYLOAD_SIZE,
-    MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError,
+    INITIAL_MAX_UDP_PAYLOAD_SIZE, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -374,20 +374,34 @@ impl Endpoint {
         if remote.port() == 0 {
             return Err(ConnectError::InvalidRemoteAddress(remote));
         }
+
         let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
+
+        let loc_cid = self.new_cid();
+        let params = TransportParameters::new(
+            &config.transport,
+            &self.config,
+            self.local_cid_generator.as_ref(),
+            loc_cid,
+            None,
+        );
+        let tls = config
+            .crypto
+            .start_session(config.version, server_name, &params)?;
+
         let (ch, conn) = self.add_connection(
             config.version,
             remote_id,
+            loc_cid,
             remote_id,
             remote,
             None,
-            ConnectionOpts::Client {
-                config,
-                server_name: server_name.into(),
-            },
             Instant::now(),
-        )?;
+            tls,
+            None,
+            config.transport,
+        );
         Ok((ch, conn))
     }
 
@@ -428,59 +442,15 @@ impl Endpoint {
         &mut self,
         version: u32,
         init_cid: ConnectionId,
+        loc_cid: ConnectionId,
         rem_cid: ConnectionId,
         remote: SocketAddr,
         local_ip: Option<IpAddr>,
-        opts: ConnectionOpts,
         now: Instant,
-    ) -> Result<(ConnectionHandle, Connection), ConnectError> {
-        let loc_cid = self.new_cid();
-        let (server_config, tls, transport_config) = match opts {
-            ConnectionOpts::Client {
-                config,
-                server_name,
-            } => {
-                let params = TransportParameters::new(
-                    &config.transport,
-                    &self.config,
-                    self.local_cid_generator.as_ref(),
-                    loc_cid,
-                    None,
-                );
-                (
-                    None,
-                    config
-                        .crypto
-                        .start_session(version, &server_name, &params)?,
-                    config.transport,
-                )
-            }
-            ConnectionOpts::Server {
-                orig_dst_cid,
-                retry_src_cid,
-            } => {
-                let config = self.server_config.as_ref().unwrap();
-                let params = TransportParameters::new(
-                    &config.transport,
-                    &self.config,
-                    self.local_cid_generator.as_ref(),
-                    loc_cid,
-                    Some(config),
-                );
-                let server_params = TransportParameters {
-                    stateless_reset_token: Some(ResetToken::new(&*self.config.reset_key, &loc_cid)),
-                    original_dst_cid: Some(orig_dst_cid),
-                    retry_src_cid,
-                    ..params
-                };
-                (
-                    Some(config.clone()),
-                    config.crypto.clone().start_session(version, &server_params),
-                    config.transport.clone(),
-                )
-            }
-        };
-
+        tls: Box<dyn crypto::Session>,
+        server_config: Option<Arc<ServerConfig>>,
+        transport_config: Arc<TransportConfig>,
+    ) -> (ConnectionHandle, Connection) {
         let conn = Connection::new(
             server_config,
             transport_config,
@@ -508,7 +478,7 @@ impl Endpoint {
         } else {
             self.connection_remotes.insert(remote, ch);
         }
-        Ok((ch, conn))
+        (ch, conn)
     }
 
     fn handle_first_packet(
@@ -652,20 +622,39 @@ impl Endpoint {
             (None, dst_cid)
         };
 
-        let (ch, mut conn) = self
-            .add_connection(
-                version,
-                dst_cid,
-                src_cid,
-                remote,
-                local_ip,
-                ConnectionOpts::Server {
-                    retry_src_cid,
-                    orig_dst_cid,
-                },
-                now,
-            )
-            .unwrap();
+        let server_config = server_config.clone();
+        let loc_cid = self.new_cid();
+        let params = TransportParameters::new(
+            &server_config.transport,
+            &self.config,
+            self.local_cid_generator.as_ref(),
+            loc_cid,
+            Some(&server_config),
+        );
+        let server_params = TransportParameters {
+            stateless_reset_token: Some(ResetToken::new(&*self.config.reset_key, &loc_cid)),
+            original_dst_cid: Some(orig_dst_cid),
+            retry_src_cid,
+            ..params
+        };
+        let tls = server_config
+            .crypto
+            .clone()
+            .start_session(version, &server_params);
+        let transport_config = server_config.transport.clone();
+
+        let (ch, mut conn) = self.add_connection(
+            version,
+            dst_cid,
+            loc_cid,
+            src_cid,
+            remote,
+            local_ip,
+            now,
+            tls,
+            Some(server_config),
+            transport_config,
+        );
         if dst_cid.len() != 0 {
             self.connection_ids_initial.insert(dst_cid, ch);
         }
@@ -835,17 +824,6 @@ pub enum DatagramEvent {
     ConnectionEvent(ConnectionEvent),
     /// The datagram has resulted in starting a new `Connection`
     NewConnection(Connection),
-}
-
-enum ConnectionOpts {
-    Client {
-        config: ClientConfig,
-        server_name: String,
-    },
-    Server {
-        retry_src_cid: Option<ConnectionId>,
-        orig_dst_cid: ConnectionId,
-    },
 }
 
 /// Errors in the parameters being used to create a new connection
