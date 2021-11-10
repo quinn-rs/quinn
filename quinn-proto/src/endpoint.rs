@@ -480,8 +480,7 @@ impl Endpoint {
             return None;
         }
 
-        // Local CID used for stateless packets
-        let temp_loc_cid = self.new_cid();
+        let loc_cid = self.new_cid();
         let server_config = self.server_config.as_ref().unwrap();
 
         if self.connections.len() >= server_config.concurrent_connections as usize
@@ -495,7 +494,7 @@ impl Endpoint {
                 local_ip,
                 crypto,
                 &src_cid,
-                &temp_loc_cid,
+                &loc_cid,
                 TransportError::CONNECTION_REFUSED(""),
             );
             return None;
@@ -514,7 +513,7 @@ impl Endpoint {
                 local_ip,
                 crypto,
                 &src_cid,
-                &temp_loc_cid,
+                &loc_cid,
                 TransportError::PROTOCOL_VIOLATION("invalid destination CID length"),
             );
             return None;
@@ -531,10 +530,10 @@ impl Endpoint {
                     issued: SystemTime::now(),
                     random_bytes: &random_bytes,
                 }
-                .encode(&*server_config.token_key, &remote, &temp_loc_cid);
+                .encode(&*server_config.token_key, &remote, &loc_cid);
 
                 let header = Header::Retry {
-                    src_cid: temp_loc_cid,
+                    src_cid: loc_cid,
                     dst_cid: src_cid,
                     version,
                 };
@@ -569,7 +568,7 @@ impl Endpoint {
                         local_ip,
                         crypto,
                         &src_cid,
-                        &temp_loc_cid,
+                        &loc_cid,
                         TransportError::INVALID_TOKEN(""),
                     );
                     return None;
@@ -580,7 +579,6 @@ impl Endpoint {
         };
 
         let server_config = server_config.clone();
-        let loc_cid = self.new_cid();
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -618,15 +616,7 @@ impl Endpoint {
                 debug!("handshake failed: {}", e);
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 if let ConnectionError::TransportError(e) = e {
-                    self.initial_close(
-                        version,
-                        remote,
-                        local_ip,
-                        crypto,
-                        &src_cid,
-                        &temp_loc_cid,
-                        e,
-                    );
+                    self.initial_close(version, remote, local_ip, crypto, &src_cid, &loc_cid, e);
                 }
                 None
             }
