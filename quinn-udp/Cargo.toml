@@ -1,6 +1,6 @@
 [package]
 name = "quinn-udp"
-version = "0.1.0-beta.1"
+version = "0.1.0"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
 description = "UDP sockets with ECN information for the QUIC transport protocol"
@@ -19,7 +19,7 @@ maintenance = { status = "experimental" }
 futures-util = { version = "0.3.11", features = ["io"] }
 libc = "0.2.69"
 mio = { version = "0.7.7", features = ["net"] }
-proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.7" }
+proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8" }
 socket2 = "0.4"
 tracing = "0.1.10"
 tokio = { version = "1.0.1", features = ["net"] }
