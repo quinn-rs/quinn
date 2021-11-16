@@ -6,7 +6,7 @@
 //! builds on top of quinn-proto, which implements protocol logic independent of any particular
 //! runtime.
 //!
-//! The entry point of this crate is the [`Endpoint`](struct.Endpoint.html).
+//! The entry point of this crate is the [`Endpoint`].
 //!
 //! # About QUIC
 //!
