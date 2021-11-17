@@ -20,12 +20,13 @@ use proto::{
 };
 use rustc_hash::FxHashMap;
 use tokio::sync::{futures::Notified, mpsc, Notify};
+use tokio_util::time::DelayQueue;
 use udp::{RecvMeta, UdpState, BATCH_SIZE};
 
 use crate::{
     connection::{Connecting, ConnectionRef},
     work_limiter::WorkLimiter,
-    EndpointConfig, EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND, SEND_TIME_BOUND,
+    EndpointConfig, VarInt, RECV_TIME_BOUND, SEND_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -119,7 +120,6 @@ impl Endpoint {
             socket,
             proto::Endpoint::new(Arc::new(config), server_config.map(Arc::new)),
             addr.is_ipv6(),
-            runtime.clone(),
         );
         let driver = EndpointDriver(rc.clone());
         runtime.spawn(Box::pin(async {
@@ -192,9 +192,8 @@ impl Endpoint {
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
         let udp_state = endpoint.udp_state.clone();
-        Ok(endpoint
-            .connections
-            .insert(ch, conn, udp_state, self.runtime.clone()))
+        let dirty = endpoint.dirty_send.clone();
+        Ok(endpoint.connections.insert(dirty, ch, conn, udp_state))
     }
 
     /// Switch to a new UDP socket
@@ -297,15 +296,13 @@ impl Future for EndpointDriver {
 
     #[allow(unused_mut)] // MSRV
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let mut endpoint = self.0.state.lock().unwrap();
+        let mut endpoint = &mut *self.0.state.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());
         }
 
-        let now = Instant::now();
-        let mut keep_going = false;
-        keep_going |= endpoint.drive_recv(cx, now)?;
-        keep_going |= endpoint.handle_events(cx, &self.0.shared);
+        let mut keep_going = endpoint.drive_recv(cx, Instant::now())?;
+        keep_going |= endpoint.drive_connections(cx, &self.0.shared);
         keep_going |= endpoint.drive_send(cx)?;
 
         if !endpoint.incoming.is_empty() {
@@ -315,10 +312,6 @@ impl Future for EndpointDriver {
         if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
             Poll::Ready(Ok(()))
         } else {
-            drop(endpoint);
-            // If there is more work to do schedule the endpoint task again.
-            // `wake_by_ref()` is called outside the lock to minimize
-            // lock contention on a multithreaded runtime.
             if keep_going {
                 cx.waker().wake_by_ref();
             }
@@ -351,14 +344,19 @@ pub(crate) struct State {
     driver: Option<Waker>,
     ipv6: bool,
     connections: ConnectionSet,
-    events: mpsc::UnboundedReceiver<(ConnectionHandle, EndpointEvent)>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
     driver_lost: bool,
     recv_limiter: WorkLimiter,
     recv_buf: Box<[u8]>,
     send_limiter: WorkLimiter,
-    runtime: Arc<dyn Runtime>,
+    /// Connections add themselves to this queue when they need to be driven
+    ///
+    /// Occurs e.g. due to application-layer activity
+    dirty_recv: mpsc::UnboundedReceiver<ConnectionHandle>,
+    /// Passed in to connections to enable the above
+    dirty_send: mpsc::UnboundedSender<ConnectionHandle>,
+    timers: DelayQueue<ConnectionHandle>,
 }
 
 #[derive(Debug)]
@@ -396,10 +394,10 @@ impl State {
                             {
                                 Some((handle, DatagramEvent::NewConnection(conn))) => {
                                     let conn = self.connections.insert(
+                                        self.dirty_send.clone(),
                                         handle,
                                         conn,
                                         self.udp_state.clone(),
-                                        self.runtime.clone(),
                                     );
                                     self.incoming.push_back(conn);
                                 }
@@ -478,44 +476,86 @@ impl State {
         result
     }
 
-    fn handle_events(&mut self, cx: &mut Context, shared: &Shared) -> bool {
-        use EndpointEvent::*;
+    /// Process connections on which there's been timeouts, packets received, or application
+    /// activity ("dirty" connections)
+    fn drive_connections(&mut self, cx: &mut Context, shared: &Shared) -> bool {
+        let mut keep_going = false;
 
-        for _ in 0..IO_LOOP_BOUND {
-            match self.events.poll_recv(cx) {
-                Poll::Ready(Some((ch, event))) => match event {
-                    Proto(e) => {
-                        if e.is_drained() {
-                            self.connections.refs.remove(&ch);
-                            if self.connections.is_empty() {
-                                shared.idle.notify_waiters();
-                            }
-                        }
-                        if let Some(event) = self.inner.handle_event(ch, e) {
-                            let conn = self.connections.refs.get(&ch).unwrap();
-                            let mut conn = conn.state.lock("handle_event");
-                            conn.inner.handle_event(event);
-                            conn.wake();
+        while let Poll::Ready(Some(result)) = self.timers.poll_expired(cx) {
+            let conn_handle = result.unwrap().into_inner();
+            let conn = match self.connections.refs.get(&conn_handle) {
+                Some(c) => c,
+                None => continue,
+            };
+            let mut state = &mut *conn.state.lock("poll timeouts");
+            let _guard = state.span.clone().entered();
+            state.inner.handle_timeout(Instant::now());
+            state.timer_handle = None;
+            state.timer_deadline = None;
+            state.wake();
+        }
+
+        let mut dirty_buffer = Vec::new();
+
+        // Buffer the list of initially dirty connections, guaranteeing that the connection
+        // processing loop below takes a predictable amount of time.
+        while let Poll::Ready(Some(conn_handle)) = self.dirty_recv.poll_recv(cx) {
+            dirty_buffer.push(conn_handle);
+        }
+
+        let mut drained = Vec::new();
+        for conn_handle in dirty_buffer {
+            let conn = match self.connections.refs.get(&conn_handle) {
+                Some(c) => c,
+                None => continue,
+            };
+            let mut state = conn.state.lock("poll dirty");
+            state.is_dirty = false;
+            let _guard = state.span.clone().entered();
+            let mut keep_conn_going = state.drive_transmit(&mut self.outgoing);
+            if let Some(deadline) = state.inner.poll_timeout() {
+                let deadline = tokio::time::Instant::from(deadline);
+                if Some(deadline) != state.timer_deadline {
+                    match state.timer_handle {
+                        Some(ref key) => self.timers.reset_at(key, deadline),
+                        None => {
+                            state.timer_handle = Some(self.timers.insert_at(conn_handle, deadline));
                         }
                     }
-                    Transmit(t) => self.outgoing.push_back(t),
-                },
-                Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
-                Poll::Pending => {
-                    return false;
+                    // self.timers may need to be polled
+                    keep_going = true;
                 }
+            }
+            while let Some(event) = state.inner.poll_endpoint_events() {
+                if event.is_drained() {
+                    drained.push(conn_handle);
+                }
+                if let Some(event) = self.inner.handle_event(conn_handle, event) {
+                    state.inner.handle_event(event);
+                    keep_conn_going = true;
+                }
+            }
+            state.forward_app_events(&conn.shared);
+            if keep_conn_going {
+                state.wake();
+                keep_going = true;
             }
         }
 
-        true
+        for conn_handle in drained {
+            self.connections.refs.remove(&conn_handle);
+        }
+        if self.connections.is_empty() {
+            shared.idle.notify_waiters();
+        }
+
+        keep_going
     }
 }
 
 #[derive(Debug)]
 struct ConnectionSet {
     refs: FxHashMap<ConnectionHandle, ConnectionRef>,
-    /// Stored to give out clones to new ConnectionInners
-    sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     /// Set if the endpoint has been manually closed
     close: Option<(VarInt, Bytes)>,
 }
@@ -523,12 +563,12 @@ struct ConnectionSet {
 impl ConnectionSet {
     fn insert(
         &mut self,
+        dirty: mpsc::UnboundedSender<ConnectionHandle>,
         handle: ConnectionHandle,
         conn: proto::Connection,
         udp_state: Arc<UdpState>,
-        runtime: Arc<dyn Runtime>,
     ) -> Connecting {
-        let (future, conn) = Connecting::new(handle, conn, self.sender.clone(), udp_state, runtime);
+        let (future, conn) = Connecting::new(dirty, handle, conn, udp_state);
         if let Some((error_code, ref reason)) = self.close {
             let mut state = conn.state.lock("close");
             state.close(error_code, reason.clone(), &conn.shared);
@@ -589,12 +629,7 @@ impl<'a> Future for Accept<'a> {
 pub(crate) struct EndpointRef(Arc<EndpointInner>);
 
 impl EndpointRef {
-    pub(crate) fn new(
-        socket: Box<dyn AsyncUdpSocket>,
-        inner: proto::Endpoint,
-        ipv6: bool,
-        runtime: Arc<dyn Runtime>,
-    ) -> Self {
+    pub(crate) fn new(socket: Box<dyn AsyncUdpSocket>, inner: proto::Endpoint, ipv6: bool) -> Self {
         let udp_state = Arc::new(UdpState::new());
         let recv_buf = vec![
             0;
@@ -602,7 +637,7 @@ impl EndpointRef {
                 * udp_state.gro_segments()
                 * BATCH_SIZE
         ];
-        let (sender, events) = mpsc::unbounded_channel();
+        let (dirty_send, dirty_recv) = mpsc::unbounded_channel();
         Self(Arc::new(EndpointInner {
             shared: Shared {
                 incoming: Notify::new(),
@@ -613,13 +648,11 @@ impl EndpointRef {
                 udp_state,
                 inner,
                 ipv6,
-                events,
                 outgoing: VecDeque::new(),
                 incoming: VecDeque::new(),
                 driver: None,
                 connections: ConnectionSet {
                     refs: FxHashMap::default(),
-                    sender,
                     close: None,
                 },
                 ref_count: 0,
@@ -627,7 +660,9 @@ impl EndpointRef {
                 recv_buf: recv_buf.into(),
                 recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
                 send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
-                runtime,
+                dirty_recv,
+                dirty_send,
+                timers: DelayQueue::new(),
             }),
         }))
     }
