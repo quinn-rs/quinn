@@ -91,6 +91,7 @@ impl PathData {
     }
 }
 
+/// RTT estimation for a particular network path
 #[derive(Copy, Clone)]
 pub struct RttEstimator {
     /// The most recent RTT measurement made when receiving an ack for a previously unacked packet
@@ -113,7 +114,30 @@ impl RttEstimator {
         }
     }
 
-    pub fn update(&mut self, ack_delay: Duration, rtt: Duration) {
+    /// The current best RTT estimation.
+    pub fn get(&self) -> Duration {
+        self.smoothed.unwrap_or(self.latest)
+    }
+
+    /// Conservative estimate of RTT
+    ///
+    /// Takes the maximum of smoothed and latest RTT, as recommended
+    /// in 6.1.2 of the recovery spec (draft 29).
+    pub fn conservative(&self) -> Duration {
+        self.get().max(self.latest)
+    }
+
+    /// Minimum RTT registered so far for this estimator.
+    pub fn min(&self) -> Duration {
+        self.min
+    }
+
+    // PTO computed as described in RFC9002#6.2.1
+    pub(crate) fn pto_base(&self) -> Duration {
+        self.get() + cmp::max(4 * self.var, TIMER_GRANULARITY)
+    }
+
+    pub(crate) fn update(&mut self, ack_delay: Duration, rtt: Duration) {
         self.latest = rtt;
         // min_rtt ignores ack delay.
         self.min = cmp::min(self.min, self.latest);
@@ -136,25 +160,5 @@ impl RttEstimator {
             self.var = self.latest / 2;
             self.min = self.latest;
         }
-    }
-
-    pub fn get(&self) -> Duration {
-        self.smoothed.unwrap_or(self.latest)
-    }
-
-    /// Conservative estimate of RTT
-    ///
-    /// Takes the maximum of smoothed and latest RTT, as recommended
-    /// in 6.1.2 of the recovery spec (draft 29).
-    pub fn conservative(&self) -> Duration {
-        self.get().max(self.latest)
-    }
-
-    pub fn pto_base(&self) -> Duration {
-        self.get() + cmp::max(4 * self.var, TIMER_GRANULARITY)
-    }
-
-    pub fn min(&self) -> Duration {
-        self.min
     }
 }

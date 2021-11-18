@@ -7,7 +7,7 @@ use rand::{Rng, SeedableRng};
 
 use crate::congestion::bbr::bw_estimation::BandwidthEstimation;
 use crate::congestion::bbr::min_max::MinMax;
-use crate::connection::paths::RttEstimator;
+use crate::connection::RttEstimator;
 
 use super::{Controller, ControllerFactory};
 

@@ -1,6 +1,6 @@
 //! Logic for controlling the rate at which data is sent
 
-use crate::connection::paths::RttEstimator;
+use crate::connection::RttEstimator;
 use std::any::Any;
 use std::time::Instant;
 
