@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use super::{Controller, ControllerFactory};
-use crate::connection::paths::RttEstimator;
+use crate::connection::RttEstimator;
 
 /// A simple, standard congestion controller
 #[derive(Debug, Clone)]

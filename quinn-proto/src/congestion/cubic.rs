@@ -3,7 +3,7 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 use super::{Controller, ControllerFactory};
-use crate::connection::paths::RttEstimator;
+use crate::connection::RttEstimator;
 use std::cmp;
 
 /// CUBIC Constants.

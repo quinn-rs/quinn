@@ -48,8 +48,9 @@ mod pacing;
 mod packet_builder;
 use packet_builder::PacketBuilder;
 
-pub(crate) mod paths;
+mod paths;
 use paths::PathData;
+pub use paths::RttEstimator;
 
 mod send_buffer;
 
