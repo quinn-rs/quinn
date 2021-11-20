@@ -440,6 +440,8 @@ pub(crate) struct PendingAcks {
     /// and between it will be allowed to be acknowledged (`can_send() == true`).
     latest_incoming: Option<Instant>,
     ack_delay: Duration,
+    /// Whether packets have been received in this space since we last ACKed
+    dirty: bool,
 }
 
 impl PendingAcks {
@@ -453,17 +455,17 @@ impl PendingAcks {
         self.ack_delay
     }
 
-    /// Should be called whenever an ACK eliciting frame was received
-    ///
-    /// This requires sending new outgoing ACKs
-    pub fn ack_eliciting_frame_received(&mut self) {
-        self.permit_ack_only = true;
+    /// Handle receipt of a new packet
+    pub fn packet_received(&mut self, ack_eliciting: bool) {
+        self.dirty = true;
+        self.permit_ack_only |= ack_eliciting;
     }
 
     /// Should be called whenever ACKs have been sent
     ///
     /// This will suppress sending further ACKs until additional ACK eliciting frames arrive
     pub fn acks_sent(&mut self) {
+        self.dirty = false;
         // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
         // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
         // the need for subtler logic to avoid double-transmitting acks all the time.
@@ -489,6 +491,10 @@ impl PendingAcks {
         if self.ranges.is_empty() {
             self.permit_ack_only = false;
         }
+    }
+
+    pub fn is_dirty(&self) -> bool {
+        self.dirty
     }
 
     /// Returns the set of currently pending ACK ranges
