@@ -2229,13 +2229,8 @@ impl Connection {
             self.stats.frame_rx.record(&frame);
 
             let _guard = span.as_ref().map(|x| x.enter());
-            // Check for ack-eliciting frames
-            match frame {
-                Frame::Ack(_) | Frame::Padding | Frame::Close(Close::Connection(_)) => {}
-                _ => {
-                    ack_eliciting = true;
-                }
-            }
+            ack_eliciting |= frame.is_ack_eliciting();
+
             // Process frames
             match frame {
                 Frame::Padding | Frame::Ping => {}
@@ -2318,14 +2313,8 @@ impl Connection {
                     _ => {}
                 }
             }
+            ack_eliciting |= frame.is_ack_eliciting();
 
-            // Check for ack-eliciting frames
-            match frame {
-                Frame::Ack(_) | Frame::Padding | Frame::Close(_) => {}
-                _ => {
-                    ack_eliciting = true;
-                }
-            }
             // Check whether this could be a probing packet
             match frame {
                 Frame::Padding
