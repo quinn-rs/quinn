@@ -2218,6 +2218,7 @@ impl Connection {
     ) -> Result<(), TransportError> {
         debug_assert_ne!(packet.header.space(), SpaceId::Data);
         let payload_len = packet.payload.len();
+        let mut ack_eliciting = false;
         for frame in frame::Iter::new(packet.payload.freeze()) {
             let span = match frame {
                 Frame::Padding => continue,
@@ -2231,9 +2232,7 @@ impl Connection {
             match frame {
                 Frame::Ack(_) | Frame::Padding | Frame::Close(Close::Connection(_)) => {}
                 _ => {
-                    self.spaces[packet.header.space()]
-                        .pending_acks
-                        .ack_eliciting_frame_received();
+                    ack_eliciting = true;
                 }
             }
             // Process frames
@@ -2263,6 +2262,9 @@ impl Connection {
                 }
             }
         }
+        self.spaces[packet.header.space()]
+            .pending_acks
+            .packet_received(ack_eliciting);
 
         self.write_crypto();
         Ok(())
@@ -2279,6 +2281,7 @@ impl Connection {
         let mut is_probing_packet = true;
         let mut close = None;
         let payload_len = payload.len();
+        let mut ack_eliciting = false;
         for frame in frame::Iter::new(payload) {
             let span = match frame {
                 Frame::Padding => continue,
@@ -2319,9 +2322,7 @@ impl Connection {
             match frame {
                 Frame::Ack(_) | Frame::Padding | Frame::Close(_) => {}
                 _ => {
-                    self.spaces[SpaceId::Data]
-                        .pending_acks
-                        .ack_eliciting_frame_received();
+                    ack_eliciting = true;
                 }
             }
             // Check whether this could be a probing packet
@@ -2540,6 +2541,10 @@ impl Connection {
             }
         }
 
+        self.spaces[SpaceId::Data]
+            .pending_acks
+            .packet_received(ack_eliciting);
+
         // Issue stream ID credit due to ACKs of outgoing finish/resets and incoming finish/resets
         // on stopped streams
         let pending = &mut self.spaces[SpaceId::Data].pending;
@@ -2671,7 +2676,8 @@ impl Connection {
         }
 
         // ACK
-        if !space.pending_acks.ranges().is_empty() {
+        if space.pending_acks.is_dirty() {
+            debug_assert!(!space.pending_acks.ranges().is_empty());
             Self::populate_acks(self.receiving_ecn, &mut sent, space, buf, &mut self.stats);
         }
 
