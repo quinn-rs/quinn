@@ -201,6 +201,10 @@ impl Frame {
             HandshakeDone => Type::HANDSHAKE_DONE,
         }
     }
+
+    pub fn is_ack_eliciting(&self) -> bool {
+        !matches!(*self, Frame::Ack(_) | Frame::Padding | Frame::Close(_))
+    }
 }
 
 #[derive(Clone, Debug)]
