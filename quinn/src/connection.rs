@@ -13,8 +13,8 @@ use std::{
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
 use futures_util::{FutureExt, StreamExt};
-use fxhash::FxHashMap;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
+use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use tracing::info_span;

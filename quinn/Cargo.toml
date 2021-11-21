@@ -29,7 +29,7 @@ maintenance = { status = "experimental" }
 bytes = "1"
 futures-util = { version = "0.3.11", default-features = false, features = ["io"] }
 futures-channel = "0.3.11"
-fxhash = "0.2.1"
+rustc-hash = "1.1"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }
 rustls = { version = "0.20", default-features = false, features = ["quic"], optional = true }
 thiserror = "1.0.21"

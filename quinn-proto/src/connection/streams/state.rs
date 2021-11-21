@@ -5,7 +5,7 @@ use std::{
 };
 
 use bytes::BufMut;
-use fxhash::FxHashMap;
+use rustc_hash::FxHashMap;
 use tracing::{debug, trace};
 
 use super::{

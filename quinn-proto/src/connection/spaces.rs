@@ -6,7 +6,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use fxhash::FxHashSet;
+use rustc_hash::FxHashSet;
 
 use super::assembler::Assembler;
 use crate::{
