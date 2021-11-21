@@ -24,7 +24,7 @@ native-certs = ["rustls-native-certs"]
 [dependencies]
 arbitrary = { version = "1.0.1", features = ["derive"], optional = true }
 bytes = "1"
-fxhash = "0.2.1"
+rustc-hash = "1.1"
 rand = "0.8"
 ring = { version = "0.16.7", optional = true }
 # If rustls gets updated to a new version which contains

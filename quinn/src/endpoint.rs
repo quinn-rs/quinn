@@ -15,10 +15,10 @@ use std::{
 use bytes::Bytes;
 use futures_channel::mpsc;
 use futures_util::StreamExt;
-use fxhash::FxHashMap;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
+use rustc_hash::FxHashMap;
 use udp::{RecvMeta, UdpSocket, UdpState, BATCH_SIZE};
 
 use crate::{

@@ -9,8 +9,8 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use fxhash::FxHashMap;
 use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
+use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
 use tracing::{debug, trace, warn};
