@@ -61,10 +61,6 @@ pub struct Endpoint {
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
-    /// Whether incoming connections should be unconditionally rejected by a server
-    ///
-    /// Equivalent to a `ServerConfig.accept_buffer` of `0`, but can be changed after the endpoint is constructed.
-    reject_new_connections: bool,
 }
 
 impl Endpoint {
@@ -81,7 +77,6 @@ impl Endpoint {
             connection_reset_tokens: ResetTokenTable::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
-            reject_new_connections: false,
             config,
             server_config,
         }
@@ -483,9 +478,7 @@ impl Endpoint {
         let loc_cid = self.new_cid();
         let server_config = self.server_config.as_ref().unwrap();
 
-        if self.connections.len() >= server_config.concurrent_connections as usize
-            || self.reject_new_connections
-            || self.is_full()
+        if self.connections.len() >= server_config.concurrent_connections as usize || self.is_full()
         {
             debug!("refusing connection");
             self.initial_close(
@@ -709,7 +702,9 @@ impl Endpoint {
 
     /// Unconditionally reject future incoming connections
     pub fn reject_new_connections(&mut self) {
-        self.reject_new_connections = true;
+        if let Some(config) = self.server_config.as_mut() {
+            Arc::make_mut(config).concurrent_connections(0);
+        }
     }
 
     /// Access the configuration used by this endpoint
@@ -758,7 +753,6 @@ impl fmt::Debug for Endpoint {
             .field("connections", &self.connections)
             .field("config", &self.config)
             .field("server_config", &self.server_config)
-            .field("reject_new_connections", &self.reject_new_connections)
             .finish()
     }
 }
