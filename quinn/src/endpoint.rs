@@ -53,6 +53,7 @@ impl Endpoint {
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
+    #[cfg(feature = "ring")]
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         Ok(Self::new(EndpointConfig::default(), None, socket)?.0)
@@ -66,6 +67,7 @@ impl Endpoint {
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
+    #[cfg(feature = "ring")]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<(Self, Incoming)> {
         let socket = std::net::UdpSocket::bind(addr)?;
         Self::new(EndpointConfig::default(), Some(config), socket)
