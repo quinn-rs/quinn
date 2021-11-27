@@ -1,7 +1,7 @@
 use std::{
     collections::{HashMap, VecDeque},
     convert::TryFrom,
-    fmt, iter,
+    fmt, io, iter,
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
     sync::Arc,
@@ -842,6 +842,19 @@ pub enum ConnectError {
     /// The cryptographic layer does not support the specified QUIC version
     #[error("unsupported QUIC version")]
     UnsupportedVersion,
+}
+
+// For compatibility with API consumers
+impl From<ConnectError> for io::Error {
+    fn from(x: ConnectError) -> io::Error {
+        use ConnectError::*;
+        let kind = match x {
+            InvalidDnsName(_) | InvalidRemoteAddress(_) => io::ErrorKind::InvalidData,
+            EndpointStopping | TooManyConnections | NoDefaultClientConfig => io::ErrorKind::Other,
+            UnsupportedVersion => io::ErrorKind::InvalidInput,
+        };
+        io::Error::new(kind, x)
+    }
 }
 
 /// Reset Tokens which are associated with peer socket addresses
