@@ -205,13 +205,10 @@ impl Endpoint {
 
         let addresses = FourTuple { remote, local_ip };
         let dst_cid = first_decode.dst_cid();
-        let known_ch = {
-            let ch = if self.local_cid_generator.cid_len() > 0 {
-                self.connection_ids.get(&dst_cid)
-            } else {
-                None
-            };
-            ch.or_else(|| {
+        let known_ch = (self.local_cid_generator.cid_len() > 0)
+            .then(|| self.connection_ids.get(&dst_cid))
+            .flatten()
+            .or_else(|| {
                 if first_decode.is_initial() || first_decode.is_0rtt() {
                     self.connection_ids_initial.get(&dst_cid)
                 } else {
@@ -233,8 +230,7 @@ impl Endpoint {
                 self.connection_reset_tokens
                     .get(addresses.remote, &data[data.len() - RESET_TOKEN_SIZE..])
             })
-            .cloned()
-        };
+            .cloned();
         if let Some(ch) = known_ch {
             return Some((
                 ch,
