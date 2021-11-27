@@ -464,11 +464,7 @@ impl Endpoint {
         if crypto
             .packet
             .remote
-            .decrypt(
-                packet_number as u64,
-                &packet.header_data,
-                &mut packet.payload,
-            )
+            .decrypt(packet_number, &packet.header_data, &mut packet.payload)
             .is_err()
         {
             debug!(packet_number, "failed to authenticate initial packet");
