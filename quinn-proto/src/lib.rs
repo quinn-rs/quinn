@@ -73,11 +73,6 @@ pub use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerato
 mod token;
 use token::{ResetToken, RetryToken};
 
-/// Types that are generic over the crypto protocol implementation
-pub mod generic {
-    pub use crate::config::ClientConfig;
-}
-
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
 
