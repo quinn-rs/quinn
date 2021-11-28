@@ -19,7 +19,7 @@ maintenance = { status = "experimental" }
 futures-util = { version = "0.3.11", features = ["io"] }
 libc = "0.2.69"
 mio = { version = "0.7.7", features = ["net"] }
-proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8" }
+proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }
 socket2 = "0.4"
 tracing = "0.1.10"
 tokio = { version = "1.0.1", features = ["net"] }
