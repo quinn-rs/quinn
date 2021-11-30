@@ -84,7 +84,7 @@ fn version_negotiate_client() {
     assert_matches!(
         client_ch.poll(),
         Some(Event::ConnectionLost {
-            reason: ConnectionError::VersionMismatch,
+            reason: ConnectionError::VersionMismatch(_),
         })
     );
 }
