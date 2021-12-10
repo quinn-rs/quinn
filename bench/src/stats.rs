@@ -2,22 +2,12 @@ use std::time::Duration;
 
 use hdrhistogram::Histogram;
 
+#[derive(Default)]
 pub struct Stats {
     pub total_size: usize,
     pub total_duration: Duration,
     pub streams: usize,
     pub stream_stats: StreamStats,
-}
-
-impl Default for Stats {
-    fn default() -> Self {
-        Self {
-            total_size: Default::default(),
-            total_duration: Default::default(),
-            streams: Default::default(),
-            stream_stats: StreamStats::default(),
-        }
-    }
 }
 
 impl Stats {
