@@ -608,7 +608,7 @@ fn server_alpn_unset() {
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref err) }) if err.code == TransportErrorCode::crypto(0x78)
+        Some(Event::ConnectionLost { reason: ConnectionError::ConnectionClosed(err) }) if err.error_code == TransportErrorCode::crypto(0x78)
     );
 }
 

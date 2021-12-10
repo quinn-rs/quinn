@@ -23,7 +23,6 @@ use crate::{
 /// A rustls TLS session
 pub struct TlsSession {
     version: Version,
-    using_alpn: bool,
     got_handshake_data: bool,
     next_secrets: Option<Secrets>,
     inner: Connection,
@@ -100,14 +99,6 @@ impl crypto::Session for TlsSession {
             };
             if self.inner.alpn_protocol().is_some() || have_server_name || !self.is_handshaking() {
                 self.got_handshake_data = true;
-                if self.using_alpn && self.inner.alpn_protocol().is_none() {
-                    // rustls ignores total ALPN failure for compat, but QUIC gets a fresh start
-                    return Err(TransportError {
-                        code: TransportErrorCode::crypto(0x78),
-                        frame: None,
-                        reason: "ALPN negotiation failed".into(),
-                    });
-                }
                 return Ok(true);
             }
         }
@@ -259,7 +250,6 @@ impl crypto::ClientConfig for rustls::ClientConfig {
         let version = interpret_version(version)?;
         Ok(Box::new(TlsSession {
             version,
-            using_alpn: !self.alpn_protocols.is_empty(),
             got_handshake_data: false,
             next_secrets: None,
             inner: Connection::Client(
@@ -286,7 +276,6 @@ impl crypto::ServerConfig for rustls::ServerConfig {
         let version = interpret_version(version).unwrap();
         Box::new(TlsSession {
             version,
-            using_alpn: !self.alpn_protocols.is_empty(),
             got_handshake_data: false,
             next_secrets: None,
             inner: Connection::Server(
