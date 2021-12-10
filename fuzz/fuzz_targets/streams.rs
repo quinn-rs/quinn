@@ -6,7 +6,6 @@ use libfuzzer_sys::fuzz_target;
 extern crate proto;
 use proto::fuzzing::{
     ConnectionState, ResetStream, Retransmits, SendStream, Streams, StreamsState,
-    TransportParameters,
 };
 use proto::{Dir, Side, StreamId, VarInt};
 
@@ -19,7 +18,6 @@ struct StreamParams {
     receive_window: u16,
     stream_receive_window: u16,
     dir: Dir,
-    transport_params: TransportParameters,
 }
 
 #[derive(Arbitrary, Debug)]
