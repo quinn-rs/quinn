@@ -76,11 +76,10 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
 }
 
 fn configure_client() -> ClientConfig {
-    let mut crypto = rustls::ClientConfig::builder()
+    let crypto = rustls::ClientConfig::builder()
         .with_safe_defaults()
         .with_custom_certificate_verifier(SkipServerVerification::new())
         .with_no_client_auth();
-    crypto.alpn_protocols = vec![b"perf".to_vec()];
 
     ClientConfig::new(Arc::new(crypto))
 }
