@@ -221,7 +221,7 @@ pub(crate) struct SentPacket {
 }
 
 /// Retransmittable data queue
-#[derive(Debug, Clone)]
+#[derive(Debug, Default, Clone)]
 pub struct Retransmits {
     pub(crate) max_data: bool,
     pub(crate) max_uni_stream_id: bool,
@@ -250,23 +250,6 @@ impl Retransmits {
             && self.new_cids.is_empty()
             && self.retire_cids.is_empty()
             && !self.handshake_done
-    }
-}
-
-impl Default for Retransmits {
-    fn default() -> Self {
-        Self {
-            max_data: false,
-            max_uni_stream_id: false,
-            max_bi_stream_id: false,
-            reset_stream: Vec::new(),
-            stop_sending: Vec::new(),
-            max_stream_data: FxHashSet::default(),
-            crypto: VecDeque::new(),
-            new_cids: Vec::new(),
-            retire_cids: Vec::new(),
-            handshake_done: false,
-        }
     }
 }
 

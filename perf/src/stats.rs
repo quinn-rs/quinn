@@ -261,7 +261,7 @@ mod json {
             intervals: &stats
                 .intervals
                 .iter()
-                .map(|interval| Interval::from_stats_interval(interval))
+                .map(Interval::from_stats_interval)
                 .collect(),
         };
 
