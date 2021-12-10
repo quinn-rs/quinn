@@ -33,7 +33,7 @@ futures-util = { version = "0.3.11", default-features = false, features = ["io"]
 futures-channel = "0.3.11"
 fxhash = "0.2.1"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }
-rustls = { version = "0.20", default-features = false, features = ["quic"], optional = true }
+rustls = { version = "0.20.3", default-features = false, features = ["quic"], optional = true }
 thiserror = "1.0.21"
 tracing = "0.1.10"
 tokio = { version = "1.0.1", features = ["rt", "time"] }
