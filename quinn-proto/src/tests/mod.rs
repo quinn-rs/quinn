@@ -630,6 +630,7 @@ fn client_alpn_unset() {
 
 #[test]
 fn alpn_mismatch() {
+    let _guard = subscribe();
     let mut server_crypto = server_crypto();
     server_crypto.alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
