@@ -42,6 +42,7 @@
 use std::time::Duration;
 
 mod broadcast;
+mod connect;
 mod connection;
 mod endpoint;
 mod mutex;
@@ -55,6 +56,7 @@ pub use proto::{
     Transmit, TransportConfig, VarInt,
 };
 
+pub use crate::connect::connect;
 pub use crate::connection::{
     Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
     OpenBi, OpenUni, SendDatagramError, ZeroRttAccepted,
