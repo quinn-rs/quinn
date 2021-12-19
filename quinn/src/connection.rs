@@ -12,7 +12,6 @@ use std::{
 
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
-use futures_util::StreamExt;
 use futures_core::Stream;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
@@ -803,7 +802,7 @@ impl ConnectionInner {
     /// If this returns `Err`, the endpoint is dead, so the driver should exit immediately.
     fn process_conn_events(&mut self, cx: &mut Context) -> Result<(), ConnectionError> {
         loop {
-            match self.conn_events.poll_next_unpin(cx) {
+            match Pin::new(&mut self.conn_events).poll_next(cx) {
                 Poll::Ready(Some(ConnectionEvent::Ping)) => {
                     self.inner.ping();
                 }
