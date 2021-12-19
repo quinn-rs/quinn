@@ -7,7 +7,7 @@ use std::{
 
 use bytes::Bytes;
 use futures_channel::oneshot;
-use futures_util::{io::AsyncWrite, FutureExt};
+use futures_util::io::AsyncWrite;
 use proto::{ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
 
@@ -136,11 +136,8 @@ impl SendStream {
             conn.finishing.insert(self.stream, send);
             conn.wake();
         }
-        match self
-            .finishing
-            .as_mut()
-            .unwrap()
-            .poll_unpin(cx)
+        match Pin::new(self.finishing.as_mut().unwrap())
+            .poll(cx)
             .map(|x| x.unwrap())
         {
             Poll::Ready(None) => Poll::Ready(Ok(())),

@@ -12,7 +12,7 @@ use std::{
 
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
-use futures_util::{FutureExt, StreamExt};
+use futures_util::StreamExt;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
@@ -160,7 +160,7 @@ impl Connecting {
 impl Future for Connecting {
     type Output = Result<NewConnection, ConnectionError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.connected.poll_unpin(cx).map(|_| {
+        Pin::new(&mut self.connected).poll(cx).map(|_| {
             let conn = self.conn.take().unwrap();
             let inner = conn.lock("connecting");
             if inner.connected {
@@ -196,7 +196,7 @@ pub struct ZeroRttAccepted(oneshot::Receiver<bool>);
 impl Future for ZeroRttAccepted {
     type Output = bool;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.0.poll_unpin(cx).map(|x| x.unwrap_or(false))
+        Pin::new(&mut self.0).poll(cx).map(|x| x.unwrap_or(false))
     }
 }
 
