@@ -14,7 +14,6 @@ use std::{
 
 use bytes::Bytes;
 use futures_channel::mpsc;
-use futures_util::StreamExt;
 use futures_core::Stream;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
@@ -436,7 +435,7 @@ impl EndpointInner {
         use EndpointEvent::*;
 
         for _ in 0..IO_LOOP_BOUND {
-            match self.events.poll_next_unpin(cx) {
+            match Pin::new(&mut self.events).poll_next(cx) {
                 Poll::Ready(Some((ch, event))) => match event {
                     Proto(e) => {
                         if e.is_drained() {
