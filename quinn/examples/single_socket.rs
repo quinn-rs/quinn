@@ -2,7 +2,6 @@
 //!
 //! Checkout the `README.md` for guidance.
 
-use futures_util::StreamExt;
 use std::{error::Error, net::SocketAddr};
 
 use quinn::Endpoint;

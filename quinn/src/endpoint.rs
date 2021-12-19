@@ -519,6 +519,13 @@ impl Incoming {
     }
 }
 
+impl Incoming {
+    /// Fetch the next incoming connection, or `None` if the endpoint has been closed
+    pub async fn next(&mut self) -> Option<Connecting> {
+        poll_fn(move |cx| Pin::new(&mut *self).poll_next(cx)).await
+    }
+}
+
 impl Stream for Incoming {
     type Item = Connecting;
 

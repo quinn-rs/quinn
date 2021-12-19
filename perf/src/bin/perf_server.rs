@@ -2,7 +2,6 @@ use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures_util::StreamExt;
 use structopt::StructOpt;
 use tracing::{debug, error, info};
 

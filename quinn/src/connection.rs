@@ -23,6 +23,7 @@ use udp::UdpState;
 use crate::{
     broadcast::{self, Broadcast},
     mutex::Mutex,
+    poll_fn,
     recv_stream::RecvStream,
     send_stream::{SendStream, WriteError},
     ConnectionEvent, EndpointEvent, VarInt,
@@ -533,6 +534,13 @@ impl Clone for Connection {
 #[derive(Debug)]
 pub struct IncomingUniStreams(ConnectionRef);
 
+impl IncomingUniStreams {
+    /// Fetch the next incoming unidirectional stream
+    pub async fn next(&mut self) -> Option<Result<RecvStream, ConnectionError>> {
+        poll_fn(move |cx| Pin::new(&mut *self).poll_next(cx)).await
+    }
+}
+
 impl Stream for IncomingUniStreams {
     type Item = Result<RecvStream, ConnectionError>;
 
@@ -558,6 +566,13 @@ impl Stream for IncomingUniStreams {
 /// See `IncomingUniStreams` for information about incoming streams in general.
 #[derive(Debug)]
 pub struct IncomingBiStreams(ConnectionRef);
+
+impl IncomingBiStreams {
+    /// Fetch the next incoming unidirectional stream
+    pub async fn next(&mut self) -> Option<Result<(SendStream, RecvStream), ConnectionError>> {
+        poll_fn(move |cx| Pin::new(&mut *self).poll_next(cx)).await
+    }
+}
 
 impl Stream for IncomingBiStreams {
     type Item = Result<(SendStream, RecvStream), ConnectionError>;
