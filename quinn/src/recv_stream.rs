@@ -6,7 +6,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_util::io::AsyncRead;
 use proto::{Chunk, Chunks, ConnectionError, ReadableError, StreamId};
 use thiserror::Error;
 use tokio::io::ReadBuf;
@@ -355,7 +354,8 @@ pub enum ReadToEndError {
     TooLong,
 }
 
-impl AsyncRead for RecvStream {
+#[cfg(feature = "futures-util")]
+impl futures_util::io::AsyncRead for RecvStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context,
