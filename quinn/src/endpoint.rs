@@ -15,6 +15,7 @@ use std::{
 use bytes::Bytes;
 use futures_channel::mpsc;
 use futures_util::StreamExt;
+use futures_core::Stream;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
@@ -518,7 +519,7 @@ impl Incoming {
     }
 }
 
-impl futures_util::stream::Stream for Incoming {
+impl Stream for Incoming {
     type Item = Connecting;
 
     #[allow(unused_mut)] // MSRV
