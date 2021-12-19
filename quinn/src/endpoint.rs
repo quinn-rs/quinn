@@ -24,6 +24,7 @@ use udp::{RecvMeta, UdpSocket, UdpState, BATCH_SIZE};
 use crate::{
     broadcast::{self, Broadcast},
     connection::Connecting,
+    poll_fn,
     work_limiter::WorkLimiter,
     ConnectionEvent, EndpointConfig, EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND,
     SEND_TIME_BOUND,
@@ -226,7 +227,7 @@ impl Endpoint {
     /// [`Incoming`]: crate::Incoming
     pub async fn wait_idle(&self) {
         let mut state = broadcast::State::default();
-        futures_util::future::poll_fn(|cx| {
+        poll_fn(move |cx| {
             let endpoint = &mut *self.inner.lock().unwrap();
             if endpoint.connections.is_empty() {
                 return Poll::Ready(());

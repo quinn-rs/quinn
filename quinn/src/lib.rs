@@ -39,7 +39,12 @@
 //! encryption alone.
 #![warn(missing_docs)]
 
-use std::time::Duration;
+use std::{
+    future::Future,
+    pin::Pin,
+    task::{Context, Poll},
+    time::Duration,
+};
 
 macro_rules! ready {
     ($e:expr $(,)?) => {
@@ -110,3 +115,24 @@ const RECV_TIME_BOUND: Duration = Duration::from_micros(50);
 
 /// The maximum amount of time that should be spent in `sendmsg()` calls per endpoint iteration
 const SEND_TIME_BOUND: Duration = Duration::from_micros(50);
+
+struct PollFn<F>(F);
+
+impl<T, F> Future for PollFn<F>
+where
+    F: FnMut(&mut Context) -> Poll<T>,
+{
+    type Output = T;
+    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<T> {
+        (&mut self.0)(cx)
+    }
+}
+
+impl<F> Unpin for PollFn<F> {}
+
+fn poll_fn<T, F>(f: F) -> PollFn<F>
+where
+    F: FnMut(&mut Context<'_>) -> Poll<T>,
+{
+    PollFn(f)
+}
