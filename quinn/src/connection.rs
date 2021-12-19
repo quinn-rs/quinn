@@ -16,12 +16,12 @@ use futures_core::Stream;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
+use tokio::sync::Notify;
 use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use tracing::info_span;
 use udp::UdpState;
 
 use crate::{
-    broadcast::{self, Broadcast},
     mutex::Mutex,
     poll_fn,
     recv_stream::RecvStream,
@@ -343,20 +343,27 @@ impl Connection {
     }
 
     async fn open(&self, dir: Dir) -> Result<(StreamId, bool), ConnectionError> {
-        let mut state = broadcast::State::default();
-        poll_fn(move |cx| {
-            let mut conn = self.0.lock("open");
-            if let Some(ref e) = conn.error {
-                return Poll::Ready(Err(e.clone()));
+        loop {
+            let opening;
+            {
+                let mut conn = self.0.lock("open");
+                if let Some(ref e) = conn.error {
+                    return Err(e.clone());
+                }
+                if let Some(id) = conn.inner.streams().open(dir) {
+                    let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
+                    return Ok((id, is_0rtt));
+                }
+                // Clone the `Arc<Notify>` so we can wait on the underlying `Notify` without holding
+                // the lock. Store it in the outer scope to ensure it outlives the lock guard.
+                opening = conn.stream_opening[dir as usize].clone();
+                // Construct the future while the lock is held to ensure we can't miss a wakeup if
+                // the `Notify` is signaled immediately after we release the lock. `await` it after
+                // the lock guard is out of scope.
+                opening.notified()
             }
-            if let Some(id) = conn.inner.streams().open(dir) {
-                let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
-                return Poll::Ready(Ok((id, is_0rtt)));
-            }
-            conn.stream_opening[dir as usize].register(cx, &mut state);
-            Poll::Pending
-        })
-        .await
+            .await
+        }
     }
 
     /// Close the connection immediately.
@@ -662,7 +669,7 @@ impl ConnectionRef {
             endpoint_events,
             blocked_writers: FxHashMap::default(),
             blocked_readers: FxHashMap::default(),
-            stream_opening: [Broadcast::new(), Broadcast::new()],
+            stream_opening: [Arc::new(Notify::new()), Arc::new(Notify::new())],
             incoming_uni_streams_reader: None,
             incoming_bi_streams_reader: None,
             datagram_reader: None,
@@ -722,7 +729,7 @@ pub struct ConnectionInner {
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
     pub(crate) blocked_readers: FxHashMap<StreamId, Waker>,
-    stream_opening: [Broadcast; 2],
+    stream_opening: [Arc<Notify>; 2],
     incoming_uni_streams_reader: Option<Waker>,
     incoming_bi_streams_reader: Option<Waker>,
     datagram_reader: Option<Waker>,
@@ -845,7 +852,7 @@ impl ConnectionInner {
                     }
                 }
                 Stream(StreamEvent::Available { dir }) => {
-                    self.stream_opening[dir as usize].wake();
+                    self.stream_opening[dir as usize].notify_one();
                 }
                 Stream(StreamEvent::Finished { id }) => {
                     if let Some(finishing) = self.finishing.remove(&id) {
@@ -937,8 +944,8 @@ impl ConnectionInner {
         for (_, reader) in self.blocked_readers.drain() {
             reader.wake()
         }
-        self.stream_opening[Dir::Uni as usize].wake();
-        self.stream_opening[Dir::Bi as usize].wake();
+        self.stream_opening[Dir::Uni as usize].notify_waiters();
+        self.stream_opening[Dir::Bi as usize].notify_waiters();
         if let Some(x) = self.incoming_uni_streams_reader.take() {
             x.wake();
         }

@@ -55,7 +55,6 @@ macro_rules! ready {
     };
 }
 
-mod broadcast;
 mod connection;
 mod endpoint;
 mod mutex;

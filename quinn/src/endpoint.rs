@@ -19,15 +19,12 @@ use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
+use tokio::sync::Notify;
 use udp::{RecvMeta, UdpSocket, UdpState, BATCH_SIZE};
 
 use crate::{
-    broadcast::{self, Broadcast},
-    connection::Connecting,
-    poll_fn,
-    work_limiter::WorkLimiter,
-    ConnectionEvent, EndpointConfig, EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND,
-    SEND_TIME_BOUND,
+    connection::Connecting, poll_fn, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
+    EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND, SEND_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -226,16 +223,23 @@ impl Endpoint {
     /// [`close()`]: Endpoint::close
     /// [`Incoming`]: crate::Incoming
     pub async fn wait_idle(&self) {
-        let mut state = broadcast::State::default();
-        poll_fn(move |cx| {
-            let endpoint = &mut *self.inner.lock().unwrap();
-            if endpoint.connections.is_empty() {
-                return Poll::Ready(());
+        loop {
+            let idle;
+            {
+                let endpoint = &mut *self.inner.lock().unwrap();
+                if endpoint.connections.is_empty() {
+                    break;
+                }
+                // Clone the `Arc<Notify>` so we can wait on the underlying `Notify` without holding
+                // the lock. Store it in the outer scope to ensure it outlives the lock guard.
+                idle = endpoint.idle.clone();
+                // Construct the future while the lock is held to ensure we can't miss a wakeup if
+                // the `Notify` is signaled immediately after we release the lock. `await` it after
+                // the lock guard is out of scope.
+                idle.notified()
             }
-            endpoint.idle.register(cx, &mut state);
-            Poll::Pending
-        })
-        .await;
+            .await;
+        }
     }
 }
 
@@ -321,7 +325,7 @@ pub(crate) struct EndpointInner {
     recv_limiter: WorkLimiter,
     recv_buf: Box<[u8]>,
     send_limiter: WorkLimiter,
-    idle: Broadcast,
+    idle: Arc<Notify>,
 }
 
 impl EndpointInner {
@@ -442,7 +446,7 @@ impl EndpointInner {
                         if e.is_drained() {
                             self.connections.senders.remove(&ch);
                             if self.connections.is_empty() {
-                                self.idle.wake();
+                                self.idle.notify_waiters();
                             }
                         }
                         if let Some(event) = self.inner.handle_event(ch, e) {
@@ -581,7 +585,7 @@ impl EndpointRef {
             recv_buf: recv_buf.into(),
             recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
             send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
-            idle: Broadcast::new(),
+            idle: Arc::new(Notify::new()),
         })))
     }
 }
