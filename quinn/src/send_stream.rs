@@ -7,7 +7,6 @@ use std::{
 
 use bytes::Bytes;
 use futures_channel::oneshot;
-use futures_util::io::AsyncWrite;
 use proto::{ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
 
@@ -220,9 +219,10 @@ impl SendStream {
     }
 }
 
-impl AsyncWrite for SendStream {
+#[cfg(feature = "futures-util")]
+impl futures_util::io::AsyncWrite for SendStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        SendStream::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
+        tokio::io::AsyncWrite::poll_write(self, cx, buf)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
@@ -230,7 +230,7 @@ impl AsyncWrite for SendStream {
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        self.get_mut().poll_finish(cx).map_err(Into::into)
+        tokio::io::AsyncWrite::poll_shutdown(self, cx)
     }
 }
 
@@ -240,7 +240,7 @@ impl tokio::io::AsyncWrite for SendStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        AsyncWrite::poll_write(self, cx, buf)
+        SendStream::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
@@ -248,7 +248,7 @@ impl tokio::io::AsyncWrite for SendStream {
     }
 
     fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        AsyncWrite::poll_close(self, cx)
+        self.get_mut().poll_finish(cx).map_err(Into::into)
     }
 }
 
