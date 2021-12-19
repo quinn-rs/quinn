@@ -13,6 +13,7 @@ use std::{
 use bytes::Bytes;
 use futures_channel::{mpsc, oneshot};
 use futures_util::StreamExt;
+use futures_core::Stream;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
@@ -533,7 +534,7 @@ impl Clone for Connection {
 #[derive(Debug)]
 pub struct IncomingUniStreams(ConnectionRef);
 
-impl futures_util::stream::Stream for IncomingUniStreams {
+impl Stream for IncomingUniStreams {
     type Item = Result<RecvStream, ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -559,7 +560,7 @@ impl futures_util::stream::Stream for IncomingUniStreams {
 #[derive(Debug)]
 pub struct IncomingBiStreams(ConnectionRef);
 
-impl futures_util::stream::Stream for IncomingBiStreams {
+impl Stream for IncomingBiStreams {
     type Item = Result<(SendStream, RecvStream), ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -587,7 +588,7 @@ impl futures_util::stream::Stream for IncomingBiStreams {
 #[derive(Debug)]
 pub struct Datagrams(ConnectionRef);
 
-impl futures_util::stream::Stream for Datagrams {
+impl Stream for Datagrams {
     type Item = Result<Bytes, ConnectionError>;
 
     fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {

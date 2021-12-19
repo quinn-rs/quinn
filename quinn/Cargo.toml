@@ -30,6 +30,7 @@ maintenance = { status = "experimental" }
 [dependencies]
 bytes = "1"
 futures-util = { version = "0.3.11", default-features = false, features = ["io"] }
+futures-core = "0.3.19"
 futures-channel = "0.3.11"
 rustc-hash = "1.1"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }
