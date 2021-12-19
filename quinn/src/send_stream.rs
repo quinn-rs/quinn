@@ -7,7 +7,7 @@ use std::{
 
 use bytes::Bytes;
 use futures_channel::oneshot;
-use futures_util::{io::AsyncWrite, ready, FutureExt};
+use futures_util::{io::AsyncWrite, FutureExt};
 use proto::{ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
 
