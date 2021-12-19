@@ -6,7 +6,6 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use futures_util::StreamExt;
 use structopt::StructOpt;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
