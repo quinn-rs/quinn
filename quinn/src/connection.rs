@@ -325,21 +325,8 @@ impl Connection {
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
     pub async fn open_uni(&self) -> Result<SendStream, ConnectionError> {
-        let mut state = broadcast::State::default();
-        poll_fn(move |cx| {
-            let mut conn = self.0.lock("OpenUni::next");
-            if let Some(ref e) = conn.error {
-                return Poll::Ready(Err(e.clone()));
-            }
-            if let Some(id) = conn.inner.streams().open(Dir::Uni) {
-                let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
-                drop(conn); // Release lock for clone
-                return Poll::Ready(Ok(SendStream::new(self.0.clone(), id, is_0rtt)));
-            }
-            conn.uni_opening.register(cx, &mut state);
-            Poll::Pending
-        })
-        .await
+        let (id, is_0rtt) = self.open(Dir::Uni).await?;
+        Ok(SendStream::new(self.0.clone(), id, is_0rtt))
     }
 
     /// Initiate a new outgoing bidirectional stream.
@@ -348,21 +335,25 @@ impl Connection {
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
     pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), ConnectionError> {
+        let (id, is_0rtt) = self.open(Dir::Bi).await?;
+        Ok((
+            SendStream::new(self.0.clone(), id, is_0rtt),
+            RecvStream::new(self.0.clone(), id, is_0rtt),
+        ))
+    }
+
+    async fn open(&self, dir: Dir) -> Result<(StreamId, bool), ConnectionError> {
         let mut state = broadcast::State::default();
         poll_fn(move |cx| {
-            let mut conn = self.0.lock("OpenBi::next");
+            let mut conn = self.0.lock("open");
             if let Some(ref e) = conn.error {
                 return Poll::Ready(Err(e.clone()));
             }
-            if let Some(id) = conn.inner.streams().open(Dir::Bi) {
+            if let Some(id) = conn.inner.streams().open(dir) {
                 let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
-                drop(conn); // Release lock for clone
-                return Poll::Ready(Ok((
-                    SendStream::new(self.0.clone(), id, is_0rtt),
-                    RecvStream::new(self.0.clone(), id, is_0rtt),
-                )));
+                return Poll::Ready(Ok((id, is_0rtt)));
             }
-            conn.bi_opening.register(cx, &mut state);
+            conn.stream_opening[dir as usize].register(cx, &mut state);
             Poll::Pending
         })
         .await
@@ -671,8 +662,7 @@ impl ConnectionRef {
             endpoint_events,
             blocked_writers: FxHashMap::default(),
             blocked_readers: FxHashMap::default(),
-            uni_opening: Broadcast::new(),
-            bi_opening: Broadcast::new(),
+            stream_opening: [Broadcast::new(), Broadcast::new()],
             incoming_uni_streams_reader: None,
             incoming_bi_streams_reader: None,
             datagram_reader: None,
@@ -732,8 +722,7 @@ pub struct ConnectionInner {
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
     pub(crate) blocked_readers: FxHashMap<StreamId, Waker>,
-    uni_opening: Broadcast,
-    bi_opening: Broadcast,
+    stream_opening: [Broadcast; 2],
     incoming_uni_streams_reader: Option<Waker>,
     incoming_bi_streams_reader: Option<Waker>,
     datagram_reader: Option<Waker>,
@@ -856,11 +845,7 @@ impl ConnectionInner {
                     }
                 }
                 Stream(StreamEvent::Available { dir }) => {
-                    let tasks = match dir {
-                        Dir::Uni => &mut self.uni_opening,
-                        Dir::Bi => &mut self.bi_opening,
-                    };
-                    tasks.wake();
+                    self.stream_opening[dir as usize].wake();
                 }
                 Stream(StreamEvent::Finished { id }) => {
                     if let Some(finishing) = self.finishing.remove(&id) {
@@ -952,8 +937,8 @@ impl ConnectionInner {
         for (_, reader) in self.blocked_readers.drain() {
             reader.wake()
         }
-        self.uni_opening.wake();
-        self.bi_opening.wake();
+        self.stream_opening[Dir::Uni as usize].wake();
+        self.stream_opening[Dir::Bi as usize].wake();
         if let Some(x) = self.incoming_uni_streams_reader.take() {
             x.wake();
         }
