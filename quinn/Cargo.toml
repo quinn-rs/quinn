@@ -14,7 +14,7 @@ edition = "2018"
 all-features = true
 
 [features]
-default = ["native-certs", "tls-rustls", "ring", "futures-util"]
+default = ["native-certs", "tls-rustls", "ring", "futures-io"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Provides `ClientConfig::with_native_roots()` convenience method
@@ -29,8 +29,8 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 bytes = "1"
-# Enables futures_util::io::{AsyncRead, AsyncWrite} support for streams
-futures-util = { version = "0.3.11", default-features = false, features = ["io"], optional = true }
+# Enables futures::io::{AsyncRead, AsyncWrite} support for streams
+futures-io = { version = "0.3.19", optional = true }
 futures-core = "0.3.19"
 futures-channel = "0.3.11"
 rustc-hash = "1.1"
