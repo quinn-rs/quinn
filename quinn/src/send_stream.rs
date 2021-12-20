@@ -219,8 +219,8 @@ impl SendStream {
     }
 }
 
-#[cfg(feature = "futures-util")]
-impl futures_util::io::AsyncWrite for SendStream {
+#[cfg(feature = "futures-io")]
+impl futures_io::AsyncWrite for SendStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
         tokio::io::AsyncWrite::poll_write(self, cx, buf)
     }

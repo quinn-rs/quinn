@@ -354,8 +354,8 @@ pub enum ReadToEndError {
     TooLong,
 }
 
-#[cfg(feature = "futures-util")]
-impl futures_util::io::AsyncRead for RecvStream {
+#[cfg(feature = "futures-io")]
+impl futures_io::AsyncRead for RecvStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context,
