@@ -46,11 +46,12 @@ impl RecvStream {
     /// Read data contiguously from the stream.
     ///
     /// Yields the number of bytes read into `buf` on success, or `None` if the stream was finished.
-    pub fn read<'a>(&'a mut self, buf: &'a mut [u8]) -> Read<'a> {
+    pub async fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
         Read {
             stream: self,
             buf: ReadBuf::new(buf),
         }
+        .await
     }
 
     /// Read an exact number of bytes contiguously from the stream.
@@ -58,11 +59,12 @@ impl RecvStream {
     /// See [`read()`] for details.
     ///
     /// [`read()`]: RecvStream::read
-    pub fn read_exact<'a>(&'a mut self, buf: &'a mut [u8]) -> ReadExact<'a> {
+    pub async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), ReadExactError> {
         ReadExact {
             stream: self,
             buf: ReadBuf::new(buf),
         }
+        .await
     }
 
     fn poll_read(
@@ -105,12 +107,17 @@ impl RecvStream {
     ///
     /// Slightly more efficient than `read` due to not copying. Chunk boundaries do not correspond
     /// to peer writes, and hence cannot be used as framing.
-    pub fn read_chunk(&mut self, max_length: usize, ordered: bool) -> ReadChunk<'_> {
+    pub async fn read_chunk(
+        &mut self,
+        max_length: usize,
+        ordered: bool,
+    ) -> Result<Option<Chunk>, ReadError> {
         ReadChunk {
             stream: self,
             max_length,
             ordered,
         }
+        .await
     }
 
     /// Foundation of [`read_chunk()`]: RecvStream::read_chunk
@@ -134,8 +141,8 @@ impl RecvStream {
     ///
     /// Slightly more efficient than `read` due to not copying. Chunk boundaries
     /// do not correspond to peer writes, and hence cannot be used as framing.
-    pub fn read_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> ReadChunks<'a> {
-        ReadChunks { stream: self, bufs }
+    pub async fn read_chunks(&mut self, bufs: &mut [Bytes]) -> Result<Option<usize>, ReadError> {
+        ReadChunks { stream: self, bufs }.await
     }
 
     /// Foundation of [`read_chunks()`]: RecvStream::read_chunks
@@ -177,7 +184,7 @@ impl RecvStream {
     /// arbitrary data.
     ///
     /// [`ReadToEndError::TooLong`]: crate::ReadToEndError::TooLong
-    pub fn read_to_end(self, size_limit: usize) -> ReadToEnd {
+    pub async fn read_to_end(self, size_limit: usize) -> Result<Vec<u8>, ReadToEndError> {
         ReadToEnd {
             stream: self,
             size_limit,
@@ -185,6 +192,7 @@ impl RecvStream {
             start: u64::max_value(),
             end: 0,
         }
+        .await
     }
 
     /// Stop accepting data
@@ -304,7 +312,7 @@ impl<T> From<(Option<T>, Option<proto::ReadError>)> for ReadStatus<T> {
 ///
 /// [`RecvStream::read_to_end()`]: crate::RecvStream::read_to_end
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct ReadToEnd {
+struct ReadToEnd {
     stream: RecvStream,
     read: Vec<(Bytes, u64)>,
     start: u64,
@@ -344,9 +352,7 @@ impl Future for ReadToEnd {
     }
 }
 
-/// Error from the [`ReadToEnd`] future.
-///
-/// [`ReadToEnd`]: crate::ReadToEnd
+/// Errors from [`RecvStream::read_to_end`]
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadToEndError {
     /// An error occurred during reading
@@ -450,7 +456,7 @@ impl From<ReadError> for io::Error {
 ///
 /// [`RecvStream::read()`]: crate::RecvStream::read
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct Read<'a> {
+struct Read<'a> {
     stream: &'a mut RecvStream,
     buf: ReadBuf<'a>,
 }
@@ -472,7 +478,7 @@ impl<'a> Future for Read<'a> {
 ///
 /// [`RecvStream::read_exact()`]: crate::RecvStream::read_exact
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct ReadExact<'a> {
+struct ReadExact<'a> {
     stream: &'a mut RecvStream,
     buf: ReadBuf<'a>,
 }
@@ -509,7 +515,7 @@ pub enum ReadExactError {
 ///
 /// [`RecvStream::read_chunk()`]: crate::RecvStream::read_chunk
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct ReadChunk<'a> {
+struct ReadChunk<'a> {
     stream: &'a mut RecvStream,
     max_length: usize,
     ordered: bool,
@@ -527,7 +533,7 @@ impl<'a> Future for ReadChunk<'a> {
 ///
 /// [`RecvStream::read_chunks()`]: crate::RecvStream::read_chunks
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct ReadChunks<'a> {
+struct ReadChunks<'a> {
     stream: &'a mut RecvStream,
     bufs: &'a mut [Bytes],
 }
