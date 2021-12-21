@@ -40,13 +40,13 @@ impl SendStream {
     ///
     /// Yields the number of bytes written on success. Congestion and flow control may cause this to
     /// be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
-    pub fn write<'a>(&'a mut self, buf: &'a [u8]) -> Write<'a> {
-        Write { stream: self, buf }
+    pub async fn write(&mut self, buf: &[u8]) -> Result<usize, WriteError> {
+        Write { stream: self, buf }.await
     }
 
     /// Convenience method to write an entire buffer to the stream
-    pub fn write_all<'a>(&'a mut self, buf: &'a [u8]) -> WriteAll<'a> {
-        WriteAll { stream: self, buf }
+    pub async fn write_all(&mut self, buf: &[u8]) -> Result<(), WriteError> {
+        WriteAll { stream: self, buf }.await
     }
 
     /// Write chunks to the stream
@@ -54,25 +54,27 @@ impl SendStream {
     /// Yields the number of bytes and chunks written on success.
     /// Congestion and flow control may cause this to be shorter than `buf.len()`,
     /// indicating that only a prefix of `bufs` was written
-    pub fn write_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> WriteChunks<'a> {
-        WriteChunks { stream: self, bufs }
+    pub async fn write_chunks(&mut self, bufs: &mut [Bytes]) -> Result<Written, WriteError> {
+        WriteChunks { stream: self, bufs }.await
     }
 
     /// Convenience method to write a single chunk in its entirety to the stream
-    pub fn write_chunk(&mut self, buf: Bytes) -> WriteChunk<'_> {
+    pub async fn write_chunk(&mut self, buf: Bytes) -> Result<(), WriteError> {
         WriteChunk {
             stream: self,
             buf: [buf],
         }
+        .await
     }
 
     /// Convenience method to write an entire list of chunks to the stream
-    pub fn write_all_chunks<'a>(&'a mut self, bufs: &'a mut [Bytes]) -> WriteAllChunks<'a> {
+    pub async fn write_all_chunks(&mut self, bufs: &mut [Bytes]) -> Result<(), WriteError> {
         WriteAllChunks {
             stream: self,
             bufs,
             offset: 0,
         }
+        .await
     }
 
     fn execute_poll<F, R>(&mut self, cx: &mut Context, write_fn: F) -> Poll<Result<R, WriteError>>
@@ -111,8 +113,8 @@ impl SendStream {
     ///
     /// No new data may be written after calling this method. Completes when the peer has
     /// acknowledged all sent data, retransmitting data as needed.
-    pub fn finish(&mut self) -> Finish<'_> {
-        Finish { stream: self }
+    pub async fn finish(&mut self) -> Result<(), WriteError> {
+        Finish { stream: self }.await
     }
 
     #[doc(hidden)]
@@ -190,8 +192,8 @@ impl SendStream {
     }
 
     /// Completes if/when the peer stops the stream, yielding the error code
-    pub fn stopped(&mut self) -> Stopped<'_> {
-        Stopped { stream: self }
+    pub async fn stopped(&mut self) -> Result<VarInt, StoppedError> {
+        Stopped { stream: self }.await
     }
 
     #[doc(hidden)]
@@ -275,7 +277,7 @@ impl Drop for SendStream {
 
 /// Future produced by `SendStream::finish`
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct Finish<'a> {
+struct Finish<'a> {
     stream: &'a mut SendStream,
 }
 
@@ -289,7 +291,7 @@ impl Future for Finish<'_> {
 
 /// Future produced by `SendStream::stopped`
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct Stopped<'a> {
+struct Stopped<'a> {
     stream: &'a mut SendStream,
 }
 
@@ -305,7 +307,7 @@ impl Future for Stopped<'_> {
 ///
 /// [`SendStream::write()`]: crate::SendStream::write
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct Write<'a> {
+struct Write<'a> {
     stream: &'a mut SendStream,
     buf: &'a [u8],
 }
@@ -323,7 +325,7 @@ impl<'a> Future for Write<'a> {
 ///
 /// [`SendStream::write_all()`]: crate::SendStream::write_all
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct WriteAll<'a> {
+struct WriteAll<'a> {
     stream: &'a mut SendStream,
     buf: &'a [u8],
 }
@@ -347,7 +349,7 @@ impl<'a> Future for WriteAll<'a> {
 ///
 /// [`SendStream::write_chunks()`]: crate::SendStream::write_chunks
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct WriteChunks<'a> {
+struct WriteChunks<'a> {
     stream: &'a mut SendStream,
     bufs: &'a mut [Bytes],
 }
@@ -365,7 +367,7 @@ impl<'a> Future for WriteChunks<'a> {
 ///
 /// [`SendStream::write_chunk()`]: crate::SendStream::write_chunk
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct WriteChunk<'a> {
+struct WriteChunk<'a> {
     stream: &'a mut SendStream,
     buf: [Bytes; 1],
 }
@@ -388,7 +390,7 @@ impl<'a> Future for WriteChunk<'a> {
 ///
 /// [`SendStream::write_all_chunks()`]: crate::SendStream::write_all_chunks
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct WriteAllChunks<'a> {
+struct WriteAllChunks<'a> {
     stream: &'a mut SendStream,
     bufs: &'a mut [Bytes],
     offset: usize,
