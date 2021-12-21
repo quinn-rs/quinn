@@ -74,10 +74,7 @@ pub use crate::connection::{
     OpenBi, OpenUni, SendDatagramError, ZeroRttAccepted,
 };
 pub use crate::endpoint::{Endpoint, Incoming};
-pub use crate::recv_stream::{
-    Read, ReadChunk, ReadChunks, ReadError, ReadExact, ReadExactError, ReadToEnd, ReadToEndError,
-    RecvStream,
-};
+pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream};
 pub use crate::send_stream::{SendStream, StoppedError, WriteError};
 
 #[cfg(test)]
