@@ -10,7 +10,10 @@ use futures_channel::oneshot;
 use proto::{ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
 
-use crate::{connection::ConnectionRef, recv_stream::UnknownStream, VarInt};
+use crate::{
+    connection::{ConnectionRef, UnknownStream},
+    VarInt,
+};
 
 /// A stream that can only be used to send data
 ///
