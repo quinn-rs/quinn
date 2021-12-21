@@ -10,7 +10,10 @@ use proto::{Chunk, Chunks, ConnectionError, ReadableError, StreamId};
 use thiserror::Error;
 use tokio::io::ReadBuf;
 
-use crate::{connection::ConnectionRef, VarInt};
+use crate::{
+    connection::{ConnectionRef, UnknownStream},
+    VarInt,
+};
 
 /// A stream that can only be used to receive data
 ///
@@ -534,18 +537,5 @@ impl<'a> Future for ReadChunks<'a> {
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
         this.stream.poll_read_chunks(cx, this.bufs)
-    }
-}
-
-/// Error indicating that a stream has already been finished or reset
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-#[error("unknown stream")]
-pub struct UnknownStream {
-    _private: (),
-}
-
-impl From<proto::UnknownStream> for UnknownStream {
-    fn from(_: proto::UnknownStream) -> Self {
-        UnknownStream { _private: () }
     }
 }

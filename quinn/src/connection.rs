@@ -1072,3 +1072,16 @@ pub enum SendDatagramError {
 /// This limits the amount of CPU resources consumed by datagram generation,
 /// and allows other tasks (like receiving ACKs) to run in between.
 const MAX_TRANSMIT_DATAGRAMS: usize = 20;
+
+/// Error indicating that a stream has already been finished or reset
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[error("unknown stream")]
+pub struct UnknownStream {
+    _private: (),
+}
+
+impl From<proto::UnknownStream> for UnknownStream {
+    fn from(_: proto::UnknownStream) -> Self {
+        UnknownStream { _private: () }
+    }
+}
