@@ -324,11 +324,12 @@ impl Connection {
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
-    pub fn open_uni(&self) -> OpenUni {
+    pub async fn open_uni(&self) -> Result<SendStream, ConnectionError> {
         OpenUni {
             conn: self.0.clone(),
             state: broadcast::State::default(),
         }
+        .await
     }
 
     /// Initiate a new outgoing bidirectional stream.
@@ -336,11 +337,12 @@ impl Connection {
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
-    pub fn open_bi(&self) -> OpenBi {
+    pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), ConnectionError> {
         OpenBi {
             conn: self.0.clone(),
             state: broadcast::State::default(),
         }
+        .await
     }
 
     /// Close the connection immediately.
@@ -622,7 +624,7 @@ impl Stream for Datagrams {
 
 /// A future that will resolve into an opened outgoing unidirectional stream
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct OpenUni {
+struct OpenUni {
     conn: ConnectionRef,
     state: broadcast::State,
 }
@@ -648,7 +650,7 @@ impl Future for OpenUni {
 
 /// A future that will resolve into an opened outgoing bidirectional stream
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct OpenBi {
+struct OpenBi {
     conn: ConnectionRef,
     state: broadcast::State,
 }

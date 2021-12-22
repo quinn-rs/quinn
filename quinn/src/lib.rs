@@ -71,7 +71,7 @@ pub use proto::{
 
 pub use crate::connection::{
     Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
-    OpenBi, OpenUni, SendDatagramError, UnknownStream, ZeroRttAccepted,
+    SendDatagramError, UnknownStream, ZeroRttAccepted,
 };
 pub use crate::endpoint::{Endpoint, Incoming};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream};
