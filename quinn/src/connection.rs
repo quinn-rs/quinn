@@ -325,10 +325,20 @@ impl Connection {
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
     pub async fn open_uni(&self) -> Result<SendStream, ConnectionError> {
-        OpenUni {
-            conn: self.0.clone(),
-            state: broadcast::State::default(),
-        }
+        let mut state = broadcast::State::default();
+        poll_fn(move |cx| {
+            let mut conn = self.0.lock("OpenUni::next");
+            if let Some(ref e) = conn.error {
+                return Poll::Ready(Err(e.clone()));
+            }
+            if let Some(id) = conn.inner.streams().open(Dir::Uni) {
+                let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
+                drop(conn); // Release lock for clone
+                return Poll::Ready(Ok(SendStream::new(self.0.clone(), id, is_0rtt)));
+            }
+            conn.uni_opening.register(cx, &mut state);
+            Poll::Pending
+        })
         .await
     }
 
@@ -338,10 +348,23 @@ impl Connection {
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
     pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), ConnectionError> {
-        OpenBi {
-            conn: self.0.clone(),
-            state: broadcast::State::default(),
-        }
+        let mut state = broadcast::State::default();
+        poll_fn(move |cx| {
+            let mut conn = self.0.lock("OpenBi::next");
+            if let Some(ref e) = conn.error {
+                return Poll::Ready(Err(e.clone()));
+            }
+            if let Some(id) = conn.inner.streams().open(Dir::Bi) {
+                let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
+                drop(conn); // Release lock for clone
+                return Poll::Ready(Ok((
+                    SendStream::new(self.0.clone(), id, is_0rtt),
+                    RecvStream::new(self.0.clone(), id, is_0rtt),
+                )));
+            }
+            conn.bi_opening.register(cx, &mut state);
+            Poll::Pending
+        })
         .await
     }
 
@@ -619,61 +642,6 @@ impl Stream for Datagrams {
             conn.datagram_reader = Some(cx.waker().clone());
             Poll::Pending
         }
-    }
-}
-
-/// A future that will resolve into an opened outgoing unidirectional stream
-#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct OpenUni {
-    conn: ConnectionRef,
-    state: broadcast::State,
-}
-
-impl Future for OpenUni {
-    type Output = Result<SendStream, ConnectionError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        let mut conn = this.conn.lock("OpenUni::next");
-        if let Some(ref e) = conn.error {
-            return Poll::Ready(Err(e.clone()));
-        }
-        if let Some(id) = conn.inner.streams().open(Dir::Uni) {
-            let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
-            drop(conn); // Release lock for clone
-            return Poll::Ready(Ok(SendStream::new(this.conn.clone(), id, is_0rtt)));
-        }
-        conn.uni_opening.register(cx, &mut this.state);
-        Poll::Pending
-    }
-}
-
-/// A future that will resolve into an opened outgoing bidirectional stream
-#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct OpenBi {
-    conn: ConnectionRef,
-    state: broadcast::State,
-}
-
-impl Future for OpenBi {
-    type Output = Result<(SendStream, RecvStream), ConnectionError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        let mut conn = this.conn.lock("OpenBi::next");
-        if let Some(ref e) = conn.error {
-            return Poll::Ready(Err(e.clone()));
-        }
-        if let Some(id) = conn.inner.streams().open(Dir::Bi) {
-            let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
-            drop(conn); // Release lock for clone
-            return Poll::Ready(Ok((
-                SendStream::new(this.conn.clone(), id, is_0rtt),
-                RecvStream::new(this.conn.clone(), id, is_0rtt),
-            )));
-        }
-        conn.bi_opening.register(cx, &mut this.state);
-        Poll::Pending
     }
 }
 
