@@ -103,7 +103,7 @@ impl Endpoint {
         if self.transmits.len() >= batch {
             &self.transmits.as_slices().0[0..batch-1]
         } else {
-            &self.transmits.as_slices().0[0..self.transmits.len()]
+            &self.transmits.as_slices().0[0..self.transmits.len()-1]
         }
     }
 
