@@ -3,7 +3,7 @@ use std::{
     convert::TryFrom,
     fmt, iter,
     net::{IpAddr, SocketAddr},
-    ops::{Index, IndexMut},
+    ops::{Index, IndexMut, RangeTo},
     sync::Arc,
     time::{Instant, SystemTime},
 };
@@ -86,6 +86,30 @@ impl Endpoint {
     #[must_use]
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
         self.transmits.pop_front()
+    }
+
+    /// Queues a packet for transmission
+    pub fn queue_transmit(&mut self, transmit: Transmit) {
+        self.transmits.push_back(transmit)
+    }
+
+    /// Drains a range of transmittable packets
+    pub fn drain_transmits(&mut self, range: RangeTo<usize>) {
+        self.transmits.drain(range);
+    }
+
+    /// Returns a batch of transmittable packets
+    pub fn transmit_batch(&self, batch: usize) -> &[Transmit] {
+        if self.transmits.len() >= batch {
+            &self.transmits.as_slices().0[..batch]
+        } else {
+            self.transmits.as_slices().0
+        }
+    }
+
+    /// Whether there are transmittable packets
+    pub fn has_transmits(&self) -> bool {
+        self.transmits.is_empty()
     }
 
     /// Replace the server configuration, affecting new incoming connections only

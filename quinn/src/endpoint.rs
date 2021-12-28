@@ -312,7 +312,6 @@ pub(crate) struct EndpointInner {
     socket: UdpSocket,
     udp_state: Arc<UdpState>,
     inner: proto::Endpoint,
-    outgoing: VecDeque<proto::Transmit>,
     incoming: VecDeque<Connecting>,
     incoming_reader: Option<Waker>,
     driver: Option<Waker>,
@@ -398,14 +397,7 @@ impl EndpointInner {
         self.send_limiter.start_cycle();
 
         let result = loop {
-            while self.outgoing.len() < BATCH_SIZE {
-                match self.inner.poll_transmit() {
-                    Some(x) => self.outgoing.push_back(x),
-                    None => break,
-                }
-            }
-
-            if self.outgoing.is_empty() {
+            if self.inner.has_transmits() {
                 break Ok(false);
             }
 
@@ -413,12 +405,11 @@ impl EndpointInner {
                 break Ok(true);
             }
 
-            match self
-                .socket
-                .poll_send(&self.udp_state, cx, self.outgoing.as_slices().0)
-            {
+            let transmit_batch = self.inner.transmit_batch(BATCH_SIZE);
+
+            match self.socket.poll_send(&self.udp_state, cx, transmit_batch) {
                 Poll::Ready(Ok(n)) => {
-                    self.outgoing.drain(..n);
+                    self.inner.drain_transmits(..n);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearily increases with number of packets.
                     self.send_limiter.record_work(n);
@@ -459,7 +450,7 @@ impl EndpointInner {
                                 .unbounded_send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t) => self.outgoing.push_back(t),
+                    Transmit(t) => self.inner.queue_transmit(t),
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
@@ -571,7 +562,6 @@ impl EndpointRef {
             inner,
             ipv6,
             events,
-            outgoing: VecDeque::new(),
             incoming: VecDeque::new(),
             incoming_reader: None,
             driver: None,
