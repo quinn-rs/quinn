@@ -100,7 +100,11 @@ impl Endpoint {
 
     /// Returns a batch of transmittable packets
     pub fn transmit_batch(&self, batch: usize) -> &[Transmit] {
-        &self.transmits.as_slices().0[0..batch]
+        if self.transmits.len() >= batch {
+            &self.transmits.as_slices().0[0..batch-1]
+        } else {
+            &self.transmits.as_slices().0[0..self.transmits.len()]
+        }
     }
 
     /// Whether there are transmittable packets
