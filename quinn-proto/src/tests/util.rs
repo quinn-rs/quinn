@@ -288,7 +288,7 @@ impl TestEndpoint {
             }
         }
 
-        while let Some(x) = self.poll_transmit() {
+        while let Some(x) = self.deque_transmit() {
             self.outbound.extend(split_transmit(x));
         }
 

@@ -84,7 +84,7 @@ impl Endpoint {
 
     /// Get the next packet to transmit
     #[must_use]
-    pub fn poll_transmit(&mut self) -> Option<Transmit> {
+    pub fn deque_transmit(&mut self) -> Option<Transmit> {
         self.transmits.pop_front()
     }
 

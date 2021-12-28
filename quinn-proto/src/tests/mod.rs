@@ -37,7 +37,7 @@ fn version_negotiate_server() {
     );
     assert!(event.is_none());
 
-    let io = server.poll_transmit();
+    let io = server.deque_transmit();
     assert!(io.is_some());
     if let Some(Transmit { contents, .. }) = io {
         assert_ne!(contents[0] & 0x80, 0);
@@ -46,7 +46,7 @@ fn version_negotiate_server() {
             DEFAULT_SUPPORTED_VERSIONS.contains(&u32::from_be_bytes(x.try_into().unwrap()))
         }));
     }
-    assert_matches!(server.poll_transmit(), None);
+    assert_matches!(server.deque_transmit(), None);
 }
 
 #[test]
