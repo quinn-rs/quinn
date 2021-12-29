@@ -522,7 +522,7 @@ fn run_echo(args: EchoArgs) {
                 };
                 let recv_task = async { recv.read_to_end(usize::max_value()).await.expect("read") };
 
-                let (_, data) = futures_util::join!(send_task, recv_task);
+                let (_, data) = tokio::join!(send_task, recv_task);
 
                 assert_eq!(data[..], msg[..], "Data mismatch");
             }
