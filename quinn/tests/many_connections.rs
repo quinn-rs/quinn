@@ -26,13 +26,12 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     .unwrap();
 
     let runtime = Builder::new_current_thread().enable_all().build().unwrap();
+    let _guard = runtime.enter();
     let shared = Arc::new(Mutex::new(Shared { errors: vec![] }));
 
     let (cfg, listener_cert) = configure_listener();
-    let (endpoint, incoming_conns) = {
-        let _guard = runtime.enter();
-        quinn::Endpoint::server(cfg, "127.0.0.1:0".parse().unwrap()).unwrap()
-    };
+    let (endpoint, incoming_conns) =
+        quinn::Endpoint::server(cfg, "127.0.0.1:0".parse().unwrap()).unwrap();
     let listener_addr = endpoint.local_addr().unwrap();
 
     let expected_messages = 50;
