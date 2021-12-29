@@ -1,8 +1,12 @@
-use std::{net::SocketAddr, sync::Arc, time::Instant};
+use std::{
+    net::SocketAddr,
+    sync::{Arc, Mutex},
+    time::Instant,
+};
 
 use anyhow::{Context, Result};
-use futures_util::StreamExt;
 use structopt::StructOpt;
+use tokio::sync::Semaphore;
 use tracing::{info, trace};
 
 use bench::{
@@ -55,13 +59,12 @@ fn main() {
     server_thread.join().expect("server thread");
 }
 
-async fn server(incoming: quinn::Incoming, opt: Opt) -> Result<()> {
-    // Handle only the expected amount of clients
-    let mut incoming = incoming.take(opt.clients);
-
+async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
     let mut server_tasks = Vec::new();
 
-    while let Some(handshake) = incoming.next().await {
+    // Handle only the expected amount of clients
+    for _ in 0..opt.clients {
+        let handshake = incoming.next().await.unwrap();
         let quinn::NewConnection {
             mut bi_streams,
             connection,
@@ -116,23 +119,29 @@ async fn client(
 
     let connection = Arc::new(connection);
 
-    let mut ops =
-        futures_util::stream::iter(
-            (0..opt.streams).map(|_| {
-                let connection = connection.clone();
-                async move {
-                    handle_client_stream(connection, opt.upload_size, opt.read_unordered).await
-                }
-            }),
-        )
-        .buffer_unordered(opt.max_streams);
-
     let mut stats = ClientStats::default();
     let mut first_error = None;
 
-    while let Some(stream_result) = ops.next().await {
-        info!("stream finished: {:?}", stream_result);
-        match stream_result {
+    let sem = Arc::new(Semaphore::new(opt.max_streams));
+    let results = Arc::new(Mutex::new(Vec::new()));
+    for _ in 0..opt.streams {
+        let permit = sem.clone().acquire_owned().await.unwrap();
+        let results = results.clone();
+        let connection = connection.clone();
+        tokio::spawn(async move {
+            let result =
+                handle_client_stream(connection, opt.upload_size, opt.read_unordered).await;
+            info!("stream finished: {:?}", result);
+            results.lock().unwrap().push(result);
+            drop(permit);
+        });
+    }
+
+    // Wait for remaining streams to finish
+    let _ = sem.acquire_many(opt.max_streams as u32).await.unwrap();
+
+    for result in results.lock().unwrap().drain(..) {
+        match result {
             Ok((upload_result, download_result)) => {
                 stats.upload_stats.stream_finished(upload_result);
                 stats.download_stats.stream_finished(download_result);
