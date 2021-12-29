@@ -489,7 +489,16 @@ fn decode_recv(
         match (cmsg.cmsg_level, cmsg.cmsg_type) {
             // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
             (libc::IPPROTO_IP, libc::IP_TOS) | (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
-                ecn_bits = cmsg::decode::<u8>(cmsg);
+                // Linux reportedly returns 4-byte values here instead of the expected, documented
+                // 1-byte, e.g. in kernel 4.4.0-19041-Microsoft or on Github Actions. Future work:
+                // find out why, report upstream?
+                if cmsg.cmsg_len as usize
+                    == libc::CMSG_LEN(mem::size_of::<libc::c_int>() as _) as usize
+                {
+                    ecn_bits = cmsg::decode::<libc::c_int>(cmsg) as u8;
+                } else {
+                    ecn_bits = cmsg::decode::<u8>(cmsg);
+                }
             },
             (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
