@@ -10,7 +10,6 @@ use std::{
     time::Instant,
 };
 
-use futures_util::ready;
 use proto::{EcnCodepoint, Transmit};
 use tokio::io::unix::AsyncFd;
 

@@ -16,7 +16,6 @@ all-features = true
 maintenance = { status = "experimental" }
 
 [dependencies]
-futures-util = { version = "0.3.11", features = ["io"] }
 libc = "0.2.69"
 mio = { version = "0.7.7", features = ["net"] }
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }
