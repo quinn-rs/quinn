@@ -9,8 +9,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_util::future;
-use futures_util::StreamExt;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tokio::{
     runtime::{Builder, Runtime},
@@ -260,25 +258,28 @@ fn endpoint() -> (Endpoint, Incoming) {
 #[tokio::test]
 async fn zero_rtt() {
     let _guard = subscribe();
-    let (endpoint, incoming) = endpoint();
+    let (endpoint, mut incoming) = endpoint();
 
     const MSG: &[u8] = b"goodbye!";
-    tokio::spawn(incoming.take(2).for_each(|incoming| async {
-        let NewConnection {
-            mut uni_streams,
-            connection,
-            ..
-        } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
-        tokio::spawn(async move {
-            while let Some(Ok(x)) = uni_streams.next().await {
-                let msg = x.read_to_end(usize::max_value()).await.unwrap();
-                assert_eq!(msg, MSG);
-            }
-        });
-        let mut s = connection.open_uni().await.expect("open_uni");
-        s.write_all(MSG).await.expect("write");
-        s.finish().await.expect("finish");
-    }));
+    tokio::spawn(async move {
+        for _ in 0..2 {
+            let incoming = incoming.next().await.unwrap();
+            let NewConnection {
+                mut uni_streams,
+                connection,
+                ..
+            } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
+            tokio::spawn(async move {
+                while let Some(Ok(x)) = uni_streams.next().await {
+                    let msg = x.read_to_end(usize::max_value()).await.unwrap();
+                    assert_eq!(msg, MSG);
+                }
+            });
+            let mut s = connection.open_uni().await.expect("open_uni");
+            s.write_all(MSG).await.expect("write");
+            s.finish().await.expect("finish");
+        }
+    });
 
     let NewConnection {
         mut uni_streams, ..
@@ -486,15 +487,12 @@ fn run_echo(args: EchoArgs) {
                 assert_eq!(None, incoming.local_ip());
             }
 
-            let new_conn = incoming.instrument(info_span!("server")).await.unwrap();
-            tokio::spawn(
-                new_conn
-                    .bi_streams
-                    .take_while(|x| future::ready(x.is_ok()))
-                    .for_each(|s| async {
-                        tokio::spawn(echo(s.unwrap()));
-                    }),
-            );
+            let mut new_conn = incoming.instrument(info_span!("server")).await.unwrap();
+            tokio::spawn(async move {
+                while let Some(stream) = new_conn.bi_streams.next().await {
+                    tokio::spawn(echo(stream.unwrap()));
+                }
+            });
             server.wait_idle().await;
         });
 

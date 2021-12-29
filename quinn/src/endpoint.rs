@@ -13,7 +13,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_core::Stream;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
@@ -525,15 +524,10 @@ impl Incoming {
 impl Incoming {
     /// Fetch the next incoming connection, or `None` if the endpoint has been closed
     pub async fn next(&mut self) -> Option<Connecting> {
-        poll_fn(move |cx| Pin::new(&mut *self).poll_next(cx)).await
+        poll_fn(move |cx| self.poll(cx)).await
     }
-}
 
-impl Stream for Incoming {
-    type Item = Connecting;
-
-    #[allow(unused_mut)] // MSRV
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll(&mut self, cx: &mut Context) -> Poll<Option<Connecting>> {
         let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver_lost {
             Poll::Ready(None)
@@ -545,6 +539,16 @@ impl Stream for Incoming {
             endpoint.incoming_reader = Some(cx.waker().clone());
             Poll::Pending
         }
+    }
+}
+
+#[cfg(feature = "futures-core")]
+impl futures_core::Stream for Incoming {
+    type Item = Connecting;
+
+    #[allow(unused_mut)] // MSRV
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        self.poll(cx)
     }
 }
 
