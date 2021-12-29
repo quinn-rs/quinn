@@ -6,7 +6,6 @@ use std::{
 };
 
 use crc::Crc;
-use futures_util::{future, FutureExt, StreamExt, TryFutureExt, TryStreamExt};
 use quinn::{ConnectionError, ReadError, WriteError};
 use rand::{self, RngCore};
 use tokio::runtime::Builder;
@@ -30,7 +29,7 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let shared = Arc::new(Mutex::new(Shared { errors: vec![] }));
 
     let (cfg, listener_cert) = configure_listener();
-    let (endpoint, incoming_conns) =
+    let (endpoint, mut incoming_conns) =
         quinn::Endpoint::server(cfg, "127.0.0.1:0".parse().unwrap()).unwrap();
     let listener_addr = endpoint.local_addr().unwrap();
 
@@ -38,29 +37,27 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
 
     let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
     let shared2 = shared.clone();
-    let read_incoming_data = incoming_conns
-        .filter_map(|connect| connect.map(|x| x.ok()))
-        .take(expected_messages)
-        .for_each(move |new_conn| {
+    let read_incoming_data = async move {
+        for _ in 0..expected_messages {
+            let new_conn = incoming_conns.next().await.unwrap().await.unwrap();
             let conn = new_conn.connection;
+            let mut uni_streams = new_conn.uni_streams;
 
             let shared = shared2.clone();
-            let task = new_conn
-                .uni_streams
-                .try_for_each(move |stream| {
-                    let conn = conn.clone();
-                    read_from_peer(stream).map(move |_| {
-                        conn.close(0u32.into(), &[]);
-                        Ok(())
-                    })
-                })
-                .unwrap_or_else(move |e| {
+            let task = async move {
+                while let Some(stream) = uni_streams.next().await {
+                    read_from_peer(stream?).await?;
+                    conn.close(0u32.into(), &[]);
+                }
+                Ok(())
+            };
+            tokio::spawn(async move {
+                if let Err(e) = task.await {
                     shared.lock().unwrap().errors.push(e);
-                });
-            tokio::spawn(task);
-
-            future::ready(())
-        });
+                }
+            });
+        }
+    };
     runtime.spawn(read_incoming_data);
 
     let client_cfg = configure_connector(&listener_cert);
@@ -68,12 +65,16 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     for _ in 0..expected_messages {
         let data = random_data_with_hash(1024 * 1024, &crc);
         let shared = shared.clone();
-        let task = endpoint
+        let connecting = endpoint
             .connect_with(client_cfg.clone(), listener_addr, "localhost")
-            .unwrap()
-            .map_err(WriteError::ConnectionLost)
-            .and_then(move |new_conn| write_to_peer(new_conn.connection, data))
-            .unwrap_or_else(move |e| {
+            .unwrap();
+        let task = async move {
+            let new_conn = connecting.await.map_err(WriteError::ConnectionLost)?;
+            write_to_peer(new_conn.connection, data).await?;
+            Ok(())
+        };
+        runtime.spawn(async move {
+            if let Err(e) = task.await {
                 use quinn::ConnectionError::*;
                 match e {
                     WriteError::ConnectionLost(ApplicationClosed { .. })
@@ -81,8 +82,8 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
                     WriteError::ConnectionLost(e) => shared.lock().unwrap().errors.push(e),
                     _ => panic!("unexpected write error"),
                 }
-            });
-        runtime.spawn(task);
+            }
+        });
     }
 
     runtime.block_on(endpoint.wait_idle());

@@ -11,7 +11,6 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_core::Stream;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
@@ -559,15 +558,11 @@ pub struct IncomingUniStreams(ConnectionRef);
 impl IncomingUniStreams {
     /// Fetch the next incoming unidirectional stream
     pub async fn next(&mut self) -> Option<Result<RecvStream, ConnectionError>> {
-        poll_fn(move |cx| Pin::new(&mut *self).poll_next(cx)).await
+        poll_fn(move |cx| self.poll(cx)).await
     }
-}
 
-impl Stream for IncomingUniStreams {
-    type Item = Result<RecvStream, ConnectionError>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let mut conn = self.0.lock("IncomingUniStreams::poll_next");
+    fn poll(&mut self, cx: &mut Context) -> Poll<Option<Result<RecvStream, ConnectionError>>> {
+        let mut conn = self.0.lock("IncomingUniStreams::poll");
         if let Some(x) = conn.inner.streams().accept(Dir::Uni) {
             conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
@@ -583,6 +578,15 @@ impl Stream for IncomingUniStreams {
     }
 }
 
+#[cfg(feature = "futures-core")]
+impl futures_core::Stream for IncomingUniStreams {
+    type Item = Result<RecvStream, ConnectionError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        self.poll(cx)
+    }
+}
+
 /// A stream of bidirectional QUIC streams initiated by a remote peer.
 ///
 /// See `IncomingUniStreams` for information about incoming streams in general.
@@ -592,15 +596,14 @@ pub struct IncomingBiStreams(ConnectionRef);
 impl IncomingBiStreams {
     /// Fetch the next incoming unidirectional stream
     pub async fn next(&mut self) -> Option<Result<(SendStream, RecvStream), ConnectionError>> {
-        poll_fn(move |cx| Pin::new(&mut *self).poll_next(cx)).await
+        poll_fn(move |cx| self.poll(cx)).await
     }
-}
 
-impl Stream for IncomingBiStreams {
-    type Item = Result<(SendStream, RecvStream), ConnectionError>;
-
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        let mut conn = self.0.lock("IncomingBiStreams::poll_next");
+    fn poll(
+        &mut self,
+        cx: &mut Context,
+    ) -> Poll<Option<Result<(SendStream, RecvStream), ConnectionError>>> {
+        let mut conn = self.0.lock("IncomingBiStreams::poll");
         if let Some(x) = conn.inner.streams().accept(Dir::Bi) {
             let is_0rtt = conn.inner.is_handshaking();
             conn.wake(); // To send additional stream ID credit
@@ -617,6 +620,15 @@ impl Stream for IncomingBiStreams {
             conn.incoming_bi_streams_reader = Some(cx.waker().clone());
             Poll::Pending
         }
+    }
+}
+
+#[cfg(feature = "futures-core")]
+impl futures_core::Stream for IncomingBiStreams {
+    type Item = Result<(SendStream, RecvStream), ConnectionError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        self.poll(cx)
     }
 }
 
@@ -645,7 +657,8 @@ impl Datagrams {
     }
 }
 
-impl Stream for Datagrams {
+#[cfg(feature = "futures-core")]
+impl futures_core::Stream for Datagrams {
     type Item = Result<Bytes, ConnectionError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
