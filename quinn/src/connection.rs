@@ -624,10 +624,13 @@ impl Stream for IncomingBiStreams {
 #[derive(Debug)]
 pub struct Datagrams(ConnectionRef);
 
-impl Stream for Datagrams {
-    type Item = Result<Bytes, ConnectionError>;
+impl Datagrams {
+    /// Fetch the next application datagram from the peer
+    pub async fn next(&mut self) -> Option<Result<Bytes, ConnectionError>> {
+        poll_fn(move |cx| self.poll(cx)).await
+    }
 
-    fn poll_next(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+    fn poll(&mut self, cx: &mut Context) -> Poll<Option<Result<Bytes, ConnectionError>>> {
         let mut conn = self.0.lock("Datagrams::poll_next");
         if let Some(x) = conn.inner.datagrams().recv() {
             Poll::Ready(Some(Ok(x)))
@@ -639,6 +642,14 @@ impl Stream for Datagrams {
             conn.datagram_reader = Some(cx.waker().clone());
             Poll::Pending
         }
+    }
+}
+
+impl Stream for Datagrams {
+    type Item = Result<Bytes, ConnectionError>;
+
+    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
+        self.poll(cx)
     }
 }
 
