@@ -11,12 +11,11 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_channel::{mpsc, oneshot};
 use futures_core::Stream;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
-use tokio::sync::Notify;
+use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use tracing::info_span;
 use udp::UdpState;
@@ -757,7 +756,7 @@ impl ConnectionInner {
             // If the endpoint driver is gone, noop.
             let _ = self
                 .endpoint_events
-                .unbounded_send((self.handle, EndpointEvent::Transmit(t)));
+                .send((self.handle, EndpointEvent::Transmit(t)));
 
             if transmits >= MAX_TRANSMIT_DATAGRAMS {
                 // TODO: What isn't ideal here yet is that if we don't poll all
@@ -776,14 +775,14 @@ impl ConnectionInner {
             // If the endpoint driver is gone, noop.
             let _ = self
                 .endpoint_events
-                .unbounded_send((self.handle, EndpointEvent::Proto(event)));
+                .send((self.handle, EndpointEvent::Proto(event)));
         }
     }
 
     /// If this returns `Err`, the endpoint is dead, so the driver should exit immediately.
     fn process_conn_events(&mut self, cx: &mut Context) -> Result<(), ConnectionError> {
         loop {
-            match Pin::new(&mut self.conn_events).poll_next(cx) {
+            match self.conn_events.poll_recv(cx) {
                 Poll::Ready(Some(ConnectionEvent::Ping)) => {
                     self.inner.ping();
                 }
@@ -993,7 +992,7 @@ impl Drop for ConnectionInner {
     fn drop(&mut self) {
         if !self.inner.is_drained() {
             // Ensure the endpoint can tidy up
-            let _ = self.endpoint_events.unbounded_send((
+            let _ = self.endpoint_events.send((
                 self.handle,
                 EndpointEvent::Proto(proto::EndpointEvent::drained()),
             ));

@@ -13,13 +13,12 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_channel::mpsc;
 use futures_core::Stream;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
-use tokio::sync::Notify;
+use tokio::sync::{mpsc, Notify};
 use udp::{RecvMeta, UdpSocket, UdpState, BATCH_SIZE};
 
 use crate::{
@@ -167,7 +166,7 @@ impl Endpoint {
         // Generate some activity so peers notice the rebind
         for sender in inner.connections.senders.values() {
             // Ignoring errors from dropped connections
-            let _ = sender.unbounded_send(ConnectionEvent::Ping);
+            let _ = sender.send(ConnectionEvent::Ping);
         }
 
         Ok(())
@@ -200,7 +199,7 @@ impl Endpoint {
         endpoint.connections.close = Some((error_code, reason.clone()));
         for sender in endpoint.connections.senders.values() {
             // Ignoring errors from dropped connections
-            let _ = sender.unbounded_send(ConnectionEvent::Close {
+            let _ = sender.send(ConnectionEvent::Close {
                 error_code,
                 reason: reason.clone(),
             });
@@ -366,7 +365,7 @@ impl EndpointInner {
                                     .senders
                                     .get_mut(&handle)
                                     .unwrap()
-                                    .unbounded_send(ConnectionEvent::Proto(event));
+                                    .send(ConnectionEvent::Proto(event));
                             }
                             None => {}
                         }
@@ -440,7 +439,7 @@ impl EndpointInner {
         use EndpointEvent::*;
 
         for _ in 0..IO_LOOP_BOUND {
-            match Pin::new(&mut self.events).poll_next(cx) {
+            match self.events.poll_recv(cx) {
                 Poll::Ready(Some((ch, event))) => match event {
                     Proto(e) => {
                         if e.is_drained() {
@@ -456,7 +455,7 @@ impl EndpointInner {
                                 .senders
                                 .get_mut(&ch)
                                 .unwrap()
-                                .unbounded_send(ConnectionEvent::Proto(event));
+                                .send(ConnectionEvent::Proto(event));
                         }
                     }
                     Transmit(t) => self.outgoing.push_back(t),
@@ -489,9 +488,9 @@ impl ConnectionSet {
         conn: proto::Connection,
         udp_state: Arc<UdpState>,
     ) -> Connecting {
-        let (send, recv) = mpsc::unbounded();
+        let (send, recv) = mpsc::unbounded_channel();
         if let Some((error_code, ref reason)) = self.close {
-            send.unbounded_send(ConnectionEvent::Close {
+            send.send(ConnectionEvent::Close {
                 error_code,
                 reason: reason.clone(),
             })
@@ -564,7 +563,7 @@ impl EndpointRef {
     pub(crate) fn new(socket: UdpSocket, inner: proto::Endpoint, ipv6: bool) -> Self {
         let recv_buf =
             vec![0; inner.config().get_max_udp_payload_size().min(64 * 1024) as usize * BATCH_SIZE];
-        let (sender, events) = mpsc::unbounded();
+        let (sender, events) = mpsc::unbounded_channel();
         Self(Arc::new(Mutex::new(EndpointInner {
             socket,
             udp_state: Arc::new(UdpState::new()),
