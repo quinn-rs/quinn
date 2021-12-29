@@ -24,12 +24,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
     )?;
 
     // connect to multiple endpoints using the same socket/endpoint
-    futures_util::future::join_all(vec![
+    tokio::join!(
         run_client(&client, addr1),
         run_client(&client, addr2),
         run_client(&client, addr3),
-    ])
-    .await;
+    );
 
     // Make sure the server has a chance to clean up
     client.wait_idle().await;

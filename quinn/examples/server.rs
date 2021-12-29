@@ -11,7 +11,6 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use futures_util::TryFutureExt;
 use structopt::{self, StructOpt};
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
@@ -150,11 +149,12 @@ async fn run(options: Opt) -> Result<()> {
 
     while let Some(conn) = incoming.next().await {
         info!("connection incoming");
-        tokio::spawn(
-            handle_connection(root.clone(), conn).unwrap_or_else(move |e| {
+        let fut = handle_connection(root.clone(), conn);
+        tokio::spawn(async move {
+            if let Err(e) = fut.await {
                 error!("connection failed: {reason}", reason = e.to_string())
-            }),
-        );
+            }
+        });
     }
 
     Ok(())
@@ -191,10 +191,14 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
                 }
                 Ok(s) => s,
             };
+            let fut = handle_request(root.clone(), stream);
             tokio::spawn(
-                handle_request(root.clone(), stream)
-                    .unwrap_or_else(move |e| error!("failed: {reason}", reason = e.to_string()))
-                    .instrument(info_span!("request")),
+                async move {
+                    if let Err(e) = fut.await {
+                        error!("failed: {reason}", reason = e.to_string());
+                    }
+                }
+                .instrument(info_span!("request")),
             );
         }
         Ok(())
