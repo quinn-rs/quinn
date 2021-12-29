@@ -6,9 +6,9 @@ use std::{
 };
 
 use bytes::Bytes;
-use futures_channel::oneshot;
 use proto::{ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
+use tokio::sync::oneshot;
 
 use crate::{
     connection::{ConnectionRef, UnknownStream},
