@@ -52,8 +52,8 @@ $ cargo run --example connection
 This example will make a QUIC connection on localhost, and you should see output like:
 
 ```text
-[server] incoming connection: id=3680c7d3b3ebd250 addr=127.0.0.1:50469
-[client] connected: id=61a2df1548935aeb, addr=127.0.0.1:5000
+[client] connected: addr=127.0.0.1:5000
+[server] connection accepted: addr=127.0.0.1:53712
 ```
 
 ## Insecure Connection Example
@@ -80,12 +80,12 @@ $ cargo run --example single_socket
 The expected output should be something like:
 
 ```text
-[server] incoming connection: id=bdd481e853111f09 addr=127.0.0.1:43149
-[server] incoming connection: id=bfdeae5f7a67d89f addr=127.0.0.1:43149
-[server] incoming connection: id=36ae757fc0d81d6a addr=127.0.0.1:43149
-[client] connected: id=751758ed2c93350e, addr=127.0.0.1:5001
-[client] connected: id=3722568139d78726, addr=127.0.0.1:5000
-[client] connected: id=621265b108a59fad, addr=127.0.0.1:5002
+[client] connected: addr=127.0.0.1:5000
+[server] incoming connection: addr=127.0.0.1:48930
+[client] connected: addr=127.0.0.1:5001
+[client] connected: addr=127.0.0.1:5002
+[server] incoming connection: addr=127.0.0.1:48930
+[server] incoming connection: addr=127.0.0.1:48930
 ```
 
 Notice how the server sees multiple incoming connections with different IDs coming from the same
