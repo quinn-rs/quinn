@@ -76,8 +76,8 @@ async fn client() -> anyhow::Result<()> {
 [Next up](data-transfer.md), let's have a look at sending data over this connection.  
 
 
-[Endpoint]: https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html
-[EndpointBuilder]: https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html
-[bind]: https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html#method.bind
-[connect]: https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html#method.connect
-[with_socket]: https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html#method.with_socket
+[Endpoint]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html
+[EndpointBuilder]: https://docs.rs/quinn/latest/quinn/struct.EndpointBuilder.html
+[bind]: https://docs.rs/quinn/latest/quinn/struct.EndpointBuilder.html#method.bind
+[connect]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.connect
+[with_socket]: https://docs.rs/quinn/latest/quinn/struct.EndpointBuilder.html#method.with_socket

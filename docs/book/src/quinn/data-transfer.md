@@ -127,9 +127,9 @@ async fn receive_datagram(mut connection: NewConnection) -> anyhow::Result<()> {
 }
 ```
 
-[Endpoint]: https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html
-[NewConnection]: https://docs.rs/quinn/latest/quinn/generic/struct.NewConnection.html
-[open_bi]: https://docs.rs/quinn/latest/quinn/generic/struct.Connection.html#method.open_bi
-[open_uni]: https://docs.rs/quinn/latest/quinn/generic/struct.Connection.html#method.open_uni
-[send_datagram]: https://docs.rs/quinn/latest/quinn/generic/struct.Connection.html#method.send_datagram
-[connection]: https://docs.rs/quinn/latest/quinn/generic/struct.NewConnection.html#structfield.connection
+[Endpoint]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html
+[NewConnection]: https://docs.rs/quinn/latest/quinn/struct.NewConnection.html
+[open_bi]: https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_bi
+[open_uni]: https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_uni
+[send_datagram]: https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.send_datagram
+[connection]: https://docs.rs/quinn/latest/quinn/struct.NewConnection.html#structfield.connection
