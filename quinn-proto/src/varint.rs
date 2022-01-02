@@ -65,11 +65,6 @@ impl VarInt {
             unreachable!("malformed VarInt");
         }
     }
-
-    /// Length of an encoded value from its first byte
-    pub fn encoded_size(first: u8) -> usize {
-        2usize.pow((first >> 6) as u32)
-    }
 }
 
 impl From<VarInt> for u64 {
