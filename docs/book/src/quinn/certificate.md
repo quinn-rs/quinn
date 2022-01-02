@@ -151,7 +151,7 @@ This is the only thing you need to do for your client to trust a server certific
 [7]: https://certbot.eff.org/instructions
 
 [ClientConfig]: https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html
-[ServerCertVerifier]: https://docs.rs/rustls/latest/rustls/trait.ServerCertVerifier.html
+[ServerCertVerifier]: https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html
 [default_client_config]: https://docs.rs/quinn/latest/quinn/struct.EndpointBuilder.html#method.default_client_config
 [generate_simple_self_signed]: https://docs.rs/rcgen/latest/rcgen/fn.generate_simple_self_signed.html
 [Certificate]: https://docs.rs/rcgen/latest/rcgen/struct.Certificate.html
