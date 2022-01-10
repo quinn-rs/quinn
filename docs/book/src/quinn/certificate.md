@@ -129,14 +129,9 @@ This is the only thing you need to do for your server to be secured.
 **Configure Client**
 
 ```rust
-let mut roots = rustls::RootCertStore::empty()
-roots.add(&cert).unwrap();
 let mut crypto = rustls::ClientConfig::builder()
-    .with_safe_default_cipher_suites()
-    .with_safe_default_kx_groups()
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .unwrap()
-    .with_root_certificates(roots)
+    .with_safe_defaults()
+    .with_single_cert(vec![cert]), key)?
     .with_no_client_auth();
 let client_config = ClientConfig::new(Arc::new(crypto));
 ```
