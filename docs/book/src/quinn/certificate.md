@@ -20,13 +20,25 @@ Then, allow the client to skip the certificate validation by implementing [Serve
 
 ```rust
 // Implementation of `ServerCertVerifier` that verifies everything as trustworthy.
-struct SkipCertificationVerification;
+struct SkipServerVerification;
 
-impl rustls::ServerCertVerifier for SkipCertificationVerification {
+impl SkipServerVerification {
+    fn new() -> Arc<Self> {
+        Arc::new(Self)
+    }
+}
+
+impl rustls::client::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
-        &self, _: &rustls::RootCertStore, _: &[rustls::Certificate], _: webpki::DNSNameRef, _: &[u8],
-    ) -> Result<rustls::ServerCertVerified, rustls::TLSError> {
-        Ok(ServerCertVerified::assertion())
+        &self,
+        _end_entity: &rustls::Certificate,
+        _intermediates: &[rustls::Certificate],
+        _server_name: &rustls::ServerName,
+        _scts: &mut dyn Iterator<Item = &[u8]>,
+        _ocsp_response: &[u8],
+        _now: std::time::SystemTime,
+    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::ServerCertVerified::assertion())
     }
 }
 ```
@@ -34,23 +46,17 @@ impl rustls::ServerCertVerifier for SkipCertificationVerification {
 After that, modify the [ClientConfig][ClientConfig] to use this [ServerCertVerifier][ServerCertVerifier] implementation. 
 
 ```rust
-pub fn insecure() -> ClientConfig {
-    let mut cfg = quinn::ClientConfigBuilder::default().build();
+fn configure_client() -> ClientConfig {
+    let crypto = rustls::ClientConfig::builder()
+        .with_safe_defaults()
+        .with_custom_certificate_verifier(SkipServerVerification::new())
+        .with_no_client_auth();
 
-    // Get a mutable reference to the 'crypto' config in the 'client config'.
-    let tls_cfg: &mut rustls::ClientConfig =
-        std::sync::Arc::get_mut(&mut cfg.crypto).unwrap();
-
-    // Change the certification verifier.
-    // This is only available when compiled with the 'dangerous_configuration' feature.
-    tls_cfg
-        .dangerous()
-        .set_certificate_verifier(Arc::new(SkipCertificationVerification));
-    cfg
+    ClientConfig::new(Arc::new(crypto))
 }
 ```
  
-Finally, if you plug this [ClientConfig][ClientConfig] into the [EndpointBuilder::default_client_config()][default_client_config] your client endpoint should verify all connections as trustworthy.
+Finally, if you plug this [ClientConfig][ClientConfig] into the [Endpoint::set_default_client_config()][set_default_client_config] your client endpoint should verify all connections as trustworthy.
 
 ## Using Certificates
 
@@ -67,19 +73,11 @@ This example uses [rcgen][4] to generate a certificate.
 Let's look at an example:
 
 ```rust
-pub fn generate_self_signed_cert(cert_path: &str, key_path: &str) -> anyhow::Result<(quinn::Certificate, quinn::PrivateKey)> {
-    // Generate dummy certificate.
-    let certificate = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let serialized_key = certificate.serialize_private_key_der();
-    let serialized_certificate = certificate.serialize_der().unwrap();
-
-    // Write to files.
-    fs::write(&cert_path, &serialized_certificate).context("failed to write certificate")?;
-    fs::write(&key_path, &serialized_key).context("failed to write private key")?;
-
-    let cert = quinn::Certificate::from_der(&serialized_certificate)?;
-    let key = quinn::PrivateKey::from_der(&serialized_key)?;
-    Ok((cert, key))
+fn generate_self_signed_cert() -> Result<(rustls::Certificate, rustls::PrivateKey), Box<dyn Error>>
+{
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
+    let key = rustls::PrivateKey(cert.serialize_private_key_der());
+    Ok((rustls::Certificate(cert.serialize_der()?), key))
 }
 ```
 
@@ -103,15 +101,15 @@ certbot asks for the required data and writes the certificate to `cert.pem` and 
 These files can then be referenced in code.  
  
 ```rust
-pub fn read_cert_from_file() -> anyhow::Result<(quinn::Certificate, quinn::PrivateKey)> {
+pub fn read_cert_from_file() -> Result<(rustls::Certificate, rustls::PrivateKey), Box<dyn Error>> {
     // Read from certificate and key from directory.
     let (cert, key) = fs::read(&"./cert.pem").and_then(|x| Ok((x, fs::read(&"./privkey.pem")?)))?;
 
     // Parse to certificate chain whereafter taking the first certifcater in this chain.
-    let cert = quinn::CertificateChain::from_pem(&cert)?.iter().next().unwrap().clone();
-    let key = quinn::PrivateKey::from_pem(&key)?;
+    let cert = rustls::Certificate(cert);
+    let key = rustls::PrivateKey(key);
 
-    Ok((quinn::Certificate::from(cert), key))
+    Ok((cert, key))
 }
 ```
 
@@ -123,8 +121,7 @@ After configuring plug the configuration into the `Endpoint`.
 **Configure Server**
 
 ```rust
-let mut builder = ServerConfigBuilder::default();
-builder.certificate(CertificateChain::from_certs(vec![certificate]), key)?;
+let server_config = ServerConfig::with_single_cert(vec![cert]), key)?;
 ```
 
 This is the only thing you need to do for your server to be secured. 
@@ -132,8 +129,16 @@ This is the only thing you need to do for your server to be secured.
 **Configure Client**
 
 ```rust
-let mut builder = ClientConfigBuilder::default();
-builder.add_certificate_authority(certificate)?;    
+let mut roots = rustls::RootCertStore::empty()
+roots.add(&cert).unwrap();
+let mut crypto = rustls::ClientConfig::builder()
+    .with_safe_default_cipher_suites()
+    .with_safe_default_kx_groups()
+    .with_protocol_versions(&[&rustls::version::TLS13])
+    .unwrap()
+    .with_root_certificates(roots)
+    .with_no_client_auth();
+let client_config = ClientConfig::new(Arc::new(crypto));
 ```
 
 This is the only thing you need to do for your client to trust a server certificate. 
@@ -152,6 +157,6 @@ This is the only thing you need to do for your client to trust a server certific
 
 [ClientConfig]: https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html
 [ServerCertVerifier]: https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html
-[default_client_config]: https://docs.rs/quinn/latest/quinn/struct.EndpointBuilder.html#method.default_client_config
+[set_default_client_config]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.set_default_client_config
 [generate_simple_self_signed]: https://docs.rs/rcgen/latest/rcgen/fn.generate_simple_self_signed.html
 [Certificate]: https://docs.rs/rcgen/latest/rcgen/struct.Certificate.html

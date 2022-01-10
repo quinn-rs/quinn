@@ -35,8 +35,8 @@ For example, from the connection initiator to the peer and the other way around.
 
 ```rust
 async fn open_bidirectional_stream(connection: Connection) -> anyhow::Result<()> {
-    let (mut send, recv) = connection.
-        open_bi()
+    let (mut send, recv) = connection
+        .open_bi()
         .await?;
 
     send.write_all(b"test").await?;
@@ -73,11 +73,11 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 
 ```rust
 async fn open_unidirectional_stream(connection: Connection)-> anyhow::Result<()> {
-    let mut send = connection.
-        open_uni()
+    let mut send = connection
+        .open_uni()
         .await?;
 
-    send.write_all(b"test").await.unwrap();
+    send.write_all(b"test").await?;
     send.finish().await?;
 
     Ok(())
