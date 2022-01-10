@@ -21,24 +21,21 @@ fn client_addr() -> SocketAddr {
 fn server_addr() -> SocketAddr {
     "127.0.0.1:5001".parse::<SocketAddr>().unwrap()
 }
-```   
-
-The [EndpointBuilder][EndpointBuilder] should be used to configure an endpoint. It is also possible to provide Quinn with an initialized socket via [with_socket()][with_socket]. 
+```
 
 **Server**
 
 First, the server endpoint should be bound to a socket. 
-The [bind()][bind] method, which can be used for this, returns a tuple containing the `Endpoint` and `Incoming` types. 
+The [server()][server] method, which can be used for this, returns a tuple containing the `Endpoint` and `Incoming` types.
 The `Endpoint` type can be used to start outgoing connections, and the `Incoming` type can be used to listen for incoming connections.
 
 ```rust
-async fn server() -> anyhow::Result<()> {
-    let mut endpoint_builder = Endpoint::builder();
-    // Configure this endpoint as a server by passing in `ServerConfig`.
-    endpoint_builder.listen(ServerConfig::default());
-
+async fn server() -> Result<(), Box<dyn Error>> {
     // Bind this endpoint to a UDP socket on the given server address. 
-    let (endpoint, mut incoming) = endpoint_builder.bind(&server_addr())?;
+    let (endpoint, mut incoming) = Endpoint::server(
+        server_config,
+        server_addr()
+    )?;
 
     // Start iterating over incoming connections.
     while let Some(conn) = incoming.next().await {
@@ -53,18 +50,17 @@ async fn server() -> anyhow::Result<()> {
 
 **Client**
 
+The [client()][client] returns only a `Endpoint` type.
 The client needs to connect to the server using the [connect(server_name)][connect] method.  
 The `SERVER_NAME` argument is the DNS name, matching the certificate configured in the server.
 
 ```rust
-async fn client() -> anyhow::Result<()> {
-    let mut endpoint_builder = Endpoint::builder();
-
+async fn client() -> Result<(), Box<dyn Error>> {
     // Bind this endpoint to a UDP socket on the given client address.
-    let (endpoint, _) = endpoint_builder.bind(&client_addr())?;
+    let mut endpoint = Endpoint::client(client_addr());
 
     // Connect to the server passing in the server name which is supposed to be in the server certificate.
-    let connection = endpoint.connect(&server_addr(), SERVER_NAME)?.await?;
+    let connection = endpoint.connect(server_addr(), SERVER_NAME)?;
 
     // Start transferring, receiving data, see data transfer page.
 
@@ -77,7 +73,6 @@ async fn client() -> anyhow::Result<()> {
 
 
 [Endpoint]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html
-[EndpointBuilder]: https://docs.rs/quinn/latest/quinn/struct.EndpointBuilder.html
-[bind]: https://docs.rs/quinn/latest/quinn/struct.EndpointBuilder.html#method.bind
+[server]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.server
+[client]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.client
 [connect]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.connect
-[with_socket]: https://docs.rs/quinn/latest/quinn/struct.EndpointBuilder.html#method.with_socket
