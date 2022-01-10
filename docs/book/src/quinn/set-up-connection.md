@@ -60,7 +60,7 @@ async fn client() -> Result<(), Box<dyn Error>> {
     let mut endpoint = Endpoint::client(client_addr());
 
     // Connect to the server passing in the server name which is supposed to be in the server certificate.
-    let connection = endpoint.connect(server_addr(), SERVER_NAME)?.await;
+    let connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
 
     // Start transferring, receiving data, see data transfer page.
 
