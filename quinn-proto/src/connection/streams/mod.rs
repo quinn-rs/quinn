@@ -362,12 +362,12 @@ impl Ord for PendingLevel {
 /// Application events about streams
 #[derive(Debug, PartialEq, Eq)]
 pub enum StreamEvent {
-    /// One or more new streams has been opened
+    /// One or more new streams has been opened and might be readable.
     Opened {
         /// Directionality for which streams have been opened
         dir: Dir,
     },
-    /// A currently open stream has data or errors waiting to be read
+    /// A currently open stream likely has data or errors waiting to be read
     Readable {
         /// Which stream is now readable
         id: StreamId,
