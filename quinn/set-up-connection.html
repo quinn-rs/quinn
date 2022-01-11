@@ -137,9 +137,9 @@
                         <h1 id="connection-setup"><a class="header" href="#connection-setup">Connection Setup</a></h1>
 <p>In the <a href="certificate.html">previous chapter</a> we looked at how to configure a certificate.
 This aspect is omitted in this chapter to prevent duplication. 
-But <strong>remember</strong> that this is required to get your <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a> up and running. 
+But <strong>remember</strong> that this is required to get your <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> up and running. 
 This chapter explains how to set up a connection and prepare it for data transfer. </p>
-<p>It all starts with the <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a> struct, this is the entry point of the library. </p>
+<p>It all starts with the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> struct, this is the entry point of the library. </p>
 <h2 id="example"><a class="header" href="#example">Example</a></h2>
 <p>Let's start by defining some constants. </p>
 <pre><pre class="playground"><code class="language-rust">
@@ -156,21 +156,19 @@ fn server_addr() -&gt; SocketAddr {
 }
 <span class="boring">}
 </span></code></pre></pre>
-<p>The <a href="https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html">EndpointBuilder</a> should be used to configure an endpoint. It is also possible to provide Quinn with an initialized socket via <a href="https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html#method.with_socket">with_socket()</a>. </p>
 <p><strong>Server</strong></p>
 <p>First, the server endpoint should be bound to a socket. 
-The <a href="https://docs.rs/quinn/latest/quinn/generic/struct.EndpointBuilder.html#method.bind">bind()</a> method, which can be used for this, returns a tuple containing the <code>Endpoint</code> and <code>Incoming</code> types. 
+The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.server">server()</a> method, which can be used for this, returns a tuple containing the <code>Endpoint</code> and <code>Incoming</code> types.
 The <code>Endpoint</code> type can be used to start outgoing connections, and the <code>Incoming</code> type can be used to listen for incoming connections.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>async fn server() -&gt; anyhow::Result&lt;()&gt; {
-    let mut endpoint_builder = Endpoint::builder();
-    // Configure this endpoint as a server by passing in `ServerConfig`.
-    endpoint_builder.listen(ServerConfig::default());
-
+</span>async fn server() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     // Bind this endpoint to a UDP socket on the given server address. 
-    let (endpoint, mut incoming) = endpoint_builder.bind(&amp;server_addr())?;
+    let (endpoint, mut incoming) = Endpoint::server(
+        server_config,
+        server_addr()
+    )?;
 
     // Start iterating over incoming connections.
     while let Some(conn) = incoming.next().await {
@@ -184,19 +182,18 @@ The <code>Endpoint</code> type can be used to start outgoing connections, and th
 <span class="boring">}
 </span></code></pre></pre>
 <p><strong>Client</strong></p>
-<p>The client needs to connect to the server using the <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html#method.connect">connect(server_name)</a> method.<br />
+<p>The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.client">client()</a> returns only a <code>Endpoint</code> type.
+The client needs to connect to the server using the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.connect">connect(server_name)</a> method.<br />
 The <code>SERVER_NAME</code> argument is the DNS name, matching the certificate configured in the server.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>async fn client() -&gt; anyhow::Result&lt;()&gt; {
-    let mut endpoint_builder = Endpoint::builder();
-
+</span>async fn client() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     // Bind this endpoint to a UDP socket on the given client address.
-    let (endpoint, _) = endpoint_builder.bind(&amp;client_addr())?;
+    let mut endpoint = Endpoint::client(client_addr());
 
     // Connect to the server passing in the server name which is supposed to be in the server certificate.
-    let connection = endpoint.connect(&amp;server_addr(), SERVER_NAME)?.await?;
+    let connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
 
     // Start transferring, receiving data, see data transfer page.
 

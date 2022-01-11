@@ -135,8 +135,8 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="data-transfer"><a class="header" href="#data-transfer">Data Transfer</a></h1>
-<p>The <a href="set-up-connection.html">previous chapter</a> explained how to set up an <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Endpoint.html">Endpoint</a>
-and then get access to a <a href="https://docs.rs/quinn/latest/quinn/generic/struct.NewConnection.html">NewConnection</a> instance.
+<p>The <a href="set-up-connection.html">previous chapter</a> explained how to set up an <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a>
+and then get access to a <a href="https://docs.rs/quinn/latest/quinn/struct.NewConnection.html">NewConnection</a> instance.
 This chapter continues with the subject of sending data over this connection.</p>
 <h2 id="multiplexing"><a class="header" href="#multiplexing">Multiplexing</a></h2>
 <p>Multiplexing is the act of combining data from multiple streams into a single stream. 
@@ -145,14 +145,14 @@ With QUIC, the programmer is in full control over the stream allocation.</p>
 <h2 id="stream-types"><a class="header" href="#stream-types">Stream Types</a></h2>
 <p>QUIC provides support for both stream and message-based communication.
 Streams and messages can be initiated both on the client and server.</p>
-<table><thead><tr><th align="left">Type</th><th align="left">Description</th><th align="left">Reference</th></tr></thead><tbody>
-<tr><td align="left"><strong>Bidirectional Stream</strong></td><td align="left">two way stream communication.</td><td align="left">see <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Connection.html#method.open_bi">open_bi</a></td></tr>
-<tr><td align="left"><strong>Unidirectional Stream</strong></td><td align="left">one way stream communication.</td><td align="left">see <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Connection.html#method.open_uni">open_uni</a></td></tr>
-<tr><td align="left"><strong>Unreliable Messaging (extension)</strong></td><td align="left">message based unreliable communication.</td><td align="left">see <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Connection.html#method.send_datagram">send_datagram</a></td></tr>
+<table><thead><tr><th style="text-align: left">Type</th><th style="text-align: left">Description</th><th style="text-align: left">Reference</th></tr></thead><tbody>
+<tr><td style="text-align: left"><strong>Bidirectional Stream</strong></td><td style="text-align: left">two way stream communication.</td><td style="text-align: left">see <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_bi">open_bi</a></td></tr>
+<tr><td style="text-align: left"><strong>Unidirectional Stream</strong></td><td style="text-align: left">one way stream communication.</td><td style="text-align: left">see <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_uni">open_uni</a></td></tr>
+<tr><td style="text-align: left"><strong>Unreliable Messaging (extension)</strong></td><td style="text-align: left">message based unreliable communication.</td><td style="text-align: left">see <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.send_datagram">send_datagram</a></td></tr>
 </tbody></table>
 <h2 id="how-to-use"><a class="header" href="#how-to-use">How to Use</a></h2>
-<p>New streams can be created with <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Connection.html#method.open_bi">open_bi()</a>, <a href="https://docs.rs/quinn/latest/quinn/generic/struct.Connection.html#method.open_uni">open_uni()</a> from type <a href="https://docs.rs/quinn/latest/quinn/generic/struct.NewConnection.html#structfield.connection">Connection</a>.
-An instance of this type, together with existing streams, can be found in the <a href="https://docs.rs/quinn/latest/quinn/generic/struct.NewConnection.html#structfield.connection">connection</a> field of <a href="https://docs.rs/quinn/latest/quinn/generic/struct.NewConnection.html">NewConnection</a>.</p>
+<p>New streams can be created with <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_bi">open_bi()</a>, <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_uni">open_uni()</a> from type <a href="https://docs.rs/quinn/latest/quinn/struct.NewConnection.html#structfield.connection">Connection</a>.
+An instance of this type, together with existing streams, can be found in the <a href="https://docs.rs/quinn/latest/quinn/struct.NewConnection.html#structfield.connection">connection</a> field of <a href="https://docs.rs/quinn/latest/quinn/struct.NewConnection.html">NewConnection</a>.</p>
 <h2 id="bidirectional-streams"><a class="header" href="#bidirectional-streams">Bidirectional Streams</a></h2>
 <p>With bidirectional streams, data can be sent in both directions. 
 For example, from the connection initiator to the peer and the other way around.</p>
@@ -161,8 +161,8 @@ For example, from the connection initiator to the peer and the other way around.
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn open_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
-    let (mut send, recv) = connection.
-        open_bi()
+    let (mut send, recv) = connection
+        .open_bi()
         .await?;
 
     send.write_all(b&quot;test&quot;).await?;
@@ -199,11 +199,11 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn open_unidirectional_stream(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
-    let mut send = connection.
-        open_uni()
+    let mut send = connection
+        .open_uni()
         .await?;
 
-    send.write_all(b&quot;test&quot;).await.unwrap();
+    send.write_all(b&quot;test&quot;).await?;
     send.finish().await?;
 
     Ok(())
