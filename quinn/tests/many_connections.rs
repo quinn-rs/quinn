@@ -179,8 +179,7 @@ fn hash_correct(data: &[u8], crc: &Crc<u32>) -> bool {
 
 #[allow(unsafe_code)]
 fn random_vec(size: usize) -> Vec<u8> {
-    let mut ret = Vec::with_capacity(size);
-    unsafe { ret.set_len(size) };
+    let mut ret = vec![0; size];
     rand::thread_rng().fill_bytes(&mut ret[..]);
     ret
 }
