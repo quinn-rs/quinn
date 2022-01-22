@@ -12,32 +12,32 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use structopt::StructOpt;
+use clap::Parser;
 use tracing::{error, info};
 use url::Url;
 
 mod common;
 
 /// HTTP/0.9 over QUIC client
-#[derive(StructOpt, Debug)]
-#[structopt(name = "client")]
+#[derive(Parser, Debug)]
+#[clap(name = "client")]
 struct Opt {
     /// Perform NSS-compatible TLS key logging to the file specified in `SSLKEYLOGFILE`.
-    #[structopt(long = "keylog")]
+    #[clap(long = "keylog")]
     keylog: bool,
 
     url: Url,
 
     /// Override hostname used for certificate verification
-    #[structopt(long = "host")]
+    #[clap(long = "host")]
     host: Option<String>,
 
     /// Custom certificate authority to trust, in DER format
-    #[structopt(parse(from_os_str), long = "ca")]
+    #[clap(parse(from_os_str), long = "ca")]
     ca: Option<PathBuf>,
 
     /// Simulate NAT rebinding after connecting
-    #[structopt(long = "rebind")]
+    #[clap(long = "rebind")]
     rebind: bool,
 }
 
@@ -48,7 +48,7 @@ fn main() {
             .finish(),
     )
     .unwrap();
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
     let code = {
         if let Err(e) = run(opt) {
             eprintln!("ERROR: {}", e);

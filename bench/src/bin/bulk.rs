@@ -5,7 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
-use structopt::StructOpt;
+use clap::Parser;
 use tokio::sync::Semaphore;
 use tracing::{info, trace};
 
@@ -17,7 +17,7 @@ use bench::{
 };
 
 fn main() {
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
     configure_tracing_subscriber();
 
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
