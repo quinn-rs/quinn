@@ -247,7 +247,7 @@ fn process_get(root: &Path, x: &[u8]) -> Result<Vec<u8>> {
         bail!("missing \\r\\n");
     }
     let x = &x[4..x.len() - 2];
-    let end = x.iter().position(|&c| c == b' ').unwrap_or_else(|| x.len());
+    let end = x.iter().position(|&c| c == b' ').unwrap_or(x.len());
     let path = str::from_utf8(&x[..end]).context("path is malformed UTF-8")?;
     let path = Path::new(&path);
     let mut real_path = PathBuf::from(root);
