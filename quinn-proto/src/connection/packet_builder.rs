@@ -7,7 +7,7 @@ use tracing::{trace, trace_span};
 use super::{spaces::SentPacket, Connection, SentFrames, State};
 use crate::{
     frame::{self, Close},
-    packet::{Header, LongType, PacketNumber, PartialEncode, SpaceId},
+    packet::{Header, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
     TransportError, TransportErrorCode,
 };
 
@@ -115,6 +115,10 @@ impl PacketBuilder {
             },
         };
         let partial_encode = header.encode(buffer);
+        if conn.peer_params.grease_quic_bit && conn.rng.gen() {
+            buffer[partial_encode.start] ^= FIXED_BIT;
+        }
+
         let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
             (
                 crypto.header.local.sample_size(),
