@@ -105,6 +105,7 @@ pub mod fuzzing {
     pub struct PacketParams {
         pub local_cid_len: usize,
         pub buf: BytesMut,
+        pub grease_quic_bit: bool,
     }
 
     impl<'arbitrary> Arbitrary<'arbitrary> for PacketParams {
@@ -113,7 +114,11 @@ pub mod fuzzing {
             let bytes: Vec<u8> = Vec::arbitrary(u)?;
             let mut buf = BytesMut::new();
             buf.put_slice(&bytes[..]);
-            Ok(PacketParams { local_cid_len, buf })
+            Ok(PacketParams {
+                local_cid_len,
+                buf,
+                grease_quic_bit: bool::arbitrary(u)?,
+            })
         }
     }
 }

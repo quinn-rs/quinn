@@ -154,6 +154,7 @@ impl Endpoint {
             data,
             self.local_cid_generator.cid_len(),
             &self.config.supported_versions,
+            self.config.grease_quic_bit,
         ) {
             Ok(x) => x,
             Err(PacketDecodeError::UnsupportedVersion {
@@ -630,6 +631,7 @@ impl Endpoint {
         transport_config: Arc<TransportConfig>,
     ) -> (ConnectionHandle, Connection) {
         let conn = Connection::new(
+            self.config.clone(),
             server_config,
             transport_config,
             init_cid,
