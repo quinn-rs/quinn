@@ -11,32 +11,32 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use structopt::{self, StructOpt};
+use clap::Parser;
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
 mod common;
 
-#[derive(StructOpt, Debug)]
-#[structopt(name = "server")]
+#[derive(Parser, Debug)]
+#[clap(name = "server")]
 struct Opt {
     /// file to log TLS keys to for debugging
-    #[structopt(long = "keylog")]
+    #[clap(long = "keylog")]
     keylog: bool,
     /// directory to serve files from
-    #[structopt(parse(from_os_str))]
+    #[clap(parse(from_os_str))]
     root: PathBuf,
     /// TLS private key in PEM format
-    #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
+    #[clap(parse(from_os_str), short = 'k', long = "key", requires = "cert")]
     key: Option<PathBuf>,
     /// TLS certificate in PEM format
-    #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
+    #[clap(parse(from_os_str), short = 'c', long = "cert", requires = "key")]
     cert: Option<PathBuf>,
     /// Enable stateless retries
-    #[structopt(long = "stateless-retry")]
+    #[clap(long = "stateless-retry")]
     stateless_retry: bool,
     /// Address to listen on
-    #[structopt(long = "listen", default_value = "[::1]:4433")]
+    #[clap(long = "listen", default_value = "[::1]:4433")]
     listen: SocketAddr,
 }
 
@@ -47,7 +47,7 @@ fn main() {
             .finish(),
     )
     .unwrap();
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
     let code = {
         if let Err(e) = run(opt) {
             eprintln!("ERROR: {}", e);

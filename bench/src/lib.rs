@@ -8,8 +8,8 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use clap::Parser;
 use rustls::RootCertStore;
-use structopt::StructOpt;
 use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
 
@@ -147,40 +147,40 @@ pub fn transport_config(opt: &Opt) -> quinn::TransportConfig {
     config
 }
 
-#[derive(StructOpt, Debug, Clone, Copy)]
-#[structopt(name = "bulk")]
+#[derive(Parser, Debug, Clone, Copy)]
+#[clap(name = "bulk")]
 pub struct Opt {
     /// The total number of clients which should be created
-    #[structopt(long = "clients", short = "c", default_value = "1")]
+    #[clap(long = "clients", short = 'c', default_value = "1")]
     pub clients: usize,
     /// The total number of streams which should be created
-    #[structopt(long = "streams", short = "n", default_value = "1")]
+    #[clap(long = "streams", short = 'n', default_value = "1")]
     pub streams: usize,
     /// The amount of concurrent streams which should be used
-    #[structopt(long = "max_streams", short = "m", default_value = "1")]
+    #[clap(long = "max_streams", short = 'm', default_value = "1")]
     pub max_streams: usize,
     /// Number of bytes to transmit from server to client
     ///
     /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10GiB
     /// will transfer 10GiB.
-    #[structopt(long, default_value = "1G", parse(try_from_str = parse_byte_size))]
+    #[clap(long, default_value = "1G", parse(try_from_str = parse_byte_size))]
     pub download_size: u64,
     /// Number of bytes to transmit from client to server
     ///
     /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10GiB
     /// will transfer 10GiB.
-    #[structopt(long, default_value = "0", parse(try_from_str = parse_byte_size))]
+    #[clap(long, default_value = "0", parse(try_from_str = parse_byte_size))]
     pub upload_size: u64,
     /// Show connection stats the at the end of the benchmark
-    #[structopt(long = "stats")]
+    #[clap(long = "stats")]
     pub stats: bool,
     /// Whether to use the unordered read API
-    #[structopt(long = "unordered")]
+    #[clap(long = "unordered")]
     pub read_unordered: bool,
     /// Allows to configure the desired cipher suite
     ///
     /// Valid options are: aes128, aes256, chacha20
-    #[structopt(long = "cipher", default_value = "aes128")]
+    #[clap(long = "cipher", default_value = "aes128")]
     pub cipher: CipherSuite,
 }
 

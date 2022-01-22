@@ -6,7 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use structopt::StructOpt;
+use clap::Parser;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
@@ -16,54 +16,54 @@ use perf::stats::{OpenStreamStats, Stats};
 use std::path::PathBuf;
 
 /// Connects to a QUIC perf server and maintains a specified pattern of requests until interrupted
-#[derive(StructOpt)]
-#[structopt(name = "client")]
+#[derive(Parser)]
+#[clap(name = "client")]
 struct Opt {
     /// Host to connect to
-    #[structopt(default_value = "localhost:4433")]
+    #[clap(default_value = "localhost:4433")]
     host: String,
     /// Override DNS resolution for host
-    #[structopt(long)]
+    #[clap(long)]
     ip: Option<IpAddr>,
     /// Number of unidirectional requests to maintain concurrently
-    #[structopt(long, default_value = "0")]
+    #[clap(long, default_value = "0")]
     uni_requests: u64,
     /// Number of bidirectional requests to maintain concurrently
-    #[structopt(long, default_value = "1")]
+    #[clap(long, default_value = "1")]
     bi_requests: u64,
     /// Number of bytes to request
-    #[structopt(long, default_value = "1048576")]
+    #[clap(long, default_value = "1048576")]
     download_size: u64,
     /// Number of bytes to transmit, in addition to the request header
-    #[structopt(long, default_value = "1048576")]
+    #[clap(long, default_value = "1048576")]
     upload_size: u64,
     /// The time to run in seconds
-    #[structopt(long, default_value = "60")]
+    #[clap(long, default_value = "60")]
     duration: u64,
     /// The interval in seconds at which stats are reported
-    #[structopt(long, default_value = "1")]
+    #[clap(long, default_value = "1")]
     interval: u64,
     /// Send buffer size in bytes
-    #[structopt(long, default_value = "2097152")]
+    #[clap(long, default_value = "2097152")]
     send_buffer_size: usize,
     /// Receive buffer size in bytes
-    #[structopt(long, default_value = "2097152")]
+    #[clap(long, default_value = "2097152")]
     recv_buffer_size: usize,
     /// Specify the local socket address
-    #[structopt(long)]
+    #[clap(long)]
     local_addr: Option<SocketAddr>,
     /// Whether to print connection statistics
-    #[structopt(long)]
+    #[clap(long)]
     conn_stats: bool,
     /// File path to output JSON statistics to. If the file is '-', stdout will be used
     #[cfg(feature = "json-output")]
-    #[structopt(long)]
+    #[clap(long)]
     json: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
 
     tracing_subscriber::fmt::init();
 

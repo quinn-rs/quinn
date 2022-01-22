@@ -2,37 +2,37 @@ use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
-use structopt::StructOpt;
+use clap::Parser;
 use tracing::{debug, error, info};
 
 use perf::bind_socket;
 
-#[derive(StructOpt)]
-#[structopt(name = "server")]
+#[derive(Parser)]
+#[clap(name = "server")]
 struct Opt {
     /// Address to listen on
-    #[structopt(long = "listen", default_value = "[::]:4433")]
+    #[clap(long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
     /// TLS private key in PEM format
-    #[structopt(parse(from_os_str), short = "k", long = "key", requires = "cert")]
+    #[clap(parse(from_os_str), short = 'k', long = "key", requires = "cert")]
     key: Option<PathBuf>,
     /// TLS certificate in PEM format
-    #[structopt(parse(from_os_str), short = "c", long = "cert", requires = "key")]
+    #[clap(parse(from_os_str), short = 'c', long = "cert", requires = "key")]
     cert: Option<PathBuf>,
     /// Send buffer size in bytes
-    #[structopt(long, default_value = "2097152")]
+    #[clap(long, default_value = "2097152")]
     send_buffer_size: usize,
     /// Receive buffer size in bytes
-    #[structopt(long, default_value = "2097152")]
+    #[clap(long, default_value = "2097152")]
     recv_buffer_size: usize,
     /// Whether to print connection statistics
-    #[structopt(long)]
+    #[clap(long)]
     conn_stats: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
 async fn main() {
-    let opt = Opt::from_args();
+    let opt = Opt::parse();
 
     tracing_subscriber::fmt::init();
 
