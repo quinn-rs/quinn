@@ -458,9 +458,7 @@ pub struct StreamMeta {
     pub fin: bool,
 }
 
-// This manual implementation exists because `Default` is not implemented for
-// `Range<u64>` on Rust 1.45. If the MSRV is bumped in the future, this can be replaced
-// with `derive(Default)`.
+// This manual implementation exists because `Default` is not implemented for `StreamId`
 impl Default for StreamMeta {
     fn default() -> Self {
         StreamMeta {
