@@ -308,6 +308,7 @@ pub struct EndpointConfig {
     pub(crate) connection_id_generator_factory:
         Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
     pub(crate) supported_versions: Vec<u32>,
+    pub(crate) grease_quic_bit: bool,
 }
 
 impl EndpointConfig {
@@ -320,6 +321,7 @@ impl EndpointConfig {
             max_udp_payload_size: 1480u32.into(), // Typical internet MTU minus IPv4 and UDP overhead, rounded up to a multiple of 8
             connection_id_generator_factory: Arc::new(cid_factory),
             supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
+            grease_quic_bit: true,
         }
     }
 
@@ -375,6 +377,16 @@ impl EndpointConfig {
         self.supported_versions = supported_versions;
         self
     }
+
+    /// Whether to accept QUIC packets containing any value for the fixed bit
+    ///
+    /// Enabled by default. Helps protect against protocol ossification and makes traffic less
+    /// identifiable to observers. Disable if helping observers identify this traffic as QUIC is
+    /// desired.
+    pub fn grease_quic_bit(&mut self, value: bool) -> &mut Self {
+        self.grease_quic_bit = value;
+        self
+    }
 }
 
 impl fmt::Debug for EndpointConfig {
@@ -384,6 +396,7 @@ impl fmt::Debug for EndpointConfig {
             .field("max_udp_payload_size", &self.max_udp_payload_size)
             .field("cid_generator_factory", &"[ elided ]")
             .field("supported_versions", &self.supported_versions)
+            .field("grease_quic_bit", &self.grease_quic_bit)
             .finish()
     }
 }

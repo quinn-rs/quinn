@@ -30,9 +30,11 @@ impl PartialDecode {
         bytes: BytesMut,
         local_cid_len: usize,
         supported_versions: &[u32],
+        grease_quic_bit: bool,
     ) -> Result<(Self, Option<BytesMut>), PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
-        let plain_header = PlainHeader::decode(&mut buf, local_cid_len, supported_versions)?;
+        let plain_header =
+            PlainHeader::decode(&mut buf, local_cid_len, supported_versions, grease_quic_bit)?;
         let dgram_len = buf.get_ref().len();
         let packet_len = plain_header
             .payload_len()
@@ -531,6 +533,7 @@ impl PlainHeader {
         buf: &mut io::Cursor<BytesMut>,
         local_cid_len: usize,
         supported_versions: &[u32],
+        grease_quic_bit: bool,
     ) -> Result<Self, PacketDecodeError> {
         let first = buf.get::<u8>()?;
         if first & LONG_HEADER_FORM == 0 {
@@ -569,7 +572,7 @@ impl PlainHeader {
                 });
             }
 
-            match LongHeaderType::from_byte(first)? {
+            match LongHeaderType::from_byte(first, grease_quic_bit)? {
                 LongHeaderType::Initial => {
                     let token_len = buf.get_var()? as usize;
                     let token_start = buf.position() as usize;
@@ -713,9 +716,9 @@ pub(crate) enum LongHeaderType {
 }
 
 impl LongHeaderType {
-    fn from_byte(b: u8) -> Result<Self, PacketDecodeError> {
+    fn from_byte(b: u8, grease_quic_bit: bool) -> Result<Self, PacketDecodeError> {
         use self::{LongHeaderType::*, LongType::*};
-        if b & FIXED_BIT == 0 {
+        if !grease_quic_bit && b & FIXED_BIT == 0 {
             return Err(PacketDecodeError::InvalidHeader("fixed bit unset"));
         }
         debug_assert!(b & LONG_HEADER_FORM != 0, "not a long packet");
@@ -870,7 +873,7 @@ mod tests {
 
         let server = initial_keys(Version::V1, &dcid, Side::Server);
         let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
-        let decode = PartialDecode::new(buf.as_slice().into(), 0, &supported_versions)
+        let decode = PartialDecode::new(buf.as_slice().into(), 0, &supported_versions, false)
             .unwrap()
             .0;
         let mut packet = decode.finish(Some(&*server.header.remote)).unwrap();

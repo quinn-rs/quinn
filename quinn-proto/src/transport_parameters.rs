@@ -77,6 +77,9 @@ macro_rules! make_struct {
             /// The value that the endpoint included in the Source Connection ID field of the first
             /// Initial packet it sends for the connection
             pub(crate) initial_src_cid: Option<ConnectionId>,
+            /// The endpoint is willing to receive QUIC packets containing any value for the fixed
+            /// bit
+            pub(crate) grease_quic_bit: bool,
 
             // Server-only
             /// The value of the Destination Connection ID field from the first Initial packet sent
@@ -100,6 +103,7 @@ macro_rules! make_struct {
                     disable_active_migration: false,
                     max_datagram_frame_size: None,
                     initial_src_cid: None,
+                    grease_quic_bit: false,
 
                     original_dst_cid: None,
                     retry_src_cid: None,
@@ -141,6 +145,7 @@ impl TransportParameters {
             max_datagram_frame_size: config
                 .datagram_receive_buffer_size
                 .map(|x| (x.min(u16::max_value().into()) as u16).into()),
+            grease_quic_bit: endpoint_config.grease_quic_bit,
             ..Self::default()
         }
     }
@@ -159,6 +164,7 @@ impl TransportParameters {
             || cached.initial_max_streams_bidi > self.initial_max_streams_bidi
             || cached.initial_max_streams_uni > self.initial_max_streams_uni
             || cached.max_datagram_frame_size > self.max_datagram_frame_size
+            || cached.grease_quic_bit && !self.grease_quic_bit
         {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "0-RTT accepted with incompatible transport parameters",
@@ -321,6 +327,11 @@ impl TransportParameters {
                 w.put_slice(cid);
             }
         }
+
+        if self.grease_quic_bit {
+            w.write_var(0x2ab2);
+            w.write_var(0);
+        }
     }
 
     /// Decode `TransportParameters` from buffer
@@ -381,6 +392,10 @@ impl TransportParameters {
                     }
                     params.max_datagram_frame_size = Some(r.get().unwrap());
                 }
+                0x2ab2 => match len {
+                    0 => params.grease_quic_bit = true,
+                    _ => return Err(Error::Malformed),
+                },
                 _ => {
                     macro_rules! parse {
                         {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
@@ -446,6 +461,7 @@ mod test {
                 connection_id: ConnectionId::new(&[]),
                 stateless_reset_token: [0xab; RESET_TOKEN_SIZE].into(),
             }),
+            grease_quic_bit: true,
             ..TransportParameters::default()
         };
         params.write(&mut buf);

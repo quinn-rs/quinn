@@ -29,8 +29,8 @@ use crate::{
         EndpointEventInner, IssuedCid,
     },
     transport_parameters::TransportParameters,
-    Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
-    MAX_STREAM_COUNT, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    Dir, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
+    VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 mod assembler;
@@ -118,6 +118,7 @@ use timer::{Timer, TimerTable};
 /// call to [`handle_event`](Self::handle_event) at that same instant; however
 /// events or timeouts with different instants must not be interleaved.
 pub struct Connection {
+    endpoint_config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
     config: Arc<TransportConfig>,
     rng: StdRng,
@@ -217,6 +218,7 @@ pub struct Connection {
 
 impl Connection {
     pub(crate) fn new(
+        endpoint_config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         config: Arc<TransportConfig>,
         init_cid: ConnectionId,
@@ -246,6 +248,7 @@ impl Connection {
         let mut rng = StdRng::from_entropy();
         let path_validated = server_config.as_ref().map_or(true, |c| c.use_retry);
         let mut this = Self {
+            endpoint_config,
             server_config,
             crypto,
             handshake_cid: loc_cid,
@@ -1772,7 +1775,12 @@ impl Connection {
         self.path.total_recvd = self.path.total_recvd.saturating_add(data.len() as u64);
         let mut remaining = Some(data);
         while let Some(data) = remaining {
-            match PartialDecode::new(data, self.local_cid_state.cid_len(), &[self.version]) {
+            match PartialDecode::new(
+                data,
+                self.local_cid_state.cid_len(),
+                &[self.version],
+                self.endpoint_config.grease_quic_bit,
+            ) {
                 Ok((partial_decode, rest)) => {
                     remaining = rest;
                     self.handle_decode(now, remote, ecn, partial_decode);
