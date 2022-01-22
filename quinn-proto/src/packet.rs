@@ -770,7 +770,7 @@ impl From<coding::UnexpectedEnd> for PacketDecodeError {
 }
 
 pub(crate) const LONG_HEADER_FORM: u8 = 0x80;
-const FIXED_BIT: u8 = 0x40;
+pub(crate) const FIXED_BIT: u8 = 0x40;
 pub(crate) const SPIN_BIT: u8 = 0x20;
 const SHORT_RESERVED_BITS: u8 = 0x18;
 const LONG_RESERVED_BITS: u8 = 0x0c;
