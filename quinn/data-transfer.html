@@ -179,8 +179,8 @@ For example, from the connection initiator to the peer and the other way around.
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn receive_bidirectional_stream(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
-    while let Some(Ok((send, recv))) = connection.bi_streams.next().await {
-        // Because it is a bidirectional stream, we can both send and recieve.
+    while let Some(Ok((mut send, recv))) = connection.bi_streams.next().await {
+        // Because it is a bidirectional stream, we can both send and receive.
         println!(&quot;request: {:?}&quot;, recv.read_to_end(50).await?);
 
         send.write_all(b&quot;response&quot;).await?;
