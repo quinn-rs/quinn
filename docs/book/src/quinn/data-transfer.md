@@ -52,7 +52,7 @@ async fn open_bidirectional_stream(connection: Connection) -> anyhow::Result<()>
 
 ```rust
 async fn receive_bidirectional_stream(mut connection: NewConnection) -> anyhow::Result<()> {
-    while let Some(Ok((send, recv))) = connection.bi_streams.next().await {
+    while let Some(Ok((mut send, recv))) = connection.bi_streams.next().await {
         // Because it is a bidirectional stream, we can both send and recieve.
         println!("request: {:?}", recv.read_to_end(50).await?);
 
