@@ -193,7 +193,8 @@ The <code>SERVER_NAME</code> argument is the DNS name, matching the certificate 
     let mut endpoint = Endpoint::client(client_addr());
 
     // Connect to the server passing in the server name which is supposed to be in the server certificate.
-    let connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
+    let new_connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
+    let NewConnection { connection, .. } = new_connection;
 
     // Start transferring, receiving data, see data transfer page.
 
