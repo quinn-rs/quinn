@@ -61,7 +61,7 @@ async fn client() -> Result<(), Box<dyn Error>> {
 
     // Connect to the server passing in the server name which is supposed to be in the server certificate.
     let new_connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
-    let connection = new_connection.connection;
+    let NewConnection { connection, .. } = new_connection;
 
     // Start transferring, receiving data, see data transfer page.
 
