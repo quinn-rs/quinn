@@ -38,7 +38,8 @@ impl CidQueue {
         }
         let index = cid
             .sequence
-            .checked_sub(self.offset).ok_or(InsertError::Retired)?;
+            .checked_sub(self.offset)
+            .ok_or(InsertError::Retired)?;
         if index >= Self::LEN as u64 {
             return Err(InsertError::ExceedsLimit);
         }

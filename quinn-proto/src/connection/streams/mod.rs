@@ -257,7 +257,8 @@ impl<'a> SendStream<'a> {
         let stream = self
             .state
             .send
-            .get_mut(&self.id).ok_or(UnknownStream { _private: () })?;
+            .get_mut(&self.id)
+            .ok_or(UnknownStream { _private: () })?;
 
         if matches!(stream.state, SendState::ResetSent) {
             // Redundant reset call
@@ -283,7 +284,8 @@ impl<'a> SendStream<'a> {
         let stream = self
             .state
             .send
-            .get_mut(&self.id).ok_or(UnknownStream { _private: () })?;
+            .get_mut(&self.id)
+            .ok_or(UnknownStream { _private: () })?;
 
         stream.priority = priority;
         Ok(())
@@ -297,7 +299,8 @@ impl<'a> SendStream<'a> {
         let stream = self
             .state
             .send
-            .get(&self.id).ok_or(UnknownStream { _private: () })?;
+            .get(&self.id)
+            .ok_or(UnknownStream { _private: () })?;
 
         Ok(stream.priority)
     }
