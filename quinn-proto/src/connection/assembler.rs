@@ -51,10 +51,7 @@ impl Assembler {
     /// Get the the next chunk
     pub(crate) fn read(&mut self, max_length: usize, ordered: bool) -> Option<Chunk> {
         loop {
-            let mut chunk = match self.data.peek_mut() {
-                Some(chunk) => chunk,
-                None => return None,
-            };
+            let mut chunk = self.data.peek_mut()?;
 
             if ordered {
                 if chunk.offset > self.bytes_read {
