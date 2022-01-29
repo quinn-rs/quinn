@@ -254,10 +254,11 @@ impl<'a> SendStream<'a> {
     /// # Panics
     /// - when applied to a receive stream
     pub fn reset(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
-        let stream = match self.state.send.get_mut(&self.id) {
-            Some(ss) => ss,
-            None => return Err(UnknownStream { _private: () }),
-        };
+        let stream = self
+            .state
+            .send
+            .get_mut(&self.id)
+            .ok_or(UnknownStream { _private: () })?;
 
         if matches!(stream.state, SendState::ResetSent) {
             // Redundant reset call
@@ -280,10 +281,11 @@ impl<'a> SendStream<'a> {
     /// # Panics
     /// - when applied to a receive stream
     pub fn set_priority(&mut self, priority: i32) -> Result<(), UnknownStream> {
-        let stream = match self.state.send.get_mut(&self.id) {
-            Some(ss) => ss,
-            None => return Err(UnknownStream { _private: () }),
-        };
+        let stream = self
+            .state
+            .send
+            .get_mut(&self.id)
+            .ok_or(UnknownStream { _private: () })?;
 
         stream.priority = priority;
         Ok(())
@@ -294,10 +296,11 @@ impl<'a> SendStream<'a> {
     /// # Panics
     /// - when applied to a receive stream
     pub fn priority(&self) -> Result<i32, UnknownStream> {
-        let stream = match self.state.send.get(&self.id) {
-            Some(ss) => ss,
-            None => return Err(UnknownStream { _private: () }),
-        };
+        let stream = self
+            .state
+            .send
+            .get(&self.id)
+            .ok_or(UnknownStream { _private: () })?;
 
         Ok(stream.priority)
     }

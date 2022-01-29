@@ -36,10 +36,10 @@ impl CidQueue {
             // This is a duplicate of the active CID.
             return Ok(());
         }
-        let index = match cid.sequence.checked_sub(self.offset) {
-            None => return Err(InsertError::Retired),
-            Some(x) => x,
-        };
+        let index = cid
+            .sequence
+            .checked_sub(self.offset)
+            .ok_or(InsertError::Retired)?;
         if index >= Self::LEN as u64 {
             return Err(InsertError::ExceedsLimit);
         }
