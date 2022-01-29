@@ -754,7 +754,7 @@ impl StreamsState {
     /// Returns whether a `MAX_DATA` frame should be enqueued as soon as possible.
     /// This will only be the case if the window update would is significant
     /// enough. As soon as a window update with a `MAX_DATA` frame has been
-    /// queued, the [`record_sent_max_data`] function should be called to
+    /// queued, the [`Recv::record_sent_max_stream_data`] function should be called to
     /// suppress sending further updates until the window increases significantly
     /// again.
     pub(super) fn add_read_credits(&mut self, credits: u64) -> ShouldTransmit {
