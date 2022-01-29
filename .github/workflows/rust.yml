@@ -69,7 +69,7 @@ jobs:
           override: true
           components: clippy
       - name: doc
-        run: cargo doc --no-deps
+        run: cargo doc --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -Dwarnings
       - name: lint fuzz
