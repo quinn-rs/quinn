@@ -365,7 +365,7 @@ impl Bbr {
             .max(self.min_cwnd);
     }
 
-    /// https://datatracker.ietf.org/doc/html/draft-cardwell-iccrg-bbr-congestion-control#section-4.3.2.2
+    /// <https://datatracker.ietf.org/doc/html/draft-cardwell-iccrg-bbr-congestion-control#section-4.3.2.2>
     fn check_if_full_bw_reached(&mut self, app_limited: bool) {
         if app_limited {
             return;

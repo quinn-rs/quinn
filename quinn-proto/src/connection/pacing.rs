@@ -11,7 +11,7 @@ use tracing::warn;
 /// Once the bucket is empty, further transmission is blocked.
 /// The bucket refills at a rate slightly faster
 /// than one congestion window per RTT, as recommended in
-/// https://tools.ietf.org/html/draft-ietf-quic-recovery-34#section-7.7
+/// <https://tools.ietf.org/html/draft-ietf-quic-recovery-34#section-7.7>
 pub struct Pacer {
     capacity: u64,
     last_window: u64,
