@@ -120,7 +120,7 @@ impl RecvStream {
         .await
     }
 
-    /// Foundation of [`read_chunk()`]: RecvStream::read_chunk
+    /// Foundation of [`Self::read_chunk`]
     fn poll_read_chunk(
         &mut self,
         cx: &mut Context,
@@ -145,7 +145,7 @@ impl RecvStream {
         ReadChunks { stream: self, bufs }.await
     }
 
-    /// Foundation of [`read_chunks()`]: RecvStream::read_chunks
+    /// Foundation of [`Self::read_chunks`]
     fn poll_read_chunks(
         &mut self,
         cx: &mut Context,
