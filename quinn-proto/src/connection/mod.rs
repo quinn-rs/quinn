@@ -2565,6 +2565,7 @@ impl Connection {
             self.migrate(now, remote);
             // Break linkability, if possible
             let _ = self.update_rem_cid();
+            self.spin = false;
         }
 
         Ok(())
@@ -2622,9 +2623,6 @@ impl Connection {
                 reset_token,
             ));
         self.peer_params.stateless_reset_token = Some(reset_token);
-
-        // Reduce linkability
-        self.spin = false;
     }
 
     /// Issue an initial set of connection IDs to the peer
