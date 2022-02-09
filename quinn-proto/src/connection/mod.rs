@@ -26,8 +26,9 @@ use crate::{
     range_set::ArrayRangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner, IssuedCid,
+        EndpointEventInner,
     },
+    token::ResetToken,
     transport_parameters::TransportParameters,
     Dir, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode, VarInt,
     MAX_STREAM_COUNT, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
@@ -2022,7 +2023,7 @@ impl Connection {
                 trace!("retrying with CID {}", rem_cid);
                 let client_hello = state.client_hello.take().unwrap();
                 self.retry_src_cid = Some(rem_cid);
-                self.rem_cids.update_cid(rem_cid);
+                self.rem_cids.update_initial_cid(rem_cid);
                 self.rem_handshake_cid = rem_cid;
 
                 let space = &mut self.spaces[SpaceId::Initial];
@@ -2146,7 +2147,7 @@ impl Connection {
                 if !state.rem_cid_set {
                     trace!("switching remote CID to {}", rem_cid);
                     let mut state = state.clone();
-                    self.rem_cids.update_cid(rem_cid);
+                    self.rem_cids.update_initial_cid(rem_cid);
                     self.rem_handshake_cid = rem_cid;
                     self.orig_rem_cid = rem_cid;
                     state.rem_cid_set = true;
@@ -2469,45 +2470,36 @@ impl Connection {
                         ));
                     }
 
-                    let retired = self.rem_cids.retire_prior_to(frame.retire_prior_to);
-                    self.spaces[SpaceId::Data]
-                        .pending
-                        .retire_cids
-                        .extend(retired);
-
                     use crate::cid_queue::InsertError;
-                    let new_rem_cid = IssuedCid {
-                        sequence: frame.sequence,
-                        id: frame.id,
-                        reset_token: frame.reset_token,
-                    };
-
-                    match self.rem_cids.insert(new_rem_cid) {
-                        Ok(()) => {}
+                    match self.rem_cids.insert(frame) {
+                        Ok(None) => {}
+                        Ok(Some((retired, reset_token))) => {
+                            self.spaces[SpaceId::Data]
+                                .pending
+                                .retire_cids
+                                .extend(retired);
+                            self.set_reset_token(reset_token);
+                        }
                         Err(InsertError::ExceedsLimit) => {
                             return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
                         }
                         Err(InsertError::Retired) => {
                             trace!("discarding already-retired");
+                            // RETIRE_CONNECTION_ID might not have been previously sent if e.g. a
+                            // range of connection IDs larger than the active connection ID limit
+                            // was retired all at once via retire_prior_to.
                             self.spaces[SpaceId::Data]
                                 .pending
                                 .retire_cids
                                 .push(frame.sequence);
                             continue;
                         }
-                    }
+                    };
 
-                    if self.side.is_server() && self.peer_params.stateless_reset_token.is_none() {
-                        if self.rem_cids.active_seq() == 0 {
-                            // We're a server still using the initial remote CID for the client, so
-                            // let's switch immediately to enable clientside stateless resets.
-                            let _ = self.update_rem_cid();
-                        }
-                    } else if self.rem_cids.is_active_retired() {
-                        // If our current CID is meant to be retired; or
-                        // active remote CID is invalid (due to packet loss or reordering),
-                        // we must switch to next valid CID
-                        self.update_rem_cid().unwrap();
+                    if self.side.is_server() && self.rem_cids.active_seq() == 0 {
+                        // We're a server still using the initial remote CID for the client, so
+                        // let's switch immediately to enable clientside stateless resets.
+                        let _ = self.update_rem_cid();
                     }
                 }
                 Frame::NewToken { token } => {
@@ -2619,7 +2611,11 @@ impl Connection {
         // Retire the current remote CID and any CIDs we had to skip.
         let retire_cids = &mut self.spaces[SpaceId::Data].pending.retire_cids;
         retire_cids.extend(retired);
+        self.set_reset_token(reset_token);
+        Ok(())
+    }
 
+    fn set_reset_token(&mut self, reset_token: ResetToken) {
         self.endpoint_events
             .push_back(EndpointEventInner::ResetToken(
                 self.path.remote,
@@ -2629,7 +2625,6 @@ impl Connection {
 
         // Reduce linkability
         self.spin = false;
-        Ok(())
     }
 
     /// Issue an initial set of connection IDs to the peer
@@ -2881,10 +2876,11 @@ impl Connection {
             (Some(x), y) => Some(cmp::min(x, y)),
         };
         if let Some(ref info) = params.preferred_address {
-            self.rem_cids.insert(IssuedCid {
+            self.rem_cids.insert(frame::NewConnectionId {
                 sequence: 1,
                 id: info.connection_id,
                 reset_token: info.stateless_reset_token,
+                retire_prior_to: 0,
             }).expect("preferred address CID is the first received, and hence is guaranteed to be legal");
         }
         self.peer_params = params;
