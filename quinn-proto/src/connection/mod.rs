@@ -2498,10 +2498,11 @@ impl Connection {
                     }
 
                     if self.side.is_server() && self.peer_params.stateless_reset_token.is_none() {
-                        // We're a server using the initial remote CID for the client, so let's
-                        // switch immediately to enable clientside stateless resets.
-                        debug_assert_eq!(self.rem_cids.active_seq(), 0);
-                        self.update_rem_cid().unwrap();
+                        if self.rem_cids.active_seq() == 0 {
+                            // We're a server still using the initial remote CID for the client, so
+                            // let's switch immediately to enable clientside stateless resets.
+                            let _ = self.update_rem_cid();
+                        }
                     } else if self.rem_cids.is_active_retired() {
                         // If our current CID is meant to be retired; or
                         // active remote CID is invalid (due to packet loss or reordering),
