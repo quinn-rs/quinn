@@ -80,8 +80,14 @@ impl CidQueue {
         self.cursor = (self.cursor + i) % Self::LEN;
         let orig_offset = self.offset;
         self.offset = cid.retire_prior_to + i as u64;
+        // We don't immediately retire CIDs in the range (orig_offset +
+        // Self::LEN)..self.offset. These are CIDs that we haven't yet received from a
+        // NEW_CONNECTION_ID frame, since having previously received them would violate the
+        // connection ID limit we specified based on Self::LEN. If we do receive a such a frame
+        // in the future, e.g. due to reordering, we'll retire it then. This ensures we can't be
+        // made to buffer an arbitrarily large number of RETIRE_CONNECTION_ID frames.
         Ok(Some((
-            orig_offset..self.offset,
+            orig_offset..self.offset.min(orig_offset + Self::LEN as u64),
             token.expect("non-initial CID missing reset token"),
         )))
     }
@@ -240,7 +246,7 @@ mod tests {
         q.insert(cid(2, 0)).unwrap();
         assert_eq!(
             q.insert(cid(1_000_000, 1_000_000)).unwrap().unwrap().0,
-            0..1_000_000,
+            0..CidQueue::LEN as u64,
         );
         assert_eq!(q.active_seq(), 1_000_000);
     }
