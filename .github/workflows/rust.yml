@@ -40,7 +40,11 @@ jobs:
       - uses: actions-rs/cargo@v1
         with:
           command: test
-          args: --workspace
+      - uses: actions-rs/cargo@v1
+        if: ${{ matrix.rust }} == "stable"
+        with:
+          command: test
+          args: --manifest-path fuzz/Cargo.toml
 
   lint:
     runs-on: ubuntu-latest
@@ -58,7 +62,6 @@ jobs:
           command: fmt
           args: --all -- --check
       - uses: actions-rs/cargo@v1
-        if: always()
         with:
           command: clippy
           args: --all-targets -- -D warnings
