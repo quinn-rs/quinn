@@ -2622,8 +2622,10 @@ impl Connection {
         };
 
         // Retire the current remote CID and any CIDs we had to skip.
-        let retire_cids = &mut self.spaces[SpaceId::Data].pending.retire_cids;
-        retire_cids.extend(retired);
+        self.spaces[SpaceId::Data]
+            .pending
+            .retire_cids
+            .extend(retired);
         self.set_reset_token(reset_token);
     }
 
