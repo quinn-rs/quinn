@@ -101,8 +101,7 @@ impl CidQueue {
         let orig_offset = self.offset;
         self.offset += i as u64;
         self.cursor = (self.cursor + i) % Self::LEN;
-        let sequence = orig_offset + i as u64;
-        Some((cid_data.1.unwrap(), orig_offset..sequence))
+        Some((cid_data.1.unwrap(), orig_offset..self.offset))
     }
 
     /// Iterate CIDs in CidQueue that are not `None`, including the active CID
