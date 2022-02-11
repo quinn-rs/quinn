@@ -49,12 +49,6 @@ impl CidQueue {
         if index >= Self::LEN as u64 + retired_count {
             return Err(InsertError::ExceedsLimit);
         }
-        if index == 0 && self.buffer[self.cursor].is_some() {
-            // This is a duplicate of the active CID, so no action is necessary. Because we always
-            // retire CIDs preceding the active CID, retire_prior_to cannot prompt any action
-            // either.
-            return Ok(None);
-        }
 
         // Discard retired CIDs, if any
         for i in 0..(retired_count.min(Self::LEN as u64) as usize) {
