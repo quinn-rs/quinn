@@ -2504,7 +2504,7 @@ impl Connection {
                     if self.side.is_server() && self.rem_cids.active_seq() == 0 {
                         // We're a server still using the initial remote CID for the client, so
                         // let's switch immediately to enable clientside stateless resets.
-                        let _ = self.update_rem_cid();
+                        self.update_rem_cid();
                     }
                 }
                 Frame::NewToken { token } => {
@@ -2573,7 +2573,7 @@ impl Connection {
             );
             self.migrate(now, remote);
             // Break linkability, if possible
-            let _ = self.update_rem_cid();
+            self.update_rem_cid();
             self.spin = false;
         }
 
@@ -2614,15 +2614,17 @@ impl Connection {
         );
     }
 
-    /// Returns Err(()) if no CIDs were available
-    fn update_rem_cid(&mut self) -> Result<(), ()> {
-        let (reset_token, retired) = self.rem_cids.next().ok_or(())?;
+    /// Switch to a previously unused remote connection ID, if possible
+    fn update_rem_cid(&mut self) {
+        let (reset_token, retired) = match self.rem_cids.next() {
+            Some(x) => x,
+            None => return,
+        };
 
         // Retire the current remote CID and any CIDs we had to skip.
         let retire_cids = &mut self.spaces[SpaceId::Data].pending.retire_cids;
         retire_cids.extend(retired);
         self.set_reset_token(reset_token);
-        Ok(())
     }
 
     fn set_reset_token(&mut self, reset_token: ResetToken) {
