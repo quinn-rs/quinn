@@ -18,7 +18,7 @@ maintenance = { status = "experimental" }
 [dependencies]
 futures-util = { version = "0.3.11", features = ["io"] }
 libc = "0.2.69"
-mio = { version = "0.7.7", features = ["net"] }
+mio = { version = "0.7.7", features = ["net", "os-poll"] }
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }
 socket2 = "0.4"
 tracing = "0.1.10"
