@@ -468,12 +468,9 @@ impl ServerConfig {
     }
 
     /// Private key used to authenticate data included in handshake tokens.
-    pub fn token_key(
-        &mut self,
-        value: Arc<dyn HandshakeTokenKey>,
-    ) -> Result<&mut Self, ConfigError> {
+    pub fn token_key(&mut self, value: Arc<dyn HandshakeTokenKey>) -> &mut Self {
         self.token_key = value;
-        Ok(self)
+        self
     }
 
     /// Whether to require clients to prove ownership of an address before committing resources.
