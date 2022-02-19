@@ -15,12 +15,12 @@ rust-version = "1.53"
 all-features = true
 
 [features]
-default = ["native-certs", "tls-rustls", "ring"]
+default = ["native-certs", "tls-rustls"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Provides `ClientConfig::with_native_roots()` convenience method
 native-certs = ["proto/native-certs"]
-tls-rustls = ["rustls", "webpki", "proto/tls-rustls"]
+tls-rustls = ["rustls", "webpki", "proto/tls-rustls", "ring"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 ring = ["proto/ring"]
 
