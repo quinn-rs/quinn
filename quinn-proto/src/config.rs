@@ -518,11 +518,14 @@ impl ServerConfig {
         let crypto = crypto::rustls::server_config(cert_chain, key)?;
         Ok(Self::with_crypto(Arc::new(crypto)))
     }
+}
 
-    /// Create a server config with the given [`rustls::ServerConfig`]
+#[cfg(feature = "ring")]
+impl ServerConfig {
+    /// Create a server config with the given [`crypto::ServerConfig`]
     ///
     /// Uses a randomized handshake token key.
-    pub fn with_crypto(crypto: Arc<rustls::ServerConfig>) -> Self {
+    pub fn with_crypto(crypto: Arc<dyn crypto::ServerConfig>) -> Self {
         let rng = &mut rand::thread_rng();
         let mut master_key = [0u8; 64];
         rng.fill_bytes(&mut master_key);
