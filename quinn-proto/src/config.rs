@@ -467,6 +467,12 @@ impl ServerConfig {
         }
     }
 
+    /// Set a custom [`TransportConfig`]
+    pub fn transport_config(&mut self, transport: Arc<TransportConfig>) -> &mut Self {
+        self.transport = transport;
+        self
+    }
+
     /// Private key used to authenticate data included in handshake tokens.
     pub fn token_key(&mut self, value: Arc<dyn HandshakeTokenKey>) -> &mut Self {
         self.token_key = value;
