@@ -6,7 +6,7 @@ use std::{
 };
 
 use crc::Crc;
-use quinn::{ConnectionError, ReadError, WriteError};
+use quinn::{ConnectionError, ReadError, TransportConfig, WriteError};
 use rand::{self, RngCore};
 use tokio::runtime::Builder;
 
@@ -130,10 +130,12 @@ async fn write_to_peer(conn: quinn::Connection, data: Vec<u8>) -> Result<(), Wri
 fn configure_connector(node_cert: &rustls::Certificate) -> quinn::ClientConfig {
     let mut roots = rustls::RootCertStore::empty();
     roots.add(node_cert).unwrap();
-    let mut peer_cfg = quinn::ClientConfig::with_root_certificates(roots);
-    let transport_config = Arc::get_mut(&mut peer_cfg.transport).unwrap();
+
+    let mut transport_config = TransportConfig::default();
     transport_config.max_idle_timeout(Some(Duration::from_secs(20).try_into().unwrap()));
 
+    let mut peer_cfg = quinn::ClientConfig::with_root_certificates(roots);
+    peer_cfg.transport_config(Arc::new(transport_config));
     peer_cfg
 }
 

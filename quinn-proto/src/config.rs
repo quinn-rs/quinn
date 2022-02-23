@@ -562,10 +562,10 @@ impl fmt::Debug for ServerConfig {
 #[non_exhaustive]
 pub struct ClientConfig {
     /// Transport configuration to use
-    pub transport: Arc<TransportConfig>,
+    pub(crate) transport: Arc<TransportConfig>,
 
     /// Cryptographic configuration to use
-    pub crypto: Arc<dyn crypto::ClientConfig>,
+    pub(crate) crypto: Arc<dyn crypto::ClientConfig>,
 
     /// QUIC protocol version to use
     pub(crate) version: u32,
@@ -579,6 +579,12 @@ impl ClientConfig {
             crypto,
             version: 1,
         }
+    }
+
+    /// Set a custom [`TransportConfig`]
+    pub fn transport_config(&mut self, transport: Arc<TransportConfig>) -> &mut Self {
+        self.transport = transport;
+        self
     }
 
     /// Set the QUIC version to use
