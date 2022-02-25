@@ -65,14 +65,15 @@ impl BandwidthEstimation {
         self.prev_acked_time = self.acked_time;
         self.acked_time = Some(now);
 
-        if self.prev_sent_time.is_none() {
-            return;
-        }
+        let prev_sent_time = match self.prev_sent_time {
+            Some(prev_sent_time) => prev_sent_time,
+            None => return,
+        };
 
-        let send_rate = if self.sent_time.unwrap() > self.prev_sent_time.unwrap() {
+        let send_rate = if self.sent_time.unwrap() > prev_sent_time {
             BandwidthEstimation::bw_from_delta(
                 self.total_sent - self.prev_total_sent,
-                self.sent_time.unwrap() - self.prev_sent_time.unwrap(),
+                self.sent_time.unwrap() - prev_sent_time,
             )
             .unwrap_or(0)
         } else {
