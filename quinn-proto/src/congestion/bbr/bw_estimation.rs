@@ -69,27 +69,25 @@ impl BandwidthEstimation {
             return;
         }
 
-        let send_rate;
-        if self.sent_time.unwrap() > self.prev_sent_time.unwrap() {
-            send_rate = BandwidthEstimation::bw_from_delta(
+        let send_rate = if self.sent_time.unwrap() > self.prev_sent_time.unwrap() {
+            BandwidthEstimation::bw_from_delta(
                 self.total_sent - self.prev_total_sent,
                 self.sent_time.unwrap() - self.prev_sent_time.unwrap(),
             )
-            .unwrap_or(0);
+            .unwrap_or(0)
         } else {
-            send_rate = u64::MAX; // will take the min of send and ack, so this is just a skip
-        }
+            u64::MAX // will take the min of send and ack, so this is just a skip
+        };
 
-        let ack_rate;
-        if self.prev_acked_time.is_none() {
-            ack_rate = 0;
+        let ack_rate = if self.prev_acked_time.is_none() {
+            0
         } else {
-            ack_rate = BandwidthEstimation::bw_from_delta(
+            BandwidthEstimation::bw_from_delta(
                 self.total_acked - self.prev_total_acked,
                 self.acked_time.unwrap() - self.prev_acked_time.unwrap(),
             )
-            .unwrap_or(0);
-        }
+            .unwrap_or(0)
+        };
 
         let bandwidth = send_rate.min(ack_rate);
         if !app_limited && self.max_filter.get() < bandwidth {
