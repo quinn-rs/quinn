@@ -11,7 +11,7 @@ pub(crate) struct BandwidthEstimation {
     prev_acked_time: Option<Instant>,
     total_sent: u64,
     prev_total_sent: u64,
-    sent_time: Option<Instant>,
+    sent_time: Instant,
     prev_sent_time: Option<Instant>,
     max_filter: MinMax,
     acked_at_last_window: u64,
@@ -26,7 +26,9 @@ impl Default for BandwidthEstimation {
             prev_acked_time: None,
             total_sent: 0,
             prev_total_sent: 0,
-            sent_time: None,
+            // The `sent_time` value set here is ignored; it is used in `on_ack()`, but will
+            // have been reset by `on_sent()` before that method is called.
+            sent_time: Instant::now(),
             prev_sent_time: None,
             max_filter: MinMax::default(),
             acked_at_last_window: 0,
@@ -48,8 +50,8 @@ impl BandwidthEstimation {
     pub fn on_sent(&mut self, now: Instant, bytes: u64) {
         self.prev_total_sent = self.total_sent;
         self.total_sent += bytes;
-        self.prev_sent_time = self.sent_time;
-        self.sent_time = Some(now);
+        self.prev_sent_time = Some(self.sent_time);
+        self.sent_time = now;
     }
 
     pub fn on_ack(
@@ -70,10 +72,10 @@ impl BandwidthEstimation {
             None => return,
         };
 
-        let send_rate = if self.sent_time.unwrap() > prev_sent_time {
+        let send_rate = if self.sent_time > prev_sent_time {
             BandwidthEstimation::bw_from_delta(
                 self.total_sent - self.prev_total_sent,
-                self.sent_time.unwrap() - prev_sent_time,
+                self.sent_time - prev_sent_time,
             )
             .unwrap_or(0)
         } else {
