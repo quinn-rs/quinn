@@ -95,7 +95,7 @@ impl Bbr {
             bw_at_last_round: 0,
             round_wo_bw_gain: 0,
             ack_aggregation: AckAggregationState {
-                max_ack_height: MinMax::new(10),
+                max_ack_height: MinMax::default(),
                 aggregation_epoch_start_time: None,
                 aggregation_epoch_bytes: 0,
             },

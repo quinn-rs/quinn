@@ -42,13 +42,6 @@ pub(crate) struct MinMax {
 }
 
 impl MinMax {
-    pub fn new(round_window: u64) -> Self {
-        MinMax {
-            window: round_window,
-            samples: [Default::default(); 3],
-        }
-    }
-
     pub fn get(&self) -> u64 {
         self.samples[0].value
     }
@@ -122,6 +115,15 @@ impl MinMax {
     }
 }
 
+impl Default for MinMax {
+    fn default() -> Self {
+        Self {
+            window: 10,
+            samples: [Default::default(); 3],
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
@@ -129,7 +131,7 @@ mod test {
     #[test]
     fn test() {
         let round = 25;
-        let mut min_max = MinMax::new(10);
+        let mut min_max = MinMax::default();
         min_max.update_max(round + 1, 100);
         assert_eq!(100, min_max.get());
         min_max.update_max(round + 3, 120);
