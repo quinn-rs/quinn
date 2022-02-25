@@ -512,6 +512,28 @@ impl Connection {
             .crypto_session()
             .export_keying_material(output, label, context)
     }
+
+    /// Modify the number of remotely initiated unidirectional streams that may be concurrently open
+    ///
+    /// No streams may be opened by the peer unless fewer than `count` are already open. Large
+    /// `count`s increase both minimum and worst-case memory consumption.
+    pub fn set_max_concurrent_uni_streams(&self, count: VarInt) {
+        let mut conn = self.0.lock("set_max_concurrent_uni_streams");
+        conn.inner.set_max_concurrent_streams(Dir::Uni, count);
+        // May need to send MAX_STREAMS to make progress
+        conn.wake();
+    }
+
+    /// Modify the number of remotely initiated bidirectional streams that may be concurrently open
+    ///
+    /// No streams may be opened by the peer unless fewer than `count` are already open. Large
+    /// `count`s increase both minimum and worst-case memory consumption.
+    pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
+        let mut conn = self.0.lock("set_max_concurrent_bi_streams");
+        conn.inner.set_max_concurrent_streams(Dir::Bi, count);
+        // May need to send MAX_STREAMS to make progress
+        conn.wake();
+    }
 }
 
 impl Clone for Connection {
