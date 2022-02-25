@@ -1095,6 +1095,14 @@ impl Connection {
         self.path.congestion.as_ref()
     }
 
+    /// Modify the number of remotely initiated streams that may be concurrently open
+    ///
+    /// No streams may be opened by the peer unless fewer than `count` are already open. Large
+    /// `count`s increase both minimum and worst-case memory consumption.
+    pub fn set_max_concurrent_streams(&mut self, dir: Dir, count: VarInt) {
+        self.streams.set_max_concurrent(dir, count);
+    }
+
     fn on_ack_received(
         &mut self,
         now: Instant,
