@@ -94,11 +94,7 @@ impl Bbr {
             round_count: 0,
             bw_at_last_round: 0,
             round_wo_bw_gain: 0,
-            ack_aggregation: AckAggregationState {
-                max_ack_height: MinMax::default(),
-                aggregation_epoch_start_time: None,
-                aggregation_epoch_bytes: 0,
-            },
+            ack_aggregation: AckAggregationState::default(),
             random_number_generator: rand::rngs::StdRng::from_entropy(),
         }
     }
@@ -526,7 +522,7 @@ impl RecoveryState {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Default, Copy, Clone)]
 struct AckAggregationState {
     max_ack_height: MinMax,
     aggregation_epoch_start_time: Option<Instant>,
