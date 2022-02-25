@@ -84,7 +84,7 @@ impl BandwidthEstimation {
         } else {
             BandwidthEstimation::bw_from_delta(
                 self.total_acked - self.prev_total_acked,
-                self.acked_time.unwrap() - self.prev_acked_time.unwrap(),
+                now - self.prev_acked_time.unwrap(),
             )
             .unwrap_or(0)
         };
