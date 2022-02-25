@@ -27,13 +27,6 @@
 
 use std::fmt::Debug;
 
-#[derive(Debug, Copy, Clone, Default)]
-struct MinMaxSample {
-    /// round number, not a timestamp
-    time: u64,
-    value: u64,
-}
-
 #[derive(Copy, Clone, Debug)]
 pub(crate) struct MinMax {
     /// round count, not a timestamp
@@ -122,6 +115,13 @@ impl Default for MinMax {
             samples: [Default::default(); 3],
         }
     }
+}
+
+#[derive(Debug, Copy, Clone, Default)]
+struct MinMaxSample {
+    /// round number, not a timestamp
+    time: u64,
+    value: u64,
 }
 
 #[cfg(test)]

@@ -17,35 +17,6 @@ pub(crate) struct BandwidthEstimation {
     acked_at_last_window: u64,
 }
 
-impl Default for BandwidthEstimation {
-    fn default() -> Self {
-        BandwidthEstimation {
-            total_acked: 0,
-            prev_total_acked: 0,
-            acked_time: None,
-            prev_acked_time: None,
-            total_sent: 0,
-            prev_total_sent: 0,
-            // The `sent_time` value set here is ignored; it is used in `on_ack()`, but will
-            // have been reset by `on_sent()` before that method is called.
-            sent_time: Instant::now(),
-            prev_sent_time: None,
-            max_filter: MinMax::default(),
-            acked_at_last_window: 0,
-        }
-    }
-}
-
-impl Display for BandwidthEstimation {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
-        write!(
-            f,
-            "{:.3} MB/s",
-            self.get_estimate() as f32 / (1024 * 1024) as f32
-        )
-    }
-}
-
 impl BandwidthEstimation {
     pub fn on_sent(&mut self, now: Instant, bytes: u64) {
         self.prev_total_sent = self.total_sent;
@@ -117,5 +88,34 @@ impl BandwidthEstimation {
         let b_ns = bytes * 1_000_000_000;
         let bytes_per_second = b_ns / (window_duration_ns as u64);
         Some(bytes_per_second)
+    }
+}
+
+impl Default for BandwidthEstimation {
+    fn default() -> Self {
+        BandwidthEstimation {
+            total_acked: 0,
+            prev_total_acked: 0,
+            acked_time: None,
+            prev_acked_time: None,
+            total_sent: 0,
+            prev_total_sent: 0,
+            // The `sent_time` value set here is ignored; it is used in `on_ack()`, but will
+            // have been reset by `on_sent()` before that method is called.
+            sent_time: Instant::now(),
+            prev_sent_time: None,
+            max_filter: MinMax::default(),
+            acked_at_last_window: 0,
+        }
+    }
+}
+
+impl Display for BandwidthEstimation {
+    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "{:.3} MB/s",
+            self.get_estimate() as f32 / (1024 * 1024) as f32
+        )
     }
 }
