@@ -490,94 +490,6 @@ impl Controller for Bbr {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum Mode {
-    // Startup phase of the connection.
-    Startup,
-    // After achieving the highest possible bandwidth during the startup, lower
-    // the pacing rate in order to drain the queue.
-    Drain,
-    // Cruising mode.
-    ProbeBw,
-    // Temporarily slow down sending in order to empty the buffer and measure
-    // the real minimum RTT.
-    ProbeRtt,
-}
-
-// Indicates how the congestion control limits the amount of bytes in flight.
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum RecoveryState {
-    // Do not limit.
-    NotInRecovery,
-    // Allow an extra outstanding byte for each byte acknowledged.
-    Conservation,
-    // Allow two extra outstanding bytes for each byte acknowledged (slow
-    // start).
-    Growth,
-}
-
-impl RecoveryState {
-    pub fn in_recovery(&self) -> bool {
-        !matches!(self, RecoveryState::NotInRecovery)
-    }
-}
-
-#[derive(Debug, Default, Copy, Clone)]
-struct AckAggregationState {
-    max_ack_height: MinMax,
-    aggregation_epoch_start_time: Option<Instant>,
-    aggregation_epoch_bytes: u64,
-}
-
-impl AckAggregationState {
-    fn update_ack_aggregation_bytes(
-        &mut self,
-        newly_acked_bytes: u64,
-        now: Instant,
-        round: u64,
-        max_bandwidth: u64,
-    ) -> u64 {
-        // Compute how many bytes are expected to be delivered, assuming max
-        // bandwidth is correct.
-        let expected_bytes_acked = max_bandwidth
-            * now
-                .saturating_duration_since(self.aggregation_epoch_start_time.unwrap_or(now))
-                .as_micros() as u64
-            / 1_000_000;
-
-        // Reset the current aggregation epoch as soon as the ack arrival rate is
-        // less than or equal to the max bandwidth.
-        if self.aggregation_epoch_bytes <= expected_bytes_acked {
-            // Reset to start measuring a new aggregation epoch.
-            self.aggregation_epoch_bytes = newly_acked_bytes;
-            self.aggregation_epoch_start_time = Some(now);
-            return 0;
-        }
-
-        // Compute how many extra bytes were delivered vs max bandwidth.
-        // Include the bytes most recently acknowledged to account for stretch acks.
-        self.aggregation_epoch_bytes += newly_acked_bytes;
-        let diff = self.aggregation_epoch_bytes - expected_bytes_acked;
-        self.max_ack_height.update_max(round, diff);
-        diff
-    }
-}
-
-#[derive(Debug, Clone, Default)]
-struct LossState {
-    lost_bytes: u64,
-}
-
-impl LossState {
-    pub fn reset(&mut self) {
-        self.lost_bytes = 0;
-    }
-
-    pub fn has_losses(&self) -> bool {
-        self.lost_bytes != 0
-    }
-}
-
 /// Configuration for the [`Bbr`] congestion controller
 #[derive(Debug, Clone)]
 pub struct BbrConfig {
@@ -625,6 +537,94 @@ impl Default for BbrConfig {
 impl ControllerFactory for Arc<BbrConfig> {
     fn build(&self, _now: Instant) -> Box<dyn Controller> {
         Box::new(Bbr::new(self.clone()))
+    }
+}
+
+#[derive(Debug, Default, Copy, Clone)]
+struct AckAggregationState {
+    max_ack_height: MinMax,
+    aggregation_epoch_start_time: Option<Instant>,
+    aggregation_epoch_bytes: u64,
+}
+
+impl AckAggregationState {
+    fn update_ack_aggregation_bytes(
+        &mut self,
+        newly_acked_bytes: u64,
+        now: Instant,
+        round: u64,
+        max_bandwidth: u64,
+    ) -> u64 {
+        // Compute how many bytes are expected to be delivered, assuming max
+        // bandwidth is correct.
+        let expected_bytes_acked = max_bandwidth
+            * now
+                .saturating_duration_since(self.aggregation_epoch_start_time.unwrap_or(now))
+                .as_micros() as u64
+            / 1_000_000;
+
+        // Reset the current aggregation epoch as soon as the ack arrival rate is
+        // less than or equal to the max bandwidth.
+        if self.aggregation_epoch_bytes <= expected_bytes_acked {
+            // Reset to start measuring a new aggregation epoch.
+            self.aggregation_epoch_bytes = newly_acked_bytes;
+            self.aggregation_epoch_start_time = Some(now);
+            return 0;
+        }
+
+        // Compute how many extra bytes were delivered vs max bandwidth.
+        // Include the bytes most recently acknowledged to account for stretch acks.
+        self.aggregation_epoch_bytes += newly_acked_bytes;
+        let diff = self.aggregation_epoch_bytes - expected_bytes_acked;
+        self.max_ack_height.update_max(round, diff);
+        diff
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum Mode {
+    // Startup phase of the connection.
+    Startup,
+    // After achieving the highest possible bandwidth during the startup, lower
+    // the pacing rate in order to drain the queue.
+    Drain,
+    // Cruising mode.
+    ProbeBw,
+    // Temporarily slow down sending in order to empty the buffer and measure
+    // the real minimum RTT.
+    ProbeRtt,
+}
+
+// Indicates how the congestion control limits the amount of bytes in flight.
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum RecoveryState {
+    // Do not limit.
+    NotInRecovery,
+    // Allow an extra outstanding byte for each byte acknowledged.
+    Conservation,
+    // Allow two extra outstanding bytes for each byte acknowledged (slow
+    // start).
+    Growth,
+}
+
+impl RecoveryState {
+    pub fn in_recovery(&self) -> bool {
+        !matches!(self, RecoveryState::NotInRecovery)
+    }
+}
+
+#[derive(Debug, Clone, Default)]
+struct LossState {
+    lost_bytes: u64,
+}
+
+impl LossState {
+    pub fn reset(&mut self) {
+        self.lost_bytes = 0;
+    }
+
+    pub fn has_losses(&self) -> bool {
+        self.lost_bytes != 0
     }
 }
 
