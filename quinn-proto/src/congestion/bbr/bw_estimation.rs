@@ -80,14 +80,13 @@ impl BandwidthEstimation {
             u64::MAX // will take the min of send and ack, so this is just a skip
         };
 
-        let ack_rate = if self.prev_acked_time.is_none() {
-            0
-        } else {
-            BandwidthEstimation::bw_from_delta(
+        let ack_rate = match self.prev_acked_time {
+            Some(prev_acked_time) => BandwidthEstimation::bw_from_delta(
                 self.total_acked - self.prev_total_acked,
-                now - self.prev_acked_time.unwrap(),
+                now - prev_acked_time,
             )
-            .unwrap_or(0)
+            .unwrap_or(0),
+            None => 0,
         };
 
         let bandwidth = send_rate.min(ack_rate);
