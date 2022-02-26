@@ -64,7 +64,7 @@ pub use crate::recv_stream::{
     Read, ReadChunk, ReadChunks, ReadError, ReadExact, ReadExactError, ReadToEnd, ReadToEndError,
     RecvStream,
 };
-pub use crate::send_stream::{SendStream, StoppedError, WriteError};
+pub use crate::send_stream::{Write, WriteChunk, WriteChunks, WriteAll, WriteAllChunks, SendStream, StoppedError, WriteError};
 
 #[cfg(test)]
 mod tests;
