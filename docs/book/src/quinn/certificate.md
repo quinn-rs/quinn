@@ -129,14 +129,10 @@ This is the only thing you need to do for your server to be secured.
 **Configure Client**
 
 ```rust
-let mut crypto = rustls::ClientConfig::builder()
-    .with_safe_defaults()
-    .with_single_cert(vec![cert]), key)?
-    .with_no_client_auth();
-let client_config = ClientConfig::new(Arc::new(crypto));
+let client_config = ClientConfig::with_native_roots();
 ```
 
-This is the only thing you need to do for your client to trust a server certificate. 
+This is the only thing you need to do for your client to trust a non-self-signed server certificate. 
 
 <br><hr>
 
