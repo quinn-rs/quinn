@@ -132,7 +132,7 @@ This is the only thing you need to do for your server to be secured.
 let client_config = ClientConfig::with_native_roots();
 ```
 
-This is the only thing you need to do for your client to trust a non-self-signed server certificate. 
+This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority. 
 
 <br><hr>
 
