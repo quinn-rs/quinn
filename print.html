@@ -402,14 +402,10 @@ After configuring plug the configuration into the <code>Endpoint</code>.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>let mut crypto = rustls::ClientConfig::builder()
-    .with_safe_defaults()
-    .with_single_cert(vec![cert]), key)?
-    .with_no_client_auth();
-let client_config = ClientConfig::new(Arc::new(crypto));
+</span>let client_config = ClientConfig::with_native_roots();
 <span class="boring">}
 </span></code></pre></pre>
-<p>This is the only thing you need to do for your client to trust a server certificate. </p>
+<p>This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority. </p>
 <p><br><hr></p>
 <p><a href="quinn/set-up-connection.html">Next</a>, let's have a look at how to set up a connection. </p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="connection-setup"><a class="header" href="#connection-setup">Connection Setup</a></h1>
