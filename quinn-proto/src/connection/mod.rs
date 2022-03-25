@@ -245,7 +245,7 @@ impl Connection {
         };
         let state = State::Handshake(state::Handshake {
             rem_cid_set: side.is_server(),
-            token: Bytes::new(),
+            expected_token: Bytes::new(),
             client_hello: None,
         });
         let mut rng = StdRng::from_entropy();
@@ -1598,10 +1598,11 @@ impl Connection {
         debug_assert!(self.side.is_server());
         let len = packet.header_data.len() + packet.payload.len();
         self.path.total_recvd = len as u64;
+
         match self.state {
             State::Handshake(ref mut state) => match packet.header {
                 Header::Initial { ref token, .. } => {
-                    state.token = token.clone();
+                    state.expected_token = token.clone();
                 }
                 _ => unreachable!("first packet must be an Initial packet"),
             },
@@ -1930,7 +1931,7 @@ impl Connection {
                 } else {
                     if let Header::Initial { ref token, .. } = packet.header {
                         if let State::Handshake(ref hs) = self.state {
-                            if self.side.is_server() && token != &hs.token {
+                            if self.side.is_server() && token != &hs.expected_token {
                                 // Clients must send the same retry token in every Initial. Initial
                                 // packets can be spoofed, so we discard rather than killing the
                                 // connection.
@@ -2105,7 +2106,7 @@ impl Connection {
                 let token_len = packet.payload.len() - 16;
                 self.retry_token = packet.payload.freeze().split_to(token_len);
                 self.state = State::Handshake(state::Handshake {
-                    token: Bytes::new(),
+                    expected_token: Bytes::new(),
                     rem_cid_set: false,
                     client_hello: None,
                 });
@@ -2134,7 +2135,7 @@ impl Connection {
                 if self.crypto.is_handshaking() {
                     trace!("handshake ongoing");
                     self.state = State::Handshake(state::Handshake {
-                        token: Bytes::new(),
+                        expected_token: Bytes::new(),
                         ..state
                     });
                     return Ok(());
@@ -3238,8 +3239,10 @@ mod state {
         ///
         /// Always set for servers
         pub rem_cid_set: bool,
-        /// Stateless retry token received in the first Initial
-        pub token: Bytes,
+        /// Stateless retry token received in the first Initial by a server.
+        ///
+        /// Must be present in every Initial. Always empty for clients.
+        pub expected_token: Bytes,
         /// First cryptographic message
         ///
         /// Only set for clients
