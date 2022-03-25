@@ -1587,6 +1587,15 @@ impl Connection {
         debug_assert!(self.side.is_server());
         let len = packet.header_data.len() + packet.payload.len();
         self.path.total_recvd = len as u64;
+        match self.state {
+            State::Handshake(ref mut state) => match packet.header {
+                Header::Initial { ref token, .. } => {
+                    state.token = Some(token.clone());
+                }
+                _ => unreachable!("first packet must be an Initial packet"),
+            },
+            _ => unreachable!("first packet must be delivered in Handshake state"),
+        }
 
         self.on_packet_authenticated(
             now,
@@ -1908,6 +1917,18 @@ impl Connection {
                     trace!("dropping short packet during handshake");
                     return;
                 } else {
+                    if let Header::Initial { ref token, .. } = packet.header {
+                        if let State::Handshake(ref hs) = self.state {
+                            if self.side.is_server() && Some(token) != hs.token.as_ref() {
+                                // Clients must send the same retry token in every Initial. Initial
+                                // packets can be spoofed, so we discard rather than killing the
+                                // connection.
+                                warn!("discarding Initial with invalid retry token");
+                                return;
+                            }
+                        }
+                    }
+
                     if !self.state.is_closed() {
                         let spin = match packet.header {
                             Header::Short { spin, .. } => spin,
@@ -3206,8 +3227,6 @@ mod state {
         /// Always set for servers
         pub rem_cid_set: bool,
         /// Stateless retry token, if the peer has provided one
-        ///
-        /// Only set for clients
         pub token: Option<Bytes>,
         /// First cryptographic message
         ///
