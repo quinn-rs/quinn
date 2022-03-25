@@ -2118,7 +2118,6 @@ impl Connection {
                 }
                 self.path.validated = true;
 
-                let state = state.clone();
                 self.process_early_payload(now, packet)?;
                 if self.state.is_closed() {
                     return Ok(());
@@ -2126,10 +2125,6 @@ impl Connection {
 
                 if self.crypto.is_handshaking() {
                     trace!("handshake ongoing");
-                    self.state = State::Handshake(state::Handshake {
-                        expected_token: Bytes::new(),
-                        ..state
-                    });
                     return Ok(());
                 }
 
