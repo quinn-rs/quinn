@@ -178,7 +178,8 @@ pub struct Connection {
     authentication_failures: u64,
     /// Why the connection was lost, if it has been
     error: Option<ConnectionError>,
-    /// Sent in every outgoing Initial packet. Always empty for servers.
+    /// Sent in every outgoing Initial packet. Always empty for servers and after Initial keys are
+    /// discarded.
     retry_token: Bytes,
 
     //
@@ -1776,6 +1777,10 @@ impl Connection {
     fn discard_space(&mut self, now: Instant, space_id: SpaceId) {
         debug_assert!(space_id != SpaceId::Data);
         trace!("discarding {:?} keys", space_id);
+        if space_id == SpaceId::Initial {
+            // No longer needed
+            self.retry_token = Bytes::new();
+        }
         let space = &mut self.spaces[space_id];
         space.crypto = None;
         space.time_of_last_ack_eliciting_packet = None;
