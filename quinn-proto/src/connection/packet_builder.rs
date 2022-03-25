@@ -39,6 +39,7 @@ impl PacketBuilder {
         conn: &mut Connection,
         version: u32,
     ) -> Option<PacketBuilder> {
+        let is_client = conn.side().is_client();
         // Initiate key update if we're approaching the confidentiality limit
         let confidentiality_limit = conn.spaces[space_id]
             .crypto
@@ -107,7 +108,9 @@ impl PacketBuilder {
                 src_cid: conn.handshake_cid,
                 dst_cid: conn.rem_cids.active(),
                 token: match conn.state {
-                    State::Handshake(ref state) => state.token.clone().unwrap_or_else(Bytes::new),
+                    State::Handshake(ref state) if is_client => {
+                        state.token.clone().unwrap_or_else(Bytes::new)
+                    }
                     _ => Bytes::new(),
                 },
                 number,
