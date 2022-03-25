@@ -121,7 +121,7 @@ After configuring plug the configuration into the `Endpoint`.
 **Configure Server**
 
 ```rust
-let server_config = ServerConfig::with_single_cert(vec![cert]), key)?;
+let server_config = ServerConfig::with_single_cert(vec![cert], key)?;
 ```
 
 This is the only thing you need to do for your server to be secured. 
