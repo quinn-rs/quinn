@@ -4,7 +4,7 @@ use bytes::Bytes;
 use rand::Rng;
 use tracing::{trace, trace_span};
 
-use super::{spaces::SentPacket, Connection, SentFrames, State};
+use super::{spaces::SentPacket, Connection, SentFrames};
 use crate::{
     frame::{self, Close},
     packet::{Header, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
@@ -39,7 +39,6 @@ impl PacketBuilder {
         conn: &mut Connection,
         version: u32,
     ) -> Option<PacketBuilder> {
-        let is_client = conn.side().is_client();
         // Initiate key update if we're approaching the confidentiality limit
         let confidentiality_limit = conn.spaces[space_id]
             .crypto
@@ -107,10 +106,7 @@ impl PacketBuilder {
             SpaceId::Initial => Header::Initial {
                 src_cid: conn.handshake_cid,
                 dst_cid: conn.rem_cids.active(),
-                token: match conn.state {
-                    State::Handshake(ref state) if is_client => state.token.clone(),
-                    _ => Bytes::new(),
-                },
+                token: conn.retry_token.clone(),
                 number,
                 version,
             },

@@ -178,6 +178,8 @@ pub struct Connection {
     authentication_failures: u64,
     /// Why the connection was lost, if it has been
     error: Option<ConnectionError>,
+    /// Sent in every outgoing Initial packet. Always empty for servers.
+    retry_token: Bytes,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -288,6 +290,7 @@ impl Connection {
             timers: TimerTable::default(),
             authentication_failures: 0,
             error: None,
+            retry_token: Bytes::new(),
 
             path_response: None,
             close: false,
@@ -2092,8 +2095,9 @@ impl Connection {
                 self.streams.retransmit_all_for_0rtt();
 
                 let token_len = packet.payload.len() - 16;
+                self.retry_token = packet.payload.freeze().split_to(token_len);
                 self.state = State::Handshake(state::Handshake {
-                    token: packet.payload.freeze().split_to(token_len),
+                    token: Bytes::new(),
                     rem_cid_set: false,
                     client_hello: None,
                 });
