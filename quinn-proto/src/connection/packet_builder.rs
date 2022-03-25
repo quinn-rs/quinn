@@ -108,9 +108,7 @@ impl PacketBuilder {
                 src_cid: conn.handshake_cid,
                 dst_cid: conn.rem_cids.active(),
                 token: match conn.state {
-                    State::Handshake(ref state) if is_client => {
-                        state.token.clone().unwrap_or_else(Bytes::new)
-                    }
+                    State::Handshake(ref state) if is_client => state.token.clone(),
                     _ => Bytes::new(),
                 },
                 number,
