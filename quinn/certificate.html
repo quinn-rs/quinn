@@ -241,7 +241,7 @@ After configuring plug the configuration into the <code>Endpoint</code>.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>let server_config = ServerConfig::with_single_cert(vec![cert]), key)?;
+</span>let server_config = ServerConfig::with_single_cert(vec![cert], key)?;
 <span class="boring">}
 </span></code></pre></pre>
 <p>This is the only thing you need to do for your server to be secured. </p>
