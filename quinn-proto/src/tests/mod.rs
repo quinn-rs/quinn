@@ -1900,3 +1900,17 @@ fn big_cert_and_key() -> (rustls::Certificate, rustls::PrivateKey) {
     let cert = rustls::Certificate(cert.serialize_der().unwrap());
     (cert, key)
 }
+
+#[test]
+fn malformed_token_len() {
+    let _guard = subscribe();
+    let client_addr = "[::2]:7890".parse().unwrap();
+    let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())));
+    server.handle(
+        Instant::now(),
+        client_addr,
+        None,
+        None,
+        hex!("8900 0000 0101 0000 1b1b 841b 0000 0000 3f00")[..].into(),
+    );
+}
