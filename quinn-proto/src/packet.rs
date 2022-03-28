@@ -573,6 +573,9 @@ impl PlainHeader {
                 LongHeaderType::Initial => {
                     let token_len = buf.get_var()? as usize;
                     let token_start = buf.position() as usize;
+                    if token_len > buf.remaining() {
+                        return Err(PacketDecodeError::InvalidHeader("token out of bounds"));
+                    }
                     buf.advance(token_len);
 
                     let len = buf.get_var()?;
