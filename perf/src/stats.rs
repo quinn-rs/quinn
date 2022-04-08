@@ -95,17 +95,11 @@ impl Stats {
 
         let print_metric = |label: &'static str, get_metric: fn(&Histogram<u64>) -> u64| {
             println!(
-                " {} │ {:>15} │ {:>17} │  {:>9} │ {:11.2} MiB/s │ {:13.2} MiB/s",
+                " {} │ {:>15.2?} │ {:>17.2?} │  {:>9.2?} │ {:11.2} MiB/s │ {:13.2} MiB/s",
                 label,
-                format!(
-                    "{:.2?}",
-                    Duration::from_micros(get_metric(&self.upload_duration))
-                ),
-                format!(
-                    "{:.2?}",
-                    Duration::from_micros(get_metric(&self.download_duration))
-                ),
-                format!("{:.2?}", Duration::from_micros(get_metric(&self.fbl))),
+                Duration::from_micros(get_metric(&self.upload_duration)),
+                Duration::from_micros(get_metric(&self.download_duration)),
+                Duration::from_micros(get_metric(&self.fbl)),
                 get_metric(&self.upload_throughput) as f64 / 1024.0 / 1024.0,
                 get_metric(&self.download_throughput) as f64 / 1024.0 / 1024.0,
             );
