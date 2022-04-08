@@ -42,13 +42,10 @@ impl Stats {
 
         let print_metric = |label: &'static str, get_metric: fn(&Histogram<u64>) -> u64| {
             println!(
-                " {} │ {:7.2} MiB/s │ {:>9}",
+                " {} │ {:7.2} MiB/s │ {:>9.2?}",
                 label,
                 get_metric(&self.stream_stats.throughput_hist) as f64 / 1024.0 / 1024.0,
-                format!(
-                    "{:.2?}",
-                    Duration::from_millis(get_metric(&self.stream_stats.duration_hist))
-                )
+                Duration::from_millis(get_metric(&self.stream_stats.duration_hist))
             );
         };
 
