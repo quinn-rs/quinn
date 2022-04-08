@@ -120,7 +120,7 @@ where
 {
     type Output = T;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<T> {
-        (&mut self.0)(cx)
+        (self.0)(cx)
     }
 }
 
