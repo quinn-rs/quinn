@@ -12,11 +12,22 @@ use std::{
     time::Instant,
 };
 
+#[cfg(feature = "runtime-async-std")]
+use async_notify::Notify;
+#[cfg(feature = "runtime-async-std")]
+use async_std::task::spawn;
 use bytes::Bytes;
+#[cfg(feature = "runtime-async-std")]
+use futures_channel::mpsc;
+#[cfg(feature = "runtime-async-std")]
+use futures_lite::stream::StreamExt;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
+#[cfg(feature = "runtime-tokio")]
+use tokio::spawn;
+#[cfg(feature = "runtime-tokio")]
 use tokio::sync::{mpsc, Notify};
 use udp::{RecvMeta, UdpSocket, UdpState, BATCH_SIZE};
 
@@ -85,7 +96,7 @@ impl Endpoint {
             addr.is_ipv6(),
         );
         let driver = EndpointDriver(rc.clone());
-        tokio::spawn(async {
+        spawn(async {
             if let Err(e) = driver.await {
                 tracing::error!("I/O error: {}", e);
             }
@@ -165,7 +176,10 @@ impl Endpoint {
         // Generate some activity so peers notice the rebind
         for sender in inner.connections.senders.values() {
             // Ignoring errors from dropped connections
+            #[cfg(feature = "runtime-tokio")]
             let _ = sender.send(ConnectionEvent::Ping);
+            #[cfg(feature = "runtime-async-std")]
+            let _ = sender.unbounded_send(ConnectionEvent::Ping);
         }
 
         Ok(())
@@ -198,7 +212,13 @@ impl Endpoint {
         endpoint.connections.close = Some((error_code, reason.clone()));
         for sender in endpoint.connections.senders.values() {
             // Ignoring errors from dropped connections
+            #[cfg(feature = "runtime-tokio")]
             let _ = sender.send(ConnectionEvent::Close {
+                error_code,
+                reason: reason.clone(),
+            });
+            #[cfg(feature = "runtime-async-std")]
+            let _ = sender.unbounded_send(ConnectionEvent::Close {
                 error_code,
                 reason: reason.clone(),
             });
@@ -359,12 +379,20 @@ impl EndpointInner {
                             }
                             Some((handle, DatagramEvent::ConnectionEvent(event))) => {
                                 // Ignoring errors from dropped connections that haven't yet been cleaned up
+                                #[cfg(feature = "runtime-tokio")]
                                 let _ = self
                                     .connections
                                     .senders
                                     .get_mut(&handle)
                                     .unwrap()
                                     .send(ConnectionEvent::Proto(event));
+                                #[cfg(feature = "runtime-async-std")]
+                                let _ = self
+                                    .connections
+                                    .senders
+                                    .get_mut(&handle)
+                                    .unwrap()
+                                    .unbounded_send(ConnectionEvent::Proto(event));
                             }
                             None => {}
                         }
@@ -438,23 +466,38 @@ impl EndpointInner {
         use EndpointEvent::*;
 
         for _ in 0..IO_LOOP_BOUND {
-            match self.events.poll_recv(cx) {
+            #[cfg(feature = "runtime-tokio")]
+            let r = self.events.poll_recv(cx);
+            #[cfg(feature = "runtime-async-std")]
+            let r = self.events.poll_next(cx);
+            match r {
                 Poll::Ready(Some((ch, event))) => match event {
                     Proto(e) => {
                         if e.is_drained() {
                             self.connections.senders.remove(&ch);
                             if self.connections.is_empty() {
+                                #[cfg(feature = "runtime-tokio")]
                                 self.idle.notify_waiters();
+                                #[cfg(feature = "runtime-async-std")]
+                                self.idle.notify();
                             }
                         }
                         if let Some(event) = self.inner.handle_event(ch, e) {
                             // Ignoring errors from dropped connections that haven't yet been cleaned up
+                            #[cfg(feature = "runtime-tokio")]
                             let _ = self
                                 .connections
                                 .senders
                                 .get_mut(&ch)
                                 .unwrap()
                                 .send(ConnectionEvent::Proto(event));
+                            #[cfg(feature = "runtime-async-std")]
+                            let _ = self
+                                .connections
+                                .senders
+                                .get_mut(&ch)
+                                .unwrap()
+                                .unbounded_send(ConnectionEvent::Proto(event));
                         }
                     }
                     Transmit(t) => self.outgoing.push_back(t),
@@ -487,9 +530,19 @@ impl ConnectionSet {
         conn: proto::Connection,
         udp_state: Arc<UdpState>,
     ) -> Connecting {
+        #[cfg(feature = "runtime-tokio")]
         let (send, recv) = mpsc::unbounded_channel();
+        #[cfg(feature = "runtime-async-std")]
+        let (send, recv) = mpsc::unbounded();
         if let Some((error_code, ref reason)) = self.close {
+            #[cfg(feature = "runtime-tokio")]
             send.send(ConnectionEvent::Close {
+                error_code,
+                reason: reason.clone(),
+            })
+            .unwrap();
+            #[cfg(feature = "runtime-async-std")]
+            send.unbounded_send(ConnectionEvent::Close {
                 error_code,
                 reason: reason.clone(),
             })
@@ -567,7 +620,10 @@ impl EndpointRef {
     pub(crate) fn new(socket: UdpSocket, inner: proto::Endpoint, ipv6: bool) -> Self {
         let recv_buf =
             vec![0; inner.config().get_max_udp_payload_size().min(64 * 1024) as usize * BATCH_SIZE];
+        #[cfg(feature = "runtime-tokio")]
         let (sender, events) = mpsc::unbounded_channel();
+        #[cfg(feature = "runtime-async-std")]
+        let (sender, events) = mpsc::unbounded();
         Self(Arc::new(Mutex::new(EndpointInner {
             socket,
             udp_state: Arc::new(UdpState::new()),

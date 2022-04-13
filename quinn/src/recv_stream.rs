@@ -8,6 +8,7 @@ use std::{
 use bytes::Bytes;
 use proto::{Chunk, Chunks, ConnectionError, ReadableError, StreamId};
 use thiserror::Error;
+#[cfg(feature = "runtime-tokio")]
 use tokio::io::ReadBuf;
 
 use crate::{
@@ -49,7 +50,10 @@ impl RecvStream {
     pub async fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
         Read {
             stream: self,
+            #[cfg(feature = "tokio")]
             buf: ReadBuf::new(buf),
+            #[cfg(feature = "async-std")]
+            buf,
         }
         .await
     }
@@ -62,11 +66,16 @@ impl RecvStream {
     pub async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), ReadExactError> {
         ReadExact {
             stream: self,
+            #[cfg(feature = "tokio")]
             buf: ReadBuf::new(buf),
+            #[cfg(feature = "async-std")]
+            buf,
+            pos: 0,
         }
         .await
     }
 
+    #[cfg(feature = "tokio")]
     fn poll_read(
         &mut self,
         cx: &mut Context,
@@ -94,6 +103,29 @@ impl RecvStream {
             }
         })
         .map(|res| res.map(|_| ()))
+    }
+
+    #[cfg(feature = "async-std")]
+    fn poll_read(&mut self, cx: &mut Context, buf: &mut [u8]) -> Poll<Result<usize, ReadError>> {
+        self.poll_read_generic(cx, true, |chunks| {
+            let mut read = false;
+            let mut pos = 0;
+            loop {
+                if read && buf.len() - pos == 0 {
+                    return ReadStatus::Readable(pos);
+                }
+
+                match chunks.next(buf.len() - pos) {
+                    Ok(Some(chunk)) => {
+                        buf[pos..pos + chunk.bytes.len()].copy_from_slice(&chunk.bytes);
+                        pos += chunk.bytes.len();
+                        read = true;
+                    }
+                    res => return (if read { Some(pos) } else { None }, res.err()).into(),
+                }
+            }
+        })
+        .map(|res| res.map(|x| x.unwrap_or(0)))
     }
 
     /// Read the next segment of data
@@ -363,19 +395,19 @@ pub enum ReadToEndError {
     TooLong,
 }
 
-#[cfg(feature = "futures-io")]
-impl futures_io::AsyncRead for RecvStream {
+#[cfg(feature = "runtime-async-std")]
+impl futures_lite::io::AsyncRead for RecvStream {
     fn poll_read(
         self: Pin<&mut Self>,
         cx: &mut Context,
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
-        let mut buf = ReadBuf::new(buf);
-        ready!(RecvStream::poll_read(self.get_mut(), cx, &mut buf))?;
-        Poll::Ready(Ok(buf.filled().len()))
+        let n = ready!(RecvStream::poll_read(self.get_mut(), cx, buf))?;
+        Poll::Ready(Ok(n))
     }
 }
 
+#[cfg(feature = "runtime-tokio")]
 impl tokio::io::AsyncRead for RecvStream {
     fn poll_read(
         self: Pin<&mut Self>,
@@ -458,9 +490,13 @@ impl From<ReadError> for io::Error {
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 struct Read<'a> {
     stream: &'a mut RecvStream,
+    #[cfg(feature = "runtime-tokio")]
     buf: ReadBuf<'a>,
+    #[cfg(feature = "runtime-async-std")]
+    buf: &'a mut [u8],
 }
 
+#[cfg(feature = "runtime-tokio")]
 impl<'a> Future for Read<'a> {
     type Output = Result<Option<usize>, ReadError>;
 
@@ -474,15 +510,34 @@ impl<'a> Future for Read<'a> {
     }
 }
 
+#[cfg(feature = "runtime-async-std")]
+impl<'a> Future for Read<'a> {
+    type Output = Result<Option<usize>, ReadError>;
+
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let pos = ready!(this.stream.poll_read(cx, &mut this.buf))?;
+        match pos {
+            0 => Poll::Ready(Ok(None)),
+            n => Poll::Ready(Ok(Some(n))),
+        }
+    }
+}
+
 /// Future produced by [`RecvStream::read_exact()`].
 ///
 /// [`RecvStream::read_exact()`]: crate::RecvStream::read_exact
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 struct ReadExact<'a> {
     stream: &'a mut RecvStream,
+    #[cfg(feature = "runtime-tokio")]
     buf: ReadBuf<'a>,
+    #[cfg(feature = "runtime-async-std")]
+    buf: &'a mut [u8],
+    pos: usize,
 }
 
+#[cfg(feature = "runtime-tokio")]
 impl<'a> Future for ReadExact<'a> {
     type Output = Result<(), ReadExactError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -491,6 +546,24 @@ impl<'a> Future for ReadExact<'a> {
         while remaining > 0 {
             ready!(this.stream.poll_read(cx, &mut this.buf))?;
             let new = this.buf.remaining();
+            if new == remaining {
+                return Poll::Ready(Err(ReadExactError::FinishedEarly));
+            }
+            remaining = new;
+        }
+        Poll::Ready(Ok(()))
+    }
+}
+
+#[cfg(feature = "runtime-async-std")]
+impl<'a> Future for ReadExact<'a> {
+    type Output = Result<(), ReadExactError>;
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        let this = self.get_mut();
+        let mut remaining = this.pos - this.buf.len();
+        while remaining > 0 {
+            this.pos += ready!(this.stream.poll_read(cx, &mut this.buf[this.pos..]))?;
+            let new = this.pos - this.buf.len();
             if new == remaining {
                 return Poll::Ready(Err(ReadExactError::FinishedEarly));
             }

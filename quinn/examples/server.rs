@@ -15,6 +15,11 @@ use structopt::{self, StructOpt};
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
 
+#[cfg(feature = "runtime-async-std")]
+use async_std::task::spawn;
+#[cfg(feature = "runtime-tokio")]
+use tokio::spawn;
+
 mod common;
 
 #[derive(StructOpt, Debug)]
@@ -40,7 +45,9 @@ struct Opt {
     listen: SocketAddr,
 }
 
-fn main() {
+#[cfg_attr(feature = "async-std", async_std::main)]
+#[cfg_attr(feature = "tokio", tokio::main)]
+async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -49,7 +56,7 @@ fn main() {
     .unwrap();
     let opt = Opt::from_args();
     let code = {
-        if let Err(e) = run(opt) {
+        if let Err(e) = run(opt).await {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -59,7 +66,6 @@ fn main() {
     ::std::process::exit(code);
 }
 
-#[tokio::main]
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 async fn run(options: Opt) -> Result<()> {
     let (certs, key) = if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
@@ -150,7 +156,7 @@ async fn run(options: Opt) -> Result<()> {
     while let Some(conn) = incoming.next().await {
         info!("connection incoming");
         let fut = handle_connection(root.clone(), conn);
-        tokio::spawn(async move {
+        spawn(async move {
             if let Err(e) = fut.await {
                 error!("connection failed: {reason}", reason = e.to_string())
             }
@@ -192,7 +198,7 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
                 Ok(s) => s,
             };
             let fut = handle_request(root.clone(), stream);
-            tokio::spawn(
+            spawn(
                 async move {
                     if let Err(e) = fut.await {
                         error!("failed: {reason}", reason = e.to_string());

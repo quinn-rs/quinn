@@ -16,9 +16,14 @@ all-features = true
 maintenance = { status = "experimental" }
 
 [dependencies]
+async-io = { version = "1.6", optional = true }
 libc = "0.2.69"
-mio = { version = "0.8", features = ["net", "os-poll"] }
+mio = { version = "0.8", features = ["net", "os-poll"], optional = true }
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }
 socket2 = "0.4"
 tracing = "0.1.10"
-tokio = { version = "1.0.1", features = ["net"] }
+tokio = { version = "1.0.1", features = ["net"], optional = true }
+
+[features]
+runtime-async-std = [ "async-io" ]
+runtime-tokio = [ "tokio", "mio" ]

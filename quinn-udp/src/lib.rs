@@ -17,15 +17,26 @@ macro_rules! ready {
     };
 }
 
-#[cfg(unix)]
+#[cfg(all(feature = "runtime-tokio", feature = "runtime-async-std"))]
+compile_error!("runtime-tokio and runtime-async-std are mutually exclusive");
+
+#[cfg(not(any(feature = "runtime-tokio", feature = "runtime-async-std")))]
+compile_error!("choose either runtime-tokio or runtime-async-std");
+
+#[cfg(all(feature = "runtime-tokio", unix))]
 mod cmsg;
-#[cfg(unix)]
-#[path = "unix.rs"]
+
+#[cfg(all(feature = "runtime-tokio", unix))]
+#[path = "tokio/unix.rs"]
 mod imp;
 
 // No ECN support
-#[cfg(not(unix))]
-#[path = "fallback.rs"]
+#[cfg(all(feature = "runtime-tokio", not(unix)))]
+#[path = "tokio/fallback.rs"]
+mod imp;
+
+#[cfg(feature = "runtime-async-std")]
+#[path = "async-std/fallback.rs"]
 mod imp;
 
 pub use imp::UdpSocket;

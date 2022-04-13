@@ -14,8 +14,24 @@ use bytes::Bytes;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
+
+#[cfg(feature = "runtime-async-std")]
+use async_io::Timer;
+#[cfg(feature = "runtime-async-std")]
+use async_notify::Notify;
+#[cfg(feature = "runtime-async-std")]
+use async_std::task::spawn;
+#[cfg(feature = "runtime-async-std")]
+use futures_channel::{mpsc, oneshot};
+#[cfg(feature = "runtime-async-std")]
+use futures_lite::stream::StreamExt;
+#[cfg(feature = "runtime-tokio")]
+use tokio::spawn;
+#[cfg(feature = "runtime-tokio")]
 use tokio::sync::{mpsc, oneshot, Notify};
-use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
+#[cfg(feature = "runtime-tokio")]
+use tokio::time::{sleep_until, Sleep};
+
 use tracing::info_span;
 use udp::UdpState;
 
@@ -57,7 +73,7 @@ impl Connecting {
             udp_state,
         );
 
-        tokio::spawn(ConnectionDriver(conn.clone()));
+        spawn(ConnectionDriver(conn.clone()));
 
         Connecting {
             conn: Some(conn),
@@ -768,8 +784,11 @@ pub struct ConnectionInner {
     on_handshake_data: Option<oneshot::Sender<()>>,
     on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
+    #[cfg(feature = "runtime-tokio")]
     timer: Option<Pin<Box<Sleep>>>,
-    timer_deadline: Option<TokioInstant>,
+    #[cfg(feature = "runtime-async-std")]
+    timer: Option<Pin<Box<Timer>>>,
+    timer_deadline: Option<Instant>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
@@ -800,9 +819,14 @@ impl ConnectionInner {
                 Some(s) => (t.contents.len() + s - 1) / s, // round up
             };
             // If the endpoint driver is gone, noop.
+            #[cfg(feature = "runtime-tokio")]
             let _ = self
                 .endpoint_events
                 .send((self.handle, EndpointEvent::Transmit(t)));
+            #[cfg(feature = "runtime-async-std")]
+            let _ = self
+                .endpoint_events
+                .unbounded_send((self.handle, EndpointEvent::Transmit(t)));
 
             if transmits >= MAX_TRANSMIT_DATAGRAMS {
                 // TODO: What isn't ideal here yet is that if we don't poll all
@@ -819,16 +843,25 @@ impl ConnectionInner {
     fn forward_endpoint_events(&mut self) {
         while let Some(event) = self.inner.poll_endpoint_events() {
             // If the endpoint driver is gone, noop.
+            #[cfg(feature = "runtime-tokio")]
             let _ = self
                 .endpoint_events
                 .send((self.handle, EndpointEvent::Proto(event)));
+            #[cfg(feature = "runtime-async-std")]
+            let _ = self
+                .endpoint_events
+                .unbounded_send((self.handle, EndpointEvent::Proto(event)));
         }
     }
 
     /// If this returns `Err`, the endpoint is dead, so the driver should exit immediately.
     fn process_conn_events(&mut self, cx: &mut Context) -> Result<(), ConnectionError> {
         loop {
-            match self.conn_events.poll_recv(cx) {
+            #[cfg(feature = "runtime-tokio")]
+            let r = self.conn_events.poll_recv(cx);
+            #[cfg(feature = "runtime-async-std")]
+            let r = self.conn_events.poll_next(cx);
+            match r {
                 Poll::Ready(Some(ConnectionEvent::Ping)) => {
                     self.inner.ping();
                 }
@@ -897,7 +930,10 @@ impl ConnectionInner {
                     }
                 }
                 Stream(StreamEvent::Available { dir }) => {
+                    #[cfg(feature = "runtime-tokio")]
                     self.stream_opening[dir as usize].notify_one();
+                    #[cfg(feature = "runtime-async-std")]
+                    self.stream_opening[dir as usize].notify();
                 }
                 Stream(StreamEvent::Finished { id }) => {
                     if let Some(finishing) = self.finishing.remove(&id) {
@@ -924,7 +960,7 @@ impl ConnectionInner {
         // Check whether we need to (re)set the timer. If so, we must poll again to ensure the
         // timer is registered with the runtime (and check whether it's already
         // expired).
-        match self.inner.poll_timeout().map(TokioInstant::from_std) {
+        match self.inner.poll_timeout() {
             Some(deadline) => {
                 if let Some(delay) = &mut self.timer {
                     // There is no need to reset the tokio timer if the deadline
@@ -934,10 +970,20 @@ impl ConnectionInner {
                         .map(|current_deadline| current_deadline != deadline)
                         .unwrap_or(true)
                     {
-                        delay.as_mut().reset(deadline);
+                        #[cfg(feature = "runtime-tokio")]
+                        delay.as_mut().reset(deadline.into());
+                        #[cfg(feature = "runtime-async-std")]
+                        delay.as_mut().set_at(deadline);
                     }
                 } else {
-                    self.timer = Some(Box::pin(sleep_until(deadline)));
+                    #[cfg(feature = "runtime-tokio")]
+                    {
+                        self.timer = Some(Box::pin(sleep_until(deadline.into())));
+                    }
+                    #[cfg(feature = "runtime-async-std")]
+                    {
+                        self.timer = Some(Box::pin(Timer::at(deadline)));
+                    }
                 }
                 // Store the actual expiration time of the timer
                 self.timer_deadline = Some(deadline);
@@ -989,8 +1035,14 @@ impl ConnectionInner {
         for (_, reader) in self.blocked_readers.drain() {
             reader.wake()
         }
+        #[cfg(feature = "runtime-tokio")]
         self.stream_opening[Dir::Uni as usize].notify_waiters();
+        #[cfg(feature = "runtime-async-std")]
+        self.stream_opening[Dir::Uni as usize].notify();
+        #[cfg(feature = "runtime-tokio")]
         self.stream_opening[Dir::Bi as usize].notify_waiters();
+        #[cfg(feature = "runtime-async-std")]
+        self.stream_opening[Dir::Bi as usize].notify();
         if let Some(x) = self.incoming_uni_streams_reader.take() {
             x.wake();
         }
@@ -1038,7 +1090,13 @@ impl Drop for ConnectionInner {
     fn drop(&mut self) {
         if !self.inner.is_drained() {
             // Ensure the endpoint can tidy up
+            #[cfg(feature = "runtime-tokio")]
             let _ = self.endpoint_events.send((
+                self.handle,
+                EndpointEvent::Proto(proto::EndpointEvent::drained()),
+            ));
+            #[cfg(feature = "runtime-async-std")]
+            let _ = self.endpoint_events.unbounded_send((
                 self.handle,
                 EndpointEvent::Proto(proto::EndpointEvent::drained()),
             ));

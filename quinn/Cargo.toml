@@ -23,28 +23,39 @@ native-certs = ["proto/native-certs"]
 tls-rustls = ["rustls", "webpki", "proto/tls-rustls", "ring"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 ring = ["proto/ring"]
+runtime-tokio = ["tokio", "udp/runtime-tokio"]
+runtime-async-std = ["futures-channel", "futures-lite", "async-notify", "async-io", "async-std", "udp/runtime-async-std"]
 
 [badges]
 codecov = { repository = "djc/quinn" }
 maintenance = { status = "experimental" }
 
 [dependencies]
+# for async-std runtime support
+async-io = { version = "1.6", optional = true }
+# for async-std runtime support
+async-notify = { version = "0.2", optional = true }
+# for async-std runtime support
+async-std = { version = "1.11", optional = true }
 bytes = "1"
-# Enables futures::io::{AsyncRead, AsyncWrite} support for streams
-futures-io = { version = "0.3.19", optional = true }
+# for async-std runtime support
+futures-channel = { version = "0.3", optional = true }
 # Implements futures::Stream for async streams such as `Incoming`
 futures-core = { version = "0.3.19", optional = true }
+# for async-std runtime support
+futures-lite = { version = "1.12", optional = true }
 rustc-hash = "1.1"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }
 rustls = { version = "0.20.3", default-features = false, features = ["quic"], optional = true }
 thiserror = "1.0.21"
 tracing = "0.1.10"
-tokio = { version = "1.0.1", features = ["rt", "time", "sync"] }
+tokio = { version = "1.0.1", features = ["rt", "time", "sync"], optional = true }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.1.0" }
 webpki = { version = "0.22", default-features = false, optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.22"
+async-std = { version = "1.11", features = [ "attributes" ] }
 crc = "2"
 bencher = "0.1.5"
 directories-next = "2"

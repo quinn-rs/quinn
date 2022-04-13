@@ -41,7 +41,9 @@ struct Opt {
     rebind: bool,
 }
 
-fn main() {
+#[cfg_attr(feature = "async-std", async_std::main)]
+#[cfg_attr(feature = "tokio", tokio::main)]
+async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -50,7 +52,7 @@ fn main() {
     .unwrap();
     let opt = Opt::from_args();
     let code = {
-        if let Err(e) = run(opt) {
+        if let Err(e) = run(opt).await {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -60,7 +62,6 @@ fn main() {
     ::std::process::exit(code);
 }
 
-#[tokio::main]
 async fn run(options: Opt) -> Result<()> {
     let url = options.url;
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
