@@ -8,6 +8,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use quinn::runtime::TokioRuntime;
 use rustls::RootCertStore;
 use structopt::StructOpt;
 use tokio::runtime::{Builder, Runtime};
@@ -30,7 +31,7 @@ pub fn server_endpoint(
     cert: rustls::Certificate,
     key: rustls::PrivateKey,
     opt: &Opt,
-) -> (SocketAddr, quinn::Incoming) {
+) -> (SocketAddr, quinn::Incoming<TokioRuntime>) {
     let cert_chain = vec![cert];
     let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
     server_config.transport = Arc::new(transport_config(opt));
@@ -53,7 +54,10 @@ pub async fn connect_client(
     server_addr: SocketAddr,
     server_cert: rustls::Certificate,
     opt: Opt,
-) -> Result<(quinn::Endpoint, quinn::Connection)> {
+) -> Result<(
+    quinn::Endpoint<TokioRuntime>,
+    quinn::Connection<TokioRuntime>,
+)> {
     let endpoint =
         quinn::Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
 
@@ -80,7 +84,10 @@ pub async fn connect_client(
     Ok((endpoint, connection))
 }
 
-pub async fn drain_stream(stream: &mut quinn::RecvStream, read_unordered: bool) -> Result<usize> {
+pub async fn drain_stream(
+    stream: &mut quinn::RecvStream<TokioRuntime>,
+    read_unordered: bool,
+) -> Result<usize> {
     let mut read = 0;
 
     if read_unordered {
@@ -109,7 +116,10 @@ pub async fn drain_stream(stream: &mut quinn::RecvStream, read_unordered: bool) 
     Ok(read)
 }
 
-pub async fn send_data_on_stream(stream: &mut quinn::SendStream, stream_size: usize) -> Result<()> {
+pub async fn send_data_on_stream(
+    stream: &mut quinn::SendStream<TokioRuntime>,
+    stream_size: usize,
+) -> Result<()> {
     const DATA: &[u8] = &[0xAB; 1024 * 1024];
     let bytes_data = Bytes::from_static(DATA);
 

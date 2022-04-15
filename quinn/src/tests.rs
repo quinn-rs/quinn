@@ -10,6 +10,7 @@ use std::{
 
 use bytes::Bytes;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
+use runtime::TokioRuntime;
 use tokio::{
     runtime::{Builder, Runtime},
     time::{Duration, Instant},
@@ -28,7 +29,8 @@ fn handshake_timeout() {
     let runtime = rt_threaded();
     let client = {
         let _guard = runtime.enter();
-        Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap()
+        Endpoint::<TokioRuntime>::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+            .unwrap()
     };
 
     let mut client_config =
@@ -64,7 +66,8 @@ fn handshake_timeout() {
 async fn close_endpoint() {
     let _guard = subscribe();
     let mut endpoint =
-        Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+        Endpoint::<TokioRuntime>::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+            .unwrap();
     endpoint.set_default_client_config(ClientConfig::with_root_certificates(
         rustls::RootCertStore::empty(),
     ));
@@ -103,7 +106,7 @@ fn local_addr() {
     let runtime = rt_basic();
     let (ep, _) = {
         let _guard = runtime.enter();
-        Endpoint::new(Default::default(), None, socket).unwrap()
+        Endpoint::<TokioRuntime>::new(Default::default(), None, socket).unwrap()
     };
     assert_eq!(
         addr,
@@ -236,7 +239,7 @@ async fn accept_after_close() {
 }
 
 /// Construct an endpoint suitable for connecting to itself
-fn endpoint() -> (Endpoint, Incoming) {
+fn endpoint() -> (Endpoint<TokioRuntime>, Incoming<TokioRuntime>) {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = rustls::PrivateKey(cert.serialize_private_key_der());
     let cert = rustls::Certificate(cert.serialize_der().unwrap());
@@ -454,7 +457,8 @@ fn run_echo(args: EchoArgs) {
         let server_addr = server_sock.local_addr().unwrap();
         let (server, mut server_incoming) = {
             let _guard = runtime.enter();
-            Endpoint::new(Default::default(), Some(server_config), server_sock).unwrap()
+            Endpoint::<TokioRuntime>::new(Default::default(), Some(server_config), server_sock)
+                .unwrap()
         };
 
         let mut roots = rustls::RootCertStore::empty();
@@ -467,7 +471,7 @@ fn run_echo(args: EchoArgs) {
 
         let mut client = {
             let _guard = runtime.enter();
-            Endpoint::client(args.client_addr).unwrap()
+            Endpoint::<TokioRuntime>::client(args.client_addr).unwrap()
         };
         let mut client_config = ClientConfig::new(Arc::new(client_crypto));
         client_config.transport_config(transport_config);
@@ -543,7 +547,7 @@ struct EchoArgs {
     stream_receive_window: Option<u64>,
 }
 
-async fn echo((mut send, mut recv): (SendStream, RecvStream)) {
+async fn echo((mut send, mut recv): (SendStream<TokioRuntime>, RecvStream<TokioRuntime>)) {
     loop {
         // These are 32 buffers, for reading approximately 32kB at once
         #[rustfmt::skip]
@@ -620,7 +624,9 @@ async fn rebind_recv() {
     let mut roots = rustls::RootCertStore::empty();
     roots.add(&cert).unwrap();
 
-    let mut client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
+    let mut client =
+        Endpoint::<TokioRuntime>::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))
+            .unwrap();
     let mut client_config = ClientConfig::new(Arc::new(
         rustls::ClientConfig::builder()
             .with_safe_defaults()
@@ -635,7 +641,7 @@ async fn rebind_recv() {
     client.set_default_client_config(client_config);
 
     let server_config = crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
-    let (server, mut incoming) = Endpoint::server(
+    let (server, mut incoming) = Endpoint::<TokioRuntime>::server(
         server_config,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
     )

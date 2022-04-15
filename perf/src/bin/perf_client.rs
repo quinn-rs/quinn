@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use quinn::runtime::TokioRuntime;
 use structopt::StructOpt;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
@@ -195,7 +196,7 @@ async fn run(opt: Opt) -> Result<()> {
 }
 
 async fn drain_stream(
-    mut stream: quinn::RecvStream,
+    mut stream: quinn::RecvStream<TokioRuntime>,
     download: u64,
     stream_stats: OpenStreamStats,
 ) -> Result<()> {
@@ -234,7 +235,7 @@ async fn drain_stream(
 }
 
 async fn drive_uni(
-    connection: quinn::Connection,
+    connection: quinn::Connection<TokioRuntime>,
     acceptor: UniAcceptor,
     stream_stats: OpenStreamStats,
     concurrency: u64,
@@ -261,7 +262,7 @@ async fn drive_uni(
 }
 
 async fn request_uni(
-    send: quinn::SendStream,
+    send: quinn::SendStream<TokioRuntime>,
     acceptor: UniAcceptor,
     upload: u64,
     download: u64,
@@ -280,7 +281,7 @@ async fn request_uni(
 }
 
 async fn request(
-    mut send: quinn::SendStream,
+    mut send: quinn::SendStream<TokioRuntime>,
     mut upload: u64,
     download: u64,
     stream_stats: OpenStreamStats,
@@ -311,7 +312,7 @@ async fn request(
 }
 
 async fn drive_bi(
-    connection: quinn::Connection,
+    connection: quinn::Connection<TokioRuntime>,
     stream_stats: OpenStreamStats,
     concurrency: u64,
     upload: u64,
@@ -336,8 +337,8 @@ async fn drive_bi(
 }
 
 async fn request_bi(
-    send: quinn::SendStream,
-    recv: quinn::RecvStream,
+    send: quinn::SendStream<TokioRuntime>,
+    recv: quinn::RecvStream<TokioRuntime>,
     upload: u64,
     download: u64,
     stream_stats: OpenStreamStats,
@@ -348,7 +349,7 @@ async fn request_bi(
 }
 
 #[derive(Clone)]
-struct UniAcceptor(Arc<tokio::sync::Mutex<quinn::IncomingUniStreams>>);
+struct UniAcceptor(Arc<tokio::sync::Mutex<quinn::IncomingUniStreams<TokioRuntime>>>);
 
 struct SkipServerVerification;
 

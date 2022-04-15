@@ -16,6 +16,7 @@ use bytes::Bytes;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
+use runtime::Runtime;
 use rustc_hash::FxHashMap;
 use tokio::sync::{mpsc, Notify};
 use udp::{RecvMeta, UdpSocket, UdpState, BATCH_SIZE};
@@ -32,12 +33,12 @@ use crate::{
 ///
 /// May be cloned to obtain another handle to the same endpoint.
 #[derive(Debug, Clone)]
-pub struct Endpoint {
-    pub(crate) inner: EndpointRef,
+pub struct Endpoint<RT: Runtime> {
+    pub(crate) inner: EndpointRef<RT>,
     pub(crate) default_client_config: Option<ClientConfig>,
 }
 
-impl Endpoint {
+impl<RT: Runtime> Endpoint<RT> {
     /// Helper to construct an endpoint for use with outgoing connections only
     ///
     /// Must be called from within a tokio runtime context. Note that `addr` is the *local* address
@@ -64,7 +65,7 @@ impl Endpoint {
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
     #[cfg(feature = "ring")]
-    pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<(Self, Incoming)> {
+    pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<(Self, Incoming<RT>)> {
         let socket = std::net::UdpSocket::bind(addr)?;
         Self::new(EndpointConfig::default(), Some(config), socket)
     }
@@ -76,7 +77,7 @@ impl Endpoint {
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: std::net::UdpSocket,
-    ) -> io::Result<(Self, Incoming)> {
+    ) -> io::Result<(Self, Incoming<RT>)> {
         let addr = socket.local_addr()?;
         let socket = UdpSocket::from_std(socket)?;
         let rc = EndpointRef::new(
@@ -85,7 +86,7 @@ impl Endpoint {
             addr.is_ipv6(),
         );
         let driver = EndpointDriver(rc.clone());
-        tokio::spawn(async {
+        RT::spawn(async {
             if let Err(e) = driver.await {
                 tracing::error!("I/O error: {}", e);
             }
@@ -112,7 +113,11 @@ impl Endpoint {
     ///
     /// May fail immediately due to configuration errors, or in the future if the connection could
     /// not be established.
-    pub fn connect(&self, addr: SocketAddr, server_name: &str) -> Result<Connecting, ConnectError> {
+    pub fn connect(
+        &self,
+        addr: SocketAddr,
+        server_name: &str,
+    ) -> Result<Connecting<RT>, ConnectError> {
         let config = match &self.default_client_config {
             Some(config) => config.clone(),
             None => return Err(ConnectError::NoDefaultClientConfig),
@@ -131,7 +136,7 @@ impl Endpoint {
         config: ClientConfig,
         addr: SocketAddr,
         server_name: &str,
-    ) -> Result<Connecting, ConnectError> {
+    ) -> Result<Connecting<RT>, ConnectError> {
         let mut endpoint = self.inner.lock().unwrap();
         if endpoint.driver_lost {
             return Err(ConnectError::EndpointStopping);
@@ -253,9 +258,9 @@ impl Endpoint {
 /// have been dropped, or when an I/O error occurs.
 #[must_use = "endpoint drivers must be spawned for I/O to occur"]
 #[derive(Debug)]
-pub(crate) struct EndpointDriver(pub(crate) EndpointRef);
+pub(crate) struct EndpointDriver<RT: Runtime>(pub(crate) EndpointRef<RT>);
 
-impl Future for EndpointDriver {
+impl<RT: Runtime> Future for EndpointDriver<RT> {
     type Output = Result<(), io::Error>;
 
     #[allow(unused_mut)] // MSRV
@@ -292,7 +297,7 @@ impl Future for EndpointDriver {
     }
 }
 
-impl Drop for EndpointDriver {
+impl<RT: Runtime> Drop for EndpointDriver<RT> {
     fn drop(&mut self) {
         let mut endpoint = self.0.lock().unwrap();
         endpoint.driver_lost = true;
@@ -306,12 +311,12 @@ impl Drop for EndpointDriver {
 }
 
 #[derive(Debug)]
-pub(crate) struct EndpointInner {
-    socket: UdpSocket,
+pub(crate) struct EndpointInner<RT: Runtime> {
+    socket: UdpSocket<RT::AsyncWrappedUdpSocket>,
     udp_state: Arc<UdpState>,
     inner: proto::Endpoint,
     outgoing: VecDeque<proto::Transmit>,
-    incoming: VecDeque<Connecting>,
+    incoming: VecDeque<Connecting<RT>>,
     incoming_reader: Option<Waker>,
     driver: Option<Waker>,
     ipv6: bool,
@@ -326,7 +331,7 @@ pub(crate) struct EndpointInner {
     idle: Arc<Notify>,
 }
 
-impl EndpointInner {
+impl<RT: Runtime> EndpointInner<RT> {
     fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
         self.recv_limiter.start_cycle();
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
@@ -481,12 +486,12 @@ struct ConnectionSet {
 }
 
 impl ConnectionSet {
-    fn insert(
+    fn insert<RT: Runtime>(
         &mut self,
         handle: ConnectionHandle,
         conn: proto::Connection,
         udp_state: Arc<UdpState>,
-    ) -> Connecting {
+    ) -> Connecting<RT> {
         let (send, recv) = mpsc::unbounded_channel();
         if let Some((error_code, ref reason)) = self.close {
             send.send(ConnectionEvent::Close {
@@ -513,21 +518,21 @@ fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
 
 /// Stream of incoming connections.
 #[derive(Debug)]
-pub struct Incoming(EndpointRef);
+pub struct Incoming<RT: Runtime>(EndpointRef<RT>);
 
-impl Incoming {
-    pub(crate) fn new(inner: EndpointRef) -> Self {
+impl<RT: Runtime> Incoming<RT> {
+    pub(crate) fn new(inner: EndpointRef<RT>) -> Self {
         Self(inner)
     }
 }
 
-impl Incoming {
+impl<RT: Runtime> Incoming<RT> {
     /// Fetch the next incoming connection, or `None` if the endpoint has been closed
-    pub async fn next(&mut self) -> Option<Connecting> {
+    pub async fn next(&mut self) -> Option<Connecting<RT>> {
         poll_fn(move |cx| self.poll(cx)).await
     }
 
-    fn poll(&mut self, cx: &mut Context) -> Poll<Option<Connecting>> {
+    fn poll(&mut self, cx: &mut Context) -> Poll<Option<Connecting<RT>>> {
         let endpoint = &mut *self.0.lock().unwrap();
         if endpoint.driver_lost {
             Poll::Ready(None)
@@ -543,8 +548,8 @@ impl Incoming {
 }
 
 #[cfg(feature = "futures-core")]
-impl futures_core::Stream for Incoming {
-    type Item = Connecting;
+impl<RT: Runtime> futures_core::Stream for Incoming<RT> {
+    type Item = Connecting<RT>;
 
     #[allow(unused_mut)] // MSRV
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -552,7 +557,7 @@ impl futures_core::Stream for Incoming {
     }
 }
 
-impl Drop for Incoming {
+impl<RT: Runtime> Drop for Incoming<RT> {
     fn drop(&mut self) {
         let endpoint = &mut *self.0.lock().unwrap();
         endpoint.inner.reject_new_connections();
@@ -561,10 +566,14 @@ impl Drop for Incoming {
 }
 
 #[derive(Debug)]
-pub(crate) struct EndpointRef(Arc<Mutex<EndpointInner>>);
+pub(crate) struct EndpointRef<RT: Runtime>(Arc<Mutex<EndpointInner<RT>>>);
 
-impl EndpointRef {
-    pub(crate) fn new(socket: UdpSocket, inner: proto::Endpoint, ipv6: bool) -> Self {
+impl<RT: Runtime> EndpointRef<RT> {
+    pub(crate) fn new(
+        socket: UdpSocket<RT::AsyncWrappedUdpSocket>,
+        inner: proto::Endpoint,
+        ipv6: bool,
+    ) -> Self {
         let recv_buf =
             vec![0; inner.config().get_max_udp_payload_size().min(64 * 1024) as usize * BATCH_SIZE];
         let (sender, events) = mpsc::unbounded_channel();
@@ -593,14 +602,14 @@ impl EndpointRef {
     }
 }
 
-impl Clone for EndpointRef {
+impl<RT: Runtime> Clone for EndpointRef<RT> {
     fn clone(&self) -> Self {
         self.0.lock().unwrap().ref_count += 1;
         Self(self.0.clone())
     }
 }
 
-impl Drop for EndpointRef {
+impl<RT: Runtime> Drop for EndpointRef<RT> {
     fn drop(&mut self) {
         let endpoint = &mut *self.0.lock().unwrap();
         if let Some(x) = endpoint.ref_count.checked_sub(1) {
@@ -616,8 +625,8 @@ impl Drop for EndpointRef {
     }
 }
 
-impl std::ops::Deref for EndpointRef {
-    type Target = Mutex<EndpointInner>;
+impl<RT: Runtime> std::ops::Deref for EndpointRef<RT> {
+    type Target = Mutex<EndpointInner<RT>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }

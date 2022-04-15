@@ -9,6 +9,7 @@ use tokio::runtime::{Builder, Runtime};
 use tracing::error_span;
 use tracing_futures::Instrument as _;
 
+use quinn::runtime::TokioRuntime;
 use quinn::Endpoint;
 
 benchmark_group!(
@@ -106,7 +107,7 @@ impl Context {
             };
             let handle = runtime.spawn(
                 async move {
-                    let quinn::NewConnection {
+                    let quinn::NewConnection::<TokioRuntime> {
                         mut uni_streams, ..
                     } = incoming
                         .next()
@@ -136,7 +137,11 @@ impl Context {
     pub fn make_client(
         &self,
         server_addr: SocketAddr,
-    ) -> (quinn::Endpoint, quinn::Connection, Runtime) {
+    ) -> (
+        quinn::Endpoint<TokioRuntime>,
+        quinn::Connection<TokioRuntime>,
+        Runtime,
+    ) {
         let runtime = rt();
         let endpoint = {
             let _guard = runtime.enter();

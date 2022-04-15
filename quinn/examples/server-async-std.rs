@@ -11,7 +11,7 @@ use std::{
 };
 
 use anyhow::{anyhow, bail, Context, Result};
-use quinn::runtime::TokioRuntime;
+use quinn::runtime::AsyncStdRuntime;
 use structopt::{self, StructOpt};
 use tracing::{error, info, info_span};
 use tracing_futures::Instrument as _;
@@ -41,7 +41,8 @@ struct Opt {
     listen: SocketAddr,
 }
 
-fn main() {
+#[async_std::main]
+async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -50,7 +51,7 @@ fn main() {
     .unwrap();
     let opt = Opt::from_args();
     let code = {
-        if let Err(e) = run(opt) {
+        if let Err(e) = run(opt).await {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -60,7 +61,6 @@ fn main() {
     ::std::process::exit(code);
 }
 
-#[tokio::main]
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 async fn run(options: Opt) -> Result<()> {
     let (certs, key) = if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
@@ -146,13 +146,13 @@ async fn run(options: Opt) -> Result<()> {
     }
 
     let (endpoint, mut incoming) =
-        quinn::Endpoint::<TokioRuntime>::server(server_config, options.listen)?;
+        quinn::Endpoint::<AsyncStdRuntime>::server(server_config, options.listen)?;
     eprintln!("listening on {}", endpoint.local_addr()?);
 
     while let Some(conn) = incoming.next().await {
         info!("connection incoming");
         let fut = handle_connection(root.clone(), conn);
-        tokio::spawn(async move {
+        async_std::task::spawn(async move {
             if let Err(e) = fut.await {
                 error!("connection failed: {reason}", reason = e.to_string())
             }
@@ -162,7 +162,10 @@ async fn run(options: Opt) -> Result<()> {
     Ok(())
 }
 
-async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting<TokioRuntime>) -> Result<()> {
+async fn handle_connection(
+    root: Arc<Path>,
+    conn: quinn::Connecting<AsyncStdRuntime>,
+) -> Result<()> {
     let quinn::NewConnection {
         connection,
         mut bi_streams,
@@ -194,7 +197,7 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting<TokioRuntime
                 Ok(s) => s,
             };
             let fut = handle_request(root.clone(), stream);
-            tokio::spawn(
+            async_std::task::spawn(
                 async move {
                     if let Err(e) = fut.await {
                         error!("failed: {reason}", reason = e.to_string());
@@ -213,8 +216,8 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting<TokioRuntime
 async fn handle_request(
     root: Arc<Path>,
     (mut send, recv): (
-        quinn::SendStream<TokioRuntime>,
-        quinn::RecvStream<TokioRuntime>,
+        quinn::SendStream<AsyncStdRuntime>,
+        quinn::RecvStream<AsyncStdRuntime>,
     ),
 ) -> Result<()> {
     let req = recv

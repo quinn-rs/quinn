@@ -4,6 +4,7 @@
 
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
+use quinn::runtime::TokioRuntime;
 use quinn::{ClientConfig, Endpoint};
 
 mod common;
@@ -36,7 +37,7 @@ async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error>> {
     endpoint.set_default_client_config(client_cfg);
 
     // connect to server
-    let quinn::NewConnection { connection, .. } = endpoint
+    let quinn::NewConnection::<TokioRuntime> { connection, .. } = endpoint
         .connect(server_addr, "localhost")
         .unwrap()
         .await

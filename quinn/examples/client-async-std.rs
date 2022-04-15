@@ -12,7 +12,7 @@ use std::{
 };
 
 use anyhow::{anyhow, Result};
-use quinn::runtime::TokioRuntime;
+use quinn::runtime::AsyncStdRuntime;
 use structopt::StructOpt;
 use tracing::{error, info};
 use url::Url;
@@ -42,7 +42,8 @@ struct Opt {
     rebind: bool,
 }
 
-fn main() {
+#[async_std::main]
+async fn main() {
     tracing::subscriber::set_global_default(
         tracing_subscriber::FmtSubscriber::builder()
             .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
@@ -51,7 +52,7 @@ fn main() {
     .unwrap();
     let opt = Opt::from_args();
     let code = {
-        if let Err(e) = run(opt) {
+        if let Err(e) = run(opt).await {
             eprintln!("ERROR: {}", e);
             1
         } else {
@@ -61,7 +62,6 @@ fn main() {
     ::std::process::exit(code);
 }
 
-#[tokio::main]
 async fn run(options: Opt) -> Result<()> {
     let url = options.url;
     let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
@@ -114,7 +114,7 @@ async fn run(options: Opt) -> Result<()> {
         .await
         .map_err(|e| anyhow!("failed to connect: {}", e))?;
     eprintln!("connected at {:?}", start.elapsed());
-    let quinn::NewConnection::<TokioRuntime> {
+    let quinn::NewConnection::<AsyncStdRuntime> {
         connection: conn, ..
     } = new_conn;
     let (mut send, recv) = conn

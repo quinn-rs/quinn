@@ -2,6 +2,7 @@ use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use quinn::runtime::TokioRuntime;
 use structopt::StructOpt;
 use tracing::{debug, error, info};
 
@@ -97,7 +98,7 @@ async fn run(opt: Opt) -> Result<()> {
     Ok(())
 }
 
-async fn handle(handshake: quinn::Connecting, opt: Arc<Opt>) -> Result<()> {
+async fn handle(handshake: quinn::Connecting<TokioRuntime>, opt: Arc<Opt>) -> Result<()> {
     let quinn::NewConnection {
         uni_streams,
         bi_streams,
@@ -113,7 +114,7 @@ async fn handle(handshake: quinn::Connecting, opt: Arc<Opt>) -> Result<()> {
     Ok(())
 }
 
-async fn conn_stats(connection: quinn::Connection, opt: Arc<Opt>) -> Result<()> {
+async fn conn_stats(connection: quinn::Connection<TokioRuntime>, opt: Arc<Opt>) -> Result<()> {
     if opt.conn_stats {
         loop {
             tokio::time::sleep(Duration::from_secs(2)).await;
@@ -125,8 +126,8 @@ async fn conn_stats(connection: quinn::Connection, opt: Arc<Opt>) -> Result<()> 
 }
 
 async fn drive_uni(
-    connection: quinn::Connection,
-    mut streams: quinn::IncomingUniStreams,
+    connection: quinn::Connection<TokioRuntime>,
+    mut streams: quinn::IncomingUniStreams<TokioRuntime>,
 ) -> Result<()> {
     while let Some(stream) = streams.next().await {
         let stream = stream?;
@@ -140,14 +141,17 @@ async fn drive_uni(
     Ok(())
 }
 
-async fn handle_uni(connection: quinn::Connection, stream: quinn::RecvStream) -> Result<()> {
+async fn handle_uni(
+    connection: quinn::Connection<TokioRuntime>,
+    stream: quinn::RecvStream<TokioRuntime>,
+) -> Result<()> {
     let bytes = read_req(stream).await?;
     let response = connection.open_uni().await?;
     respond(bytes, response).await?;
     Ok(())
 }
 
-async fn drive_bi(mut streams: quinn::IncomingBiStreams) -> Result<()> {
+async fn drive_bi(mut streams: quinn::IncomingBiStreams<TokioRuntime>) -> Result<()> {
     while let Some(stream) = streams.next().await {
         let (send, recv) = stream?;
         tokio::spawn(async move {
@@ -159,13 +163,16 @@ async fn drive_bi(mut streams: quinn::IncomingBiStreams) -> Result<()> {
     Ok(())
 }
 
-async fn handle_bi(send: quinn::SendStream, recv: quinn::RecvStream) -> Result<()> {
+async fn handle_bi(
+    send: quinn::SendStream<TokioRuntime>,
+    recv: quinn::RecvStream<TokioRuntime>,
+) -> Result<()> {
     let bytes = read_req(recv).await?;
     respond(bytes, send).await?;
     Ok(())
 }
 
-async fn read_req(mut stream: quinn::RecvStream) -> Result<u64> {
+async fn read_req(mut stream: quinn::RecvStream<TokioRuntime>) -> Result<u64> {
     let mut buf = [0; 8];
     stream
         .read_exact(&mut buf)
@@ -177,7 +184,7 @@ async fn read_req(mut stream: quinn::RecvStream) -> Result<u64> {
     Ok(n)
 }
 
-async fn drain_stream(mut stream: quinn::RecvStream) -> Result<()> {
+async fn drain_stream(mut stream: quinn::RecvStream<TokioRuntime>) -> Result<()> {
     #[rustfmt::skip]
     let mut bufs = [
         Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
@@ -194,7 +201,7 @@ async fn drain_stream(mut stream: quinn::RecvStream) -> Result<()> {
     Ok(())
 }
 
-async fn respond(mut bytes: u64, mut stream: quinn::SendStream) -> Result<()> {
+async fn respond(mut bytes: u64, mut stream: quinn::SendStream<TokioRuntime>) -> Result<()> {
     const DATA: [u8; 1024 * 1024] = [42; 1024 * 1024];
 
     while bytes > 0 {

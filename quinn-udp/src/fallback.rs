@@ -6,7 +6,7 @@ use std::{
 };
 
 use proto::Transmit;
-use tokio::io::ReadBuf;
+use runtime::AsyncWrappedUdpSocket;
 
 use super::{log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
 
@@ -15,17 +15,17 @@ use super::{log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
 /// Unlike a standard tokio UDP socket, this allows ECN bits to be read and written on some
 /// platforms.
 #[derive(Debug)]
-pub struct UdpSocket {
-    io: tokio::net::UdpSocket,
+pub struct UdpSocket<T> {
+    io: T,
     last_send_error: Instant,
 }
 
-impl UdpSocket {
-    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
+impl<T: AsyncWrappedUdpSocket> UdpSocket<T> {
+    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket<T>> {
         socket.set_nonblocking(true)?;
         let now = Instant::now();
         Ok(UdpSocket {
-            io: tokio::net::UdpSocket::from_std(socket)?,
+            io: T::new(socket)?,
             last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
         })
     }
@@ -75,10 +75,9 @@ impl UdpSocket {
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
         debug_assert!(!bufs.is_empty());
-        let mut buf = ReadBuf::new(&mut bufs[0]);
-        let addr = ready!(self.io.poll_recv_from(cx, &mut buf))?;
+        let (len, addr) = ready!(self.io.poll_recv_from(cx, &mut bufs[0]))?;
         meta[0] = RecvMeta {
-            len: buf.filled().len(),
+            len,
             addr,
             ecn: None,
             dst_ip: None,

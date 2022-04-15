@@ -1,4 +1,5 @@
 use hdrhistogram::Histogram;
+use quinn::runtime::Runtime;
 use quinn::StreamId;
 use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -132,7 +133,11 @@ impl Stats {
 pub struct OpenStreamStats(Arc<Mutex<Vec<Arc<StreamStats>>>>);
 
 impl OpenStreamStats {
-    pub fn new_sender(&self, stream: &quinn::SendStream, upload_size: u64) -> Arc<StreamStats> {
+    pub fn new_sender<RT: Runtime>(
+        &self,
+        stream: &quinn::SendStream<RT>,
+        upload_size: u64,
+    ) -> Arc<StreamStats> {
         let send_stream_stats = StreamStats {
             id: stream.id(),
             request_size: upload_size,
@@ -147,7 +152,11 @@ impl OpenStreamStats {
         send_stream_stats
     }
 
-    pub fn new_receiver(&self, stream: &quinn::RecvStream, download_size: u64) -> Arc<StreamStats> {
+    pub fn new_receiver<RT: Runtime>(
+        &self,
+        stream: &quinn::RecvStream<RT>,
+        download_size: u64,
+    ) -> Arc<StreamStats> {
         let recv_stream_stats = StreamStats {
             id: stream.id(),
             request_size: download_size,

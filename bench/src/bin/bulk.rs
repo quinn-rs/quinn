@@ -5,6 +5,7 @@ use std::{
 };
 
 use anyhow::{Context, Result};
+use quinn::runtime::TokioRuntime;
 use structopt::StructOpt;
 use tokio::sync::Semaphore;
 use tracing::{info, trace};
@@ -59,7 +60,7 @@ fn main() {
     server_thread.join().expect("server thread");
 }
 
-async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
+async fn server(mut incoming: quinn::Incoming<TokioRuntime>, opt: Opt) -> Result<()> {
     let mut server_tasks = Vec::new();
 
     // Handle only the expected amount of clients
@@ -174,7 +175,7 @@ async fn client(
 }
 
 async fn handle_client_stream(
-    connection: Arc<quinn::Connection>,
+    connection: Arc<quinn::Connection<TokioRuntime>>,
     upload_size: usize,
     read_unordered: bool,
 ) -> Result<(TransferResult, TransferResult)> {

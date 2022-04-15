@@ -4,6 +4,7 @@
 
 use std::{error::Error, net::SocketAddr};
 
+use quinn::runtime::TokioRuntime;
 use quinn::Endpoint;
 
 mod common;
@@ -52,7 +53,7 @@ fn run_server(addr: SocketAddr) -> Result<Vec<u8>, Box<dyn Error>> {
 }
 
 /// Attempt QUIC connection with the given server address.
-async fn run_client(endpoint: &Endpoint, server_addr: SocketAddr) {
+async fn run_client(endpoint: &Endpoint<TokioRuntime>, server_addr: SocketAddr) {
     let connect = endpoint.connect(server_addr, "localhost").unwrap();
     let quinn::NewConnection { connection, .. } = connect.await.unwrap();
     println!("[client] connected: addr={}", connection.remote_address());

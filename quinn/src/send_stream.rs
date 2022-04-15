@@ -7,6 +7,7 @@ use std::{
 
 use bytes::Bytes;
 use proto::{ConnectionError, FinishError, StreamId, Written};
+use runtime::{Runtime, TokioRuntime};
 use thiserror::Error;
 use tokio::sync::oneshot;
 
@@ -22,15 +23,15 @@ use crate::{
 ///
 /// [`reset()`]: SendStream::reset
 #[derive(Debug)]
-pub struct SendStream {
-    conn: ConnectionRef,
+pub struct SendStream<RT: Runtime> {
+    conn: ConnectionRef<RT>,
     stream: StreamId,
     is_0rtt: bool,
     finishing: Option<oneshot::Receiver<Option<WriteError>>>,
 }
 
-impl SendStream {
-    pub(crate) fn new(conn: ConnectionRef, stream: StreamId, is_0rtt: bool) -> Self {
+impl<RT: Runtime> SendStream<RT> {
+    pub(crate) fn new(conn: ConnectionRef<RT>, stream: StreamId, is_0rtt: bool) -> Self {
         Self {
             conn,
             stream,
@@ -225,9 +226,9 @@ impl SendStream {
 }
 
 #[cfg(feature = "futures-io")]
-impl futures_io::AsyncWrite for SendStream {
+impl<RT: Runtime> futures_io::AsyncWrite for SendStream<RT> {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        tokio::io::AsyncWrite::poll_write(self, cx, buf)
+        SendStream::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
@@ -235,11 +236,12 @@ impl futures_io::AsyncWrite for SendStream {
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        tokio::io::AsyncWrite::poll_shutdown(self, cx)
+        self.get_mut().poll_finish(cx).map_err(Into::into)
     }
 }
 
-impl tokio::io::AsyncWrite for SendStream {
+#[cfg(feature = "runtime-tokio")]
+impl tokio::io::AsyncWrite for SendStream<TokioRuntime> {
     fn poll_write(
         self: Pin<&mut Self>,
         cx: &mut Context<'_>,
@@ -257,7 +259,7 @@ impl tokio::io::AsyncWrite for SendStream {
     }
 }
 
-impl Drop for SendStream {
+impl<RT: Runtime> Drop for SendStream<RT> {
     fn drop(&mut self) {
         let mut conn = self.conn.lock("SendStream::drop");
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
@@ -280,11 +282,11 @@ impl Drop for SendStream {
 
 /// Future produced by `SendStream::finish`
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct Finish<'a> {
-    stream: &'a mut SendStream,
+struct Finish<'a, RT: Runtime> {
+    stream: &'a mut SendStream<RT>,
 }
 
-impl Future for Finish<'_> {
+impl<RT: Runtime> Future for Finish<'_, RT> {
     type Output = Result<(), WriteError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -294,11 +296,11 @@ impl Future for Finish<'_> {
 
 /// Future produced by `SendStream::stopped`
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct Stopped<'a> {
-    stream: &'a mut SendStream,
+struct Stopped<'a, RT: Runtime> {
+    stream: &'a mut SendStream<RT>,
 }
 
-impl Future for Stopped<'_> {
+impl<RT: Runtime> Future for Stopped<'_, RT> {
     type Output = Result<VarInt, StoppedError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -310,12 +312,12 @@ impl Future for Stopped<'_> {
 ///
 /// [`SendStream::write()`]: crate::SendStream::write
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct Write<'a> {
-    stream: &'a mut SendStream,
+struct Write<'a, RT: Runtime> {
+    stream: &'a mut SendStream<RT>,
     buf: &'a [u8],
 }
 
-impl<'a> Future for Write<'a> {
+impl<'a, RT: Runtime> Future for Write<'a, RT> {
     type Output = Result<usize, WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -328,12 +330,12 @@ impl<'a> Future for Write<'a> {
 ///
 /// [`SendStream::write_all()`]: crate::SendStream::write_all
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct WriteAll<'a> {
-    stream: &'a mut SendStream,
+struct WriteAll<'a, RT: Runtime> {
+    stream: &'a mut SendStream<RT>,
     buf: &'a [u8],
 }
 
-impl<'a> Future for WriteAll<'a> {
+impl<'a, RT: Runtime> Future for WriteAll<'a, RT> {
     type Output = Result<(), WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -352,12 +354,12 @@ impl<'a> Future for WriteAll<'a> {
 ///
 /// [`SendStream::write_chunks()`]: crate::SendStream::write_chunks
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct WriteChunks<'a> {
-    stream: &'a mut SendStream,
+struct WriteChunks<'a, RT: Runtime> {
+    stream: &'a mut SendStream<RT>,
     bufs: &'a mut [Bytes],
 }
 
-impl<'a> Future for WriteChunks<'a> {
+impl<'a, RT: Runtime> Future for WriteChunks<'a, RT> {
     type Output = Result<Written, WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -370,12 +372,12 @@ impl<'a> Future for WriteChunks<'a> {
 ///
 /// [`SendStream::write_chunk()`]: crate::SendStream::write_chunk
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct WriteChunk<'a> {
-    stream: &'a mut SendStream,
+struct WriteChunk<'a, RT: Runtime> {
+    stream: &'a mut SendStream<RT>,
     buf: [Bytes; 1],
 }
 
-impl<'a> Future for WriteChunk<'a> {
+impl<'a, RT: Runtime> Future for WriteChunk<'a, RT> {
     type Output = Result<(), WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -393,13 +395,13 @@ impl<'a> Future for WriteChunk<'a> {
 ///
 /// [`SendStream::write_all_chunks()`]: crate::SendStream::write_all_chunks
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct WriteAllChunks<'a> {
-    stream: &'a mut SendStream,
+struct WriteAllChunks<'a, RT: Runtime> {
+    stream: &'a mut SendStream<RT>,
     bufs: &'a mut [Bytes],
     offset: usize,
 }
 
-impl<'a> Future for WriteAllChunks<'a> {
+impl<'a, RT: Runtime> Future for WriteAllChunks<'a, RT> {
     type Output = Result<(), WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();

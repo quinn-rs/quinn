@@ -1,0 +1,21 @@
+[package]
+name = "quinn-runtime"
+version = "0.1.0"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/quinn-rs/quinn"
+description = "Abstractions for writing async-runtime-independent code"
+keywords = ["quic"]
+categories = ["network-programming", "asynchronous"]
+workspace = ".."
+edition = "2018"
+
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+tokio = { version = "1.0.1", features = ["net", "time"], optional = true }
+async-io = { version = "1.6", optional = true }
+async-std = { version = "1.11", optional = true }
+
+[features]
+runtime-tokio = [ "tokio" ]
+runtime-async-std = [ "async-io", "async-std" ]

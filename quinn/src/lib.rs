@@ -75,6 +75,7 @@ pub use crate::connection::{
 pub use crate::endpoint::{Endpoint, Incoming};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream};
 pub use crate::send_stream::{SendStream, StoppedError, WriteError};
+pub use runtime;
 
 #[cfg(test)]
 mod tests;

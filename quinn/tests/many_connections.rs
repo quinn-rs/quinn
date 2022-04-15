@@ -8,6 +8,7 @@ use std::{
 use crc::Crc;
 use quinn::{ConnectionError, ReadError, TransportConfig, WriteError};
 use rand::{self, RngCore};
+use runtime::TokioRuntime;
 use tokio::runtime::Builder;
 
 struct Shared {
@@ -93,7 +94,9 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     }
 }
 
-async fn read_from_peer(stream: quinn::RecvStream) -> Result<(), quinn::ConnectionError> {
+async fn read_from_peer(
+    stream: quinn::RecvStream<TokioRuntime>,
+) -> Result<(), quinn::ConnectionError> {
     let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
     match stream.read_to_end(1024 * 1024 * 5).await {
         Ok(data) => {
@@ -115,7 +118,10 @@ async fn read_from_peer(stream: quinn::RecvStream) -> Result<(), quinn::Connecti
     }
 }
 
-async fn write_to_peer(conn: quinn::Connection, data: Vec<u8>) -> Result<(), WriteError> {
+async fn write_to_peer(
+    conn: quinn::Connection<TokioRuntime>,
+    data: Vec<u8>,
+) -> Result<(), WriteError> {
     let mut s = conn.open_uni().await.map_err(WriteError::ConnectionLost)?;
     s.write_all(&data).await?;
     // Suppress finish errors, since the peer may close before ACKing

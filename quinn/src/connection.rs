@@ -12,10 +12,10 @@ use std::{
 
 use bytes::Bytes;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
+use runtime::{AsyncTimer, Runtime};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, Notify};
-use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use tracing::info_span;
 use udp::UdpState;
 
@@ -31,20 +31,20 @@ use proto::congestion::Controller;
 /// In-progress connection attempt future
 #[derive(Debug)]
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-pub struct Connecting {
-    conn: Option<ConnectionRef>,
+pub struct Connecting<RT: Runtime> {
+    conn: Option<ConnectionRef<RT>>,
     connected: oneshot::Receiver<bool>,
     handshake_data_ready: Option<oneshot::Receiver<()>>,
 }
 
-impl Connecting {
+impl<RT: Runtime> Connecting<RT> {
     pub(crate) fn new(
         handle: ConnectionHandle,
         conn: proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         udp_state: Arc<UdpState>,
-    ) -> Connecting {
+    ) -> Connecting<RT> {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
         let conn = ConnectionRef::new(
@@ -57,7 +57,7 @@ impl Connecting {
             udp_state,
         );
 
-        tokio::spawn(ConnectionDriver(conn.clone()));
+        RT::spawn(ConnectionDriver(conn.clone()));
 
         Connecting {
             conn: Some(conn),
@@ -91,7 +91,7 @@ impl Connecting {
     /// ticket is found, `self` is returned unmodified.
     ///
     /// For incoming connections, a 0.5-RTT connection will always be successfully constructed.
-    pub fn into_0rtt(mut self) -> Result<(NewConnection, ZeroRttAccepted), Self> {
+    pub fn into_0rtt(mut self) -> Result<(NewConnection<RT>, ZeroRttAccepted), Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
         let conn = (self.conn.as_mut().unwrap()).lock("into_0rtt");
@@ -156,8 +156,8 @@ impl Connecting {
     }
 }
 
-impl Future for Connecting {
-    type Output = Result<NewConnection, ConnectionError>;
+impl<RT: Runtime> Future for Connecting<RT> {
+    type Output = Result<NewConnection<RT>, ConnectionError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Pin::new(&mut self.connected).poll(cx).map(|_| {
             let conn = self.conn.take().unwrap();
@@ -175,12 +175,12 @@ impl Future for Connecting {
     }
 }
 
-impl Connecting {
+impl<RT: Runtime> Connecting<RT> {
     /// The peer's UDP address.
     ///
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn remote_address(&self) -> SocketAddr {
-        let conn_ref: &ConnectionRef = self.conn.as_ref().expect("used after yielding Ready");
+        let conn_ref: &ConnectionRef<RT> = self.conn.as_ref().expect("used after yielding Ready");
         conn_ref.lock("remote_address").inner.remote_address()
     }
 }
@@ -213,7 +213,7 @@ impl Future for ZeroRttAccepted {
     feature = "rustls",
     doc = "```rust
 # use quinn::NewConnection;
-# fn dummy(new_connection: NewConnection) {
+# fn dummy<RT: quinn::runtime::Runtime>(new_connection: NewConnection<RT>) {
 let NewConnection { connection, .. } = { new_connection };
 # }
 ```"
@@ -224,9 +224,9 @@ let NewConnection { connection, .. } = { new_connection };
 /// [`Connection::close()`]: crate::Connection::close
 #[derive(Debug)]
 #[non_exhaustive]
-pub struct NewConnection {
+pub struct NewConnection<RT: Runtime> {
     /// Handle for interacting with the connection
-    pub connection: Connection,
+    pub connection: Connection<RT>,
     /// Unidirectional streams initiated by the peer, in the order they were opened
     ///
     /// Note that data for separate streams may be delivered in any order. In other words, reading
@@ -234,15 +234,15 @@ pub struct NewConnection {
     /// details.
     ///
     /// [`IncomingUniStreams`]: crate::IncomingUniStreams
-    pub uni_streams: IncomingUniStreams,
+    pub uni_streams: IncomingUniStreams<RT>,
     /// Bidirectional streams initiated by the peer, in the order they were opened
-    pub bi_streams: IncomingBiStreams,
+    pub bi_streams: IncomingBiStreams<RT>,
     /// Unordered, unreliable datagrams sent by the peer
-    pub datagrams: Datagrams,
+    pub datagrams: Datagrams<RT>,
 }
 
-impl NewConnection {
-    fn new(conn: ConnectionRef) -> Self {
+impl<RT: Runtime> NewConnection<RT> {
+    fn new(conn: ConnectionRef<RT>) -> Self {
         Self {
             connection: Connection(conn.clone()),
             uni_streams: IncomingUniStreams(conn.clone()),
@@ -264,9 +264,9 @@ impl NewConnection {
 /// packets still in flight from the peer are handled gracefully.
 #[must_use = "connection drivers must be spawned for their connections to function"]
 #[derive(Debug)]
-struct ConnectionDriver(ConnectionRef);
+struct ConnectionDriver<RT: Runtime>(ConnectionRef<RT>);
 
-impl Future for ConnectionDriver {
+impl<RT: Runtime> Future for ConnectionDriver<RT> {
     type Output = ();
 
     #[allow(unused_mut)] // MSRV
@@ -314,15 +314,15 @@ impl Future for ConnectionDriver {
 ///
 /// [`Connection::close()`]: Connection::close
 #[derive(Debug)]
-pub struct Connection(ConnectionRef);
+pub struct Connection<RT: Runtime>(ConnectionRef<RT>);
 
-impl Connection {
+impl<RT: Runtime> Connection<RT> {
     /// Initiate a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
-    pub async fn open_uni(&self) -> Result<SendStream, ConnectionError> {
+    pub async fn open_uni(&self) -> Result<SendStream<RT>, ConnectionError> {
         let (id, is_0rtt) = self.open(Dir::Uni).await?;
         Ok(SendStream::new(self.0.clone(), id, is_0rtt))
     }
@@ -332,7 +332,7 @@ impl Connection {
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
     /// actually used.
-    pub async fn open_bi(&self) -> Result<(SendStream, RecvStream), ConnectionError> {
+    pub async fn open_bi(&self) -> Result<(SendStream<RT>, RecvStream<RT>), ConnectionError> {
         let (id, is_0rtt) = self.open(Dir::Bi).await?;
         Ok((
             SendStream::new(self.0.clone(), id, is_0rtt),
@@ -558,7 +558,7 @@ impl Connection {
     }
 }
 
-impl Clone for Connection {
+impl<RT: Runtime> Clone for Connection<RT> {
     fn clone(&self) -> Self {
         Connection(self.0.clone())
     }
@@ -575,15 +575,15 @@ impl Clone for Connection {
 /// performance, an application should be prepared to fully process later streams before any data is
 /// received on earlier streams.
 #[derive(Debug)]
-pub struct IncomingUniStreams(ConnectionRef);
+pub struct IncomingUniStreams<RT: Runtime>(ConnectionRef<RT>);
 
-impl IncomingUniStreams {
+impl<RT: Runtime> IncomingUniStreams<RT> {
     /// Fetch the next incoming unidirectional stream
-    pub async fn next(&mut self) -> Option<Result<RecvStream, ConnectionError>> {
+    pub async fn next(&mut self) -> Option<Result<RecvStream<RT>, ConnectionError>> {
         poll_fn(move |cx| self.poll(cx)).await
     }
 
-    fn poll(&mut self, cx: &mut Context) -> Poll<Option<Result<RecvStream, ConnectionError>>> {
+    fn poll(&mut self, cx: &mut Context) -> Poll<Option<Result<RecvStream<RT>, ConnectionError>>> {
         let mut conn = self.0.lock("IncomingUniStreams::poll");
         if let Some(x) = conn.inner.streams().accept(Dir::Uni) {
             conn.wake(); // To send additional stream ID credit
@@ -601,8 +601,8 @@ impl IncomingUniStreams {
 }
 
 #[cfg(feature = "futures-core")]
-impl futures_core::Stream for IncomingUniStreams {
-    type Item = Result<RecvStream, ConnectionError>;
+impl<RT: Runtime> futures_core::Stream for IncomingUniStreams<RT> {
+    type Item = Result<RecvStream<RT>, ConnectionError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         self.poll(cx)
@@ -613,18 +613,21 @@ impl futures_core::Stream for IncomingUniStreams {
 ///
 /// See `IncomingUniStreams` for information about incoming streams in general.
 #[derive(Debug)]
-pub struct IncomingBiStreams(ConnectionRef);
+pub struct IncomingBiStreams<RT: Runtime>(ConnectionRef<RT>);
 
-impl IncomingBiStreams {
+impl<RT: Runtime> IncomingBiStreams<RT> {
     /// Fetch the next incoming unidirectional stream
-    pub async fn next(&mut self) -> Option<Result<(SendStream, RecvStream), ConnectionError>> {
+    pub async fn next(
+        &mut self,
+    ) -> Option<Result<(SendStream<RT>, RecvStream<RT>), ConnectionError>> {
         poll_fn(move |cx| self.poll(cx)).await
     }
 
+    #[allow(clippy::type_complexity)]
     fn poll(
         &mut self,
         cx: &mut Context,
-    ) -> Poll<Option<Result<(SendStream, RecvStream), ConnectionError>>> {
+    ) -> Poll<Option<Result<(SendStream<RT>, RecvStream<RT>), ConnectionError>>> {
         let mut conn = self.0.lock("IncomingBiStreams::poll");
         if let Some(x) = conn.inner.streams().accept(Dir::Bi) {
             let is_0rtt = conn.inner.is_handshaking();
@@ -646,8 +649,8 @@ impl IncomingBiStreams {
 }
 
 #[cfg(feature = "futures-core")]
-impl futures_core::Stream for IncomingBiStreams {
-    type Item = Result<(SendStream, RecvStream), ConnectionError>;
+impl<RT: Runtime> futures_core::Stream for IncomingBiStreams<RT> {
+    type Item = Result<(SendStream<RT>, RecvStream<RT>), ConnectionError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
         self.poll(cx)
@@ -656,9 +659,9 @@ impl futures_core::Stream for IncomingBiStreams {
 
 /// Stream of unordered, unreliable datagrams sent by the peer
 #[derive(Debug)]
-pub struct Datagrams(ConnectionRef);
+pub struct Datagrams<RT: Runtime>(ConnectionRef<RT>);
 
-impl Datagrams {
+impl<RT: Runtime> Datagrams<RT> {
     /// Fetch the next application datagram from the peer
     pub async fn next(&mut self) -> Option<Result<Bytes, ConnectionError>> {
         poll_fn(move |cx| self.poll(cx)).await
@@ -680,7 +683,7 @@ impl Datagrams {
 }
 
 #[cfg(feature = "futures-core")]
-impl futures_core::Stream for Datagrams {
+impl<RT: Runtime> futures_core::Stream for Datagrams<RT> {
     type Item = Result<Bytes, ConnectionError>;
 
     fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
@@ -689,9 +692,9 @@ impl futures_core::Stream for Datagrams {
 }
 
 #[derive(Debug)]
-pub struct ConnectionRef(Arc<Mutex<ConnectionInner>>);
+pub struct ConnectionRef<RT: Runtime>(Arc<Mutex<ConnectionInner<RT>>>);
 
-impl ConnectionRef {
+impl<RT: Runtime> ConnectionRef<RT> {
     fn new(
         handle: ConnectionHandle,
         conn: proto::Connection,
@@ -731,14 +734,14 @@ impl ConnectionRef {
     }
 }
 
-impl Clone for ConnectionRef {
+impl<RT: Runtime> Clone for ConnectionRef<RT> {
     fn clone(&self) -> Self {
         self.lock("clone").ref_count += 1;
         Self(self.0.clone())
     }
 }
 
-impl Drop for ConnectionRef {
+impl<RT: Runtime> Drop for ConnectionRef<RT> {
     fn drop(&mut self) {
         let conn = &mut *self.lock("drop");
         if let Some(x) = conn.ref_count.checked_sub(1) {
@@ -754,22 +757,22 @@ impl Drop for ConnectionRef {
     }
 }
 
-impl std::ops::Deref for ConnectionRef {
-    type Target = Mutex<ConnectionInner>;
+impl<RT: Runtime> std::ops::Deref for ConnectionRef<RT> {
+    type Target = Mutex<ConnectionInner<RT>>;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
 }
 
-pub struct ConnectionInner {
+pub struct ConnectionInner<RT: Runtime> {
     pub(crate) inner: proto::Connection,
     driver: Option<Waker>,
     handle: ConnectionHandle,
     on_handshake_data: Option<oneshot::Sender<()>>,
     on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
-    timer: Option<Pin<Box<Sleep>>>,
-    timer_deadline: Option<TokioInstant>,
+    timer: Option<Pin<Box<RT::Timer>>>,
+    timer_deadline: Option<Instant>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
@@ -787,7 +790,7 @@ pub struct ConnectionInner {
     udp_state: Arc<UdpState>,
 }
 
-impl ConnectionInner {
+impl<RT: Runtime> ConnectionInner<RT> {
     fn drive_transmit(&mut self) -> bool {
         let now = Instant::now();
         let mut transmits = 0;
@@ -924,7 +927,7 @@ impl ConnectionInner {
         // Check whether we need to (re)set the timer. If so, we must poll again to ensure the
         // timer is registered with the runtime (and check whether it's already
         // expired).
-        match self.inner.poll_timeout().map(TokioInstant::from_std) {
+        match self.inner.poll_timeout() {
             Some(deadline) => {
                 if let Some(delay) = &mut self.timer {
                     // There is no need to reset the tokio timer if the deadline
@@ -937,7 +940,7 @@ impl ConnectionInner {
                         delay.as_mut().reset(deadline);
                     }
                 } else {
-                    self.timer = Some(Box::pin(sleep_until(deadline)));
+                    self.timer = Some(Box::pin(RT::Timer::new(deadline)));
                 }
                 // Store the actual expiration time of the timer
                 self.timer_deadline = Some(deadline);
@@ -1034,7 +1037,7 @@ impl ConnectionInner {
     }
 }
 
-impl Drop for ConnectionInner {
+impl<RT: Runtime> Drop for ConnectionInner<RT> {
     fn drop(&mut self) {
         if !self.inner.is_drained() {
             // Ensure the endpoint can tidy up
@@ -1046,7 +1049,7 @@ impl Drop for ConnectionInner {
     }
 }
 
-impl fmt::Debug for ConnectionInner {
+impl<RT: Runtime> fmt::Debug for ConnectionInner<RT> {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("ConnectionInner")
             .field("inner", &self.inner)

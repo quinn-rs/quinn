@@ -1,6 +1,7 @@
 #![cfg(feature = "rustls")]
 //! Commonly used code in most examples.
 
+use quinn::runtime::TokioRuntime;
 use quinn::{ClientConfig, Endpoint, Incoming, ServerConfig};
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
@@ -13,7 +14,7 @@ use std::{error::Error, net::SocketAddr, sync::Arc};
 pub fn make_client_endpoint(
     bind_addr: SocketAddr,
     server_certs: &[&[u8]],
-) -> Result<Endpoint, Box<dyn Error>> {
+) -> Result<Endpoint<TokioRuntime>, Box<dyn Error>> {
     let client_cfg = configure_client(server_certs)?;
     let mut endpoint = Endpoint::client(bind_addr)?;
     endpoint.set_default_client_config(client_cfg);
@@ -28,7 +29,9 @@ pub fn make_client_endpoint(
 /// - a stream of incoming QUIC connections
 /// - server certificate serialized into DER format
 #[allow(unused)]
-pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Incoming, Vec<u8>), Box<dyn Error>> {
+pub fn make_server_endpoint(
+    bind_addr: SocketAddr,
+) -> Result<(Incoming<TokioRuntime>, Vec<u8>), Box<dyn Error>> {
     let (server_config, server_cert) = configure_server()?;
     let (_endpoint, incoming) = Endpoint::server(server_config, bind_addr)?;
     Ok((incoming, server_cert))
