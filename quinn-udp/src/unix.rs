@@ -20,24 +20,42 @@ type IpTosTy = libc::c_uchar;
 #[cfg(not(target_os = "freebsd"))]
 type IpTosTy = libc::c_int;
 
+fn only_v6(sock: &std::net::UdpSocket) -> io::Result<bool> {
+    let raw_fd = sock.as_raw_fd();
+    let mut val: libc::c_int = 0;
+    let mut len = mem::size_of::<libc::c_int>() as libc::socklen_t;
+    let res = unsafe {
+        libc::getsockopt(
+            raw_fd,
+            libc::IPPROTO_IPV6,
+            libc::IPV6_V6ONLY,
+            &mut val as *mut _ as *mut _,
+            &mut len,
+        )
+    };
+    match res {
+        -1 => Err(io::Error::last_os_error()),
+        _ => Ok(val != 0),
+    }
+}
+
 /// Tokio-compatible UDP socket with some useful specializations.
 ///
 /// Unlike a standard tokio UDP socket, this allows ECN bits to be read and written on some
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocket {
-    io: AsyncFd<mio::net::UdpSocket>,
+    io: AsyncFd<std::net::UdpSocket>,
     last_send_error: Instant,
 }
 
 impl UdpSocket {
     pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
         socket.set_nonblocking(true)?;
-        let io = mio::net::UdpSocket::from_std(socket);
-        init(&io)?;
+        init(&socket)?;
         let now = Instant::now();
         Ok(UdpSocket {
-            io: AsyncFd::new(io)?,
+            io: AsyncFd::new(socket)?,
             last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
         })
     }
@@ -79,7 +97,7 @@ impl UdpSocket {
     }
 }
 
-fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
+fn init(io: &std::net::UdpSocket) -> io::Result<()> {
     let mut cmsg_platform_space = 0;
     if cfg!(target_os = "linux") {
         cmsg_platform_space +=
@@ -99,7 +117,7 @@ fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
     let addr = io.local_addr()?;
 
     // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
-    if addr.is_ipv4() || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !io.only_v6()?) {
+    if addr.is_ipv4() || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !only_v6(io)?) {
         let on: libc::c_int = 1;
         let rc = unsafe {
             libc::setsockopt(
@@ -193,7 +211,7 @@ fn init(io: &mio::net::UdpSocket) -> io::Result<()> {
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 fn send(
     state: &UdpState,
-    io: &mio::net::UdpSocket,
+    io: &std::net::UdpSocket,
     last_send_error: &mut Instant,
     transmits: &[Transmit],
 ) -> io::Result<usize> {
@@ -276,7 +294,7 @@ fn send(
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn send(
     _state: &UdpState,
-    io: &mio::net::UdpSocket,
+    io: &std::net::UdpSocket,
     last_send_error: &mut Instant,
     transmits: &[Transmit],
 ) -> io::Result<usize> {
@@ -316,7 +334,7 @@ fn send(
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 fn recv(
-    io: &mio::net::UdpSocket,
+    io: &std::net::UdpSocket,
     bufs: &mut [IoSliceMut<'_>],
     meta: &mut [RecvMeta],
 ) -> io::Result<usize> {
@@ -359,7 +377,7 @@ fn recv(
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn recv(
-    io: &mio::net::UdpSocket,
+    io: &std::net::UdpSocket,
     bufs: &mut [IoSliceMut<'_>],
     meta: &mut [RecvMeta],
 ) -> io::Result<usize> {
