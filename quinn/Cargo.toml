@@ -50,7 +50,7 @@ bencher = "0.1.5"
 directories-next = "2"
 rand = "0.8"
 rcgen = "0.9.1"
-rustls-pemfile = "0.3.0"
+rustls-pemfile = "1.0.0"
 structopt = "0.3.0"
 tokio = { version = "1.0.1", features = ["rt", "rt-multi-thread", "time", "macros", "sync"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
