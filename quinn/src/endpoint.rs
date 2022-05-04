@@ -12,7 +12,7 @@ use std::{
     time::Instant,
 };
 
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
@@ -346,27 +346,31 @@ impl EndpointInner {
                 Poll::Ready(Ok(msgs)) => {
                     self.recv_limiter.record_work(msgs);
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
-                        let data = buf[0..meta.len].into();
-                        match self
-                            .inner
-                            .handle(now, meta.addr, meta.dst_ip, meta.ecn, data)
-                        {
-                            Some((handle, DatagramEvent::NewConnection(conn))) => {
-                                let conn =
-                                    self.connections
-                                        .insert(handle, conn, self.udp_state.clone());
-                                self.incoming.push_back(conn);
+                        for buf in buf[0..meta.len].chunks(meta.gso_size.unwrap_or(meta.len)) {
+                            let data: BytesMut = buf.into();
+                            match self
+                                .inner
+                                .handle(now, meta.addr, meta.dst_ip, meta.ecn, data)
+                            {
+                                Some((handle, DatagramEvent::NewConnection(conn))) => {
+                                    let conn = self.connections.insert(
+                                        handle,
+                                        conn,
+                                        self.udp_state.clone(),
+                                    );
+                                    self.incoming.push_back(conn);
+                                }
+                                Some((handle, DatagramEvent::ConnectionEvent(event))) => {
+                                    // Ignoring errors from dropped connections that haven't yet been cleaned up
+                                    let _ = self
+                                        .connections
+                                        .senders
+                                        .get_mut(&handle)
+                                        .unwrap()
+                                        .send(ConnectionEvent::Proto(event));
+                                }
+                                None => {}
                             }
-                            Some((handle, DatagramEvent::ConnectionEvent(event))) => {
-                                // Ignoring errors from dropped connections that haven't yet been cleaned up
-                                let _ = self
-                                    .connections
-                                    .senders
-                                    .get_mut(&handle)
-                                    .unwrap()
-                                    .send(ConnectionEvent::Proto(event));
-                            }
-                            None => {}
                         }
                     }
                 }
@@ -565,8 +569,12 @@ pub(crate) struct EndpointRef(Arc<Mutex<EndpointInner>>);
 
 impl EndpointRef {
     pub(crate) fn new(socket: UdpSocket, inner: proto::Endpoint, ipv6: bool) -> Self {
+        // FIXME: don't hardcode the GRO size
         let recv_buf =
-            vec![0; inner.config().get_max_udp_payload_size().min(64 * 1024) as usize * BATCH_SIZE];
+            vec![
+                0;
+                inner.config().get_max_udp_payload_size().min(64 * 1024) as usize * 10 * BATCH_SIZE
+            ];
         let (sender, events) = mpsc::unbounded_channel();
         Self(Arc::new(Mutex::new(EndpointInner {
             socket,

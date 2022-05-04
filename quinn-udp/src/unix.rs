@@ -52,6 +52,7 @@ pub struct UdpSocket {
 impl UdpSocket {
     pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
         socket.set_nonblocking(true)?;
+
         init(&socket)?;
         let now = Instant::now();
         Ok(UdpSocket {
@@ -134,6 +135,20 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
     }
     #[cfg(target_os = "linux")]
     {
+        let on: libc::c_int = 1;
+        let rc = unsafe {
+            libc::setsockopt(
+                io.as_raw_fd(),
+                libc::SOL_UDP,
+                libc::UDP_GRO,
+                &on as *const _ as _,
+                mem::size_of_val(&on) as _,
+            )
+        };
+        if rc == -1 {
+            return Err(io::Error::last_os_error());
+        }
+
         if addr.is_ipv4() {
             let rc = unsafe {
                 libc::setsockopt(
@@ -500,6 +515,7 @@ fn decode_recv(
     let name = unsafe { name.assume_init() };
     let mut ecn_bits = 0;
     let mut dst_ip = None;
+    let mut gso_size = None;
 
     let cmsg_iter = unsafe { cmsg::Iter::new(hdr) };
     for cmsg in cmsg_iter {
@@ -527,6 +543,10 @@ fn decode_recv(
                 let pktinfo = cmsg::decode::<libc::in6_pktinfo>(cmsg);
                 dst_ip = Some(IpAddr::V6(ptr::read(&pktinfo.ipi6_addr as *const _ as _)));
             },
+            #[cfg(target_os = "linux")]
+            (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
+                gso_size = Some(cmsg::decode::<libc::c_int>(cmsg) as usize);
+            },
             _ => {}
         }
     }
@@ -542,6 +562,7 @@ fn decode_recv(
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
         dst_ip,
+        gso_size,
     }
 }
 
