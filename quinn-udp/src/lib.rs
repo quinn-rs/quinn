@@ -37,6 +37,7 @@ pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
 #[derive(Debug)]
 pub struct UdpState {
     max_gso_segments: AtomicUsize,
+    gro_segments: usize,
 }
 
 impl UdpState {
@@ -52,6 +53,15 @@ impl UdpState {
     #[inline]
     pub fn max_gso_segments(&self) -> usize {
         self.max_gso_segments.load(Ordering::Relaxed)
+    }
+
+    /// The number of segments to read when GRO is enabled. Used as a factor to
+    /// compute the receive buffer size.
+    ///
+    /// Returns 1 if the platform doesn't support GRO.
+    #[inline]
+    pub fn gro_segments(&self) -> usize {
+        self.gro_segments
     }
 }
 

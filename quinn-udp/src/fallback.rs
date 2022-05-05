@@ -97,6 +97,7 @@ impl UdpSocket {
 pub fn udp_state() -> super::UdpState {
     super::UdpState {
         max_gso_segments: std::sync::atomic::AtomicUsize::new(1),
+        gro_segments: 1,
     }
 }
 

@@ -570,16 +570,17 @@ pub(crate) struct EndpointRef(Arc<Mutex<EndpointInner>>);
 
 impl EndpointRef {
     pub(crate) fn new(socket: UdpSocket, inner: proto::Endpoint, ipv6: bool) -> Self {
-        // FIXME: don't hardcode the GRO size
-        let recv_buf =
-            vec![
-                0;
-                inner.config().get_max_udp_payload_size().min(64 * 1024) as usize * 10 * BATCH_SIZE
-            ];
+        let udp_state = Arc::new(UdpState::new());
+        let recv_buf = vec![
+            0;
+            inner.config().get_max_udp_payload_size().min(64 * 1024) as usize
+                * udp_state.gro_segments()
+                * BATCH_SIZE
+        ];
         let (sender, events) = mpsc::unbounded_channel();
         Self(Arc::new(Mutex::new(EndpointInner {
             socket,
-            udp_state: Arc::new(UdpState::new()),
+            udp_state,
             inner,
             ipv6,
             events,
