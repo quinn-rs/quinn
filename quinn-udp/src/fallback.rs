@@ -77,8 +77,10 @@ impl UdpSocket {
         debug_assert!(!bufs.is_empty());
         let mut buf = ReadBuf::new(&mut bufs[0]);
         let addr = ready!(self.io.poll_recv_from(cx, &mut buf))?;
+        let len = buf.filled().len();
         meta[0] = RecvMeta {
-            len: buf.filled().len(),
+            len,
+            stride: len,
             addr,
             ecn: None,
             dst_ip: None,

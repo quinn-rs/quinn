@@ -65,10 +65,10 @@ impl Default for UdpState {
 pub struct RecvMeta {
     pub addr: SocketAddr,
     pub len: usize,
+    pub stride: usize,
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address which was encoded in this datagram
     pub dst_ip: Option<IpAddr>,
-    pub gso_size: Option<usize>,
 }
 
 impl Default for RecvMeta {
@@ -77,9 +77,9 @@ impl Default for RecvMeta {
         Self {
             addr: SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0),
             len: 0,
+            stride: 0,
             ecn: None,
             dst_ip: None,
-            gso_size: None,
         }
     }
 }

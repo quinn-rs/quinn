@@ -515,7 +515,7 @@ fn decode_recv(
     let name = unsafe { name.assume_init() };
     let mut ecn_bits = 0;
     let mut dst_ip = None;
-    let mut gso_size = None;
+    let mut stride = len;
 
     let cmsg_iter = unsafe { cmsg::Iter::new(hdr) };
     for cmsg in cmsg_iter {
@@ -545,7 +545,7 @@ fn decode_recv(
             },
             #[cfg(target_os = "linux")]
             (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
-                gso_size = Some(cmsg::decode::<libc::c_int>(cmsg) as usize);
+                stride = cmsg::decode::<libc::c_int>(cmsg) as usize;
             },
             _ => {}
         }
@@ -559,10 +559,10 @@ fn decode_recv(
 
     RecvMeta {
         len,
+        stride,
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
         dst_ip,
-        gso_size,
     }
 }
 
