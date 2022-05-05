@@ -346,11 +346,13 @@ impl EndpointInner {
                 Poll::Ready(Ok(msgs)) => {
                     self.recv_limiter.record_work(msgs);
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
-                        for buf in buf[0..meta.len].chunks(meta.gso_size.unwrap_or(meta.len)) {
-                            let data: BytesMut = buf.into();
+                        let mut data: BytesMut = buf[0..meta.len].into();
+                        while !data.is_empty() {
+                            let buf =
+                                data.split_to(meta.gso_size.unwrap_or(meta.len).min(data.len()));
                             match self
                                 .inner
-                                .handle(now, meta.addr, meta.dst_ip, meta.ecn, data)
+                                .handle(now, meta.addr, meta.dst_ip, meta.ecn, buf)
                             {
                                 Some((handle, DatagramEvent::NewConnection(conn))) => {
                                     let conn = self.connections.insert(
