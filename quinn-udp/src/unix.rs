@@ -52,6 +52,7 @@ pub struct UdpSocket {
 impl UdpSocket {
     pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
         socket.set_nonblocking(true)?;
+
         init(&socket)?;
         let now = Instant::now();
         Ok(UdpSocket {
@@ -134,6 +135,18 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
     }
     #[cfg(target_os = "linux")]
     {
+        // opportunistically try to enable GRO. See gro::gro_segments().
+        let on: libc::c_int = 1;
+        unsafe {
+            libc::setsockopt(
+                io.as_raw_fd(),
+                libc::SOL_UDP,
+                libc::UDP_GRO,
+                &on as *const _ as _,
+                mem::size_of_val(&on) as _,
+            )
+        };
+
         if addr.is_ipv4() {
             let rc = unsafe {
                 libc::setsockopt(
@@ -407,6 +420,7 @@ fn recv(
 pub fn udp_state() -> UdpState {
     UdpState {
         max_gso_segments: AtomicUsize::new(gso::max_gso_segments()),
+        gro_segments: gro::gro_segments(),
     }
 }
 
@@ -500,6 +514,7 @@ fn decode_recv(
     let name = unsafe { name.assume_init() };
     let mut ecn_bits = 0;
     let mut dst_ip = None;
+    let mut stride = len;
 
     let cmsg_iter = unsafe { cmsg::Iter::new(hdr) };
     for cmsg in cmsg_iter {
@@ -527,6 +542,10 @@ fn decode_recv(
                 let pktinfo = cmsg::decode::<libc::in6_pktinfo>(cmsg);
                 dst_ip = Some(IpAddr::V6(ptr::read(&pktinfo.ipi6_addr as *const _ as _)));
             },
+            #[cfg(target_os = "linux")]
+            (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
+                stride = cmsg::decode::<libc::c_int>(cmsg) as usize;
+            },
             _ => {}
         }
     }
@@ -539,6 +558,7 @@ fn decode_recv(
 
     RecvMeta {
         len,
+        stride,
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
         dst_ip,
@@ -600,5 +620,41 @@ mod gso {
 
     pub fn set_segment_size(_encoder: &mut cmsg::Encoder, _segment_size: u16) {
         panic!("Setting a segment size is not supported on current platform");
+    }
+}
+
+#[cfg(target_os = "linux")]
+mod gro {
+    use super::*;
+
+    pub fn gro_segments() -> usize {
+        let socket = match std::net::UdpSocket::bind("[::]:0") {
+            Ok(socket) => socket,
+            Err(_) => return 1,
+        };
+
+        let on: libc::c_int = 1;
+        let rc = unsafe {
+            libc::setsockopt(
+                socket.as_raw_fd(),
+                libc::SOL_UDP,
+                libc::UDP_GRO,
+                &on as *const _ as _,
+                mem::size_of_val(&on) as _,
+            )
+        };
+
+        if rc != -1 {
+            10
+        } else {
+            1
+        }
+    }
+}
+
+#[cfg(not(target_os = "linux"))]
+mod gro {
+    pub fn gro_segments() -> usize {
+        1
     }
 }

@@ -37,6 +37,7 @@ pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
 #[derive(Debug)]
 pub struct UdpState {
     max_gso_segments: AtomicUsize,
+    gro_segments: usize,
 }
 
 impl UdpState {
@@ -53,6 +54,15 @@ impl UdpState {
     pub fn max_gso_segments(&self) -> usize {
         self.max_gso_segments.load(Ordering::Relaxed)
     }
+
+    /// The number of segments to read when GRO is enabled. Used as a factor to
+    /// compute the receive buffer size.
+    ///
+    /// Returns 1 if the platform doesn't support GRO.
+    #[inline]
+    pub fn gro_segments(&self) -> usize {
+        self.gro_segments
+    }
 }
 
 impl Default for UdpState {
@@ -65,6 +75,7 @@ impl Default for UdpState {
 pub struct RecvMeta {
     pub addr: SocketAddr,
     pub len: usize,
+    pub stride: usize,
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address which was encoded in this datagram
     pub dst_ip: Option<IpAddr>,
@@ -76,6 +87,7 @@ impl Default for RecvMeta {
         Self {
             addr: SocketAddr::new(Ipv6Addr::UNSPECIFIED.into(), 0),
             len: 0,
+            stride: 0,
             ecn: None,
             dst_ip: None,
         }
