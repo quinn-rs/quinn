@@ -16,7 +16,7 @@ use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, Notify};
 use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
-use tracing::info_span;
+use tracing::debug_span;
 use udp::UdpState;
 
 use crate::{
@@ -273,7 +273,7 @@ impl Future for ConnectionDriver {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.lock("poll");
 
-        let span = info_span!("drive", id = conn.handle.0);
+        let span = debug_span!("drive", id = conn.handle.0);
         let _guard = span.enter();
 
         if let Err(e) = conn.process_conn_events(cx) {
