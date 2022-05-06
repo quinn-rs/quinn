@@ -15,7 +15,7 @@ rust-version = "1.53"
 all-features = true
 
 [features]
-default = ["native-certs", "tls-rustls"]
+default = ["native-certs", "tls-rustls", "runtime-tokio"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Provides `ClientConfig::with_native_roots()` convenience method
@@ -23,12 +23,16 @@ native-certs = ["proto/native-certs"]
 tls-rustls = ["rustls", "webpki", "proto/tls-rustls", "ring"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 ring = ["proto/ring"]
+runtime-tokio = [ "tokio/time", "tokio/rt", "udp/runtime-tokio" ]
+runtime-async-std = [ "async-io", "async-std", "udp/runtime-async-std" ]
 
 [badges]
 codecov = { repository = "djc/quinn" }
 maintenance = { status = "experimental" }
 
 [dependencies]
+async-io = { version = "1.6", optional = true }
+async-std = { version = "1.11", optional = true }
 bytes = "1"
 # Enables futures::io::{AsyncRead, AsyncWrite} support for streams
 futures-io = { version = "0.3.19", optional = true }
@@ -39,11 +43,12 @@ proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", def
 rustls = { version = "0.20.3", default-features = false, features = ["quic"], optional = true }
 thiserror = "1.0.21"
 tracing = "0.1.10"
-tokio = { version = "1.0.1", features = ["rt", "time", "sync"] }
+tokio = { version = "1.0.1", features = ["sync"] }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.1.0" }
 webpki = { version = "0.22", default-features = false, optional = true }
 
 [dev-dependencies]
+async-std = { version = "1.11", features = [ "attributes" ] }
 anyhow = "1.0.22"
 crc = "3"
 bencher = "0.1.5"

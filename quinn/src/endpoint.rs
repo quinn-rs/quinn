@@ -12,6 +12,7 @@ use std::{
     time::Instant,
 };
 
+use crate::runtime::{make_runtime, Runtime};
 use bytes::{Bytes, BytesMut};
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
@@ -35,15 +36,13 @@ use crate::{
 pub struct Endpoint {
     pub(crate) inner: EndpointRef,
     pub(crate) default_client_config: Option<ClientConfig>,
+    runtime: Arc<Box<dyn Runtime>>,
 }
 
 impl Endpoint {
     /// Helper to construct an endpoint for use with outgoing connections only
     ///
-    /// Must be called from within a tokio runtime context. Note that `addr` is the *local* address
-    /// to bind to, which should usually be a wildcard address like `0.0.0.0:0` or `[::]:0`, which
-    /// allow communication with any reachable IPv4 or IPv6 address respectively from an OS-assigned
-    /// port.
+    /// Note that `addr` is the *local* address to bind to, which should usually be a wildcard address like `0.0.0.0:0` or `[::]:0`, which allow communication with any reachable IPv4 or IPv6 address respectively from an OS-assigned port.
     ///
     /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
@@ -52,12 +51,11 @@ impl Endpoint {
     #[cfg(feature = "ring")]
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
-        Ok(Self::new(EndpointConfig::default(), None, socket)?.0)
+        let runtime = make_runtime();
+        Ok(Self::new_with_runtime(EndpointConfig::default(), None, socket, runtime)?.0)
     }
 
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
-    ///
-    /// Must be called from within a tokio runtime context.
     ///
     /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
@@ -66,34 +64,47 @@ impl Endpoint {
     #[cfg(feature = "ring")]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<(Self, Incoming)> {
         let socket = std::net::UdpSocket::bind(addr)?;
-        Self::new(EndpointConfig::default(), Some(config), socket)
+        let runtime = make_runtime();
+        Self::new_with_runtime(EndpointConfig::default(), Some(config), socket, runtime)
     }
 
     /// Construct an endpoint with arbitrary configuration
-    ///
-    /// Must be called from within a tokio runtime context.
     pub fn new(
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: std::net::UdpSocket,
+        runtime: impl Runtime,
     ) -> io::Result<(Self, Incoming)> {
+        let runtime: Box<dyn Runtime> = Box::new(runtime);
+        Self::new_with_runtime(config, server_config, socket, runtime)
+    }
+
+    fn new_with_runtime(
+        config: EndpointConfig,
+        server_config: Option<ServerConfig>,
+        socket: std::net::UdpSocket,
+        runtime: Box<dyn Runtime>,
+    ) -> io::Result<(Self, Incoming)> {
+        let runtime = Arc::new(runtime);
         let addr = socket.local_addr()?;
-        let socket = UdpSocket::from_std(socket)?;
+        let socket = UdpSocket::new(runtime.wrap_udp_socket(socket)?)?;
         let rc = EndpointRef::new(
             socket,
             proto::Endpoint::new(Arc::new(config), server_config.map(Arc::new)),
             addr.is_ipv6(),
+            runtime.clone(),
         );
         let driver = EndpointDriver(rc.clone());
-        tokio::spawn(async {
+        runtime.spawn(Box::pin(async {
             if let Err(e) = driver.await {
                 tracing::error!("I/O error: {}", e);
             }
-        });
+        }));
         Ok((
             Self {
                 inner: rc.clone(),
                 default_client_config: None,
+                runtime,
             },
             Incoming::new(rc),
         ))
@@ -146,7 +157,9 @@ impl Endpoint {
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
         let udp_state = endpoint.udp_state.clone();
-        Ok(endpoint.connections.insert(ch, conn, udp_state))
+        Ok(endpoint
+            .connections
+            .insert(ch, conn, udp_state, self.runtime.clone()))
     }
 
     /// Switch to a new UDP socket
@@ -157,7 +170,7 @@ impl Endpoint {
     /// On error, the old UDP socket is retained.
     pub fn rebind(&self, socket: std::net::UdpSocket) -> io::Result<()> {
         let addr = socket.local_addr()?;
-        let socket = UdpSocket::from_std(socket)?;
+        let socket = UdpSocket::new(self.runtime.wrap_udp_socket(socket)?)?;
         let mut inner = self.inner.lock().unwrap();
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
@@ -324,6 +337,7 @@ pub(crate) struct EndpointInner {
     recv_buf: Box<[u8]>,
     send_limiter: WorkLimiter,
     idle: Arc<Notify>,
+    runtime: Arc<Box<dyn Runtime>>,
 }
 
 impl EndpointInner {
@@ -358,6 +372,7 @@ impl EndpointInner {
                                         handle,
                                         conn,
                                         self.udp_state.clone(),
+                                        self.runtime.clone(),
                                     );
                                     self.incoming.push_back(conn);
                                 }
@@ -491,6 +506,7 @@ impl ConnectionSet {
         handle: ConnectionHandle,
         conn: proto::Connection,
         udp_state: Arc<UdpState>,
+        runtime: Arc<Box<dyn Runtime>>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
         if let Some((error_code, ref reason)) = self.close {
@@ -501,7 +517,7 @@ impl ConnectionSet {
             .unwrap();
         }
         self.senders.insert(handle, send);
-        Connecting::new(handle, conn, self.sender.clone(), recv, udp_state)
+        Connecting::new(handle, conn, self.sender.clone(), recv, udp_state, runtime)
     }
 
     fn is_empty(&self) -> bool {
@@ -569,7 +585,12 @@ impl Drop for Incoming {
 pub(crate) struct EndpointRef(Arc<Mutex<EndpointInner>>);
 
 impl EndpointRef {
-    pub(crate) fn new(socket: UdpSocket, inner: proto::Endpoint, ipv6: bool) -> Self {
+    pub(crate) fn new(
+        socket: UdpSocket,
+        inner: proto::Endpoint,
+        ipv6: bool,
+        runtime: Arc<Box<dyn Runtime>>,
+    ) -> Self {
         let udp_state = Arc::new(UdpState::new());
         let recv_buf = vec![
             0;
@@ -599,6 +620,7 @@ impl EndpointRef {
             recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
             send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
             idle: Arc::new(Notify::new()),
+            runtime,
         })))
     }
 }

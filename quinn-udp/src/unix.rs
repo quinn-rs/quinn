@@ -11,9 +11,9 @@ use std::{
 };
 
 use proto::{EcnCodepoint, Transmit};
-use tokio::io::unix::AsyncFd;
 
 use super::{cmsg, log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
+use crate::runtime::AsyncWrappedUdpSocket;
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
@@ -45,18 +45,16 @@ fn only_v6(sock: &std::net::UdpSocket) -> io::Result<bool> {
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocket {
-    io: AsyncFd<std::net::UdpSocket>,
+    io: Box<dyn AsyncWrappedUdpSocket>,
     last_send_error: Instant,
 }
 
 impl UdpSocket {
-    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
-        socket.set_nonblocking(true)?;
-
-        init(&socket)?;
+    pub fn new(socket: Box<dyn AsyncWrappedUdpSocket>) -> io::Result<UdpSocket> {
+        init(socket.get_ref())?;
         let now = Instant::now();
         Ok(UdpSocket {
-            io: AsyncFd::new(socket)?,
+            io: socket,
             last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
         })
     }
@@ -69,11 +67,12 @@ impl UdpSocket {
     ) -> Poll<Result<usize, io::Error>> {
         loop {
             let last_send_error = &mut self.last_send_error;
-            let mut guard = ready!(self.io.poll_write_ready(cx))?;
-            if let Ok(res) =
-                guard.try_io(|io| send(state, io.get_ref(), last_send_error, transmits))
-            {
-                return Poll::Ready(res);
+            ready!(self.io.poll_write_ready(cx))?;
+            match send(state, self.io.get_ref(), last_send_error, transmits) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    self.io.clear_write_ready(cx);
+                }
+                res => break Poll::Ready(res),
             }
         }
     }
@@ -86,9 +85,12 @@ impl UdpSocket {
     ) -> Poll<io::Result<usize>> {
         debug_assert!(!bufs.is_empty());
         loop {
-            let mut guard = ready!(self.io.poll_read_ready(cx))?;
-            if let Ok(res) = guard.try_io(|io| recv(io.get_ref(), bufs, meta)) {
-                return Poll::Ready(res);
+            ready!(self.io.poll_read_ready(cx))?;
+            match recv(self.io.get_ref(), bufs, meta) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    self.io.clear_read_ready(cx);
+                }
+                res => break Poll::Ready(res),
             }
         }
     }

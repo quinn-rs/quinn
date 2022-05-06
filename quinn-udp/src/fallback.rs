@@ -5,8 +5,8 @@ use std::{
     time::Instant,
 };
 
+use crate::runtime::AsyncWrappedUdpSocket;
 use proto::Transmit;
-use tokio::io::ReadBuf;
 
 use super::{log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
 
@@ -16,16 +16,15 @@ use super::{log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocket {
-    io: tokio::net::UdpSocket,
+    io: Box<dyn AsyncWrappedUdpSocket>,
     last_send_error: Instant,
 }
 
 impl UdpSocket {
-    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
-        socket.set_nonblocking(true)?;
+    pub fn new(socket: Box<dyn AsyncWrappedUdpSocket>) -> io::Result<UdpSocket> {
         let now = Instant::now();
         Ok(UdpSocket {
-            io: tokio::net::UdpSocket::from_std(socket)?,
+            io: socket,
             last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
         })
     }
@@ -38,10 +37,28 @@ impl UdpSocket {
     ) -> Poll<Result<usize, io::Error>> {
         let mut sent = 0;
         for transmit in transmits {
-            match self
-                .io
-                .poll_send_to(cx, &transmit.contents, transmit.destination)
-            {
+            let io_res = loop {
+                let poll_res = self.io.poll_write_ready(cx);
+
+                break match poll_res {
+                    Poll::Ready(Ok(())) => Poll::Ready(
+                        match self
+                            .io
+                            .try_send_to(&transmit.contents, transmit.destination)
+                        {
+                            Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                                self.io.clear_write_ready(cx);
+                                continue; // try again
+                            }
+                            res => res,
+                        },
+                    ),
+                    Poll::Ready(Err(e)) => Poll::Ready(Err(e)),
+                    Poll::Pending => Poll::Pending,
+                };
+            };
+
+            match io_res {
                 Poll::Ready(Ok(_)) => {
                     sent += 1;
                 }
@@ -75,9 +92,19 @@ impl UdpSocket {
         meta: &mut [RecvMeta],
     ) -> Poll<io::Result<usize>> {
         debug_assert!(!bufs.is_empty());
-        let mut buf = ReadBuf::new(&mut bufs[0]);
-        let addr = ready!(self.io.poll_recv_from(cx, &mut buf))?;
-        let len = buf.filled().len();
+
+        let (len, addr) = loop {
+            ready!(self.io.poll_read_ready(cx))?;
+
+            break match self.io.try_recv_from(&mut bufs[0]) {
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    self.io.clear_read_ready(cx);
+                    continue; // try again
+                }
+                res => res?,
+            };
+        };
+
         meta[0] = RecvMeta {
             len,
             stride: len,

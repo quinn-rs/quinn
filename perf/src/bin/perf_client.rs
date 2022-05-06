@@ -6,6 +6,7 @@ use std::{
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
+use quinn::TokioRuntime;
 use structopt::StructOpt;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
@@ -103,7 +104,7 @@ async fn run(opt: Opt) -> Result<()> {
 
     let socket = bind_socket(bind_addr, opt.send_buffer_size, opt.recv_buffer_size)?;
 
-    let (endpoint, _) = quinn::Endpoint::new(Default::default(), None, socket)?;
+    let (endpoint, _) = quinn::Endpoint::new(Default::default(), None, socket, TokioRuntime)?;
 
     let mut crypto = rustls::ClientConfig::builder()
         .with_cipher_suites(perf::PERF_CIPHER_SUITES)

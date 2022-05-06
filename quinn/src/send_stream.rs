@@ -227,7 +227,7 @@ impl SendStream {
 #[cfg(feature = "futures-io")]
 impl futures_io::AsyncWrite for SendStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        tokio::io::AsyncWrite::poll_write(self, cx, buf)
+        SendStream::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
@@ -235,10 +235,11 @@ impl futures_io::AsyncWrite for SendStream {
     }
 
     fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        tokio::io::AsyncWrite::poll_shutdown(self, cx)
+        self.get_mut().poll_finish(cx).map_err(Into::into)
     }
 }
 
+#[cfg(feature = "runtime-tokio")]
 impl tokio::io::AsyncWrite for SendStream {
     fn poll_write(
         self: Pin<&mut Self>,

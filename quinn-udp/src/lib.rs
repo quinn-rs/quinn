@@ -28,6 +28,8 @@ mod imp;
 #[path = "fallback.rs"]
 mod imp;
 
+pub mod runtime;
+
 pub use imp::UdpSocket;
 
 /// Number of UDP packets to send/receive at a time

@@ -59,6 +59,7 @@ mod connection;
 mod endpoint;
 mod mutex;
 mod recv_stream;
+mod runtime;
 mod send_stream;
 mod work_limiter;
 
@@ -74,6 +75,10 @@ pub use crate::connection::{
 };
 pub use crate::endpoint::{Endpoint, Incoming};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream};
+#[cfg(feature = "runtime-async-std")]
+pub use crate::runtime::AsyncStdRuntime;
+#[cfg(feature = "runtime-tokio")]
+pub use crate::runtime::TokioRuntime;
 pub use crate::send_stream::{SendStream, StoppedError, WriteError};
 
 #[cfg(test)]

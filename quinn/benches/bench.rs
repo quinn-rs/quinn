@@ -9,7 +9,7 @@ use tokio::runtime::{Builder, Runtime};
 use tracing::error_span;
 use tracing_futures::Instrument as _;
 
-use quinn::Endpoint;
+use quinn::{Endpoint, TokioRuntime};
 
 benchmark_group!(
     benches,
@@ -102,7 +102,7 @@ impl Context {
             let runtime = rt();
             let (_, mut incoming) = {
                 let _guard = runtime.enter();
-                Endpoint::new(Default::default(), Some(config), sock).unwrap()
+                Endpoint::new(Default::default(), Some(config), sock, TokioRuntime).unwrap()
             };
             let handle = runtime.spawn(
                 async move {
