@@ -23,8 +23,8 @@ native-certs = ["proto/native-certs"]
 tls-rustls = ["rustls", "webpki", "proto/tls-rustls", "ring"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 ring = ["proto/ring"]
-runtime-tokio = [ "tokio/time", "tokio/rt", "udp/runtime-tokio" ]
-runtime-async-std = [ "async-io", "async-std", "udp/runtime-async-std" ]
+runtime-tokio = ["tokio/time", "tokio/rt", "udp/runtime-tokio"]
+runtime-async-std = ["async-io", "async-std", "udp/runtime-async-std"]
 
 [badges]
 codecov = { repository = "djc/quinn" }
@@ -48,7 +48,7 @@ udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.1.0" }
 webpki = { version = "0.22", default-features = false, optional = true }
 
 [dev-dependencies]
-async-std = { version = "1.11", features = [ "attributes" ] }
+async-std = { version = "1.11", features = ["attributes"] }
 anyhow = "1.0.22"
 crc = "3"
 bencher = "0.1.5"

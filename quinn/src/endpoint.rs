@@ -75,8 +75,7 @@ impl Endpoint {
         socket: std::net::UdpSocket,
         runtime: impl Runtime,
     ) -> io::Result<(Self, Incoming)> {
-        let runtime: Box<dyn Runtime> = Box::new(runtime);
-        Self::new_with_runtime(config, server_config, socket, runtime)
+        Self::new_with_runtime(config, server_config, socket, Box::new(runtime))
     }
 
     fn new_with_runtime(

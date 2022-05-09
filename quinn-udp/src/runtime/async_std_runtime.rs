@@ -1,9 +1,13 @@
-use super::{AsyncWrappedUdpSocket, Runtime};
+use super::{AsyncUdpSocket, Runtime};
 use async_io::Async;
 use std::io;
+use std::net::{SocketAddr, UdpSocket as StdUdpSocket};
 use std::task::{Context, Poll};
 
-impl AsyncWrappedUdpSocket for Async<std::net::UdpSocket> {
+#[derive(Clone, Debug)]
+pub struct AsyncStdRuntime;
+
+impl AsyncUdpSocket for Async<StdUdpSocket> {
     fn poll_read_ready(&self, cx: &mut Context) -> Poll<io::Result<()>> {
         Async::poll_readable(self, cx)
     }
@@ -20,32 +24,26 @@ impl AsyncWrappedUdpSocket for Async<std::net::UdpSocket> {
         // async-std doesn't need this
     }
 
-    fn try_recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, std::net::SocketAddr)> {
+    fn recv_from(&self, buf: &mut [u8]) -> io::Result<(usize, SocketAddr)> {
         self.get_ref().recv_from(buf)
     }
 
-    fn try_send_to(&self, buf: &[u8], target: std::net::SocketAddr) -> io::Result<usize> {
+    fn send_to(&self, buf: &[u8], target: SocketAddr) -> io::Result<usize> {
         self.get_ref().send_to(buf, target)
     }
 
-    fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
+    fn local_addr(&self) -> io::Result<SocketAddr> {
         self.get_ref().local_addr()
     }
 
     #[cfg(unix)]
-    fn get_ref(&self) -> &std::net::UdpSocket {
+    fn get_ref(&self) -> &StdUdpSocket {
         Async::get_ref(self)
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct AsyncStdRuntime;
-
 impl Runtime for AsyncStdRuntime {
-    fn wrap_udp_socket(
-        &self,
-        t: std::net::UdpSocket,
-    ) -> io::Result<Box<dyn AsyncWrappedUdpSocket>> {
+    fn wrap_udp_socket(&self, t: StdUdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
         Ok(Box::new(Async::new(t)?))
     }
 }

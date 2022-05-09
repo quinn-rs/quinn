@@ -20,9 +20,9 @@ libc = "0.2.69"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }
 socket2 = "0.4"
 tracing = "0.1.10"
-tokio = { version = "1.0.1", features = [ "net" ], optional = true }
+tokio = { version = "1.0.1", features = ["net"], optional = true }
 async-io = { version = "1.6", optional = true }
 
 [features]
-runtime-tokio = [ "tokio" ]
-runtime-async-std = [ "async-io" ]
+runtime-tokio = ["tokio"]
+runtime-async-std = ["async-io"]

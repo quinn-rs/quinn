@@ -13,7 +13,7 @@ use std::{
 use proto::{EcnCodepoint, Transmit};
 
 use super::{cmsg, log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
-use crate::runtime::AsyncWrappedUdpSocket;
+use crate::runtime::AsyncUdpSocket;
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
@@ -45,16 +45,16 @@ fn only_v6(sock: &std::net::UdpSocket) -> io::Result<bool> {
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocket {
-    io: Box<dyn AsyncWrappedUdpSocket>,
+    io: Box<dyn AsyncUdpSocket>,
     last_send_error: Instant,
 }
 
 impl UdpSocket {
-    pub fn new(socket: Box<dyn AsyncWrappedUdpSocket>) -> io::Result<UdpSocket> {
-        init(socket.get_ref())?;
+    pub fn new(io: Box<dyn AsyncUdpSocket>) -> io::Result<UdpSocket> {
+        init(io.get_ref())?;
         let now = Instant::now();
         Ok(UdpSocket {
-            io: socket,
+            io,
             last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
         })
     }

@@ -5,7 +5,7 @@ use std::{
     time::Instant,
 };
 
-use crate::runtime::AsyncWrappedUdpSocket;
+use crate::runtime::AsyncUdpSocket;
 use proto::Transmit;
 
 use super::{log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
@@ -16,15 +16,15 @@ use super::{log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocket {
-    io: Box<dyn AsyncWrappedUdpSocket>,
+    io: Box<dyn AsyncUdpSocket>,
     last_send_error: Instant,
 }
 
 impl UdpSocket {
-    pub fn new(socket: Box<dyn AsyncWrappedUdpSocket>) -> io::Result<UdpSocket> {
+    pub fn new(io: Box<dyn AsyncUdpSocket>) -> io::Result<UdpSocket> {
         let now = Instant::now();
         Ok(UdpSocket {
-            io: socket,
+            io,
             last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
         })
     }
@@ -42,10 +42,7 @@ impl UdpSocket {
 
                 break match poll_res {
                     Poll::Ready(Ok(())) => Poll::Ready(
-                        match self
-                            .io
-                            .try_send_to(&transmit.contents, transmit.destination)
-                        {
+                        match self.io.send_to(&transmit.contents, transmit.destination) {
                             Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                                 self.io.clear_write_ready(cx);
                                 continue; // try again
@@ -96,7 +93,7 @@ impl UdpSocket {
         let (len, addr) = loop {
             ready!(self.io.poll_read_ready(cx))?;
 
-            break match self.io.try_recv_from(&mut bufs[0]) {
+            break match self.io.recv_from(&mut bufs[0]) {
                 Err(e) if e.kind() == io::ErrorKind::WouldBlock => {
                     self.io.clear_read_ready(cx);
                     continue; // try again
