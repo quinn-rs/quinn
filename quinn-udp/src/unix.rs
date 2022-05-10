@@ -645,7 +645,14 @@ mod gro {
         };
 
         if rc != -1 {
-            10
+            // As defined in net/ipv4/udp_offload.c
+            // #define UDP_GRO_CNT_MAX 64
+            //
+            // NOTE: this MUST be set to UDP_GRO_CNT_MAX to ensure that the receive buffer size
+            // (get_max_udp_payload_size() * gro_segments()) is large enough to hold the largest GRO
+            // list the kernel might potentially produce. See
+            // https://github.com/quinn-rs/quinn/pull/1354.
+            64
         } else {
             1
         }
