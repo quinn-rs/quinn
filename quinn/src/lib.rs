@@ -70,8 +70,8 @@ pub use proto::{
 };
 
 pub use crate::connection::{
-    Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams, NewConnection,
-    SendDatagramError, UnknownStream, ZeroRttAccepted,
+    AcceptBi, AcceptUni, Connecting, Connection, Datagrams, IncomingBiStreams, IncomingUniStreams,
+    NewConnection, ReadDatagram, SendDatagramError, UnknownStream, ZeroRttAccepted,
 };
 pub use crate::endpoint::{Endpoint, Incoming};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream};
