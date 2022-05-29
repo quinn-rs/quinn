@@ -119,7 +119,7 @@ crates will always be at least 6 months old at the time of release.
 [rustls]: https://github.com/ctz/rustls
 [ring]: https://github.com/briansmith/ring
 [talk]: https://paris.rustfest.eu/sessions/a-quic-future-in-rust
-[slides]: https://dirkjan.ochtman.nl/files/quic-future-in-rust.pdf
+[slides]: https://github.com/djc/talks/blob/ff760845b51ba4836cce82e7f2c640ecb5fd59fa/2018-05-26%20A%20QUIC%20future%20in%20Rust/Quinn-Speaker.pdf
 [animation]: https://dirkjan.ochtman.nl/files/head-of-line-blocking.html
 [youtube]: https://www.youtube.com/watch?v=EHgyY5DNdvI
 [letsencrypt]: https://letsencrypt.org/
