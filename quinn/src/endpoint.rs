@@ -17,8 +17,12 @@ use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
-use tokio::sync::{mpsc, Notify};
-use udp::{RecvMeta, UdpSocket, UdpState, BATCH_SIZE};
+use tokio::{
+    io::Interest,
+    net::UdpSocket,
+    sync::{mpsc, Notify},
+};
+use udp::{RecvMeta, UdpSocketState, UdpState, BATCH_SIZE};
 
 use crate::{
     connection::Connecting, poll_fn, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
@@ -78,6 +82,7 @@ impl Endpoint {
         socket: std::net::UdpSocket,
     ) -> io::Result<(Self, Incoming)> {
         let addr = socket.local_addr()?;
+        UdpSocketState::configure((&socket).into())?;
         let socket = UdpSocket::from_std(socket)?;
         let rc = EndpointRef::new(
             socket,
@@ -157,6 +162,7 @@ impl Endpoint {
     /// On error, the old UDP socket is retained.
     pub fn rebind(&self, socket: std::net::UdpSocket) -> io::Result<()> {
         let addr = socket.local_addr()?;
+        UdpSocketState::configure((&socket).into())?;
         let socket = UdpSocket::from_std(socket)?;
         let mut inner = self.inner.lock().unwrap();
         inner.socket = socket;
@@ -308,6 +314,7 @@ impl Drop for EndpointDriver {
 #[derive(Debug)]
 pub(crate) struct EndpointInner {
     socket: UdpSocket,
+    socket_state: UdpSocketState,
     udp_state: Arc<UdpState>,
     inner: proto::Endpoint,
     outgoing: VecDeque<proto::Transmit>,
@@ -342,8 +349,17 @@ impl EndpointInner {
             });
         let mut iovs = unsafe { iovs.assume_init() };
         loop {
-            match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
-                Poll::Ready(Ok(msgs)) => {
+            match self.socket.poll_recv_ready(cx) {
+                Poll::Pending => break,
+                Poll::Ready(Err(e)) => return Err(e),
+                Poll::Ready(Ok(())) => {}
+            }
+            let result = self.socket.try_io(Interest::READABLE, || {
+                self.socket_state
+                    .recv((&self.socket).into(), &mut iovs, &mut metas)
+            });
+            match result {
+                Ok(msgs) => {
                     self.recv_limiter.record_work(msgs);
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
                         let mut data: BytesMut = buf[0..meta.len].into();
@@ -375,15 +391,16 @@ impl EndpointInner {
                         }
                     }
                 }
-                Poll::Pending => {
-                    break;
-                }
                 // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an
                 // attacker
-                Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::ConnectionReset => {
+                Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => {
                     continue;
                 }
-                Poll::Ready(Err(e)) => {
+                // Re-poll to register for wakeup
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    continue;
+                }
+                Err(e) => {
                     return Err(e);
                 }
             }
@@ -416,20 +433,30 @@ impl EndpointInner {
                 break Ok(true);
             }
 
-            match self
-                .socket
-                .poll_send(&self.udp_state, cx, self.outgoing.as_slices().0)
-            {
-                Poll::Ready(Ok(n)) => {
+            match self.socket.poll_send_ready(cx) {
+                Poll::Pending => break Ok(false),
+                Poll::Ready(Err(e)) => return Err(e),
+                Poll::Ready(Ok(())) => {}
+            }
+            let result = self.socket.try_io(Interest::WRITABLE, || {
+                self.socket_state.send(
+                    (&self.socket).into(),
+                    &self.udp_state,
+                    self.outgoing.as_slices().0,
+                )
+            });
+            match result {
+                Ok(n) => {
                     self.outgoing.drain(..n);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearily increases with number of packets.
                     self.send_limiter.record_work(n);
                 }
-                Poll::Pending => {
-                    break Ok(false);
+                // Re-poll to register for wakeup
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    continue;
                 }
-                Poll::Ready(Err(e)) => {
+                Err(e) => {
                     break Err(e);
                 }
             }
@@ -580,6 +607,7 @@ impl EndpointRef {
         let (sender, events) = mpsc::unbounded_channel();
         Self(Arc::new(Mutex::new(EndpointInner {
             socket,
+            socket_state: UdpSocketState::new(),
             udp_state,
             inner,
             ipv6,

@@ -39,8 +39,8 @@ proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", def
 rustls = { version = "0.20.3", default-features = false, features = ["quic"], optional = true }
 thiserror = "1.0.21"
 tracing = "0.1.10"
-tokio = { version = "1.0.1", features = ["rt", "time", "sync"] }
-udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.1.0" }
+tokio = { version = "1.0.1", features = ["rt", "time", "sync", "net"] }
+udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.2" }
 webpki = { version = "0.22", default-features = false, optional = true }
 
 [dev-dependencies]

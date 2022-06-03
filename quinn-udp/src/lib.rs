@@ -1,4 +1,8 @@
 //! Uniform interface to send/recv UDP packets with ECN information.
+#[cfg(unix)]
+use std::os::unix::io::AsRawFd;
+#[cfg(windows)]
+use std::os::windows::io::AsRawSocket;
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::atomic::{AtomicUsize, Ordering},
@@ -7,15 +11,6 @@ use std::{
 
 use proto::{EcnCodepoint, Transmit};
 use tracing::warn;
-
-macro_rules! ready {
-    ($e:expr $(,)?) => {
-        match $e {
-            std::task::Poll::Ready(t) => t,
-            std::task::Poll::Pending => return std::task::Poll::Pending,
-        }
-    };
-}
 
 #[cfg(unix)]
 mod cmsg;
@@ -28,7 +23,7 @@ mod imp;
 #[path = "fallback.rs"]
 mod imp;
 
-pub use imp::UdpSocket;
+pub use imp::UdpSocketState;
 
 /// Number of UDP packets to send/receive at a time
 pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
@@ -112,5 +107,32 @@ fn log_sendmsg_error(
         warn!(
         "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, enc: {:?}, len: {:?}, segment_size: {:?} }}",
             err, transmit.destination, transmit.src_ip, transmit.ecn, transmit.contents.len(), transmit.segment_size);
+    }
+}
+
+/// A borrowed UDP socket
+///
+/// On Unix, constructible via `From<T: AsRawFd>`. On Windows, constructible via `From<T:
+/// AsRawSocket>`.
+// Wrapper around socket2 to avoid making it a public dependency and incurring stability risk
+pub struct UdpSockRef<'a>(socket2::SockRef<'a>);
+
+#[cfg(unix)]
+impl<'s, S> From<&'s S> for UdpSockRef<'s>
+where
+    S: AsRawFd,
+{
+    fn from(socket: &'s S) -> Self {
+        Self(socket.into())
+    }
+}
+
+#[cfg(windows)]
+impl<'s, S> From<&'s S> for UdpSockRef<'s>
+where
+    S: AsRawSocket,
+{
+    fn from(socket: &'s S) -> Self {
+        Self(socket.into())
     }
 }

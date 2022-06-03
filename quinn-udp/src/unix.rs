@@ -6,21 +6,20 @@ use std::{
     os::unix::io::AsRawFd,
     ptr,
     sync::atomic::AtomicUsize,
-    task::{Context, Poll},
     time::Instant,
 };
 
 use proto::{EcnCodepoint, Transmit};
-use tokio::io::unix::AsyncFd;
+use socket2::SockRef;
 
-use super::{cmsg, log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
+use super::{cmsg, log_sendmsg_error, RecvMeta, UdpSockRef, UdpState, IO_ERROR_LOG_INTERVAL};
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
 #[cfg(not(target_os = "freebsd"))]
 type IpTosTy = libc::c_int;
 
-fn only_v6(sock: &std::net::UdpSocket) -> io::Result<bool> {
+fn only_v6(sock: &SockRef<'_>) -> io::Result<bool> {
     let raw_fd = sock.as_raw_fd();
     let mut val: libc::c_int = 0;
     let mut len = mem::size_of::<libc::c_int>() as libc::socklen_t;
@@ -44,61 +43,48 @@ fn only_v6(sock: &std::net::UdpSocket) -> io::Result<bool> {
 /// Unlike a standard tokio UDP socket, this allows ECN bits to be read and written on some
 /// platforms.
 #[derive(Debug)]
-pub struct UdpSocket {
-    io: AsyncFd<std::net::UdpSocket>,
+pub struct UdpSocketState {
     last_send_error: Instant,
 }
 
-impl UdpSocket {
-    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
-        socket.set_nonblocking(true)?;
-
-        init(&socket)?;
+impl UdpSocketState {
+    pub fn new() -> Self {
         let now = Instant::now();
-        Ok(UdpSocket {
-            io: AsyncFd::new(socket)?,
+        Self {
             last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
-        })
-    }
-
-    pub fn poll_send(
-        &mut self,
-        state: &UdpState,
-        cx: &mut Context,
-        transmits: &[Transmit],
-    ) -> Poll<Result<usize, io::Error>> {
-        loop {
-            let last_send_error = &mut self.last_send_error;
-            let mut guard = ready!(self.io.poll_write_ready(cx))?;
-            if let Ok(res) =
-                guard.try_io(|io| send(state, io.get_ref(), last_send_error, transmits))
-            {
-                return Poll::Ready(res);
-            }
         }
     }
 
-    pub fn poll_recv(
+    pub fn configure(sock: UdpSockRef<'_>) -> io::Result<()> {
+        init(sock.0)
+    }
+
+    pub fn send(
+        &mut self,
+        socket: UdpSockRef<'_>,
+        state: &UdpState,
+        transmits: &[Transmit],
+    ) -> Result<usize, io::Error> {
+        send(state, socket.0, &mut self.last_send_error, transmits)
+    }
+
+    pub fn recv(
         &self,
-        cx: &mut Context,
+        socket: UdpSockRef<'_>,
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        debug_assert!(!bufs.is_empty());
-        loop {
-            let mut guard = ready!(self.io.poll_read_ready(cx))?;
-            if let Ok(res) = guard.try_io(|io| recv(io.get_ref(), bufs, meta)) {
-                return Poll::Ready(res);
-            }
-        }
-    }
-
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.io.get_ref().local_addr()
+    ) -> io::Result<usize> {
+        recv(socket.0, bufs, meta)
     }
 }
 
-fn init(io: &std::net::UdpSocket) -> io::Result<()> {
+impl Default for UdpSocketState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+fn init(io: SockRef<'_>) -> io::Result<()> {
     let mut cmsg_platform_space = 0;
     if cfg!(target_os = "linux") {
         cmsg_platform_space +=
@@ -115,10 +101,13 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
         "control message buffers will be misaligned"
     );
 
+    io.set_nonblocking(true)?;
+
     let addr = io.local_addr()?;
+    let is_ipv4 = addr.family() == libc::AF_INET as libc::sa_family_t;
 
     // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
-    if addr.is_ipv4() || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !only_v6(io)?) {
+    if is_ipv4 || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !only_v6(&io)?) {
         let on: libc::c_int = 1;
         let rc = unsafe {
             libc::setsockopt(
@@ -161,7 +150,7 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
 
-        if addr.is_ipv4() {
+        if is_ipv4 {
             let on: libc::c_int = 1;
             let rc = unsafe {
                 libc::setsockopt(
@@ -175,7 +164,7 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
             if rc == -1 {
                 return Err(io::Error::last_os_error());
             }
-        } else if addr.is_ipv6() {
+        } else {
             let rc = unsafe {
                 libc::setsockopt(
                     io.as_raw_fd(),
@@ -204,7 +193,7 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
             }
         }
     }
-    if addr.is_ipv6() {
+    if !is_ipv4 {
         let on: libc::c_int = 1;
         let rc = unsafe {
             libc::setsockopt(
@@ -225,7 +214,7 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 fn send(
     state: &UdpState,
-    io: &std::net::UdpSocket,
+    io: SockRef<'_>,
     last_send_error: &mut Instant,
     transmits: &[Transmit],
 ) -> io::Result<usize> {
@@ -308,7 +297,7 @@ fn send(
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn send(
     _state: &UdpState,
-    io: &std::net::UdpSocket,
+    io: SockRef<'_>,
     last_send_error: &mut Instant,
     transmits: &[Transmit],
 ) -> io::Result<usize> {
@@ -347,11 +336,7 @@ fn send(
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
-fn recv(
-    io: &std::net::UdpSocket,
-    bufs: &mut [IoSliceMut<'_>],
-    meta: &mut [RecvMeta],
-) -> io::Result<usize> {
+fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
     let mut hdrs = unsafe { mem::zeroed::<[libc::mmsghdr; BATCH_SIZE]>() };
@@ -390,11 +375,7 @@ fn recv(
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn recv(
-    io: &std::net::UdpSocket,
-    bufs: &mut [IoSliceMut<'_>],
-    meta: &mut [RecvMeta],
-) -> io::Result<usize> {
+fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
     let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
     let mut hdr = unsafe { mem::zeroed::<libc::msghdr>() };
