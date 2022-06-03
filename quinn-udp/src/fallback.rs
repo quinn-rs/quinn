@@ -1,59 +1,58 @@
 use std::{
     io::{self, IoSliceMut},
-    net::SocketAddr,
-    task::{Context, Poll},
     time::Instant,
 };
 
 use proto::Transmit;
-use tokio::io::ReadBuf;
 
-use super::{log_sendmsg_error, RecvMeta, UdpState, IO_ERROR_LOG_INTERVAL};
+use super::{log_sendmsg_error, RecvMeta, UdpSockRef, UdpState, IO_ERROR_LOG_INTERVAL};
 
-/// Tokio-compatible UDP socket with some useful specializations.
+/// Fallback UDP socket interface that stubs out all special functionality
 ///
-/// Unlike a standard tokio UDP socket, this allows ECN bits to be read and written on some
-/// platforms.
+/// Used when a better implementation is not available for a particular target, at the cost of
+/// reduced performance compared to that enabled by some target-specific interfaces.
 #[derive(Debug)]
-pub struct UdpSocket {
-    io: tokio::net::UdpSocket,
+pub struct UdpSocketState {
     last_send_error: Instant,
 }
 
-impl UdpSocket {
-    pub fn from_std(socket: std::net::UdpSocket) -> io::Result<UdpSocket> {
-        socket.set_nonblocking(true)?;
+impl UdpSocketState {
+    pub fn new() -> Self {
         let now = Instant::now();
-        Ok(UdpSocket {
-            io: tokio::net::UdpSocket::from_std(socket)?,
+        Self {
             last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
-        })
+        }
     }
 
-    pub fn poll_send(
+    pub fn configure(socket: UdpSockRef<'_>) -> io::Result<()> {
+        socket.0.set_nonblocking(true)
+    }
+
+    pub fn send(
         &mut self,
+        socket: UdpSockRef<'_>,
         _state: &UdpState,
-        cx: &mut Context,
         transmits: &[Transmit],
-    ) -> Poll<Result<usize, io::Error>> {
+    ) -> Result<usize, io::Error> {
         let mut sent = 0;
         for transmit in transmits {
-            match self
-                .io
-                .poll_send_to(cx, &transmit.contents, transmit.destination)
-            {
-                Poll::Ready(Ok(_)) => {
+            match socket.0.send_to(
+                &transmit.contents,
+                &socket2::SockAddr::from(transmit.destination),
+            ) {
+                Ok(_) => {
                     sent += 1;
                 }
                 // We need to report that some packets were sent in this case, so we rely on
                 // errors being either harmlessly transient (in the case of WouldBlock) or
                 // recurring on the next call.
-                Poll::Ready(Err(_)) | Poll::Pending if sent != 0 => return Poll::Ready(Ok(sent)),
-                Poll::Ready(Err(e)) => {
-                    // WouldBlock is expected to be returned as `Poll::Pending`
-                    debug_assert!(e.kind() != io::ErrorKind::WouldBlock);
+                Err(_) if sent != 0 => return Ok(sent),
+                Err(e) => {
+                    if e.kind() == io::ErrorKind::WouldBlock {
+                        return Err(e);
+                    }
 
-                    // Errors are ignored, since they will ususally be handled
+                    // Other errors are ignored, since they will ususally be handled
                     // by higher level retransmits and timeouts.
                     // - PermissionDenied errors have been observed due to iptable rules.
                     //   Those are not fatal errors, since the
@@ -62,34 +61,39 @@ impl UdpSocket {
                     log_sendmsg_error(&mut self.last_send_error, e, transmit);
                     sent += 1;
                 }
-                Poll::Pending => return Poll::Pending,
             }
         }
-        Poll::Ready(Ok(sent))
+        Ok(sent)
     }
 
-    pub fn poll_recv(
+    pub fn recv(
         &self,
-        cx: &mut Context,
+        socket: UdpSockRef<'_>,
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
-    ) -> Poll<io::Result<usize>> {
-        debug_assert!(!bufs.is_empty());
-        let mut buf = ReadBuf::new(&mut bufs[0]);
-        let addr = ready!(self.io.poll_recv_from(cx, &mut buf))?;
-        let len = buf.filled().len();
+    ) -> io::Result<usize> {
+        // Safety: both `IoSliceMut` and `MaybeUninitSlice` promise to have the
+        // same layout, that of `iovec`/`WSABUF`. Furthermore `recv_vectored`
+        // promises to not write unitialised bytes to the `bufs` and pass it
+        // directly to the `recvmsg` system call, so this is safe.
+        let bufs = unsafe {
+            &mut *(bufs as *mut [IoSliceMut<'_>] as *mut [socket2::MaybeUninitSlice<'_>])
+        };
+        let (len, _flags, addr) = socket.0.recv_from_vectored(bufs)?;
         meta[0] = RecvMeta {
             len,
             stride: len,
-            addr,
+            addr: addr.as_socket().unwrap(),
             ecn: None,
             dst_ip: None,
         };
-        Poll::Ready(Ok(1))
+        Ok(1)
     }
+}
 
-    pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.io.local_addr()
+impl Default for UdpSocketState {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
