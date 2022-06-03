@@ -19,25 +19,6 @@ type IpTosTy = libc::c_uchar;
 #[cfg(not(target_os = "freebsd"))]
 type IpTosTy = libc::c_int;
 
-fn only_v6(sock: &SockRef<'_>) -> io::Result<bool> {
-    let raw_fd = sock.as_raw_fd();
-    let mut val: libc::c_int = 0;
-    let mut len = mem::size_of::<libc::c_int>() as libc::socklen_t;
-    let res = unsafe {
-        libc::getsockopt(
-            raw_fd,
-            libc::IPPROTO_IPV6,
-            libc::IPV6_V6ONLY,
-            &mut val as *mut _ as *mut _,
-            &mut len,
-        )
-    };
-    match res {
-        -1 => Err(io::Error::last_os_error()),
-        _ => Ok(val != 0),
-    }
-}
-
 /// Tokio-compatible UDP socket with some useful specializations.
 ///
 /// Unlike a standard tokio UDP socket, this allows ECN bits to be read and written on some
@@ -107,7 +88,7 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
     let is_ipv4 = addr.family() == libc::AF_INET as libc::sa_family_t;
 
     // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
-    if is_ipv4 || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !only_v6(&io)?) {
+    if is_ipv4 || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !io.only_v6()?) {
         let on: libc::c_int = 1;
         let rc = unsafe {
             libc::setsockopt(
