@@ -3,6 +3,7 @@ use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
+use quinn::TokioRuntime;
 use tracing::{debug, error, info};
 
 use perf::bind_socket;
@@ -77,9 +78,13 @@ async fn run(opt: Opt) -> Result<()> {
 
     let socket = bind_socket(opt.listen, opt.send_buffer_size, opt.recv_buffer_size)?;
 
-    let (endpoint, mut incoming) =
-        quinn::Endpoint::new(Default::default(), Some(server_config), socket)
-            .context("creating endpoint")?;
+    let (endpoint, mut incoming) = quinn::Endpoint::new(
+        Default::default(),
+        Some(server_config),
+        socket,
+        TokioRuntime,
+    )
+    .context("creating endpoint")?;
 
     info!("listening on {}", endpoint.local_addr().unwrap());
 

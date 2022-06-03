@@ -12,17 +12,14 @@ use std::{
     time::Instant,
 };
 
+use crate::runtime::{default_runtime, AsyncUdpSocket, Runtime};
 use bytes::{Bytes, BytesMut};
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
-use tokio::{
-    io::Interest,
-    net::UdpSocket,
-    sync::{mpsc, Notify},
-};
-use udp::{RecvMeta, UdpSocketState, UdpState, BATCH_SIZE};
+use tokio::sync::{mpsc, Notify};
+use udp::{RecvMeta, UdpState, BATCH_SIZE};
 
 use crate::{
     connection::Connecting, poll_fn, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
@@ -39,15 +36,15 @@ use crate::{
 pub struct Endpoint {
     pub(crate) inner: EndpointRef,
     pub(crate) default_client_config: Option<ClientConfig>,
+    runtime: Arc<Box<dyn Runtime>>,
 }
 
 impl Endpoint {
     /// Helper to construct an endpoint for use with outgoing connections only
     ///
-    /// Must be called from within a tokio runtime context. Note that `addr` is the *local* address
-    /// to bind to, which should usually be a wildcard address like `0.0.0.0:0` or `[::]:0`, which
-    /// allow communication with any reachable IPv4 or IPv6 address respectively from an OS-assigned
-    /// port.
+    /// Note that `addr` is the *local* address to bind to, which should usually be a wildcard
+    /// address like `0.0.0.0:0` or `[::]:0`, which allow communication with any reachable IPv4 or
+    /// IPv6 address respectively from an OS-assigned port.
     ///
     /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
@@ -56,12 +53,18 @@ impl Endpoint {
     #[cfg(feature = "ring")]
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
-        Ok(Self::new(EndpointConfig::default(), None, socket)?.0)
+        let runtime = default_runtime()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
+        Ok(Self::new_with_runtime(
+            EndpointConfig::default(),
+            None,
+            runtime.wrap_udp_socket(socket)?,
+            runtime,
+        )?
+        .0)
     }
 
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
-    ///
-    /// Must be called from within a tokio runtime context.
     ///
     /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
@@ -70,35 +73,65 @@ impl Endpoint {
     #[cfg(feature = "ring")]
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<(Self, Incoming)> {
         let socket = std::net::UdpSocket::bind(addr)?;
-        Self::new(EndpointConfig::default(), Some(config), socket)
+        let runtime = default_runtime()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
+        Self::new_with_runtime(
+            EndpointConfig::default(),
+            Some(config),
+            runtime.wrap_udp_socket(socket)?,
+            runtime,
+        )
     }
 
-    /// Construct an endpoint with arbitrary configuration
-    ///
-    /// Must be called from within a tokio runtime context.
+    /// Construct an endpoint with arbitrary configuration and socket
     pub fn new(
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: std::net::UdpSocket,
+        runtime: impl Runtime,
     ) -> io::Result<(Self, Incoming)> {
+        let socket = runtime.wrap_udp_socket(socket)?;
+        Self::new_with_runtime(config, server_config, socket, Box::new(runtime))
+    }
+
+    /// Construct an endpoint with arbitrary configuration and pre-constructed abstract socket
+    ///
+    /// Useful when `socket` has additional state (e.g. sidechannels) attached for which shared
+    /// ownership is needed.
+    pub fn new_with_abstract_socket(
+        config: EndpointConfig,
+        server_config: Option<ServerConfig>,
+        socket: impl AsyncUdpSocket,
+        runtime: impl Runtime,
+    ) -> io::Result<(Self, Incoming)> {
+        Self::new_with_runtime(config, server_config, Box::new(socket), Box::new(runtime))
+    }
+
+    fn new_with_runtime(
+        config: EndpointConfig,
+        server_config: Option<ServerConfig>,
+        socket: Box<dyn AsyncUdpSocket>,
+        runtime: Box<dyn Runtime>,
+    ) -> io::Result<(Self, Incoming)> {
+        let runtime = Arc::new(runtime);
         let addr = socket.local_addr()?;
-        UdpSocketState::configure((&socket).into())?;
-        let socket = UdpSocket::from_std(socket)?;
         let rc = EndpointRef::new(
             socket,
             proto::Endpoint::new(Arc::new(config), server_config.map(Arc::new)),
             addr.is_ipv6(),
+            runtime.clone(),
         );
         let driver = EndpointDriver(rc.clone());
-        tokio::spawn(async {
+        runtime.spawn(Box::pin(async {
             if let Err(e) = driver.await {
                 tracing::error!("I/O error: {}", e);
             }
-        });
+        }));
         Ok((
             Self {
                 inner: rc.clone(),
                 default_client_config: None,
+                runtime,
             },
             Incoming::new(rc),
         ))
@@ -151,7 +184,9 @@ impl Endpoint {
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
         let udp_state = endpoint.udp_state.clone();
-        Ok(endpoint.connections.insert(ch, conn, udp_state))
+        Ok(endpoint
+            .connections
+            .insert(ch, conn, udp_state, self.runtime.clone()))
     }
 
     /// Switch to a new UDP socket
@@ -162,8 +197,7 @@ impl Endpoint {
     /// On error, the old UDP socket is retained.
     pub fn rebind(&self, socket: std::net::UdpSocket) -> io::Result<()> {
         let addr = socket.local_addr()?;
-        UdpSocketState::configure((&socket).into())?;
-        let socket = UdpSocket::from_std(socket)?;
+        let socket = self.runtime.wrap_udp_socket(socket)?;
         let mut inner = self.inner.lock().unwrap();
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
@@ -313,8 +347,7 @@ impl Drop for EndpointDriver {
 
 #[derive(Debug)]
 pub(crate) struct EndpointInner {
-    socket: UdpSocket,
-    socket_state: UdpSocketState,
+    socket: Box<dyn AsyncUdpSocket>,
     udp_state: Arc<UdpState>,
     inner: proto::Endpoint,
     outgoing: VecDeque<proto::Transmit>,
@@ -331,6 +364,7 @@ pub(crate) struct EndpointInner {
     recv_buf: Box<[u8]>,
     send_limiter: WorkLimiter,
     idle: Arc<Notify>,
+    runtime: Arc<Box<dyn Runtime>>,
 }
 
 impl EndpointInner {
@@ -349,17 +383,8 @@ impl EndpointInner {
             });
         let mut iovs = unsafe { iovs.assume_init() };
         loop {
-            match self.socket.poll_recv_ready(cx) {
-                Poll::Pending => break,
-                Poll::Ready(Err(e)) => return Err(e),
-                Poll::Ready(Ok(())) => {}
-            }
-            let result = self.socket.try_io(Interest::READABLE, || {
-                self.socket_state
-                    .recv((&self.socket).into(), &mut iovs, &mut metas)
-            });
-            match result {
-                Ok(msgs) => {
+            match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
+                Poll::Ready(Ok(msgs)) => {
                     self.recv_limiter.record_work(msgs);
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
                         let mut data: BytesMut = buf[0..meta.len].into();
@@ -374,6 +399,7 @@ impl EndpointInner {
                                         handle,
                                         conn,
                                         self.udp_state.clone(),
+                                        self.runtime.clone(),
                                     );
                                     self.incoming.push_back(conn);
                                 }
@@ -391,16 +417,15 @@ impl EndpointInner {
                         }
                     }
                 }
+                Poll::Pending => {
+                    break;
+                }
                 // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an
                 // attacker
-                Err(ref e) if e.kind() == io::ErrorKind::ConnectionReset => {
+                Poll::Ready(Err(ref e)) if e.kind() == io::ErrorKind::ConnectionReset => {
                     continue;
                 }
-                // Re-poll to register for wakeup
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    continue;
-                }
-                Err(e) => {
+                Poll::Ready(Err(e)) => {
                     return Err(e);
                 }
             }
@@ -433,30 +458,20 @@ impl EndpointInner {
                 break Ok(true);
             }
 
-            match self.socket.poll_send_ready(cx) {
-                Poll::Pending => break Ok(false),
-                Poll::Ready(Err(e)) => return Err(e),
-                Poll::Ready(Ok(())) => {}
-            }
-            let result = self.socket.try_io(Interest::WRITABLE, || {
-                self.socket_state.send(
-                    (&self.socket).into(),
-                    &self.udp_state,
-                    self.outgoing.as_slices().0,
-                )
-            });
-            match result {
-                Ok(n) => {
+            match self
+                .socket
+                .poll_send(&self.udp_state, cx, self.outgoing.as_slices().0)
+            {
+                Poll::Ready(Ok(n)) => {
                     self.outgoing.drain(..n);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearily increases with number of packets.
                     self.send_limiter.record_work(n);
                 }
-                // Re-poll to register for wakeup
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
-                    continue;
+                Poll::Pending => {
+                    break Ok(false);
                 }
-                Err(e) => {
+                Poll::Ready(Err(e)) => {
                     break Err(e);
                 }
             }
@@ -518,6 +533,7 @@ impl ConnectionSet {
         handle: ConnectionHandle,
         conn: proto::Connection,
         udp_state: Arc<UdpState>,
+        runtime: Arc<Box<dyn Runtime>>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
         if let Some((error_code, ref reason)) = self.close {
@@ -528,7 +544,7 @@ impl ConnectionSet {
             .unwrap();
         }
         self.senders.insert(handle, send);
-        Connecting::new(handle, conn, self.sender.clone(), recv, udp_state)
+        Connecting::new(handle, conn, self.sender.clone(), recv, udp_state, runtime)
     }
 
     fn is_empty(&self) -> bool {
@@ -596,7 +612,12 @@ impl Drop for Incoming {
 pub(crate) struct EndpointRef(Arc<Mutex<EndpointInner>>);
 
 impl EndpointRef {
-    pub(crate) fn new(socket: UdpSocket, inner: proto::Endpoint, ipv6: bool) -> Self {
+    pub(crate) fn new(
+        socket: Box<dyn AsyncUdpSocket>,
+        inner: proto::Endpoint,
+        ipv6: bool,
+        runtime: Arc<Box<dyn Runtime>>,
+    ) -> Self {
         let udp_state = Arc::new(UdpState::new());
         let recv_buf = vec![
             0;
@@ -607,7 +628,6 @@ impl EndpointRef {
         let (sender, events) = mpsc::unbounded_channel();
         Self(Arc::new(Mutex::new(EndpointInner {
             socket,
-            socket_state: UdpSocketState::new(),
             udp_state,
             inner,
             ipv6,
@@ -627,6 +647,7 @@ impl EndpointRef {
             recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
             send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
             idle: Arc::new(Notify::new()),
+            runtime,
         })))
     }
 }

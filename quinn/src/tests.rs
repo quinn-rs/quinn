@@ -8,6 +8,7 @@ use std::{
     sync::Arc,
 };
 
+use crate::runtime::TokioRuntime;
 use bytes::Bytes;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use tokio::{
@@ -103,7 +104,7 @@ fn local_addr() {
     let runtime = rt_basic();
     let (ep, _) = {
         let _guard = runtime.enter();
-        Endpoint::new(Default::default(), None, socket).unwrap()
+        Endpoint::new(Default::default(), None, socket, TokioRuntime).unwrap()
     };
     assert_eq!(
         addr,
@@ -454,7 +455,13 @@ fn run_echo(args: EchoArgs) {
         let server_addr = server_sock.local_addr().unwrap();
         let (server, mut server_incoming) = {
             let _guard = runtime.enter();
-            Endpoint::new(Default::default(), Some(server_config), server_sock).unwrap()
+            Endpoint::new(
+                Default::default(),
+                Some(server_config),
+                server_sock,
+                TokioRuntime,
+            )
+            .unwrap()
         };
 
         let mut roots = rustls::RootCertStore::empty();
