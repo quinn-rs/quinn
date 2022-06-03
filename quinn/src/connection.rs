@@ -10,12 +10,12 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::runtime::{AsyncTimer, Runtime};
 use bytes::Bytes;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{mpsc, oneshot, Notify};
-use tokio::time::{sleep_until, Instant as TokioInstant, Sleep};
 use tracing::debug_span;
 use udp::UdpState;
 
@@ -44,6 +44,7 @@ impl Connecting {
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         udp_state: Arc<UdpState>,
+        runtime: Arc<Box<dyn Runtime>>,
     ) -> Connecting {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
@@ -55,9 +56,10 @@ impl Connecting {
             on_handshake_data_send,
             on_connected_send,
             udp_state,
+            runtime.clone(),
         );
 
-        tokio::spawn(ConnectionDriver(conn.clone()));
+        runtime.spawn(Box::pin(ConnectionDriver(conn.clone())));
 
         Connecting {
             conn: Some(conn),
@@ -692,6 +694,7 @@ impl futures_core::Stream for Datagrams {
 pub struct ConnectionRef(Arc<Mutex<ConnectionInner>>);
 
 impl ConnectionRef {
+    #[allow(clippy::too_many_arguments)]
     fn new(
         handle: ConnectionHandle,
         conn: proto::Connection,
@@ -700,6 +703,7 @@ impl ConnectionRef {
         on_handshake_data: oneshot::Sender<()>,
         on_connected: oneshot::Sender<bool>,
         udp_state: Arc<UdpState>,
+        runtime: Arc<Box<dyn Runtime>>,
     ) -> Self {
         Self(Arc::new(Mutex::new(ConnectionInner {
             inner: conn,
@@ -723,6 +727,7 @@ impl ConnectionRef {
             error: None,
             ref_count: 0,
             udp_state,
+            runtime,
         })))
     }
 
@@ -768,8 +773,8 @@ pub struct ConnectionInner {
     on_handshake_data: Option<oneshot::Sender<()>>,
     on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
-    timer: Option<Pin<Box<Sleep>>>,
-    timer_deadline: Option<TokioInstant>,
+    timer: Option<Pin<Box<dyn AsyncTimer>>>,
+    timer_deadline: Option<Instant>,
     conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
@@ -785,6 +790,7 @@ pub struct ConnectionInner {
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
     udp_state: Arc<UdpState>,
+    runtime: Arc<Box<dyn Runtime>>,
 }
 
 impl ConnectionInner {
@@ -924,7 +930,7 @@ impl ConnectionInner {
         // Check whether we need to (re)set the timer. If so, we must poll again to ensure the
         // timer is registered with the runtime (and check whether it's already
         // expired).
-        match self.inner.poll_timeout().map(TokioInstant::from_std) {
+        match self.inner.poll_timeout() {
             Some(deadline) => {
                 if let Some(delay) = &mut self.timer {
                     // There is no need to reset the tokio timer if the deadline
@@ -937,7 +943,7 @@ impl ConnectionInner {
                         delay.as_mut().reset(deadline);
                     }
                 } else {
-                    self.timer = Some(Box::pin(sleep_until(deadline)));
+                    self.timer = Some(self.runtime.new_timer(deadline));
                 }
                 // Store the actual expiration time of the timer
                 self.timer_deadline = Some(deadline);
