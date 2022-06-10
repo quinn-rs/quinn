@@ -175,7 +175,7 @@ async fn client(
 
 async fn handle_client_stream(
     connection: Arc<quinn::Connection>,
-    upload_size: usize,
+    upload_size: u64,
     read_unordered: bool,
 ) -> Result<(TransferResult, TransferResult)> {
     let start = Instant::now();
@@ -191,7 +191,7 @@ async fn handle_client_stream(
 
     let start = Instant::now();
     let size = drain_stream(&mut recv_stream, read_unordered).await?;
-    let download_result = TransferResult::new(start.elapsed(), size);
+    let download_result = TransferResult::new(start.elapsed(), size as u64);
 
     Ok((upload_result, download_result))
 }
