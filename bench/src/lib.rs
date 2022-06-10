@@ -109,12 +109,12 @@ pub async fn drain_stream(stream: &mut quinn::RecvStream, read_unordered: bool) 
     Ok(read)
 }
 
-pub async fn send_data_on_stream(stream: &mut quinn::SendStream, stream_size: usize) -> Result<()> {
+pub async fn send_data_on_stream(stream: &mut quinn::SendStream, stream_size: u64) -> Result<()> {
     const DATA: &[u8] = &[0xAB; 1024 * 1024];
     let bytes_data = Bytes::from_static(DATA);
 
-    let full_chunks = stream_size / DATA.len();
-    let remaining = stream_size % DATA.len();
+    let full_chunks = stream_size / (DATA.len() as u64);
+    let remaining = (stream_size % (DATA.len() as u64)) as usize;
 
     for _ in 0..full_chunks {
         stream
@@ -164,13 +164,13 @@ pub struct Opt {
     /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10GiB
     /// will transfer 10GiB.
     #[structopt(long, default_value = "1G", parse(try_from_str = parse_byte_size))]
-    pub download_size: usize,
+    pub download_size: u64,
     /// Number of bytes to transmit from client to server
     ///
     /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10GiB
     /// will transfer 10GiB.
     #[structopt(long, default_value = "0", parse(try_from_str = parse_byte_size))]
-    pub upload_size: usize,
+    pub upload_size: u64,
     /// Show connection stats the at the end of the benchmark
     #[structopt(long = "stats")]
     pub stats: bool,
@@ -184,7 +184,7 @@ pub struct Opt {
     pub cipher: CipherSuite,
 }
 
-fn parse_byte_size(s: &str) -> Result<usize, ParseIntError> {
+fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
     let s = s.trim();
 
     let multiplier = match s.chars().last() {
@@ -201,7 +201,7 @@ fn parse_byte_size(s: &str) -> Result<usize, ParseIntError> {
         s
     };
 
-    let base: usize = usize::from_str(s)?;
+    let base: u64 = u64::from_str(s)?;
 
     Ok(base * multiplier)
 }

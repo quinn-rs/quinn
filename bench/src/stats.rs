@@ -4,7 +4,7 @@ use hdrhistogram::Histogram;
 
 #[derive(Default)]
 pub struct Stats {
-    pub total_size: usize,
+    pub total_size: u64,
     pub total_duration: Duration,
     pub streams: usize,
     pub stream_stats: StreamStats,
@@ -75,13 +75,13 @@ impl Default for StreamStats {
 #[derive(Debug)]
 pub struct TransferResult {
     pub duration: Duration,
-    pub size: usize,
+    pub size: u64,
     pub throughput: f64,
 }
 
 impl TransferResult {
-    pub fn new(duration: Duration, size: usize) -> Self {
-        let throughput = throughput_bps(duration, size as u64);
+    pub fn new(duration: Duration, size: u64) -> Self {
+        let throughput = throughput_bps(duration, size);
         TransferResult {
             duration,
             size,
