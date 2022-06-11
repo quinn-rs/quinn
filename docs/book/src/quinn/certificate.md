@@ -101,15 +101,34 @@ certbot asks for the required data and writes the certificate to `cert.pem` and 
 These files can then be referenced in code.  
  
 ```rust
-pub fn read_cert_from_file() -> Result<(rustls::Certificate, rustls::PrivateKey), Box<dyn Error>> {
-    // Read from certificate and key from directory.
-    let (cert, key) = fs::read(&"./cert.pem").and_then(|x| Ok((x, fs::read(&"./privkey.pem")?)))?;
+use std::{error::Error, fs::File, io::BufReader};
 
-    // Parse to certificate chain whereafter taking the first certifcater in this chain.
-    let cert = rustls::Certificate(cert);
-    let key = rustls::PrivateKey(key);
+pub fn read_certs_from_file(
+) -> Result<(Vec<rustls::Certificate>, rustls::PrivateKey), Box<dyn Error>> {
+    let certs: Vec<_> = {
+        let cert_file = File::open("./cert.pem")?;
+        let mut cert_file_rdr = BufReader::new(cert_file);
+        let cert_vec = rustls_pemfile::certs(&mut cert_file_rdr)?;
+        cert_vec
+            .into_iter()
+            .map(|cert| rustls::Certificate(cert))
+            .collect()
+    };
+    let key = {
+        let key_file = File::open("./privkey.pem")?;
+        let mut key_file_rdr = BufReader::new(key_file);
 
-    Ok((cert, key))
+        // if the file starts with "BEGIN RSA PRIVATE KEY"
+        // let mut key_vec = rustls_pemfile::rsa_private_keys(&mut key_file_rdr)?;
+
+        // if the file starts with "BEGIN PRIVATE KEY"
+        let mut key_vec = rustls_pemfile::pkcs8_private_keys(&mut key_file_rdr)?;
+
+        assert_eq!(key_vec.len(), 1);
+        rustls::PrivateKey(key_vec.remove(0))
+    };
+
+    Ok((certs, key))
 }
 ```
 
@@ -121,7 +140,7 @@ After configuring plug the configuration into the `Endpoint`.
 **Configure Server**
 
 ```rust
-let server_config = ServerConfig::with_single_cert(vec![cert], key)?;
+let server_config = ServerConfig::with_single_cert(certs, key)?;
 ```
 
 This is the only thing you need to do for your server to be secured. 
