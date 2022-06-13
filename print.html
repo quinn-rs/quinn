@@ -375,15 +375,34 @@ These files can then be referenced in code.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>pub fn read_cert_from_file() -&gt; Result&lt;(rustls::Certificate, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt; {
-    // Read from certificate and key from directory.
-    let (cert, key) = fs::read(&amp;&quot;./cert.pem&quot;).and_then(|x| Ok((x, fs::read(&amp;&quot;./privkey.pem&quot;)?)))?;
+</span>use std::{error::Error, fs::File, io::BufReader};
 
-    // Parse to certificate chain whereafter taking the first certifcater in this chain.
-    let cert = rustls::Certificate(cert);
-    let key = rustls::PrivateKey(key);
+pub fn read_certs_from_file(
+) -&gt; Result&lt;(Vec&lt;rustls::Certificate&gt;, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt; {
+    let certs: Vec&lt;_&gt; = {
+        let cert_file = File::open(&quot;./cert.pem&quot;)?;
+        let mut cert_file_rdr = BufReader::new(cert_file);
+        let cert_vec = rustls_pemfile::certs(&amp;mut cert_file_rdr)?;
+        cert_vec
+            .into_iter()
+            .map(|cert| rustls::Certificate(cert))
+            .collect()
+    };
+    let key = {
+        let key_file = File::open(&quot;./privkey.pem&quot;)?;
+        let mut key_file_rdr = BufReader::new(key_file);
 
-    Ok((cert, key))
+        // if the file starts with &quot;BEGIN RSA PRIVATE KEY&quot;
+        // let mut key_vec = rustls_pemfile::rsa_private_keys(&amp;mut key_file_rdr)?;
+
+        // if the file starts with &quot;BEGIN PRIVATE KEY&quot;
+        let mut key_vec = rustls_pemfile::pkcs8_private_keys(&amp;mut key_file_rdr)?;
+
+        assert_eq!(key_vec.len(), 1);
+        rustls::PrivateKey(key_vec.remove(0))
+    };
+
+    Ok((certs, key))
 }
 <span class="boring">}
 </span></code></pre></pre>
@@ -394,7 +413,7 @@ After configuring plug the configuration into the <code>Endpoint</code>.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>let server_config = ServerConfig::with_single_cert(vec![cert], key)?;
+</span>let server_config = ServerConfig::with_single_cert(certs, key)?;
 <span class="boring">}
 </span></code></pre></pre>
 <p>This is the only thing you need to do for your server to be secured. </p>
