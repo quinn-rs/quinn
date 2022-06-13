@@ -514,6 +514,7 @@ fn decode_recv(
     let name = unsafe { name.assume_init() };
     let mut ecn_bits = 0;
     let mut dst_ip = None;
+    #[allow(unused_mut)] // only mutable on Linux
     let mut stride = len;
 
     let cmsg_iter = unsafe { cmsg::Iter::new(hdr) };
