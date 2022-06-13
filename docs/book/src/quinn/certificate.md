@@ -105,28 +105,20 @@ use std::{error::Error, fs::File, io::BufReader};
 
 pub fn read_certs_from_file(
 ) -> Result<(Vec<rustls::Certificate>, rustls::PrivateKey), Box<dyn Error>> {
-    let certs: Vec<_> = {
-        let cert_file = File::open("./cert.pem")?;
-        let mut cert_file_rdr = BufReader::new(cert_file);
-        let cert_vec = rustls_pemfile::certs(&mut cert_file_rdr)?;
-        cert_vec
-            .into_iter()
-            .map(|cert| rustls::Certificate(cert))
-            .collect()
-    };
-    let key = {
-        let key_file = File::open("./privkey.pem")?;
-        let mut key_file_rdr = BufReader::new(key_file);
+    let mut cert_chain_reader = BufReader::new(File::open("./certificates.pem")?);
+    let certs = rustls_pemfile::certs(&mut cert_chain_reader)?
+        .into_iter()
+        .map(rustls::Certificate)
+        .collect();
 
-        // if the file starts with "BEGIN RSA PRIVATE KEY"
-        // let mut key_vec = rustls_pemfile::rsa_private_keys(&mut key_file_rdr)?;
+    let mut key_reader = BufReader::new(File::open("./privkey.pem")?);
+    // if the file starts with "BEGIN RSA PRIVATE KEY"
+    // let mut key_vec = rustls_pemfile::rsa_private_keys(&mut reader)?;
+    // if the file starts with "BEGIN PRIVATE KEY"
+    let mut keys = rustls_pemfile::pkcs8_private_keys(&mut reader)?;
 
-        // if the file starts with "BEGIN PRIVATE KEY"
-        let mut key_vec = rustls_pemfile::pkcs8_private_keys(&mut key_file_rdr)?;
-
-        assert_eq!(key_vec.len(), 1);
-        rustls::PrivateKey(key_vec.remove(0))
-    };
+    assert_eq!(key_vec.len(), 1);
+    let key = rustls::PrivateKey(keys.remove(0));
 
     Ok((certs, key))
 }
