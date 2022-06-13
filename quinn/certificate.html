@@ -135,16 +135,16 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="certificates"><a class="header" href="#certificates">Certificates</a></h1>
-<p>In this chapter, we discuss the configuration of the certificates that are <strong>required</strong> for a working Quinn connection. </p>
-<p>As QUIC uses TLS 1.3 for authentication of connections, the server needs to provide the client with a certificate confirming its identity, and the client must be configured to trust the certificates it receives from the server. </p>
+<p>In this chapter, we discuss the configuration of the certificates that are <strong>required</strong> for a working Quinn connection.</p>
+<p>As QUIC uses TLS 1.3 for authentication of connections, the server needs to provide the client with a certificate confirming its identity, and the client must be configured to trust the certificates it receives from the server.</p>
 <h2 id="insecure-connection"><a class="header" href="#insecure-connection">Insecure Connection</a></h2>
-<p>For our example use case, the easiest way to allow the client to trust our server is to disable certificate verification (don't do this in production!). 
+<p>For our example use case, the easiest way to allow the client to trust our server is to disable certificate verification (don't do this in production!).
 When the <a href="https://github.com/ctz/rustls">rustls</a> <code>dangerous_configuration</code> feature flag is enabled, a client can be configured to trust any server.</p>
 <p>Start by adding a <a href="https://github.com/ctz/rustls">rustls</a> dependency with the <code>dangerous_configuration</code> feature flag to your <code>Cargo.toml</code> file.</p>
 <pre><code class="language-toml">quinn = &quot;*&quot;
 rustls = { version = &quot;*&quot;, features = [&quot;dangerous_configuration&quot;, &quot;quic&quot;] }
 </code></pre>
-<p>Then, allow the client to skip the certificate validation by implementing <a href="https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html">ServerCertVerifier</a> and letting it assert verification for any server. </p>
+<p>Then, allow the client to skip the certificate validation by implementing <a href="https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html">ServerCertVerifier</a> and letting it assert verification for any server.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -172,7 +172,7 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
 }
 <span class="boring">}
 </span></code></pre></pre>
-<p>After that, modify the <a href="https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html">ClientConfig</a> to use this <a href="https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html">ServerCertVerifier</a> implementation. </p>
+<p>After that, modify the <a href="https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html">ClientConfig</a> to use this <a href="https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html">ServerCertVerifier</a> implementation.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -188,10 +188,10 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
 </span></code></pre></pre>
 <p>Finally, if you plug this <a href="https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html">ClientConfig</a> into the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.set_default_client_config">Endpoint::set_default_client_config()</a> your client endpoint should verify all connections as trustworthy.</p>
 <h2 id="using-certificates"><a class="header" href="#using-certificates">Using Certificates</a></h2>
-<p>In this section, we look at certifying an endpoint with a certificate. 
+<p>In this section, we look at certifying an endpoint with a certificate.
 The certificate can be signed with its key, or with a certificate authority's key.</p>
 <h3 id="self-signed-certificates"><a class="header" href="#self-signed-certificates">Self Signed Certificates</a></h3>
-<p>Relying on <a href="https://en.wikipedia.org/wiki/Self-signed_certificate#:%7E:text=In%20cryptography%20and%20computer%20security,a%20CA%20aim%20to%20provide.">self-signed</a> certificates means that clients allow servers to sign their certificates. 
+<p>Relying on <a href="https://en.wikipedia.org/wiki/Self-signed_certificate#:%7E:text=In%20cryptography%20and%20computer%20security,a%20CA%20aim%20to%20provide.">self-signed</a> certificates means that clients allow servers to sign their certificates.
 This is simpler because no third party is involved in signing the server's certificate.
 However, self-signed certificates do not protect users from person-in-the-middle attacks, because an interceptor can trivially replace the certificate with one that it has signed. Self-signed certificates, among other options, can be created using the <a href="https://github.com/est31/rcgen">rcgen</a> crate or the openssl binary.
 This example uses <a href="https://github.com/est31/rcgen">rcgen</a> to generate a certificate.</p>
@@ -214,10 +214,10 @@ This example uses <a href="https://github.com/est31/rcgen">rcgen</a> to generate
 <p><a href="https://certbot.eff.org/instructions">certbot</a> can be used with Let's Encrypt to generate certificates; its website comes with clear instructions.
 Because we're generating a certificate for an internal test server, the process used will be slightly different compared to what you would do when generating certificates for an existing (public) website.</p>
 <p>On the certbot website, select that you do not have a public web server and follow the given installation instructions.
-certbot must answer a cryptographic challenge of the Let's Encrypt API to prove that you control the domain. 
+certbot must answer a cryptographic challenge of the Let's Encrypt API to prove that you control the domain.
 It needs to listen on port 80 (HTTP) or 443 (HTTPS) to achieve this. Open the appropriate port in your firewall and router.</p>
 <p>If certbot is installed, run <code>certbot certonly --standalone</code>, this command will start a web server in the background and start the challenge.
-certbot asks for the required data and writes the certificate to <code>cert.pem</code> and the private key to <code>privkey.pem</code>.<br />
+certbot asks for the required data and writes the certificate to <code>cert.pem</code> and the private key to <code>privkey.pem</code>.
 These files can then be referenced in code.</p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
@@ -226,28 +226,20 @@ These files can then be referenced in code.</p>
 
 pub fn read_certs_from_file(
 ) -&gt; Result&lt;(Vec&lt;rustls::Certificate&gt;, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt; {
-    let certs: Vec&lt;_&gt; = {
-        let cert_file = File::open(&quot;./cert.pem&quot;)?;
-        let mut cert_file_rdr = BufReader::new(cert_file);
-        let cert_vec = rustls_pemfile::certs(&amp;mut cert_file_rdr)?;
-        cert_vec
-            .into_iter()
-            .map(|cert| rustls::Certificate(cert))
-            .collect()
-    };
-    let key = {
-        let key_file = File::open(&quot;./privkey.pem&quot;)?;
-        let mut key_file_rdr = BufReader::new(key_file);
+    let mut cert_chain_reader = BufReader::new(File::open(&quot;./certificates.pem&quot;)?);
+    let certs = rustls_pemfile::certs(&amp;mut cert_chain_reader)?
+        .into_iter()
+        .map(rustls::Certificate)
+        .collect();
 
-        // if the file starts with &quot;BEGIN RSA PRIVATE KEY&quot;
-        // let mut key_vec = rustls_pemfile::rsa_private_keys(&amp;mut key_file_rdr)?;
+    let mut key_reader = BufReader::new(File::open(&quot;./privkey.pem&quot;)?);
+    // if the file starts with &quot;BEGIN RSA PRIVATE KEY&quot;
+    // let mut key_vec = rustls_pemfile::rsa_private_keys(&amp;mut reader)?;
+    // if the file starts with &quot;BEGIN PRIVATE KEY&quot;
+    let mut keys = rustls_pemfile::pkcs8_private_keys(&amp;mut reader)?;
 
-        // if the file starts with &quot;BEGIN PRIVATE KEY&quot;
-        let mut key_vec = rustls_pemfile::pkcs8_private_keys(&amp;mut key_file_rdr)?;
-
-        assert_eq!(key_vec.len(), 1);
-        rustls::PrivateKey(key_vec.remove(0))
-    };
+    assert_eq!(key_vec.len(), 1);
+    let key = rustls::PrivateKey(keys.remove(0));
 
     Ok((certs, key))
 }
@@ -263,7 +255,7 @@ After configuring plug the configuration into the <code>Endpoint</code>.</p>
 </span>let server_config = ServerConfig::with_single_cert(certs, key)?;
 <span class="boring">}
 </span></code></pre></pre>
-<p>This is the only thing you need to do for your server to be secured. </p>
+<p>This is the only thing you need to do for your server to be secured.</p>
 <p><strong>Configure Client</strong></p>
 <pre><pre class="playground"><code class="language-rust">
 <span class="boring">#![allow(unused)]
@@ -271,9 +263,9 @@ After configuring plug the configuration into the <code>Endpoint</code>.</p>
 </span>let client_config = ClientConfig::with_native_roots();
 <span class="boring">}
 </span></code></pre></pre>
-<p>This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority. </p>
+<p>This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority.</p>
 <p><br><hr></p>
-<p><a href="set-up-connection.html">Next</a>, let's have a look at how to set up a connection. </p>
+<p><a href="set-up-connection.html">Next</a>, let's have a look at how to set up a connection.</p>
 
                     </main>
 
