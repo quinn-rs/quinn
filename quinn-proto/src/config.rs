@@ -7,7 +7,7 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
     crypto::{self, HandshakeTokenKey, HmacKey},
-    VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS,
+    VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MAX_UDP_PAYLOAD_SIZE,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -34,6 +34,7 @@ pub struct TransportConfig {
     pub(crate) packet_threshold: u32,
     pub(crate) time_threshold: f32,
     pub(crate) initial_rtt: Duration,
+    pub(crate) initial_max_udp_payload_size: u16,
 
     pub(crate) persistent_congestion_threshold: u32,
     pub(crate) keep_alive_interval: Option<Duration>,
@@ -151,6 +152,23 @@ impl TransportConfig {
         self
     }
 
+    /// UDP payload size that the network must be capable of carrying
+    ///
+    /// Effective max UDP payload size may change over the life of the connection in the future due
+    /// to path MTU detection, but will never fall below this value.
+    ///
+    /// Must be at least 1200, which is the default, and known to be safe for typical internet
+    /// applications. Larger values are more efficient, but increase the risk of unpredictable
+    /// catastrophic packet loss due to exceeding the network path's IP MTU.
+    ///
+    /// Real-world MTUs can vary according to ISP, VPN, and properties of intermediate network links
+    /// outside of either endpoint's control. Extreme caution should be used when raising this value
+    /// for connections outside of private networks where these factors are fully controlled.
+    pub fn initial_max_udp_payload_size(&mut self, value: u16) -> &mut Self {
+        self.initial_max_udp_payload_size = value.max(INITIAL_MAX_UDP_PAYLOAD_SIZE);
+        self
+    }
+
     /// Number of consecutive PTOs after which network is considered to be experiencing persistent congestion.
     pub fn persistent_congestion_threshold(&mut self, value: u32) -> &mut Self {
         self.persistent_congestion_threshold = value;
@@ -246,6 +264,7 @@ impl Default for TransportConfig {
             packet_threshold: 3,
             time_threshold: 9.0 / 8.0,
             initial_rtt: Duration::from_millis(333), // per spec, intentionally distinct from EXPECTED_RTT
+            initial_max_udp_payload_size: INITIAL_MAX_UDP_PAYLOAD_SIZE,
 
             persistent_congestion_threshold: 3,
             keep_alive_interval: None,

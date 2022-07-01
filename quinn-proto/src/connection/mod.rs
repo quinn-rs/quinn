@@ -262,6 +262,7 @@ impl Connection {
                 remote,
                 config.initial_rtt,
                 config.congestion_controller_factory.build(now),
+                config.initial_max_udp_payload_size,
                 now,
                 path_validated,
             ),
@@ -2626,6 +2627,7 @@ impl Connection {
                 remote,
                 self.config.initial_rtt,
                 self.config.congestion_controller_factory.build(now),
+                self.config.initial_max_udp_payload_size,
                 now,
                 false,
             )

@@ -1,7 +1,7 @@
 use std::{cmp, net::SocketAddr, time::Duration, time::Instant};
 
 use super::pacing::Pacer;
-use crate::{congestion, packet::SpaceId, INITIAL_MAX_UDP_PAYLOAD_SIZE, TIMER_GRANULARITY};
+use crate::{congestion, packet::SpaceId, TIMER_GRANULARITY};
 
 /// Description of a particular network path
 pub struct PathData {
@@ -36,6 +36,7 @@ impl PathData {
         remote: SocketAddr,
         initial_rtt: Duration,
         congestion: Box<dyn congestion::Controller>,
+        initial_max_udp_payload_size: u16,
         now: Instant,
         validated: bool,
     ) -> Self {
@@ -46,7 +47,7 @@ impl PathData {
             pacing: Pacer::new(
                 initial_rtt,
                 congestion.initial_window(),
-                INITIAL_MAX_UDP_PAYLOAD_SIZE,
+                initial_max_udp_payload_size,
                 now,
             ),
             congestion,
@@ -55,7 +56,7 @@ impl PathData {
             validated,
             total_sent: 0,
             total_recvd: 0,
-            max_udp_payload_size: INITIAL_MAX_UDP_PAYLOAD_SIZE,
+            max_udp_payload_size: initial_max_udp_payload_size,
             first_packet_after_rtt_sample: None,
         }
     }
