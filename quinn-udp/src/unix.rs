@@ -147,20 +147,21 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
             )
         };
 
-        if addr.is_ipv4() {
-            let rc = unsafe {
-                libc::setsockopt(
-                    io.as_raw_fd(),
-                    libc::IPPROTO_IP,
-                    libc::IP_MTU_DISCOVER,
-                    &libc::IP_PMTUDISC_PROBE as *const _ as _,
-                    mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
+        // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
+        let rc = unsafe {
+            libc::setsockopt(
+                io.as_raw_fd(),
+                libc::IPPROTO_IP,
+                libc::IP_MTU_DISCOVER,
+                &libc::IP_PMTUDISC_PROBE as *const _ as _,
+                mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
+            )
+        };
+        if rc == -1 {
+            return Err(io::Error::last_os_error());
+        }
 
+        if addr.is_ipv4() {
             let on: libc::c_int = 1;
             let rc = unsafe {
                 libc::setsockopt(
