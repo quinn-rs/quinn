@@ -18,8 +18,12 @@ mod cmsg;
 #[path = "unix.rs"]
 mod imp;
 
+#[cfg(windows)]
+#[path = "windows.rs"]
+mod imp;
+
 // No ECN support
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 #[path = "fallback.rs"]
 mod imp;
 
