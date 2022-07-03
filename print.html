@@ -144,7 +144,7 @@ These concepts are important to understanding when to use QUIC.</p>
 <li><strong>unreliable</strong>: Transport packets are not assured of arrival and ordering. </li>
 <li><strong>reliable</strong>: Transport packets are assured of arrival and ordering.</li>
 </ul>
-<table><thead><tr><th style="text-align: center">Feature</th><th style="text-align: center">TCP</th><th style="text-align: center">UDP</th><th style="text-align: center">QUIC</th></tr></thead><tbody>
+<div class="table-wrapper"><table><thead><tr><th style="text-align: center">Feature</th><th style="text-align: center">TCP</th><th style="text-align: center">UDP</th><th style="text-align: center">QUIC</th></tr></thead><tbody>
 <tr><td style="text-align: center"><a href="https://en.wikipedia.org/wiki/Connection-oriented_communication">Connection-Oriented</a></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
 <tr><td style="text-align: center">Transport Guarantees</td><td style="text-align: center">Reliable</td><td style="text-align: center">Unreliable</td><td style="text-align: center">Reliable ('a)</td></tr>
 <tr><td style="text-align: center">Packet Transfer</td><td style="text-align: center"><a href="https://en.wikipedia.org/wiki/Stream_(computing)">Stream-based</a></td><td style="text-align: center">Message based</td><td style="text-align: center">Stream based</td></tr>
@@ -152,6 +152,7 @@ These concepts are important to understanding when to use QUIC.</p>
 <tr><td style="text-align: center"><a href="https://en.wikipedia.org/wiki/TCP_congestion_control">Control Flow, Congestion Avoidance/Control</a></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes ('b)</td></tr>
 <tr><td style="text-align: center">Based On</td><td style="text-align: center"><a href="https://nl.wikipedia.org/wiki/Internetprotocol">IP</a></td><td style="text-align: center"><a href="https://nl.wikipedia.org/wiki/Internetprotocol">IP</a></td><td style="text-align: center">UDP</td></tr>
 </tbody></table>
+</div>
 <p>'a. Unreliable is supported as an extension.<br />
 'b. QUIC control flow/congestion implementations will run in userspace whereas in TCP it's running in kernel space, 
 however, there might be a kernel implementation for QUIC in the future.</p>
@@ -211,7 +212,7 @@ One thing is for sure, QUIC has many great potentials and will serve us in the f
 <a href="https://github.com/ctz/rustls">rustls</a> and <a href="https://github.com/briansmith/ring"><em>ring</em></a></li>
 <li>Application-layer datagrams for small, unreliable messages</li>
 <li>Future-based async API</li>
-<li>Minimum supported Rust version of 1.53.0</li>
+<li>Minimum supported Rust version of 1.57.0</li>
 </ul>
 <h2 id="overview"><a class="header" href="#overview">Overview</a></h2>
 <ul>
@@ -298,8 +299,7 @@ When the <a href="https://github.com/ctz/rustls">rustls</a> <code>dangerous_conf
 rustls = { version = &quot;*&quot;, features = [&quot;dangerous_configuration&quot;, &quot;quic&quot;] }
 </code></pre>
 <p>Then, allow the client to skip the certificate validation by implementing <a href="https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html">ServerCertVerifier</a> and letting it assert verification for any server.</p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>// Implementation of `ServerCertVerifier` that verifies everything as trustworthy.
 struct SkipServerVerification;
@@ -326,8 +326,7 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
 <span class="boring">}
 </span></code></pre></pre>
 <p>After that, modify the <a href="https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html">ClientConfig</a> to use this <a href="https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html">ServerCertVerifier</a> implementation.</p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>fn configure_client() -&gt; ClientConfig {
     let crypto = rustls::ClientConfig::builder()
@@ -349,8 +348,7 @@ This is simpler because no third party is involved in signing the server's certi
 However, self-signed certificates do not protect users from person-in-the-middle attacks, because an interceptor can trivially replace the certificate with one that it has signed. Self-signed certificates, among other options, can be created using the <a href="https://github.com/est31/rcgen">rcgen</a> crate or the openssl binary.
 This example uses <a href="https://github.com/est31/rcgen">rcgen</a> to generate a certificate.</p>
 <p>Let's look at an example:</p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>fn generate_self_signed_cert() -&gt; Result&lt;(rustls::Certificate, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt;
 {
@@ -372,8 +370,7 @@ It needs to listen on port 80 (HTTP) or 443 (HTTPS) to achieve this. Open the ap
 <p>If certbot is installed, run <code>certbot certonly --standalone</code>, this command will start a web server in the background and start the challenge.
 certbot asks for the required data and writes the certificate to <code>cert.pem</code> and the private key to <code>privkey.pem</code>.
 These files can then be referenced in code.</p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>use std::{error::Error, fs::File, io::BufReader};
 
@@ -402,16 +399,14 @@ pub fn read_certs_from_file(
 <p>Now that you have a valid certificate, the client and server need to be configured to use it.
 After configuring plug the configuration into the <code>Endpoint</code>.</p>
 <p><strong>Configure Server</strong></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>let server_config = ServerConfig::with_single_cert(certs, key)?;
 <span class="boring">}
 </span></code></pre></pre>
 <p>This is the only thing you need to do for your server to be secured.</p>
 <p><strong>Configure Client</strong></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>let client_config = ClientConfig::with_native_roots();
 <span class="boring">}
@@ -427,8 +422,7 @@ This chapter explains how to set up a connection and prepare it for data transfe
 <p>It all starts with the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> struct, this is the entry point of the library. </p>
 <h2 id="example"><a class="header" href="#example">Example</a></h2>
 <p>Let's start by defining some constants. </p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>static SERVER_NAME: &amp;str = &quot;localhost&quot;;
 
@@ -445,8 +439,7 @@ fn server_addr() -&gt; SocketAddr {
 <p>First, the server endpoint should be bound to a socket. 
 The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.server">server()</a> method, which can be used for this, returns a tuple containing the <code>Endpoint</code> and <code>Incoming</code> types.
 The <code>Endpoint</code> type can be used to start outgoing connections, and the <code>Incoming</code> type can be used to listen for incoming connections.</p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn server() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     // Bind this endpoint to a UDP socket on the given server address. 
@@ -470,8 +463,7 @@ The <code>Endpoint</code> type can be used to start outgoing connections, and th
 <p>The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.client">client()</a> returns only a <code>Endpoint</code> type.
 The client needs to connect to the server using the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.connect">connect(server_name)</a> method.<br />
 The <code>SERVER_NAME</code> argument is the DNS name, matching the certificate configured in the server.</p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn client() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     // Bind this endpoint to a UDP socket on the given client address.
@@ -500,11 +492,12 @@ With QUIC, the programmer is in full control over the stream allocation.</p>
 <h2 id="stream-types"><a class="header" href="#stream-types">Stream Types</a></h2>
 <p>QUIC provides support for both stream and message-based communication.
 Streams and messages can be initiated both on the client and server.</p>
-<table><thead><tr><th style="text-align: left">Type</th><th style="text-align: left">Description</th><th style="text-align: left">Reference</th></tr></thead><tbody>
+<div class="table-wrapper"><table><thead><tr><th style="text-align: left">Type</th><th style="text-align: left">Description</th><th style="text-align: left">Reference</th></tr></thead><tbody>
 <tr><td style="text-align: left"><strong>Bidirectional Stream</strong></td><td style="text-align: left">two way stream communication.</td><td style="text-align: left">see <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_bi">open_bi</a></td></tr>
 <tr><td style="text-align: left"><strong>Unidirectional Stream</strong></td><td style="text-align: left">one way stream communication.</td><td style="text-align: left">see <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_uni">open_uni</a></td></tr>
 <tr><td style="text-align: left"><strong>Unreliable Messaging (extension)</strong></td><td style="text-align: left">message based unreliable communication.</td><td style="text-align: left">see <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.send_datagram">send_datagram</a></td></tr>
 </tbody></table>
+</div>
 <h2 id="how-to-use"><a class="header" href="#how-to-use">How to Use</a></h2>
 <p>New streams can be created with <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_bi">open_bi()</a>, <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_uni">open_uni()</a> from type <a href="https://docs.rs/quinn/latest/quinn/struct.NewConnection.html#structfield.connection">Connection</a>.
 An instance of this type, together with existing streams, can be found in the <a href="https://docs.rs/quinn/latest/quinn/struct.NewConnection.html#structfield.connection">connection</a> field of <a href="https://docs.rs/quinn/latest/quinn/struct.NewConnection.html">NewConnection</a>.</p>
@@ -512,8 +505,7 @@ An instance of this type, together with existing streams, can be found in the <a
 <p>With bidirectional streams, data can be sent in both directions. 
 For example, from the connection initiator to the peer and the other way around.</p>
 <p><em>open bidirectional stream</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn open_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
     let (mut send, recv) = connection
@@ -530,8 +522,7 @@ For example, from the connection initiator to the peer and the other way around.
 <span class="boring">}
 </span></code></pre></pre>
 <p><em>iterate incoming bidirectional stream(s)</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn receive_bidirectional_stream(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
     while let Some(Ok((mut send, recv))) = connection.bi_streams.next().await {
@@ -550,8 +541,7 @@ For example, from the connection initiator to the peer and the other way around.
 <p>With unidirectional streams, you can carry data only in one direction: from the initiator of the stream to its peer.
 It is possible to get reliability without ordering (so no head-of-line blocking) by opening a new stream for each packet.</p>
 <p><em>open unidirectional stream</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn open_unidirectional_stream(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
     let mut send = connection
@@ -566,8 +556,7 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 <span class="boring">}
 </span></code></pre></pre>
 <p><em>iterating incoming unidirectional stream(s)</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn receive_unidirectional_stream(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
     while let Some(Ok(recv)) = connection.uni_streams.next().await {
@@ -583,8 +572,7 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 <p>With unreliable messaging, you can transfer data without reliability. 
 This could be useful if data arrival isn't essential or when high throughput is important.</p>
 <p><em>send datagram</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn send_unreliable(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
     connection
@@ -596,8 +584,7 @@ This could be useful if data arrival isn't essential or when high throughput is 
 <span class="boring">}
 </span></code></pre></pre>
 <p><em>iterating datagram stream(s)</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn receive_datagram(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
     while let Some(Ok(received_bytes)) = connection.datagrams.next().await {

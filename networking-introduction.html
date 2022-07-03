@@ -143,7 +143,7 @@ These concepts are important to understanding when to use QUIC.</p>
 <li><strong>unreliable</strong>: Transport packets are not assured of arrival and ordering. </li>
 <li><strong>reliable</strong>: Transport packets are assured of arrival and ordering.</li>
 </ul>
-<table><thead><tr><th style="text-align: center">Feature</th><th style="text-align: center">TCP</th><th style="text-align: center">UDP</th><th style="text-align: center">QUIC</th></tr></thead><tbody>
+<div class="table-wrapper"><table><thead><tr><th style="text-align: center">Feature</th><th style="text-align: center">TCP</th><th style="text-align: center">UDP</th><th style="text-align: center">QUIC</th></tr></thead><tbody>
 <tr><td style="text-align: center"><a href="https://en.wikipedia.org/wiki/Connection-oriented_communication">Connection-Oriented</a></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes</td></tr>
 <tr><td style="text-align: center">Transport Guarantees</td><td style="text-align: center">Reliable</td><td style="text-align: center">Unreliable</td><td style="text-align: center">Reliable ('a)</td></tr>
 <tr><td style="text-align: center">Packet Transfer</td><td style="text-align: center"><a href="https://en.wikipedia.org/wiki/Stream_(computing)">Stream-based</a></td><td style="text-align: center">Message based</td><td style="text-align: center">Stream based</td></tr>
@@ -151,6 +151,7 @@ These concepts are important to understanding when to use QUIC.</p>
 <tr><td style="text-align: center"><a href="https://en.wikipedia.org/wiki/TCP_congestion_control">Control Flow, Congestion Avoidance/Control</a></td><td style="text-align: center">Yes</td><td style="text-align: center">No</td><td style="text-align: center">Yes ('b)</td></tr>
 <tr><td style="text-align: center">Based On</td><td style="text-align: center"><a href="https://nl.wikipedia.org/wiki/Internetprotocol">IP</a></td><td style="text-align: center"><a href="https://nl.wikipedia.org/wiki/Internetprotocol">IP</a></td><td style="text-align: center">UDP</td></tr>
 </tbody></table>
+</div>
 <p>'a. Unreliable is supported as an extension.<br />
 'b. QUIC control flow/congestion implementations will run in userspace whereas in TCP it's running in kernel space, 
 however, there might be a kernel implementation for QUIC in the future.</p>

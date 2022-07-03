@@ -145,11 +145,12 @@ With QUIC, the programmer is in full control over the stream allocation.</p>
 <h2 id="stream-types"><a class="header" href="#stream-types">Stream Types</a></h2>
 <p>QUIC provides support for both stream and message-based communication.
 Streams and messages can be initiated both on the client and server.</p>
-<table><thead><tr><th style="text-align: left">Type</th><th style="text-align: left">Description</th><th style="text-align: left">Reference</th></tr></thead><tbody>
+<div class="table-wrapper"><table><thead><tr><th style="text-align: left">Type</th><th style="text-align: left">Description</th><th style="text-align: left">Reference</th></tr></thead><tbody>
 <tr><td style="text-align: left"><strong>Bidirectional Stream</strong></td><td style="text-align: left">two way stream communication.</td><td style="text-align: left">see <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_bi">open_bi</a></td></tr>
 <tr><td style="text-align: left"><strong>Unidirectional Stream</strong></td><td style="text-align: left">one way stream communication.</td><td style="text-align: left">see <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_uni">open_uni</a></td></tr>
 <tr><td style="text-align: left"><strong>Unreliable Messaging (extension)</strong></td><td style="text-align: left">message based unreliable communication.</td><td style="text-align: left">see <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.send_datagram">send_datagram</a></td></tr>
 </tbody></table>
+</div>
 <h2 id="how-to-use"><a class="header" href="#how-to-use">How to Use</a></h2>
 <p>New streams can be created with <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_bi">open_bi()</a>, <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_uni">open_uni()</a> from type <a href="https://docs.rs/quinn/latest/quinn/struct.NewConnection.html#structfield.connection">Connection</a>.
 An instance of this type, together with existing streams, can be found in the <a href="https://docs.rs/quinn/latest/quinn/struct.NewConnection.html#structfield.connection">connection</a> field of <a href="https://docs.rs/quinn/latest/quinn/struct.NewConnection.html">NewConnection</a>.</p>
@@ -157,8 +158,7 @@ An instance of this type, together with existing streams, can be found in the <a
 <p>With bidirectional streams, data can be sent in both directions. 
 For example, from the connection initiator to the peer and the other way around.</p>
 <p><em>open bidirectional stream</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn open_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
     let (mut send, recv) = connection
@@ -175,8 +175,7 @@ For example, from the connection initiator to the peer and the other way around.
 <span class="boring">}
 </span></code></pre></pre>
 <p><em>iterate incoming bidirectional stream(s)</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn receive_bidirectional_stream(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
     while let Some(Ok((mut send, recv))) = connection.bi_streams.next().await {
@@ -195,8 +194,7 @@ For example, from the connection initiator to the peer and the other way around.
 <p>With unidirectional streams, you can carry data only in one direction: from the initiator of the stream to its peer.
 It is possible to get reliability without ordering (so no head-of-line blocking) by opening a new stream for each packet.</p>
 <p><em>open unidirectional stream</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn open_unidirectional_stream(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
     let mut send = connection
@@ -211,8 +209,7 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 <span class="boring">}
 </span></code></pre></pre>
 <p><em>iterating incoming unidirectional stream(s)</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn receive_unidirectional_stream(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
     while let Some(Ok(recv)) = connection.uni_streams.next().await {
@@ -228,8 +225,7 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 <p>With unreliable messaging, you can transfer data without reliability. 
 This could be useful if data arrival isn't essential or when high throughput is important.</p>
 <p><em>send datagram</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn send_unreliable(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
     connection
@@ -241,8 +237,7 @@ This could be useful if data arrival isn't essential or when high throughput is 
 <span class="boring">}
 </span></code></pre></pre>
 <p><em>iterating datagram stream(s)</em></p>
-<pre><pre class="playground"><code class="language-rust">
-<span class="boring">#![allow(unused)]
+<pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn receive_datagram(mut connection: NewConnection) -&gt; anyhow::Result&lt;()&gt; {
     while let Some(Ok(received_bytes)) = connection.datagrams.next().await {
