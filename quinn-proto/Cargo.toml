@@ -7,7 +7,7 @@ description = "State machine for the QUIC transport protocol"
 keywords = ["quic"]
 categories = [ "network-programming", "asynchronous" ]
 workspace = ".."
-edition = "2018"
+edition = "2021"
 rust-version = "1.57"
 
 [package.metadata.docs.rs]
