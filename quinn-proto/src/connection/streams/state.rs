@@ -85,6 +85,9 @@ pub struct StreamsState {
     initial_max_stream_data_uni: VarInt,
     initial_max_stream_data_bidi_local: VarInt,
     initial_max_stream_data_bidi_remote: VarInt,
+
+    /// The shrink to be applied to local_max_data when receive_window is shrunk
+    receive_window_shrink_debt: u64,
 }
 
 impl StreamsState {
@@ -126,6 +129,7 @@ impl StreamsState {
             initial_max_stream_data_uni: 0u32.into(),
             initial_max_stream_data_bidi_local: 0u32.into(),
             initial_max_stream_data_bidi_remote: 0u32.into(),
+            receive_window_shrink_debt: 0,
         };
 
         for dir in Dir::iter() {
@@ -759,6 +763,24 @@ impl StreamsState {
         self.ensure_remote_streams(dir);
     }
 
+    /// Set the receive_window and returns wether the receive_window has been
+    /// expanded or shrunk: true if expanded, false if shrunk.
+    pub fn set_receive_window(&mut self, receive_window: VarInt) -> bool {
+        let receive_window = receive_window.into();
+        let mut expanded = false;
+        if receive_window > self.receive_window {
+            self.local_max_data = self
+                .local_max_data
+                .saturating_add(receive_window - self.receive_window);
+            expanded = true;
+        } else {
+            let diff = self.receive_window - receive_window;
+            self.receive_window_shrink_debt = self.receive_window_shrink_debt.saturating_add(diff);
+        }
+        self.receive_window = receive_window;
+        expanded
+    }
+
     pub(super) fn insert(&mut self, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
         if bi || !remote {
@@ -789,7 +811,13 @@ impl StreamsState {
     /// suppress sending further updates until the window increases significantly
     /// again.
     pub(super) fn add_read_credits(&mut self, credits: u64) -> ShouldTransmit {
-        self.local_max_data = self.local_max_data.saturating_add(credits);
+        if credits > self.receive_window_shrink_debt {
+            let net_credits = credits - self.receive_window_shrink_debt;
+            self.local_max_data = self.local_max_data.saturating_add(net_credits);
+            self.receive_window_shrink_debt = 0;
+        } else {
+            self.receive_window_shrink_debt -= credits;
+        }
 
         if self.local_max_data > VarInt::MAX.into_inner() {
             return ShouldTransmit(false);
@@ -1552,5 +1580,71 @@ mod tests {
             assert_eq!(client.max_remote[Dir::Uni as usize], 200);
             assert_eq!(client.max_remote[Dir::Bi as usize], 201);
         }
+    }
+
+    #[test]
+    fn expand_receive_window() {
+        let mut server = make(Side::Server);
+        let new_receive_window = 2 * server.receive_window as u32;
+        let expanded = server.set_receive_window(new_receive_window.into());
+        assert!(expanded);
+        assert_eq!(server.receive_window, new_receive_window as u64);
+        assert_eq!(server.local_max_data, new_receive_window as u64);
+        assert_eq!(server.receive_window_shrink_debt, 0);
+        let prev_local_max_data = server.local_max_data;
+
+        // credit, expecting all of them added to local_max_data
+        let credits = 1024u64;
+        let should_transmit = server.add_read_credits(credits);
+        assert_eq!(server.receive_window_shrink_debt, 0);
+        assert_eq!(server.local_max_data, prev_local_max_data + credits);
+        assert!(should_transmit.should_transmit());
+    }
+
+    #[test]
+    fn shrink_receive_window() {
+        let mut server = make(Side::Server);
+        let new_receive_window = server.receive_window as u32 / 2;
+        let prev_local_max_data = server.local_max_data;
+
+        // shrink the receive_winbow, local_max_data is not expected to be changed
+        let shrink_diff = server.receive_window - new_receive_window as u64;
+        let expanded = server.set_receive_window(new_receive_window.into());
+        assert!(!expanded);
+        assert_eq!(server.receive_window, new_receive_window as u64);
+        assert_eq!(server.local_max_data, prev_local_max_data);
+        assert_eq!(server.receive_window_shrink_debt, shrink_diff);
+        let prev_local_max_data = server.local_max_data;
+
+        // credit twice, local_max_data does not change as it is absorbed by receive_window_shrink_debt
+        let credits = 1024u64;
+        for _ in 0..2 {
+            let expected_receive_window_shrink_debt = server.receive_window_shrink_debt - credits;
+            let should_transmit = server.add_read_credits(credits);
+            assert_eq!(
+                server.receive_window_shrink_debt,
+                expected_receive_window_shrink_debt
+            );
+            assert_eq!(server.local_max_data, prev_local_max_data);
+            assert!(!should_transmit.should_transmit());
+        }
+
+        // credit again which exceeds all remaining expected_receive_window_shrink_debt
+        let credits = 1024 * 512;
+        let prev_local_max_data = server.local_max_data;
+        let expected_local_max_data =
+            server.local_max_data + (credits - server.receive_window_shrink_debt);
+        let _should_transmit = server.add_read_credits(credits);
+        assert_eq!(server.receive_window_shrink_debt, 0);
+        assert_eq!(server.local_max_data, expected_local_max_data);
+        assert!(server.local_max_data > prev_local_max_data);
+
+        // credit again, all should be added to local_max_data
+        let credits = 1024 * 512;
+        let expected_local_max_data = server.local_max_data + credits;
+        let should_transmit = server.add_read_credits(credits);
+        assert_eq!(server.receive_window_shrink_debt, 0);
+        assert_eq!(server.local_max_data, expected_local_max_data);
+        assert!(should_transmit.should_transmit());
     }
 }
