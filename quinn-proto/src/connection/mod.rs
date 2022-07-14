@@ -1107,6 +1107,29 @@ impl Connection {
         self.streams.set_max_concurrent(dir, count);
     }
 
+    /// Set the maximum number of bytes the peer may transmit across all streams of a connection before
+    /// becoming blocked.
+    ///
+    /// This should be set to at least the expected connection latency multiplied by the maximum
+    /// desired throughput. Larger values can be useful to allow maximum throughput within a
+    /// stream while another is blocked.
+    pub fn set_receive_window(&mut self, receive_window: VarInt) {
+        self.streams.set_receive_window(receive_window);
+    }
+
+    /// Set the maximum number of bytes the peer may transmit without acknowledgement on any one stream
+    /// before becoming blocked.
+    ///
+    /// This should be set to at least the expected connection latency multiplied by the maximum
+    /// desired throughput. Setting this smaller than `receive_window` helps ensure that a single
+    /// stream doesn't monopolize receive buffers, which may otherwise occur if the application
+    /// chooses not to read from a large stream for a time while still requiring data on other
+    /// streams.
+    pub fn set_stream_receive_window(&mut self, stream_receive_window: VarInt) {
+        self.streams
+            .set_stream_receive_window(stream_receive_window);
+    }
+
     fn on_ack_received(
         &mut self,
         now: Instant,
