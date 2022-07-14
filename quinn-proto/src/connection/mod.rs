@@ -1099,6 +1099,13 @@ impl Connection {
         self.streams.set_max_concurrent(dir, count);
     }
 
+    /// See [`TransportConfig::receive_window()`]
+    pub fn set_receive_window(&mut self, receive_window: VarInt) {
+        if self.streams.set_receive_window(receive_window) {
+            self.spaces[SpaceId::Data].pending.max_data = true;
+        }
+    }
+
     fn on_ack_received(
         &mut self,
         now: Instant,
