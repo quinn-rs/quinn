@@ -759,6 +759,14 @@ impl StreamsState {
         self.ensure_remote_streams(dir);
     }
 
+    pub fn set_receive_window(&mut self, receive_window: VarInt) {
+        self.receive_window = receive_window.into();
+    }
+
+    pub fn set_stream_receive_window(&mut self, stream_receive_window: VarInt) {
+        self.stream_receive_window = stream_receive_window.into();
+    }
+
     pub(super) fn insert(&mut self, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
         if bi || !remote {
