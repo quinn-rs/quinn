@@ -28,6 +28,10 @@ impl Recv {
         }
     }
 
+    pub(super) fn set_sent_max_stream_data(&mut self, max_stream_data: u64) {
+        self.sent_max_stream_data = max_stream_data;
+    }
+
     /// Process a STREAM frame
     ///
     /// Return value is `(number_of_new_bytes_ingested, stream_is_closed)`
