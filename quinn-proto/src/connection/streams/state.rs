@@ -686,6 +686,16 @@ impl StreamsState {
         Ok(())
     }
 
+    /// Set `receive_window`
+    pub fn set_receive_window(&mut self, value: VarInt) {
+        self.receive_window = value.into();
+    }
+
+    /// Set `stream_receive_window`
+    pub fn set_stream_receive_window(&mut self, value: VarInt) {
+        self.stream_receive_window = value.into();
+    }
+
     /// Returns the maximum amount of data this is allowed to be written on the connection
     pub fn write_limit(&self) -> u64 {
         (self.max_data - self.data_sent).min(self.send_window - self.unacked_data)
