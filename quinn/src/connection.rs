@@ -554,7 +554,7 @@ impl Connection {
     /// This should be set to at least the expected connection latency multiplied by the maximum
     /// desired throughput. Larger values can be useful to allow maximum throughput within a
     /// stream while another is blocked.
-    pub fn set_receive_window(&mut self, receive_window: VarInt) {
+    pub fn set_receive_window(&self, receive_window: VarInt) {
         let mut conn = self.0.lock("set_receive_window");
         conn.inner.set_receive_window(receive_window);
         conn.wake();
