@@ -763,15 +763,6 @@ impl StreamsState {
         self.receive_window = receive_window.into();
     }
 
-    pub fn set_stream_receive_window(&mut self, stream_receive_window: VarInt) {
-        self.stream_receive_window = stream_receive_window.into();
-
-        // correct the existing streams
-        for recv in self.recv.values_mut() {
-            recv.set_sent_max_stream_data(self.stream_receive_window);
-        }
-    }
-
     pub(super) fn insert(&mut self, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
         if bi || !remote {
