@@ -1,7 +1,9 @@
 use std::{convert::TryInto, fmt, num::TryFromIntError, sync::Arc, time::Duration};
 
-use rand::RngCore;
 use thiserror::Error;
+
+#[cfg(feature = "ring")]
+use rand::RngCore;
 
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
