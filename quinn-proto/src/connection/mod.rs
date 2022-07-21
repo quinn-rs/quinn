@@ -743,7 +743,7 @@ impl Connection {
                     && !can_send.acks
                     && can_send.other
                     && (buf_capacity - builder.datagram_start)
-                        == self.path.max_udp_payload_size as _),
+                        == self.path.max_udp_payload_size as usize),
                 "SendableFrames was {:?}, but only ACKs have been written",
                 can_send
             );

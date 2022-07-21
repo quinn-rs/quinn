@@ -147,7 +147,7 @@ impl Recv {
     ) -> Result<bool, TransportError> {
         // Validate final_offset
         if let Some(offset) = self.final_offset() {
-            if offset != final_offset.into() {
+            if offset != final_offset.into_inner() {
                 return Err(TransportError::FINAL_SIZE_ERROR("inconsistent value"));
             }
         } else if self.end > final_offset.into() {
