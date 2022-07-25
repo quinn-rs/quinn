@@ -548,7 +548,7 @@ impl Connection {
         conn.wake();
     }
 
-    /// See [`quinn::TransportConfig::receive_window()`]
+    /// See [`proto::TransportConfig::receive_window()`]
     pub fn set_receive_window(&self, receive_window: VarInt) {
         let mut conn = self.0.lock("set_receive_window");
         conn.inner.set_receive_window(receive_window);
