@@ -2,9 +2,8 @@ use std::{
     io,
     io::IoSliceMut,
     mem::{self, MaybeUninit},
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
-    ptr,
     sync::atomic::AtomicUsize,
     task::{Context, Poll},
     time::Instant,
@@ -358,7 +357,7 @@ fn recv(
                 hdrs.as_mut_ptr(),
                 bufs.len().min(BATCH_SIZE) as libc::c_uint,
                 0,
-                ptr::null_mut(),
+                std::ptr::null_mut(),
             )
         };
         if n == -1 {
@@ -520,21 +519,41 @@ fn decode_recv(
                     ecn_bits = cmsg::decode::<libc::c_int>(cmsg) as u8;
                 }
             },
-            (libc::IPPROTO_IP, libc::IP_PKTINFO) => unsafe {
-                let pktinfo = cmsg::decode::<libc::in_pktinfo>(cmsg);
-                dst_ip = Some(IpAddr::V4(ptr::read(&pktinfo.ipi_addr as *const _ as _)));
-            },
-            (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => unsafe {
-                let pktinfo = cmsg::decode::<libc::in6_pktinfo>(cmsg);
-                dst_ip = Some(IpAddr::V6(ptr::read(&pktinfo.ipi6_addr as *const _ as _)));
-            },
+            (libc::IPPROTO_IP, libc::IP_PKTINFO) => {
+                let pktinfo = unsafe { cmsg::decode::<libc::in_pktinfo>(cmsg) };
+                dst_ip = Some(IpAddr::V4(Ipv4Addr::from(
+                    pktinfo.ipi_addr.s_addr.to_ne_bytes(),
+                )));
+            }
+            (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
+                let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo>(cmsg) };
+                dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
+            }
             _ => {}
         }
     }
 
     let addr = match libc::c_int::from(name.ss_family) {
-        libc::AF_INET => unsafe { SocketAddr::V4(ptr::read(&name as *const _ as _)) },
-        libc::AF_INET6 => unsafe { SocketAddr::V6(ptr::read(&name as *const _ as _)) },
+        libc::AF_INET => {
+            // Safety: if the ss_family field is AF_INET then storage must be a sockaddr_in.
+            let addr: &libc::sockaddr_in =
+                unsafe { &*(&name as *const _ as *const libc::sockaddr_in) };
+            SocketAddr::V4(SocketAddrV4::new(
+                Ipv4Addr::from(addr.sin_addr.s_addr.to_ne_bytes()),
+                u16::from_be(addr.sin_port),
+            ))
+        }
+        libc::AF_INET6 => {
+            // Safety: if the ss_family field is AF_INET6 then storage must be a sockaddr_in6.
+            let addr: &libc::sockaddr_in6 =
+                unsafe { &*(&name as *const _ as *const libc::sockaddr_in6) };
+            SocketAddr::V6(SocketAddrV6::new(
+                Ipv6Addr::from(addr.sin6_addr.s6_addr),
+                u16::from_be(addr.sin6_port),
+                addr.sin6_flowinfo,
+                addr.sin6_scope_id,
+            ))
+        }
         _ => unreachable!(),
     };
 
