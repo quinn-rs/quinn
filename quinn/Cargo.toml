@@ -1,6 +1,6 @@
 [package]
 name = "quinn"
-version = "0.8.3"
+version = "0.8.4"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
 description = "QUIC transport protocol implementation for Tokio"
@@ -33,7 +33,7 @@ bytes = "1"
 futures-util = { version = "0.3.11", default-features = false, features = ["io"] }
 futures-channel = "0.3.11"
 fxhash = "0.2.1"
-proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8.3", default-features = false }
+proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8.4", default-features = false }
 rustls = { version = "0.20.3", default-features = false, features = ["quic"], optional = true }
 thiserror = "1.0.21"
 tracing = "0.1.10"
