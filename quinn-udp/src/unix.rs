@@ -212,7 +212,7 @@ fn send(
         unsafe { MaybeUninit::uninit().assume_init() };
     for (i, transmit) in transmits.iter().enumerate().take(BATCH_SIZE) {
         let dst_addr = unsafe {
-            std::ptr::write(
+            ptr::write(
                 addrs[i].as_mut_ptr(),
                 socket2::SockAddr::from(transmit.destination),
             );
