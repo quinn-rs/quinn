@@ -44,7 +44,7 @@ impl Connecting {
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         udp_state: Arc<UdpState>,
-        runtime: Arc<Box<dyn Runtime>>,
+        runtime: Arc<dyn Runtime>,
     ) -> Connecting {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
@@ -728,7 +728,7 @@ impl ConnectionRef {
         on_handshake_data: oneshot::Sender<()>,
         on_connected: oneshot::Sender<bool>,
         udp_state: Arc<UdpState>,
-        runtime: Arc<Box<dyn Runtime>>,
+        runtime: Arc<dyn Runtime>,
     ) -> Self {
         Self(Arc::new(Mutex::new(ConnectionInner {
             inner: conn,
@@ -817,7 +817,7 @@ pub struct ConnectionInner {
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
     udp_state: Arc<UdpState>,
-    runtime: Arc<Box<dyn Runtime>>,
+    runtime: Arc<dyn Runtime>,
 }
 
 impl ConnectionInner {

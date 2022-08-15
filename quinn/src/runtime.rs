@@ -4,6 +4,7 @@ use std::{
     io::{self, IoSliceMut},
     net::SocketAddr,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Instant,
 };
@@ -57,17 +58,17 @@ pub trait AsyncUdpSocket: Send + Debug + 'static {
 /// If `runtime-tokio` is enabled and this function is called from within a Tokio runtime context,
 /// then `TokioRuntime` is returned. Otherwise, if `runtime-async-std` is enabled, `AsyncStdRuntime`
 /// is returned. Otherwise, `None` is returned.
-pub fn default_runtime() -> Option<Box<dyn Runtime>> {
+pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
     #[cfg(feature = "runtime-tokio")]
     {
         if ::tokio::runtime::Handle::try_current().is_ok() {
-            return Some(Box::new(TokioRuntime));
+            return Some(Arc::new(TokioRuntime));
         }
     }
 
     #[cfg(feature = "runtime-async-std")]
     {
-        return Some(Box::new(AsyncStdRuntime));
+        return Some(Arc::new(AsyncStdRuntime));
     }
 
     #[cfg(not(feature = "runtime-async-std"))]
