@@ -366,6 +366,30 @@ impl Connection {
         }
     }
 
+    /// Wait for the connection to be closed for any reason
+    ///
+    /// Despite the return type's name, closed connections are often not an error condition at the
+    /// application layer. Cases that might be routine include [`ConnectionError::LocallyClosed`]
+    /// and [`ConnectionError::ApplicationClosed`].
+    pub async fn closed(&self) -> ConnectionError {
+        let closed;
+        {
+            let conn = self.0.lock("closed");
+            closed = conn.closed.clone();
+            // Construct the future while the lock is held to ensure we can't miss a wakeup if
+            // the `Notify` is signaled immediately after we release the lock. `await` it after
+            // the lock guard is out of scope.
+            closed.notified()
+        }
+        .await;
+        self.0
+            .lock("closed")
+            .error
+            .as_ref()
+            .expect("closed without an error")
+            .clone()
+    }
+
     /// Close the connection immediately.
     ///
     /// Pending operations will fail immediately with [`ConnectionError::LocallyClosed`]. Delivery
@@ -731,6 +755,7 @@ impl ConnectionRef {
             datagram_reader: None,
             finishing: FxHashMap::default(),
             stopped: FxHashMap::default(),
+            closed: Arc::new(Notify::new()),
             error: None,
             ref_count: 0,
             udp_state,
@@ -792,6 +817,7 @@ pub struct ConnectionInner {
     datagram_reader: Option<Waker>,
     pub(crate) finishing: FxHashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
     pub(crate) stopped: FxHashMap<StreamId, Waker>,
+    closed: Arc<Notify>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
@@ -1022,6 +1048,7 @@ impl ConnectionInner {
         for (_, waker) in self.stopped.drain() {
             waker.wake();
         }
+        self.closed.notify_waiters();
     }
 
     fn close(&mut self, error_code: VarInt, reason: Bytes) {
