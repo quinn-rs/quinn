@@ -354,7 +354,7 @@ impl crypto::PacketKey for PacketKey {
         payload: &mut BytesMut,
     ) -> Result<(), CryptoError> {
         let plain = self
-            .decrypt_in_place(packet, &*header, payload.as_mut())
+            .decrypt_in_place(packet, header, payload.as_mut())
             .map_err(|_| CryptoError)?;
         let plain_len = plain.len();
         payload.truncate(plain_len);
