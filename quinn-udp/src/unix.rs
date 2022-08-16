@@ -1,10 +1,11 @@
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+use std::ptr;
 use std::{
     io,
     io::IoSliceMut,
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
-    ptr,
     sync::atomic::AtomicUsize,
     time::Instant,
 };
