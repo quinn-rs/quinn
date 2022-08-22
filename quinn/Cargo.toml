@@ -1,6 +1,6 @@
 [package]
 name = "quinn"
-version = "0.8.4"
+version = "0.8.5"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
 description = "QUIC transport protocol implementation for Tokio"
