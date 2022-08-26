@@ -230,9 +230,9 @@ pub fn read_certs_from_file(
 
     let mut key_reader = BufReader::new(File::open(&quot;./privkey.pem&quot;)?);
     // if the file starts with &quot;BEGIN RSA PRIVATE KEY&quot;
-    // let mut key_vec = rustls_pemfile::rsa_private_keys(&amp;mut reader)?;
+    // let mut key_vec = rustls_pemfile::rsa_private_keys(&amp;mut key_reader)?;
     // if the file starts with &quot;BEGIN PRIVATE KEY&quot;
-    let mut keys = rustls_pemfile::pkcs8_private_keys(&amp;mut reader)?;
+    let mut keys = rustls_pemfile::pkcs8_private_keys(&amp;mut key_reader)?;
 
     assert_eq!(key_vec.len(), 1);
     let key = rustls::PrivateKey(keys.remove(0));
