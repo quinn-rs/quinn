@@ -15,14 +15,11 @@ use pin_project_lite::pin_project;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
-use tokio::{
-    sync::{futures::Notified, mpsc, oneshot, Notify},
-    time::Instant as TokioInstant,
-};
-use tokio_util::time::delay_queue;
+use tokio::sync::{futures::Notified, mpsc, oneshot, Notify};
 use tracing::debug_span;
 
 use crate::{
+    delay_queue::Timer,
     mutex::Mutex,
     recv_stream::RecvStream,
     send_stream::{SendStream, WriteError},
@@ -784,8 +781,8 @@ pub(crate) struct State {
     on_handshake_data: Option<oneshot::Sender<()>>,
     on_connected: Option<oneshot::Sender<bool>>,
     connected: bool,
-    pub(crate) timer_handle: Option<delay_queue::Key>,
-    pub(crate) timer_deadline: Option<TokioInstant>,
+    pub(crate) timer_handle: Option<Timer>,
+    pub(crate) timer_deadline: Option<Instant>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
     pub(crate) blocked_readers: FxHashMap<StreamId, Waker>,
     pub(crate) finishing: FxHashMap<StreamId, oneshot::Sender<Option<WriteError>>>,

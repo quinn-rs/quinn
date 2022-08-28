@@ -51,6 +51,7 @@ macro_rules! ready {
 }
 
 mod connection;
+mod delay_queue;
 mod endpoint;
 mod mutex;
 mod recv_stream;

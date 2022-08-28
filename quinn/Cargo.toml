@@ -42,10 +42,10 @@ rustc-hash = "1.1"
 pin-project-lite = "0.2"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.9", default-features = false }
 rustls = { version = "0.20.3", default-features = false, features = ["quic"], optional = true }
+slab = "0.4"
 thiserror = "1.0.21"
 tracing = "0.1.10"
 tokio = { version = "1.13.0", features = ["sync"] }
-tokio-util = { version = "0.6.9", features = ["time"] }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.3", default-features = false }
 webpki = { version = "0.22", default-features = false, optional = true }
 
@@ -54,6 +54,7 @@ anyhow = "1.0.22"
 crc = "3"
 bencher = "0.1.5"
 directories-next = "2"
+proptest = "=1.0.0" # Pinned for MSRV
 rand = "0.8"
 rcgen = "0.10.0"
 rustls-pemfile = "1.0.0"
