@@ -8,7 +8,7 @@ keywords = ["quic"]
 categories = [ "network-programming", "asynchronous" ]
 workspace = ".."
 edition = "2021"
-rust-version = "1.57"
+rust-version = "1.59"
 
 [package.metadata.docs.rs]
 all-features = true
