@@ -503,10 +503,7 @@ fn run_echo(args: EchoArgs) {
             server.wait_idle().await;
         });
 
-        info!(
-            "connecting from {} to {}",
-            args.client_addr, args.server_addr
-        );
+        info!("connecting from {} to {}", args.client_addr, server_addr);
         runtime.block_on(async move {
             let new_conn = client
                 .connect(server_addr, "localhost")
