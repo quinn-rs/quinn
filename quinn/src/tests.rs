@@ -496,8 +496,8 @@ fn run_echo(args: EchoArgs) {
 
             let mut new_conn = incoming.instrument(info_span!("server")).await.unwrap();
             tokio::spawn(async move {
-                while let Some(stream) = new_conn.bi_streams.next().await {
-                    tokio::spawn(echo(stream.unwrap()));
+                while let Some(Ok(stream)) = new_conn.bi_streams.next().await {
+                    tokio::spawn(echo(stream));
                 }
             });
             server.wait_idle().await;
