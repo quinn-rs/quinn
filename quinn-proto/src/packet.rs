@@ -575,7 +575,7 @@ impl PlainHeader {
                 });
             }
 
-            match LongHeaderType::from_byte(first, grease_quic_bit)? {
+            match LongHeaderType::from_byte(first)? {
                 LongHeaderType::Initial => {
                     let token_len = buf.get_var()? as usize;
                     let token_start = buf.position() as usize;
@@ -722,7 +722,7 @@ pub(crate) enum LongHeaderType {
 }
 
 impl LongHeaderType {
-    fn from_byte(b: u8, grease_quic_bit: bool) -> Result<Self, PacketDecodeError> {
+    fn from_byte(b: u8) -> Result<Self, PacketDecodeError> {
         use self::{LongHeaderType::*, LongType::*};
         debug_assert!(b & LONG_HEADER_FORM != 0, "not a long packet");
         Ok(match (b & 0x30) >> 4 {
