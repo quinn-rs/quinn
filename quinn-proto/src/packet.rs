@@ -536,6 +536,9 @@ impl PlainHeader {
         grease_quic_bit: bool,
     ) -> Result<Self, PacketDecodeError> {
         let first = buf.get::<u8>()?;
+        if !grease_quic_bit && first & FIXED_BIT == 0 {
+            return Err(PacketDecodeError::InvalidHeader("fixed bit unset"));
+        }
         if first & LONG_HEADER_FORM == 0 {
             let spin = first & SPIN_BIT != 0;
             if buf.remaining() < local_cid_len {
@@ -572,7 +575,7 @@ impl PlainHeader {
                 });
             }
 
-            match LongHeaderType::from_byte(first, grease_quic_bit)? {
+            match LongHeaderType::from_byte(first)? {
                 LongHeaderType::Initial => {
                     let token_len = buf.get_var()? as usize;
                     let token_start = buf.position() as usize;
@@ -719,11 +722,8 @@ pub(crate) enum LongHeaderType {
 }
 
 impl LongHeaderType {
-    fn from_byte(b: u8, grease_quic_bit: bool) -> Result<Self, PacketDecodeError> {
+    fn from_byte(b: u8) -> Result<Self, PacketDecodeError> {
         use self::{LongHeaderType::*, LongType::*};
-        if !grease_quic_bit && b & FIXED_BIT == 0 {
-            return Err(PacketDecodeError::InvalidHeader("fixed bit unset"));
-        }
         debug_assert!(b & LONG_HEADER_FORM != 0, "not a long packet");
         Ok(match (b & 0x30) >> 4 {
             0x0 => Initial,
