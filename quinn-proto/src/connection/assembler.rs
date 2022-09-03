@@ -270,6 +270,7 @@ impl Buffer {
         let duplicate = offset.saturating_sub(self.offset) as usize;
         self.offset = self.offset.max(offset);
         if duplicate >= self.bytes.len() {
+            // All bytes are duplicate
             self.bytes = Bytes::new();
             self.defragmented = true;
             self.allocation_size = 0;

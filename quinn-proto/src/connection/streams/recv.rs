@@ -101,7 +101,7 @@ impl Recv {
         // Only announce a window update if it's significant enough
         // to make it worthwhile sending a MAX_STREAM_DATA frame.
         // We use here a fraction of the configured stream receive window to make
-        // the decision, and accomodate for streams using bigger windows requring
+        // the decision, and accommodate for streams using bigger windows requiring
         // less updates. A fixed size would also work - but it would need to be
         // smaller than `stream_receive_window` in order to make sure the stream
         // does not get stuck.
