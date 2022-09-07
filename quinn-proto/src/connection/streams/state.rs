@@ -226,7 +226,7 @@ impl StreamsState {
             rs.ingest(frame, payload_len, self.data_recvd, self.local_max_data)?;
         self.data_recvd = self.data_recvd.saturating_add(new_bytes);
 
-        if !rs.stopped {
+        if !rs.stopped() {
             self.on_stream_frame(true, stream);
             return Ok(ShouldTransmit(false));
         }
@@ -276,9 +276,9 @@ impl StreamsState {
             // Redundant reset
             return Ok(ShouldTransmit(false));
         }
-        let bytes_read = rs.assembler.bytes_read();
-        let stopped = rs.stopped;
-        let end = rs.end;
+        let bytes_read = rs.assembler().bytes_read();
+        let stopped = rs.stopped();
+        let end = rs.end();
         if stopped {
             // Stopped streams should be disposed immediately on reset
             self.recv.remove(&id);

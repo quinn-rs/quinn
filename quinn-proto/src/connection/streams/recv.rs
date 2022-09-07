@@ -11,10 +11,10 @@ use crate::{frame, Dir, TransportError, VarInt};
 #[derive(Debug, Default)]
 pub(super) struct Recv {
     state: RecvState,
-    pub(super) assembler: Assembler,
+    assembler: Assembler,
     sent_max_stream_data: u64,
-    pub(super) end: u64,
-    pub(super) stopped: bool,
+    end: u64,
+    stopped: bool,
 }
 
 impl Recv {
@@ -195,6 +195,21 @@ impl Recv {
         }
 
         Ok(new_bytes)
+    }
+
+    #[must_use]
+    pub(super) fn assembler(&self) -> &Assembler {
+        &self.assembler
+    }
+
+    #[must_use]
+    pub(super) fn end(&self) -> u64 {
+        self.end
+    }
+
+    #[must_use]
+    pub(super) fn stopped(&self) -> bool {
+        self.stopped
     }
 }
 
