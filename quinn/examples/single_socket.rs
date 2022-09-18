@@ -41,7 +41,7 @@ fn run_server(addr: SocketAddr) -> Result<Vec<u8>, Box<dyn Error>> {
     let (mut incoming, server_cert) = make_server_endpoint(addr)?;
     // accept a single connection
     tokio::spawn(async move {
-        let quinn::NewConnection { connection, .. } = incoming.next().await.unwrap().await.unwrap();
+        let connection = incoming.next().await.unwrap().await.unwrap();
         println!(
             "[server] incoming connection: addr={}",
             connection.remote_address()
@@ -54,6 +54,6 @@ fn run_server(addr: SocketAddr) -> Result<Vec<u8>, Box<dyn Error>> {
 /// Attempt QUIC connection with the given server address.
 async fn run_client(endpoint: &Endpoint, server_addr: SocketAddr) {
     let connect = endpoint.connect(server_addr, "localhost").unwrap();
-    let quinn::NewConnection { connection, .. } = connect.await.unwrap();
+    let connection = connect.await.unwrap();
     println!("[client] connected: addr={}", connection.remote_address());
 }

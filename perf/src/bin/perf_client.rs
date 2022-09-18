@@ -119,24 +119,17 @@ async fn run(opt: Opt) -> Result<()> {
 
     let stream_stats = OpenStreamStats::default();
 
-    let quinn::NewConnection {
-        connection,
-        uni_streams,
-        ..
-    } = endpoint
+    let connection = endpoint
         .connect_with(cfg, addr, host_name)?
         .await
         .context("connecting")?;
 
     info!("established");
 
-    let acceptor = UniAcceptor(Arc::new(tokio::sync::Mutex::new(uni_streams)));
-
     let drive_fut = async {
         tokio::try_join!(
             drive_uni(
                 connection.clone(),
-                acceptor,
                 stream_stats.clone(),
                 opt.uni_requests,
                 opt.upload_size,
@@ -236,7 +229,6 @@ async fn drain_stream(
 
 async fn drive_uni(
     connection: quinn::Connection,
-    acceptor: UniAcceptor,
     stream_stats: OpenStreamStats,
     concurrency: u64,
     upload: u64,
@@ -247,12 +239,12 @@ async fn drive_uni(
     loop {
         let permit = sem.clone().acquire_owned().await.unwrap();
         let send = connection.open_uni().await?;
-        let acceptor = acceptor.clone();
         let stream_stats = stream_stats.clone();
 
         debug!("sending request on {}", send.id());
+        let connection = connection.clone();
         tokio::spawn(async move {
-            if let Err(e) = request_uni(send, acceptor, upload, download, stream_stats).await {
+            if let Err(e) = request_uni(send, connection, upload, download, stream_stats).await {
                 error!("sending request failed: {:#}", e);
             }
 
@@ -263,19 +255,13 @@ async fn drive_uni(
 
 async fn request_uni(
     send: quinn::SendStream,
-    acceptor: UniAcceptor,
+    conn: quinn::Connection,
     upload: u64,
     download: u64,
     stream_stats: OpenStreamStats,
 ) -> Result<()> {
     request(send, upload, download, stream_stats.clone()).await?;
-    let recv = {
-        let mut guard = acceptor.0.lock().await;
-        guard
-            .next()
-            .await
-            .ok_or_else(|| anyhow::anyhow!("End of stream"))
-    }??;
+    let recv = conn.accept_uni().await?;
     drain_stream(recv, download, stream_stats).await?;
     Ok(())
 }
@@ -347,9 +333,6 @@ async fn request_bi(
     drain_stream(recv, download, stream_stats).await?;
     Ok(())
 }
-
-#[derive(Clone)]
-struct UniAcceptor(Arc<tokio::sync::Mutex<quinn::IncomingUniStreams>>);
 
 struct SkipServerVerification;
 

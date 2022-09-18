@@ -106,16 +106,14 @@ impl Context {
             };
             let handle = runtime.spawn(
                 async move {
-                    let quinn::NewConnection {
-                        mut uni_streams, ..
-                    } = incoming
+                    let connection = incoming
                         .next()
                         .await
                         .expect("accept")
                         .await
                         .expect("connect");
 
-                    while let Some(Ok(mut stream)) = uni_streams.next().await {
+                    while let Ok(mut stream) = connection.accept_uni().await {
                         tokio::spawn(async move {
                             while stream
                                 .read_chunk(usize::MAX, false)
@@ -142,7 +140,7 @@ impl Context {
             let _guard = runtime.enter();
             Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap()
         };
-        let quinn::NewConnection { connection, .. } = runtime
+        let connection = runtime
             .block_on(async {
                 endpoint
                     .connect_with(self.client_config.clone(), server_addr, "localhost")

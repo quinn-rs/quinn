@@ -2,7 +2,6 @@ use std::{
     any::Any,
     fmt,
     future::Future,
-    mem,
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
@@ -22,7 +21,6 @@ use udp::UdpState;
 
 use crate::{
     mutex::Mutex,
-    poll_fn,
     recv_stream::RecvStream,
     send_stream::{SendStream, WriteError},
     ConnectionEvent, EndpointEvent, VarInt,
@@ -94,7 +92,7 @@ impl Connecting {
     /// ticket is found, `self` is returned unmodified.
     ///
     /// For incoming connections, a 0.5-RTT connection will always be successfully constructed.
-    pub fn into_0rtt(mut self) -> Result<(NewConnection, ZeroRttAccepted), Self> {
+    pub fn into_0rtt(mut self) -> Result<(Connection, ZeroRttAccepted), Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
         let conn = (self.conn.as_mut().unwrap()).state.lock("into_0rtt");
@@ -104,7 +102,7 @@ impl Connecting {
 
         if is_ok {
             let conn = self.conn.take().unwrap();
-            Ok((NewConnection::new(conn), ZeroRttAccepted(self.connected)))
+            Ok((Connection(conn), ZeroRttAccepted(self.connected)))
         } else {
             Err(self)
         }
@@ -160,14 +158,14 @@ impl Connecting {
 }
 
 impl Future for Connecting {
-    type Output = Result<NewConnection, ConnectionError>;
+    type Output = Result<Connection, ConnectionError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Pin::new(&mut self.connected).poll(cx).map(|_| {
             let conn = self.conn.take().unwrap();
             let inner = conn.state.lock("connecting");
             if inner.connected {
                 drop(inner);
-                Ok(NewConnection::new(conn))
+                Ok(Connection(conn))
             } else {
                 Err(inner
                     .error
@@ -199,59 +197,6 @@ impl Future for ZeroRttAccepted {
     type Output = bool;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Pin::new(&mut self.0).poll(cx).map(|x| x.unwrap_or(false))
-    }
-}
-
-/// Components of a newly established connection
-///
-/// All fields of this struct, in addition to any other handles constructed later, must be dropped
-/// for a connection to be implicitly closed. If the `NewConnection` is stored in a long-lived
-/// variable, moving individual fields won't cause remaining unused fields to be dropped, even with
-/// pattern-matching. The easiest way to ensure unused fields are dropped is to pattern-match on the
-/// variable wrapped in brackets, which forces the entire `NewConnection` to be moved out of the
-/// variable and into a temporary, ensuring all unused fields are dropped at the end of the
-/// statement:
-///
-#[cfg_attr(
-    feature = "rustls",
-    doc = "```rust
-# use quinn::NewConnection;
-# fn dummy(new_connection: NewConnection) {
-let NewConnection { connection, .. } = { new_connection };
-# }
-```"
-)]
-///
-/// You can also explicitly invoke [`Connection::close()`] at any time.
-///
-/// [`Connection::close()`]: crate::Connection::close
-#[derive(Debug)]
-#[non_exhaustive]
-pub struct NewConnection {
-    /// Handle for interacting with the connection
-    pub connection: Connection,
-    /// Unidirectional streams initiated by the peer, in the order they were opened
-    ///
-    /// Note that data for separate streams may be delivered in any order. In other words, reading
-    /// from streams in the order they're opened is not optimal. See [`IncomingUniStreams`] for
-    /// details.
-    ///
-    /// [`IncomingUniStreams`]: crate::IncomingUniStreams
-    pub uni_streams: IncomingUniStreams,
-    /// Bidirectional streams initiated by the peer, in the order they were opened
-    pub bi_streams: IncomingBiStreams,
-    /// Unordered, unreliable datagrams sent by the peer
-    pub datagrams: Datagrams,
-}
-
-impl NewConnection {
-    fn new(conn: ConnectionRef) -> Self {
-        Self {
-            connection: Connection(conn.clone()),
-            uni_streams: IncomingUniStreams(conn.clone()),
-            bi_streams: IncomingBiStreams(conn.clone()),
-            datagrams: Datagrams(conn),
-        }
     }
 }
 
@@ -668,96 +613,6 @@ fn poll_open<'a>(
     }
 }
 
-/// A stream of unidirectional QUIC streams initiated by a remote peer.
-///
-/// Incoming streams are *always* opened in the same order that the peer created them, but data can
-/// be delivered to open streams in any order. This allows meaning to be assigned to the sequence in
-/// which streams are opened. For example, a file transfer protocol might designate the first stream
-/// the client opens as a "control" stream, using all others for exchanging file data.
-///
-/// Processing streams in the order they're opened will produce head-of-line blocking. For best
-/// performance, an application should be prepared to fully process later streams before any data is
-/// received on earlier streams.
-#[derive(Debug)]
-pub struct IncomingUniStreams(ConnectionRef);
-
-impl IncomingUniStreams {
-    /// Fetch the next incoming unidirectional stream
-    pub async fn next(&mut self) -> Option<Result<RecvStream, ConnectionError>> {
-        poll_fn(move |cx| self.poll(cx)).await
-    }
-
-    fn poll(&mut self, cx: &mut Context) -> Poll<Option<Result<RecvStream, ConnectionError>>> {
-        let mut conn = self.0.state.lock("IncomingUniStreams::poll");
-        if let Some(x) = conn.inner.streams().accept(Dir::Uni) {
-            conn.wake(); // To send additional stream ID credit
-            mem::drop(conn); // Release the lock so clone can take it
-            Poll::Ready(Some(Ok(RecvStream::new(self.0.clone(), x, false))))
-        } else if let Some(ConnectionError::LocallyClosed) = conn.error {
-            Poll::Ready(None)
-        } else if let Some(ref e) = conn.error {
-            Poll::Ready(Some(Err(e.clone())))
-        } else {
-            conn.incoming_uni_streams_reader = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }
-}
-
-#[cfg(feature = "futures-core")]
-impl futures_core::Stream for IncomingUniStreams {
-    type Item = Result<RecvStream, ConnectionError>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.poll(cx)
-    }
-}
-
-/// A stream of bidirectional QUIC streams initiated by a remote peer.
-///
-/// See `IncomingUniStreams` for information about incoming streams in general.
-#[derive(Debug)]
-pub struct IncomingBiStreams(ConnectionRef);
-
-impl IncomingBiStreams {
-    /// Fetch the next incoming unidirectional stream
-    pub async fn next(&mut self) -> Option<Result<(SendStream, RecvStream), ConnectionError>> {
-        poll_fn(move |cx| self.poll(cx)).await
-    }
-
-    fn poll(
-        &mut self,
-        cx: &mut Context,
-    ) -> Poll<Option<Result<(SendStream, RecvStream), ConnectionError>>> {
-        let mut conn = self.0.state.lock("IncomingBiStreams::poll");
-        if let Some(x) = conn.inner.streams().accept(Dir::Bi) {
-            let is_0rtt = conn.inner.is_handshaking();
-            conn.wake(); // To send additional stream ID credit
-            mem::drop(conn); // Release the lock so clone can take it
-            Poll::Ready(Some(Ok((
-                SendStream::new(self.0.clone(), x, is_0rtt),
-                RecvStream::new(self.0.clone(), x, is_0rtt),
-            ))))
-        } else if let Some(ConnectionError::LocallyClosed) = conn.error {
-            Poll::Ready(None)
-        } else if let Some(ref e) = conn.error {
-            Poll::Ready(Some(Err(e.clone())))
-        } else {
-            conn.incoming_bi_streams_reader = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }
-}
-
-#[cfg(feature = "futures-core")]
-impl futures_core::Stream for IncomingBiStreams {
-    type Item = Result<(SendStream, RecvStream), ConnectionError>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.poll(cx)
-    }
-}
-
 pin_project! {
     /// Future produced by [`Connection::accept_uni`]
     pub struct AcceptUni<'a> {
@@ -855,40 +710,6 @@ impl Future for ReadDatagram<'_> {
     }
 }
 
-/// Stream of unordered, unreliable datagrams sent by the peer
-#[derive(Debug)]
-pub struct Datagrams(ConnectionRef);
-
-impl Datagrams {
-    /// Fetch the next application datagram from the peer
-    pub async fn next(&mut self) -> Option<Result<Bytes, ConnectionError>> {
-        poll_fn(move |cx| self.poll(cx)).await
-    }
-
-    fn poll(&mut self, cx: &mut Context) -> Poll<Option<Result<Bytes, ConnectionError>>> {
-        let mut conn = self.0.state.lock("Datagrams::poll_next");
-        if let Some(x) = conn.inner.datagrams().recv() {
-            Poll::Ready(Some(Ok(x)))
-        } else if let Some(ConnectionError::LocallyClosed) = conn.error {
-            Poll::Ready(None)
-        } else if let Some(ref e) = conn.error {
-            Poll::Ready(Some(Err(e.clone())))
-        } else {
-            conn.datagram_reader = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }
-}
-
-#[cfg(feature = "futures-core")]
-impl futures_core::Stream for Datagrams {
-    type Item = Result<Bytes, ConnectionError>;
-
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.poll(cx)
-    }
-}
-
 #[derive(Debug)]
 pub struct ConnectionRef(Arc<ConnectionInner>);
 
@@ -918,9 +739,6 @@ impl ConnectionRef {
                 endpoint_events,
                 blocked_writers: FxHashMap::default(),
                 blocked_readers: FxHashMap::default(),
-                incoming_uni_streams_reader: None,
-                incoming_bi_streams_reader: None,
-                datagram_reader: None,
                 finishing: FxHashMap::default(),
                 stopped: FxHashMap::default(),
                 error: None,
@@ -994,9 +812,6 @@ pub(crate) struct State {
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
     pub(crate) blocked_readers: FxHashMap<StreamId, Waker>,
-    incoming_uni_streams_reader: Option<Waker>,
-    incoming_bi_streams_reader: Option<Waker>,
-    datagram_reader: Option<Waker>,
     pub(crate) finishing: FxHashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
     pub(crate) stopped: FxHashMap<StreamId, Waker>,
     /// Always set to Some before the connection becomes drained
@@ -1102,21 +917,12 @@ impl State {
                 }
                 Stream(StreamEvent::Opened { dir: Dir::Uni }) => {
                     shared.stream_incoming[Dir::Uni as usize].notify_waiters();
-                    if let Some(x) = self.incoming_uni_streams_reader.take() {
-                        x.wake();
-                    }
                 }
                 Stream(StreamEvent::Opened { dir: Dir::Bi }) => {
                     shared.stream_incoming[Dir::Bi as usize].notify_waiters();
-                    if let Some(x) = self.incoming_bi_streams_reader.take() {
-                        x.wake();
-                    }
                 }
                 DatagramReceived => {
                     shared.datagrams.notify_waiters();
-                    if let Some(x) = self.datagram_reader.take() {
-                        x.wake();
-                    }
                 }
                 Stream(StreamEvent::Readable { id }) => {
                     if let Some(reader) = self.blocked_readers.remove(&id) {
@@ -1221,16 +1027,7 @@ impl State {
         shared.stream_opening[Dir::Bi as usize].notify_waiters();
         shared.stream_incoming[Dir::Uni as usize].notify_waiters();
         shared.stream_incoming[Dir::Bi as usize].notify_waiters();
-        if let Some(x) = self.incoming_uni_streams_reader.take() {
-            x.wake();
-        }
-        if let Some(x) = self.incoming_bi_streams_reader.take() {
-            x.wake();
-        }
         shared.datagrams.notify_waiters();
-        if let Some(x) = self.datagram_reader.take() {
-            x.wake();
-        }
         for (_, x) in self.finishing.drain() {
             let _ = x.send(Some(WriteError::ConnectionLost(reason.clone())));
         }
