@@ -96,7 +96,7 @@ impl Connecting {
     pub fn into_0rtt(mut self) -> Result<(NewConnection, ZeroRttAccepted), Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
-        let conn = (self.conn.as_mut().unwrap()).lock("into_0rtt");
+        let conn = (self.conn.as_mut().unwrap()).state.lock("into_0rtt");
 
         let is_ok = conn.inner.has_0rtt() || conn.inner.side().is_server();
         drop(conn);
@@ -123,7 +123,7 @@ impl Connecting {
             let _ = x.await;
         }
         let conn = self.conn.as_ref().unwrap();
-        let inner = conn.lock("handshake");
+        let inner = conn.state.lock("handshake");
         inner
             .inner
             .crypto_session()
@@ -152,7 +152,7 @@ impl Connecting {
     /// and the method will return `None`.
     pub fn local_ip(&self) -> Option<IpAddr> {
         let conn = self.conn.as_ref().unwrap();
-        let inner = conn.lock("local_ip");
+        let inner = conn.state.lock("local_ip");
 
         inner.inner.local_ip()
     }
@@ -163,7 +163,7 @@ impl Future for Connecting {
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         Pin::new(&mut self.connected).poll(cx).map(|_| {
             let conn = self.conn.take().unwrap();
-            let inner = conn.lock("connecting");
+            let inner = conn.state.lock("connecting");
             if inner.connected {
                 drop(inner);
                 Ok(NewConnection::new(conn))
@@ -183,7 +183,7 @@ impl Connecting {
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn remote_address(&self) -> SocketAddr {
         let conn_ref: &ConnectionRef = self.conn.as_ref().expect("used after yielding Ready");
-        conn_ref.lock("remote_address").inner.remote_address()
+        conn_ref.state.lock("remote_address").inner.remote_address()
     }
 }
 
@@ -273,13 +273,13 @@ impl Future for ConnectionDriver {
 
     #[allow(unused_mut)] // MSRV
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let conn = &mut *self.0.lock("poll");
+        let conn = &mut *self.0.state.lock("poll");
 
         let span = debug_span!("drive", id = conn.handle.0);
         let _guard = span.enter();
 
-        if let Err(e) = conn.process_conn_events(cx) {
-            conn.terminate(e);
+        if let Err(e) = conn.process_conn_events(&self.0.shared, cx) {
+            conn.terminate(e, &self.0.shared);
             return Poll::Ready(());
         }
         let mut keep_going = conn.drive_transmit();
@@ -287,7 +287,7 @@ impl Future for ConnectionDriver {
         // might need to reset a timer. Hence, we must loop until neither happens.
         keep_going |= conn.drive_timer(cx);
         conn.forward_endpoint_events();
-        conn.forward_app_events();
+        conn.forward_app_events(&self.0.shared);
 
         if !conn.inner.is_drained() {
             if keep_going {
@@ -344,9 +344,8 @@ impl Connection {
 
     async fn open(&self, dir: Dir) -> Result<(StreamId, bool), ConnectionError> {
         loop {
-            let opening;
             {
-                let mut conn = self.0.lock("open");
+                let mut conn = self.0.state.lock("open");
                 if let Some(ref e) = conn.error {
                     return Err(e.clone());
                 }
@@ -354,13 +353,10 @@ impl Connection {
                     let is_0rtt = conn.inner.side().is_client() && conn.inner.is_handshaking();
                     return Ok((id, is_0rtt));
                 }
-                // Clone the `Arc<Notify>` so we can wait on the underlying `Notify` without holding
-                // the lock. Store it in the outer scope to ensure it outlives the lock guard.
-                opening = conn.stream_opening[dir as usize].clone();
                 // Construct the future while the lock is held to ensure we can't miss a wakeup if
                 // the `Notify` is signaled immediately after we release the lock. `await` it after
                 // the lock guard is out of scope.
-                opening.notified()
+                self.0.shared.stream_opening[dir as usize].notified()
             }
             .await
         }
@@ -372,17 +368,19 @@ impl Connection {
     /// application layer. Cases that might be routine include [`ConnectionError::LocallyClosed`]
     /// and [`ConnectionError::ApplicationClosed`].
     pub async fn closed(&self) -> ConnectionError {
-        let closed;
         {
-            let conn = self.0.lock("closed");
-            closed = conn.closed.clone();
+            let conn = self.0.state.lock("closed");
+            if let Some(error) = conn.error.as_ref() {
+                return error.clone();
+            }
             // Construct the future while the lock is held to ensure we can't miss a wakeup if
             // the `Notify` is signaled immediately after we release the lock. `await` it after
             // the lock guard is out of scope.
-            closed.notified()
+            self.0.shared.closed.notified()
         }
         .await;
         self.0
+            .state
             .lock("closed")
             .error
             .as_ref()
@@ -406,8 +404,8 @@ impl Connection {
     /// [`finish`]: crate::SendStream::finish
     /// [`SendStream`]: crate::SendStream
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
-        let conn = &mut *self.0.lock("close");
-        conn.close(error_code, Bytes::copy_from_slice(reason));
+        let conn = &mut *self.0.state.lock("close");
+        conn.close(error_code, Bytes::copy_from_slice(reason), &self.0.shared);
     }
 
     /// Transmit `data` as an unreliable, unordered application datagram
@@ -416,7 +414,7 @@ impl Connection {
     /// and `data` must both fit inside a single QUIC packet and be smaller than the maximum
     /// dictated by the peer.
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
-        let conn = &mut *self.0.lock("send_datagram");
+        let conn = &mut *self.0.state.lock("send_datagram");
         if let Some(ref x) = conn.error {
             return Err(SendDatagramError::ConnectionLost(x.clone()));
         }
@@ -447,6 +445,7 @@ impl Connection {
     /// [`send_datagram()`]: Connection::send_datagram
     pub fn max_datagram_size(&self) -> Option<usize> {
         self.0
+            .state
             .lock("max_datagram_size")
             .inner
             .datagrams()
@@ -458,7 +457,7 @@ impl Connection {
     /// If `ServerConfig::migration` is `true`, clients may change addresses at will, e.g. when
     /// switching to a cellular internet connection.
     pub fn remote_address(&self) -> SocketAddr {
-        self.0.lock("remote_address").inner.remote_address()
+        self.0.state.lock("remote_address").inner.remote_address()
     }
 
     /// The local IP address which was used when the peer established
@@ -476,22 +475,23 @@ impl Connection {
     /// On all non-supported platforms the local IP address will not be available,
     /// and the method will return `None`.
     pub fn local_ip(&self) -> Option<IpAddr> {
-        self.0.lock("local_ip").inner.local_ip()
+        self.0.state.lock("local_ip").inner.local_ip()
     }
 
     /// Current best estimate of this connection's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
-        self.0.lock("rtt").inner.rtt()
+        self.0.state.lock("rtt").inner.rtt()
     }
 
     /// Returns connection statistics
     pub fn stats(&self) -> ConnectionStats {
-        self.0.lock("stats").inner.stats()
+        self.0.state.lock("stats").inner.stats()
     }
 
     /// Current state of the congestion control algorithm, for debugging purposes
     pub fn congestion_state(&self) -> Box<dyn Controller> {
         self.0
+            .state
             .lock("congestion_state")
             .inner
             .congestion_state()
@@ -507,6 +507,7 @@ impl Connection {
     /// [`Connection::handshake_data()`]: crate::Connecting::handshake_data
     pub fn handshake_data(&self) -> Option<Box<dyn Any>> {
         self.0
+            .state
             .lock("handshake_data")
             .inner
             .crypto_session()
@@ -520,6 +521,7 @@ impl Connection {
     /// be [`downcast`](Box::downcast) to a <code>Vec<[rustls::Certificate](rustls::Certificate)></code>
     pub fn peer_identity(&self) -> Option<Box<dyn Any>> {
         self.0
+            .state
             .lock("peer_identity")
             .inner
             .crypto_session()
@@ -537,7 +539,11 @@ impl Connection {
     // Update traffic keys spontaneously for testing purposes.
     #[doc(hidden)]
     pub fn force_key_update(&self) {
-        self.0.lock("force_key_update").inner.initiate_key_update()
+        self.0
+            .state
+            .lock("force_key_update")
+            .inner
+            .initiate_key_update()
     }
 
     /// Derive keying material from this connection's TLS session secrets.
@@ -555,6 +561,7 @@ impl Connection {
         context: &[u8],
     ) -> Result<(), proto::crypto::ExportKeyingMaterialError> {
         self.0
+            .state
             .lock("export_keying_material")
             .inner
             .crypto_session()
@@ -566,7 +573,7 @@ impl Connection {
     /// No streams may be opened by the peer unless fewer than `count` are already open. Large
     /// `count`s increase both minimum and worst-case memory consumption.
     pub fn set_max_concurrent_uni_streams(&self, count: VarInt) {
-        let mut conn = self.0.lock("set_max_concurrent_uni_streams");
+        let mut conn = self.0.state.lock("set_max_concurrent_uni_streams");
         conn.inner.set_max_concurrent_streams(Dir::Uni, count);
         // May need to send MAX_STREAMS to make progress
         conn.wake();
@@ -574,7 +581,7 @@ impl Connection {
 
     /// See [`proto::TransportConfig::receive_window()`]
     pub fn set_receive_window(&self, receive_window: VarInt) {
-        let mut conn = self.0.lock("set_receive_window");
+        let mut conn = self.0.state.lock("set_receive_window");
         conn.inner.set_receive_window(receive_window);
         conn.wake();
     }
@@ -584,7 +591,7 @@ impl Connection {
     /// No streams may be opened by the peer unless fewer than `count` are already open. Large
     /// `count`s increase both minimum and worst-case memory consumption.
     pub fn set_max_concurrent_bi_streams(&self, count: VarInt) {
-        let mut conn = self.0.lock("set_max_concurrent_bi_streams");
+        let mut conn = self.0.state.lock("set_max_concurrent_bi_streams");
         conn.inner.set_max_concurrent_streams(Dir::Bi, count);
         // May need to send MAX_STREAMS to make progress
         conn.wake();
@@ -611,7 +618,7 @@ impl IncomingUniStreams {
     }
 
     fn poll(&mut self, cx: &mut Context) -> Poll<Option<Result<RecvStream, ConnectionError>>> {
-        let mut conn = self.0.lock("IncomingUniStreams::poll");
+        let mut conn = self.0.state.lock("IncomingUniStreams::poll");
         if let Some(x) = conn.inner.streams().accept(Dir::Uni) {
             conn.wake(); // To send additional stream ID credit
             mem::drop(conn); // Release the lock so clone can take it
@@ -652,7 +659,7 @@ impl IncomingBiStreams {
         &mut self,
         cx: &mut Context,
     ) -> Poll<Option<Result<(SendStream, RecvStream), ConnectionError>>> {
-        let mut conn = self.0.lock("IncomingBiStreams::poll");
+        let mut conn = self.0.state.lock("IncomingBiStreams::poll");
         if let Some(x) = conn.inner.streams().accept(Dir::Bi) {
             let is_0rtt = conn.inner.is_handshaking();
             conn.wake(); // To send additional stream ID credit
@@ -692,7 +699,7 @@ impl Datagrams {
     }
 
     fn poll(&mut self, cx: &mut Context) -> Poll<Option<Result<Bytes, ConnectionError>>> {
-        let mut conn = self.0.lock("Datagrams::poll_next");
+        let mut conn = self.0.state.lock("Datagrams::poll_next");
         if let Some(x) = conn.inner.datagrams().recv() {
             Poll::Ready(Some(Ok(x)))
         } else if let Some(ConnectionError::LocallyClosed) = conn.error {
@@ -716,7 +723,7 @@ impl futures_core::Stream for Datagrams {
 }
 
 #[derive(Debug)]
-pub struct ConnectionRef(Arc<Mutex<ConnectionInner>>);
+pub struct ConnectionRef(Arc<ConnectionInner>);
 
 impl ConnectionRef {
     #[allow(clippy::too_many_arguments)]
@@ -730,31 +737,32 @@ impl ConnectionRef {
         udp_state: Arc<UdpState>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
-        Self(Arc::new(Mutex::new(ConnectionInner {
-            inner: conn,
-            driver: None,
-            handle,
-            on_handshake_data: Some(on_handshake_data),
-            on_connected: Some(on_connected),
-            connected: false,
-            timer: None,
-            timer_deadline: None,
-            conn_events,
-            endpoint_events,
-            blocked_writers: FxHashMap::default(),
-            blocked_readers: FxHashMap::default(),
-            stream_opening: [Arc::new(Notify::new()), Arc::new(Notify::new())],
-            incoming_uni_streams_reader: None,
-            incoming_bi_streams_reader: None,
-            datagram_reader: None,
-            finishing: FxHashMap::default(),
-            stopped: FxHashMap::default(),
-            closed: Arc::new(Notify::new()),
-            error: None,
-            ref_count: 0,
-            udp_state,
-            runtime,
-        })))
+        Self(Arc::new(ConnectionInner {
+            state: Mutex::new(State {
+                inner: conn,
+                driver: None,
+                handle,
+                on_handshake_data: Some(on_handshake_data),
+                on_connected: Some(on_connected),
+                connected: false,
+                timer: None,
+                timer_deadline: None,
+                conn_events,
+                endpoint_events,
+                blocked_writers: FxHashMap::default(),
+                blocked_readers: FxHashMap::default(),
+                incoming_uni_streams_reader: None,
+                incoming_bi_streams_reader: None,
+                datagram_reader: None,
+                finishing: FxHashMap::default(),
+                stopped: FxHashMap::default(),
+                error: None,
+                ref_count: 0,
+                udp_state,
+                runtime,
+            }),
+            shared: Shared::default(),
+        }))
     }
 
     fn stable_id(&self) -> usize {
@@ -764,14 +772,14 @@ impl ConnectionRef {
 
 impl Clone for ConnectionRef {
     fn clone(&self) -> Self {
-        self.lock("clone").ref_count += 1;
+        self.state.lock("clone").ref_count += 1;
         Self(self.0.clone())
     }
 }
 
 impl Drop for ConnectionRef {
     fn drop(&mut self) {
-        let conn = &mut *self.lock("drop");
+        let conn = &mut *self.state.lock("drop");
         if let Some(x) = conn.ref_count.checked_sub(1) {
             conn.ref_count = x;
             if x == 0 && !conn.inner.is_closed() {
@@ -779,20 +787,32 @@ impl Drop for ConnectionRef {
                 // not, we can't do any harm. If there were any streams being opened, then either
                 // the connection will be closed for an unrelated reason or a fresh reference will
                 // be constructed for the newly opened stream.
-                conn.implicit_close();
+                conn.implicit_close(&self.shared);
             }
         }
     }
 }
 
 impl std::ops::Deref for ConnectionRef {
-    type Target = Mutex<ConnectionInner>;
+    type Target = ConnectionInner;
     fn deref(&self) -> &Self::Target {
-        &self.0
+        &*self.0
     }
 }
 
+#[derive(Debug)]
 pub struct ConnectionInner {
+    pub(crate) state: Mutex<State>,
+    pub(crate) shared: Shared,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct Shared {
+    stream_opening: [Notify; 2],
+    closed: Notify,
+}
+
+pub(crate) struct State {
     pub(crate) inner: proto::Connection,
     driver: Option<Waker>,
     handle: ConnectionHandle,
@@ -805,13 +825,11 @@ pub struct ConnectionInner {
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
     pub(crate) blocked_readers: FxHashMap<StreamId, Waker>,
-    stream_opening: [Arc<Notify>; 2],
     incoming_uni_streams_reader: Option<Waker>,
     incoming_bi_streams_reader: Option<Waker>,
     datagram_reader: Option<Waker>,
     pub(crate) finishing: FxHashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
     pub(crate) stopped: FxHashMap<StreamId, Waker>,
-    closed: Arc<Notify>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
@@ -820,7 +838,7 @@ pub struct ConnectionInner {
     runtime: Arc<dyn Runtime>,
 }
 
-impl ConnectionInner {
+impl State {
     fn drive_transmit(&mut self) -> bool {
         let now = Instant::now();
         let mut transmits = 0;
@@ -859,7 +877,11 @@ impl ConnectionInner {
     }
 
     /// If this returns `Err`, the endpoint is dead, so the driver should exit immediately.
-    fn process_conn_events(&mut self, cx: &mut Context) -> Result<(), ConnectionError> {
+    fn process_conn_events(
+        &mut self,
+        shared: &Shared,
+        cx: &mut Context,
+    ) -> Result<(), ConnectionError> {
         loop {
             match self.conn_events.poll_recv(cx) {
                 Poll::Ready(Some(ConnectionEvent::Ping)) => {
@@ -869,7 +891,7 @@ impl ConnectionInner {
                     self.inner.handle_event(event);
                 }
                 Poll::Ready(Some(ConnectionEvent::Close { reason, error_code })) => {
-                    self.close(error_code, reason);
+                    self.close(error_code, reason, shared);
                 }
                 Poll::Ready(None) => {
                     return Err(ConnectionError::TransportError(proto::TransportError {
@@ -885,7 +907,7 @@ impl ConnectionInner {
         }
     }
 
-    fn forward_app_events(&mut self) {
+    fn forward_app_events(&mut self, shared: &Shared) {
         while let Some(event) = self.inner.poll() {
             use proto::Event::*;
             match event {
@@ -902,7 +924,7 @@ impl ConnectionInner {
                     }
                 }
                 ConnectionLost { reason } => {
-                    self.terminate(reason);
+                    self.terminate(reason, shared);
                 }
                 Stream(StreamEvent::Writable { id }) => {
                     if let Some(writer) = self.blocked_writers.remove(&id) {
@@ -931,7 +953,7 @@ impl ConnectionInner {
                 }
                 Stream(StreamEvent::Available { dir }) => {
                     // Might mean any number of streams are ready, so we wake up everyone
-                    self.stream_opening[dir as usize].notify_waiters();
+                    shared.stream_opening[dir as usize].notify_waiters();
                 }
                 Stream(StreamEvent::Finished { id }) => {
                     if let Some(finishing) = self.finishing.remove(&id) {
@@ -1012,7 +1034,7 @@ impl ConnectionInner {
     }
 
     /// Used to wake up all blocked futures when the connection becomes closed for any reason
-    fn terminate(&mut self, reason: ConnectionError) {
+    fn terminate(&mut self, reason: ConnectionError, shared: &Shared) {
         self.error = Some(reason.clone());
         if let Some(x) = self.on_handshake_data.take() {
             let _ = x.send(());
@@ -1023,8 +1045,8 @@ impl ConnectionInner {
         for (_, reader) in self.blocked_readers.drain() {
             reader.wake()
         }
-        self.stream_opening[Dir::Uni as usize].notify_waiters();
-        self.stream_opening[Dir::Bi as usize].notify_waiters();
+        shared.stream_opening[Dir::Uni as usize].notify_waiters();
+        shared.stream_opening[Dir::Bi as usize].notify_waiters();
         if let Some(x) = self.incoming_uni_streams_reader.take() {
             x.wake();
         }
@@ -1043,18 +1065,18 @@ impl ConnectionInner {
         for (_, waker) in self.stopped.drain() {
             waker.wake();
         }
-        self.closed.notify_waiters();
+        shared.closed.notify_waiters();
     }
 
-    fn close(&mut self, error_code: VarInt, reason: Bytes) {
+    fn close(&mut self, error_code: VarInt, reason: Bytes, shared: &Shared) {
         self.inner.close(Instant::now(), error_code, reason);
-        self.terminate(ConnectionError::LocallyClosed);
+        self.terminate(ConnectionError::LocallyClosed, shared);
         self.wake();
     }
 
     /// Close for a reason other than the application's explicit request
-    pub fn implicit_close(&mut self) {
-        self.close(0u32.into(), Bytes::new());
+    pub fn implicit_close(&mut self, shared: &Shared) {
+        self.close(0u32.into(), Bytes::new(), shared);
     }
 
     pub(crate) fn check_0rtt(&self) -> Result<(), ()> {
@@ -1069,7 +1091,7 @@ impl ConnectionInner {
     }
 }
 
-impl Drop for ConnectionInner {
+impl Drop for State {
     fn drop(&mut self) {
         if !self.inner.is_drained() {
             // Ensure the endpoint can tidy up
@@ -1081,11 +1103,9 @@ impl Drop for ConnectionInner {
     }
 }
 
-impl fmt::Debug for ConnectionInner {
+impl fmt::Debug for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        f.debug_struct("ConnectionInner")
-            .field("inner", &self.inner)
-            .finish()
+        f.debug_struct("State").field("inner", &self.inner).finish()
     }
 }
 

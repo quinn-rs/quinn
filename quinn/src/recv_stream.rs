@@ -200,7 +200,7 @@ impl RecvStream {
     /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
     /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
-        let mut conn = self.conn.lock("RecvStream::stop");
+        let mut conn = self.conn.state.lock("RecvStream::stop");
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return Ok(());
         }
@@ -243,7 +243,7 @@ impl RecvStream {
             return Poll::Ready(Ok(None));
         }
 
-        let mut conn = self.conn.lock("RecvStream::poll_read");
+        let mut conn = self.conn.state.lock("RecvStream::poll_read");
         if self.is_0rtt {
             conn.check_0rtt().map_err(|()| ReadError::ZeroRttRejected)?;
         }
@@ -389,7 +389,7 @@ impl tokio::io::AsyncRead for RecvStream {
 
 impl Drop for RecvStream {
     fn drop(&mut self) {
-        let mut conn = self.conn.lock("RecvStream::drop");
+        let mut conn = self.conn.state.lock("RecvStream::drop");
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
