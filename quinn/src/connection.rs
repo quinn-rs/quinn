@@ -930,7 +930,8 @@ impl ConnectionInner {
                     }
                 }
                 Stream(StreamEvent::Available { dir }) => {
-                    self.stream_opening[dir as usize].notify_one();
+                    // Might mean any number of streams are ready, so we wake up everyone
+                    self.stream_opening[dir as usize].notify_waiters();
                 }
                 Stream(StreamEvent::Finished { id }) => {
                     if let Some(finishing) = self.finishing.remove(&id) {
