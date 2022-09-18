@@ -85,7 +85,7 @@ impl SendStream {
         F: FnOnce(&mut proto::SendStream) -> Result<R, proto::WriteError>,
     {
         use proto::WriteError::*;
-        let mut conn = self.conn.lock("SendStream::poll_write");
+        let mut conn = self.conn.state.lock("SendStream::poll_write");
         if self.is_0rtt {
             conn.check_0rtt()
                 .map_err(|()| WriteError::ZeroRttRejected)?;
@@ -122,7 +122,7 @@ impl SendStream {
 
     #[doc(hidden)]
     pub fn poll_finish(&mut self, cx: &mut Context) -> Poll<Result<(), WriteError>> {
-        let mut conn = self.conn.lock("poll_finish");
+        let mut conn = self.conn.state.lock("poll_finish");
         if self.is_0rtt {
             conn.check_0rtt()
                 .map_err(|()| WriteError::ZeroRttRejected)?;
@@ -166,7 +166,7 @@ impl SendStream {
     /// previously transmitted data will no longer be retransmitted if lost. If an attempt has
     /// already been made to finish the stream, the peer may still receive all written data.
     pub fn reset(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
-        let mut conn = self.conn.lock("SendStream::reset");
+        let mut conn = self.conn.state.lock("SendStream::reset");
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return Ok(());
         }
@@ -183,14 +183,14 @@ impl SendStream {
     /// transmitted. Using many different priority levels per connection may have a negative
     /// impact on performance.
     pub fn set_priority(&self, priority: i32) -> Result<(), UnknownStream> {
-        let mut conn = self.conn.lock("SendStream::set_priority");
+        let mut conn = self.conn.state.lock("SendStream::set_priority");
         conn.inner.send_stream(self.stream).set_priority(priority)?;
         Ok(())
     }
 
     /// Get the priority of the send stream
     pub fn priority(&self) -> Result<i32, UnknownStream> {
-        let mut conn = self.conn.lock("SendStream::priority");
+        let mut conn = self.conn.state.lock("SendStream::priority");
         Ok(conn.inner.send_stream(self.stream).priority()?)
     }
 
@@ -201,7 +201,7 @@ impl SendStream {
 
     #[doc(hidden)]
     pub fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<VarInt, StoppedError>> {
-        let mut conn = self.conn.lock("SendStream::poll_stopped");
+        let mut conn = self.conn.state.lock("SendStream::poll_stopped");
 
         if self.is_0rtt {
             conn.check_0rtt()
@@ -260,7 +260,7 @@ impl tokio::io::AsyncWrite for SendStream {
 
 impl Drop for SendStream {
     fn drop(&mut self) {
-        let mut conn = self.conn.lock("SendStream::drop");
+        let mut conn = self.conn.state.lock("SendStream::drop");
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
