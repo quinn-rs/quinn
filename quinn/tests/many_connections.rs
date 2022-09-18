@@ -39,14 +39,12 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let shared2 = shared.clone();
     let read_incoming_data = async move {
         for _ in 0..expected_messages {
-            let new_conn = incoming_conns.next().await.unwrap().await.unwrap();
-            let conn = new_conn.connection;
-            let mut uni_streams = new_conn.uni_streams;
+            let conn = incoming_conns.next().await.unwrap().await.unwrap();
 
             let shared = shared2.clone();
             let task = async move {
-                while let Some(stream) = uni_streams.next().await {
-                    read_from_peer(stream?).await?;
+                while let Ok(stream) = conn.accept_uni().await {
+                    read_from_peer(stream).await?;
                     conn.close(0u32.into(), &[]);
                 }
                 Ok(())
@@ -69,8 +67,8 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
             .connect_with(client_cfg.clone(), listener_addr, "localhost")
             .unwrap();
         let task = async move {
-            let new_conn = connecting.await.map_err(WriteError::ConnectionLost)?;
-            write_to_peer(new_conn.connection, data).await?;
+            let conn = connecting.await.map_err(WriteError::ConnectionLost)?;
+            write_to_peer(conn, data).await?;
             Ok(())
         };
         runtime.spawn(async move {

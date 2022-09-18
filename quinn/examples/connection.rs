@@ -12,21 +12,17 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // accept a single connection
     tokio::spawn(async move {
         let incoming_conn = incoming.next().await.unwrap();
-        let new_conn = incoming_conn.await.unwrap();
+        let conn = incoming_conn.await.unwrap();
         println!(
             "[server] connection accepted: addr={}",
-            new_conn.connection.remote_address()
+            conn.remote_address()
         );
         // Dropping all handles associated with a connection implicitly closes it
     });
 
     let endpoint = make_client_endpoint("0.0.0.0:0".parse().unwrap(), &[&server_cert])?;
     // connect to server
-    let quinn::NewConnection {
-        connection,
-        mut uni_streams,
-        ..
-    } = endpoint
+    let connection = endpoint
         .connect(server_addr, "localhost")
         .unwrap()
         .await
@@ -34,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     println!("[client] connected: addr={}", connection.remote_address());
 
     // Waiting for a stream will complete with an error when the server closes the connection
-    let _ = uni_streams.next().await;
+    let _ = connection.accept_uni().await;
 
     // Give the server has a chance to clean up
     endpoint.wait_idle().await;

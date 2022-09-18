@@ -23,10 +23,10 @@ async fn run_server(addr: SocketAddr) {
     let (mut incoming, _server_cert) = make_server_endpoint(addr).unwrap();
     // accept a single connection
     let incoming_conn = incoming.next().await.unwrap();
-    let new_conn = incoming_conn.await.unwrap();
+    let conn = incoming_conn.await.unwrap();
     println!(
         "[server] connection accepted: addr={}",
-        new_conn.connection.remote_address()
+        conn.remote_address()
     );
 }
 
@@ -36,7 +36,7 @@ async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error>> {
     endpoint.set_default_client_config(client_cfg);
 
     // connect to server
-    let quinn::NewConnection { connection, .. } = endpoint
+    let connection = endpoint
         .connect(server_addr, "localhost")
         .unwrap()
         .await

@@ -103,16 +103,11 @@ async fn run(opt: Opt) -> Result<()> {
 }
 
 async fn handle(handshake: quinn::Connecting, opt: Arc<Opt>) -> Result<()> {
-    let quinn::NewConnection {
-        uni_streams,
-        bi_streams,
-        connection,
-        ..
-    } = handshake.await.context("handshake failed")?;
+    let connection = handshake.await.context("handshake failed")?;
     debug!("{} connected", connection.remote_address());
     tokio::try_join!(
-        drive_uni(connection.clone(), uni_streams),
-        drive_bi(bi_streams),
+        drive_uni(connection.clone()),
+        drive_bi(connection.clone()),
         conn_stats(connection, opt)
     )?;
     Ok(())
@@ -129,12 +124,8 @@ async fn conn_stats(connection: quinn::Connection, opt: Arc<Opt>) -> Result<()> 
     Ok(())
 }
 
-async fn drive_uni(
-    connection: quinn::Connection,
-    mut streams: quinn::IncomingUniStreams,
-) -> Result<()> {
-    while let Some(stream) = streams.next().await {
-        let stream = stream?;
+async fn drive_uni(connection: quinn::Connection) -> Result<()> {
+    while let Ok(stream) = connection.accept_uni().await {
         let connection = connection.clone();
         tokio::spawn(async move {
             if let Err(e) = handle_uni(connection, stream).await {
@@ -152,9 +143,8 @@ async fn handle_uni(connection: quinn::Connection, stream: quinn::RecvStream) ->
     Ok(())
 }
 
-async fn drive_bi(mut streams: quinn::IncomingBiStreams) -> Result<()> {
-    while let Some(stream) = streams.next().await {
-        let (send, recv) = stream?;
+async fn drive_bi(connection: quinn::Connection) -> Result<()> {
+    while let Ok((send, recv)) = connection.accept_bi().await {
         tokio::spawn(async move {
             if let Err(e) = handle_bi(send, recv).await {
                 error!("request failed: {:#}", e);

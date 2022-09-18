@@ -19,9 +19,7 @@ use tracing::{info, info_span};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
-use super::{
-    ClientConfig, Endpoint, Incoming, NewConnection, RecvStream, SendStream, TransportConfig,
-};
+use super::{ClientConfig, Endpoint, Incoming, RecvStream, SendStream, TransportConfig};
 
 #[test]
 fn handshake_timeout() {
@@ -130,23 +128,18 @@ fn read_after_close() {
             .expect("endpoint")
             .await
             .expect("connection");
-        let mut s = new_conn.connection.open_uni().await.unwrap();
+        let mut s = new_conn.open_uni().await.unwrap();
         s.write_all(MSG).await.unwrap();
         s.finish().await.unwrap();
     });
     runtime.block_on(async move {
-        let mut new_conn = endpoint
+        let new_conn = endpoint
             .connect(endpoint.local_addr().unwrap(), "localhost")
             .unwrap()
             .await
             .expect("connect");
         tokio::time::sleep_until(Instant::now() + Duration::from_millis(100)).await;
-        let stream = new_conn
-            .uni_streams
-            .next()
-            .await
-            .expect("incoming streams")
-            .expect("missing stream");
+        let stream = new_conn.accept_uni().await.expect("incoming streams");
         let msg = stream
             .read_to_end(usize::max_value())
             .await
@@ -178,12 +171,10 @@ fn export_keying_material() {
             .expect("connection");
         let mut i_buf = [0u8; 64];
         incoming_conn
-            .connection
             .export_keying_material(&mut i_buf, b"asdf", b"qwer")
             .unwrap();
         let mut o_buf = [0u8; 64];
         outgoing_conn
-            .connection
             .export_keying_material(&mut o_buf, b"asdf", b"qwer")
             .unwrap();
         assert_eq!(&i_buf[..], &o_buf[..]);
@@ -201,8 +192,7 @@ async fn accept_after_close() {
         .connect(endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .await
-        .expect("connect")
-        .connection;
+        .expect("connect");
     let mut s = sender.open_uni().await.unwrap();
     s.write_all(MSG).await.unwrap();
     s.finish().await.unwrap();
@@ -212,7 +202,7 @@ async fn accept_after_close() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Despite the connection having closed, we should be able to accept it...
-    let mut receiver = incoming
+    let receiver = incoming
         .next()
         .await
         .expect("endpoint")
@@ -220,12 +210,7 @@ async fn accept_after_close() {
         .expect("connection");
 
     // ...and read what was sent.
-    let stream = receiver
-        .uni_streams
-        .next()
-        .await
-        .expect("incoming streams")
-        .expect("missing stream");
+    let stream = receiver.accept_uni().await.expect("incoming streams");
     let msg = stream
         .read_to_end(usize::max_value())
         .await
@@ -233,7 +218,7 @@ async fn accept_after_close() {
     assert_eq!(msg, MSG);
 
     // But it's still definitely closed.
-    assert!(receiver.connection.open_uni().await.is_err());
+    assert!(receiver.open_uni().await.is_err());
 }
 
 /// Construct an endpoint suitable for connecting to itself
@@ -265,13 +250,10 @@ async fn zero_rtt() {
     tokio::spawn(async move {
         for _ in 0..2 {
             let incoming = incoming.next().await.unwrap();
-            let NewConnection {
-                mut uni_streams,
-                connection,
-                ..
-            } = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
+            let connection = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
+            let c = connection.clone();
             tokio::spawn(async move {
-                while let Some(Ok(x)) = uni_streams.next().await {
+                while let Ok(x) = c.accept_uni().await {
                     let msg = x.read_to_end(usize::max_value()).await.unwrap();
                     assert_eq!(msg, MSG);
                 }
@@ -282,9 +264,7 @@ async fn zero_rtt() {
         }
     });
 
-    let NewConnection {
-        mut uni_streams, ..
-    } = endpoint
+    let connection = endpoint
         .connect(endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
@@ -296,11 +276,7 @@ async fn zero_rtt() {
     tokio::spawn(async move {
         // Buy time for the driver to process the server's NewSessionTicket
         tokio::time::sleep_until(Instant::now() + Duration::from_millis(100)).await;
-        let stream = uni_streams
-            .next()
-            .await
-            .expect("incoming streams")
-            .expect("missing stream");
+        let stream = connection.accept_uni().await.expect("incoming streams");
         let msg = stream
             .read_to_end(usize::max_value())
             .await
@@ -311,30 +287,20 @@ async fn zero_rtt() {
 
     info!("initial connection complete");
 
-    let (
-        NewConnection {
-            connection,
-            mut uni_streams,
-            ..
-        },
-        zero_rtt,
-    ) = endpoint
+    let (connection, zero_rtt) = endpoint
         .connect(endpoint.local_addr().unwrap(), "localhost")
         .unwrap()
         .into_0rtt()
         .unwrap_or_else(|_| panic!("missing 0-RTT keys"));
     // Send something ASAP to use 0-RTT
+    let c = connection.clone();
     tokio::spawn(async move {
-        let mut s = connection.open_uni().await.expect("0-RTT open uni");
+        let mut s = c.open_uni().await.expect("0-RTT open uni");
         s.write_all(MSG).await.expect("0-RTT write");
         s.finish().await.expect("0-RTT finish");
     });
 
-    let stream = uni_streams
-        .next()
-        .await
-        .expect("incoming streams")
-        .expect("missing stream");
+    let stream = connection.accept_uni().await.expect("incoming streams");
     let msg = stream
         .read_to_end(usize::max_value())
         .await
@@ -342,7 +308,7 @@ async fn zero_rtt() {
     assert_eq!(msg, MSG);
     assert!(zero_rtt.await);
 
-    drop(uni_streams);
+    drop(connection);
 
     endpoint.wait_idle().await;
 }
@@ -494,9 +460,9 @@ fn run_echo(args: EchoArgs) {
                 assert_eq!(None, incoming.local_ip());
             }
 
-            let mut new_conn = incoming.instrument(info_span!("server")).await.unwrap();
+            let new_conn = incoming.instrument(info_span!("server")).await.unwrap();
             tokio::spawn(async move {
-                while let Some(Ok(stream)) = new_conn.bi_streams.next().await {
+                while let Ok(stream) = new_conn.accept_bi().await {
                     tokio::spawn(echo(stream));
                 }
             });
@@ -517,7 +483,7 @@ fn run_echo(args: EchoArgs) {
 
             for i in 0..args.nr_streams {
                 println!("Opening stream {}", i);
-                let (mut send, recv) = new_conn.connection.open_bi().await.expect("stream open");
+                let (mut send, recv) = new_conn.open_bi().await.expect("stream open");
                 let msg = gen_data(args.stream_size, SEED);
 
                 let send_task = async {
@@ -530,7 +496,7 @@ fn run_echo(args: EchoArgs) {
 
                 assert_eq!(data[..], msg[..], "Data mismatch");
             }
-            new_conn.connection.close(0u32.into(), b"done");
+            new_conn.close(0u32.into(), b"done");
             client.wait_idle().await;
         });
         handle
@@ -653,7 +619,7 @@ async fn rebind_recv() {
     let connected_send = Arc::new(tokio::sync::Notify::new());
     let connected_recv = connected_send.clone();
     let server = tokio::spawn(async move {
-        let NewConnection { connection, .. } = incoming.next().await.unwrap().await.unwrap();
+        let connection = incoming.next().await.unwrap().await.unwrap();
         info!("got conn");
         connected_send.notify_one();
         write_recv.notified().await;
@@ -662,9 +628,7 @@ async fn rebind_recv() {
         stream.finish().await.unwrap();
     });
 
-    let NewConnection {
-        mut uni_streams, ..
-    } = client
+    let connection = client
         .connect(server_addr, "localhost")
         .unwrap()
         .await
@@ -676,7 +640,7 @@ async fn rebind_recv() {
         .unwrap();
     info!("rebound");
     write_send.notify_one();
-    let stream = uni_streams.next().await.unwrap().unwrap();
+    let stream = connection.accept_uni().await.unwrap();
     assert_eq!(stream.read_to_end(MSG.len()).await.unwrap(), MSG);
     server.await.unwrap();
 }

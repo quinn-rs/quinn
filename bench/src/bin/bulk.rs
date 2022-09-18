@@ -65,22 +65,17 @@ async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
     // Handle only the expected amount of clients
     for _ in 0..opt.clients {
         let handshake = incoming.next().await.unwrap();
-        let quinn::NewConnection {
-            mut bi_streams,
-            connection,
-            ..
-        } = handshake.await.context("handshake failed")?;
+        let connection = handshake.await.context("handshake failed")?;
 
         server_tasks.push(tokio::spawn(async move {
             loop {
-                let (mut send_stream, mut recv_stream) = match bi_streams.next().await {
-                    None => break,
-                    Some(Err(quinn::ConnectionError::ApplicationClosed(_))) => break,
-                    Some(Err(e)) => {
+                let (mut send_stream, mut recv_stream) = match connection.accept_bi().await {
+                    Err(quinn::ConnectionError::ApplicationClosed(_)) => break,
+                    Err(e) => {
                         eprintln!("accepting stream failed: {:?}", e);
                         break;
                     }
-                    Some(Ok(stream)) => stream,
+                    Ok(stream) => stream,
                 };
                 trace!("stream established");
 

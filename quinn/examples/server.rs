@@ -161,11 +161,7 @@ async fn run(options: Opt) -> Result<()> {
 }
 
 async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<()> {
-    let quinn::NewConnection {
-        connection,
-        mut bi_streams,
-        ..
-    } = conn.await?;
+    let connection = conn.await?;
     let span = info_span!(
         "connection",
         remote = %connection.remote_address(),
@@ -180,7 +176,8 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
         info!("established");
 
         // Each stream initiated by the client constitutes a new request.
-        while let Some(stream) = bi_streams.next().await {
+        loop {
+            let stream = connection.accept_bi().await;
             let stream = match stream {
                 Err(quinn::ConnectionError::ApplicationClosed { .. }) => {
                     info!("connection closed");
@@ -201,7 +198,6 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
                 .instrument(info_span!("request")),
             );
         }
-        Ok(())
     }
     .instrument(span)
     .await?;

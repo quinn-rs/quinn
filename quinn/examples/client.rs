@@ -108,14 +108,11 @@ async fn run(options: Opt) -> Result<()> {
         .ok_or_else(|| anyhow!("no hostname specified"))?;
 
     eprintln!("connecting to {} at {}", host, remote);
-    let new_conn = endpoint
+    let conn = endpoint
         .connect(remote, host)?
         .await
         .map_err(|e| anyhow!("failed to connect: {}", e))?;
     eprintln!("connected at {:?}", start.elapsed());
-    let quinn::NewConnection {
-        connection: conn, ..
-    } = new_conn;
     let (mut send, recv) = conn
         .open_bi()
         .await
