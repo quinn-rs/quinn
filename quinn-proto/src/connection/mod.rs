@@ -749,7 +749,7 @@ impl Connection {
             );
             pad_datagram |= sent.requires_padding;
 
-            if !sent.acks.is_empty() {
+            if sent.largest_acked.is_some() {
                 self.spaces[space_id].pending_acks.acks_sent();
             }
 
@@ -1158,7 +1158,14 @@ impl Connection {
         let mut ack_eliciting_acked = false;
         for packet in newly_acked.elts() {
             if let Some(info) = self.spaces[space].sent_packets.remove(&packet) {
-                self.spaces[space].pending_acks.subtract(&info.acks);
+                if let Some(acked) = info.largest_acked {
+                    // Assume ACKs for all packets below the largest acknowledged in `packet` have
+                    // been received. This can cause the peer to spuriously retransmit if some of
+                    // our earlier ACKs were lost, but allows for simpler state tracking. See
+                    // discussion at
+                    // https://www.rfc-editor.org/rfc/rfc9000.html#name-limiting-ranges-by-tracking
+                    self.spaces[space].pending_acks.subtract_below(acked);
+                }
                 ack_eliciting_acked |= info.ack_eliciting;
                 self.on_packet_acked(now, space, info);
             }
@@ -2089,7 +2096,6 @@ impl Connection {
 
                 let space = &mut self.spaces[SpaceId::Initial];
                 if let Some(info) = space.sent_packets.remove(&0) {
-                    space.pending_acks.subtract(&info.acks);
                     self.on_packet_acked(now, SpaceId::Initial, info);
                 };
 
@@ -2880,7 +2886,7 @@ impl Connection {
         } else {
             None
         };
-        sent.acks = space.pending_acks.ranges().clone();
+        sent.largest_acked = space.pending_acks.ranges().max();
 
         let delay_micros = space.pending_acks.ack_delay().as_micros() as u64;
 
@@ -2888,9 +2894,9 @@ impl Connection {
         let ack_delay_exp = TransportParameters::default().ack_delay_exponent;
         let delay = delay_micros >> ack_delay_exp.into_inner();
 
-        trace!("ACK {:?}, Delay = {}us", sent.acks, delay);
+        trace!("ACK {:?}, Delay = {}us", space.pending_acks.ranges(), delay);
 
-        frame::Ack::encode(delay as _, &sent.acks, ecn, buf);
+        frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
         stats.frame_tx.acks += 1;
     }
 
@@ -3360,7 +3366,7 @@ struct ZeroRttCrypto {
 #[derive(Default)]
 struct SentFrames {
     retransmits: ThinRetransmits,
-    acks: ArrayRangeSet,
+    largest_acked: Option<u64>,
     stream_frames: StreamMetaVec,
     /// Whether the packet contains non-retransmittable frames (like datagrams)
     non_retransmits: bool,
@@ -3370,7 +3376,7 @@ struct SentFrames {
 impl SentFrames {
     /// Returns whether the packet contains only ACKs
     pub fn is_ack_only(&self, streams: &StreamsState) -> bool {
-        !self.acks.is_empty()
+        self.largest_acked.is_some()
             && !self.non_retransmits
             && self.stream_frames.is_empty()
             && self.retransmits.is_empty(streams)

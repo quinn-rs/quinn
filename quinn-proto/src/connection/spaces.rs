@@ -209,7 +209,8 @@ pub(crate) struct SentPacket {
     pub(crate) size: u16,
     /// Whether an acknowledgement is expected directly in response to this packet.
     pub(crate) ack_eliciting: bool,
-    pub(crate) acks: ArrayRangeSet,
+    /// The largest packet number acknowledged by this packet
+    pub(crate) largest_acked: Option<u64>,
     /// Data which needs to be retransmitted in case the packet is lost.
     /// The data is boxed to minimize `SentPacket` size for the typical case of
     /// packets only containing ACKs and STREAM frames.
@@ -464,12 +465,9 @@ impl PendingAcks {
         }
     }
 
-    /// Removes the given ACKs from the set of pending ACKs
-    pub fn subtract(&mut self, acks: &ArrayRangeSet) {
-        self.ranges.subtract(acks);
-        if self.ranges.is_empty() {
-            self.permit_ack_only = false;
-        }
+    /// Remove ACKs of packets numbered at or below `max` from the set of pending ACKs
+    pub fn subtract_below(&mut self, max: u64) {
+        self.ranges.remove(0..(max + 1));
     }
 
     /// Returns the set of currently pending ACK ranges
