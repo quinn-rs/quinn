@@ -21,7 +21,6 @@ use tokio::{
 };
 use tokio_util::time::delay_queue;
 use tracing::debug_span;
-use udp::UdpState;
 
 use crate::{
     mutex::Mutex,
@@ -45,7 +44,6 @@ impl Connecting {
         dirty: mpsc::UnboundedSender<ConnectionHandle>,
         handle: ConnectionHandle,
         conn: proto::Connection,
-        udp_state: Arc<UdpState>,
     ) -> (Connecting, ConnectionRef) {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
@@ -55,7 +53,6 @@ impl Connecting {
             dirty,
             on_handshake_data_send,
             on_connected_send,
-            udp_state,
         );
 
         (
@@ -698,7 +695,6 @@ impl ConnectionRef {
         dirty: mpsc::UnboundedSender<ConnectionHandle>,
         on_handshake_data: oneshot::Sender<()>,
         on_connected: oneshot::Sender<bool>,
-        udp_state: Arc<UdpState>,
     ) -> Self {
         let _ = dirty.send(handle);
         Self(Arc::new(ConnectionInner {
@@ -719,7 +715,6 @@ impl ConnectionRef {
                 stopped: FxHashMap::default(),
                 error: None,
                 ref_count: 0,
-                udp_state,
             }),
             shared: Shared::default(),
         }))
@@ -799,15 +794,16 @@ pub(crate) struct State {
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
-    udp_state: Arc<UdpState>,
 }
 
 impl State {
-    pub(crate) fn drive_transmit(&mut self, out: &mut VecDeque<proto::Transmit>) -> bool {
+    pub(crate) fn drive_transmit(
+        &mut self,
+        out: &mut VecDeque<proto::Transmit>,
+        max_datagrams: usize,
+    ) -> bool {
         let now = Instant::now();
         let mut transmits = 0;
-
-        let max_datagrams = self.udp_state.max_gso_segments();
 
         while let Some(t) = self.inner.poll_transmit(now, max_datagrams) {
             transmits += match t.segment_size {

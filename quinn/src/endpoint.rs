@@ -191,9 +191,8 @@ impl Endpoint {
             addr
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
-        let udp_state = endpoint.udp_state.clone();
         let dirty = endpoint.dirty_send.clone();
-        Ok(endpoint.connections.insert(dirty, ch, conn, udp_state))
+        Ok(endpoint.connections.insert(dirty, ch, conn))
     }
 
     /// Switch to a new UDP socket
@@ -337,7 +336,7 @@ pub(crate) struct EndpointInner {
 #[derive(Debug)]
 pub(crate) struct State {
     socket: Box<dyn AsyncUdpSocket>,
-    udp_state: Arc<UdpState>,
+    udp_state: UdpState,
     inner: proto::Endpoint,
     outgoing: VecDeque<proto::Transmit>,
     incoming: VecDeque<Connecting>,
@@ -397,7 +396,6 @@ impl State {
                                         self.dirty_send.clone(),
                                         handle,
                                         conn,
-                                        self.udp_state.clone(),
                                     );
                                     self.incoming.push_back(conn);
                                 }
@@ -503,6 +501,7 @@ impl State {
             dirty_buffer.push(conn_handle);
         }
 
+        let max_datagrams = self.udp_state.max_gso_segments();
         let mut drained = Vec::new();
         for conn_handle in dirty_buffer {
             let conn = match self.connections.refs.get(&conn_handle) {
@@ -512,7 +511,7 @@ impl State {
             let mut state = conn.state.lock("poll dirty");
             state.is_dirty = false;
             let _guard = state.span.clone().entered();
-            let mut keep_conn_going = state.drive_transmit(&mut self.outgoing);
+            let mut keep_conn_going = state.drive_transmit(&mut self.outgoing, max_datagrams);
             if let Some(deadline) = state.inner.poll_timeout() {
                 let deadline = tokio::time::Instant::from(deadline);
                 if Some(deadline) != state.timer_deadline {
@@ -566,9 +565,8 @@ impl ConnectionSet {
         dirty: mpsc::UnboundedSender<ConnectionHandle>,
         handle: ConnectionHandle,
         conn: proto::Connection,
-        udp_state: Arc<UdpState>,
     ) -> Connecting {
-        let (future, conn) = Connecting::new(dirty, handle, conn, udp_state);
+        let (future, conn) = Connecting::new(dirty, handle, conn);
         if let Some((error_code, ref reason)) = self.close {
             let mut state = conn.state.lock("close");
             state.close(error_code, reason.clone(), &conn.shared);
@@ -630,7 +628,7 @@ pub(crate) struct EndpointRef(Arc<EndpointInner>);
 
 impl EndpointRef {
     pub(crate) fn new(socket: Box<dyn AsyncUdpSocket>, inner: proto::Endpoint, ipv6: bool) -> Self {
-        let udp_state = Arc::new(UdpState::new());
+        let udp_state = UdpState::new();
         let recv_buf = vec![
             0;
             inner.config().get_max_udp_payload_size().min(64 * 1024) as usize
