@@ -432,6 +432,22 @@ impl State {
         Ok(false)
     }
 
+    fn drive_timers(&mut self, cx: &mut Context, now: Instant) {
+        while let Poll::Ready(Some(result)) = self.timers.poll_expired(cx) {
+            let conn_handle = result.unwrap().into_inner();
+            let conn = match self.connections.refs.get(&conn_handle) {
+                Some(c) => c,
+                None => continue,
+            };
+            let mut state = &mut *conn.state.lock("poll timeouts");
+            let _guard = state.span.clone().entered();
+            state.inner.handle_timeout(now);
+            state.timer_handle = None;
+            state.timer_deadline = None;
+            state.wake();
+        }
+    }
+
     fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
         self.send_limiter.start_cycle();
 
@@ -479,19 +495,7 @@ impl State {
     fn drive_connections(&mut self, cx: &mut Context, shared: &Shared) -> bool {
         let mut keep_going = false;
 
-        while let Poll::Ready(Some(result)) = self.timers.poll_expired(cx) {
-            let conn_handle = result.unwrap().into_inner();
-            let conn = match self.connections.refs.get(&conn_handle) {
-                Some(c) => c,
-                None => continue,
-            };
-            let mut state = &mut *conn.state.lock("poll timeouts");
-            let _guard = state.span.clone().entered();
-            state.inner.handle_timeout(Instant::now());
-            state.timer_handle = None;
-            state.timer_deadline = None;
-            state.wake();
-        }
+        self.drive_timers(cx, Instant::now());
 
         let mut dirty_buffer = Vec::new();
 
