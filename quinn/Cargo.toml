@@ -56,7 +56,7 @@ directories-next = "2"
 rand = "0.8"
 rcgen = "0.10.0"
 rustls-pemfile = "1.0.0"
-clap = { version = "3.2", features = ["derive"] }
+clap = { version = "4.0", features = ["derive"] }
 tokio = { version = "1.0.1", features = ["rt", "rt-multi-thread", "time", "macros", "sync"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }

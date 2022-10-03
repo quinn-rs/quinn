@@ -21,7 +21,7 @@ serde = { version = "1.0", features = ["derive"], optional = true  }
 serde_json = { version = "1.0", optional = true }
 socket2 = "0.4"
 webpki = "0.22"
-clap = { version = "3.2", features = ["derive"] }
+clap = { version = "4.0", features = ["derive"] }
 tokio = { version = "1.0.1", features = ["rt", "macros", "signal", "net", "sync"] }
 tracing = "0.1.10"
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
