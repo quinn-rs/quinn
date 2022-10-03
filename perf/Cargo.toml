@@ -14,7 +14,7 @@ json-output = ["serde", "serde_json"]
 anyhow = "1.0.22"
 hdrhistogram = { version = "7.2", default-features = false }
 quinn = { path = "../quinn" }
-rcgen = "0.9.1"
+rcgen = "0.10.0"
 rustls = { version = "0.20", default-features = false, features = ["dangerous_configuration"] }
 rustls-pemfile = "1.0.0"
 serde = { version = "1.0", features = ["derive"], optional = true  }
