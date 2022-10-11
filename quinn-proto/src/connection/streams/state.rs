@@ -282,6 +282,7 @@ impl StreamsState {
         if stopped {
             // Stopped streams should be disposed immediately on reset
             self.recv.remove(&id);
+            self.stream_freed(id, StreamHalf::Recv);
         }
         self.on_stream_frame(!stopped, id);
 
@@ -1126,6 +1127,7 @@ mod tests {
         assert!(!pending.max_data);
 
         // Server complies
+        let prev_max = client.max_remote[Dir::Uni as usize];
         assert_eq!(
             client
                 .received_reset(frame::ResetStream {
@@ -1137,6 +1139,11 @@ mod tests {
             ShouldTransmit(false)
         );
         assert!(!client.recv.contains_key(&id), "stream state is freed");
+        assert!(
+            client.max_streams_dirty[Dir::Uni as usize],
+            "stream credit is issued"
+        );
+        assert_eq!(client.max_remote[Dir::Uni as usize], prev_max + 1);
     }
 
     #[test]
