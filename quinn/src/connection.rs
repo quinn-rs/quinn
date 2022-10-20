@@ -339,6 +339,13 @@ impl Connection {
             .clone()
     }
 
+    /// If the connection is closed, the reason why.
+    ///
+    /// Returns `None` if the connection is still open.
+    pub fn close_reason(&self) -> Option<ConnectionError> {
+        self.0.state.lock("close_reason").error.clone()
+    }
+
     /// Close the connection immediately.
     ///
     /// Pending operations will fail immediately with [`ConnectionError::LocallyClosed`]. Delivery
