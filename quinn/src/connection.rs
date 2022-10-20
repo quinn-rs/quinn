@@ -410,6 +410,19 @@ impl Connection {
             .max_size()
     }
 
+    /// Bytes available in the outgoing datagram buffer
+    ///
+    /// When greater than zero, calling [`send_datagram()`](Self::send_datagram) with a datagram of
+    /// at most this size is guaranteed not to cause older datagrams to be dropped.
+    pub fn datagram_send_buffer_space(&self) -> usize {
+        self.0
+            .state
+            .lock("datagram_send_buffer_space")
+            .inner
+            .datagrams()
+            .send_buffer_space()
+    }
+
     /// The peer's UDP address
     ///
     /// If `ServerConfig::migration` is `true`, clients may change addresses at will, e.g. when

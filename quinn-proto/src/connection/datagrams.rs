@@ -75,6 +75,17 @@ impl<'a> Datagrams<'a> {
     pub fn recv(&mut self) -> Option<Bytes> {
         self.conn.datagrams.recv()
     }
+
+    /// Bytes available in the outgoing datagram buffer
+    ///
+    /// When greater than zero, [`send`](Self::send)ing a datagram of at most this size is
+    /// guaranteed not to cause older datagrams to be dropped.
+    pub fn send_buffer_space(&self) -> usize {
+        self.conn
+            .config
+            .datagram_send_buffer_size
+            .saturating_sub(self.conn.datagrams.outgoing_total)
+    }
 }
 
 #[derive(Default)]
