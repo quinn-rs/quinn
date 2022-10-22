@@ -17,7 +17,7 @@ maintenance = { status = "experimental" }
 
 [dependencies]
 libc = "0.2.69"
-proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }
+proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.9", default-features = false }
 socket2 = "0.4"
 tracing = "0.1.10"
 
