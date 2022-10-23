@@ -15,10 +15,10 @@ struct Opt {
     #[clap(long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
     /// TLS private key in DER format
-    #[clap(parse(from_os_str), short = 'k', long = "key", requires = "cert")]
+    #[clap(short = 'k', long = "key", requires = "cert")]
     key: Option<PathBuf>,
     /// TLS certificate in PEM format
-    #[clap(parse(from_os_str), short = 'c', long = "cert", requires = "key")]
+    #[clap(short = 'c', long = "cert", requires = "key")]
     cert: Option<PathBuf>,
     /// Send buffer size in bytes
     #[clap(long, default_value = "2097152")]
