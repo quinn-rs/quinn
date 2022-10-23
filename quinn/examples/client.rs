@@ -33,7 +33,7 @@ struct Opt {
     host: Option<String>,
 
     /// Custom certificate authority to trust, in DER format
-    #[clap(parse(from_os_str), long = "ca")]
+    #[clap(long = "ca")]
     ca: Option<PathBuf>,
 
     /// Simulate NAT rebinding after connecting

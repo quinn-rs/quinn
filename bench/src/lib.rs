@@ -161,15 +161,15 @@ pub struct Opt {
     pub max_streams: usize,
     /// Number of bytes to transmit from server to client
     ///
-    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10GiB
+    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10G
     /// will transfer 10GiB.
-    #[clap(long, default_value = "1G", parse(try_from_str = parse_byte_size))]
+    #[clap(long, default_value = "1G", value_parser = parse_byte_size)]
     pub download_size: u64,
     /// Number of bytes to transmit from client to server
     ///
-    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10GiB
+    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10G
     /// will transfer 10GiB.
-    #[clap(long, default_value = "0", parse(try_from_str = parse_byte_size))]
+    #[clap(long, default_value = "0", value_parser = parse_byte_size)]
     pub upload_size: u64,
     /// Show connection stats the at the end of the benchmark
     #[clap(long = "stats")]
