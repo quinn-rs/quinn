@@ -157,19 +157,16 @@ fn server_addr() -&gt; SocketAddr {
 </span></code></pre></pre>
 <p><strong>Server</strong></p>
 <p>First, the server endpoint should be bound to a socket. 
-The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.server">server()</a> method, which can be used for this, returns a tuple containing the <code>Endpoint</code> and <code>Incoming</code> types.
-The <code>Endpoint</code> type can be used to start outgoing connections, and the <code>Incoming</code> type can be used to listen for incoming connections.</p>
+The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.server">server()</a> method, which can be used for this, returns the <code>Endpoint</code> type.
+<code>Endpoint</code> is used to start outgoing connections and accept incoming connections.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn server() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     // Bind this endpoint to a UDP socket on the given server address. 
-    let (endpoint, mut incoming) = Endpoint::server(
-        server_config,
-        server_addr()
-    )?;
+    let endpoint = Endpoint::server(config, server_addr())?;
 
     // Start iterating over incoming connections.
-    while let Some(conn) = incoming.next().await {
+    while let Some(conn) = endpoint.accept().await {
         let mut connection = conn.await?;
 
         // Save connection somewhere, start transferring, receiving data, see DataTransfer tutorial.
