@@ -170,7 +170,7 @@ The <code>Endpoint</code> type can be used to start outgoing connections, and th
 
     // Start iterating over incoming connections.
     while let Some(conn) = incoming.next().await {
-        let mut connection: NewConnection = conn.await?;
+        let mut connection = conn.await?;
 
         // Save connection somewhere, start transferring, receiving data, see DataTransfer tutorial.
     }
@@ -190,8 +190,7 @@ The <code>SERVER_NAME</code> argument is the DNS name, matching the certificate 
     let mut endpoint = Endpoint::client(client_addr());
 
     // Connect to the server passing in the server name which is supposed to be in the server certificate.
-    let new_connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
-    let NewConnection { connection, .. } = new_connection;
+    let connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
 
     // Start transferring, receiving data, see data transfer page.
 
