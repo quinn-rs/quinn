@@ -100,14 +100,14 @@ impl Context {
         let config = self.server_config.clone();
         let handle = thread::spawn(move || {
             let runtime = rt();
-            let (_, mut incoming) = {
+            let endpoint = {
                 let _guard = runtime.enter();
                 Endpoint::new(Default::default(), Some(config), sock, TokioRuntime).unwrap()
             };
             let handle = runtime.spawn(
                 async move {
-                    let connection = incoming
-                        .next()
+                    let connection = endpoint
+                        .accept()
                         .await
                         .expect("accept")
                         .await

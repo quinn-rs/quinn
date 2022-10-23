@@ -36,8 +36,6 @@ async-std = { version = "1.11", optional = true }
 bytes = "1"
 # Enables futures::io::{AsyncRead, AsyncWrite} support for streams
 futures-io = { version = "0.3.19", optional = true }
-# Implements futures::Stream for async streams such as `Incoming`
-futures-core = { version = "0.3.19", optional = true }
 rustc-hash = "1.1"
 pin-project-lite = "0.2"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.8", default-features = false }

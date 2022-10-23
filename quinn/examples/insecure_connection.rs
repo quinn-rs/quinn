@@ -20,9 +20,9 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 /// Runs a QUIC server bound to given address.
 async fn run_server(addr: SocketAddr) {
-    let (mut incoming, _server_cert) = make_server_endpoint(addr).unwrap();
+    let (endpoint, _server_cert) = make_server_endpoint(addr).unwrap();
     // accept a single connection
-    let incoming_conn = incoming.next().await.unwrap();
+    let incoming_conn = endpoint.accept().await.unwrap();
     let conn = incoming_conn.await.unwrap();
     println!(
         "[server] connection accepted: addr={}",

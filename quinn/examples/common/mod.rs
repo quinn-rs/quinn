@@ -1,7 +1,7 @@
 #![cfg(feature = "rustls")]
 //! Commonly used code in most examples.
 
-use quinn::{ClientConfig, Endpoint, Incoming, ServerConfig};
+use quinn::{ClientConfig, Endpoint, ServerConfig};
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
 /// Constructs a QUIC endpoint configured for use a client only.
@@ -28,10 +28,10 @@ pub fn make_client_endpoint(
 /// - a stream of incoming QUIC connections
 /// - server certificate serialized into DER format
 #[allow(unused)]
-pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Incoming, Vec<u8>), Box<dyn Error>> {
+pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Endpoint, Vec<u8>), Box<dyn Error>> {
     let (server_config, server_cert) = configure_server()?;
-    let (_endpoint, incoming) = Endpoint::server(server_config, bind_addr)?;
-    Ok((incoming, server_cert))
+    let endpoint = Endpoint::server(server_config, bind_addr)?;
+    Ok((endpoint, server_cert))
 }
 
 /// Builds default quinn client config and trusts given certificates.

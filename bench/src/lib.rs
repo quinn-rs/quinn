@@ -30,12 +30,12 @@ pub fn server_endpoint(
     cert: rustls::Certificate,
     key: rustls::PrivateKey,
     opt: &Opt,
-) -> (SocketAddr, quinn::Incoming) {
+) -> (SocketAddr, quinn::Endpoint) {
     let cert_chain = vec![cert];
     let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
     server_config.transport = Arc::new(transport_config(opt));
 
-    let (endpoint, incoming) = {
+    let endpoint = {
         let _guard = rt.enter();
         quinn::Endpoint::server(
             server_config,
@@ -44,8 +44,7 @@ pub fn server_endpoint(
         .unwrap()
     };
     let server_addr = endpoint.local_addr().unwrap();
-    drop(endpoint); // Ensure server shuts down when finished
-    (server_addr, incoming)
+    (server_addr, endpoint)
 }
 
 /// Create a client endpoint and client connection

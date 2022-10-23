@@ -29,17 +29,17 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     let shared = Arc::new(Mutex::new(Shared { errors: vec![] }));
 
     let (cfg, listener_cert) = configure_listener();
-    let (endpoint, mut incoming_conns) =
-        quinn::Endpoint::server(cfg, "127.0.0.1:0".parse().unwrap()).unwrap();
+    let endpoint = quinn::Endpoint::server(cfg, "127.0.0.1:0".parse().unwrap()).unwrap();
     let listener_addr = endpoint.local_addr().unwrap();
 
     let expected_messages = 50;
 
     let crc = crc::Crc::<u32>::new(&crc::CRC_32_ISO_HDLC);
     let shared2 = shared.clone();
+    let endpoint2 = endpoint.clone();
     let read_incoming_data = async move {
         for _ in 0..expected_messages {
-            let conn = incoming_conns.next().await.unwrap().await.unwrap();
+            let conn = endpoint2.accept().await.unwrap().await.unwrap();
 
             let shared = shared2.clone();
             let task = async move {
