@@ -26,19 +26,16 @@ fn server_addr() -> SocketAddr {
 **Server**
 
 First, the server endpoint should be bound to a socket. 
-The [server()][server] method, which can be used for this, returns a tuple containing the `Endpoint` and `Incoming` types.
-The `Endpoint` type can be used to start outgoing connections, and the `Incoming` type can be used to listen for incoming connections.
+The [server()][server] method, which can be used for this, returns the `Endpoint` type.
+`Endpoint` is used to start outgoing connections and accept incoming connections.
 
 ```rust
 async fn server() -> Result<(), Box<dyn Error>> {
     // Bind this endpoint to a UDP socket on the given server address. 
-    let (endpoint, mut incoming) = Endpoint::server(
-        server_config,
-        server_addr()
-    )?;
+    let endpoint = Endpoint::server(config, server_addr())?;
 
     // Start iterating over incoming connections.
-    while let Some(conn) = incoming.next().await {
+    while let Some(conn) = endpoint.accept().await {
         let mut connection = conn.await?;
 
         // Save connection somewhere, start transferring, receiving data, see DataTransfer tutorial.

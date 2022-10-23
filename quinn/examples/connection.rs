@@ -8,10 +8,11 @@ use common::{make_client_endpoint, make_server_endpoint};
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server_addr = "127.0.0.1:5000".parse().unwrap();
-    let (mut incoming, server_cert) = make_server_endpoint(server_addr)?;
+    let (endpoint, server_cert) = make_server_endpoint(server_addr)?;
     // accept a single connection
+    let endpoint2 = endpoint.clone();
     tokio::spawn(async move {
-        let incoming_conn = incoming.next().await.unwrap();
+        let incoming_conn = endpoint2.accept().await.unwrap();
         let conn = incoming_conn.await.unwrap();
         println!(
             "[server] connection accepted: addr={}",

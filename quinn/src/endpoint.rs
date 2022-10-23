@@ -23,7 +23,7 @@ use tokio::sync::{futures::Notified, mpsc, Notify};
 use udp::{RecvMeta, UdpState, BATCH_SIZE};
 
 use crate::{
-    connection::Connecting, poll_fn, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
+    connection::Connecting, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
     EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND, SEND_TIME_BOUND,
 };
 
@@ -56,13 +56,12 @@ impl Endpoint {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime = default_runtime()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
-        Ok(Self::new_with_runtime(
+        Self::new_with_runtime(
             EndpointConfig::default(),
             None,
             runtime.wrap_udp_socket(socket)?,
             runtime,
-        )?
-        .0)
+        )
     }
 
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
@@ -72,7 +71,7 @@ impl Endpoint {
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
     #[cfg(feature = "ring")]
-    pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<(Self, Incoming)> {
+    pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime = default_runtime()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
@@ -90,7 +89,7 @@ impl Endpoint {
         server_config: Option<ServerConfig>,
         socket: std::net::UdpSocket,
         runtime: impl Runtime,
-    ) -> io::Result<(Self, Incoming)> {
+    ) -> io::Result<Self> {
         let socket = runtime.wrap_udp_socket(socket)?;
         Self::new_with_runtime(config, server_config, socket, Arc::new(runtime))
     }
@@ -104,7 +103,7 @@ impl Endpoint {
         server_config: Option<ServerConfig>,
         socket: impl AsyncUdpSocket,
         runtime: impl Runtime,
-    ) -> io::Result<(Self, Incoming)> {
+    ) -> io::Result<Self> {
         Self::new_with_runtime(config, server_config, Box::new(socket), Arc::new(runtime))
     }
 
@@ -113,7 +112,7 @@ impl Endpoint {
         server_config: Option<ServerConfig>,
         socket: Box<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
-    ) -> io::Result<(Self, Incoming)> {
+    ) -> io::Result<Self> {
         let addr = socket.local_addr()?;
         let rc = EndpointRef::new(
             socket,
@@ -127,14 +126,11 @@ impl Endpoint {
                 tracing::error!("I/O error: {}", e);
             }
         }));
-        Ok((
-            Self {
-                inner: rc.clone(),
-                default_client_config: None,
-                runtime,
-            },
-            Incoming::new(rc),
-        ))
+        Ok(Self {
+            inner: rc,
+            default_client_config: None,
+            runtime,
+        })
     }
 
     /// Get the next incoming connection attempt from a client
@@ -255,9 +251,6 @@ impl Endpoint {
                 reason: reason.clone(),
             });
         }
-        if let Some(task) = endpoint.incoming_reader.take() {
-            task.wake();
-        }
         self.inner.shared.incoming.notify_waiters();
     }
 
@@ -268,11 +261,9 @@ impl Endpoint {
     /// the idle timeout period.
     ///
     /// Does not proactively close existing connections or cause incoming connections to be
-    /// rejected. Consider calling [`close()`] and dropping the [`Incoming`] stream if
-    /// that is desired.
+    /// rejected. Consider calling [`close()`] if that is desired.
     ///
     /// [`close()`]: Endpoint::close
-    /// [`Incoming`]: crate::Incoming
     pub async fn wait_idle(&self) {
         loop {
             let idle;
@@ -302,8 +293,8 @@ impl Endpoint {
 /// flowing between the `Endpoint` and the tasks managing `Connection`s. As such,
 /// running this task is necessary to keep the endpoint's connections running.
 ///
-/// `EndpointDriver` futures terminate when the `Incoming` stream and all clones of the `Endpoint`
-/// have been dropped, or when an I/O error occurs.
+/// `EndpointDriver` futures terminate when all clones of the `Endpoint` have been dropped, or when
+/// an I/O error occurs.
 #[must_use = "endpoint drivers must be spawned for I/O to occur"]
 #[derive(Debug)]
 pub(crate) struct EndpointDriver(pub(crate) EndpointRef);
@@ -325,9 +316,6 @@ impl Future for EndpointDriver {
         keep_going |= endpoint.drive_send(cx)?;
 
         if !endpoint.incoming.is_empty() {
-            if let Some(task) = endpoint.incoming_reader.take() {
-                task.wake();
-            }
             self.0.shared.incoming.notify_waiters();
         }
 
@@ -350,9 +338,6 @@ impl Drop for EndpointDriver {
     fn drop(&mut self) {
         let mut endpoint = self.0.state.lock().unwrap();
         endpoint.driver_lost = true;
-        if let Some(task) = endpoint.incoming_reader.take() {
-            task.wake();
-        }
         self.0.shared.incoming.notify_waiters();
         // Drop all outgoing channels, signaling the termination of the endpoint to the associated
         // connections.
@@ -373,7 +358,6 @@ pub(crate) struct State {
     inner: proto::Endpoint,
     outgoing: VecDeque<proto::Transmit>,
     incoming: VecDeque<Connecting>,
-    incoming_reader: Option<Waker>,
     driver: Option<Waker>,
     ipv6: bool,
     connections: ConnectionSet,
@@ -585,55 +569,6 @@ fn ensure_ipv6(x: SocketAddr) -> SocketAddrV6 {
     }
 }
 
-/// Stream of incoming connections.
-#[derive(Debug)]
-pub struct Incoming(EndpointRef);
-
-impl Incoming {
-    pub(crate) fn new(inner: EndpointRef) -> Self {
-        Self(inner)
-    }
-}
-
-impl Incoming {
-    /// Fetch the next incoming connection, or `None` if the endpoint has been closed
-    pub async fn next(&mut self) -> Option<Connecting> {
-        poll_fn(move |cx| self.poll(cx)).await
-    }
-
-    fn poll(&mut self, cx: &mut Context) -> Poll<Option<Connecting>> {
-        let endpoint = &mut *self.0.state.lock().unwrap();
-        if endpoint.driver_lost {
-            Poll::Ready(None)
-        } else if let Some(conn) = endpoint.incoming.pop_front() {
-            Poll::Ready(Some(conn))
-        } else if endpoint.connections.close.is_some() {
-            Poll::Ready(None)
-        } else {
-            endpoint.incoming_reader = Some(cx.waker().clone());
-            Poll::Pending
-        }
-    }
-}
-
-#[cfg(feature = "futures-core")]
-impl futures_core::Stream for Incoming {
-    type Item = Connecting;
-
-    #[allow(unused_mut)] // MSRV
-    fn poll_next(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Option<Self::Item>> {
-        self.poll(cx)
-    }
-}
-
-impl Drop for Incoming {
-    fn drop(&mut self) {
-        let endpoint = &mut *self.0.state.lock().unwrap();
-        endpoint.inner.reject_new_connections();
-        endpoint.incoming_reader = None;
-    }
-}
-
 pin_project! {
     /// Future produced by [`Endpoint::accept`]
     pub struct Accept<'a> {
@@ -700,7 +635,6 @@ impl EndpointRef {
                 events,
                 outgoing: VecDeque::new(),
                 incoming: VecDeque::new(),
-                incoming_reader: None,
                 driver: None,
                 connections: ConnectionSet {
                     senders: FxHashMap::default(),

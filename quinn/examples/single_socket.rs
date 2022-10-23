@@ -38,10 +38,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
 /// Runs a QUIC server bound to given address and returns server certificate.
 fn run_server(addr: SocketAddr) -> Result<Vec<u8>, Box<dyn Error>> {
-    let (mut incoming, server_cert) = make_server_endpoint(addr)?;
+    let (endpoint, server_cert) = make_server_endpoint(addr)?;
     // accept a single connection
     tokio::spawn(async move {
-        let connection = incoming.next().await.unwrap().await.unwrap();
+        let connection = endpoint.accept().await.unwrap().await.unwrap();
         println!(
             "[server] incoming connection: addr={}",
             connection.remote_address()

@@ -19,7 +19,7 @@ use tracing::{info, info_span};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
-use super::{ClientConfig, Endpoint, Incoming, RecvStream, SendStream, TransportConfig};
+use super::{ClientConfig, Endpoint, RecvStream, SendStream, TransportConfig};
 
 #[test]
 fn handshake_timeout() {
@@ -100,7 +100,7 @@ fn local_addr() {
     let socket = UdpSocket::bind("[::1]:0").unwrap();
     let addr = socket.local_addr().unwrap();
     let runtime = rt_basic();
-    let (ep, _) = {
+    let ep = {
         let _guard = runtime.enter();
         Endpoint::new(Default::default(), None, socket, TokioRuntime).unwrap()
     };
@@ -115,15 +115,16 @@ fn local_addr() {
 fn read_after_close() {
     let _guard = subscribe();
     let runtime = rt_basic();
-    let (endpoint, mut incoming) = {
+    let endpoint = {
         let _guard = runtime.enter();
         endpoint()
     };
 
     const MSG: &[u8] = b"goodbye!";
+    let endpoint2 = endpoint.clone();
     runtime.spawn(async move {
-        let new_conn = incoming
-            .next()
+        let new_conn = endpoint2
+            .accept()
             .await
             .expect("endpoint")
             .await
@@ -152,7 +153,7 @@ fn read_after_close() {
 fn export_keying_material() {
     let _guard = subscribe();
     let runtime = rt_basic();
-    let (endpoint, mut incoming) = {
+    let endpoint = {
         let _guard = runtime.enter();
         endpoint()
     };
@@ -163,8 +164,8 @@ fn export_keying_material() {
             .unwrap()
             .await
             .expect("connect");
-        let incoming_conn = incoming
-            .next()
+        let incoming_conn = endpoint
+            .accept()
             .await
             .expect("endpoint")
             .await
@@ -184,7 +185,7 @@ fn export_keying_material() {
 #[tokio::test]
 async fn accept_after_close() {
     let _guard = subscribe();
-    let (endpoint, mut incoming) = endpoint();
+    let endpoint = endpoint();
 
     const MSG: &[u8] = b"goodbye!";
 
@@ -202,8 +203,8 @@ async fn accept_after_close() {
     tokio::time::sleep(Duration::from_millis(100)).await;
 
     // Despite the connection having closed, we should be able to accept it...
-    let receiver = incoming
-        .next()
+    let receiver = endpoint
+        .accept()
         .await
         .expect("endpoint")
         .await
@@ -222,7 +223,7 @@ async fn accept_after_close() {
 }
 
 /// Construct an endpoint suitable for connecting to itself
-fn endpoint() -> (Endpoint, Incoming) {
+fn endpoint() -> Endpoint {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = rustls::PrivateKey(cert.serialize_private_key_der());
     let cert = rustls::Certificate(cert.serialize_der().unwrap());
@@ -230,7 +231,7 @@ fn endpoint() -> (Endpoint, Incoming) {
 
     let mut roots = rustls::RootCertStore::empty();
     roots.add(&cert).unwrap();
-    let (mut endpoint, incoming) = Endpoint::server(
+    let mut endpoint = Endpoint::server(
         server_config,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
     )
@@ -238,18 +239,19 @@ fn endpoint() -> (Endpoint, Incoming) {
     let client_config = ClientConfig::with_root_certificates(roots);
     endpoint.set_default_client_config(client_config);
 
-    (endpoint, incoming)
+    endpoint
 }
 
 #[tokio::test]
 async fn zero_rtt() {
     let _guard = subscribe();
-    let (endpoint, mut incoming) = endpoint();
+    let endpoint = endpoint();
 
     const MSG: &[u8] = b"goodbye!";
+    let endpoint2 = endpoint.clone();
     tokio::spawn(async move {
         for _ in 0..2 {
-            let incoming = incoming.next().await.unwrap();
+            let incoming = endpoint2.accept().await.unwrap();
             let connection = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
             let c = connection.clone();
             tokio::spawn(async move {
@@ -419,7 +421,7 @@ fn run_echo(args: EchoArgs) {
         server_config.transport = transport_config.clone();
         let server_sock = UdpSocket::bind(args.server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
-        let (server, mut server_incoming) = {
+        let server = {
             let _guard = runtime.enter();
             Endpoint::new(
                 Default::default(),
@@ -447,7 +449,7 @@ fn run_echo(args: EchoArgs) {
         client.set_default_client_config(client_config);
 
         let handle = runtime.spawn(async move {
-            let incoming = server_incoming.next().await.unwrap();
+            let incoming = server.accept().await.unwrap();
 
             // Note for anyone modifying the platform support in this test:
             // If `local_ip` gets available on additional platforms - which
@@ -605,7 +607,7 @@ async fn rebind_recv() {
     client.set_default_client_config(client_config);
 
     let server_config = crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
-    let (server, mut incoming) = Endpoint::server(
+    let server = Endpoint::server(
         server_config,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
     )
@@ -619,7 +621,7 @@ async fn rebind_recv() {
     let connected_send = Arc::new(tokio::sync::Notify::new());
     let connected_recv = connected_send.clone();
     let server = tokio::spawn(async move {
-        let connection = incoming.next().await.unwrap().await.unwrap();
+        let connection = server.accept().await.unwrap().await.unwrap();
         info!("got conn");
         connected_send.notify_one();
         write_recv.notified().await;

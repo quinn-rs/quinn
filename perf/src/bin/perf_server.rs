@@ -78,7 +78,7 @@ async fn run(opt: Opt) -> Result<()> {
 
     let socket = bind_socket(opt.listen, opt.send_buffer_size, opt.recv_buffer_size)?;
 
-    let (endpoint, mut incoming) = quinn::Endpoint::new(
+    let endpoint = quinn::Endpoint::new(
         Default::default(),
         Some(server_config),
         socket,
@@ -90,7 +90,7 @@ async fn run(opt: Opt) -> Result<()> {
 
     let opt = Arc::new(opt);
 
-    while let Some(handshake) = incoming.next().await {
+    while let Some(handshake) = endpoint.accept().await {
         let opt = opt.clone();
         tokio::spawn(async move {
             if let Err(e) = handle(handshake, opt).await {

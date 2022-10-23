@@ -39,12 +39,7 @@
 //! encryption alone.
 #![warn(missing_docs)]
 
-use std::{
-    future::Future,
-    pin::Pin,
-    task::{Context, Poll},
-    time::Duration,
-};
+use std::time::Duration;
 
 macro_rules! ready {
     ($e:expr $(,)?) => {
@@ -73,7 +68,7 @@ pub use crate::connection::{
     AcceptBi, AcceptUni, Connecting, Connection, OpenBi, OpenUni, ReadDatagram, SendDatagramError,
     UnknownStream, ZeroRttAccepted,
 };
-pub use crate::endpoint::{Accept, Endpoint, Incoming};
+pub use crate::endpoint::{Accept, Endpoint};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream};
 #[cfg(feature = "runtime-async-std")]
 pub use crate::runtime::AsyncStdRuntime;
@@ -117,24 +112,3 @@ const RECV_TIME_BOUND: Duration = Duration::from_micros(50);
 
 /// The maximum amount of time that should be spent in `sendmsg()` calls per endpoint iteration
 const SEND_TIME_BOUND: Duration = Duration::from_micros(50);
-
-struct PollFn<F>(F);
-
-impl<T, F> Future for PollFn<F>
-where
-    F: FnMut(&mut Context) -> Poll<T>,
-{
-    type Output = T;
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<T> {
-        (self.0)(cx)
-    }
-}
-
-impl<F> Unpin for PollFn<F> {}
-
-fn poll_fn<T, F>(f: F) -> PollFn<F>
-where
-    F: FnMut(&mut Context<'_>) -> Poll<T>,
-{
-    PollFn(f)
-}

@@ -25,10 +25,10 @@ fn main() {
     let cert = rustls::Certificate(cert.serialize_der().unwrap());
 
     let runtime = rt();
-    let (server_addr, incoming) = server_endpoint(&runtime, cert.clone(), key, &opt);
+    let (server_addr, endpoint) = server_endpoint(&runtime, cert.clone(), key, &opt);
 
     let server_thread = std::thread::spawn(move || {
-        if let Err(e) = runtime.block_on(server(incoming, opt)) {
+        if let Err(e) = runtime.block_on(server(endpoint, opt)) {
             eprintln!("server failed: {:#}", e);
         }
     });
@@ -59,12 +59,12 @@ fn main() {
     server_thread.join().expect("server thread");
 }
 
-async fn server(mut incoming: quinn::Incoming, opt: Opt) -> Result<()> {
+async fn server(endpoint: quinn::Endpoint, opt: Opt) -> Result<()> {
     let mut server_tasks = Vec::new();
 
     // Handle only the expected amount of clients
     for _ in 0..opt.clients {
-        let handshake = incoming.next().await.unwrap();
+        let handshake = endpoint.accept().await.unwrap();
         let connection = handshake.await.context("handshake failed")?;
 
         server_tasks.push(tokio::spawn(async move {

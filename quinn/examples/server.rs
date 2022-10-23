@@ -144,10 +144,10 @@ async fn run(options: Opt) -> Result<()> {
         bail!("root path does not exist");
     }
 
-    let (endpoint, mut incoming) = quinn::Endpoint::server(server_config, options.listen)?;
+    let endpoint = quinn::Endpoint::server(server_config, options.listen)?;
     eprintln!("listening on {}", endpoint.local_addr()?);
 
-    while let Some(conn) = incoming.next().await {
+    while let Some(conn) = endpoint.accept().await {
         info!("connection incoming");
         let fut = handle_connection(root.clone(), conn);
         tokio::spawn(async move {
