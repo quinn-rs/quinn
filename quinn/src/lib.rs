@@ -73,7 +73,7 @@ pub use crate::connection::{
     AcceptBi, AcceptUni, Connecting, Connection, OpenBi, OpenUni, ReadDatagram, SendDatagramError,
     UnknownStream, ZeroRttAccepted,
 };
-pub use crate::endpoint::{Endpoint, Incoming};
+pub use crate::endpoint::{Accept, Endpoint, Incoming};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream};
 #[cfg(feature = "runtime-async-std")]
 pub use crate::runtime::AsyncStdRuntime;

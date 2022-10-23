@@ -14,11 +14,12 @@ use std::{
 
 use crate::runtime::{default_runtime, AsyncUdpSocket, Runtime};
 use bytes::{Bytes, BytesMut};
+use pin_project_lite::pin_project;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
-use tokio::sync::{mpsc, Notify};
+use tokio::sync::{futures::Notified, mpsc, Notify};
 use udp::{RecvMeta, UdpState, BATCH_SIZE};
 
 use crate::{
@@ -136,6 +137,17 @@ impl Endpoint {
         ))
     }
 
+    /// Get the next incoming connection attempt from a client
+    ///
+    /// Yields [`Connecting`] futures that must be `await`ed to obtain the final `Connection`, or
+    /// `None` if the endpoint is [`close`](Self::close)d.
+    pub fn accept(&self) -> Accept<'_> {
+        Accept {
+            endpoint: self,
+            notify: self.inner.shared.incoming.notified(),
+        }
+    }
+
     /// Set the client configuration used by `connect`
     pub fn set_default_client_config(&mut self, config: ClientConfig) {
         self.default_client_config = Some(config);
@@ -169,7 +181,7 @@ impl Endpoint {
         addr: SocketAddr,
         server_name: &str,
     ) -> Result<Connecting, ConnectError> {
-        let mut endpoint = self.inner.lock().unwrap();
+        let mut endpoint = self.inner.state.lock().unwrap();
         if endpoint.driver_lost {
             return Err(ConnectError::EndpointStopping);
         }
@@ -197,7 +209,7 @@ impl Endpoint {
     pub fn rebind(&self, socket: std::net::UdpSocket) -> io::Result<()> {
         let addr = socket.local_addr()?;
         let socket = self.runtime.wrap_udp_socket(socket)?;
-        let mut inner = self.inner.lock().unwrap();
+        let mut inner = self.inner.state.lock().unwrap();
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
 
@@ -215,6 +227,7 @@ impl Endpoint {
     /// Useful for e.g. refreshing TLS certificates without disrupting existing connections.
     pub fn set_server_config(&self, server_config: Option<ServerConfig>) {
         self.inner
+            .state
             .lock()
             .unwrap()
             .inner
@@ -223,7 +236,7 @@ impl Endpoint {
 
     /// Get the local `SocketAddr` the underlying socket is bound to
     pub fn local_addr(&self) -> io::Result<SocketAddr> {
-        self.inner.lock().unwrap().socket.local_addr()
+        self.inner.state.lock().unwrap().socket.local_addr()
     }
 
     /// Close all of this endpoint's connections immediately and cease accepting new connections.
@@ -233,7 +246,7 @@ impl Endpoint {
     /// [`Connection::close()`]: crate::Connection::close
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let reason = Bytes::copy_from_slice(reason);
-        let mut endpoint = self.inner.lock().unwrap();
+        let mut endpoint = self.inner.state.lock().unwrap();
         endpoint.connections.close = Some((error_code, reason.clone()));
         for sender in endpoint.connections.senders.values() {
             // Ignoring errors from dropped connections
@@ -245,6 +258,7 @@ impl Endpoint {
         if let Some(task) = endpoint.incoming_reader.take() {
             task.wake();
         }
+        self.inner.shared.incoming.notify_waiters();
     }
 
     /// Wait for all connections on the endpoint to be cleanly shut down
@@ -263,7 +277,7 @@ impl Endpoint {
         loop {
             let idle;
             {
-                let endpoint = &mut *self.inner.lock().unwrap();
+                let endpoint = &mut *self.inner.state.lock().unwrap();
                 if endpoint.connections.is_empty() {
                     break;
                 }
@@ -299,7 +313,7 @@ impl Future for EndpointDriver {
 
     #[allow(unused_mut)] // MSRV
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let mut endpoint = self.0.lock().unwrap();
+        let mut endpoint = self.0.state.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());
         }
@@ -314,6 +328,7 @@ impl Future for EndpointDriver {
             if let Some(task) = endpoint.incoming_reader.take() {
                 task.wake();
             }
+            self.0.shared.incoming.notify_waiters();
         }
 
         if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
@@ -333,11 +348,12 @@ impl Future for EndpointDriver {
 
 impl Drop for EndpointDriver {
     fn drop(&mut self) {
-        let mut endpoint = self.0.lock().unwrap();
+        let mut endpoint = self.0.state.lock().unwrap();
         endpoint.driver_lost = true;
         if let Some(task) = endpoint.incoming_reader.take() {
             task.wake();
         }
+        self.0.shared.incoming.notify_waiters();
         // Drop all outgoing channels, signaling the termination of the endpoint to the associated
         // connections.
         endpoint.connections.senders.clear();
@@ -346,6 +362,12 @@ impl Drop for EndpointDriver {
 
 #[derive(Debug)]
 pub(crate) struct EndpointInner {
+    pub(crate) state: Mutex<State>,
+    pub(crate) shared: Shared,
+}
+
+#[derive(Debug)]
+pub(crate) struct State {
     socket: Box<dyn AsyncUdpSocket>,
     udp_state: Arc<UdpState>,
     inner: proto::Endpoint,
@@ -366,7 +388,12 @@ pub(crate) struct EndpointInner {
     runtime: Arc<dyn Runtime>,
 }
 
-impl EndpointInner {
+#[derive(Debug)]
+pub(crate) struct Shared {
+    incoming: Notify,
+}
+
+impl State {
     fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
         self.recv_limiter.start_cycle();
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
@@ -575,7 +602,7 @@ impl Incoming {
     }
 
     fn poll(&mut self, cx: &mut Context) -> Poll<Option<Connecting>> {
-        let endpoint = &mut *self.0.lock().unwrap();
+        let endpoint = &mut *self.0.state.lock().unwrap();
         if endpoint.driver_lost {
             Poll::Ready(None)
         } else if let Some(conn) = endpoint.incoming.pop_front() {
@@ -601,14 +628,50 @@ impl futures_core::Stream for Incoming {
 
 impl Drop for Incoming {
     fn drop(&mut self) {
-        let endpoint = &mut *self.0.lock().unwrap();
+        let endpoint = &mut *self.0.state.lock().unwrap();
         endpoint.inner.reject_new_connections();
         endpoint.incoming_reader = None;
     }
 }
 
+pin_project! {
+    /// Future produced by [`Endpoint::accept`]
+    pub struct Accept<'a> {
+        endpoint: &'a Endpoint,
+        #[pin]
+        notify: Notified<'a>,
+    }
+}
+
+impl<'a> Future for Accept<'a> {
+    type Output = Option<Connecting>;
+    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        let endpoint = &mut *this.endpoint.inner.state.lock().unwrap();
+        if endpoint.driver_lost {
+            return Poll::Ready(None);
+        }
+        if let Some(conn) = endpoint.incoming.pop_front() {
+            return Poll::Ready(Some(conn));
+        }
+        if endpoint.connections.close.is_some() {
+            return Poll::Ready(None);
+        }
+        loop {
+            match this.notify.as_mut().poll(ctx) {
+                // `state` lock ensures we didn't race with readiness
+                Poll::Pending => return Poll::Pending,
+                // Spurious wakeup, get a new future
+                Poll::Ready(()) => this
+                    .notify
+                    .set(this.endpoint.inner.shared.incoming.notified()),
+            }
+        }
+    }
+}
+
 #[derive(Debug)]
-pub(crate) struct EndpointRef(Arc<Mutex<EndpointInner>>);
+pub(crate) struct EndpointRef(Arc<EndpointInner>);
 
 impl EndpointRef {
     pub(crate) fn new(
@@ -625,42 +688,47 @@ impl EndpointRef {
                 * BATCH_SIZE
         ];
         let (sender, events) = mpsc::unbounded_channel();
-        Self(Arc::new(Mutex::new(EndpointInner {
-            socket,
-            udp_state,
-            inner,
-            ipv6,
-            events,
-            outgoing: VecDeque::new(),
-            incoming: VecDeque::new(),
-            incoming_reader: None,
-            driver: None,
-            connections: ConnectionSet {
-                senders: FxHashMap::default(),
-                sender,
-                close: None,
+        Self(Arc::new(EndpointInner {
+            shared: Shared {
+                incoming: Notify::new(),
             },
-            ref_count: 0,
-            driver_lost: false,
-            recv_buf: recv_buf.into(),
-            recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
-            send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
-            idle: Arc::new(Notify::new()),
-            runtime,
-        })))
+            state: Mutex::new(State {
+                socket,
+                udp_state,
+                inner,
+                ipv6,
+                events,
+                outgoing: VecDeque::new(),
+                incoming: VecDeque::new(),
+                incoming_reader: None,
+                driver: None,
+                connections: ConnectionSet {
+                    senders: FxHashMap::default(),
+                    sender,
+                    close: None,
+                },
+                ref_count: 0,
+                driver_lost: false,
+                recv_buf: recv_buf.into(),
+                recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
+                send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
+                idle: Arc::new(Notify::new()),
+                runtime,
+            }),
+        }))
     }
 }
 
 impl Clone for EndpointRef {
     fn clone(&self) -> Self {
-        self.0.lock().unwrap().ref_count += 1;
+        self.0.state.lock().unwrap().ref_count += 1;
         Self(self.0.clone())
     }
 }
 
 impl Drop for EndpointRef {
     fn drop(&mut self) {
-        let endpoint = &mut *self.0.lock().unwrap();
+        let endpoint = &mut *self.0.state.lock().unwrap();
         if let Some(x) = endpoint.ref_count.checked_sub(1) {
             endpoint.ref_count = x;
             if x == 0 {
@@ -675,7 +743,7 @@ impl Drop for EndpointRef {
 }
 
 impl std::ops::Deref for EndpointRef {
-    type Target = Mutex<EndpointInner>;
+    type Target = EndpointInner;
     fn deref(&self) -> &Self::Target {
         &self.0
     }
