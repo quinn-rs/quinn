@@ -39,7 +39,7 @@ async fn server() -> Result<(), Box<dyn Error>> {
 
     // Start iterating over incoming connections.
     while let Some(conn) = incoming.next().await {
-        let mut connection: NewConnection = conn.await?;
+        let mut connection = conn.await?;
 
         // Save connection somewhere, start transferring, receiving data, see DataTransfer tutorial.
     }
@@ -60,8 +60,7 @@ async fn client() -> Result<(), Box<dyn Error>> {
     let mut endpoint = Endpoint::client(client_addr());
 
     // Connect to the server passing in the server name which is supposed to be in the server certificate.
-    let new_connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
-    let NewConnection { connection, .. } = new_connection;
+    let connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
 
     // Start transferring, receiving data, see data transfer page.
 

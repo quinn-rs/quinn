@@ -1,7 +1,7 @@
 # Data Transfer
 
 The [previous chapter](set-up-connection.md) explained how to set up an [Endpoint][Endpoint]
-and then get access to a [NewConnection][NewConnection] instance.
+and then get access to a [Connection][Connection].
 This chapter continues with the subject of sending data over this connection.
 
 ## Multiplexing
@@ -23,8 +23,8 @@ Streams and messages can be initiated both on the client and server.
 
 ## How to Use
 
-New streams can be created with [open_bi()][open_bi], [open_uni()][open_uni] from type [Connection][Connection].
-An instance of this type, together with existing streams, can be found in the [connection][connection] field of [NewConnection].
+New streams can be created with [Connection][Connection]'s [open_bi()][open_bi] and
+[open_uni()][open_uni] methods.
 
 ## Bidirectional Streams
 
@@ -51,8 +51,8 @@ async fn open_bidirectional_stream(connection: Connection) -> anyhow::Result<()>
 *iterate incoming bidirectional stream(s)*
 
 ```rust
-async fn receive_bidirectional_stream(mut connection: NewConnection) -> anyhow::Result<()> {
-    while let Some(Ok((mut send, recv))) = connection.bi_streams.next().await {
+async fn receive_bidirectional_stream(connection: Connection) -> anyhow::Result<()> {
+    while let Ok((mut send, recv)) = connection.accept_bi().await {
         // Because it is a bidirectional stream, we can both send and receive.
         println!("request: {:?}", recv.read_to_end(50).await?);
 
@@ -87,8 +87,8 @@ async fn open_unidirectional_stream(connection: Connection)-> anyhow::Result<()>
 *iterating incoming unidirectional stream(s)*
 
 ```rust
-async fn receive_unidirectional_stream(mut connection: NewConnection) -> anyhow::Result<()> {
-    while let Some(Ok(recv)) = connection.uni_streams.next().await {
+async fn receive_unidirectional_stream(connection: Connection) -> anyhow::Result<()> {
+    while let Ok(recv) = connection.accept_uni().await {
         // Because it is a unidirectional stream, we can only receive not send back.
         println!("{:?}", recv.read_to_end(50).await?);
     }
@@ -117,8 +117,8 @@ async fn send_unreliable(connection: Connection)-> anyhow::Result<()> {
 *iterating datagram stream(s)*
 
 ```rust
-async fn receive_datagram(mut connection: NewConnection) -> anyhow::Result<()> {
-    while let Some(Ok(received_bytes)) = connection.datagrams.next().await {
+async fn receive_datagram(connection: Connection) -> anyhow::Result<()> {
+    while let Ok(received_bytes) = connection.read_datagram().await {
         // Because it is a unidirectional stream, we can only receive not send back.
         println!("request: {:?}", received);
     }
@@ -128,8 +128,7 @@ async fn receive_datagram(mut connection: NewConnection) -> anyhow::Result<()> {
 ```
 
 [Endpoint]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html
-[NewConnection]: https://docs.rs/quinn/latest/quinn/struct.NewConnection.html
+[Connection]: https://docs.rs/quinn/latest/quinn/struct.Connection.html
 [open_bi]: https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_bi
 [open_uni]: https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_uni
 [send_datagram]: https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.send_datagram
-[connection]: https://docs.rs/quinn/latest/quinn/struct.NewConnection.html#structfield.connection
