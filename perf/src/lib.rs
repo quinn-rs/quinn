@@ -7,6 +7,8 @@ use tracing::warn;
 #[cfg_attr(not(feature = "json-output"), allow(dead_code))]
 pub mod stats;
 
+pub mod noprotection;
+
 pub fn bind_socket(
     addr: SocketAddr,
     send_buffer_size: usize,
