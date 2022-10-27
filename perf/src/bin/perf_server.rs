@@ -32,6 +32,9 @@ struct Opt {
     /// Perform NSS-compatible TLS key logging to the file specified in `SSLKEYLOGFILE`.
     #[clap(long = "keylog")]
     keylog: bool,
+    /// UDP payload size that the network must be capable of carrying
+    #[clap(long, default_value = "1200")]
+    initial_max_udp_payload_size: u16,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -81,7 +84,11 @@ async fn run(opt: Opt) -> Result<()> {
         crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
-    let server_config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+    let mut transport = quinn::TransportConfig::default();
+    transport.initial_max_udp_payload_size(opt.initial_max_udp_payload_size);
+
+    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+    server_config.transport_config(Arc::new(transport));
 
     let socket = bind_socket(opt.listen, opt.send_buffer_size, opt.recv_buffer_size)?;
 
