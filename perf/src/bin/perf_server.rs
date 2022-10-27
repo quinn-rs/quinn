@@ -29,6 +29,9 @@ struct Opt {
     /// Whether to print connection statistics
     #[clap(long)]
     conn_stats: bool,
+    /// Perform NSS-compatible TLS key logging to the file specified in `SSLKEYLOGFILE`.
+    #[clap(long = "keylog")]
+    keylog: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -73,6 +76,10 @@ async fn run(opt: Opt) -> Result<()> {
         .with_single_cert(cert, key)
         .unwrap();
     crypto.alpn_protocols = vec![b"perf".to_vec()];
+
+    if opt.keylog {
+        crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+    }
 
     let server_config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
 

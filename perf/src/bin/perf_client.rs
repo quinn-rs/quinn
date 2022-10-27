@@ -60,6 +60,9 @@ struct Opt {
     #[cfg(feature = "json-output")]
     #[clap(long)]
     json: Option<PathBuf>,
+    /// Perform NSS-compatible TLS key logging to the file specified in `SSLKEYLOGFILE`.
+    #[clap(long = "keylog")]
+    keylog: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -114,6 +117,10 @@ async fn run(opt: Opt) -> Result<()> {
         .with_custom_certificate_verifier(SkipServerVerification::new())
         .with_no_client_auth();
     crypto.alpn_protocols = vec![b"perf".to_vec()];
+
+    if opt.keylog {
+        crypto.key_log = Arc::new(rustls::KeyLogFile::new());
+    }
 
     let cfg = quinn::ClientConfig::new(Arc::new(crypto));
 
