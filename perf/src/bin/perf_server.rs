@@ -6,7 +6,7 @@ use clap::Parser;
 use quinn::TokioRuntime;
 use tracing::{debug, error, info};
 
-use perf::bind_socket;
+use perf::{bind_socket, noprotection::NoProtectionServerConfig};
 
 #[derive(Parser)]
 #[clap(name = "server")]
@@ -35,6 +35,9 @@ struct Opt {
     /// UDP payload size that the network must be capable of carrying
     #[clap(long, default_value = "1200")]
     initial_max_udp_payload_size: u16,
+    /// Disable packet encryption/decryption (for debugging purpose)
+    #[clap(long = "no-protection")]
+    no_protection: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -87,7 +90,11 @@ async fn run(opt: Opt) -> Result<()> {
     let mut transport = quinn::TransportConfig::default();
     transport.initial_max_udp_payload_size(opt.initial_max_udp_payload_size);
 
-    let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(crypto));
+    let mut server_config = if opt.no_protection {
+        quinn::ServerConfig::with_crypto(Arc::new(NoProtectionServerConfig::new(Arc::new(crypto))))
+    } else {
+        quinn::ServerConfig::with_crypto(Arc::new(crypto))
+    };
     server_config.transport_config(Arc::new(transport));
 
     let socket = bind_socket(opt.listen, opt.send_buffer_size, opt.recv_buffer_size)?;

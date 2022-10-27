@@ -11,8 +11,8 @@ use quinn::TokioRuntime;
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
-use perf::bind_socket;
 use perf::stats::{OpenStreamStats, Stats};
+use perf::{bind_socket, noprotection::NoProtectionClientConfig};
 #[cfg(feature = "json-output")]
 use std::path::PathBuf;
 
@@ -66,6 +66,9 @@ struct Opt {
     /// UDP payload size that the network must be capable of carrying
     #[clap(long, default_value = "1200")]
     initial_max_udp_payload_size: u16,
+    /// Disable packet encryption/decryption (for debugging purpose)
+    #[clap(long = "no-protection")]
+    no_protection: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -128,7 +131,11 @@ async fn run(opt: Opt) -> Result<()> {
     let mut transport = quinn::TransportConfig::default();
     transport.initial_max_udp_payload_size(opt.initial_max_udp_payload_size);
 
-    let mut cfg = quinn::ClientConfig::new(Arc::new(crypto));
+    let mut cfg = if opt.no_protection {
+        quinn::ClientConfig::new(Arc::new(NoProtectionClientConfig::new(Arc::new(crypto))))
+    } else {
+        quinn::ClientConfig::new(Arc::new(crypto))
+    };
     cfg.transport_config(Arc::new(transport));
 
     let stream_stats = OpenStreamStats::default();
