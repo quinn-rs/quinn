@@ -489,7 +489,7 @@ impl Connection {
             _ => false,
         };
 
-        let mut buf = Vec::new();
+        let mut buf = Vec::with_capacity(max_datagrams * self.path.max_udp_payload_size as usize);
         // Reserving capacity can provide more capacity than we asked for.
         // However we are not allowed to write more than MTU size. Therefore
         // the maximum capacity is tracked separately.
