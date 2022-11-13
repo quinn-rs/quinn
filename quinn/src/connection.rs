@@ -628,7 +628,7 @@ fn poll_open<'a>(
             // `state` lock ensures we didn't race with readiness
             Poll::Pending => return Poll::Pending,
             // Spurious wakeup, get a new future
-            Poll::Ready(()) => notify.set(conn.shared.stream_incoming[dir as usize].notified()),
+            Poll::Ready(()) => notify.set(conn.shared.stream_opening[dir as usize].notified()),
         }
     }
 }
@@ -813,7 +813,10 @@ pub struct ConnectionInner {
 
 #[derive(Debug, Default)]
 pub(crate) struct Shared {
+    /// Notified when new streams may be locally initiated due to an increase in stream ID flow
+    /// control budget
     stream_opening: [Notify; 2],
+    /// Notified when the peer has initiated a new stream
     stream_incoming: [Notify; 2],
     datagrams: Notify,
     closed: Notify,
