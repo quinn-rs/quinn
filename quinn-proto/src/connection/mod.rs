@@ -2591,7 +2591,9 @@ impl Connection {
             .packet_received(ack_eliciting);
 
         // Issue stream ID credit due to ACKs of outgoing finish/resets and incoming finish/resets
-        // on stopped streams
+        // on stopped streams. Incoming finishes/resets on open streams are not handled here as they
+        // are only freed, and hence only issue credit, once the application has been notified
+        // during a read on the stream.
         let pending = &mut self.spaces[SpaceId::Data].pending;
         for dir in Dir::iter() {
             if self.streams.take_max_streams_dirty(dir) {

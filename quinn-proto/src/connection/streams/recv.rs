@@ -296,7 +296,8 @@ impl<'a> Chunks<'a> {
         }
 
         let mut should_transmit = false;
-        // We issue additional stream ID credit iff a remotely-initiated stream stream is finished or reset
+        // We issue additional stream ID credit after the application is notified that a previously
+        // open stream has finished or been reset and we've therefore disposed of its state.
         if matches!(state, ChunksState::Finished | ChunksState::Reset(_))
             && self.streams.side != self.id.initiator()
         {
