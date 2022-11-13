@@ -273,7 +273,7 @@ impl Connection {
     pub fn open_uni(&self) -> OpenUni<'_> {
         OpenUni {
             conn: &self.0,
-            notify: self.0.shared.stream_opening[Dir::Uni as usize].notified(),
+            notify: self.0.shared.stream_budget_available[Dir::Uni as usize].notified(),
         }
     }
 
@@ -285,7 +285,7 @@ impl Connection {
     pub fn open_bi(&self) -> OpenBi<'_> {
         OpenBi {
             conn: &self.0,
-            notify: self.0.shared.stream_opening[Dir::Bi as usize].notified(),
+            notify: self.0.shared.stream_budget_available[Dir::Bi as usize].notified(),
         }
     }
 
@@ -628,7 +628,9 @@ fn poll_open<'a>(
             // `state` lock ensures we didn't race with readiness
             Poll::Pending => return Poll::Pending,
             // Spurious wakeup, get a new future
-            Poll::Ready(()) => notify.set(conn.shared.stream_opening[dir as usize].notified()),
+            Poll::Ready(()) => {
+                notify.set(conn.shared.stream_budget_available[dir as usize].notified())
+            }
         }
     }
 }
@@ -815,7 +817,7 @@ pub struct ConnectionInner {
 pub(crate) struct Shared {
     /// Notified when new streams may be locally initiated due to an increase in stream ID flow
     /// control budget
-    stream_opening: [Notify; 2],
+    stream_budget_available: [Notify; 2],
     /// Notified when the peer has initiated a new stream
     stream_incoming: [Notify; 2],
     datagrams: Notify,
@@ -954,7 +956,7 @@ impl State {
                 }
                 Stream(StreamEvent::Available { dir }) => {
                     // Might mean any number of streams are ready, so we wake up everyone
-                    shared.stream_opening[dir as usize].notify_waiters();
+                    shared.stream_budget_available[dir as usize].notify_waiters();
                 }
                 Stream(StreamEvent::Finished { id }) => {
                     if let Some(finishing) = self.finishing.remove(&id) {
@@ -1046,8 +1048,8 @@ impl State {
         for (_, reader) in self.blocked_readers.drain() {
             reader.wake()
         }
-        shared.stream_opening[Dir::Uni as usize].notify_waiters();
-        shared.stream_opening[Dir::Bi as usize].notify_waiters();
+        shared.stream_budget_available[Dir::Uni as usize].notify_waiters();
+        shared.stream_budget_available[Dir::Bi as usize].notify_waiters();
         shared.stream_incoming[Dir::Uni as usize].notify_waiters();
         shared.stream_incoming[Dir::Bi as usize].notify_waiters();
         shared.datagrams.notify_waiters();
