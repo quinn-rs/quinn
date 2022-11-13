@@ -801,7 +801,7 @@ impl Drop for ConnectionRef {
 impl std::ops::Deref for ConnectionRef {
     type Target = ConnectionInner;
     fn deref(&self) -> &Self::Target {
-        &*self.0
+        &self.0
     }
 }
 
