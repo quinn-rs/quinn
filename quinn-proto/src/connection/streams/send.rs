@@ -218,7 +218,7 @@ impl<'a> BytesSource for ByteSlice<'a> {
         let chunk = Bytes::from(self.data[..limit].to_owned());
         self.data = &self.data[chunk.len()..];
 
-        let chunks_consumed = if self.data.is_empty() { 1 } else { 0 };
+        let chunks_consumed = usize::from(self.data.is_empty());
         (chunk, chunks_consumed)
     }
 }
