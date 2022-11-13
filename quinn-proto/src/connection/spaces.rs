@@ -11,7 +11,7 @@ use rustc_hash::FxHashSet;
 use super::assembler::Assembler;
 use crate::{
     connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
-    shared::IssuedCid, StreamId, VarInt,
+    shared::IssuedCid, Dir, StreamId, VarInt,
 };
 
 pub(crate) struct PacketSpace {
@@ -225,8 +225,7 @@ pub(crate) struct SentPacket {
 #[derive(Debug, Default, Clone)]
 pub struct Retransmits {
     pub(crate) max_data: bool,
-    pub(crate) max_uni_stream_id: bool,
-    pub(crate) max_bi_stream_id: bool,
+    pub(crate) max_stream_id: [bool; 2],
     pub(crate) reset_stream: Vec<(StreamId, VarInt)>,
     pub(crate) stop_sending: Vec<frame::StopSending>,
     pub(crate) max_stream_data: FxHashSet<StreamId>,
@@ -239,8 +238,7 @@ pub struct Retransmits {
 impl Retransmits {
     pub fn is_empty(&self, streams: &StreamsState) -> bool {
         !self.max_data
-            && !self.max_uni_stream_id
-            && !self.max_bi_stream_id
+            && !self.max_stream_id.into_iter().any(|x| x)
             && self.reset_stream.is_empty()
             && self.stop_sending.is_empty()
             && self
@@ -259,8 +257,9 @@ impl ::std::ops::BitOrAssign for Retransmits {
         // We reduce in-stream head-of-line blocking by queueing retransmits before other data for
         // STREAM and CRYPTO frames.
         self.max_data |= rhs.max_data;
-        self.max_uni_stream_id |= rhs.max_uni_stream_id;
-        self.max_bi_stream_id |= rhs.max_bi_stream_id;
+        for dir in Dir::iter() {
+            self.max_stream_id[dir as usize] |= rhs.max_stream_id[dir as usize];
+        }
         self.reset_stream.extend_from_slice(&rhs.reset_stream);
         self.stop_sending.extend_from_slice(&rhs.stop_sending);
         self.max_stream_data.extend(&rhs.max_stream_data);

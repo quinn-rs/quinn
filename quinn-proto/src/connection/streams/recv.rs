@@ -6,7 +6,7 @@ use tracing::debug;
 
 use super::{Retransmits, ShouldTransmit, StreamHalf, StreamId, StreamsState, UnknownStream};
 use crate::connection::assembler::{Assembler, Chunk, IllegalOrderedRead};
-use crate::{frame, Dir, TransportError, VarInt};
+use crate::{frame, TransportError, VarInt};
 
 #[derive(Debug, Default)]
 pub(super) struct Recv {
@@ -301,10 +301,7 @@ impl<'a> Chunks<'a> {
         if matches!(state, ChunksState::Finished | ChunksState::Reset(_))
             && self.streams.side != self.id.initiator()
         {
-            match self.id.dir() {
-                Dir::Uni => self.pending.max_uni_stream_id = true,
-                Dir::Bi => self.pending.max_bi_stream_id = true,
-            }
+            self.pending.max_stream_id[self.id.dir() as usize] = true;
             should_transmit = true;
         }
 
