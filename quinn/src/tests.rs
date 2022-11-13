@@ -224,10 +224,16 @@ async fn accept_after_close() {
 
 /// Construct an endpoint suitable for connecting to itself
 fn endpoint() -> Endpoint {
+    endpoint_with_config(TransportConfig::default())
+}
+
+fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let key = rustls::PrivateKey(cert.serialize_private_key_der());
     let cert = rustls::Certificate(cert.serialize_der().unwrap());
-    let server_config = crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
+    let transport_config = Arc::new(transport_config);
+    let mut server_config = crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
+    server_config.transport_config(transport_config.clone());
 
     let mut roots = rustls::RootCertStore::empty();
     roots.add(&cert).unwrap();
@@ -236,7 +242,8 @@ fn endpoint() -> Endpoint {
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
     )
     .unwrap();
-    let client_config = ClientConfig::with_root_certificates(roots);
+    let mut client_config = ClientConfig::with_root_certificates(roots);
+    client_config.transport_config(transport_config);
     endpoint.set_default_client_config(client_config);
 
     endpoint
@@ -645,4 +652,38 @@ async fn rebind_recv() {
     let stream = connection.accept_uni().await.unwrap();
     assert_eq!(stream.read_to_end(MSG.len()).await.unwrap(), MSG);
     server.await.unwrap();
+}
+
+#[tokio::test]
+async fn stream_id_flow_control() {
+    let _guard = subscribe();
+    let mut cfg = TransportConfig::default();
+    cfg.max_concurrent_uni_streams(1u32.into());
+    let endpoint = endpoint_with_config(cfg);
+
+    let (client, server) = tokio::join!(
+        endpoint
+            .connect(endpoint.local_addr().unwrap(), "localhost")
+            .unwrap(),
+        async { endpoint.accept().await.unwrap().await }
+    );
+    let client = client.unwrap();
+    let server = server.unwrap();
+
+    // If `open_uni` doesn't get unblocked when the previous stream is dropped, this will time out.
+    tokio::join!(
+        async {
+            client.open_uni().await.unwrap();
+        },
+        async {
+            client.open_uni().await.unwrap();
+        },
+        async {
+            client.open_uni().await.unwrap();
+        },
+        async {
+            server.accept_uni().await.unwrap();
+            server.accept_uni().await.unwrap();
+        }
+    );
 }
