@@ -2597,10 +2597,7 @@ impl Connection {
         let pending = &mut self.spaces[SpaceId::Data].pending;
         for dir in Dir::iter() {
             if self.streams.take_max_streams_dirty(dir) {
-                match dir {
-                    Dir::Uni => pending.max_uni_stream_id = true,
-                    Dir::Bi => pending.max_bi_stream_id = true,
-                }
+                pending.max_stream_id[dir as usize] = true;
             }
         }
 

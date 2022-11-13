@@ -443,32 +443,29 @@ impl StreamsState {
             stats.max_stream_data += 1;
         }
 
-        // MAX_STREAMS_UNI
-        if pending.max_uni_stream_id && buf.len() + 9 < max_size {
-            pending.max_uni_stream_id = false;
-            retransmits.get_or_create().max_uni_stream_id = true;
-            self.max_streams_dirty[Dir::Uni as usize] = false;
-            trace!(
-                value = self.max_remote[Dir::Uni as usize],
-                "MAX_STREAMS (unidirectional)"
-            );
-            buf.write(frame::Type::MAX_STREAMS_UNI);
-            buf.write_var(self.max_remote[Dir::Uni as usize]);
-            stats.max_streams_uni += 1;
-        }
+        // MAX_STREAMS
+        for dir in Dir::iter() {
+            if !pending.max_stream_id[dir as usize] || buf.len() + 9 >= max_size {
+                continue;
+            }
 
-        // MAX_STREAMS_BIDI
-        if pending.max_bi_stream_id && buf.len() + 9 < max_size {
-            pending.max_bi_stream_id = false;
-            retransmits.get_or_create().max_bi_stream_id = true;
-            self.max_streams_dirty[Dir::Bi as usize] = false;
+            pending.max_stream_id[dir as usize] = false;
+            retransmits.get_or_create().max_stream_id[dir as usize] = true;
+            self.max_streams_dirty[dir as usize] = false;
             trace!(
-                value = self.max_remote[Dir::Bi as usize],
-                "MAX_STREAMS (bidirectional)"
+                value = self.max_remote[dir as usize],
+                "MAX_STREAMS ({:?})",
+                dir
             );
-            buf.write(frame::Type::MAX_STREAMS_BIDI);
-            buf.write_var(self.max_remote[Dir::Bi as usize]);
-            stats.max_streams_bidi += 1;
+            buf.write(match dir {
+                Dir::Uni => frame::Type::MAX_STREAMS_UNI,
+                Dir::Bi => frame::Type::MAX_STREAMS_BIDI,
+            });
+            buf.write_var(self.max_remote[dir as usize]);
+            match dir {
+                Dir::Uni => stats.max_streams_uni += 1,
+                Dir::Bi => stats.max_streams_bidi += 1,
+            }
         }
     }
 
@@ -912,7 +909,7 @@ mod tests {
         assert!(chunks.next(0).unwrap().is_none());
         let should_transmit = chunks.finalize();
         assert!(should_transmit.0);
-        assert!(pending.max_uni_stream_id);
+        assert!(pending.max_stream_id[Dir::Uni as usize]);
         assert_eq!(client.local_max_data - initial_max, MESSAGE_SIZE as u64);
     }
 
