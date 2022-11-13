@@ -32,7 +32,7 @@ pub struct StreamsState {
     /// Maximum number of remotely-initiated streams that may be opened over the lifetime of the
     /// connection so far, per direction
     max_remote: [u64; 2],
-    /// Number of streams that we've given the peer permission to open
+    /// Number of streams that we've given the peer permission to open and which aren't fully closed
     allocated_remote_count: [u64; 2],
     /// Size of the desired stream flow control window. May be smaller than `allocated_remote_count`
     /// due to `set_max_concurrent` calls.
@@ -447,6 +447,7 @@ impl StreamsState {
         if pending.max_uni_stream_id && buf.len() + 9 < max_size {
             pending.max_uni_stream_id = false;
             retransmits.get_or_create().max_uni_stream_id = true;
+            self.max_streams_dirty[Dir::Uni as usize] = false;
             trace!(
                 value = self.max_remote[Dir::Uni as usize],
                 "MAX_STREAMS (unidirectional)"
@@ -460,6 +461,7 @@ impl StreamsState {
         if pending.max_bi_stream_id && buf.len() + 9 < max_size {
             pending.max_bi_stream_id = false;
             retransmits.get_or_create().max_bi_stream_id = true;
+            self.max_streams_dirty[Dir::Bi as usize] = false;
             trace!(
                 value = self.max_remote[Dir::Bi as usize],
                 "MAX_STREAMS (bidirectional)"
