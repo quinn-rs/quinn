@@ -24,13 +24,13 @@ struct Opt {
     #[clap(long = "keylog")]
     keylog: bool,
     /// directory to serve files from
-    #[clap(parse(from_os_str))]
+    #[clap(value_parser = clap::value_parser!(PathBuf))]
     root: PathBuf,
     /// TLS private key in PEM format
-    #[clap(parse(from_os_str), short = 'k', long = "key", requires = "cert")]
+    #[clap(value_parser = clap::value_parser!(PathBuf), short = 'k', long = "key", requires = "cert")]
     key: Option<PathBuf>,
     /// TLS certificate in PEM format
-    #[clap(parse(from_os_str), short = 'c', long = "cert", requires = "key")]
+    #[clap(value_parser = clap::value_parser!(PathBuf), short = 'c', long = "cert", requires = "key")]
     cert: Option<PathBuf>,
     /// Enable stateless retries
     #[clap(long = "stateless-retry")]
