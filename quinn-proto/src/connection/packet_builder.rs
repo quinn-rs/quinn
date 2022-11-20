@@ -128,13 +128,18 @@ impl PacketBuilder {
             unreachable!("tried to send {:?} packet without keys", space_id);
         };
 
-        // Each packet must be large enough for header protection sampling, i.e. the
-        // combined lengths of the encoded packet number and protected payload must be at
-        // least 4 bytes longer than the sample required for header protection
+        // Each packet must be large enough for header protection sampling, i.e. the combined
+        // lengths of the encoded packet number and protected payload must be at least 4 bytes
+        // longer than the sample required for header protection. Further, each packet should be at
+        // least tag_len + 6 bytes larger than the destination CID on incoming packets so that the
+        // peer may send stateless resets that are indistinguishable from regular traffic.
 
         // pn_len + payload_len + tag_len >= sample_size + 4
         // payload_len >= sample_size + 4 - pn_len - tag_len
-        let min_size = buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len);
+        let min_size = Ord::max(
+            buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
+            partial_encode.start + conn.rem_cids.active().len() + 6,
+        );
         let max_size = buffer_capacity - partial_encode.start - partial_encode.header_len - tag_len;
 
         Some(PacketBuilder {
