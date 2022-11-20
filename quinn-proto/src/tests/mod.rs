@@ -175,13 +175,10 @@ fn server_stateless_reset() {
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (client_ch, _) = pair.connect();
+    pair.drive(); // Flush any post-handshake frames
     pair.server.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config())));
-    // Send something big enough to allow room for a smaller stateless reset.
-    pair.client.connections.get_mut(&client_ch).unwrap().close(
-        pair.time,
-        VarInt(42),
-        (&[0xab; 128][..]).into(),
-    );
+    // Force the server to generate the smallest possible stateless reset
+    pair.client.connections.get_mut(&client_ch).unwrap().ping();
     info!("resetting");
     pair.drive();
     assert_matches!(
