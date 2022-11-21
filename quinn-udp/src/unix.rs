@@ -116,8 +116,9 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
 
     let addr = io.local_addr()?;
 
-    // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
-    if addr.is_ipv4() || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !only_v6(io)?) {
+    // mac and ios do not support IP_RECVTOS on dual-stack sockets :(
+    // older macos versions also don't have the flag and will error out if we don't ignore it
+    if addr.is_ipv4() || !only_v6(io)? {
         let on: libc::c_int = 1;
         let rc = unsafe {
             libc::setsockopt(
@@ -129,9 +130,13 @@ fn init(io: &std::net::UdpSocket) -> io::Result<()> {
             )
         };
         if rc == -1 {
-            return Err(io::Error::last_os_error());
+            tracing::debug!(
+                "Ignoring error setting IP_RECVTOS on socket: {:?}",
+                io::Error::last_os_error()
+            );
         }
     }
+
     #[cfg(target_os = "linux")]
     {
         if addr.is_ipv4() {
