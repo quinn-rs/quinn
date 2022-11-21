@@ -88,8 +88,9 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
     let addr = io.local_addr()?;
     let is_ipv4 = addr.family() == libc::AF_INET as libc::sa_family_t;
 
-    // macos and ios do not support IP_RECVTOS on dual-stack sockets :(
-    if is_ipv4 || ((!cfg!(any(target_os = "macos", target_os = "ios"))) && !io.only_v6()?) {
+    // mac and ios do not support IP_RECVTOS on dual-stack sockets :(
+    // older macos versions also don't have the flag and will error out if we don't ignore it
+    if is_ipv4 || !io.only_v6()? {
         let on: libc::c_int = 1;
         let rc = unsafe {
             libc::setsockopt(
@@ -101,9 +102,13 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
             )
         };
         if rc == -1 {
-            return Err(io::Error::last_os_error());
+            tracing::debug!(
+                "Ignoring error setting IP_RECVTOS on socket: {:?}",
+                io::Error::last_os_error()
+            );
         }
     }
+
     #[cfg(target_os = "linux")]
     {
         // opportunistically try to enable GRO. See gro::gro_segments().
