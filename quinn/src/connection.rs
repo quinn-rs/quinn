@@ -146,6 +146,8 @@ impl Connecting {
     /// Retrieving the local IP address is currently supported on the following
     /// platforms:
     /// - Linux
+    /// - FreeBSD
+    /// - macOS
     ///
     /// On all non-supported platforms the local IP address will not be available,
     /// and the method will return `None`.

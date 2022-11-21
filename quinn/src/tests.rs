@@ -462,7 +462,8 @@ fn run_echo(args: EchoArgs) {
             // If `local_ip` gets available on additional platforms - which
             // requires modifying this test - please update the list of supported
             // platforms in the doc comments of the various `local_ip` functions.
-            if cfg!(target_os = "linux") {
+            if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") || cfg!(target_os = "macos")
+            {
                 let local_ip = incoming.local_ip().expect("Local IP must be available");
                 assert!(local_ip.is_loopback());
             } else {

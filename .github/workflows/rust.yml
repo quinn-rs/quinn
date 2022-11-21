@@ -8,6 +8,30 @@ on:
     - cron: "21 3 * * 5"
 
 jobs:
+  test-freebsd:
+  # see https://github.com/actions/runner/issues/385
+  # use https://github.com/vmactions/freebsd-vm for now
+    name: test on freebsd
+    runs-on: macos-12
+    steps:
+      - uses: actions/checkout@v2
+      - name: test on freebsd
+        uses: vmactions/freebsd-vm@v0
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install -y curl
+            curl https://sh.rustup.rs -sSf --output rustup.sh
+            sh rustup.sh -y --profile minimal --default-toolchain stable
+            echo "~~~~ rustc --version ~~~~"
+            $HOME/.cargo/bin/rustc --version
+          run: |
+            freebsd-version
+            $HOME/.cargo/bin/cargo build --all-targets
+            $HOME/.cargo/bin/cargo test
+            $HOME/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml
   test:
     strategy:
       matrix:
