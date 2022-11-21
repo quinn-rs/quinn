@@ -68,7 +68,7 @@ impl Default for UdpSocketState {
 
 fn init(io: SockRef<'_>) -> io::Result<()> {
     let mut cmsg_platform_space = 0;
-    if cfg!(target_os = "linux") {
+    if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") || cfg!(target_os = "macos") {
         cmsg_platform_space +=
             unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
     }
@@ -164,13 +164,20 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
             if rc == -1 {
                 return Err(io::Error::last_os_error());
             }
-
+        }
+    }
+    #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+    // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
+    // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS
+    // macOS also supports IP_PKTINFO
+    {
+        if is_ipv4 {
             let on: libc::c_int = 1;
             let rc = unsafe {
                 libc::setsockopt(
                     io.as_raw_fd(),
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_RECVPKTINFO,
+                    libc::IPPROTO_IP,
+                    libc::IP_RECVDSTADDR,
                     &on as *const _ as _,
                     mem::size_of_val(&on) as _,
                 )
@@ -180,7 +187,23 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
             }
         }
     }
+
+    // IPV6_RECVPKTINFO is standardized
     if !is_ipv4 {
+        let on: libc::c_int = 1;
+        let rc = unsafe {
+            libc::setsockopt(
+                io.as_raw_fd(),
+                libc::IPPROTO_IPV6,
+                libc::IPV6_RECVPKTINFO,
+                &on as *const _ as _,
+                mem::size_of_val(&on) as _,
+            )
+        };
+        if rc == -1 {
+            return Err(io::Error::last_os_error());
+        }
+
         let on: libc::c_int = 1;
         let rc = unsafe {
             libc::setsockopt(
@@ -200,11 +223,24 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 fn send(
+    #[allow(unused_variables)] // only used on Linux
     state: &UdpState,
     io: SockRef<'_>,
     last_send_error: &mut Instant,
     transmits: &[Transmit],
 ) -> io::Result<usize> {
+    #[allow(unused_mut)] // only mutable on FeeBSD
+    let mut encode_src_ip = true;
+    #[cfg(target_os = "freebsd")]
+    {
+        let addr = io.local_addr()?;
+        let is_ipv4 = addr.family() == libc::AF_INET as libc::sa_family_t;
+        if is_ipv4 {
+            if let Some(socket) = addr.as_socket_ipv4() {
+                encode_src_ip = socket.ip() == &Ipv4Addr::UNSPECIFIED;
+            }
+        }
+    }
     let mut msgs: [libc::mmsghdr; BATCH_SIZE] = unsafe { mem::zeroed() };
     let mut iovecs: [libc::iovec; BATCH_SIZE] = unsafe { mem::zeroed() };
     let mut cmsgs = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
@@ -230,13 +266,13 @@ fn send(
             &mut msgs[i].msg_hdr,
             &mut iovecs[i],
             &mut cmsgs[i],
+            encode_src_ip,
         );
     }
     let num_transmits = transmits.len().min(BATCH_SIZE);
 
     loop {
-        let n =
-            unsafe { libc::sendmmsg(io.as_raw_fd(), msgs.as_mut_ptr(), num_transmits as u32, 0) };
+        let n = unsafe { libc::sendmmsg(io.as_raw_fd(), msgs.as_mut_ptr(), num_transmits as _, 0) };
         if n == -1 {
             let e = io::Error::last_os_error();
             match e.kind() {
@@ -292,9 +328,18 @@ fn send(
     let mut iov: libc::iovec = unsafe { mem::zeroed() };
     let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
     let mut sent = 0;
+
     while sent < transmits.len() {
         let addr = socket2::SockAddr::from(transmits[sent].destination);
-        prepare_msg(&transmits[sent], &addr, &mut hdr, &mut iov, &mut ctrl);
+        prepare_msg(
+            &transmits[sent],
+            &addr,
+            &mut hdr,
+            &mut iov,
+            &mut ctrl,
+            // Only tested on macOS
+            cfg!(target_os = "macos"),
+        );
         let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
         if n == -1 {
             let e = io::Error::last_os_error();
@@ -341,7 +386,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
             libc::recvmmsg(
                 io.as_raw_fd(),
                 hdrs.as_mut_ptr(),
-                bufs.len().min(BATCH_SIZE) as libc::c_uint,
+                bufs.len().min(BATCH_SIZE) as _,
                 0,
                 ptr::null_mut(),
             )
@@ -401,6 +446,8 @@ fn prepare_msg(
     hdr: &mut libc::msghdr,
     iov: &mut libc::iovec,
     ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
+    #[allow(unused_variables)] // only used on FreeBSD & macOS
+    encode_src_ip: bool,
 ) {
     iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
     iov.iov_len = transmit.contents.len();
@@ -432,9 +479,10 @@ fn prepare_msg(
     }
 
     if let Some(ip) = &transmit.src_ip {
-        if cfg!(target_os = "linux") {
-            match ip {
-                IpAddr::V4(v4) => {
+        match ip {
+            IpAddr::V4(v4) => {
+                #[cfg(target_os = "linux")]
+                {
                     let pktinfo = libc::in_pktinfo {
                         ipi_ifindex: 0,
                         ipi_spec_dst: libc::in_addr {
@@ -444,15 +492,24 @@ fn prepare_msg(
                     };
                     encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
                 }
-                IpAddr::V6(v6) => {
-                    let pktinfo = libc::in6_pktinfo {
-                        ipi6_ifindex: 0,
-                        ipi6_addr: libc::in6_addr {
-                            s6_addr: v6.octets(),
-                        },
-                    };
-                    encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
+                #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+                {
+                    if encode_src_ip {
+                        let addr = libc::in_addr {
+                            s_addr: u32::from_ne_bytes(v4.octets()),
+                        };
+                        encoder.push(libc::IPPROTO_IP, libc::IP_RECVDSTADDR, addr);
+                    }
                 }
+            }
+            IpAddr::V6(v6) => {
+                let pktinfo = libc::in6_pktinfo {
+                    ipi6_ifindex: 0,
+                    ipi6_addr: libc::in6_addr {
+                        s6_addr: v6.octets(),
+                    },
+                };
+                encoder.push(libc::IPPROTO_IPV6, libc::IPV6_PKTINFO, pktinfo);
             }
         }
     }
@@ -504,11 +561,17 @@ fn decode_recv(
                     ecn_bits = cmsg::decode::<libc::c_int>(cmsg) as u8;
                 }
             },
+            #[cfg(target_os = "linux")]
             (libc::IPPROTO_IP, libc::IP_PKTINFO) => {
                 let pktinfo = unsafe { cmsg::decode::<libc::in_pktinfo>(cmsg) };
                 dst_ip = Some(IpAddr::V4(Ipv4Addr::from(
                     pktinfo.ipi_addr.s_addr.to_ne_bytes(),
                 )));
+            }
+            #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+            (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
+                let in_addr = unsafe { cmsg::decode::<libc::in_addr>(cmsg) };
+                dst_ip = Some(IpAddr::V4(Ipv4Addr::from(in_addr.s_addr.to_ne_bytes())));
             }
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo>(cmsg) };
