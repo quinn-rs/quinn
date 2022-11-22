@@ -218,7 +218,7 @@ impl Assembler {
 }
 
 /// A chunk of data from the receive stream
-#[derive(Debug, PartialEq)]
+#[derive(Debug, PartialEq, Eq)]
 pub struct Chunk {
     /// The offset in the stream
     pub offset: u64,

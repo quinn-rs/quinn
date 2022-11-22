@@ -850,7 +850,7 @@ impl FrameStruct for Datagram {
 
 impl Datagram {
     pub(crate) fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
-        out.write(Type(*DATAGRAM_TYS.start() | if length { 1 } else { 0 })); // 1 byte
+        out.write(Type(*DATAGRAM_TYS.start() | u64::from(length))); // 1 byte
         if length {
             // Safe to unwrap because we check length sanity before queueing datagrams
             out.write(VarInt::from_u64(self.data.len() as u64).unwrap()); // <= 8 bytes
