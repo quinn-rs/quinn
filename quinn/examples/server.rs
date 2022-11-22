@@ -108,7 +108,7 @@ async fn run(options: Opt) -> Result<()> {
                 let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
                 let key = cert.serialize_private_key_der();
                 let cert = cert.serialize_der().unwrap();
-                fs::create_dir_all(&path).context("failed to create certificate directory")?;
+                fs::create_dir_all(path).context("failed to create certificate directory")?;
                 fs::write(&cert_path, &cert).context("failed to write certificate")?;
                 fs::write(&key_path, &key).context("failed to write private key")?;
                 (cert, key)
