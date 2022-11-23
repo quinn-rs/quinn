@@ -571,7 +571,9 @@ mod gso {
     pub fn max_gso_segments() -> usize {
         const GSO_SIZE: libc::c_int = 1500;
 
-        let socket = match std::net::UdpSocket::bind("[::]:0") {
+        let socket = match std::net::UdpSocket::bind("[::]:0")
+            .or_else(|_| std::net::UdpSocket::bind("127.0.0.1:0"))
+        {
             Ok(socket) => socket,
             Err(_) => return 1,
         };
@@ -618,7 +620,9 @@ mod gro {
     use super::*;
 
     pub fn gro_segments() -> usize {
-        let socket = match std::net::UdpSocket::bind("[::]:0") {
+        let socket = match std::net::UdpSocket::bind("[::]:0")
+            .or_else(|_| std::net::UdpSocket::bind("127.0.0.1:0"))
+        {
             Ok(socket) => socket,
             Err(_) => return 1,
         };
