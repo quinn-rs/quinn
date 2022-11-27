@@ -308,7 +308,7 @@ impl Connection {
     /// Receive an application datagram
     pub fn read_datagram(&self) -> ReadDatagram<'_> {
         ReadDatagram {
-            conn: self.0.clone(),
+            conn: &self.0,
             notify: self.0.shared.datagrams.notified(),
         }
     }
@@ -706,7 +706,7 @@ fn poll_accept<'a>(
 pin_project! {
     /// Future produced by [`Connection::read_datagram`]
     pub struct ReadDatagram<'a> {
-        conn: ConnectionRef,
+        conn: &'a ConnectionRef,
         #[pin]
         notify: Notified<'a>,
     }
@@ -715,19 +715,22 @@ pin_project! {
 impl Future for ReadDatagram<'_> {
     type Output = Result<Bytes, ConnectionError>;
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-        let this = self.project();
-        let mut conn = this.conn.state.lock("ReadDatagram::poll");
+        let mut this = self.project();
+        let mut state = this.conn.state.lock("ReadDatagram::poll");
         // Check for buffered datagrams before checking `state.error` so that already-received
         // datagrams, which are necessarily finite, can be drained from a closed connection.
-        if let Some(x) = conn.inner.datagrams().recv() {
-            Poll::Ready(Ok(x))
-        } else if let Some(ref e) = conn.error {
-            Poll::Ready(Err(e.clone()))
-        } else if this.notify.poll(ctx).is_pending() {
-            // `conn` lock ensures we don't race with readiness
-            Poll::Pending
-        } else {
-            unreachable!("ReadDatagram notified with no datagrams pending");
+        if let Some(x) = state.inner.datagrams().recv() {
+            return Poll::Ready(Ok(x));
+        } else if let Some(ref e) = state.error {
+            return Poll::Ready(Err(e.clone()));
+        }
+        loop {
+            match this.notify.as_mut().poll(ctx) {
+                // `state` lock ensures we didn't race with readiness
+                Poll::Pending => return Poll::Pending,
+                // Spurious wakeup, get a new future
+                Poll::Ready(()) => this.notify.set(this.conn.shared.datagrams.notified()),
+            }
         }
     }
 }
