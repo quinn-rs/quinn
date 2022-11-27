@@ -143,6 +143,7 @@ pub fn transport_config(opt: &Opt) -> quinn::TransportConfig {
     // is configurable as a parameter.
     let mut config = quinn::TransportConfig::default();
     config.max_concurrent_uni_streams(opt.max_streams.try_into().unwrap());
+    config.initial_max_udp_payload_size(opt.initial_mtu);
     config
 }
 
@@ -181,6 +182,9 @@ pub struct Opt {
     /// Valid options are: aes128, aes256, chacha20
     #[clap(long = "cipher", default_value = "aes128")]
     pub cipher: CipherSuite,
+    /// Starting guess for maximum UDP payload size
+    #[clap(long, default_value = "1200")]
+    pub initial_mtu: u16,
 }
 
 fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
