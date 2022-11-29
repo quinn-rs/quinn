@@ -307,6 +307,13 @@ impl Future for Stopped<'_> {
     }
 }
 
+impl<'a> Drop for Stopped<'a> {
+    fn drop(&mut self) {
+        let mut conn = self.stream.conn.state.lock("Stopped::drop");
+        conn.stopped.remove(&self.stream.stream);
+    }
+}
+
 /// Future produced by [`SendStream::write()`].
 ///
 /// [`SendStream::write()`]: crate::SendStream::write
