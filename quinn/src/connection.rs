@@ -963,6 +963,9 @@ impl State {
                         // If the finishing stream was already dropped, there's nothing more to do.
                         let _ = finishing.send(None);
                     }
+                    if let Some(stopped) = self.stopped.remove(&id) {
+                        stopped.wake();
+                    }
                 }
                 Stream(StreamEvent::Stopped { id, error_code }) => {
                     if let Some(stopped) = self.stopped.remove(&id) {
