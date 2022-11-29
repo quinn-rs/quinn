@@ -390,6 +390,10 @@ impl tokio::io::AsyncRead for RecvStream {
 impl Drop for RecvStream {
     fn drop(&mut self) {
         let mut conn = self.conn.state.lock("RecvStream::drop");
+
+        // clean up any previously registered wakers
+        conn.blocked_readers.remove(&self.stream);
+
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
