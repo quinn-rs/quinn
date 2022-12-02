@@ -78,6 +78,7 @@ pub struct RecvMeta {
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address which was encoded in this datagram
     pub dst_ip: Option<IpAddr>,
+    pub dst_addr: Option<SocketAddr>,
 }
 
 impl Default for RecvMeta {
@@ -89,6 +90,7 @@ impl Default for RecvMeta {
             stride: 0,
             ecn: None,
             dst_ip: None,
+            dst_addr: None,
         }
     }
 }

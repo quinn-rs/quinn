@@ -86,6 +86,7 @@ impl UdpSocketState {
             addr: addr.as_socket().unwrap(),
             ecn: None,
             dst_ip: None,
+            dst_addr: None,
         };
         Ok(1)
     }

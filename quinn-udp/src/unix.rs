@@ -68,15 +68,26 @@ impl Default for UdpSocketState {
 
 fn init(io: SockRef<'_>) -> io::Result<()> {
     let mut cmsg_platform_space = 0;
-    if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") || cfg!(target_os = "macos") {
+    if cfg!(target_os = "linux") {
         cmsg_platform_space +=
-            unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
+            unsafe { libc::CMSG_SPACE(mem::size_of::<libc::sockaddr_in6>() as _) as usize }
+                + unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize };
+    } else if cfg!(target_os = "freebsd") || cfg!(target_os = "macos") {
+        cmsg_platform_space +=
+            unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in_addr>() as _) as usize }
     }
 
     assert!(
         CMSG_LEN
-            >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
-                + cmsg_platform_space
+            >= unsafe { libc::CMSG_SPACE(mem::size_of::<u8>() as _) as usize }
+                + unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
+                + unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize }
+                + cmsg_platform_space,
+        "control message buffer too small, increase CMSG_LEN to: {}",
+        unsafe { libc::CMSG_SPACE(mem::size_of::<u8>() as _) as usize }
+            + unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
+            + unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize }
+            + cmsg_platform_space,
     );
     assert!(
         mem::align_of::<libc::cmsghdr>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
@@ -137,6 +148,22 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
             return Err(io::Error::last_os_error());
         }
 
+        // Recover the original destination (IP:port) for traffic redirected with TPROXY.
+        // Note: IP_TRANSPARENT option must be enabled in order for traffic to be redirected.
+        // Note: Both IPv4 and IPv6 options must be enabled on dual-stack sockets.
+        let rc = unsafe {
+            libc::setsockopt(
+                io.as_raw_fd(),
+                libc::IPPROTO_IP,
+                libc::IP_RECVORIGDSTADDR,
+                &on as *const _ as _,
+                mem::size_of_val(&on) as _,
+            )
+        };
+        if rc == -1 {
+            return Err(io::Error::last_os_error());
+        }
+
         if is_ipv4 {
             let on: libc::c_int = 1;
             let rc = unsafe {
@@ -159,6 +186,21 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
                     libc::IPV6_MTU_DISCOVER,
                     &libc::IP_PMTUDISC_PROBE as *const _ as _,
                     mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
+                )
+            };
+            if rc == -1 {
+                return Err(io::Error::last_os_error());
+            }
+
+            // Recover the original destination (IP:port) for traffic redirected with TPROXY.
+            // Note: IP_TRANSPARENT option must be enabled in order for traffic to be redirected.
+            let rc = unsafe {
+                libc::setsockopt(
+                    io.as_raw_fd(),
+                    libc::IPPROTO_IPV6,
+                    libc::IPV6_RECVORIGDSTADDR,
+                    &on as *const _ as _,
+                    mem::size_of_val(&on) as _,
                 )
             };
             if rc == -1 {
@@ -438,7 +480,8 @@ pub fn udp_state() -> UdpState {
     }
 }
 
-const CMSG_LEN: usize = 88;
+// Must be large enough to fit all control messages (with headers).
+const CMSG_LEN: usize = 160;
 
 fn prepare_msg(
     transmit: &Transmit,
@@ -540,6 +583,7 @@ fn decode_recv(
     let name = unsafe { name.assume_init() };
     let mut ecn_bits = 0;
     let mut dst_ip = None;
+    let mut dst_addr = None;
     #[allow(unused_mut)] // only mutable on Linux
     let mut stride = len;
 
@@ -576,6 +620,24 @@ fn decode_recv(
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo>(cmsg) };
                 dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
+            }
+            #[cfg(target_os = "linux")]
+            (libc::IPPROTO_IP, libc::IP_ORIGDSTADDR) => {
+                let addr = unsafe { cmsg::decode::<libc::sockaddr_in>(cmsg) };
+                dst_addr = Some(SocketAddr::V4(SocketAddrV4::new(
+                    Ipv4Addr::from(addr.sin_addr.s_addr.to_ne_bytes()),
+                    u16::from_be(addr.sin_port),
+                )))
+            }
+            #[cfg(target_os = "linux")]
+            (libc::IPPROTO_IPV6, libc::IPV6_ORIGDSTADDR) => {
+                let addr = unsafe { cmsg::decode::<libc::sockaddr_in6>(cmsg) };
+                dst_addr = Some(SocketAddr::V6(SocketAddrV6::new(
+                    Ipv6Addr::from(addr.sin6_addr.s6_addr),
+                    u16::from_be(addr.sin6_port),
+                    addr.sin6_flowinfo,
+                    addr.sin6_scope_id,
+                )))
             }
             #[cfg(target_os = "linux")]
             (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
@@ -615,6 +677,7 @@ fn decode_recv(
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
         dst_ip,
+        dst_addr,
     }
 }
 
