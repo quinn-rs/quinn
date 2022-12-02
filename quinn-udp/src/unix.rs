@@ -102,110 +102,47 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
     // mac and ios do not support IP_RECVTOS on dual-stack sockets :(
     // older macos versions also don't have the flag and will error out if we don't ignore it
     if is_ipv4 || !io.only_v6()? {
-        let on: libc::c_int = 1;
-        let rc = unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::IPPROTO_IP,
-                libc::IP_RECVTOS,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
-        if rc == -1 {
-            tracing::debug!(
-                "Ignoring error setting IP_RECVTOS on socket: {:?}",
-                io::Error::last_os_error()
-            );
+        if let Err(err) = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON) {
+            tracing::debug!("Ignoring error setting IP_RECVTOS on socket: {err:?}",);
         }
     }
 
     #[cfg(target_os = "linux")]
     {
         // opportunistically try to enable GRO. See gro::gro_segments().
-        let on: libc::c_int = 1;
-        unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::SOL_UDP,
-                libc::UDP_GRO,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
+        let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
 
         // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
-        let rc = unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::IPPROTO_IP,
-                libc::IP_MTU_DISCOVER,
-                &libc::IP_PMTUDISC_PROBE as *const _ as _,
-                mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
-            )
-        };
-        if rc == -1 {
-            return Err(io::Error::last_os_error());
-        }
+        set_socket_option(
+            &*io,
+            libc::IPPROTO_IP,
+            libc::IP_MTU_DISCOVER,
+            libc::IP_PMTUDISC_PROBE,
+        )?;
 
         // Recover the original destination (IP:port) for traffic redirected with TPROXY.
         // Note: IP_TRANSPARENT option must be enabled in order for traffic to be redirected.
         // Note: Both IPv4 and IPv6 options must be enabled on dual-stack sockets.
-        let rc = unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::IPPROTO_IP,
-                libc::IP_RECVORIGDSTADDR,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
-        if rc == -1 {
-            return Err(io::Error::last_os_error());
-        }
+        set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVORIGDSTADDR, OPTION_ON)?;
 
         if is_ipv4 {
-            let on: libc::c_int = 1;
-            let rc = unsafe {
-                libc::setsockopt(
-                    io.as_raw_fd(),
-                    libc::IPPROTO_IP,
-                    libc::IP_PKTINFO,
-                    &on as *const _ as _,
-                    mem::size_of_val(&on) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
+            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_PKTINFO, OPTION_ON)?;
         } else {
-            let rc = unsafe {
-                libc::setsockopt(
-                    io.as_raw_fd(),
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_MTU_DISCOVER,
-                    &libc::IP_PMTUDISC_PROBE as *const _ as _,
-                    mem::size_of_val(&libc::IP_PMTUDISC_PROBE) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
+            set_socket_option(
+                &*io,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_MTU_DISCOVER,
+                libc::IP_PMTUDISC_PROBE,
+            )?;
 
             // Recover the original destination (IP:port) for traffic redirected with TPROXY.
             // Note: IP_TRANSPARENT option must be enabled in order for traffic to be redirected.
-            let rc = unsafe {
-                libc::setsockopt(
-                    io.as_raw_fd(),
-                    libc::IPPROTO_IPV6,
-                    libc::IPV6_RECVORIGDSTADDR,
-                    &on as *const _ as _,
-                    mem::size_of_val(&on) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
+            set_socket_option(
+                &*io,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_RECVORIGDSTADDR,
+                OPTION_ON,
+            )?;
         }
     }
     #[cfg(any(target_os = "freebsd", target_os = "macos"))]
@@ -214,52 +151,20 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
     // macOS also supports IP_PKTINFO
     {
         if is_ipv4 {
-            let on: libc::c_int = 1;
-            let rc = unsafe {
-                libc::setsockopt(
-                    io.as_raw_fd(),
-                    libc::IPPROTO_IP,
-                    libc::IP_RECVDSTADDR,
-                    &on as *const _ as _,
-                    mem::size_of_val(&on) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
+            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVDSTADDR, OPTION_ON)?;
         }
     }
 
     // IPV6_RECVPKTINFO is standardized
     if !is_ipv4 {
-        let on: libc::c_int = 1;
-        let rc = unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::IPPROTO_IPV6,
-                libc::IPV6_RECVPKTINFO,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
-        if rc == -1 {
-            return Err(io::Error::last_os_error());
-        }
-
-        let on: libc::c_int = 1;
-        let rc = unsafe {
-            libc::setsockopt(
-                io.as_raw_fd(),
-                libc::IPPROTO_IPV6,
-                libc::IPV6_RECVTCLASS,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
-        if rc == -1 {
-            return Err(io::Error::last_os_error());
-        }
+        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVPKTINFO, OPTION_ON)?;
+        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS, OPTION_ON)?;
     }
+
+    if !is_ipv4 {
+        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS, OPTION_ON)?;
+    }
+
     Ok(())
 }
 
@@ -704,22 +609,11 @@ mod gso {
             Err(_) => return 1,
         };
 
-        let rc = unsafe {
-            libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_UDP,
-                libc::UDP_SEGMENT,
-                &GSO_SIZE as *const _ as _,
-                mem::size_of_val(&GSO_SIZE) as _,
-            )
-        };
-
-        if rc != -1 {
-            // As defined in linux/udp.h
-            // #define UDP_MAX_SEGMENTS        (1 << 6UL)
-            64
-        } else {
-            1
+        // As defined in linux/udp.h
+        // #define UDP_MAX_SEGMENTS        (1 << 6UL)
+        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_SEGMENT, GSO_SIZE) {
+            Ok(()) => 64,
+            Err(_) => 1,
         }
     }
 
@@ -753,31 +647,43 @@ mod gro {
             Err(_) => return 1,
         };
 
-        let on: libc::c_int = 1;
-        let rc = unsafe {
-            libc::setsockopt(
-                socket.as_raw_fd(),
-                libc::SOL_UDP,
-                libc::UDP_GRO,
-                &on as *const _ as _,
-                mem::size_of_val(&on) as _,
-            )
-        };
-
-        if rc != -1 {
-            // As defined in net/ipv4/udp_offload.c
-            // #define UDP_GRO_CNT_MAX 64
-            //
-            // NOTE: this MUST be set to UDP_GRO_CNT_MAX to ensure that the receive buffer size
-            // (get_max_udp_payload_size() * gro_segments()) is large enough to hold the largest GRO
-            // list the kernel might potentially produce. See
-            // https://github.com/quinn-rs/quinn/pull/1354.
-            64
-        } else {
-            1
+        // As defined in net/ipv4/udp_offload.c
+        // #define UDP_GRO_CNT_MAX 64
+        //
+        // NOTE: this MUST be set to UDP_GRO_CNT_MAX to ensure that the receive buffer size
+        // (get_max_udp_payload_size() * gro_segments()) is large enough to hold the largest GRO
+        // list the kernel might potentially produce. See
+        // https://github.com/quinn-rs/quinn/pull/1354.
+        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON) {
+            Ok(()) => 64,
+            Err(_) => 1,
         }
     }
 }
+
+fn set_socket_option(
+    socket: &impl AsRawFd,
+    level: libc::c_int,
+    name: libc::c_int,
+    value: libc::c_int,
+) -> Result<(), io::Error> {
+    let rc = unsafe {
+        libc::setsockopt(
+            socket.as_raw_fd(),
+            level,
+            name,
+            &value as *const _ as _,
+            mem::size_of_val(&value) as _,
+        )
+    };
+
+    match rc == 0 {
+        true => Ok(()),
+        false => Err(io::Error::last_os_error()),
+    }
+}
+
+const OPTION_ON: libc::c_int = 1;
 
 #[cfg(not(target_os = "linux"))]
 mod gro {
