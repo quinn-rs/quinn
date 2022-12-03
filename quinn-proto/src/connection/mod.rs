@@ -2647,7 +2647,10 @@ impl Connection {
                 remote,
                 self.config.initial_rtt,
                 self.config.congestion_controller_factory.build(now),
-                self.config.initial_max_udp_payload_size,
+                self.config.initial_max_udp_payload_size.min(
+                    u16::try_from(self.peer_params.max_udp_payload_size.into_inner())
+                        .unwrap_or(u16::MAX),
+                ),
                 now,
                 false,
             )
@@ -2952,6 +2955,9 @@ impl Connection {
             }).expect("preferred address CID is the first received, and hence is guaranteed to be legal");
         }
         self.peer_params = params;
+        self.path.max_udp_payload_size = self.path.max_udp_payload_size.min(
+            u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
+        );
     }
 
     fn decrypt_packet(
