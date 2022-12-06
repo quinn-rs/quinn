@@ -267,7 +267,7 @@ impl Default for CubicConfig {
         const MAX_DATAGRAM_SIZE: u64 = 1232;
         Self {
             max_datagram_size: MAX_DATAGRAM_SIZE,
-            initial_window: 14720.max(2 * MAX_DATAGRAM_SIZE).min(10 * MAX_DATAGRAM_SIZE),
+            initial_window: 14720.clamp(2 * MAX_DATAGRAM_SIZE, 10 * MAX_DATAGRAM_SIZE),
             minimum_window: 2 * MAX_DATAGRAM_SIZE,
         }
     }

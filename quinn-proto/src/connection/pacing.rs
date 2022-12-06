@@ -135,9 +135,10 @@ fn optimal_capacity(smoothed_rtt: Duration, window: u64, max_udp_payload_size: u
 
     // Small bursts are less efficient (no GSO), could increase latency and don't effectively
     // use the channel's buffer capacity. Large bursts might block the connection on sending.
-    capacity
-        .max(MIN_BURST_SIZE * max_udp_payload_size as u64)
-        .min(MAX_BURST_SIZE * max_udp_payload_size as u64)
+    capacity.clamp(
+        MIN_BURST_SIZE * max_udp_payload_size as u64,
+        MAX_BURST_SIZE * max_udp_payload_size as u64,
+    )
 }
 
 /// The burst interval
