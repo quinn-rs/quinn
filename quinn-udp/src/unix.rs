@@ -475,6 +475,7 @@ fn decode_recv(
             (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
                 // https://bugreport.apple.com/web/?problemID=48761855
+                #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
                 if cfg!(target_os = "macos")
                     && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
                 {

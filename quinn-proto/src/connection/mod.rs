@@ -1402,7 +1402,7 @@ impl Connection {
             let largest_lost_sent = self.spaces[pn_space].sent_packets[&largest_lost].time_sent;
             self.lost_packets += lost_packets.len() as u64;
             self.stats.path.lost_packets += lost_packets.len() as u64;
-            self.stats.path.lost_bytes += size_of_lost_packets as u64;
+            self.stats.path.lost_bytes += size_of_lost_packets;
             trace!(
                 "packets lost: {:?}, bytes lost: {}",
                 lost_packets,

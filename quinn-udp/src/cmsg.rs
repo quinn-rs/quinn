@@ -35,12 +35,15 @@ impl<'a> Encoder<'a> {
     pub fn push<T: Copy + ?Sized>(&mut self, level: libc::c_int, ty: libc::c_int, value: T) {
         assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
         let space = unsafe { libc::CMSG_SPACE(mem::size_of_val(&value) as _) as usize };
-        assert!(
-            self.hdr.msg_controllen as usize >= self.len + space,
-            "control message buffer too small. Required: {}, Available: {}",
-            self.len + space,
-            self.hdr.msg_controllen
-        );
+        #[allow(clippy::unnecessary_cast)] // hdr.msg_controllen defined as size_t
+        {
+            assert!(
+                self.hdr.msg_controllen as usize >= self.len + space,
+                "control message buffer too small. Required: {}, Available: {}",
+                self.len + space,
+                self.hdr.msg_controllen
+            );
+        }
         let cmsg = self.cmsg.take().expect("no control buffer space remaining");
         cmsg.cmsg_level = level;
         cmsg.cmsg_type = ty;
@@ -71,10 +74,13 @@ impl<'a> Drop for Encoder<'a> {
 /// `cmsg` must refer to a cmsg containing a payload of type `T`
 pub unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
     assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
-    debug_assert_eq!(
-        cmsg.cmsg_len as usize,
-        libc::CMSG_LEN(mem::size_of::<T>() as _) as usize
-    );
+    #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
+    {
+        debug_assert_eq!(
+            cmsg.cmsg_len as usize,
+            libc::CMSG_LEN(mem::size_of::<T>() as _) as usize
+        );
+    }
     ptr::read(libc::CMSG_DATA(cmsg) as *const T)
 }
 
