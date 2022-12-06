@@ -318,7 +318,7 @@ impl ThinRetransmits {
     /// This function will allocate a backing storage if required.
     pub fn get_or_create(&mut self) -> &mut Retransmits {
         if self.retransmits.is_none() {
-            self.retransmits = Some(Box::new(Retransmits::default()));
+            self.retransmits = Some(Box::default());
         }
         self.retransmits.as_deref_mut().unwrap()
     }
