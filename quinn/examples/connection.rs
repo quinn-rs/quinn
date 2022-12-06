@@ -33,7 +33,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Waiting for a stream will complete with an error when the server closes the connection
     let _ = connection.accept_uni().await;
 
-    // Give the server has a chance to clean up
+    // Make sure the server has a chance to clean up
     endpoint.wait_idle().await;
 
     Ok(())
