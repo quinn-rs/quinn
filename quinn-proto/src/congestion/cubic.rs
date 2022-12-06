@@ -153,7 +153,7 @@ impl Controller for Cubic {
             // cwnd_inc can be more than 1 MSS in the late stage of max probing.
             // however RFC9002 §7.3.3 (Congestion Avoidance) limits
             // the increase of cwnd to 1 max_datagram_size per cwnd acknowledged.
-            if self.cubic_state.cwnd_inc as u64 >= self.config.max_datagram_size {
+            if self.cubic_state.cwnd_inc >= self.config.max_datagram_size {
                 self.window += self.config.max_datagram_size;
                 self.cubic_state.cwnd_inc = 0;
             }

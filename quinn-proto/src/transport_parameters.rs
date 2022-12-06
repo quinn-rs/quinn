@@ -381,8 +381,7 @@ impl TransportParameters {
                     if params.preferred_address.is_some() {
                         return Err(Error::Malformed);
                     }
-                    params.preferred_address =
-                        Some(PreferredAddress::read(&mut r.take(len as usize))?);
+                    params.preferred_address = Some(PreferredAddress::read(&mut r.take(len))?);
                 }
                 0x0f => decode_cid(len, &mut params.initial_src_cid, r)?,
                 0x10 => decode_cid(len, &mut params.retry_src_cid, r)?,

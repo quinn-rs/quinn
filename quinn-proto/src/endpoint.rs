@@ -598,14 +598,7 @@ impl Endpoint {
         if dst_cid.len() != 0 {
             self.connection_ids_initial.insert(dst_cid, ch);
         }
-        match conn.handle_first_packet(
-            now,
-            addresses.remote,
-            ecn,
-            packet_number as u64,
-            packet,
-            rest,
-        ) {
+        match conn.handle_first_packet(now, addresses.remote, ecn, packet_number, packet, rest) {
             Ok(()) => {
                 trace!(id = ch.0, icid = %dst_cid, "connection incoming");
                 Some((ch, conn))

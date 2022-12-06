@@ -149,7 +149,7 @@ impl StreamsState {
         self.max[Dir::Uni as usize] = params.initial_max_streams_uni.into();
         self.received_max_data(params.initial_max_data);
         for i in 0..self.max_remote[Dir::Bi as usize] {
-            let id = StreamId::new(!self.side, Dir::Bi, i as u64);
+            let id = StreamId::new(!self.side, Dir::Bi, i);
             self.send.get_mut(&id).unwrap().max_data =
                 params.initial_max_stream_data_bidi_local.into();
         }
