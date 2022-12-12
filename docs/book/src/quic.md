@@ -1,7 +1,6 @@
 # The QUIC protocol
-[QUIC][QUIC] is a general-purpose network protocol built on top of UDP.
-The protocol is still under development and standardized by the [IETF][IETF]. 
-Quinn strives to implement the latest [draft][draft] but may lag a bit behind. Although QUIC is still in a draft phase, 
+[QUIC] is a general-purpose network protocol built on top of UDP,
+and [standardized][rfc] by the [IETF]. Although QUIC is still relatively new, 
 the protocol is used for all connections from Chrome web browsers to the Google servers. 
  
 QUIC solves a number of transport-layer and application-layer problems experienced by modern web applications. 
@@ -21,6 +20,6 @@ One thing is for sure, QUIC has many great potentials and will serve us in the f
 
 In the upcoming chapter we will be discussing various aspects of QUIC also in relation to Quinn. 
 
-[draft]: https://datatracker.ietf.org/doc/draft-ietf-quic-transport/
+[rfc]: https://www.rfc-editor.org/rfc/rfc9000.html
 [IETF]: https://www.ietf.org/
 [QUIC]: https://en.wikipedia.org/wiki/QUIC
