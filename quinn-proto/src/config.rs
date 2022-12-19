@@ -336,7 +336,7 @@ impl EndpointConfig {
     /// Create a default config with a particular `reset_key`
     pub fn new(reset_key: Arc<dyn HmacKey>) -> Self {
         let cid_factory: fn() -> Box<dyn ConnectionIdGenerator> =
-            || Box::new(RandomConnectionIdGenerator::default());
+            || Box::<RandomConnectionIdGenerator>::default();
         Self {
             reset_key,
             max_udp_payload_size: 1480u32.into(), // Typical internet MTU minus IPv4 and UDP overhead, rounded up to a multiple of 8

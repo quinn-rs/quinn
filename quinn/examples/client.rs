@@ -70,7 +70,7 @@ async fn run(options: Opt) -> Result<()> {
 
     let mut roots = rustls::RootCertStore::empty();
     if let Some(ca_path) = options.ca {
-        roots.add(&rustls::Certificate(fs::read(&ca_path)?))?;
+        roots.add(&rustls::Certificate(fs::read(ca_path)?))?;
     } else {
         let dirs = directories_next::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
         match fs::read(dirs.data_local_dir().join("cert.der")) {
