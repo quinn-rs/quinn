@@ -252,48 +252,48 @@ mod tests {
         // Offset 16 requires 1 byte
         assert_eq!(
             buf.poll_transmit((SIZE1 - transmitted + 1) as usize),
-            (transmitted as u64..SIZE1, false)
+            (transmitted..SIZE1, false)
         );
-        buf.retransmit(transmitted as u64..SIZE1);
+        buf.retransmit(transmitted..SIZE1);
         assert_eq!(
             buf.poll_transmit((SIZE1 - transmitted + 1) as usize),
-            (transmitted as u64..SIZE1, false)
+            (transmitted..SIZE1, false)
         );
         transmitted = SIZE1;
 
         // Offset 64 requires 2 bytes
         assert_eq!(
             buf.poll_transmit((SIZE2 - transmitted + 2) as usize),
-            (transmitted as u64..SIZE2, false)
+            (transmitted..SIZE2, false)
         );
-        buf.retransmit(transmitted as u64..SIZE2);
+        buf.retransmit(transmitted..SIZE2);
         assert_eq!(
             buf.poll_transmit((SIZE2 - transmitted + 2) as usize),
-            (transmitted as u64..SIZE2, false)
+            (transmitted..SIZE2, false)
         );
         transmitted = SIZE2;
 
         // Offset 16384 requires requires 4 bytes
         assert_eq!(
             buf.poll_transmit((SIZE3 - transmitted + 4) as usize),
-            (transmitted as u64..SIZE3, false)
+            (transmitted..SIZE3, false)
         );
-        buf.retransmit(transmitted as u64..SIZE3);
+        buf.retransmit(transmitted..SIZE3);
         assert_eq!(
             buf.poll_transmit((SIZE3 - transmitted + 4) as usize),
-            (transmitted as u64..SIZE3, false)
+            (transmitted..SIZE3, false)
         );
         transmitted = SIZE3;
 
         // Offset 1GB requires 8 bytes
         assert_eq!(
             buf.poll_transmit(chunk.len() + 8),
-            (transmitted as u64..transmitted + chunk.len() as u64, false)
+            (transmitted..transmitted + chunk.len() as u64, false)
         );
-        buf.retransmit(transmitted as u64..transmitted + chunk.len() as u64);
+        buf.retransmit(transmitted..transmitted + chunk.len() as u64);
         assert_eq!(
             buf.poll_transmit(chunk.len() + 8),
-            (transmitted as u64..transmitted + chunk.len() as u64, false)
+            (transmitted..transmitted + chunk.len() as u64, false)
         );
     }
 

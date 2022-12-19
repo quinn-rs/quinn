@@ -60,7 +60,7 @@ impl Stats {
 
     fn record(&mut self, stream_stats: Arc<StreamStats>) {
         if stream_stats.finished.load(Ordering::SeqCst) {
-            let duration = stream_stats.duration.load(Ordering::SeqCst) as u64;
+            let duration = stream_stats.duration.load(Ordering::SeqCst);
             let bps = throughput_bytes_per_second(duration, stream_stats.request_size);
 
             if stream_stats.sender {
@@ -70,7 +70,7 @@ impl Stats {
                 self.download_throughput.record(bps as u64).unwrap();
                 self.download_duration.record(duration).unwrap();
                 self.fbl
-                    .record(stream_stats.first_byte_latency.load(Ordering::SeqCst) as u64)
+                    .record(stream_stats.first_byte_latency.load(Ordering::SeqCst))
                     .unwrap();
                 self.requests += 1;
             }
