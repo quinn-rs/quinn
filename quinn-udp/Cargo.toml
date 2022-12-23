@@ -12,6 +12,11 @@ edition = "2018"
 [package.metadata.docs.rs]
 all-features = true
 
+[features]
+default = ["log"]
+# Write logs via the `log` crate when no `tracing` subscriber exists
+log = ["tracing/log"]
+
 [badges]
 maintenance = { status = "experimental" }
 

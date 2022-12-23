@@ -17,10 +17,12 @@ all-features = true
 maintenance = { status = "experimental" }
 
 [features]
-default = ["tls-rustls"]
+default = ["tls-rustls", "log"]
 tls-rustls = ["rustls", "webpki", "ring"]
 # Provides `ClientConfig::with_native_roots()` convenience method
 native-certs = ["rustls-native-certs"]
+# Write logs via the `log` crate when no `tracing` subscriber exists
+log = ["tracing/log"]
 
 [dependencies]
 arbitrary = { version = "1.0.1", features = ["derive"], optional = true }
