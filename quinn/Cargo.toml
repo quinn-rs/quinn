@@ -15,7 +15,7 @@ rust-version = "1.59"
 all-features = true
 
 [features]
-default = ["native-certs", "tls-rustls", "runtime-tokio"]
+default = ["native-certs", "tls-rustls", "runtime-tokio", "log"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Provides `ClientConfig::with_native_roots()` convenience method
@@ -25,6 +25,8 @@ tls-rustls = ["rustls", "webpki", "proto/tls-rustls", "ring"]
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
 runtime-async-std = ["async-io", "async-std"]
+# Write logs via the `log` crate when no `tracing` subscriber exists
+log = ["tracing/log", "proto/log", "udp/log"]
 
 [badges]
 codecov = { repository = "djc/quinn" }
@@ -43,7 +45,7 @@ rustls = { version = "0.20.3", default-features = false, features = ["quic"], op
 thiserror = "1.0.21"
 tracing = "0.1.10"
 tokio = { version = "1.13.0", features = ["sync"] }
-udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.3" }
+udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.3", default-features = false }
 webpki = { version = "0.22", default-features = false, optional = true }
 
 [dev-dependencies]
