@@ -366,7 +366,7 @@ impl Endpoint {
         if self.is_full() {
             return Err(ConnectError::TooManyConnections);
         }
-        if remote.port() == 0 {
+        if remote.port() == 0 || remote.ip().is_unspecified() {
             return Err(ConnectError::InvalidRemoteAddress(remote));
         }
 
