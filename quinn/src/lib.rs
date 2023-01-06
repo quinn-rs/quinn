@@ -63,6 +63,7 @@ pub use proto::{
     ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout, ServerConfig, StreamId,
     Transmit, TransportConfig, VarInt,
 };
+pub use udp::{RecvMeta, UdpState};
 
 pub use crate::connection::{
     AcceptBi, AcceptUni, Connecting, Connection, OpenBi, OpenUni, ReadDatagram, SendDatagramError,
