@@ -271,8 +271,10 @@ impl Endpoint {
                 if endpoint.connections.is_empty() {
                     break;
                 }
+                // Construct future while lock is held to avoid race
+                self.inner.shared.idle.notified()
             }
-            self.inner.shared.idle.notified().await;
+            .await;
         }
     }
 }
