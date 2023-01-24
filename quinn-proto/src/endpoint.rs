@@ -369,6 +369,9 @@ impl Endpoint {
         if remote.port() == 0 || remote.ip().is_unspecified() {
             return Err(ConnectError::InvalidRemoteAddress(remote));
         }
+        if !self.config.supported_versions.contains(&config.version) {
+            return Err(ConnectError::UnsupportedVersion);
+        }
 
         let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
@@ -830,7 +833,7 @@ pub enum ConnectError {
     /// Use `Endpoint::connect_with` to specify a client configuration.
     #[error("no default client config")]
     NoDefaultClientConfig,
-    /// The cryptographic layer does not support the specified QUIC version
+    /// The local endpoint does not support the QUIC version specified in the client configuration
     #[error("unsupported QUIC version")]
     UnsupportedVersion,
 }
