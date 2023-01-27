@@ -145,7 +145,7 @@ impl std::ops::Deref for ResetToken {
 impl fmt::Display for ResetToken {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.iter() {
-            write!(f, "{:02x}", byte)?;
+            write!(f, "{byte:02x}")?;
         }
         Ok(())
     }

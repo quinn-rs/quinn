@@ -51,7 +51,7 @@ fn handshake_timeout() {
             .await
         {
             Err(crate::ConnectionError::TimedOut) => {}
-            Err(e) => panic!("unexpected error: {:?}", e),
+            Err(e) => panic!("unexpected error: {e:?}"),
             Ok(_) => panic!("unexpected success"),
         }
     });
@@ -88,7 +88,7 @@ async fn close_endpoint() {
     endpoint.close(0u32.into(), &[]);
     match conn.await {
         Err(crate::ConnectionError::LocallyClosed) => (),
-        Err(e) => panic!("unexpected error: {}", e),
+        Err(e) => panic!("unexpected error: {e}"),
         Ok(_) => {
             panic!("unexpected success");
         }
@@ -492,7 +492,7 @@ fn run_echo(args: EchoArgs) {
             const SEED: u64 = 0x12345678;
 
             for i in 0..args.nr_streams {
-                println!("Opening stream {}", i);
+                println!("Opening stream {i}");
                 let (mut send, recv) = new_conn.open_bi().await.expect("stream open");
                 let msg = gen_data(args.stream_size, SEED);
 

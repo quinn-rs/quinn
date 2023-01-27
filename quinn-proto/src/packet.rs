@@ -863,7 +863,7 @@ mod tests {
         );
 
         for byte in &buf {
-            print!("{:02x}", byte);
+            print!("{byte:02x}");
         }
         println!();
         assert_eq!(

@@ -744,8 +744,7 @@ impl Connection {
                     && can_send.other
                     && (buf_capacity - builder.datagram_start)
                         == self.path.max_udp_payload_size as usize),
-                "SendableFrames was {:?}, but only ACKs have been written",
-                can_send
+                "SendableFrames was {can_send:?}, but only ACKs have been written",
             );
             pad_datagram |= sent.requires_padding;
 
@@ -1338,7 +1337,7 @@ impl Connection {
         let loss_delay = cmp::max(rtt.mul_f32(self.config.time_threshold), TIMER_GRANULARITY);
 
         // Packets sent before this time are deemed lost.
-        let lost_send_time = now - loss_delay;
+        let lost_send_time = now.checked_sub(loss_delay).unwrap();
         let largest_acked_packet = self.spaces[pn_space].largest_acked_packet.unwrap();
         let packet_threshold = self.config.packet_threshold as u64;
         let mut size_of_lost_packets = 0u64;
@@ -1767,8 +1766,7 @@ impl Connection {
     fn upgrade_crypto(&mut self, space: SpaceId, crypto: Keys) {
         debug_assert!(
             self.spaces[space].crypto.is_none(),
-            "already reached packet space {:?}",
-            space
+            "already reached packet space {space:?}",
         );
         trace!("{:?} keys ready", space);
         if space == SpaceId::Data {

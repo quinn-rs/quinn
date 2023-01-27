@@ -1630,7 +1630,7 @@ fn datagram_unsupported() {
 
     match pair.client_datagrams(client_ch).send(Bytes::new()) {
         Err(SendDatagramError::UnsupportedByPeer) => {}
-        Err(e) => panic!("unexpected error: {}", e),
+        Err(e) => panic!("unexpected error: {e}"),
         Ok(_) => panic!("unexpected success"),
     }
 }
@@ -1889,7 +1889,7 @@ fn big_cert_and_key() -> (rustls::Certificate, rustls::PrivateKey) {
     let cert = rcgen::generate_simple_self_signed(
         Some("localhost".into())
             .into_iter()
-            .chain((0..1000).map(|x| format!("foo_{}", x)))
+            .chain((0..1000).map(|x| format!("foo_{x}")))
             .collect::<Vec<_>>(),
     )
     .unwrap();

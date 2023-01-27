@@ -50,7 +50,7 @@ async fn main() {
 
 async fn run(opt: Opt) -> Result<()> {
     let (key, cert) = match (&opt.key, &opt.cert) {
-        (&Some(ref key), &Some(ref cert)) => {
+        (Some(key), Some(cert)) => {
             let key = fs::read(key).context("reading key")?;
             let cert = fs::read(cert).expect("reading cert");
 
