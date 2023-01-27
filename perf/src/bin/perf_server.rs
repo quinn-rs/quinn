@@ -14,7 +14,7 @@ struct Opt {
     /// Address to listen on
     #[clap(long = "listen", default_value = "[::]:4433")]
     listen: SocketAddr,
-    /// TLS private key in PEM format
+    /// TLS private key in DER format
     #[clap(parse(from_os_str), short = 'k', long = "key", requires = "cert")]
     key: Option<PathBuf>,
     /// TLS certificate in PEM format
