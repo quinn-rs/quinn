@@ -21,8 +21,40 @@ use crate::{
 /// - A variant of [`ReadError`] has been yielded by a read call
 /// - [`stop()`] was called explicitly
 ///
+/// # Closing a stream
+///
+/// When a stream is expected to be closed gracefully the sender should call
+/// [`SendStream::finish`].  However there is no guarantee the connected [`RecvStream`] will
+/// receive this End Of File (EOF) indicator in the same QUIC frame as the last frame which
+/// carried data.
+///
+/// So even if the application layer logic already knows it read all the data because it
+/// does its own framing, it must still read from the [`RecvStream`] until EOF.  Otherwise
+/// it risks inadvertently calling [`RecvStream::stop`] if it drops the stream.  And calling
+/// [`RecvStream::stop`] could result in the connected [`SendStream::finish`] call failing
+/// with a [`WriteError::Stopped`] error.
+///
+/// For example if exactly 10 bytes are to be read, you still need to explicitly read EOF:
+///
+/// ```ignore
+/// // In the sending task
+/// send_stream.write(&b"0123456789"[..]).await?;
+/// send_stream.finish()?;
+///
+/// // In the receiving task
+/// let mut buf = [0u8; 10];
+/// let data = recv_stream.read_exact(&mut buf);
+/// if let Some(chunk) = recv_stream.read_chunk(8, false).await? {
+///     reader.stop(0u8.into()).ok();
+/// }
+/// ```
+///
+/// Note that in this example the receiver sends an error to the sender if it received some
+/// unexpected data, forcing the stream to finish in an error state.
+///
 /// [`ReadError`]: crate::ReadError
 /// [`stop()`]: RecvStream::stop
+/// [`SendStream::finish`]: crate::SendStream::finish
 #[derive(Debug)]
 pub struct RecvStream {
     conn: ConnectionRef,
