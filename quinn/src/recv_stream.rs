@@ -50,7 +50,7 @@ use crate::{
 /// // In the receiving task
 /// let mut buf = [0u8; 10];
 /// let data = recv_stream.read_exact(&mut buf).await?;
-/// if let Some(chunk) = recv_stream.read_chunk(8, false).await? {
+/// if recv_stream.read_to_end(0).await.is_err() {
 ///     recv_stream.stop(0u8.into()).ok();
 /// }
 /// # Ok(())
