@@ -28,7 +28,7 @@ use crate::{
 /// receive this End Of File (EOF) indicator in the same QUIC frame as the last frame which
 /// carried data.
 ///
-/// So even if the application layer logic already knows it read all the data because it
+/// Even if the application layer logic already knows it read all the data because it
 /// does its own framing, it must still read from the [`RecvStream`] until EOF.  Otherwise
 /// it risks inadvertently calling [`RecvStream::stop`] if it drops the stream.  And calling
 /// [`RecvStream::stop`] could result in the connected [`SendStream::finish`] call failing
