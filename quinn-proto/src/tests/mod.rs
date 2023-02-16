@@ -1,25 +1,30 @@
-use std::{
-    convert::TryInto,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
-    time::{Duration, Instant},
-};
-
-use assert_matches::assert_matches;
-use bytes::Bytes;
-use hex_literal::hex;
-use rand::RngCore;
-use ring::hmac;
-use rustls::internal::msgs::enums::AlertDescription;
-use tracing::info;
+mod util;
 
 use super::*;
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     frame::FrameStruct,
 };
-mod util;
+use assert_matches::assert_matches;
+use bytes::Bytes;
+use hex_literal::hex;
+use quinn_test::rustls::suite;
+use rand::RngCore;
+use ring::hmac;
+use rustls::internal::msgs::enums::AlertDescription;
+use std::{
+    convert::TryInto,
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    sync::Arc,
+    time::{Duration, Instant},
+};
+use tracing::info;
 use util::*;
+
+#[test]
+fn example() {
+    suite().lifecycle()
+}
 
 #[test]
 fn version_negotiate_server() {

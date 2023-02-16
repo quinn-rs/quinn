@@ -23,10 +23,12 @@ tls-rustls = ["rustls", "webpki", "ring"]
 native-certs = ["rustls-native-certs"]
 # Write logs via the `log` crate when no `tracing` subscriber exists
 log = ["tracing/log"]
+integration-tests = []
 
 [dependencies]
 arbitrary = { version = "1.0.1", features = ["derive"], optional = true }
 bytes = "1"
+quinn-visibility = { path = "../quinn-visibility" }
 rustc-hash = "1.1"
 rand = "0.8"
 ring = { version = "0.16.7", optional = true }
@@ -41,6 +43,7 @@ webpki = { version = "0.22", default-features = false, optional = true }
 [dev-dependencies]
 assert_matches = "1.1"
 hex-literal = "0.3.0"
+quinn-test = { path = "../quinn-test" }
 rcgen = "0.10.0"
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
 lazy_static = "1"

@@ -17,6 +17,10 @@ use arbitrary::Arbitrary;
 pub struct VarInt(pub(crate) u64);
 
 impl VarInt {
+    /// An error used for integration testing.
+    #[cfg(any(test, feature = "integration-tests"))]
+    pub const TEST_ERROR: VarInt = VarInt(42);
+
     /// The largest representable value
     pub const MAX: VarInt = VarInt((1 << 62) - 1);
     /// The largest encoded value length

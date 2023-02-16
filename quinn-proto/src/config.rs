@@ -24,6 +24,7 @@ use crate::{
 /// for higher bandwidths and latencies increases worst-case memory consumption, but does not impair
 /// performance at lower bandwidths and latencies. The default configuration is tuned for a 100Mbps
 /// link with a 100ms round trip time.
+#[cfg_attr(any(test, feature = "integration-tests"), quinn_visibility::make(pub))]
 pub struct TransportConfig {
     pub(crate) max_concurrent_bidi_streams: VarInt,
     pub(crate) max_concurrent_uni_streams: VarInt,
@@ -320,6 +321,7 @@ impl fmt::Debug for TransportConfig {
 ///
 /// Default values should be suitable for most internet applications.
 #[derive(Clone)]
+#[cfg_attr(any(test, feature = "integration-tests"), quinn_visibility::make(pub))]
 pub struct EndpointConfig {
     pub(crate) reset_key: Arc<dyn HmacKey>,
     pub(crate) max_udp_payload_size: VarInt,
@@ -439,6 +441,7 @@ impl Default for EndpointConfig {
 ///
 /// Default values should be suitable for most internet applications.
 #[derive(Clone)]
+#[cfg_attr(any(test, feature = "integration-tests"), quinn_visibility::make(pub))]
 pub struct ServerConfig {
     /// Transport configuration to use for incoming connections
     pub transport: Arc<TransportConfig>,

@@ -3066,13 +3066,13 @@ impl Connection {
 
     /// The number of bytes of packets containing retransmittable frames that have not been
     /// acknowledged or declared lost.
-    #[cfg(test)]
+    #[cfg_attr(feature = "integration-tests", quinn_visibility::make(pub))]
     pub(crate) fn bytes_in_flight(&self) -> u64 {
         self.in_flight.bytes
     }
 
     /// Number of bytes worth of non-ack-only packets that may be sent
-    #[cfg(test)]
+    #[cfg_attr(feature = "integration-tests", quinn_visibility::make(pub))]
     pub(crate) fn congestion_window(&self) -> u64 {
         self.path
             .congestion
@@ -3081,7 +3081,7 @@ impl Connection {
     }
 
     /// Whether no timers but keepalive, idle and pushnewcid are running
-    #[cfg(test)]
+    #[cfg_attr(feature = "integration-tests", quinn_visibility::make(pub))]
     pub(crate) fn is_idle(&self) -> bool {
         Timer::VALUES
             .iter()
@@ -3092,40 +3092,40 @@ impl Connection {
     }
 
     /// Total number of outgoing packets that have been deemed lost
-    #[cfg(test)]
+    #[cfg_attr(feature = "integration-tests", quinn_visibility::make(pub))]
     pub(crate) fn lost_packets(&self) -> u64 {
         self.lost_packets
     }
 
     /// Whether explicit congestion notification is in use on outgoing packets.
-    #[cfg(test)]
-    pub(crate) fn using_ecn(&self) -> bool {
+    #[cfg(any(test, feature = "integration-tests"))]
+    pub fn using_ecn(&self) -> bool {
         self.path.sending_ecn
     }
 
     /// The number of received bytes in the current path
-    #[cfg(test)]
-    pub(crate) fn total_recvd(&self) -> u64 {
+    #[cfg(any(test, feature = "integration-tests"))]
+    pub fn total_recvd(&self) -> u64 {
         self.path.total_recvd
     }
 
-    #[cfg(test)]
-    pub(crate) fn active_local_cid_seq(&self) -> (u64, u64) {
+    #[cfg(any(test, feature = "integration-tests"))]
+    pub fn active_local_cid_seq(&self) -> (u64, u64) {
         self.local_cid_state.active_seq()
     }
 
     /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
     /// with updated `retire_prior_to` field set to `v`
-    #[cfg(test)]
-    pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant) {
+    #[cfg(any(test, feature = "integration-tests"))]
+    pub fn rotate_local_cid(&mut self, v: u64, now: Instant) {
         let n = self.local_cid_state.assign_retire_seq(v);
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(now, n));
     }
 
     /// Check the current active remote CID sequence
-    #[cfg(test)]
-    pub(crate) fn active_rem_cid_seq(&self) -> u64 {
+    #[cfg(any(test, feature = "integration-tests"))]
+    pub fn active_rem_cid_seq(&self) -> u64 {
         self.rem_cids.active_seq()
     }
 

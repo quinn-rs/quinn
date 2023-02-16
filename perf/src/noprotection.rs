@@ -1,3 +1,4 @@
+use std::any::Any;
 use std::sync::Arc;
 
 use bytes::BytesMut;
@@ -129,6 +130,10 @@ impl crypto::ClientConfig for NoProtectionClientConfig {
 
         Ok(Box::new(NoProtectionSession::new(tls)))
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 impl crypto::ServerConfig for NoProtectionServerConfig {
@@ -153,6 +158,10 @@ impl crypto::ServerConfig for NoProtectionServerConfig {
         let tls = self.inner.clone().start_session(version, params);
 
         Box::new(NoProtectionSession::new(tls))
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

@@ -712,8 +712,8 @@ impl Endpoint {
         &self.config
     }
 
-    #[cfg(test)]
-    pub(crate) fn known_connections(&self) -> usize {
+    #[cfg(any(test, feature = "integration-tests"))]
+    pub fn known_connections(&self) -> usize {
         let x = self.connections.len();
         debug_assert_eq!(x, self.connection_ids_initial.len());
         // Not all connections have known reset tokens
@@ -723,8 +723,8 @@ impl Endpoint {
         x
     }
 
-    #[cfg(test)]
-    pub(crate) fn known_cids(&self) -> usize {
+    #[cfg(any(test, feature = "integration-tests"))]
+    pub fn known_cids(&self) -> usize {
         self.connection_ids.len()
     }
 

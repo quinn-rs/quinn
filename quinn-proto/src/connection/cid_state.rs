@@ -182,7 +182,6 @@ impl CidState {
         self.retire_seq
     }
 
-    #[cfg(test)]
     pub(crate) fn active_seq(&self) -> (u64, u64) {
         let mut min = u64::MAX;
         let mut max = u64::MIN;
@@ -197,7 +196,6 @@ impl CidState {
         (min, max)
     }
 
-    #[cfg(test)]
     pub(crate) fn assign_retire_seq(&mut self, v: u64) -> u64 {
         // Cannot retire more CIDs than what have been issued
         debug_assert!(v <= *self.active_seq.iter().max().unwrap() + 1);

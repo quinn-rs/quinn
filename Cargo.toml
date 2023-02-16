@@ -1,6 +1,6 @@
 [workspace]
-members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf", "fuzz"]
-default-members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf"]
+members = ["quinn", "quinn-proto", "quinn-test", "quinn-udp", "quinn-visibility", "bench", "perf", "fuzz"]
+default-members = ["quinn", "quinn-proto", "quinn-test", "quinn-udp", "quinn-visibility", "bench", "perf"]
 
 [profile.bench]
 debug = true

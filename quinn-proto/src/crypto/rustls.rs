@@ -265,6 +265,10 @@ impl crypto::ClientConfig for rustls::ClientConfig {
             ),
         }))
     }
+
+    fn as_any(&self) -> &dyn Any {
+        self
+    }
 }
 
 impl crypto::ServerConfig for rustls::ServerConfig {
@@ -316,6 +320,10 @@ impl crypto::ServerConfig for rustls::ServerConfig {
         let mut result = [0; 16];
         result.copy_from_slice(tag.as_ref());
         result
+    }
+
+    fn as_any(&self) -> &dyn Any {
+        self
     }
 }
 

@@ -49,6 +49,7 @@ pub struct Code(u64);
 
 impl Code {
     /// Create QUIC error code from TLS alert code
+    #[cfg_attr(any(test, feature = "integration-tests"), quinn_visibility::make(pub))]
     pub(crate) fn crypto(code: u8) -> Self {
         Code(0x100 | u64::from(code))
     }
