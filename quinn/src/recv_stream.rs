@@ -29,12 +29,13 @@ use crate::{
 /// carried data.
 ///
 /// Even if the application layer logic already knows it read all the data because it does
-/// its own framing, it must still read from the [`RecvStream`] until `AsyncRead` signals
-/// End Of File (EOF).  Otherwise it risks inadvertently calling [`RecvStream::stop`] if it
-/// drops the stream.  And calling [`RecvStream::stop`] could result in the connected
-/// [`SendStream::finish`] call failing with a [`WriteError::Stopped`] error.
+/// its own framing, it must still read until it reaches the end of the [`RecvStream`].
+/// Otherwise it risks inadvertently calling [`RecvStream::stop`] if it drops the stream.
+/// And calling [`RecvStream::stop`] could result in the connected [`SendStream::finish`]
+/// call failing with a [`WriteError::Stopped`] error.
 ///
-/// For example if exactly 10 bytes are to be read, you still need to explicitly read EOF:
+/// For example if exactly 10 bytes are to be read, you still need to explicitly read the
+/// end of the stream:
 ///
 /// ```no_run
 /// # use quinn::{SendStream, RecvStream};
