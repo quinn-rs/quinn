@@ -59,7 +59,8 @@ use crate::{
 /// ```
 ///
 /// Note that in this example the receiver sends an error to the sender if it received some
-/// unexpected data, forcing the stream to finish in an error state.
+/// unexpected data, interrupting any further attempts to send data.  But crucially only
+/// after it attempted to read the end of the stream.
 ///
 /// [`ReadError`]: crate::ReadError
 /// [`stop()`]: RecvStream::stop
