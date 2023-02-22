@@ -56,7 +56,8 @@ pub trait Session: Send + 'static {
     ///
     /// This should be called with the contents of `CRYPTO` frames. If it returns `Ok`, the
     /// caller should call `write_handshake()` to check if the crypto protocol has anything
-    /// to send to the peer.
+    /// to send to the peer. This method will only return `true` the first time that
+    /// handshake data is available. Future calls will always return false.
     ///
     /// On success, returns `true` iff `self.handshake_data()` has been populated.
     fn read_handshake(&mut self, buf: &[u8]) -> Result<bool, TransportError>;
