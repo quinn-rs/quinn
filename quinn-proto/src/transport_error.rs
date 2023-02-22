@@ -49,7 +49,7 @@ pub struct Code(u64);
 
 impl Code {
     /// Create QUIC error code from TLS alert code
-    pub(crate) fn crypto(code: u8) -> Self {
+    pub fn crypto(code: u8) -> Self {
         Code(0x100 | u64::from(code))
     }
 }

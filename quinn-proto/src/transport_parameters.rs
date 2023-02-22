@@ -94,6 +94,67 @@ macro_rules! make_struct {
             pub(crate) preferred_address: Option<PreferredAddress>,
         }
 
+        impl TransportParameters {
+            $($(#[$doc])*
+            #[inline]
+            pub fn $name (&self) -> u64 {
+                self.$name.0
+            })*
+
+            /// Does the endpoint support active connection migration
+            #[inline]
+            pub fn disable_active_migration(&self) -> bool {
+                self.disable_active_migration
+            }
+
+            /// Maximum size for datagram frames
+            #[inline]
+            pub fn max_datagram_frame_size(&self) -> Option<u64> {
+                self.max_datagram_frame_size.map_or(None, |x| Some(x.0))
+            }
+
+            /// The value that the endpoint included in the Source Connection ID field of the first
+            /// Initial packet it sends for the connection
+            #[inline]
+            pub fn initial_src_cid(&self) -> Option<ConnectionId> {
+                self.initial_src_cid
+            }
+
+            /// The endpoint is willing to receive QUIC packets containing any value for the fixed
+            /// bit
+            #[inline]
+            pub fn grease_quic_bit(&self) -> bool {
+                self.grease_quic_bit
+            }
+
+            // Server-only
+            /// The value of the Destination Connection ID field from the first Initial packet sent
+            /// by the client
+            #[inline]
+            pub fn original_dst_cid(&self) -> Option<ConnectionId> {
+                self.original_dst_cid
+            }
+
+            /// The value that the server included in the Source Connection ID field of a Retry
+            /// packet
+            #[inline]
+            pub fn retry_src_cid(&self) -> Option<ConnectionId> {
+                self.retry_src_cid
+            }
+
+            /// Token used by the client to verify a stateless reset from the server
+            #[inline]
+            pub fn stateless_reset_token(&self) -> Option<ResetToken> {
+                self.stateless_reset_token
+            }
+
+            /// The server's preferred address for communication after handshake completion
+            #[inline]
+            pub fn preferred_address(&self) -> Option<PreferredAddress> {
+                self.preferred_address
+            }
+        }
+
         impl Default for TransportParameters {
             /// Standard defaults, used if the peer does not supply a given parameter.
             fn default() -> Self {
@@ -186,10 +247,14 @@ impl TransportParameters {
 ///
 /// This is communicated as a transport parameter during TLS session establishment.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) struct PreferredAddress {
+pub struct PreferredAddress {
+    /// The server's IPv4 address.
     pub address_v4: Option<SocketAddrV4>,
+    /// The server's IPv6 address.
     pub address_v6: Option<SocketAddrV6>,
+    /// The connection ID.
     pub connection_id: ConnectionId,
+    /// The reset token.
     pub stateless_reset_token: ResetToken,
 }
 

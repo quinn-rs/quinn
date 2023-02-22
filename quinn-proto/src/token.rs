@@ -13,6 +13,9 @@ use crate::{
     RESET_TOKEN_SIZE,
 };
 
+/// Retry token
+///
+/// Used for address validation.
 pub struct RetryToken<'a> {
     /// The destination connection ID set in the very first packet from the client
     pub orig_dst_cid: ConnectionId,
@@ -23,7 +26,7 @@ pub struct RetryToken<'a> {
 }
 
 impl<'a> RetryToken<'a> {
-    pub fn encode(
+    pub(crate) fn encode(
         &self,
         key: &dyn HandshakeTokenKey,
         address: &SocketAddr,
@@ -51,7 +54,7 @@ impl<'a> RetryToken<'a> {
         token
     }
 
-    pub fn from_bytes(
+    pub(crate) fn from_bytes(
         key: &dyn HandshakeTokenKey,
         address: &SocketAddr,
         retry_src_cid: &ConnectionId,
@@ -100,7 +103,8 @@ impl<'a> RetryToken<'a> {
     }
 
     const MAX_ADDITIONAL_DATA_SIZE: usize = 39; // max(ipv4, ipv6) + port + retry_src_cid
-    pub const RANDOM_BYTES_LEN: usize = 32;
+
+    pub(crate) const RANDOM_BYTES_LEN: usize = 32;
 }
 
 /// Stateless reset token
@@ -118,6 +122,11 @@ impl ResetToken {
         let mut result = [0; RESET_TOKEN_SIZE];
         result.copy_from_slice(&signature[..RESET_TOKEN_SIZE]);
         result.into()
+    }
+
+    /// Returns an empty token.
+    pub fn none() -> Self {
+        Self([0; RESET_TOKEN_SIZE])
     }
 }
 

@@ -107,7 +107,8 @@ impl Endpoint {
         Self::new_with_runtime(config, server_config, Box::new(socket), Arc::new(runtime))
     }
 
-    fn new_with_runtime(
+    /// Construct an endpoint with arbitrary configuration and pre-constructed async socket.
+    pub fn new_with_runtime(
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: Box<dyn AsyncUdpSocket>,
