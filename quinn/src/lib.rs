@@ -1,4 +1,4 @@
-//! QUIC transport protocol support for Tokio
+//! QUIC transport protocol implementation
 //!
 //! [QUIC](https://en.wikipedia.org/wiki/QUIC) is a modern transport protocol addressing
 //! shortcomings of TCP, such as head-of-line blocking, poor security, slow handshakes, and
