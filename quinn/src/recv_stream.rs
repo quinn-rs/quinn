@@ -29,7 +29,7 @@ use crate::{
 /// carried data.
 ///
 /// Even if the application layer logic already knows it read all the data because it does
-/// its own framing, it must still read until it reaches the end of the [`RecvStream`].
+/// its own framing, it should still read until it reaches the end of the [`RecvStream`].
 /// Otherwise it risks inadvertently calling [`RecvStream::stop`] if it drops the stream.
 /// And calling [`RecvStream::stop`] could result in the connected [`SendStream::finish`]
 /// call failing with a [`WriteError::Stopped`] error.
