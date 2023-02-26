@@ -79,10 +79,10 @@ async fn server(endpoint: quinn::Endpoint, opt: Opt) -> Result<()> {
                 };
                 trace!("stream established");
 
-                let _: tokio::task::JoinHandle<Result<()>> = tokio::spawn(async move {
+                tokio::spawn(async move {
                     drain_stream(&mut recv_stream, opt.read_unordered).await?;
                     send_data_on_stream(&mut send_stream, opt.download_size).await?;
-                    Ok(())
+                    Ok::<_, anyhow::Error>(())
                 });
             }
 
