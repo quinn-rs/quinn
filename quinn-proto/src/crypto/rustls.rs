@@ -86,7 +86,7 @@ impl crypto::Session for TlsSession {
                     reason: e.to_string(),
                 }
             } else {
-                TransportError::PROTOCOL_VIOLATION(format!("TLS error: {}", e))
+                TransportError::PROTOCOL_VIOLATION(format!("TLS error: {e}"))
             }
         })?;
         if !self.got_handshake_data {

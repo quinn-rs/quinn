@@ -26,7 +26,7 @@ impl Stats {
     }
 
     pub fn print(&self, stat_name: &str) {
-        println!("Overall {} stats:\n", stat_name);
+        println!("Overall {stat_name} stats:\n");
         println!(
             "Transferred {} bytes on {} streams in {:4.2?} ({:.2} MiB/s)\n",
             self.total_size,
@@ -35,7 +35,7 @@ impl Stats {
             throughput_bps(self.total_duration, self.total_size) / 1024.0 / 1024.0
         );
 
-        println!("Stream {} metrics:\n", stat_name);
+        println!("Stream {stat_name} metrics:\n");
 
         println!("      │  Throughput   │ Duration ");
         println!("──────┼───────────────┼──────────");

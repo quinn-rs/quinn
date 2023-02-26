@@ -50,7 +50,7 @@ fn main() {
     let opt = Opt::parse();
     let code = {
         if let Err(e) = run(opt) {
-            eprintln!("ERROR: {}", e);
+            eprintln!("ERROR: {e}");
             1
         } else {
             0
@@ -220,7 +220,7 @@ async fn handle_request(
     // Execute the request
     let resp = process_get(&root, &req).unwrap_or_else(|e| {
         error!("failed: {}", e);
-        format!("failed to process request: {}\n", e).into_bytes()
+        format!("failed to process request: {e}\n").into_bytes()
     });
     // Write the response
     send.write_all(&resp)

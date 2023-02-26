@@ -344,7 +344,7 @@ impl fmt::Debug for Ack {
             if !first {
                 ranges.push(',');
             }
-            write!(ranges, "{:?}", range).unwrap();
+            write!(ranges, "{range:?}").unwrap();
             first = false;
         }
         ranges.push(']');
@@ -898,7 +898,7 @@ mod test {
                 assert_eq!(&packets[..], PACKETS);
                 assert_eq!(ack.ecn, Some(ECN));
             }
-            ref x => panic!("incorrect frame {:?}", x),
+            ref x => panic!("incorrect frame {x:?}"),
         }
     }
 }
