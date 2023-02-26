@@ -51,7 +51,7 @@ fn main() {
     let opt = Opt::parse();
     let code = {
         if let Err(e) = run(opt) {
-            eprintln!("ERROR: {}", e);
+            eprintln!("ERROR: {e}");
             1
         } else {
             0
@@ -107,7 +107,7 @@ async fn run(options: Opt) -> Result<()> {
         .map_or_else(|| url.host_str(), |x| Some(x))
         .ok_or_else(|| anyhow!("no hostname specified"))?;
 
-    eprintln!("connecting to {} at {}", host, remote);
+    eprintln!("connecting to {host} at {remote}");
     let conn = endpoint
         .connect(remote, host)?
         .await
@@ -120,7 +120,7 @@ async fn run(options: Opt) -> Result<()> {
     if rebind {
         let socket = std::net::UdpSocket::bind("[::]:0").unwrap();
         let addr = socket.local_addr().unwrap();
-        eprintln!("rebinding to {}", addr);
+        eprintln!("rebinding to {addr}");
         endpoint.rebind(socket).expect("rebind failed");
     }
 

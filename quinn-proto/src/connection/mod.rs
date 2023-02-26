@@ -744,8 +744,7 @@ impl Connection {
                     && can_send.other
                     && (buf_capacity - builder.datagram_start)
                         == self.path.max_udp_payload_size as usize),
-                "SendableFrames was {:?}, but only ACKs have been written",
-                can_send
+                "SendableFrames was {can_send:?}, but only ACKs have been written"
             );
             pad_datagram |= sent.requires_padding;
 
@@ -1767,8 +1766,7 @@ impl Connection {
     fn upgrade_crypto(&mut self, space: SpaceId, crypto: Keys) {
         debug_assert!(
             self.spaces[space].crypto.is_none(),
-            "already reached packet space {:?}",
-            space
+            "already reached packet space {space:?}"
         );
         trace!("{:?} keys ready", space);
         if space == SpaceId::Data {
