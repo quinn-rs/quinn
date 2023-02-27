@@ -40,8 +40,8 @@ use crate::{
 /// ```no_run
 /// # use quinn::{SendStream, RecvStream};
 /// # async fn func(
-/// #     send_stream: &mut SendStream,
-/// #     recv_stream: &mut RecvStream,
+/// #     mut send_stream: SendStream,
+/// #     mut recv_stream: RecvStream,
 /// # ) -> anyhow::Result<()>
 /// # {
 /// // In the sending task
