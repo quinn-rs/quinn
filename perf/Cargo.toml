@@ -21,7 +21,7 @@ rustls = { version = "0.20", default-features = false, features = ["dangerous_co
 rustls-pemfile = "1.0.0"
 serde = { version = "1.0", features = ["derive"], optional = true  }
 serde_json = { version = "1.0", optional = true }
-socket2 = "0.4"
+socket2 = "0.5"
 webpki = "0.22"
 clap = { version = "3.2", features = ["derive"] }
 tokio = { version = "1.0.1", features = ["rt", "macros", "signal", "net", "sync"] }

@@ -24,7 +24,7 @@ maintenance = { status = "experimental" }
 [dependencies]
 libc = "0.2.69"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.9", default-features = false }
-socket2 = "0.4" # 0.5.1 has an MSRV of 1.63
+socket2 = "0.5" # 0.5.1 has an MSRV of 1.63
 tracing = "0.1.10"
 
 [target.'cfg(windows)'.dependencies]
