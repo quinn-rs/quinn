@@ -11,10 +11,16 @@ use std::{
     time::{Duration, Instant},
 };
 
+use crate::tests::certs::Leaf;
+use crate::tests::provider;
+use crate::{
+    crypto, packet, ClientConfig, Connection, ConnectionEvent, ConnectionHandle, DatagramEvent,
+    Datagrams, EcnCodepoint, Endpoint, EndpointConfig, EndpointEvent, RecvStream, SendStream,
+    ServerConfig, StreamId, Streams, Transmit,
+};
 use assert_matches::assert_matches;
 use lazy_static::lazy_static;
-use rustls::{Certificate, KeyLogFile, PrivateKey};
-use tracing::{info_span, trace};
+use tracing::{info, info_span, trace};
 
 use super::*;
 
@@ -30,8 +36,8 @@ pub struct Pair {
 }
 
 impl Pair {
-    pub fn new(endpoint_config: Arc<EndpointConfig>, server_config: ServerConfig) -> Self {
-        let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)));
+    pub fn new(endpoint_config: Arc<EndpointConfig>, server_config: Arc<ServerConfig>) -> Self {
+        let server = Endpoint::new(endpoint_config.clone(), Some(server_config));
         let client = Endpoint::new(endpoint_config, None);
 
         Pair::new_from_endpoint(client, server)
@@ -215,7 +221,7 @@ impl Pair {
 
 impl Default for Pair {
     fn default() -> Self {
-        Pair::new(Default::default(), server_config())
+        Pair::new(Default::default(), Arc::new(server_config()))
     }
 }
 
@@ -347,14 +353,14 @@ impl TestEndpoint {
     }
 }
 
-impl ::std::ops::Deref for TestEndpoint {
+impl ops::Deref for TestEndpoint {
     type Target = Endpoint;
     fn deref(&self) -> &Endpoint {
         &self.endpoint
     }
 }
 
-impl ::std::ops::DerefMut for TestEndpoint {
+impl ops::DerefMut for TestEndpoint {
     fn deref_mut(&mut self) -> &mut Endpoint {
         &mut self.endpoint
     }
@@ -384,44 +390,33 @@ impl Write for TestWriter {
 }
 
 pub fn server_config() -> ServerConfig {
-    ServerConfig::with_crypto(Arc::new(server_crypto()))
+    ServerConfig::with_crypto(Arc::from(server_crypto(provider::ServerConfig::default())))
 }
 
-pub fn server_config_with_cert(cert: Certificate, key: PrivateKey) -> ServerConfig {
-    ServerConfig::with_crypto(Arc::new(server_crypto_with_cert(cert, key)))
+pub fn server_config_with_cert(cert: Leaf) -> ServerConfig {
+    ServerConfig::with_crypto(Arc::from(server_crypto(provider::ServerConfig {
+        cert,
+        ..Default::default()
+    })))
 }
 
-pub fn server_crypto() -> rustls::ServerConfig {
-    let cert = Certificate(CERTIFICATE.serialize_der().unwrap());
-    let key = PrivateKey(CERTIFICATE.serialize_private_key_der());
-    server_crypto_with_cert(cert, key)
-}
-
-pub fn server_crypto_with_cert(cert: Certificate, key: PrivateKey) -> rustls::ServerConfig {
-    crate::crypto::rustls::server_config(vec![cert], key).unwrap()
+pub fn server_crypto(cfg: provider::ServerConfig) -> Box<dyn crypto::ServerConfig> {
+    provider::server().new_server(cfg)
 }
 
 pub fn client_config() -> ClientConfig {
-    ClientConfig::new(Arc::new(client_crypto()))
+    ClientConfig::new(Arc::from(client_crypto(provider::ClientConfig::default())))
 }
 
-pub fn client_config_with_certs(certs: Vec<rustls::Certificate>) -> ClientConfig {
-    ClientConfig::new(Arc::new(client_crypto_with_certs(certs)))
+pub fn client_crypto(cfg: provider::ClientConfig) -> Box<dyn crypto::ClientConfig> {
+    provider::client().new_client(cfg)
 }
 
-pub fn client_crypto() -> rustls::ClientConfig {
-    let cert = rustls::Certificate(CERTIFICATE.serialize_der().unwrap());
-    client_crypto_with_certs(vec![cert])
-}
-
-pub fn client_crypto_with_certs(certs: Vec<rustls::Certificate>) -> rustls::ClientConfig {
-    let mut roots = rustls::RootCertStore::empty();
-    for cert in certs {
-        roots.add(&cert).unwrap();
-    }
-    let mut config = crate::crypto::rustls::client_config(roots);
-    config.key_log = Arc::new(KeyLogFile::new());
-    config
+pub fn client_config_with_allowed_peers(allowed_peers: Vec<Leaf>) -> ClientConfig {
+    ClientConfig::new(Arc::from(client_crypto(provider::ClientConfig {
+        allowed_peers,
+        ..Default::default()
+    })))
 }
 
 pub fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
@@ -463,8 +458,6 @@ fn split_transmit(transmit: Transmit) -> Vec<Transmit> {
 }
 
 lazy_static! {
-    pub static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
-    pub static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
-    pub(crate) static ref CERTIFICATE: rcgen::Certificate =
-        rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    pub(crate) static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
+    pub(crate) static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
 }
