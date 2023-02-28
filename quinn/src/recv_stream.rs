@@ -51,16 +51,18 @@ use crate::{
 /// // In the receiving task
 /// let mut buf = [0u8; 10];
 /// let data = recv_stream.read_exact(&mut buf).await?;
-/// if recv_stream.read_to_end(0).await.is_err() {
-///     recv_stream.stop(0u8.into()).ok();
-/// }
+/// recv_stream.read_to_end(0).await?;
 /// # Ok(())
 /// # }
 /// ```
 ///
-/// Note that in this example the receiver sends an error to the sender if it received some
-/// unexpected data, interrupting any further attempts to send data.  But crucially only
-/// after it attempted to read the end of the stream.
+/// Note that in this example the receiver is dropped because [`RecvStream::read_to_end`]
+/// takes ownership, this results in the implicit call to `stop(0)` interrupting any further
+/// attempts to send data.  Crucially the `stop` call only happens after it attempted to
+/// read the entire stream.
+///
+/// [`RecvStream::read_chunk`] could be used instead which does not take ownership and
+/// allows using an explit call to [`RecvStream::stop`] with a custom error code.
 ///
 /// [`ReadError`]: crate::ReadError
 /// [`stop()`]: RecvStream::stop
