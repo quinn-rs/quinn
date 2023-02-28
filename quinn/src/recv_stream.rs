@@ -57,9 +57,9 @@ use crate::{
 /// ```
 ///
 /// Note that in this example the receiver is dropped because [`RecvStream::read_to_end`]
-/// takes ownership, this results in the implicit call to `stop(0)` interrupting any further
-/// attempts to send data.  Crucially the `stop` call only happens after it attempted to
-/// read the entire stream.
+/// takes ownership.  This results in the implicit call to `stop(0)` if the stream was not
+/// finished, interrupting any further attempts to send data.  Crucially the `stop` call
+/// only happens after it attempted to read the entire stream.
 ///
 /// [`RecvStream::read_chunk`] could be used instead which does not take ownership and
 /// allows using an explit call to [`RecvStream::stop`] with a custom error code.
