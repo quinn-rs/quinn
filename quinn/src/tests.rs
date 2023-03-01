@@ -140,7 +140,7 @@ fn read_after_close() {
             .await
             .expect("connect");
         tokio::time::sleep_until(Instant::now() + Duration::from_millis(100)).await;
-        let stream = new_conn.accept_uni().await.expect("incoming streams");
+        let mut stream = new_conn.accept_uni().await.expect("incoming streams");
         let msg = stream
             .read_to_end(usize::max_value())
             .await
@@ -211,7 +211,7 @@ async fn accept_after_close() {
         .expect("connection");
 
     // ...and read what was sent.
-    let stream = receiver.accept_uni().await.expect("incoming streams");
+    let mut stream = receiver.accept_uni().await.expect("incoming streams");
     let msg = stream
         .read_to_end(usize::max_value())
         .await
@@ -262,7 +262,7 @@ async fn zero_rtt() {
             let connection = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
             let c = connection.clone();
             tokio::spawn(async move {
-                while let Ok(x) = c.accept_uni().await {
+                while let Ok(mut x) = c.accept_uni().await {
                     let msg = x.read_to_end(usize::max_value()).await.unwrap();
                     assert_eq!(msg, MSG);
                 }
@@ -285,7 +285,7 @@ async fn zero_rtt() {
     tokio::spawn(async move {
         // Buy time for the driver to process the server's NewSessionTicket
         tokio::time::sleep_until(Instant::now() + Duration::from_millis(100)).await;
-        let stream = connection.accept_uni().await.expect("incoming streams");
+        let mut stream = connection.accept_uni().await.expect("incoming streams");
         let msg = stream
             .read_to_end(usize::max_value())
             .await
@@ -309,7 +309,7 @@ async fn zero_rtt() {
         s.finish().await.expect("0-RTT finish");
     });
 
-    let stream = connection.accept_uni().await.expect("incoming streams");
+    let mut stream = connection.accept_uni().await.expect("incoming streams");
     let msg = stream
         .read_to_end(usize::max_value())
         .await
@@ -493,7 +493,7 @@ fn run_echo(args: EchoArgs) {
 
             for i in 0..args.nr_streams {
                 println!("Opening stream {i}");
-                let (mut send, recv) = new_conn.open_bi().await.expect("stream open");
+                let (mut send, mut recv) = new_conn.open_bi().await.expect("stream open");
                 let msg = gen_data(args.stream_size, SEED);
 
                 let send_task = async {
@@ -650,7 +650,7 @@ async fn rebind_recv() {
         .unwrap();
     info!("rebound");
     write_send.notify_one();
-    let stream = connection.accept_uni().await.unwrap();
+    let mut stream = connection.accept_uni().await.unwrap();
     assert_eq!(stream.read_to_end(MSG.len()).await.unwrap(), MSG);
     server.await.unwrap();
 }

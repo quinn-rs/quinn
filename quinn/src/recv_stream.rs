@@ -51,15 +51,16 @@ use crate::{
 /// // In the receiving task
 /// let mut buf = [0u8; 10];
 /// let data = recv_stream.read_exact(&mut buf).await?;
-/// recv_stream.read_to_end(0).await?;
+/// if recv_stream.read_to_end(0).await.is_err() {
+///     // Discard unexpected data and notify the peer to stop sending it
+///     let _ = recv_stream.stop(0u8.into());
+/// }
 /// # Ok(())
 /// # }
 /// ```
 ///
-/// Note that in this example the receiver is dropped because [`RecvStream::read_to_end`]
-/// takes ownership.  This results in the implicit call to `stop(0)` if the stream was not
-/// finished, interrupting any further attempts to send data.  Crucially the `stop` call
-/// only happens after it attempted to read the entire stream.
+/// An alternative approach, used in HTTP/3, is to specify a particular error code used with `stop`
+/// that indicates graceful receiver-initiated stream shutdown, rather than a true error condition.
 ///
 /// [`RecvStream::read_chunk`] could be used instead which does not take ownership and
 /// allows using an explit call to [`RecvStream::stop`] with a custom error code.
@@ -221,15 +222,15 @@ impl RecvStream {
 
     /// Convenience method to read all remaining data into a buffer
     ///
-    /// The returned future fails with [`ReadToEndError::TooLong`] if it's longer than `size_limit`
-    /// bytes. Uses unordered reads to be more efficient than using `AsyncRead` would allow.
-    /// `size_limit` should be set to limit worst-case memory use.
+    /// Fails with [`ReadToEndError::TooLong`] on reading more than `size_limit` bytes, discarding
+    /// all data read. Uses unordered reads to be more efficient than using `AsyncRead` would
+    /// allow. `size_limit` should be set to limit worst-case memory use.
     ///
     /// If unordered reads have already been made, the resulting buffer may have gaps containing
     /// arbitrary data.
     ///
     /// [`ReadToEndError::TooLong`]: crate::ReadToEndError::TooLong
-    pub async fn read_to_end(self, size_limit: usize) -> Result<Vec<u8>, ReadToEndError> {
+    pub async fn read_to_end(&mut self, size_limit: usize) -> Result<Vec<u8>, ReadToEndError> {
         ReadToEnd {
             stream: self,
             size_limit,
@@ -357,15 +358,15 @@ impl<T> From<(Option<T>, Option<proto::ReadError>)> for ReadStatus<T> {
 ///
 /// [`RecvStream::read_to_end()`]: crate::RecvStream::read_to_end
 #[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct ReadToEnd {
-    stream: RecvStream,
+struct ReadToEnd<'a> {
+    stream: &'a mut RecvStream,
     read: Vec<(Bytes, u64)>,
     start: u64,
     end: u64,
     size_limit: usize,
 }
 
-impl Future for ReadToEnd {
+impl Future for ReadToEnd<'_> {
     type Output = Result<Vec<u8>, ReadToEndError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         loop {

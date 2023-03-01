@@ -113,7 +113,7 @@ async fn run(options: Opt) -> Result<()> {
         .await
         .map_err(|e| anyhow!("failed to connect: {}", e))?;
     eprintln!("connected at {:?}", start.elapsed());
-    let (mut send, recv) = conn
+    let (mut send, mut recv) = conn
         .open_bi()
         .await
         .map_err(|e| anyhow!("failed to open stream: {}", e))?;

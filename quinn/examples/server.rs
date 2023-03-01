@@ -205,7 +205,7 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<(
 
 async fn handle_request(
     root: Arc<Path>,
-    (mut send, recv): (quinn::SendStream, quinn::RecvStream),
+    (mut send, mut recv): (quinn::SendStream, quinn::RecvStream),
 ) -> Result<()> {
     let req = recv
         .read_to_end(64 * 1024)
