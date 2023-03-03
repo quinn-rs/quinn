@@ -194,7 +194,9 @@ fn send(
     let num_transmits = transmits.len().min(BATCH_SIZE);
 
     loop {
-        let n = unsafe { libc::sendmmsg(io.as_raw_fd(), msgs.as_mut_ptr(), num_transmits as _, 0) };
+        let n = unsafe {
+            sendmmsg_with_fallback(io.as_raw_fd(), msgs.as_mut_ptr(), num_transmits as _)
+        };
         if n == -1 {
             let e = io::Error::last_os_error();
             match e.kind() {
@@ -289,6 +291,56 @@ fn send(
     Ok(sent)
 }
 
+/// Implementation of `sendmmsg` with a fallback
+/// to `sendmsg` if syscall is not available.
+///
+/// It uses [`libc::syscall`] instead of [`libc::sendmmsg`]
+/// to avoid linking error on systems where libc does not contain `sendmmsg`.
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+unsafe fn sendmmsg_with_fallback(
+    sockfd: libc::c_int,
+    msgvec: *mut libc::mmsghdr,
+    vlen: libc::c_uint,
+) -> libc::c_int {
+    let flags = 0;
+    let ret = libc::syscall(libc::SYS_sendmmsg, sockfd, msgvec, vlen, flags) as libc::c_int;
+    if ret != -1 {
+        return ret;
+    }
+
+    let e = io::Error::last_os_error();
+    match e.raw_os_error() {
+        Some(libc::ENOSYS) => {
+            // Fallback to `sendmsg`.
+            sendmmsg_fallback(sockfd, msgvec, vlen)
+        }
+        _ => -1,
+    }
+}
+
+/// Fallback implementation of `sendmmsg` using `sendmsg`
+/// for systems which do not support `sendmmsg`
+/// such as Linux <3.0.
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+unsafe fn sendmmsg_fallback(
+    sockfd: libc::c_int,
+    msgvec: *mut libc::mmsghdr,
+    vlen: libc::c_uint,
+) -> libc::c_int {
+    let flags = 0;
+    if vlen == 0 {
+        return 0;
+    }
+
+    let n = libc::sendmsg(sockfd, &(*msgvec).msg_hdr, flags);
+    if n == -1 {
+        -1
+    } else {
+        (*msgvec).msg_len = n as libc::c_uint;
+        1
+    }
+}
+
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
@@ -305,12 +357,10 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     }
     let msg_count = loop {
         let n = unsafe {
-            libc::recvmmsg(
+            recvmmsg_with_fallback(
                 io.as_raw_fd(),
                 hdrs.as_mut_ptr(),
                 bufs.len().min(BATCH_SIZE) as _,
-                0,
-                ptr::null_mut(),
             )
         };
         if n == -1 {
@@ -350,6 +400,58 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     };
     meta[0] = decode_recv(&name, &hdr, n as usize);
     Ok(1)
+}
+
+/// Implementation of `recvmmsg` with a fallback
+/// to `recvmsg` if syscall is not available.
+///
+/// It uses [`libc::syscall`] instead of [`libc::recvmmsg`]
+/// to avoid linking error on systems where libc does not contain `recvmmsg`.
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+unsafe fn recvmmsg_with_fallback(
+    sockfd: libc::c_int,
+    msgvec: *mut libc::mmsghdr,
+    vlen: libc::c_uint,
+) -> libc::c_int {
+    let flags = 0;
+    let timeout = ptr::null_mut::<libc::timespec>();
+    let ret =
+        libc::syscall(libc::SYS_recvmmsg, sockfd, msgvec, vlen, flags, timeout) as libc::c_int;
+    if ret != -1 {
+        return ret;
+    }
+
+    let e = io::Error::last_os_error();
+    match e.raw_os_error() {
+        Some(libc::ENOSYS) => {
+            // Fallback to `recvmsg`.
+            recvmmsg_fallback(sockfd, msgvec, vlen)
+        }
+        _ => -1,
+    }
+}
+
+/// Fallback implementation of `recvmmsg` using `recvmsg`
+/// for systems which do not support `recvmmsg`
+/// such as Linux <2.6.33.
+#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+unsafe fn recvmmsg_fallback(
+    sockfd: libc::c_int,
+    msgvec: *mut libc::mmsghdr,
+    vlen: libc::c_uint,
+) -> libc::c_int {
+    let flags = 0;
+    if vlen == 0 {
+        return 0;
+    }
+
+    let n = libc::recvmsg(sockfd, &mut (*msgvec).msg_hdr, flags);
+    if n == -1 {
+        -1
+    } else {
+        (*msgvec).msg_len = n as libc::c_uint;
+        1
+    }
 }
 
 /// Returns the platforms UDP socket capabilities
