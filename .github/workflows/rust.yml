@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ['main', '0.6.x', '0.5.x']
+    branches: ['main', '0.8.x']
   pull_request:
   schedule:
     - cron: "21 3 * * 5"
