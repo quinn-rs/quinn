@@ -14,11 +14,10 @@ jobs:
           profile: minimal
           toolchain: stable
           override: true
-      - uses: actions-rs/tarpaulin@v0.1
-      - uses: codecov/codecov-action@v1.0.2
+      - uses: taiki-e/install-action@cargo-llvm-cov
+      - run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      - name: Upload coverage to Codecov
+        uses: codecov/codecov-action@v3
         with:
-          token: ${{secrets.CODECOV_TOKEN}}
-      - uses: actions/upload-artifact@v1
-        with:
-          name: code-coverage-report
-          path: cobertura.xml
+          files: lcov.info
+          fail_ci_if_error: true
