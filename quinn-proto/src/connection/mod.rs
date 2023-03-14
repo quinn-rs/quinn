@@ -44,6 +44,7 @@ mod datagrams;
 use datagrams::DatagramState;
 pub use datagrams::{Datagrams, SendDatagramError};
 
+mod mtud;
 mod pacing;
 
 mod packet_builder;
@@ -263,6 +264,8 @@ impl Connection {
                 config.initial_rtt,
                 config.congestion_controller_factory.build(now),
                 config.initial_max_udp_payload_size,
+                None,
+                config.mtu_discovery_config.clone(),
                 now,
                 path_validated,
             ),
@@ -428,8 +431,8 @@ impl Connection {
                     SpaceId::Data,
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
-                let mut buf = Vec::with_capacity(self.path.max_udp_payload_size as usize);
-                let buf_capacity = self.path.max_udp_payload_size as usize;
+                let mut buf = Vec::with_capacity(self.path.current_mtu() as usize);
+                let buf_capacity = self.path.current_mtu() as usize;
 
                 let mut builder = PacketBuilder::new(
                     now,
@@ -542,7 +545,7 @@ impl Connection {
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
-                if buf_capacity >= self.path.max_udp_payload_size as usize * max_datagrams {
+                if buf_capacity >= self.path.current_mtu() as usize * max_datagrams {
                     // No more datagrams allowed
                     break;
                 }
@@ -554,7 +557,7 @@ impl Connection {
                 // budget left, we always allow a full MTU to be sent
                 // (see https://github.com/quinn-rs/quinn/issues/1082)
                 if self.path.anti_amplification_blocked(
-                    self.path.max_udp_payload_size as u64 * num_datagrams as u64 + 1,
+                    self.path.current_mtu() as u64 * num_datagrams as u64 + 1,
                 ) {
                     trace!("blocked by anti-amplification");
                     break;
@@ -569,9 +572,9 @@ impl Connection {
                     } else {
                         0
                     } as u64;
-                    debug_assert!(untracked_bytes <= self.path.max_udp_payload_size as u64);
+                    debug_assert!(untracked_bytes <= self.path.current_mtu() as u64);
 
-                    let bytes_to_send = u64::from(self.path.max_udp_payload_size) + untracked_bytes;
+                    let bytes_to_send = u64::from(self.path.current_mtu()) + untracked_bytes;
                     if self.in_flight.bytes + bytes_to_send >= self.path.congestion.window() {
                         space_idx += 1;
                         congestion_blocked = true;
@@ -585,7 +588,7 @@ impl Connection {
                     if let Some(delay) = self.path.pacing.delay(
                         smoothed_rtt,
                         bytes_to_send,
-                        self.path.max_udp_payload_size,
+                        self.path.current_mtu(),
                         self.path.congestion.window(),
                         now,
                     ) {
@@ -601,7 +604,7 @@ impl Connection {
                 if let Some(mut builder) = builder.take() {
                     // Pad the packet to make it suitable for sending with GSO
                     // which will always send the maximum PDU.
-                    builder.pad_to(self.path.max_udp_payload_size);
+                    builder.pad_to(self.path.current_mtu());
 
                     builder.finish_and_track(now, self, sent_frames.take(), &mut buf);
 
@@ -609,7 +612,7 @@ impl Connection {
                 }
 
                 // Allocate space for another datagram
-                buf_capacity += self.path.max_udp_payload_size as usize;
+                buf_capacity += self.path.current_mtu() as usize;
                 if buf.capacity() < buf_capacity {
                     // We reserve the maximum space for sending `max_datagrams` upfront
                     // to avoid any reallocations if more datagrams have to be appended later on.
@@ -619,9 +622,7 @@ impl Connection {
                     // (e.g. purely containing ACKs), modern memory allocators
                     // (e.g. mimalloc and jemalloc) will pool certain allocation sizes
                     // and therefore this is still rather efficient.
-                    buf.reserve(
-                        max_datagrams * self.path.max_udp_payload_size as usize - buf.capacity(),
-                    );
+                    buf.reserve(max_datagrams * self.path.current_mtu() as usize - buf.capacity());
                 }
                 num_datagrams += 1;
                 coalesce = true;
@@ -666,7 +667,7 @@ impl Connection {
                 space_id,
                 &mut buf,
                 buf_capacity,
-                (num_datagrams - 1) * (self.path.max_udp_payload_size as usize),
+                (num_datagrams - 1) * (self.path.current_mtu() as usize),
                 ack_eliciting,
                 self,
                 self.version,
@@ -742,8 +743,7 @@ impl Connection {
                 !(sent.is_ack_only(&self.streams)
                     && !can_send.acks
                     && can_send.other
-                    && (buf_capacity - builder.datagram_start)
-                        == self.path.max_udp_payload_size as usize),
+                    && (buf_capacity - builder.datagram_start) == self.path.current_mtu() as usize),
                 "SendableFrames was {can_send:?}, but only ACKs have been written"
             );
             pad_datagram |= sent.requires_padding;
@@ -773,6 +773,48 @@ impl Connection {
 
         self.app_limited = buf.is_empty() && !congestion_blocked;
 
+        // Send MTU probe if necessary
+        if buf.is_empty() && self.state.is_established() {
+            let space_id = SpaceId::Data;
+            let probe_size = match self
+                .path
+                .mtud
+                .poll_transmit(now, self.spaces[space_id].next_packet_number)
+            {
+                Some(next_probe_size) => next_probe_size,
+                None => return None,
+            };
+
+            let buf_capacity = probe_size as usize;
+            buf.reserve(buf_capacity);
+
+            let mut builder = PacketBuilder::new(
+                now,
+                space_id,
+                &mut buf,
+                buf_capacity,
+                0,
+                true,
+                self,
+                self.version,
+            )?;
+
+            // We implement MTU probes as ping packets padded up to the probe size
+            buf.write(frame::Type::PING);
+            builder.pad_to(probe_size);
+            let sent_frames = SentFrames {
+                non_retransmits: true,
+                ..Default::default()
+            };
+            builder.finish_and_track(now, self, Some(sent_frames), &mut buf);
+
+            self.stats.frame_tx.ping += 1;
+            self.stats.path.sent_plpmtud_probes += 1;
+            num_datagrams = 1;
+
+            trace!(?probe_size, "writing MTUD probe");
+        }
+
         if buf.is_empty() {
             return None;
         }
@@ -794,7 +836,7 @@ impl Connection {
             },
             segment_size: match num_datagrams {
                 1 => None,
-                _ => Some(self.path.max_udp_payload_size as usize),
+                _ => Some(self.path.current_mtu() as usize),
             },
             src_ip: self.local_ip,
         })
@@ -1175,6 +1217,9 @@ impl Connection {
                     self.spaces[space].pending_acks.subtract_below(acked);
                 }
                 ack_eliciting_acked |= info.ack_eliciting;
+
+                // Notify MTU discovery that a packet was acked, because it might be an MTU probe
+                self.path.mtud.on_acked(space, packet, info.size);
                 self.on_packet_acked(now, space, info);
             }
         }
@@ -1342,6 +1387,8 @@ impl Connection {
 
     fn detect_lost_packets(&mut self, now: Instant, pn_space: SpaceId, due_to_ack: bool) {
         let mut lost_packets = Vec::<u64>::new();
+        let mut lost_mtu_probe = None;
+        let in_flight_mtu_probe = self.path.mtud.in_flight_mtu_probe();
         let rtt = self.path.rtt.conservative();
         let loss_delay = cmp::max(rtt.mul_f32(self.config.time_threshold), TIMER_GRANULARITY);
 
@@ -1371,24 +1418,30 @@ impl Connection {
 
             if info.time_sent <= lost_send_time || largest_acked_packet >= packet + packet_threshold
             {
-                lost_packets.push(packet);
-                size_of_lost_packets += info.size as u64;
-                if info.ack_eliciting && due_to_ack {
-                    match persistent_congestion_start {
-                        // Two ACK-eliciting packets lost more than congestion_period apart, with no
-                        // ACKed packets in between
-                        Some(start) if info.time_sent - start > congestion_period => {
-                            in_persistent_congestion = true;
+                if Some(packet) == in_flight_mtu_probe {
+                    // Lost MTU probes are not included in `lost_packets`, because they should not
+                    // trigger a congestion control response
+                    lost_mtu_probe = in_flight_mtu_probe;
+                } else {
+                    lost_packets.push(packet);
+                    size_of_lost_packets += info.size as u64;
+                    if info.ack_eliciting && due_to_ack {
+                        match persistent_congestion_start {
+                            // Two ACK-eliciting packets lost more than congestion_period apart, with no
+                            // ACKed packets in between
+                            Some(start) if info.time_sent - start > congestion_period => {
+                                in_persistent_congestion = true;
+                            }
+                            // Persistent congestion must start after the first RTT sample
+                            None if self
+                                .path
+                                .first_packet_after_rtt_sample
+                                .map_or(false, |x| x < (pn_space, packet)) =>
+                            {
+                                persistent_congestion_start = Some(info.time_sent);
+                            }
+                            _ => {}
                         }
-                        // Persistent congestion must start after the first RTT sample
-                        None if self
-                            .path
-                            .first_packet_after_rtt_sample
-                            .map_or(false, |x| x < (pn_space, packet)) =>
-                        {
-                            persistent_congestion_start = Some(info.time_sent);
-                        }
-                        _ => {}
                     }
                 }
             } else {
@@ -1423,6 +1476,7 @@ impl Connection {
                     self.streams.retransmit(frame);
                 }
                 self.spaces[pn_space].pending |= info.retransmits;
+                self.path.mtud.on_non_probe_lost(now, *packet, info.size);
             }
             // Don't apply congestion penalty for lost ack-only packets
             let lost_ack_eliciting = old_bytes_in_flight != self.in_flight.bytes;
@@ -1436,6 +1490,17 @@ impl Connection {
                     size_of_lost_packets,
                 );
             }
+        }
+
+        // Handle a lost MTU probe
+        if let Some(packet) = lost_mtu_probe {
+            let info = self.spaces[SpaceId::Data]
+                .sent_packets
+                .remove(&packet)
+                .unwrap(); // safe: lost_mtu_probe is omitted from lost_packets, and therefore must not have been removed yet
+            self.remove_in_flight(SpaceId::Data, &info);
+            self.path.mtud.on_probe_lost();
+            self.stats.path.lost_plpmtud_probes += 1;
         }
     }
 
@@ -2171,7 +2236,7 @@ impl Connection {
                 }
 
                 if self.side.is_client() {
-                    // Client-only beceause server params were set from the client's Initial
+                    // Client-only because server params were set from the client's Initial
                     let params =
                         self.crypto
                             .transport_parameters()?
@@ -2650,14 +2715,16 @@ impl Connection {
         let mut new_path = if remote.is_ipv4() && remote.ip() == self.path.remote.ip() {
             PathData::from_previous(remote, &self.path, now)
         } else {
+            let peer_max_udp_payload_size =
+                u16::try_from(self.peer_params.max_udp_payload_size.into_inner())
+                    .unwrap_or(u16::MAX);
             PathData::new(
                 remote,
                 self.config.initial_rtt,
                 self.config.congestion_controller_factory.build(now),
-                self.config.initial_max_udp_payload_size.min(
-                    u16::try_from(self.peer_params.max_udp_payload_size.into_inner())
-                        .unwrap_or(u16::MAX),
-                ),
+                self.config.initial_max_udp_payload_size,
+                Some(peer_max_udp_payload_size),
+                self.config.mtu_discovery_config.clone(),
                 now,
                 false,
             )
@@ -2962,7 +3029,7 @@ impl Connection {
             }).expect("preferred address CID is the first received, and hence is guaranteed to be legal");
         }
         self.peer_params = params;
-        self.path.max_udp_payload_size = self.path.max_udp_payload_size.min(
+        self.path.mtud.on_peer_max_udp_payload_size_received(
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
         );
     }
@@ -3134,6 +3201,12 @@ impl Connection {
     #[cfg(test)]
     pub(crate) fn active_rem_cid_seq(&self) -> u64 {
         self.rem_cids.active_seq()
+    }
+
+    /// Returns the detected maximum udp payload size for the current path
+    #[cfg(test)]
+    pub(crate) fn path_mtu(&self) -> u16 {
+        self.path.current_mtu()
     }
 
     fn max_ack_delay(&self) -> Duration {

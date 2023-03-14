@@ -1,10 +1,10 @@
 use std::{cmp, net::SocketAddr, time::Duration, time::Instant};
 
-use super::pacing::Pacer;
-use crate::{congestion, packet::SpaceId, TIMER_GRANULARITY};
+use super::{mtud::MtuDiscovery, pacing::Pacer};
+use crate::{config::MtuDiscoveryConfig, congestion, packet::SpaceId, TIMER_GRANULARITY};
 
 /// Description of a particular network path
-pub struct PathData {
+pub(crate) struct PathData {
     pub remote: SocketAddr,
     pub rtt: RttEstimator,
     /// Whether we're enabling ECN on outgoing packets
@@ -24,7 +24,8 @@ pub struct PathData {
     pub total_sent: u64,
     /// Total size of all UDP datagrams received on this path
     pub total_recvd: u64,
-    pub max_udp_payload_size: u16,
+    /// The state of the MTU discovery process
+    pub mtud: MtuDiscovery,
     /// Packet number of the first packet sent after an RTT sample was collected on this path
     ///
     /// Used in persistent congestion determination.
@@ -37,6 +38,8 @@ impl PathData {
         initial_rtt: Duration,
         congestion: Box<dyn congestion::Controller>,
         initial_max_udp_payload_size: u16,
+        peer_max_udp_payload_size: Option<u16>,
+        mtud_config: Option<MtuDiscoveryConfig>,
         now: Instant,
         validated: bool,
     ) -> Self {
@@ -56,7 +59,16 @@ impl PathData {
             validated,
             total_sent: 0,
             total_recvd: 0,
-            max_udp_payload_size: initial_max_udp_payload_size,
+            mtud: mtud_config.map_or(
+                MtuDiscovery::disabled(initial_max_udp_payload_size),
+                |config| {
+                    MtuDiscovery::new(
+                        initial_max_udp_payload_size,
+                        peer_max_udp_payload_size,
+                        config,
+                    )
+                },
+            ),
             first_packet_after_rtt_sample: None,
         }
     }
@@ -67,12 +79,7 @@ impl PathData {
         PathData {
             remote,
             rtt: prev.rtt,
-            pacing: Pacer::new(
-                smoothed_rtt,
-                congestion.window(),
-                prev.max_udp_payload_size,
-                now,
-            ),
+            pacing: Pacer::new(smoothed_rtt, congestion.window(), prev.current_mtu(), now),
             sending_ecn: true,
             congestion,
             challenge: None,
@@ -80,7 +87,7 @@ impl PathData {
             validated: false,
             total_sent: 0,
             total_recvd: 0,
-            max_udp_payload_size: prev.max_udp_payload_size,
+            mtud: prev.mtud.clone(),
             first_packet_after_rtt_sample: prev.first_packet_after_rtt_sample,
         }
     }
@@ -89,6 +96,11 @@ impl PathData {
     /// received enough data from the peer to permit sending `bytes_to_send` additional bytes
     pub fn anti_amplification_blocked(&self, bytes_to_send: u64) -> bool {
         !self.validated && self.total_recvd * 3 < self.total_sent + bytes_to_send
+    }
+
+    /// Returns the path's current MTU
+    pub fn current_mtu(&self) -> u16 {
+        self.mtud.current_mtu()
     }
 }
 

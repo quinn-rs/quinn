@@ -18,10 +18,14 @@ use tracing::{info_span, trace};
 
 use super::*;
 
+pub const DEFAULT_MAX_UDP_PAYLOAD_SIZE: usize = 1200;
+
 pub struct Pair {
     pub server: TestEndpoint,
     pub client: TestEndpoint,
     pub time: Instant,
+    /// Simulates the maximum size allowed for UDP payloads by the link (packets exceeding this size will be dropped)
+    pub max_udp_payload_size: usize,
     // One-way
     pub latency: Duration,
     /// Number of spin bit flips
@@ -50,6 +54,7 @@ impl Pair {
             server: TestEndpoint::new(server, server_addr),
             client: TestEndpoint::new(client, client_addr),
             time: Instant::now(),
+            max_udp_payload_size: DEFAULT_MAX_UDP_PAYLOAD_SIZE,
             latency: Duration::new(0, 0),
             spins: 0,
             last_spin: false,
@@ -91,11 +96,32 @@ impl Pair {
         while self.step() {}
     }
 
+    /// Advance time until both connections are idle, or after 100 steps have been executed
+    ///
+    /// Returns true if the amount of steps exceeds the bounds, because the connections never became
+    /// idle
+    pub fn drive_bounded(&mut self) -> bool {
+        for _ in 0..100 {
+            if !self.step() {
+                return false;
+            }
+        }
+
+        true
+    }
+
     pub fn drive_client(&mut self) {
         let span = info_span!("client");
         let _guard = span.enter();
         self.client.drive(self.time, self.server.addr);
         for x in self.client.outbound.drain(..) {
+            if packet_size(&x) > self.max_udp_payload_size {
+                info!(
+                    packet_size = packet_size(&x),
+                    "dropping packet (max size exceeded)"
+                );
+                continue;
+            }
             if x.contents[0] & packet::LONG_HEADER_FORM == 0 {
                 let spin = x.contents[0] & packet::SPIN_BIT != 0;
                 self.spins += (spin == self.last_spin) as u64;
@@ -117,6 +143,13 @@ impl Pair {
         let _guard = span.enter();
         self.server.drive(self.time, self.client.addr);
         for x in self.server.outbound.drain(..) {
+            if packet_size(&x) > self.max_udp_payload_size {
+                info!(
+                    packet_size = packet_size(&x),
+                    "dropping packet (max size exceeded)"
+                );
+                continue;
+            }
             if let Some(ref socket) = self.server.socket {
                 socket.send_to(&x.contents, x.destination).unwrap();
             }
@@ -351,6 +384,10 @@ impl TestEndpoint {
     pub fn assert_accept(&mut self) -> ConnectionHandle {
         self.accepted.take().expect("server didn't connect")
     }
+
+    pub fn assert_no_accept(&self) {
+        assert!(self.accepted.is_none(), "server did unexpectedly connect")
+    }
 }
 
 impl ::std::ops::Deref for TestEndpoint {
@@ -390,7 +427,11 @@ impl Write for TestWriter {
 }
 
 pub fn server_config() -> ServerConfig {
-    ServerConfig::with_crypto(Arc::new(server_crypto()))
+    let mut config = ServerConfig::with_crypto(Arc::new(server_crypto()));
+    Arc::get_mut(&mut config.transport)
+        .unwrap()
+        .mtu_discovery_config(Some(MtuDiscoveryConfig::default()));
+    config
 }
 
 pub fn server_config_with_cert(cert: Certificate, key: PrivateKey) -> ServerConfig {
@@ -408,7 +449,11 @@ pub fn server_crypto_with_cert(cert: Certificate, key: PrivateKey) -> rustls::Se
 }
 
 pub fn client_config() -> ClientConfig {
-    ClientConfig::new(Arc::new(client_crypto()))
+    let mut config = ClientConfig::new(Arc::new(client_crypto()));
+    Arc::get_mut(&mut config.transport)
+        .unwrap()
+        .mtu_discovery_config(Some(MtuDiscoveryConfig::default()));
+    config
 }
 
 pub fn client_config_with_certs(certs: Vec<rustls::Certificate>) -> ClientConfig {
@@ -466,6 +511,14 @@ fn split_transmit(transmit: Transmit) -> Vec<Transmit> {
     }
 
     transmits
+}
+
+fn packet_size(transmit: &Transmit) -> usize {
+    if transmit.segment_size.is_some() {
+        panic!("This transmit is meant to be split into multiple packets!");
+    }
+
+    transmit.contents.len()
 }
 
 lazy_static! {

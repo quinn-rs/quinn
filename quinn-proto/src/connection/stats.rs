@@ -132,6 +132,11 @@ pub struct PathStats {
     pub lost_bytes: u64,
     /// The amount of packets sent on this path
     pub sent_packets: u64,
+    /// The amount of PLPMTUD probe packets sent on this path (also counted by `sent_packets`)
+    pub sent_plpmtud_probes: u64,
+    /// The amount of PLPMTUD probe packets lost on this path (ignored by `lost_packets` and
+    /// `lost_bytes`)
+    pub lost_plpmtud_probes: u64,
 }
 
 /// Connection statistics
