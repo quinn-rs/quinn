@@ -15,6 +15,7 @@ use tracing::warn;
 pub struct Pacer {
     capacity: u64,
     last_window: u64,
+    last_mtu: u16,
     tokens: u64,
     prev: Instant,
 }
@@ -31,6 +32,7 @@ impl Pacer {
         Self {
             capacity,
             last_window: window,
+            last_mtu: max_udp_payload_size,
             tokens: capacity,
             prev: now,
         }
@@ -61,12 +63,13 @@ impl Pacer {
             "zero-sized congestion control window is nonsense"
         );
 
-        if window != self.last_window {
+        if window != self.last_window || mtu != self.last_mtu {
             self.capacity = optimal_capacity(smoothed_rtt, window, mtu);
 
             // Clamp the tokens
             self.tokens = self.capacity.min(self.tokens);
             self.last_window = window;
+            self.last_mtu = mtu;
         }
 
         // if we can already send a packet, there is no need for delay
@@ -227,6 +230,15 @@ mod tests {
             (window as u128 / 2 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
         );
         assert_eq!(pacer.tokens, initial_tokens / 2);
+
+        pacer.delay(rtt, mtu as u64, mtu * 2, window, now);
+        assert_eq!(
+            pacer.capacity,
+            (window as u128 * BURST_INTERVAL_NANOS / rtt.as_nanos()) as u64
+        );
+
+        pacer.delay(rtt, mtu as u64, 20_000, window, now);
+        assert_eq!(pacer.capacity, 20_000_u64 * MIN_BURST_SIZE);
     }
 
     #[test]

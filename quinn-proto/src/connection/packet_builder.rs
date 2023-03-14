@@ -238,9 +238,6 @@ impl PacketBuilder {
         );
 
         buffer.resize(buffer.len() + packet_crypto.tag_len(), 0);
-        debug_assert!(
-            buffer.len() <= self.datagram_start + conn.path.max_udp_payload_size as usize
-        );
         let encode_start = self.partial_encode.start;
         let packet_buf = &mut buffer[encode_start..];
         self.partial_encode.finish(

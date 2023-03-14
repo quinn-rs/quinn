@@ -1911,3 +1911,284 @@ fn malformed_token_len() {
         hex!("8900 0000 0101 0000 1b1b 841b 0000 0000 3f00")[..].into(),
     );
 }
+
+#[test]
+/// This is mostly a sanity check to ensure our testing code is correctly dropping packets above the
+/// pmtu
+fn connect_too_low_mtu() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+
+    // The maximum payload size is lower than 1200, so no packages will get through!
+    pair.max_udp_payload_size = 1000;
+
+    pair.begin_connect(client_config());
+    pair.drive();
+    pair.server.assert_no_accept()
+}
+
+#[test]
+fn connect_lost_mtu_probes_do_not_trigger_congestion_control() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+
+    let (client_ch, server_ch) = pair.connect();
+    pair.drive();
+
+    let client_stats = pair.client_conn_mut(client_ch).stats();
+    let server_stats = pair.server_conn_mut(server_ch).stats();
+
+    // Sanity check (all MTU probes should have been lost)
+    assert_eq!(client_stats.path.sent_plpmtud_probes, 9);
+    assert_eq!(client_stats.path.lost_plpmtud_probes, 9);
+    assert_eq!(server_stats.path.sent_plpmtud_probes, 9);
+    assert_eq!(server_stats.path.lost_plpmtud_probes, 9);
+
+    // No congestion events
+    assert_eq!(client_stats.path.congestion_events, 0);
+    assert_eq!(server_stats.path.congestion_events, 0);
+}
+
+#[test]
+fn connect_detects_mtu() {
+    let _guard = subscribe();
+    let max_udp_payload_and_expected_mtu = &[(1200, 1200), (1400, 1389), (1500, 1452)];
+
+    for &(pair_max_udp, expected_mtu) in max_udp_payload_and_expected_mtu {
+        println!("Trying {pair_max_udp}");
+        let mut pair = Pair::default();
+        pair.max_udp_payload_size = pair_max_udp;
+        let (client_ch, server_ch) = pair.connect();
+        pair.drive();
+
+        assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), expected_mtu);
+        assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), expected_mtu);
+    }
+}
+
+#[test]
+fn migrate_detects_new_mtu_and_respects_original_peer_max_udp_payload_size() {
+    let _guard = subscribe();
+
+    let client_max_udp_payload_size: u16 = 1400;
+
+    // Set up a client with a max payload size of 1400 (and use the defaults for the server)
+    let server_endpoint_config = EndpointConfig::default();
+    let server = Endpoint::new(
+        Arc::new(server_endpoint_config),
+        Some(Arc::new(server_config())),
+    );
+    let client_endpoint_config = EndpointConfig {
+        max_udp_payload_size: VarInt::from(client_max_udp_payload_size),
+        ..EndpointConfig::default()
+    };
+    let client = Endpoint::new(Arc::new(client_endpoint_config), None);
+    let mut pair = Pair::new_from_endpoint(client, server);
+    pair.max_udp_payload_size = 1300;
+
+    // Connect
+    let (client_ch, server_ch) = pair.connect();
+    pair.drive();
+
+    // Sanity check: MTUD ran to completion (the numbers differ because binary search stops when
+    // changes are smaller than 20, otherwise both endpoints would converge at the same MTU of 1300)
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1293);
+    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), 1300);
+
+    // Migrate client to a different port (and simulate a higher path MTU)
+    pair.max_udp_payload_size = 1500;
+    pair.client.addr = SocketAddr::new(
+        Ipv4Addr::new(127, 0, 0, 1).into(),
+        CLIENT_PORTS.lock().unwrap().next().unwrap(),
+    );
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive();
+
+    // Sanity check: the server saw that the client address was updated
+    assert_eq!(
+        pair.server_conn_mut(server_ch).remote_address(),
+        pair.client.addr
+    );
+
+    // MTU detection has successfully run after migrating
+    assert_eq!(
+        pair.server_conn_mut(server_ch).path_mtu(),
+        client_max_udp_payload_size
+    );
+
+    // Sanity check: the client keeps the old MTU, because migration is triggered by incoming
+    // packets from a different address
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1293);
+}
+
+#[test]
+fn connect_runs_mtud_again_after_600_seconds() {
+    let _guard = subscribe();
+    let mut server_config = server_config();
+    let mut client_config = client_config();
+
+    // Note: we use an infinite idle timeout to ensure we can wait 600 seconds without the
+    // connection closing
+    Arc::get_mut(&mut server_config.transport)
+        .unwrap()
+        .max_idle_timeout(None);
+    Arc::get_mut(&mut client_config.transport)
+        .unwrap()
+        .max_idle_timeout(None);
+
+    let mut pair = Pair::new(Default::default(), server_config);
+    pair.max_udp_payload_size = 1400;
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+    pair.drive();
+
+    // Sanity check: the mtu has been discovered
+    let client_conn = pair.client_conn_mut(client_ch);
+    assert_eq!(client_conn.path_mtu(), 1389);
+    assert_eq!(client_conn.stats().path.sent_plpmtud_probes, 5);
+    assert_eq!(client_conn.stats().path.lost_plpmtud_probes, 3);
+    let server_conn = pair.server_conn_mut(server_ch);
+    assert_eq!(server_conn.path_mtu(), 1389);
+    assert_eq!(server_conn.stats().path.sent_plpmtud_probes, 5);
+    assert_eq!(server_conn.stats().path.lost_plpmtud_probes, 3);
+
+    // Sanity check: the mtu does not change after the fact, even though the link now supports a
+    // higher udp payload size
+    pair.max_udp_payload_size = 1500;
+    pair.drive();
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1389);
+    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), 1389);
+
+    // The MTU changes after 600 seconds, because now MTUD runs for the second time
+    pair.time += Duration::from_secs(600);
+    pair.drive();
+    assert!(!pair.client_conn_mut(client_ch).is_closed());
+    assert!(!pair.server_conn_mut(client_ch).is_closed());
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1452);
+    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), 1452);
+}
+
+#[test]
+fn packet_loss_and_retry_too_low_mtu() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+
+    pair.client_send(client_ch, s).write(b"hello").unwrap();
+    pair.drive();
+
+    // Nothing will get past this mtu
+    pair.max_udp_payload_size = 10;
+    pair.client_send(client_ch, s).write(b" world").unwrap();
+    pair.drive_client();
+
+    // The packet was dropped
+    assert!(pair.client.outbound.is_empty());
+    assert!(pair.server.inbound.is_empty());
+
+    // Restore the default mtu, so future packets are properly transmitted
+    pair.max_udp_payload_size = DEFAULT_MAX_UDP_PAYLOAD_SIZE;
+
+    // The lost packet is resent
+    pair.drive();
+    assert!(pair.client.outbound.is_empty());
+
+    let recv = pair.server_recv(server_ch, s);
+    let buf = stream_chunks(recv);
+
+    assert_eq!(buf, b"hello world".as_slice());
+}
+
+#[test]
+fn blackhole_after_mtu_change_repairs_itself() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.max_udp_payload_size = 1500;
+    let (client_ch, server_ch) = pair.connect();
+    pair.drive();
+
+    // Sanity check
+    assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1452);
+    assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), 1452);
+
+    // Back to the base MTU
+    pair.max_udp_payload_size = 1200;
+
+    // The payload will be sent in a single packet, because the detected MTU was 1444, but it will
+    // be dropped because the link no longer supports that packet size!
+    let payload = vec![42; 1300];
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, s).write(&payload).unwrap();
+    let out_of_bounds = pair.drive_bounded();
+
+    if out_of_bounds {
+        panic!("Connections never reached an idle state");
+    }
+
+    let recv = pair.server_recv(server_ch, s);
+    let buf = stream_chunks(recv);
+
+    // The whole packet arrived in the end
+    assert_eq!(buf.len(), 1300);
+
+    // Sanity checks (black hole detected after 3 lost packets)
+    let client_stats = pair.client_conn_mut(client_ch).stats();
+    assert!(client_stats.path.lost_packets >= 3);
+    assert!(client_stats.path.congestion_events >= 3);
+}
+
+#[test]
+fn packet_splitting_with_default_mtu() {
+    let _guard = subscribe();
+
+    // The payload needs to be split in 2 in order to be sent, because it is higher than the max MTU
+    let payload = vec![42; 1300];
+
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+    pair.drive();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+
+    pair.client_send(client_ch, s).write(&payload).unwrap();
+    pair.client.drive(pair.time, pair.server.addr);
+    assert_eq!(pair.client.outbound.len(), 2);
+
+    pair.drive_client();
+    assert_eq!(pair.server.inbound.len(), 2);
+}
+
+#[test]
+fn packet_splitting_not_necessary_after_higher_mtu_discovered() {
+    let _guard = subscribe();
+    let payload = vec![42; 1300];
+
+    let mut pair = Pair::default();
+    pair.max_udp_payload_size = 1500;
+
+    let (client_ch, _) = pair.connect();
+    pair.drive();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+
+    pair.client_send(client_ch, s).write(&payload).unwrap();
+    pair.client.drive(pair.time, pair.server.addr);
+    assert_eq!(pair.client.outbound.len(), 1);
+
+    pair.drive_client();
+    assert_eq!(pair.server.inbound.len(), 1);
+}
+
+fn stream_chunks(mut recv: RecvStream) -> Vec<u8> {
+    let mut buf = Vec::new();
+
+    let mut chunks = recv.read(true).unwrap();
+    while let Ok(Some(chunk)) = chunks.next(usize::MAX) {
+        buf.extend(chunk.bytes);
+    }
+
+    let _ = chunks.finalize();
+
+    buf
+}

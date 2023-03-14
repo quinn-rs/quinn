@@ -10,6 +10,7 @@ use crate::{
     congestion,
     crypto::{self, HandshakeTokenKey, HmacKey},
     VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MAX_UDP_PAYLOAD_SIZE,
+    MAX_UDP_PAYLOAD,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -37,6 +38,7 @@ pub struct TransportConfig {
     pub(crate) time_threshold: f32,
     pub(crate) initial_rtt: Duration,
     pub(crate) initial_max_udp_payload_size: u16,
+    pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
 
     pub(crate) persistent_congestion_threshold: u32,
     pub(crate) keep_alive_interval: Option<Duration>,
@@ -154,20 +156,47 @@ impl TransportConfig {
         self
     }
 
-    /// UDP payload size that the network must be capable of carrying
-    ///
-    /// Effective max UDP payload size may change over the life of the connection in the future due
-    /// to path MTU detection, but will never fall below this value.
+    /// The initial value to be used as the maximum UDP payload size before running MTU discovery
+    /// (see [`TransportConfig::mtu_discovery_config`]).
     ///
     /// Must be at least 1200, which is the default, and known to be safe for typical internet
     /// applications. Larger values are more efficient, but increase the risk of unpredictable
-    /// catastrophic packet loss due to exceeding the network path's IP MTU.
+    /// catastrophic packet loss due to exceeding the network path's IP MTU. If the provided value
+    /// is higher than what the network path actually supports, packet loss will eventually trigger
+    /// black hole detection and bring it down to 1200.
     ///
     /// Real-world MTUs can vary according to ISP, VPN, and properties of intermediate network links
-    /// outside of either endpoint's control. Extreme caution should be used when raising this value
-    /// for connections outside of private networks where these factors are fully controlled.
+    /// outside of either endpoint's control. Caution should be used when raising this value for
+    /// connections outside of private networks where these factors are fully controlled.
     pub fn initial_max_udp_payload_size(&mut self, value: u16) -> &mut Self {
         self.initial_max_udp_payload_size = value.max(INITIAL_MAX_UDP_PAYLOAD_SIZE);
+        self
+    }
+
+    /// Specifies the MTU discovery config (see [`MtuDiscoveryConfig`] for details).
+    ///
+    /// Defaults to `None`, which disables MTU discovery altogether.
+    ///
+    /// # Important
+    ///
+    /// MTU discovery depends on platform support for disabling UDP packet fragmentation, which is
+    /// not always available. If the platform allows fragmenting UDP packets, MTU discovery may end
+    /// up "discovering" an MTU that is not really supported by the network, causing packet loss
+    /// down the line.
+    ///
+    /// The `quinn` crate provides the `Endpoint::server` and `Endpoint::client` constructors that
+    /// automatically disable UDP packet fragmentation on Linux and Windows. When using these
+    /// constructors, MTU discovery will reliably work, unless the code is compiled targeting an
+    /// unsupported platform (e.g. iOS). In the latter case, it is advisable to keep MTU discovery
+    /// disabled.
+    ///
+    /// Users of `quinn-proto` and authors of custom `AsyncUdpSocket` implementations should ensure
+    /// to disable UDP packet fragmentation (this is strongly recommended by [RFC
+    /// 9000](https://www.rfc-editor.org/rfc/rfc9000.html#section-14-7), regardless of MTU
+    /// discovery). They can build on top of the `quinn-udp` crate, used by `quinn` itself, which
+    /// provides Linux and Windows support for disabling packet fragmentation.
+    pub fn mtu_discovery_config(&mut self, value: Option<MtuDiscoveryConfig>) -> &mut Self {
+        self.mtu_discovery_config = value;
         self
     }
 
@@ -267,6 +296,7 @@ impl Default for TransportConfig {
             time_threshold: 9.0 / 8.0,
             initial_rtt: Duration::from_millis(333), // per spec, intentionally distinct from EXPECTED_RTT
             initial_max_udp_payload_size: INITIAL_MAX_UDP_PAYLOAD_SIZE,
+            mtu_discovery_config: None,
 
             persistent_congestion_threshold: 3,
             keep_alive_interval: None,
@@ -313,6 +343,113 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_send_buffer_size", &self.datagram_send_buffer_size)
             .field("congestion_controller_factory", &"[ opaque ]")
             .finish()
+    }
+}
+
+/// Parameters governing MTU discovery.
+///
+/// # The why of MTU discovery
+///
+/// By design, QUIC ensures during the handshake that the network path between the client and the
+/// server is able to transmit unfragmented UDP packets with a body of 1200 bytes. In other words,
+/// once the connection is established, we know that the network path's maximum transmission unit
+/// (MTU) is of at least 1200 bytes (plus IP and UDP headers). Because of this, a QUIC endpoint can
+/// split outgoing data in packets of 1200 bytes, with confidence that the network will be able to
+/// deliver them (if the endpoint were to send bigger packets, they could prove too big and end up
+/// being dropped).
+///
+/// There is, however, a significant overhead associated to sending a packet. If the same
+/// information can be sent in fewer packets, that results in higher throughput. The amount of
+/// packets that need to be sent is inversely proportional to the MTU: the higher the MTU, the
+/// bigger the packets that can be sent, and the fewer packets that are needed to transmit a given
+/// amount of bytes.
+///
+/// Most networks have an MTU higher than 1200. Through MTU discovery, endpoints can detect the
+/// path's MTU and, if it turns out to be higher, start sending bigger packets.
+///
+/// # MTU discovery internals
+///
+/// Quinn implements MTU discovery through DPLPMTUD (Datagram Packetization Layer Path MTU
+/// Discovery), described in [section 14.3 of RFC
+/// 9000](https://www.rfc-editor.org/rfc/rfc9000.html#section-14.3). This method consists of sending
+/// QUIC packets padded to a particular size (called PMTU probes), and waiting to see if the remote
+/// peer responds with an ACK. If an ACK is received, that means the probe arrived at the remote
+/// peer, which in turn means that the network path's MTU is of at least the packet's size. If the
+/// probe is lost, it is sent another 2 times before concluding that the MTU is lower than the
+/// packet's size.
+///
+/// MTU discovery runs on a schedule (e.g. every 600 seconds) specified through
+/// [`MtuDiscoveryConfig::interval`]. The first run happens right after the handshake, and
+/// subsequent discoveries are scheduled to run when the interval has elapsed, starting from the
+/// last time when MTU discovery completed.
+///
+/// Since the search space for MTUs is quite big (the smallest possible MTU is 1200, and the highest
+/// is 65527), Quinn performs a binary search to keep the number of probes as low as possible. The
+/// lower bound of the search is equal to [`TransportConfig::initial_max_udp_payload_size`] in the
+/// initial MTU discovery run, and is equal to the currently discovered MTU in subsequent runs. The
+/// upper bound is determined by the minimum of [`MtuDiscoveryConfig::upper_bound`] and the
+/// `max_udp_payload_size` transport parameter received from the peer during the handshake.
+///
+/// # Black hole detection
+///
+/// If, at some point, the network path no longer accepts packets of the detected size, packet loss
+/// will eventually trigger black hole detection and reset the detected MTU to 1200. In that case,
+/// MTU discovery will be triggered after [`MtuDiscoveryConfig::black_hole_cooldown`] (ignoring the
+/// timer that was set based on [`MtuDiscoveryConfig::interval`]).
+///
+/// # Interaction between peers
+///
+/// There is no guarantee that the MTU on the path between A and B is the same as the MTU of the
+/// path between B and A. Therefore, each peer in the connection needs to run MTU discovery
+/// independently in order to discover the path's MTU.
+#[derive(Clone, Debug)]
+pub struct MtuDiscoveryConfig {
+    pub(crate) interval: Duration,
+    pub(crate) upper_bound: u16,
+    pub(crate) black_hole_cooldown: Duration,
+}
+
+impl MtuDiscoveryConfig {
+    /// Specifies the time to wait after completing MTU discovery before starting a new MTU
+    /// discovery run.
+    ///
+    /// Defaults to 600 seconds, as recommended by [RFC
+    /// 8899](https://www.rfc-editor.org/rfc/rfc8899).
+    pub fn interval(&mut self, value: Duration) -> &mut Self {
+        self.interval = value;
+        self
+    }
+
+    /// Specifies the upper bound to the max UDP payload size that MTU discovery will search for.
+    ///
+    /// Defaults to 1452, to stay within Ethernet's MTU when using IPv4 and IPv6. The highest
+    /// allowed value is 65527, which corresponds to the maximum permitted UDP payload on IPv6.
+    ///
+    /// It is safe to use an arbitrarily high upper bound, regardless of the network path's MTU. The
+    /// only drawback is that MTU discovery might take more time to finish.
+    pub fn upper_bound(&mut self, value: u16) -> &mut Self {
+        self.upper_bound = value.min(MAX_UDP_PAYLOAD);
+        self
+    }
+
+    /// Specifies the amount of time that MTU discovery should wait after a black hole was detected
+    /// before running again. Defaults to one minute.
+    ///
+    /// Black hole detection can be spuriously triggered in case of congestion, so it makes sense to
+    /// try MTU discovery again after a short period of time.
+    pub fn black_hole_cooldown(&mut self, value: Duration) -> &mut Self {
+        self.black_hole_cooldown = value;
+        self
+    }
+}
+
+impl Default for MtuDiscoveryConfig {
+    fn default() -> Self {
+        MtuDiscoveryConfig {
+            interval: Duration::from_secs(600),
+            upper_bound: 1452,
+            black_hole_cooldown: Duration::from_secs(60),
+        }
     }
 }
 
