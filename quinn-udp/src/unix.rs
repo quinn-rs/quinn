@@ -17,7 +17,7 @@ use super::{cmsg, log_sendmsg_error, RecvMeta, UdpSockRef, UdpState, IO_ERROR_LO
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
-#[cfg(not(target_os = "freebsd"))]
+#[cfg(not(any(target_os = "freebsd", target_os = "android")))]
 type IpTosTy = libc::c_int;
 
 /// Tokio-compatible UDP socket with some useful specializations.
@@ -493,6 +493,11 @@ fn prepare_msg(
     let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
     let ecn = transmit.ecn.map_or(0, |x| x as libc::c_int);
     if transmit.destination.is_ipv4() {
+        // Android may use old kernel <3.13 which does not support IP_TOS cmsg type.
+        // On these kernels `sendmmsg` returns EINVAL and does not send anything
+        // if it encounters IP_TOS cmsg.
+        // To avoid this, we do not try to set TOS on Android at all.
+        #[cfg(not(target_os = "android"))]
         encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
     } else {
         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
