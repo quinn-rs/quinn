@@ -137,7 +137,7 @@ impl Recv {
         }
     }
 
-    /// Returns `false` iff the reset was redundant
+    /// Returns `false` if the reset was redundant
     pub(super) fn reset(
         &mut self,
         error_code: VarInt,
