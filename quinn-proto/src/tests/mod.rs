@@ -10,7 +10,7 @@ use bytes::Bytes;
 use hex_literal::hex;
 use rand::RngCore;
 use ring::hmac;
-use rustls::internal::msgs::enums::AlertDescription;
+use rustls::AlertDescription;
 use tracing::info;
 
 use super::*;
@@ -354,7 +354,7 @@ fn reject_self_signed_server_cert() {
     pair.drive();
     assert_matches!(pair.client_conn_mut(client_ch).poll(),
                     Some(Event::ConnectionLost { reason: ConnectionError::TransportError(ref error)})
-                    if error.code == TransportErrorCode::crypto(AlertDescription::BadCertificate.get_u8()));
+                    if error.code == TransportErrorCode::crypto(AlertDescription::UnknownCA.get_u8()));
 }
 
 #[test]
@@ -369,9 +369,9 @@ fn reject_missing_client_cert() {
         .with_safe_default_kx_groups()
         .with_protocol_versions(&[&rustls::version::TLS13])
         .unwrap()
-        .with_client_cert_verifier(rustls::server::AllowAnyAuthenticatedClient::new(
+        .with_client_cert_verifier(Arc::new(rustls::server::AllowAnyAuthenticatedClient::new(
             rustls::RootCertStore::empty(),
-        ))
+        )))
         .with_single_cert(vec![rustls::Certificate(cert)], key)
         .unwrap();
 

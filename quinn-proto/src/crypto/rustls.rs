@@ -5,11 +5,7 @@ use ring::aead;
 pub use rustls::Error;
 use rustls::{
     self,
-    quic::{
-        ClientQuicExt, HeaderProtectionKey, KeyChange, PacketKey, QuicExt, Secrets, ServerQuicExt,
-        Version,
-    },
-    Connection,
+    quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Version},
 };
 
 use crate::{
@@ -19,6 +15,15 @@ use crate::{
     transport_parameters::TransportParameters,
     ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
 };
+
+impl From<Side> for rustls::Side {
+    fn from(s: Side) -> Self {
+        match s {
+            Side::Client => rustls::Side::Client,
+            Side::Server => rustls::Side::Server,
+        }
+    }
+}
 
 /// A rustls TLS session
 pub struct TlsSession {
@@ -50,7 +55,7 @@ impl crypto::Session for TlsSession {
             protocol: self.inner.alpn_protocol().map(|x| x.into()),
             server_name: match self.inner {
                 Connection::Client(_) => None,
-                Connection::Server(ref session) => session.sni_hostname().map(|x| x.into()),
+                Connection::Server(ref session) => session.server_name().map(|x| x.into()),
             },
         }))
     }
@@ -95,7 +100,7 @@ impl crypto::Session for TlsSession {
             // connections.
             let have_server_name = match self.inner {
                 Connection::Client(_) => false,
-                Connection::Server(ref session) => session.sni_hostname().is_some(),
+                Connection::Server(ref session) => session.server_name().is_some(),
             };
             if self.inner.alpn_protocol().is_some() || have_server_name || !self.is_handshaking() {
                 self.got_handshake_data = true;
@@ -180,7 +185,8 @@ impl crypto::Session for TlsSession {
     ) -> Result<(), ExportKeyingMaterialError> {
         self.inner
             .export_keying_material(output, label, Some(context))
-            .map_err(|_| ExportKeyingMaterialError)
+            .map_err(|_| ExportKeyingMaterialError)?;
+        Ok(())
     }
 }
 
@@ -252,8 +258,8 @@ impl crypto::ClientConfig for rustls::ClientConfig {
             version,
             got_handshake_data: false,
             next_secrets: None,
-            inner: Connection::Client(
-                rustls::ClientConnection::new_quic(
+            inner: rustls::quic::Connection::Client(
+                rustls::quic::ClientConnection::new(
                     self,
                     version,
                     server_name
@@ -278,8 +284,8 @@ impl crypto::ServerConfig for rustls::ServerConfig {
             version,
             got_handshake_data: false,
             next_secrets: None,
-            inner: Connection::Server(
-                rustls::ServerConnection::new_quic(self, version, to_vec(params)).unwrap(),
+            inner: rustls::quic::Connection::Server(
+                rustls::quic::ServerConnection::new(self, version, to_vec(params)).unwrap(),
             ),
         })
     }
@@ -326,7 +332,7 @@ fn to_vec(params: &TransportParameters) -> Vec<u8> {
 }
 
 pub(crate) fn initial_keys(version: Version, dst_cid: &ConnectionId, side: Side) -> Keys {
-    let keys = rustls::quic::Keys::initial(version, dst_cid, side.is_client());
+    let keys = rustls::quic::Keys::initial(version, dst_cid, side.into());
     Keys {
         header: KeyPair {
             local: Box::new(keys.local.header),
