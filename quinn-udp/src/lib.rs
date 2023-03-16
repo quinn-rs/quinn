@@ -43,6 +43,7 @@ pub struct UdpState {
     /// If enabled, we assume that old kernel is used and switch to fallback mode.
     /// In particular, we do not use IP_TOS cmsg_type in this case,
     /// which is not supported on Linux <3.13 and results in not sending the UDP packet at all.
+    #[cfg(not(windows))]
     sendmsg_einval: AtomicBool,
 }
 
@@ -72,12 +73,14 @@ impl UdpState {
 
     /// Returns true if we previously got an EINVAL error from `sendmsg` or `sendmmsg` syscall.
     #[inline]
+    #[cfg(not(windows))]
     pub fn sendmsg_einval(&self) -> bool {
         self.sendmsg_einval.load(Ordering::Relaxed)
     }
 
     /// Sets the flag indicating we got EINVAL error from `sendmsg` or `sendmmsg` syscall.
     #[inline]
+    #[cfg(not(windows))]
     pub fn set_sendmsg_einval(&self) {
         self.sendmsg_einval.store(true, Ordering::Relaxed)
     }
