@@ -5,7 +5,7 @@ use std::os::unix::io::AsRawFd;
 use std::os::windows::io::AsRawSocket;
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
-    sync::atomic::{AtomicUsize, Ordering},
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
     time::{Duration, Instant},
 };
 
@@ -37,6 +37,13 @@ pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
 pub struct UdpState {
     max_gso_segments: AtomicUsize,
     gro_segments: usize,
+
+    /// True if we have received EINVAL error from `sendmsg` or `sendmmsg` system call at least once.
+    ///
+    /// If enabled, we assume that old kernel is used and switch to fallback mode.
+    /// In particular, we do not use IP_TOS cmsg_type in this case,
+    /// which is not supported on Linux <3.13 and results in not sending the UDP packet at all.
+    sendmsg_einval: AtomicBool,
 }
 
 impl UdpState {
@@ -61,6 +68,18 @@ impl UdpState {
     #[inline]
     pub fn gro_segments(&self) -> usize {
         self.gro_segments
+    }
+
+    /// Returns true if we previously got an EINVAL error from `sendmsg` or `sendmmsg` syscall.
+    #[inline]
+    pub fn sendmsg_einval(&self) -> bool {
+        self.sendmsg_einval.load(Ordering::Relaxed)
+    }
+
+    /// Sets the flag indicating we got EINVAL error from `sendmsg` or `sendmmsg` syscall.
+    #[inline]
+    pub fn set_sendmsg_einval(&self) {
+        self.sendmsg_einval.store(true, Ordering::Relaxed)
     }
 }
 

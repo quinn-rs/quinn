@@ -6,7 +6,7 @@ use std::{
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
-    sync::atomic::AtomicUsize,
+    sync::atomic::{AtomicBool, AtomicUsize},
     time::Instant,
 };
 
@@ -189,6 +189,7 @@ fn send(
             &mut iovecs[i],
             &mut cmsgs[i],
             encode_src_ip,
+            state.sendmsg_einval(),
         );
     }
     let num_transmits = transmits.len().min(BATCH_SIZE);
@@ -221,6 +222,12 @@ fn send(
                         }
                     }
 
+                    if e.raw_os_error() == Some(libc::EINVAL) {
+                        // Some arguments to `sendmsg` are not supported.
+                        // Switch to fallback mode.
+                        state.set_sendmsg_einval();
+                    }
+
                     // Other errors are ignored, since they will ususally be handled
                     // by higher level retransmits and timeouts.
                     // - PermissionDenied errors have been observed due to iptable rules.
@@ -243,7 +250,7 @@ fn send(
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 fn send(
-    _state: &UdpState,
+    state: &UdpState,
     io: SockRef<'_>,
     last_send_error: &mut Instant,
     transmits: &[Transmit],
@@ -263,6 +270,7 @@ fn send(
             &mut ctrl,
             // Only tested on macOS
             cfg!(target_os = "macos"),
+            state.sendmsg_einval(),
         );
         let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
         if n == -1 {
@@ -459,6 +467,7 @@ pub fn udp_state() -> UdpState {
     UdpState {
         max_gso_segments: AtomicUsize::new(gso::max_gso_segments()),
         gro_segments: gro::gro_segments(),
+        sendmsg_einval: AtomicBool::new(false),
     }
 }
 
@@ -472,6 +481,7 @@ fn prepare_msg(
     ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
     #[allow(unused_variables)] // only used on FreeBSD & macOS
     encode_src_ip: bool,
+    sendmsg_einval: bool,
 ) {
     iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
     iov.iov_len = transmit.contents.len();
@@ -493,7 +503,9 @@ fn prepare_msg(
     let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
     let ecn = transmit.ecn.map_or(0, |x| x as libc::c_int);
     if transmit.destination.is_ipv4() {
-        encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
+        if !sendmsg_einval {
+            encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
+        }
     } else {
         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
     }
