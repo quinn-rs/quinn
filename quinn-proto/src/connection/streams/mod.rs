@@ -56,6 +56,7 @@ impl<'a> Streams<'a> {
     /// Accept a remotely initiated stream of a certain directionality, if possible
     ///
     /// Returns `None` if there are no new incoming streams for this connection.
+    /// Has no impact on the data flow-control or stream concurrency limits.
     pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
         if self.state.next_remote[dir as usize] == self.state.next_reported_remote[dir as usize] {
             return None;
@@ -78,6 +79,18 @@ impl<'a> Streams<'a> {
     /// The number of streams that may have unacknowledged data.
     pub fn send_streams(&self) -> usize {
         self.state.send_streams
+    }
+
+    /// The number of remotely initiated open streams of a certain directionality.
+    ///
+    /// Includes remotely initiated streams, which have not been accepted via [`accept`](Self::accept).
+    /// These streams count against the respective concurrency limit reported by
+    /// [`Connection::max_concurrent_streams`](super::Connection::max_concurrent_streams).
+    pub fn remote_open_streams(&self, dir: Dir) -> u64 {
+        // total opened - total closed = total opened - ( total permitted - total permitted unclosed )
+        self.state.next_remote[dir as usize]
+            - (self.state.max_remote[dir as usize]
+                - self.state.allocated_remote_count[dir as usize])
     }
 }
 

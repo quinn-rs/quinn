@@ -1107,6 +1107,15 @@ impl Connection {
         self.streams.set_max_concurrent(dir, count);
     }
 
+    /// Current number of remotely initiated streams that may be concurrently open
+    ///
+    /// If the target for this limit is reduced using [`set_max_concurrent_streams`](Self::set_max_concurrent_streams),
+    /// it will not change immediately, even if fewer streams are open. Instead, it will
+    /// decrement by one for each time a remotely initiated stream of matching directionality is closed.
+    pub fn max_concurrent_streams(&self, dir: Dir) -> u64 {
+        self.streams.max_concurrent(dir)
+    }
+
     /// See [`TransportConfig::receive_window()`]
     pub fn set_receive_window(&mut self, receive_window: VarInt) {
         if self.streams.set_receive_window(receive_window) {
