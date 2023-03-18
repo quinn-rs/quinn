@@ -31,9 +31,9 @@ pub struct StreamsState {
     pub(super) max: [u64; 2],
     /// Maximum number of remotely-initiated streams that may be opened over the lifetime of the
     /// connection so far, per direction
-    max_remote: [u64; 2],
+    pub(super) max_remote: [u64; 2],
     /// Number of streams that we've given the peer permission to open and which aren't fully closed
-    allocated_remote_count: [u64; 2],
+    pub(super) allocated_remote_count: [u64; 2],
     /// Size of the desired stream flow control window. May be smaller than `allocated_remote_count`
     /// due to `set_max_concurrent` calls.
     max_concurrent_remote_count: [u64; 2],
@@ -761,6 +761,10 @@ impl StreamsState {
         self.flow_control_adjusted = true;
         self.max_concurrent_remote_count[dir as usize] = count.into();
         self.ensure_remote_streams(dir);
+    }
+
+    pub fn max_concurrent(&self, dir: Dir) -> u64 {
+        self.allocated_remote_count[dir as usize]
     }
 
     /// Set the receive_window and returns wether the receive_window has been
