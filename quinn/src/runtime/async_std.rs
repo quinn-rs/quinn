@@ -50,7 +50,7 @@ struct UdpSocket {
 
 impl AsyncUdpSocket for UdpSocket {
     fn poll_send(
-        &mut self,
+        &self,
         state: &udp::UdpState,
         cx: &mut Context,
         transmits: &[proto::Transmit],

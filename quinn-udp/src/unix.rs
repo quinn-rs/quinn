@@ -6,7 +6,10 @@ use std::{
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
-    sync::atomic::{AtomicBool, AtomicUsize},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize},
+        Mutex,
+    },
     time::Instant,
 };
 
@@ -26,14 +29,14 @@ type IpTosTy = libc::c_int;
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocketState {
-    last_send_error: Instant,
+    last_send_error: Mutex<Instant>,
 }
 
 impl UdpSocketState {
     pub fn new() -> Self {
         let now = Instant::now();
         Self {
-            last_send_error: now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now),
+            last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
         }
     }
 
@@ -42,12 +45,12 @@ impl UdpSocketState {
     }
 
     pub fn send(
-        &mut self,
+        &self,
         socket: UdpSockRef<'_>,
         state: &UdpState,
         transmits: &[Transmit],
     ) -> Result<usize, io::Error> {
-        send(state, socket.0, &mut self.last_send_error, transmits)
+        send(state, socket.0, &self.last_send_error, transmits)
     }
 
     pub fn recv(
@@ -148,7 +151,7 @@ fn send(
     #[allow(unused_variables)] // only used on Linux
     state: &UdpState,
     io: SockRef<'_>,
-    last_send_error: &mut Instant,
+    last_send_error: &Mutex<Instant>,
     transmits: &[Transmit],
 ) -> io::Result<usize> {
     #[allow(unused_mut)] // only mutable on FeeBSD
@@ -252,7 +255,7 @@ fn send(
 fn send(
     state: &UdpState,
     io: SockRef<'_>,
-    last_send_error: &mut Instant,
+    last_send_error: &Mutex<Instant>,
     transmits: &[Transmit],
 ) -> io::Result<usize> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
