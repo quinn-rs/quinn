@@ -5,7 +5,10 @@ use std::os::unix::io::AsRawFd;
 use std::os::windows::io::AsRawSocket;
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
-    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
+    sync::{
+        atomic::{AtomicBool, AtomicUsize, Ordering},
+        Mutex,
+    },
     time::{Duration, Instant},
 };
 
@@ -123,11 +126,12 @@ const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
 /// Logging will only be performed if at least [`IO_ERROR_LOG_INTERVAL`]
 /// has elapsed since the last error was logged.
 fn log_sendmsg_error(
-    last_send_error: &mut Instant,
+    last_send_error: &Mutex<Instant>,
     err: impl core::fmt::Debug,
     transmit: &Transmit,
 ) {
     let now = Instant::now();
+    let last_send_error = &mut *last_send_error.lock().expect("poisend lock");
     if now.saturating_duration_since(*last_send_error) > IO_ERROR_LOG_INTERVAL {
         *last_send_error = now;
         warn!(
