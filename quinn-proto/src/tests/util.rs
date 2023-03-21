@@ -292,33 +292,39 @@ impl TestEndpoint {
             self.outbound.extend(split_transmit(x));
         }
 
-        let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
-        for (ch, conn) in self.connections.iter_mut() {
-            if self.timeout.map_or(false, |x| x <= now) {
-                self.timeout = None;
-                conn.handle_timeout(now);
-            }
-
-            for (_, mut events) in self.conn_events.drain() {
-                for event in events.drain(..) {
-                    conn.handle_event(event);
+        loop {
+            let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
+            for (ch, conn) in self.connections.iter_mut() {
+                if self.timeout.map_or(false, |x| x <= now) {
+                    self.timeout = None;
+                    conn.handle_timeout(now);
                 }
+
+                for (_, mut events) in self.conn_events.drain() {
+                    for event in events.drain(..) {
+                        conn.handle_event(event);
+                    }
+                }
+
+                while let Some(event) = conn.poll_endpoint_events() {
+                    endpoint_events.push((*ch, event));
+                }
+
+                while let Some(x) = conn.poll_transmit(now, MAX_DATAGRAMS) {
+                    self.outbound.extend(split_transmit(x));
+                }
+                self.timeout = conn.poll_timeout();
             }
 
-            while let Some(event) = conn.poll_endpoint_events() {
-                endpoint_events.push((*ch, event));
+            if endpoint_events.is_empty() {
+                break;
             }
 
-            while let Some(x) = conn.poll_transmit(now, MAX_DATAGRAMS) {
-                self.outbound.extend(split_transmit(x));
-            }
-            self.timeout = conn.poll_timeout();
-        }
-
-        for (ch, event) in endpoint_events {
-            if let Some(event) = self.handle_event(ch, event) {
-                if let Some(conn) = self.connections.get_mut(&ch) {
-                    conn.handle_event(event);
+            for (ch, event) in endpoint_events {
+                if let Some(event) = self.handle_event(ch, event) {
+                    if let Some(conn) = self.connections.get_mut(&ch) {
+                        conn.handle_event(event);
+                    }
                 }
             }
         }
