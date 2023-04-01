@@ -254,22 +254,30 @@ async fn zero_rtt() {
     let _guard = subscribe();
     let endpoint = endpoint();
 
-    const MSG: &[u8] = b"goodbye!";
+    const MSG0: &[u8] = b"zero";
+    const MSG1: &[u8] = b"one";
     let endpoint2 = endpoint.clone();
     tokio::spawn(async move {
         for _ in 0..2 {
             let incoming = endpoint2.accept().await.unwrap();
-            let connection = incoming.into_0rtt().unwrap_or_else(|_| unreachable!()).0;
+            let (connection, established) = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
             let c = connection.clone();
             tokio::spawn(async move {
                 while let Ok(mut x) = c.accept_uni().await {
                     let msg = x.read_to_end(usize::max_value()).await.unwrap();
-                    assert_eq!(msg, MSG);
+                    assert_eq!(msg, MSG0);
                 }
             });
+            info!("sending 0.5-RTT");
             let mut s = connection.open_uni().await.expect("open_uni");
-            s.write_all(MSG).await.expect("write");
+            s.write_all(MSG0).await.expect("write");
             s.finish().await.expect("finish");
+            established.await;
+            info!("sending 1-RTT");
+            let mut s = connection.open_uni().await.expect("open_uni");
+            s.write_all(MSG1).await.expect("write");
+            // The peer might close the connection before ACKing
+            let _ = s.finish().await;
         }
     });
 
@@ -282,17 +290,23 @@ async fn zero_rtt() {
         .await
         .expect("connect");
 
-    tokio::spawn(async move {
-        // Buy time for the driver to process the server's NewSessionTicket
-        tokio::time::sleep_until(Instant::now() + Duration::from_millis(100)).await;
+    {
         let mut stream = connection.accept_uni().await.expect("incoming streams");
         let msg = stream
             .read_to_end(usize::max_value())
             .await
             .expect("read_to_end");
-        assert_eq!(msg, MSG);
-    });
-    endpoint.wait_idle().await;
+        assert_eq!(msg, MSG0);
+        // Read a 1-RTT message to ensure the handshake completes fully, allowing the server's
+        // NewSessionTicket frame to be received.
+        let mut stream = connection.accept_uni().await.expect("incoming streams");
+        let msg = stream
+            .read_to_end(usize::max_value())
+            .await
+            .expect("read_to_end");
+        assert_eq!(msg, MSG1);
+        drop(connection);
+    }
 
     info!("initial connection complete");
 
@@ -305,7 +319,8 @@ async fn zero_rtt() {
     let c = connection.clone();
     tokio::spawn(async move {
         let mut s = c.open_uni().await.expect("0-RTT open uni");
-        s.write_all(MSG).await.expect("0-RTT write");
+        info!("sending 0-RTT");
+        s.write_all(MSG0).await.expect("0-RTT write");
         s.finish().await.expect("0-RTT finish");
     });
 
@@ -314,10 +329,10 @@ async fn zero_rtt() {
         .read_to_end(usize::max_value())
         .await
         .expect("read_to_end");
-    assert_eq!(msg, MSG);
+    assert_eq!(msg, MSG0);
     assert!(zero_rtt.await);
 
-    drop(connection);
+    drop((stream, connection));
 
     endpoint.wait_idle().await;
 }
