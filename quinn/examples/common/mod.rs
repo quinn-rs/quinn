@@ -45,11 +45,25 @@ fn configure_client(server_certs: &[&[u8]]) -> Result<ClientConfig, Box<dyn Erro
         certs.add(&rustls::Certificate(cert.to_vec()))?;
     }
 
-    Ok(ClientConfig::with_root_certificates(certs))
+    let mut client_config = ClientConfig::with_root_certificates(certs);
+    enable_mtud_if_supported(&mut client_config);
+
+    Ok(client_config)
 }
 
+/// Enables MTUD if supported by the operating system
+#[cfg(any(windows, os = "linux"))]
+pub fn enable_mtud_if_supported(client_config: &mut ClientConfig) {
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.mtu_discovery_config(Some(quinn::MtuDiscoveryConfig::default()));
+    client_config.transport_config(Arc::new(transport_config));
+}
+
+/// Enables MTUD if supported by the operating system
+#[cfg(not(any(windows, os = "linux")))]
+pub fn enable_mtud_if_supported(_client_config: &mut ClientConfig) {}
+
 /// Returns default server configuration along with its certificate.
-#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let cert_der = cert.serialize_der().unwrap();
@@ -58,9 +72,10 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let cert_chain = vec![rustls::Certificate(cert_der.clone())];
 
     let mut server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
-    Arc::get_mut(&mut server_config.transport)
-        .unwrap()
-        .max_concurrent_uni_streams(0_u8.into());
+    let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+    transport_config.max_concurrent_uni_streams(0_u8.into());
+    #[cfg(any(windows, os = "linux"))]
+    transport_config.mtu_discovery_config(Some(quinn::MtuDiscoveryConfig::default()));
 
     Ok((server_config, cert_der))
 }

@@ -129,6 +129,8 @@ async fn run(opt: Opt) -> Result<()> {
     }
 
     let mut transport = quinn::TransportConfig::default();
+    #[cfg(any(windows, os = "linux"))]
+    transport.mtu_discovery_config(Some(quinn::MtuDiscoveryConfig::default()));
     transport.initial_max_udp_payload_size(opt.initial_max_udp_payload_size);
 
     let mut cfg = if opt.no_protection {
