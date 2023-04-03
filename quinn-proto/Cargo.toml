@@ -40,7 +40,7 @@ webpki = { version = "0.22", default-features = false, optional = true }
 
 [dev-dependencies]
 assert_matches = "1.1"
-hex-literal = "0.3.0"
+hex-literal = "0.4.0"
 rcgen = "0.10.0"
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
 lazy_static = "1"
