@@ -131,9 +131,10 @@ async fn run(options: Opt) -> Result<()> {
     }
 
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
-    Arc::get_mut(&mut server_config.transport)
-        .unwrap()
-        .max_concurrent_uni_streams(0_u8.into());
+    let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+    transport_config.max_concurrent_uni_streams(0_u8.into());
+    #[cfg(any(windows, os = "linux"))]
+    transport_config.mtu_discovery_config(Some(quinn::MtuDiscoveryConfig::default()));
     if options.stateless_retry {
         server_config.use_retry(true);
     }
