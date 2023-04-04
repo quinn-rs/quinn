@@ -466,7 +466,7 @@ unsafe fn recvmmsg_fallback(
 }
 
 /// Returns the platforms UDP socket capabilities
-pub fn udp_state() -> UdpState {
+pub(crate) fn udp_state() -> UdpState {
     UdpState {
         max_gso_segments: AtomicUsize::new(gso::max_gso_segments()),
         gro_segments: gro::gro_segments(),
@@ -660,10 +660,10 @@ fn decode_recv(
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 // Chosen somewhat arbitrarily; might benefit from additional tuning.
-pub const BATCH_SIZE: usize = 32;
+pub(crate) const BATCH_SIZE: usize = 32;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-pub const BATCH_SIZE: usize = 1;
+pub(crate) const BATCH_SIZE: usize = 1;
 
 #[cfg(target_os = "linux")]
 mod gso {
@@ -671,7 +671,7 @@ mod gso {
 
     /// Checks whether GSO support is available by setting the UDP_SEGMENT
     /// option on a socket
-    pub fn max_gso_segments() -> usize {
+    pub(crate) fn max_gso_segments() -> usize {
         const GSO_SIZE: libc::c_int = 1500;
 
         let socket = match std::net::UdpSocket::bind("[::]:0")
@@ -689,7 +689,7 @@ mod gso {
         }
     }
 
-    pub fn set_segment_size(encoder: &mut cmsg::Encoder, segment_size: u16) {
+    pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder, segment_size: u16) {
         encoder.push(libc::SOL_UDP, libc::UDP_SEGMENT, segment_size);
     }
 }
@@ -698,11 +698,11 @@ mod gso {
 mod gso {
     use super::*;
 
-    pub fn max_gso_segments() -> usize {
+    pub(super) fn max_gso_segments() -> usize {
         1
     }
 
-    pub fn set_segment_size(_encoder: &mut cmsg::Encoder, _segment_size: u16) {
+    pub(super) fn set_segment_size(_encoder: &mut cmsg::Encoder, _segment_size: u16) {
         panic!("Setting a segment size is not supported on current platform");
     }
 }
@@ -711,7 +711,7 @@ mod gso {
 mod gro {
     use super::*;
 
-    pub fn gro_segments() -> usize {
+    pub(crate) fn gro_segments() -> usize {
         let socket = match std::net::UdpSocket::bind("[::]:0")
             .or_else(|_| std::net::UdpSocket::bind("127.0.0.1:0"))
         {
@@ -759,7 +759,7 @@ const OPTION_ON: libc::c_int = 1;
 
 #[cfg(not(target_os = "linux"))]
 mod gro {
-    pub fn gro_segments() -> usize {
+    pub(super) fn gro_segments() -> usize {
         1
     }
 }
