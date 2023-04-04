@@ -1,4 +1,5 @@
 //! Uniform interface to send/recv UDP packets with ECN information.
+#![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
 #[cfg(unix)]

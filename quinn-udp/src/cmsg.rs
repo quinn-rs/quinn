@@ -2,13 +2,13 @@ use std::{mem, ptr};
 
 #[derive(Copy, Clone)]
 #[repr(align(8))] // Conservative bound for align_of<cmsghdr>
-pub struct Aligned<T>(pub T);
+pub(crate) struct Aligned<T>(pub(crate) T);
 
 /// Helper to encode a series of control messages ("cmsgs") to a buffer for use in `sendmsg`.
 ///
 /// The operation must be "finished" for the msghdr to be usable, either by calling `finish`
 /// explicitly or by dropping the `Encoder`.
-pub struct Encoder<'a> {
+pub(crate) struct Encoder<'a> {
     hdr: &'a mut libc::msghdr,
     cmsg: Option<&'a mut libc::cmsghdr>,
     len: usize,
@@ -19,7 +19,7 @@ impl<'a> Encoder<'a> {
     /// - `hdr.msg_control` must be a suitably aligned pointer to `hdr.msg_controllen` bytes that
     ///   can be safely written
     /// - The `Encoder` must be dropped before `hdr` is passed to a system call, and must not be leaked.
-    pub unsafe fn new(hdr: &'a mut libc::msghdr) -> Self {
+    pub(crate) unsafe fn new(hdr: &'a mut libc::msghdr) -> Self {
         Self {
             cmsg: libc::CMSG_FIRSTHDR(hdr).as_mut(),
             hdr,
@@ -32,7 +32,7 @@ impl<'a> Encoder<'a> {
     /// # Panics
     /// - If insufficient buffer space remains.
     /// - If `T` has stricter alignment requirements than `cmsghdr`
-    pub fn push<T: Copy + ?Sized>(&mut self, level: libc::c_int, ty: libc::c_int, value: T) {
+    pub(crate) fn push<T: Copy + ?Sized>(&mut self, level: libc::c_int, ty: libc::c_int, value: T) {
         assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
         let space = unsafe { libc::CMSG_SPACE(mem::size_of_val(&value) as _) as usize };
         #[allow(clippy::unnecessary_cast)] // hdr.msg_controllen defined as size_t
@@ -56,7 +56,7 @@ impl<'a> Encoder<'a> {
     }
 
     /// Finishes appending control messages to the buffer
-    pub fn finish(self) {
+    pub(crate) fn finish(self) {
         // Delegates to the `Drop` impl
     }
 }
@@ -72,7 +72,7 @@ impl<'a> Drop for Encoder<'a> {
 /// # Safety
 ///
 /// `cmsg` must refer to a cmsg containing a payload of type `T`
-pub unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
+pub(crate) unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
     assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
     #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
     {
@@ -84,7 +84,7 @@ pub unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
     ptr::read(libc::CMSG_DATA(cmsg) as *const T)
 }
 
-pub struct Iter<'a> {
+pub(crate) struct Iter<'a> {
     hdr: &'a libc::msghdr,
     cmsg: Option<&'a libc::cmsghdr>,
 }
@@ -95,7 +95,7 @@ impl<'a> Iter<'a> {
     /// `hdr.msg_control` must point to memory outliving `'a` which can be soundly read for the
     /// lifetime of the constructed `Iter` and contains a buffer of cmsgs, i.e. is aligned for
     /// `cmsghdr`, is fully initialized, and has correct internal links.
-    pub unsafe fn new(hdr: &'a libc::msghdr) -> Self {
+    pub(crate) unsafe fn new(hdr: &'a libc::msghdr) -> Self {
         Self {
             hdr,
             cmsg: libc::CMSG_FIRSTHDR(hdr).as_ref(),
