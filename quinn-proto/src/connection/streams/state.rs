@@ -20,6 +20,7 @@ use crate::{
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
 };
 
+#[allow(unreachable_pub)] // fuzzing only
 pub struct StreamsState {
     pub(super) side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
@@ -91,6 +92,7 @@ pub struct StreamsState {
 }
 
 impl StreamsState {
+    #[allow(unreachable_pub)] // fuzzing only
     pub fn new(
         side: Side,
         max_remote_uni: VarInt,
@@ -141,7 +143,7 @@ impl StreamsState {
         this
     }
 
-    pub fn set_params(&mut self, params: &TransportParameters) {
+    pub(crate) fn set_params(&mut self, params: &TransportParameters) {
         self.initial_max_stream_data_uni = params.initial_max_stream_data_uni;
         self.initial_max_stream_data_bidi_local = params.initial_max_stream_data_bidi_local;
         self.initial_max_stream_data_bidi_remote = params.initial_max_stream_data_bidi_remote;
@@ -169,7 +171,7 @@ impl StreamsState {
         self.max_streams_dirty[dir as usize] = new_count != 0;
     }
 
-    pub fn zero_rtt_rejected(&mut self) {
+    pub(crate) fn zero_rtt_rejected(&mut self) {
         // Revert to initial state for outgoing streams
         for dir in Dir::iter() {
             for i in 0..self.next[dir as usize] {
@@ -198,7 +200,7 @@ impl StreamsState {
     /// Process incoming stream frame
     ///
     /// If successful, returns whether a `MAX_DATA` frame needs to be transmitted
-    pub fn received(
+    pub(crate) fn received(
         &mut self,
         frame: frame::Stream,
         payload_len: usize,
@@ -244,6 +246,7 @@ impl StreamsState {
     /// Process incoming RESET_STREAM frame
     ///
     /// If successful, returns whether a `MAX_DATA` frame needs to be transmitted
+    #[allow(unreachable_pub)] // fuzzing only
     pub fn received_reset(
         &mut self,
         frame: frame::ResetStream,
@@ -299,6 +302,7 @@ impl StreamsState {
     }
 
     /// Process incoming `STOP_SENDING` frame
+    #[allow(unreachable_pub)] // fuzzing only
     pub fn received_stop_sending(&mut self, id: StreamId, error_code: VarInt) {
         let stream = match self.send.get_mut(&id) {
             Some(ss) => ss,
@@ -312,7 +316,7 @@ impl StreamsState {
         }
     }
 
-    pub fn reset_acked(&mut self, id: StreamId) {
+    pub(crate) fn reset_acked(&mut self, id: StreamId) {
         match self.send.entry(id) {
             hash_map::Entry::Vacant(_) => {}
             hash_map::Entry::Occupied(e) => {
@@ -325,7 +329,7 @@ impl StreamsState {
     }
 
     /// Whether any stream data is queued, regardless of control frames
-    pub fn can_send_stream_data(&self) -> bool {
+    pub(crate) fn can_send_stream_data(&self) -> bool {
         // Reset streams may linger in the pending stream list, but will never produce stream frames
         self.pending.iter().any(|level| {
             level
@@ -337,13 +341,13 @@ impl StreamsState {
     }
 
     /// Whether MAX_STREAM_DATA frames could be sent for stream `id`
-    pub fn can_send_flow_control(&self, id: StreamId) -> bool {
+    pub(crate) fn can_send_flow_control(&self, id: StreamId) -> bool {
         self.recv
             .get(&id)
             .map_or(false, |s| s.receiving_unknown_size())
     }
 
-    pub fn write_control_frames(
+    pub(in crate::connection) fn write_control_frames(
         &mut self,
         buf: &mut Vec<u8>,
         pending: &mut Retransmits,
@@ -469,7 +473,11 @@ impl StreamsState {
         }
     }
 
-    pub fn write_stream_frames(&mut self, buf: &mut Vec<u8>, max_buf_size: usize) -> StreamMetaVec {
+    pub(crate) fn write_stream_frames(
+        &mut self,
+        buf: &mut Vec<u8>,
+        max_buf_size: usize,
+    ) -> StreamMetaVec {
         let mut stream_frames = StreamMetaVec::new();
         while buf.len() + frame::Stream::SIZE_BOUND < max_buf_size {
             if max_buf_size
@@ -580,7 +588,7 @@ impl StreamsState {
         }
     }
 
-    pub fn received_ack_of(&mut self, frame: frame::StreamMeta) {
+    pub(crate) fn received_ack_of(&mut self, frame: frame::StreamMeta) {
         let mut entry = match self.send.entry(frame.id) {
             hash_map::Entry::Vacant(_) => return,
             hash_map::Entry::Occupied(e) => e,
@@ -602,7 +610,7 @@ impl StreamsState {
         self.events.push_back(StreamEvent::Finished { id });
     }
 
-    pub fn retransmit(&mut self, frame: frame::StreamMeta) {
+    pub(crate) fn retransmit(&mut self, frame: frame::StreamMeta) {
         let stream = match self.send.get_mut(&frame.id) {
             // Loss of data on a closed stream is a noop
             None => return,
@@ -615,7 +623,7 @@ impl StreamsState {
         stream.pending.retransmit(frame.offsets);
     }
 
-    pub fn retransmit_all_for_0rtt(&mut self) {
+    pub(crate) fn retransmit_all_for_0rtt(&mut self) {
         for dir in Dir::iter() {
             for index in 0..self.next[dir as usize] {
                 let id = StreamId::new(Side::Client, dir, index);
@@ -633,7 +641,11 @@ impl StreamsState {
         }
     }
 
-    pub fn received_max_streams(&mut self, dir: Dir, count: u64) -> Result<(), TransportError> {
+    pub(crate) fn received_max_streams(
+        &mut self,
+        dir: Dir,
+        count: u64,
+    ) -> Result<(), TransportError> {
         if count > MAX_STREAM_COUNT {
             return Err(TransportError::FRAME_ENCODING_ERROR(
                 "unrepresentable stream limit",
@@ -650,11 +662,11 @@ impl StreamsState {
     }
 
     /// Handle increase to connection-level flow control limit
-    pub fn received_max_data(&mut self, n: VarInt) {
+    pub(crate) fn received_max_data(&mut self, n: VarInt) {
         self.max_data = self.max_data.max(n.into());
     }
 
-    pub fn received_max_stream_data(
+    pub(crate) fn received_max_stream_data(
         &mut self,
         id: StreamId,
         offset: u64,
@@ -691,12 +703,12 @@ impl StreamsState {
     }
 
     /// Returns the maximum amount of data this is allowed to be written on the connection
-    pub fn write_limit(&self) -> u64 {
+    pub(crate) fn write_limit(&self) -> u64 {
         (self.max_data - self.data_sent).min(self.send_window - self.unacked_data)
     }
 
     /// Yield stream events
-    pub fn poll(&mut self) -> Option<StreamEvent> {
+    pub(crate) fn poll(&mut self) -> Option<StreamEvent> {
         if let Some(dir) = Dir::iter().find(|&i| mem::replace(&mut self.opened[i as usize], false))
         {
             return Some(StreamEvent::Opened { dir });
@@ -723,7 +735,7 @@ impl StreamsState {
         self.events.pop_front()
     }
 
-    pub fn take_max_streams_dirty(&mut self, dir: Dir) -> bool {
+    pub(crate) fn take_max_streams_dirty(&mut self, dir: Dir) -> bool {
         mem::replace(&mut self.max_streams_dirty[dir as usize], false)
     }
 
@@ -753,23 +765,23 @@ impl StreamsState {
     }
 
     /// Whether a locally initiated stream has never been open
-    pub fn is_local_unopened(&self, id: StreamId) -> bool {
+    pub(crate) fn is_local_unopened(&self, id: StreamId) -> bool {
         id.index() >= self.next[id.dir() as usize]
     }
 
-    pub fn set_max_concurrent(&mut self, dir: Dir, count: VarInt) {
+    pub(crate) fn set_max_concurrent(&mut self, dir: Dir, count: VarInt) {
         self.flow_control_adjusted = true;
         self.max_concurrent_remote_count[dir as usize] = count.into();
         self.ensure_remote_streams(dir);
     }
 
-    pub fn max_concurrent(&self, dir: Dir) -> u64 {
+    pub(crate) fn max_concurrent(&self, dir: Dir) -> u64 {
         self.allocated_remote_count[dir as usize]
     }
 
     /// Set the receive_window and returns wether the receive_window has been
     /// expanded or shrunk: true if expanded, false if shrunk.
-    pub fn set_receive_window(&mut self, receive_window: VarInt) -> bool {
+    pub(crate) fn set_receive_window(&mut self, receive_window: VarInt) -> bool {
         let receive_window = receive_window.into();
         let mut expanded = false;
         if receive_window > self.receive_window {

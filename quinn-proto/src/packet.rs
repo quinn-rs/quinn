@@ -18,14 +18,16 @@ use crate::{
 // across QUIC versions), which gives us the destination CID and allows us
 // to inspect the version and packet type (which depends on the version).
 // This information allows us to fully decode and decrypt the packet.
+#[allow(unreachable_pub)] // fuzzing only
 #[derive(Debug)]
 pub struct PartialDecode {
     plain_header: PlainHeader,
     buf: io::Cursor<BytesMut>,
 }
 
+#[allow(clippy::len_without_is_empty)]
 impl PartialDecode {
-    #![allow(clippy::len_without_is_empty)]
+    #[allow(unreachable_pub)] // fuzzing only
     pub fn new(
         bytes: BytesMut,
         local_cid_len: usize,
@@ -101,6 +103,7 @@ impl PartialDecode {
     }
 
     /// Length of QUIC packet being decoded
+    #[allow(unreachable_pub)] // fuzzing only
     pub fn len(&self) -> usize {
         self.buf.get_ref().len()
     }
@@ -222,7 +225,7 @@ pub(crate) struct Packet {
 }
 
 impl Packet {
-    pub fn reserved_bits_valid(&self) -> bool {
+    pub(crate) fn reserved_bits_valid(&self) -> bool {
         let mask = match self.header {
             Header::Short { .. } => SHORT_RESERVED_BITS,
             _ => LONG_RESERVED_BITS,
@@ -434,8 +437,8 @@ impl Header {
 }
 
 pub(crate) struct PartialEncode {
-    pub start: usize,
-    pub header_len: usize,
+    pub(crate) start: usize,
+    pub(crate) header_len: usize,
     // Packet number length, payload length needed
     pn: Option<(usize, bool)>,
 }
@@ -751,6 +754,7 @@ pub(crate) enum LongType {
     ZeroRtt,
 }
 
+#[allow(unreachable_pub)] // fuzzing only
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum PacketDecodeError {
     #[error("unsupported version {version:x}")]

@@ -12,16 +12,16 @@ use crate::{
 };
 
 pub(super) struct PacketBuilder {
-    pub datagram_start: usize,
-    pub space: SpaceId,
-    pub partial_encode: PartialEncode,
-    pub ack_eliciting: bool,
-    pub exact_number: u64,
-    pub short_header: bool,
-    pub min_size: usize,
-    pub max_size: usize,
-    pub tag_len: usize,
-    pub span: tracing::Span,
+    pub(super) datagram_start: usize,
+    pub(super) space: SpaceId,
+    pub(super) partial_encode: PartialEncode,
+    pub(super) ack_eliciting: bool,
+    pub(super) exact_number: u64,
+    pub(super) short_header: bool,
+    pub(super) min_size: usize,
+    pub(super) max_size: usize,
+    pub(super) tag_len: usize,
+    pub(super) span: tracing::Span,
 }
 
 impl PacketBuilder {
@@ -29,7 +29,7 @@ impl PacketBuilder {
     ///
     /// Marks the connection drained and returns `None` if the confidentiality limit would be
     /// violated.
-    pub fn new(
+    pub(super) fn new(
         now: Instant,
         space_id: SpaceId,
         buffer: &mut Vec<u8>,
@@ -156,13 +156,13 @@ impl PacketBuilder {
         })
     }
 
-    pub fn pad_to(&mut self, min_size: u16) {
+    pub(super) fn pad_to(&mut self, min_size: u16) {
         let prev = self.min_size;
         self.min_size = self.datagram_start + (min_size as usize) - self.tag_len;
         debug_assert!(self.min_size >= prev, "padding must not shrink datagram");
     }
 
-    pub fn finish_and_track(
+    pub(super) fn finish_and_track(
         self,
         now: Instant,
         conn: &mut Connection,
@@ -210,7 +210,7 @@ impl PacketBuilder {
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
-    pub fn finish(self, conn: &mut Connection, buffer: &mut Vec<u8>) -> (usize, bool) {
+    pub(super) fn finish(self, conn: &mut Connection, buffer: &mut Vec<u8>) -> (usize, bool) {
         let pad = buffer.len() < self.min_size;
         if pad {
             trace!("PADDING * {}", self.min_size - buffer.len());

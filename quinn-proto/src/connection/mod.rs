@@ -71,9 +71,10 @@ mod streams;
 pub use streams::StreamsState;
 #[cfg(not(fuzzing))]
 use streams::StreamsState;
+//pub(crate) use streams::{ByteSlice, BytesArray};
 pub use streams::{
-    ByteSlice, BytesArray, BytesSource, Chunks, FinishError, ReadError, ReadableError, RecvStream,
-    SendStream, ShouldTransmit, StreamEvent, Streams, UnknownStream, WriteError, Written,
+    BytesSource, Chunks, FinishError, ReadError, ReadableError, RecvStream, SendStream,
+    StreamEvent, Streams, UnknownStream, WriteError, Written,
 };
 
 mod timer;
@@ -3304,6 +3305,7 @@ impl From<ConnectionError> for io::Error {
     }
 }
 
+#[allow(unreachable_pub)] // fuzzing only
 #[derive(Clone)]
 pub enum State {
     Handshake(state::Handshake),
@@ -3341,25 +3343,27 @@ impl State {
 mod state {
     use super::*;
 
+    #[allow(unreachable_pub)] // fuzzing only
     #[derive(Clone)]
     pub struct Handshake {
         /// Whether the remote CID has been set by the peer yet
         ///
         /// Always set for servers
-        pub rem_cid_set: bool,
+        pub(super) rem_cid_set: bool,
         /// Stateless retry token received in the first Initial by a server.
         ///
         /// Must be present in every Initial. Always empty for clients.
-        pub expected_token: Bytes,
+        pub(super) expected_token: Bytes,
         /// First cryptographic message
         ///
         /// Only set for clients
-        pub client_hello: Option<Bytes>,
+        pub(super) client_hello: Option<Bytes>,
     }
 
+    #[allow(unreachable_pub)] // fuzzing only
     #[derive(Clone)]
     pub struct Closed {
-        pub reason: Close,
+        pub(super) reason: Close,
     }
 }
 
@@ -3393,7 +3397,7 @@ struct InFlight {
 }
 
 impl InFlight {
-    pub fn new() -> Self {
+    fn new() -> Self {
         Self {
             bytes: 0,
             ack_eliciting: 0,
@@ -3468,7 +3472,7 @@ struct SentFrames {
 
 impl SentFrames {
     /// Returns whether the packet contains only ACKs
-    pub fn is_ack_only(&self, streams: &StreamsState) -> bool {
+    fn is_ack_only(&self, streams: &StreamsState) -> bool {
         self.largest_acked.is_some()
             && !self.non_retransmits
             && self.stream_frames.is_empty()

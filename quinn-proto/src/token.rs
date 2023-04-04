@@ -13,17 +13,17 @@ use crate::{
     RESET_TOKEN_SIZE,
 };
 
-pub struct RetryToken<'a> {
+pub(crate) struct RetryToken<'a> {
     /// The destination connection ID set in the very first packet from the client
-    pub orig_dst_cid: ConnectionId,
+    pub(crate) orig_dst_cid: ConnectionId,
     /// The time at which this token was issued
-    pub issued: SystemTime,
+    pub(crate) issued: SystemTime,
     /// Random bytes for deriving AEAD key
-    pub random_bytes: &'a [u8],
+    pub(crate) random_bytes: &'a [u8],
 }
 
 impl<'a> RetryToken<'a> {
-    pub fn encode(
+    pub(crate) fn encode(
         &self,
         key: &dyn HandshakeTokenKey,
         address: &SocketAddr,
@@ -51,7 +51,7 @@ impl<'a> RetryToken<'a> {
         token
     }
 
-    pub fn from_bytes(
+    pub(crate) fn from_bytes(
         key: &dyn HandshakeTokenKey,
         address: &SocketAddr,
         retry_src_cid: &ConnectionId,
@@ -100,7 +100,7 @@ impl<'a> RetryToken<'a> {
     }
 
     const MAX_ADDITIONAL_DATA_SIZE: usize = 39; // max(ipv4, ipv6) + port + retry_src_cid
-    pub const RANDOM_BYTES_LEN: usize = 32;
+    pub(crate) const RANDOM_BYTES_LEN: usize = 32;
 }
 
 /// Stateless reset token
@@ -108,7 +108,7 @@ impl<'a> RetryToken<'a> {
 /// Used for an endpoint to securely communicate that it has lost state for a connection.
 #[allow(clippy::derived_hash_with_manual_eq)] // Custom PartialEq impl matches derived semantics
 #[derive(Debug, Copy, Clone, Hash)]
-pub struct ResetToken([u8; RESET_TOKEN_SIZE]);
+pub(crate) struct ResetToken([u8; RESET_TOKEN_SIZE]);
 
 impl ResetToken {
     pub(crate) fn new(key: &dyn HmacKey, id: &ConnectionId) -> Self {

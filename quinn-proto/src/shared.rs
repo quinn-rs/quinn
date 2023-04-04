@@ -164,8 +164,8 @@ impl EcnCodepoint {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct IssuedCid {
-    pub sequence: u64,
-    pub id: ConnectionId,
-    pub reset_token: ResetToken,
+pub(crate) struct IssuedCid {
+    pub(crate) sequence: u64,
+    pub(crate) id: ConnectionId,
+    pub(crate) reset_token: ResetToken,
 }

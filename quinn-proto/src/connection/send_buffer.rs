@@ -6,7 +6,7 @@ use crate::{range_set::RangeSet, VarInt};
 
 /// Buffer of outgoing retransmittable stream data
 #[derive(Default, Debug)]
-pub struct SendBuffer {
+pub(super) struct SendBuffer {
     /// Data queued by the application but not yet acknowledged. May or may not have been sent.
     unacked_segments: VecDeque<Bytes>,
     /// Total size of `unacked_segments`
@@ -27,19 +27,19 @@ pub struct SendBuffer {
 
 impl SendBuffer {
     /// Construct an empty buffer at the initial offset
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self::default()
     }
 
     /// Append application data to the end of the stream
-    pub fn write(&mut self, data: Bytes) {
+    pub(super) fn write(&mut self, data: Bytes) {
         self.unacked_len += data.len();
         self.offset += data.len() as u64;
         self.unacked_segments.push_back(data);
     }
 
     /// Discard a range of acknowledged stream data
-    pub fn ack(&mut self, mut range: Range<u64>) {
+    pub(super) fn ack(&mut self, mut range: Range<u64>) {
         // Clamp the range to data which is still tracked
         let base_offset = self.offset - self.unacked_len as u64;
         range.start = base_offset.max(range.start);
@@ -86,7 +86,7 @@ impl SendBuffer {
     /// - The second return value indicates whether the length needs to be encoded
     ///   in the STREAM frames metadata (`true`), or whether it can be omitted
     ///   since the selected range will fill the whole packet.
-    pub fn poll_transmit(&mut self, mut max_len: usize) -> (Range<u64>, bool) {
+    pub(super) fn poll_transmit(&mut self, mut max_len: usize) -> (Range<u64>, bool) {
         debug_assert!(max_len >= 8 + 8);
         let mut encode_length = false;
 
@@ -136,7 +136,7 @@ impl SendBuffer {
     /// in noncontiguous fashion in the send buffer. In this case callers
     /// should call the function again with an incremented start offset to
     /// retrieve more data.
-    pub fn get(&self, offsets: Range<u64>) -> &[u8] {
+    pub(super) fn get(&self, offsets: Range<u64>) -> &[u8] {
         let base_offset = self.offset - self.unacked_len as u64;
 
         let mut segment_offset = base_offset;
@@ -156,36 +156,36 @@ impl SendBuffer {
     }
 
     /// Queue a range of sent but unacknowledged data to be retransmitted
-    pub fn retransmit(&mut self, range: Range<u64>) {
+    pub(super) fn retransmit(&mut self, range: Range<u64>) {
         debug_assert!(range.end <= self.unsent, "unsent data can't be lost");
         self.retransmits.insert(range);
     }
 
-    pub fn retransmit_all_for_0rtt(&mut self) {
+    pub(super) fn retransmit_all_for_0rtt(&mut self) {
         debug_assert_eq!(self.offset, self.unacked_len as u64);
         self.unsent = 0;
     }
 
     /// First stream offset unwritten by the application, i.e. the offset that the next write will
     /// begin at
-    pub fn offset(&self) -> u64 {
+    pub(super) fn offset(&self) -> u64 {
         self.offset
     }
 
     /// Whether all sent data has been acknowledged
-    pub fn is_fully_acked(&self) -> bool {
+    pub(super) fn is_fully_acked(&self) -> bool {
         self.unacked_len == 0
     }
 
     /// Whether there's data to send
     ///
     /// There may be sent unacknowledged data even when this is false.
-    pub fn has_unsent_data(&self) -> bool {
+    pub(super) fn has_unsent_data(&self) -> bool {
         self.unsent != self.offset || !self.retransmits.is_empty()
     }
 
     /// Compute the amount of data that hasn't been acknowledged
-    pub fn unacked(&self) -> u64 {
+    pub(super) fn unacked(&self) -> u64 {
         self.unacked_len as u64 - self.acks.iter().map(|x| x.end - x.start).sum::<u64>()
     }
 }

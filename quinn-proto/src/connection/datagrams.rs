@@ -98,7 +98,7 @@ pub(super) struct DatagramState {
 }
 
 impl DatagramState {
-    pub fn received(
+    pub(super) fn received(
         &mut self,
         datagram: Datagram,
         window: &Option<usize>,
@@ -127,7 +127,7 @@ impl DatagramState {
         Ok(was_empty)
     }
 
-    pub fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool {
+    pub(super) fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool {
         let datagram = match self.outgoing.pop_front() {
             Some(x) => x,
             None => return false,
@@ -145,7 +145,7 @@ impl DatagramState {
         true
     }
 
-    pub fn recv(&mut self) -> Option<Bytes> {
+    pub(super) fn recv(&mut self) -> Option<Bytes> {
         let x = self.incoming.pop_front()?.data;
         self.recv_buffered -= x.len();
         Some(x)

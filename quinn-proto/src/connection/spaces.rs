@@ -14,57 +14,57 @@ use crate::{
     shared::IssuedCid, Dir, StreamId, VarInt,
 };
 
-pub(crate) struct PacketSpace {
-    pub(crate) crypto: Option<Keys>,
-    pub(crate) dedup: Dedup,
+pub(super) struct PacketSpace {
+    pub(super) crypto: Option<Keys>,
+    pub(super) dedup: Dedup,
     /// Highest received packet number
-    pub(crate) rx_packet: u64,
+    pub(super) rx_packet: u64,
 
     /// Data to send
-    pub(crate) pending: Retransmits,
+    pub(super) pending: Retransmits,
     /// Packet numbers to acknowledge
-    pub(crate) pending_acks: PendingAcks,
+    pub(super) pending_acks: PendingAcks,
 
     /// The packet number of the next packet that will be sent, if any.
-    pub(crate) next_packet_number: u64,
+    pub(super) next_packet_number: u64,
     /// The largest packet number the remote peer acknowledged in an ACK frame.
-    pub(crate) largest_acked_packet: Option<u64>,
-    pub(crate) largest_acked_packet_sent: Instant,
+    pub(super) largest_acked_packet: Option<u64>,
+    pub(super) largest_acked_packet_sent: Instant,
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
-    pub(crate) sent_packets: BTreeMap<u64, SentPacket>,
+    pub(super) sent_packets: BTreeMap<u64, SentPacket>,
     /// Number of explicit congestion notification codepoints seen on incoming packets
-    pub(crate) ecn_counters: frame::EcnCounts,
+    pub(super) ecn_counters: frame::EcnCounts,
     /// Recent ECN counters sent by the peer in ACK frames
     ///
     /// Updated (and inspected) whenever we receive an ACK with a new highest acked packet
     /// number. Stored per-space to simplify verification, which would otherwise have difficulty
     /// distinguishing between ECN bleaching and counts having been updated by a near-simultaneous
     /// ACK already processed in another space.
-    pub(crate) ecn_feedback: frame::EcnCounts,
+    pub(super) ecn_feedback: frame::EcnCounts,
 
     /// Incoming cryptographic handshake stream
-    pub(crate) crypto_stream: Assembler,
+    pub(super) crypto_stream: Assembler,
     /// Current offset of outgoing cryptographic handshake stream
-    pub(crate) crypto_offset: u64,
+    pub(super) crypto_offset: u64,
 
     /// The time the most recently sent retransmittable packet was sent.
-    pub(crate) time_of_last_ack_eliciting_packet: Option<Instant>,
+    pub(super) time_of_last_ack_eliciting_packet: Option<Instant>,
     /// The time at which the earliest sent packet in this space will be considered lost based on
     /// exceeding the reordering window in time. Only set for packets numbered prior to a packet
     /// that has been acknowledged.
-    pub(crate) loss_time: Option<Instant>,
+    pub(super) loss_time: Option<Instant>,
     /// Number of tail loss probes to send
-    pub(crate) loss_probes: u32,
-    pub(crate) ping_pending: bool,
+    pub(super) loss_probes: u32,
+    pub(super) ping_pending: bool,
     /// Number of congestion control "in flight" bytes
-    pub(crate) in_flight: u64,
+    pub(super) in_flight: u64,
     /// Number of packets sent in the current key phase
-    pub(crate) sent_with_keys: u64,
+    pub(super) sent_with_keys: u64,
 }
 
 impl PacketSpace {
-    pub(crate) fn new(now: Instant) -> Self {
+    pub(super) fn new(now: Instant) -> Self {
         Self {
             crypto: None,
             dedup: Dedup::new(),
@@ -104,7 +104,7 @@ impl PacketSpace {
     /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
     /// in-flight data either, we're probably a client guarding against a handshake
     /// anti-amplification deadlock and we just make something up.
-    pub(crate) fn maybe_queue_probe(&mut self, streams: &StreamsState) {
+    pub(super) fn maybe_queue_probe(&mut self, streams: &StreamsState) {
         if self.loss_probes == 0 {
             return;
         }
@@ -130,7 +130,7 @@ impl PacketSpace {
         self.ping_pending = true;
     }
 
-    pub(crate) fn get_tx_number(&mut self) -> u64 {
+    pub(super) fn get_tx_number(&mut self) -> u64 {
         // TODO: Handle packet number overflow gracefully
         assert!(self.next_packet_number < 2u64.pow(62));
         let x = self.next_packet_number;
@@ -139,7 +139,7 @@ impl PacketSpace {
         x
     }
 
-    pub(crate) fn can_send(&self, streams: &StreamsState) -> SendableFrames {
+    pub(super) fn can_send(&self, streams: &StreamsState) -> SendableFrames {
         let acks = self.pending_acks.can_send();
         let other = !self.pending.is_empty(streams) || self.ping_pending;
 
@@ -147,7 +147,7 @@ impl PacketSpace {
     }
 
     /// Verifies sanity of an ECN block and returns whether congestion was encountered.
-    pub(crate) fn detect_ecn(
+    pub(super) fn detect_ecn(
         &mut self,
         newly_acked: u64,
         ecn: frame::EcnCounts,
@@ -179,7 +179,7 @@ impl PacketSpace {
         Ok(ce_increase != 0)
     }
 
-    pub(crate) fn sent(&mut self, number: u64, packet: SentPacket) {
+    pub(super) fn sent(&mut self, number: u64, packet: SentPacket) {
         self.in_flight += u64::from(packet.size);
         self.sent_packets.insert(number, packet);
     }
@@ -200,43 +200,44 @@ impl IndexMut<SpaceId> for [PacketSpace; 3] {
 
 /// Represents one or more packets subject to retransmission
 #[derive(Debug, Clone)]
-pub(crate) struct SentPacket {
+pub(super) struct SentPacket {
     /// The time the packet was sent.
-    pub(crate) time_sent: Instant,
+    pub(super) time_sent: Instant,
     /// The number of bytes sent in the packet, not including UDP or IP overhead, but including QUIC
     /// framing overhead. Zero if this packet is not counted towards congestion control, i.e. not an
     /// "in flight" packet.
-    pub(crate) size: u16,
+    pub(super) size: u16,
     /// Whether an acknowledgement is expected directly in response to this packet.
-    pub(crate) ack_eliciting: bool,
+    pub(super) ack_eliciting: bool,
     /// The largest packet number acknowledged by this packet
-    pub(crate) largest_acked: Option<u64>,
+    pub(super) largest_acked: Option<u64>,
     /// Data which needs to be retransmitted in case the packet is lost.
     /// The data is boxed to minimize `SentPacket` size for the typical case of
     /// packets only containing ACKs and STREAM frames.
-    pub(crate) retransmits: ThinRetransmits,
+    pub(super) retransmits: ThinRetransmits,
     /// Metadata for stream frames in a packet
     ///
     /// The actual application data is stored with the stream state.
-    pub(crate) stream_frames: frame::StreamMetaVec,
+    pub(super) stream_frames: frame::StreamMetaVec,
 }
 
 /// Retransmittable data queue
+#[allow(unreachable_pub)] // fuzzing only
 #[derive(Debug, Default, Clone)]
 pub struct Retransmits {
-    pub(crate) max_data: bool,
-    pub(crate) max_stream_id: [bool; 2],
-    pub(crate) reset_stream: Vec<(StreamId, VarInt)>,
-    pub(crate) stop_sending: Vec<frame::StopSending>,
-    pub(crate) max_stream_data: FxHashSet<StreamId>,
-    pub(crate) crypto: VecDeque<frame::Crypto>,
-    pub(crate) new_cids: Vec<IssuedCid>,
-    pub(crate) retire_cids: Vec<u64>,
-    pub(crate) handshake_done: bool,
+    pub(super) max_data: bool,
+    pub(super) max_stream_id: [bool; 2],
+    pub(super) reset_stream: Vec<(StreamId, VarInt)>,
+    pub(super) stop_sending: Vec<frame::StopSending>,
+    pub(super) max_stream_data: FxHashSet<StreamId>,
+    pub(super) crypto: VecDeque<frame::Crypto>,
+    pub(super) new_cids: Vec<IssuedCid>,
+    pub(super) retire_cids: Vec<u64>,
+    pub(super) handshake_done: bool,
 }
 
 impl Retransmits {
-    pub fn is_empty(&self, streams: &StreamsState) -> bool {
+    pub(super) fn is_empty(&self, streams: &StreamsState) -> bool {
         !self.max_data
             && !self.max_stream_id.into_iter().any(|x| x)
             && self.reset_stream.is_empty()
@@ -295,13 +296,13 @@ impl ::std::iter::FromIterator<Self> for Retransmits {
 
 /// A variant of `Retransmits` which only allocates storage when required
 #[derive(Debug, Default, Clone)]
-pub struct ThinRetransmits {
+pub(super) struct ThinRetransmits {
     retransmits: Option<Box<Retransmits>>,
 }
 
 impl ThinRetransmits {
     /// Returns `true` if no retransmits are necessary
-    pub fn is_empty(&self, streams: &StreamsState) -> bool {
+    pub(super) fn is_empty(&self, streams: &StreamsState) -> bool {
         match &self.retransmits {
             Some(retransmits) => retransmits.is_empty(streams),
             None => true,
@@ -309,14 +310,14 @@ impl ThinRetransmits {
     }
 
     /// Returns a reference to the retransmits stored in this box
-    pub fn get(&self) -> Option<&Retransmits> {
+    pub(super) fn get(&self) -> Option<&Retransmits> {
         self.retransmits.as_deref()
     }
 
     /// Returns a mutable reference to the stored retransmits
     ///
     /// This function will allocate a backing storage if required.
-    pub fn get_or_create(&mut self) -> &mut Retransmits {
+    pub(super) fn get_or_create(&mut self) -> &mut Retransmits {
         if self.retransmits.is_none() {
             self.retransmits = Some(Box::default());
         }
@@ -335,7 +336,7 @@ impl ThinRetransmits {
 ///     ^        ^ ^
 /// window highest next
 /// ```
-pub struct Dedup {
+pub(super) struct Dedup {
     window: Window,
     /// Lowest packet number higher than all yet authenticated.
     next: u64,
@@ -352,7 +353,7 @@ const WINDOW_SIZE: u64 = 1 + mem::size_of::<Window>() as u64 * 8;
 
 impl Dedup {
     /// Construct an empty window positioned at the start.
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self { window: 0, next: 0 }
     }
 
@@ -364,7 +365,7 @@ impl Dedup {
     /// Record a newly authenticated packet number.
     ///
     /// Returns whether the packet might be a duplicate.
-    pub fn insert(&mut self, packet: u64) -> bool {
+    pub(super) fn insert(&mut self, packet: u64) -> bool {
         if let Some(diff) = packet.checked_sub(self.next) {
             // Right of window
             self.window = (self.window << 1 | 1)
@@ -393,14 +394,14 @@ impl Dedup {
 
 /// Indicates which data is available for sending
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-pub(crate) struct SendableFrames {
-    pub acks: bool,
-    pub other: bool,
+pub(super) struct SendableFrames {
+    pub(super) acks: bool,
+    pub(super) other: bool,
 }
 
 impl SendableFrames {
     /// Returns that no data is available for sending
-    pub fn empty() -> Self {
+    pub(super) fn empty() -> Self {
         Self {
             acks: false,
             other: false,
@@ -408,13 +409,13 @@ impl SendableFrames {
     }
 
     /// Whether no data is sendable
-    pub fn is_empty(&self) -> bool {
+    pub(super) fn is_empty(&self) -> bool {
         !self.acks && !self.other
     }
 }
 
 #[derive(Debug, Default)]
-pub(crate) struct PendingAcks {
+pub(super) struct PendingAcks {
     permit_ack_only: bool,
     ranges: ArrayRangeSet,
     /// This value will be used for calculating ACK delay once it is implemented
@@ -427,24 +428,24 @@ pub(crate) struct PendingAcks {
 
 impl PendingAcks {
     /// Whether any ACK frames can be sent
-    pub fn can_send(&self) -> bool {
+    pub(super) fn can_send(&self) -> bool {
         self.permit_ack_only && !self.ranges.is_empty()
     }
 
     /// Returns the duration the acknowledgement of the latest incoming packet has been delayed
-    pub fn ack_delay(&self) -> Duration {
+    pub(super) fn ack_delay(&self) -> Duration {
         self.ack_delay
     }
 
     /// Handle receipt of a new packet
-    pub fn packet_received(&mut self, ack_eliciting: bool) {
+    pub(super) fn packet_received(&mut self, ack_eliciting: bool) {
         self.permit_ack_only |= ack_eliciting;
     }
 
     /// Should be called whenever ACKs have been sent
     ///
     /// This will suppress sending further ACKs until additional ACK eliciting frames arrive
-    pub fn acks_sent(&mut self) {
+    pub(super) fn acks_sent(&mut self) {
         // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
         // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
         // the need for subtler logic to avoid double-transmitting acks all the time.
@@ -455,7 +456,7 @@ impl PendingAcks {
     }
 
     /// Insert one packet that needs to be acknowledged
-    pub fn insert_one(&mut self, packet: u64, now: Instant) {
+    pub(super) fn insert_one(&mut self, packet: u64, now: Instant) {
         self.ranges.insert_one(packet);
         self.latest_incoming = Some(now);
 
@@ -465,12 +466,12 @@ impl PendingAcks {
     }
 
     /// Remove ACKs of packets numbered at or below `max` from the set of pending ACKs
-    pub fn subtract_below(&mut self, max: u64) {
+    pub(super) fn subtract_below(&mut self, max: u64) {
         self.ranges.remove(0..(max + 1));
     }
 
     /// Returns the set of currently pending ACK ranges
-    pub fn ranges(&self) -> &ArrayRangeSet {
+    pub(super) fn ranges(&self) -> &ArrayRangeSet {
         &self.ranges
     }
 }

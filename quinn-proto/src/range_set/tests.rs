@@ -187,13 +187,13 @@ struct RefRangeSet {
 }
 
 impl RefRangeSet {
-    pub fn new(capacity: usize) -> Self {
+    fn new(capacity: usize) -> Self {
         Self {
             data: vec![false; capacity],
         }
     }
 
-    pub fn len(&self) -> usize {
+    fn len(&self) -> usize {
         let mut last = false;
         let mut count = 0;
 
@@ -207,11 +207,11 @@ impl RefRangeSet {
         count
     }
 
-    pub fn is_empty(&self) -> bool {
+    fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    pub fn insert(&mut self, x: Range<u64>) -> bool {
+    fn insert(&mut self, x: Range<u64>) -> bool {
         let mut result = false;
 
         assert!(x.end <= self.data.len() as u64);
@@ -227,7 +227,7 @@ impl RefRangeSet {
         result
     }
 
-    pub fn remove(&mut self, x: Range<u64>) -> bool {
+    fn remove(&mut self, x: Range<u64>) -> bool {
         let mut result = false;
 
         assert!(x.end <= self.data.len() as u64);
@@ -243,7 +243,7 @@ impl RefRangeSet {
         result
     }
 
-    pub fn elts(&self) -> Vec<u64> {
+    fn elts(&self) -> Vec<u64> {
         self.data
             .iter()
             .enumerate()

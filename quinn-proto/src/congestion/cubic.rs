@@ -18,7 +18,7 @@ const C: f64 = 0.4;
 /// We need to keep those variables across the connection.
 /// k, w_max are described in the RFC.
 #[derive(Debug, Default, Clone)]
-pub struct State {
+pub(super) struct State {
     k: f64,
 
     w_max: f64,

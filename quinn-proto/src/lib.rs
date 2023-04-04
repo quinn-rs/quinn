@@ -15,6 +15,7 @@
 #![cfg_attr(not(fuzzing), warn(missing_docs))]
 #![cfg_attr(test, allow(dead_code))]
 // Fixes welcome:
+#![warn(unreachable_pub)]
 #![allow(clippy::cognitive_complexity)]
 #![allow(clippy::too_many_arguments)]
 #![warn(clippy::use_self)]
@@ -81,9 +82,7 @@ use arbitrary::Arbitrary;
 #[doc(hidden)]
 #[cfg(fuzzing)]
 pub mod fuzzing {
-    pub use crate::connection::{
-        FinishError, Retransmits, SendStream, State as ConnectionState, Streams, StreamsState,
-    };
+    pub use crate::connection::{Retransmits, State as ConnectionState, StreamsState};
     pub use crate::frame::ResetStream;
     pub use crate::packet::PartialDecode;
     pub use crate::transport_parameters::TransportParameters;
