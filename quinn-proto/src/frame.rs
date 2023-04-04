@@ -136,7 +136,7 @@ const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
 const DATAGRAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x30, 0x31);
 
 #[derive(Debug)]
-pub enum Frame {
+pub(crate) enum Frame {
     Padding,
     Ping,
     Ack(Ack),
@@ -162,7 +162,7 @@ pub enum Frame {
 }
 
 impl Frame {
-    pub fn ty(&self) -> Type {
+    pub(crate) fn ty(&self) -> Type {
         use self::Frame::*;
         match *self {
             Padding => Type::PADDING,
@@ -202,7 +202,7 @@ impl Frame {
         }
     }
 
-    pub fn is_ack_eliciting(&self) -> bool {
+    pub(crate) fn is_ack_eliciting(&self) -> bool {
         !matches!(*self, Self::Ack(_) | Self::Padding | Self::Close(_))
     }
 }
@@ -442,11 +442,11 @@ impl EcnCounts {
 }
 
 #[derive(Debug, Clone)]
-pub struct Stream {
-    pub id: StreamId,
-    pub offset: u64,
-    pub fin: bool,
-    pub data: Bytes,
+pub(crate) struct Stream {
+    pub(crate) id: StreamId,
+    pub(crate) offset: u64,
+    pub(crate) fin: bool,
+    pub(crate) data: Bytes,
 }
 
 impl FrameStruct for Stream {
@@ -455,10 +455,10 @@ impl FrameStruct for Stream {
 
 /// Metadata from a stream frame
 #[derive(Debug, Clone)]
-pub struct StreamMeta {
-    pub id: StreamId,
-    pub offsets: Range<u64>,
-    pub fin: bool,
+pub(crate) struct StreamMeta {
+    pub(crate) id: StreamId,
+    pub(crate) offsets: Range<u64>,
+    pub(crate) fin: bool,
 }
 
 // This manual implementation exists because `Default` is not implemented for `StreamId`
@@ -473,7 +473,7 @@ impl Default for StreamMeta {
 }
 
 impl StreamMeta {
-    pub fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
+    pub(crate) fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
         let mut ty = *STREAM_TYS.start();
         if self.offsets.start != 0 {
             ty |= 0x04;
@@ -496,18 +496,18 @@ impl StreamMeta {
 }
 
 /// A vector of [`StreamMeta`] with optimization for the single element case
-pub type StreamMetaVec = TinyVec<[StreamMeta; 1]>;
+pub(crate) type StreamMetaVec = TinyVec<[StreamMeta; 1]>;
 
 #[derive(Debug, Clone)]
-pub struct Crypto {
-    pub offset: u64,
-    pub data: Bytes,
+pub(crate) struct Crypto {
+    pub(crate) offset: u64,
+    pub(crate) data: Bytes,
 }
 
 impl Crypto {
-    pub const SIZE_BOUND: usize = 17;
+    pub(crate) const SIZE_BOUND: usize = 17;
 
-    pub fn encode<W: BufMut>(&self, out: &mut W) {
+    pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
         out.write(Type::CRYPTO);
         out.write_var(self.offset);
         out.write_var(self.data.len() as u64);
@@ -515,7 +515,7 @@ impl Crypto {
     }
 }
 
-pub struct Iter {
+pub(crate) struct Iter {
     // TODO: ditch io::Cursor after bytes 0.5
     bytes: io::Cursor<Bytes>,
     last_ty: Option<Type>,
@@ -545,7 +545,7 @@ impl From<UnexpectedEnd> for IterErr {
 }
 
 impl Iter {
-    pub fn new(payload: Bytes) -> Self {
+    pub(crate) fn new(payload: Bytes) -> Self {
         Self {
             bytes: io::Cursor::new(payload),
             last_ty: None,
@@ -779,12 +779,13 @@ impl<'a> Iterator for AckIter<'a> {
     }
 }
 
+#[allow(unreachable_pub)] // fuzzing only
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 #[derive(Debug, Copy, Clone)]
 pub struct ResetStream {
-    pub id: StreamId,
-    pub error_code: VarInt,
-    pub final_offset: VarInt,
+    pub(crate) id: StreamId,
+    pub(crate) error_code: VarInt,
+    pub(crate) final_offset: VarInt,
 }
 
 impl FrameStruct for ResetStream {
@@ -792,7 +793,7 @@ impl FrameStruct for ResetStream {
 }
 
 impl ResetStream {
-    pub fn encode<W: BufMut>(&self, out: &mut W) {
+    pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
         out.write(Type::RESET_STREAM); // 1 byte
         out.write(self.id); // <= 8 bytes
         out.write(self.error_code); // <= 8 bytes
@@ -801,9 +802,9 @@ impl ResetStream {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct StopSending {
-    pub id: StreamId,
-    pub error_code: VarInt,
+pub(crate) struct StopSending {
+    pub(crate) id: StreamId,
+    pub(crate) error_code: VarInt,
 }
 
 impl FrameStruct for StopSending {
@@ -811,7 +812,7 @@ impl FrameStruct for StopSending {
 }
 
 impl StopSending {
-    pub fn encode<W: BufMut>(&self, out: &mut W) {
+    pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
         out.write(Type::STOP_SENDING); // 1 byte
         out.write(self.id); // <= 8 bytes
         out.write(self.error_code) // <= 8 bytes
@@ -819,15 +820,15 @@ impl StopSending {
 }
 
 #[derive(Debug, Copy, Clone)]
-pub struct NewConnectionId {
-    pub sequence: u64,
-    pub retire_prior_to: u64,
-    pub id: ConnectionId,
-    pub reset_token: ResetToken,
+pub(crate) struct NewConnectionId {
+    pub(crate) sequence: u64,
+    pub(crate) retire_prior_to: u64,
+    pub(crate) id: ConnectionId,
+    pub(crate) reset_token: ResetToken,
 }
 
 impl NewConnectionId {
-    pub fn encode<W: BufMut>(&self, out: &mut W) {
+    pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
         out.write(Type::NEW_CONNECTION_ID);
         out.write_var(self.sequence);
         out.write_var(self.retire_prior_to);
@@ -838,7 +839,7 @@ impl NewConnectionId {
 }
 
 /// Smallest number of bytes this type of frame is guaranteed to fit within.
-pub const RETIRE_CONNECTION_ID_SIZE_BOUND: usize = 9;
+pub(crate) const RETIRE_CONNECTION_ID_SIZE_BOUND: usize = 9;
 
 /// An unreliable datagram
 #[derive(Debug, Clone)]

@@ -40,23 +40,23 @@ pub(crate) struct TimerTable {
 }
 
 impl TimerTable {
-    pub fn set(&mut self, timer: Timer, time: Instant) {
+    pub(super) fn set(&mut self, timer: Timer, time: Instant) {
         self.data[timer as usize] = Some(time);
     }
 
-    pub fn get(&self, timer: Timer) -> Option<Instant> {
+    pub(super) fn get(&self, timer: Timer) -> Option<Instant> {
         self.data[timer as usize]
     }
 
-    pub fn stop(&mut self, timer: Timer) {
+    pub(super) fn stop(&mut self, timer: Timer) {
         self.data[timer as usize] = None;
     }
 
-    pub fn next_timeout(&self) -> Option<Instant> {
+    pub(super) fn next_timeout(&self) -> Option<Instant> {
         self.data.iter().filter_map(|&x| x).min()
     }
 
-    pub fn is_expired(&self, timer: Timer, after: Instant) -> bool {
+    pub(super) fn is_expired(&self, timer: Timer, after: Instant) -> bool {
         self.data[timer as usize].map_or(false, |x| x <= after)
     }
 }

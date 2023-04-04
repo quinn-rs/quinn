@@ -608,7 +608,7 @@ enum RecoveryState {
 }
 
 impl RecoveryState {
-    pub fn in_recovery(&self) -> bool {
+    pub(super) fn in_recovery(&self) -> bool {
         !matches!(self, Self::NotInRecovery)
     }
 }
@@ -619,11 +619,11 @@ struct LossState {
 }
 
 impl LossState {
-    pub fn reset(&mut self) {
+    pub(super) fn reset(&mut self) {
         self.lost_bytes = 0;
     }
 
-    pub fn has_losses(&self) -> bool {
+    pub(super) fn has_losses(&self) -> bool {
         self.lost_bytes != 0
     }
 }

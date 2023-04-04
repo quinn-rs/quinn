@@ -9,7 +9,7 @@ type CidData = (ConnectionId, Option<ResetToken>);
 ///
 /// May contain gaps due to packet loss or reordering
 #[derive(Debug)]
-pub struct CidQueue {
+pub(crate) struct CidQueue {
     /// Ring buffer indexed by `self.cursor`
     buffer: [Option<CidData>; Self::LEN],
     /// Index at which circular buffer addressing is based
@@ -21,7 +21,7 @@ pub struct CidQueue {
 }
 
 impl CidQueue {
-    pub fn new(cid: ConnectionId) -> Self {
+    pub(crate) fn new(cid: ConnectionId) -> Self {
         let mut buffer = [None; Self::LEN];
         buffer[0] = Some((cid, None));
         Self {
@@ -35,7 +35,7 @@ impl CidQueue {
     ///
     /// Returns a non-empty range of retired sequence numbers and the reset token of the new active
     /// CID iff any CIDs were retired.
-    pub fn insert(
+    pub(crate) fn insert(
         &mut self,
         cid: NewConnectionId,
     ) -> Result<Option<(Range<u64>, ResetToken)>, InsertError> {
@@ -88,7 +88,7 @@ impl CidQueue {
 
     /// Switch to next active CID if possible, return
     /// 1) the corresponding ResetToken and 2) a non-empty range preceding it to retire
-    pub fn next(&mut self) -> Option<(ResetToken, Range<u64>)> {
+    pub(crate) fn next(&mut self) -> Option<(ResetToken, Range<u64>)> {
         let (i, cid_data) = self.iter().nth(1)?;
         self.buffer[self.cursor] = None;
 
@@ -107,26 +107,26 @@ impl CidQueue {
     }
 
     /// Replace the initial CID
-    pub fn update_initial_cid(&mut self, cid: ConnectionId) {
+    pub(crate) fn update_initial_cid(&mut self, cid: ConnectionId) {
         debug_assert_eq!(self.offset, 0);
         self.buffer[self.cursor] = Some((cid, None));
     }
 
     /// Return active remote CID itself
-    pub fn active(&self) -> ConnectionId {
+    pub(crate) fn active(&self) -> ConnectionId {
         self.buffer[self.cursor].unwrap().0
     }
 
     /// Return the sequence number of active remote CID
-    pub fn active_seq(&self) -> u64 {
+    pub(crate) fn active_seq(&self) -> u64 {
         self.offset
     }
 
-    pub const LEN: usize = 5;
+    pub(crate) const LEN: usize = 5;
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub enum InsertError {
+pub(crate) enum InsertError {
     /// CID was already retired
     Retired,
     /// Sequence number violates the leading edge of the window

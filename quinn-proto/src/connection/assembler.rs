@@ -10,7 +10,7 @@ use crate::range_set::RangeSet;
 
 /// Helper to assemble unordered stream frames into an ordered stream
 #[derive(Debug, Default)]
-pub(crate) struct Assembler {
+pub(super) struct Assembler {
     state: State,
     data: BinaryHeap<Buffer>,
     /// Total number of buffered bytes, including duplicates in ordered mode.
@@ -25,11 +25,11 @@ pub(crate) struct Assembler {
 }
 
 impl Assembler {
-    pub fn new() -> Self {
+    pub(super) fn new() -> Self {
         Self::default()
     }
 
-    pub(crate) fn ensure_ordering(&mut self, ordered: bool) -> Result<(), IllegalOrderedRead> {
+    pub(super) fn ensure_ordering(&mut self, ordered: bool) -> Result<(), IllegalOrderedRead> {
         if ordered && !self.state.is_ordered() {
             return Err(IllegalOrderedRead);
         } else if !ordered && self.state.is_ordered() {
@@ -49,7 +49,7 @@ impl Assembler {
     }
 
     /// Get the the next chunk
-    pub(crate) fn read(&mut self, max_length: usize, ordered: bool) -> Option<Chunk> {
+    pub(super) fn read(&mut self, max_length: usize, ordered: bool) -> Option<Chunk> {
         loop {
             let mut chunk = self.data.peek_mut()?;
 
@@ -139,7 +139,7 @@ impl Assembler {
 
     // Note: If a packet contains many frames from the same stream, the estimated over-allocation
     // will be much higher because we are counting the same allocation multiple times.
-    pub(crate) fn insert(&mut self, mut offset: u64, mut bytes: Bytes, allocation_size: usize) {
+    pub(super) fn insert(&mut self, mut offset: u64, mut bytes: Bytes, allocation_size: usize) {
         debug_assert!(
             bytes.len() <= allocation_size,
             "allocation_size less than bytes.len(): {:?} < {:?}",
@@ -200,17 +200,17 @@ impl Assembler {
         }
     }
 
-    pub(crate) fn set_bytes_read(&mut self, new: u64) {
+    pub(super) fn set_bytes_read(&mut self, new: u64) {
         self.bytes_read = new;
     }
 
     /// Number of bytes consumed by the application
-    pub(crate) fn bytes_read(&self) -> u64 {
+    pub(super) fn bytes_read(&self) -> u64 {
         self.bytes_read
     }
 
     /// Discard all buffered data
-    pub(crate) fn clear(&mut self) {
+    pub(super) fn clear(&mut self) {
         self.data.clear();
         self.buffered = 0;
         self.allocated = 0;

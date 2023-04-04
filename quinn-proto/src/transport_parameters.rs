@@ -184,10 +184,10 @@ impl TransportParameters {
 /// This is communicated as a transport parameter during TLS session establishment.
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(crate) struct PreferredAddress {
-    pub address_v4: Option<SocketAddrV4>,
-    pub address_v6: Option<SocketAddrV6>,
-    pub connection_id: ConnectionId,
-    pub stateless_reset_token: ResetToken,
+    pub(crate) address_v4: Option<SocketAddrV4>,
+    pub(crate) address_v6: Option<SocketAddrV6>,
+    pub(crate) connection_id: ConnectionId,
+    pub(crate) stateless_reset_token: ResetToken,
 }
 
 impl PreferredAddress {

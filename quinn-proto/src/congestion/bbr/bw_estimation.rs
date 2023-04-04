@@ -18,14 +18,14 @@ pub(crate) struct BandwidthEstimation {
 }
 
 impl BandwidthEstimation {
-    pub fn on_sent(&mut self, now: Instant, bytes: u64) {
+    pub(crate) fn on_sent(&mut self, now: Instant, bytes: u64) {
         self.prev_total_sent = self.total_sent;
         self.total_sent += bytes;
         self.prev_sent_time = Some(self.sent_time);
         self.sent_time = now;
     }
 
-    pub fn on_ack(
+    pub(crate) fn on_ack(
         &mut self,
         now: Instant,
         _sent: Instant,
@@ -68,19 +68,19 @@ impl BandwidthEstimation {
         }
     }
 
-    pub fn bytes_acked_this_window(&self) -> u64 {
+    pub(crate) fn bytes_acked_this_window(&self) -> u64 {
         self.total_acked - self.acked_at_last_window
     }
 
-    pub fn end_acks(&mut self, _current_round: u64, _app_limited: bool) {
+    pub(crate) fn end_acks(&mut self, _current_round: u64, _app_limited: bool) {
         self.acked_at_last_window = self.total_acked;
     }
 
-    pub fn get_estimate(&self) -> u64 {
+    pub(crate) fn get_estimate(&self) -> u64 {
         self.max_filter.get()
     }
 
-    pub const fn bw_from_delta(bytes: u64, delta: Duration) -> Option<u64> {
+    pub(crate) const fn bw_from_delta(bytes: u64, delta: Duration) -> Option<u64> {
         let window_duration_ns = delta.as_nanos();
         if window_duration_ns == 0 {
             return None;

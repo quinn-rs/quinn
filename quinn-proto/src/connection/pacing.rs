@@ -12,7 +12,7 @@ use tracing::warn;
 /// The bucket refills at a rate slightly faster
 /// than one congestion window per RTT, as recommended in
 /// <https://tools.ietf.org/html/draft-ietf-quic-recovery-34#section-7.7>
-pub struct Pacer {
+pub(super) struct Pacer {
     capacity: u64,
     last_window: u64,
     last_mtu: u16,
@@ -22,7 +22,7 @@ pub struct Pacer {
 
 impl Pacer {
     /// Obtains a new [`Pacer`].
-    pub fn new(
+    pub(super) fn new(
         smoothed_rtt: Duration,
         window: u64,
         max_udp_payload_size: u16,
@@ -39,7 +39,7 @@ impl Pacer {
     }
 
     /// Record that a packet has been transmitted.
-    pub fn on_transmit(&mut self, packet_length: u16) {
+    pub(super) fn on_transmit(&mut self, packet_length: u16) {
         self.tokens = self.tokens.saturating_sub(packet_length.into())
     }
 
@@ -50,7 +50,7 @@ impl Pacer {
     ///
     /// The 5/4 ratio used here comes from the suggestion that N = 1.25 in the draft IETF RFC for
     /// QUIC.
-    pub fn delay(
+    pub(super) fn delay(
         &mut self,
         smoothed_rtt: Duration,
         bytes_to_send: u64,

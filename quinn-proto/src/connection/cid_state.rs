@@ -10,7 +10,7 @@ use tracing::{debug, trace};
 use crate::{shared::IssuedCid, TransportError};
 
 /// Local connection ID management
-pub struct CidState {
+pub(super) struct CidState {
     /// Timestamp when issued cids should be retired
     retire_timestamp: VecDeque<CidTimestamp>,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.

@@ -147,7 +147,7 @@ impl Send {
 ///
 /// The type allows to dequeue [`Bytes`] chunks from an array of chunks, up to
 /// a configured limit.
-pub struct BytesArray<'a> {
+pub(crate) struct BytesArray<'a> {
     /// The wrapped slice of `Bytes`
     chunks: &'a mut [Bytes],
     /// The amount of chunks consumed from this source
@@ -155,7 +155,7 @@ pub struct BytesArray<'a> {
 }
 
 impl<'a> BytesArray<'a> {
-    pub fn from_chunks(chunks: &'a mut [Bytes]) -> Self {
+    pub(crate) fn from_chunks(chunks: &'a mut [Bytes]) -> Self {
         Self {
             chunks,
             consumed: 0,
@@ -197,13 +197,13 @@ impl<'a> BytesSource for BytesArray<'a> {
 /// The type allows to dequeue a single [`Bytes`] chunk, which will be lazily
 /// created from a reference. This allows to defer the allocation until it is
 /// known how much data needs to be copied.
-pub struct ByteSlice<'a> {
+pub(crate) struct ByteSlice<'a> {
     /// The wrapped byte slice
     data: &'a [u8],
 }
 
 impl<'a> ByteSlice<'a> {
-    pub fn from_slice(data: &'a [u8]) -> Self {
+    pub(crate) fn from_slice(data: &'a [u8]) -> Self {
         Self { data }
     }
 }

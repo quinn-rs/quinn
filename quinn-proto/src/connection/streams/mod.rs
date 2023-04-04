@@ -15,10 +15,12 @@ use recv::Recv;
 pub use recv::{Chunks, ReadError, ReadableError};
 
 mod send;
-pub use send::{ByteSlice, BytesArray, BytesSource, FinishError, WriteError, Written};
+pub(crate) use send::{ByteSlice, BytesArray};
+pub use send::{BytesSource, FinishError, WriteError, Written};
 use send::{Send, SendState};
 
 mod state;
+#[allow(unreachable_pub)] // fuzzing only
 pub use state::StreamsState;
 
 /// Access to streams

@@ -4,10 +4,9 @@ use arbitrary::Arbitrary;
 use libfuzzer_sys::fuzz_target;
 
 extern crate proto;
-use proto::fuzzing::{
-    ConnectionState, ResetStream, Retransmits, SendStream, Streams, StreamsState,
-};
+use proto::fuzzing::{ConnectionState, ResetStream, Retransmits, StreamsState};
 use proto::{Dir, Side, StreamId, VarInt};
+use proto::{SendStream, Streams};
 
 #[derive(Arbitrary, Debug)]
 struct StreamParams {

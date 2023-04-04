@@ -17,6 +17,6 @@ fn constant_time_ne(a: &[u8], b: &[u8]) -> u8 {
 }
 
 /// Compares byte strings in constant time.
-pub fn eq(a: &[u8], b: &[u8]) -> bool {
+pub(crate) fn eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len() && constant_time_ne(a, b) == 0
 }

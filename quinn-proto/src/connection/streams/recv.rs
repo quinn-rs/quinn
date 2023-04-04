@@ -115,7 +115,7 @@ impl Recv {
     /// This will suppress enqueuing further `MAX_STREAM_DATA` frames unless
     /// either the previous transmission was not acknowledged or the window
     /// further increased.
-    pub fn record_sent_max_stream_data(&mut self, sent_value: u64) {
+    pub(super) fn record_sent_max_stream_data(&mut self, sent_value: u64) {
         if sent_value > self.sent_max_stream_data {
             self.sent_max_stream_data = sent_value;
         }
