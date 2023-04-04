@@ -738,7 +738,7 @@ impl Future for ReadDatagram<'_> {
 }
 
 #[derive(Debug)]
-pub struct ConnectionRef(Arc<ConnectionInner>);
+pub(crate) struct ConnectionRef(Arc<ConnectionInner>);
 
 impl ConnectionRef {
     #[allow(clippy::too_many_arguments)]
@@ -813,7 +813,7 @@ impl std::ops::Deref for ConnectionRef {
 }
 
 #[derive(Debug)]
-pub struct ConnectionInner {
+pub(crate) struct ConnectionInner {
     pub(crate) state: Mutex<State>,
     pub(crate) shared: Shared,
 }
@@ -1080,7 +1080,7 @@ impl State {
     }
 
     /// Close for a reason other than the application's explicit request
-    pub fn implicit_close(&mut self, shared: &Shared) {
+    pub(crate) fn implicit_close(&mut self, shared: &Shared) {
         self.close(0u32.into(), Bytes::new(), shared);
     }
 

@@ -573,7 +573,7 @@ fn gen_data(size: usize, seed: u64) -> Vec<u8> {
     buf
 }
 
-pub fn subscribe() -> tracing::subscriber::DefaultGuard {
+fn subscribe() -> tracing::subscriber::DefaultGuard {
     let sub = tracing_subscriber::FmtSubscriber::builder()
         .with_env_filter(EnvFilter::from_default_env())
         .with_writer(|| TestWriter)

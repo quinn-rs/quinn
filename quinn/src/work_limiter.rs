@@ -16,7 +16,7 @@ use std::time::{Duration, Instant};
 /// It will however work best if the required time to complete a work item is
 /// constant.
 #[derive(Debug)]
-pub struct WorkLimiter {
+pub(crate) struct WorkLimiter {
     /// Whether to measure the required work time, or to use the previous estimates
     mode: Mode,
     /// The current cycle number
@@ -37,7 +37,7 @@ pub struct WorkLimiter {
 }
 
 impl WorkLimiter {
-    pub fn new(desired_cycle_time: Duration) -> Self {
+    pub(crate) fn new(desired_cycle_time: Duration) -> Self {
         Self {
             mode: Mode::Measure,
             cycle: 0,
@@ -52,7 +52,7 @@ impl WorkLimiter {
     }
 
     /// Starts one work cycle
-    pub fn start_cycle(&mut self) {
+    pub(crate) fn start_cycle(&mut self) {
         self.completed = 0;
         if let Mode::Measure = self.mode {
             self.start_time = self.now();
@@ -62,7 +62,7 @@ impl WorkLimiter {
     /// Returns whether more work can be performed inside the `desired_cycle_time`
     ///
     /// Requires that previous work was tracked using `record_work`.
-    pub fn allow_work(&mut self) -> bool {
+    pub(crate) fn allow_work(&mut self) -> bool {
         match self.mode {
             Mode::Measure => (self.now() - self.start_time) < self.desired_cycle_time,
             Mode::HistoricData => self.completed < self.allowed,
@@ -72,7 +72,7 @@ impl WorkLimiter {
     /// Records that `work` additional work items have been completed inside the cycle
     ///
     /// Must be called between `start_cycle` and `finish_cycle`.
-    pub fn record_work(&mut self, work: usize) {
+    pub(crate) fn record_work(&mut self, work: usize) {
         self.completed += work;
     }
 
@@ -83,7 +83,7 @@ impl WorkLimiter {
     /// The estimate is updated using the same exponential averaging (smoothing)
     /// mechanism which is used for determining QUIC path rtts: The last value is
     /// weighted by 1/8, and the previous average by 7/8.
-    pub fn finish_cycle(&mut self) {
+    pub(crate) fn finish_cycle(&mut self) {
         // If no work was done in the cycle drop the measurement, it won't be useful
         if self.completed == 0 {
             return;
