@@ -17,7 +17,7 @@ pub trait Codec: Sized {
 }
 
 impl Codec for u8 {
-    fn decode<B: Buf>(buf: &mut B) -> Result<u8> {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self> {
         if buf.remaining() < 1 {
             return Err(UnexpectedEnd);
         }
@@ -29,7 +29,7 @@ impl Codec for u8 {
 }
 
 impl Codec for u16 {
-    fn decode<B: Buf>(buf: &mut B) -> Result<u16> {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self> {
         if buf.remaining() < 2 {
             return Err(UnexpectedEnd);
         }
@@ -41,7 +41,7 @@ impl Codec for u16 {
 }
 
 impl Codec for u32 {
-    fn decode<B: Buf>(buf: &mut B) -> Result<u32> {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self> {
         if buf.remaining() < 4 {
             return Err(UnexpectedEnd);
         }
@@ -53,7 +53,7 @@ impl Codec for u32 {
 }
 
 impl Codec for u64 {
-    fn decode<B: Buf>(buf: &mut B) -> Result<u64> {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self> {
         if buf.remaining() < 8 {
             return Err(UnexpectedEnd);
         }
@@ -65,7 +65,7 @@ impl Codec for u64 {
 }
 
 impl Codec for Ipv4Addr {
-    fn decode<B: Buf>(buf: &mut B) -> Result<Ipv4Addr> {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self> {
         if buf.remaining() < 4 {
             return Err(UnexpectedEnd);
         }
@@ -79,7 +79,7 @@ impl Codec for Ipv4Addr {
 }
 
 impl Codec for Ipv6Addr {
-    fn decode<B: Buf>(buf: &mut B) -> Result<Ipv6Addr> {
+    fn decode<B: Buf>(buf: &mut B) -> Result<Self> {
         if buf.remaining() < 16 {
             return Err(UnexpectedEnd);
         }

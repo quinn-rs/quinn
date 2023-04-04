@@ -38,7 +38,7 @@ impl Pair {
         let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)));
         let client = Endpoint::new(endpoint_config, None);
 
-        Pair::new_from_endpoint(client, server)
+        Self::new_from_endpoint(client, server)
     }
 
     pub fn new_from_endpoint(client: Endpoint, server: Endpoint) -> Self {
@@ -248,7 +248,7 @@ impl Pair {
 
 impl Default for Pair {
     fn default() -> Self {
-        Pair::new(Default::default(), server_config())
+        Self::new(Default::default(), server_config())
     }
 }
 

@@ -49,6 +49,6 @@ impl crypto::AeadKey for aead::LessSafeKey {
 
 impl From<ring::error::Unspecified> for CryptoError {
     fn from(_: ring::error::Unspecified) -> Self {
-        CryptoError
+        Self
     }
 }

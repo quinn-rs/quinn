@@ -32,7 +32,7 @@ impl CidState {
         let mut active_seq = FxHashSet::default();
         // Add sequence number of CID used in handshaking into tracking set
         active_seq.insert(0);
-        let mut this = CidState {
+        let mut this = Self {
             retire_timestamp: VecDeque::new(),
             issued: 1, // One CID is already supplied during handshaking
             active_seq,

@@ -17,6 +17,7 @@
 // Fixes welcome:
 #![allow(clippy::cognitive_complexity)]
 #![allow(clippy::too_many_arguments)]
+#![warn(clippy::use_self)]
 
 use std::{
     fmt,
@@ -92,12 +93,12 @@ pub mod fuzzing {
 
     impl<'arbitrary> Arbitrary<'arbitrary> for TransportParameters {
         fn arbitrary(u: &mut Unstructured<'arbitrary>) -> Result<Self> {
-            Ok(TransportParameters {
+            Ok(Self {
                 initial_max_streams_bidi: u.arbitrary()?,
                 initial_max_streams_uni: u.arbitrary()?,
                 ack_delay_exponent: u.arbitrary()?,
                 max_udp_payload_size: u.arbitrary()?,
-                ..TransportParameters::default()
+                ..Self::default()
             })
         }
     }
@@ -115,7 +116,7 @@ pub mod fuzzing {
             let bytes: Vec<u8> = Vec::arbitrary(u)?;
             let mut buf = BytesMut::new();
             buf.put_slice(&bytes[..]);
-            Ok(PacketParams {
+            Ok(Self {
                 local_cid_len,
                 buf,
                 grease_quic_bit: bool::arbitrary(u)?,
@@ -149,22 +150,22 @@ impl Side {
     #[inline]
     /// Shorthand for `self == Side::Client`
     pub fn is_client(self) -> bool {
-        self == Side::Client
+        self == Self::Client
     }
 
     #[inline]
     /// Shorthand for `self == Side::Server`
     pub fn is_server(self) -> bool {
-        self == Side::Server
+        self == Self::Server
     }
 }
 
 impl ops::Not for Side {
-    type Output = Side;
-    fn not(self) -> Side {
+    type Output = Self;
+    fn not(self) -> Self {
         match self {
-            Side::Client => Side::Server,
-            Side::Server => Side::Client,
+            Self::Client => Self::Server,
+            Self::Server => Self::Client,
         }
     }
 }
@@ -181,7 +182,7 @@ pub enum Dir {
 
 impl Dir {
     fn iter() -> impl Iterator<Item = Self> {
-        [Dir::Bi, Dir::Uni].iter().cloned()
+        [Self::Bi, Self::Uni].iter().cloned()
     }
 }
 
@@ -223,7 +224,7 @@ impl fmt::Display for StreamId {
 impl StreamId {
     /// Create a new StreamId
     pub fn new(initiator: Side, dir: Dir, index: u64) -> Self {
-        StreamId(index << 2 | (dir as u64) << 1 | initiator as u64)
+        Self(index << 2 | (dir as u64) << 1 | initiator as u64)
     }
     /// Which side of a connection initiated the stream
     pub fn initiator(self) -> Side {
@@ -248,8 +249,8 @@ impl StreamId {
 }
 
 impl From<StreamId> for VarInt {
-    fn from(x: StreamId) -> VarInt {
-        unsafe { VarInt::from_u64_unchecked(x.0) }
+    fn from(x: StreamId) -> Self {
+        unsafe { Self::from_u64_unchecked(x.0) }
     }
 }
 
@@ -260,8 +261,8 @@ impl From<VarInt> for StreamId {
 }
 
 impl coding::Codec for StreamId {
-    fn decode<B: bytes::Buf>(buf: &mut B) -> coding::Result<StreamId> {
-        VarInt::decode(buf).map(|x| StreamId(x.into_inner()))
+    fn decode<B: bytes::Buf>(buf: &mut B) -> coding::Result<Self> {
+        VarInt::decode(buf).map(|x| Self(x.into_inner()))
     }
     fn encode<B: bytes::BufMut>(&self, buf: &mut B) {
         VarInt::from_u64(self.0).unwrap().encode(buf);

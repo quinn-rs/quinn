@@ -50,13 +50,13 @@ pub struct Code(u64);
 impl Code {
     /// Create QUIC error code from TLS alert code
     pub fn crypto(code: u8) -> Self {
-        Code(0x100 | u64::from(code))
+        Self(0x100 | u64::from(code))
     }
 }
 
 impl coding::Codec for Code {
     fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
-        Ok(Code(buf.get_var()?))
+        Ok(Self(buf.get_var()?))
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
         buf.write_var(self.0)
@@ -64,7 +64,7 @@ impl coding::Codec for Code {
 }
 
 impl From<Code> for u64 {
-    fn from(x: Code) -> u64 {
+    fn from(x: Code) -> Self {
         x.0
     }
 }

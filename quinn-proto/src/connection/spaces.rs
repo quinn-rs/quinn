@@ -280,12 +280,12 @@ impl ::std::ops::BitOrAssign<ThinRetransmits> for Retransmits {
     }
 }
 
-impl ::std::iter::FromIterator<Retransmits> for Retransmits {
+impl ::std::iter::FromIterator<Self> for Retransmits {
     fn from_iter<T>(iter: T) -> Self
     where
-        T: IntoIterator<Item = Retransmits>,
+        T: IntoIterator<Item = Self>,
     {
-        let mut result = Retransmits::default();
+        let mut result = Self::default();
         for packet in iter {
             result |= packet;
         }

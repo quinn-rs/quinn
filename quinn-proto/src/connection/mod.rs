@@ -3284,15 +3284,15 @@ pub enum ConnectionError {
 impl From<Close> for ConnectionError {
     fn from(x: Close) -> Self {
         match x {
-            Close::Connection(reason) => ConnectionError::ConnectionClosed(reason),
-            Close::Application(reason) => ConnectionError::ApplicationClosed(reason),
+            Close::Connection(reason) => Self::ConnectionClosed(reason),
+            Close::Application(reason) => Self::ApplicationClosed(reason),
         }
     }
 }
 
 // For compatibility with API consumers
 impl From<ConnectionError> for io::Error {
-    fn from(x: ConnectionError) -> io::Error {
+    fn from(x: ConnectionError) -> Self {
         use self::ConnectionError::*;
         let kind = match x {
             TimedOut => io::ErrorKind::TimedOut,
@@ -3300,7 +3300,7 @@ impl From<ConnectionError> for io::Error {
             ApplicationClosed(_) | ConnectionClosed(_) => io::ErrorKind::ConnectionAborted,
             TransportError(_) | VersionMismatch | LocallyClosed => io::ErrorKind::Other,
         };
-        io::Error::new(kind, x)
+        Self::new(kind, x)
     }
 }
 
@@ -3316,25 +3316,25 @@ pub enum State {
 
 impl State {
     fn closed<R: Into<Close>>(reason: R) -> Self {
-        State::Closed(state::Closed {
+        Self::Closed(state::Closed {
             reason: reason.into(),
         })
     }
 
     fn is_handshake(&self) -> bool {
-        matches!(*self, State::Handshake(_))
+        matches!(*self, Self::Handshake(_))
     }
 
     fn is_established(&self) -> bool {
-        matches!(*self, State::Established)
+        matches!(*self, Self::Established)
     }
 
     fn is_closed(&self) -> bool {
-        matches!(*self, State::Closed(_) | State::Draining | State::Drained)
+        matches!(*self, Self::Closed(_) | Self::Draining | Self::Drained)
     }
 
     fn is_drained(&self) -> bool {
-        matches!(*self, State::Drained)
+        matches!(*self, Self::Drained)
     }
 }
 

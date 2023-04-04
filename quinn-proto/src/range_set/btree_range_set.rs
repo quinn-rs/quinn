@@ -161,13 +161,13 @@ impl RangeSet {
         }
     }
 
-    pub fn add(&mut self, other: &RangeSet) {
+    pub fn add(&mut self, other: &Self) {
         for (&start, &end) in &other.0 {
             self.insert(start..end);
         }
     }
 
-    pub fn subtract(&mut self, other: &RangeSet) {
+    pub fn subtract(&mut self, other: &Self) {
         for (&start, &end) in &other.0 {
             self.remove(start..end);
         }

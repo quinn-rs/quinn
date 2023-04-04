@@ -348,8 +348,8 @@ enum ReadStatus<T> {
 impl<T> From<(Option<T>, Option<proto::ReadError>)> for ReadStatus<T> {
     fn from(status: (Option<T>, Option<proto::ReadError>)) -> Self {
         match status {
-            (read, None) => ReadStatus::Finished(read),
-            (read, Some(e)) => ReadStatus::Failed(read, e),
+            (read, None) => Self::Finished(read),
+            (read, Some(e)) => Self::Failed(read, e),
         }
     }
 }
@@ -428,7 +428,7 @@ impl tokio::io::AsyncRead for RecvStream {
         cx: &mut Context<'_>,
         buf: &mut ReadBuf<'_>,
     ) -> Poll<io::Result<()>> {
-        ready!(RecvStream::poll_read(self.get_mut(), cx, buf))?;
+        ready!(Self::poll_read(self.get_mut(), cx, buf))?;
         Poll::Ready(Ok(()))
     }
 }
@@ -484,8 +484,8 @@ pub enum ReadError {
 impl From<ReadableError> for ReadError {
     fn from(e: ReadableError) -> Self {
         match e {
-            ReadableError::UnknownStream => ReadError::UnknownStream,
-            ReadableError::IllegalOrderedRead => ReadError::IllegalOrderedRead,
+            ReadableError::UnknownStream => Self::UnknownStream,
+            ReadableError::IllegalOrderedRead => Self::IllegalOrderedRead,
         }
     }
 }
@@ -498,7 +498,7 @@ impl From<ReadError> for io::Error {
             ConnectionLost(_) | UnknownStream => io::ErrorKind::NotConnected,
             IllegalOrderedRead => io::ErrorKind::InvalidInput,
         };
-        io::Error::new(kind, x)
+        Self::new(kind, x)
     }
 }
 

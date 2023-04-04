@@ -37,7 +37,7 @@ impl Runtime for TokioRuntime {
 
 impl AsyncTimer for Sleep {
     fn reset(self: Pin<&mut Self>, t: Instant) {
-        Sleep::reset(self, t.into())
+        Self::reset(self, t.into())
     }
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<()> {
         Future::poll(self, cx)

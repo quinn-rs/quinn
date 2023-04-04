@@ -40,7 +40,7 @@ impl Type {
 
 impl coding::Codec for Type {
     fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
-        Ok(Type(buf.get_var()?))
+        Ok(Self(buf.get_var()?))
     }
     fn encode<B: BufMut>(&self, buf: &mut B) {
         buf.write_var(self.0);
@@ -203,7 +203,7 @@ impl Frame {
     }
 
     pub fn is_ack_eliciting(&self) -> bool {
-        !matches!(*self, Frame::Ack(_) | Frame::Padding | Frame::Close(_))
+        !matches!(*self, Self::Ack(_) | Self::Padding | Self::Close(_))
     }
 }
 
@@ -216,25 +216,25 @@ pub enum Close {
 impl Close {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
         match *self {
-            Close::Connection(ref x) => x.encode(out, max_len),
-            Close::Application(ref x) => x.encode(out, max_len),
+            Self::Connection(ref x) => x.encode(out, max_len),
+            Self::Application(ref x) => x.encode(out, max_len),
         }
     }
 }
 
 impl From<TransportError> for Close {
     fn from(x: TransportError) -> Self {
-        Close::Connection(x.into())
+        Self::Connection(x.into())
     }
 }
 impl From<ConnectionClose> for Close {
     fn from(x: ConnectionClose) -> Self {
-        Close::Connection(x)
+        Self::Connection(x)
     }
 }
 impl From<ApplicationClose> for Close {
     fn from(x: ApplicationClose) -> Self {
-        Close::Application(x)
+        Self::Application(x)
     }
 }
 
@@ -262,7 +262,7 @@ impl fmt::Display for ConnectionClose {
 
 impl From<TransportError> for ConnectionClose {
     fn from(x: TransportError) -> Self {
-        ConnectionClose {
+        Self {
             error_code: x.code,
             frame_type: x.frame,
             reason: x.reason.into(),
@@ -464,7 +464,7 @@ pub struct StreamMeta {
 // This manual implementation exists because `Default` is not implemented for `StreamId`
 impl Default for StreamMeta {
     fn default() -> Self {
-        StreamMeta {
+        Self {
             id: StreamId(0),
             offsets: 0..0,
             fin: false,
@@ -540,13 +540,13 @@ impl IterErr {
 
 impl From<UnexpectedEnd> for IterErr {
     fn from(_: UnexpectedEnd) -> Self {
-        IterErr::UnexpectedEnd
+        Self::UnexpectedEnd
     }
 }
 
 impl Iter {
     pub fn new(payload: Bytes) -> Self {
-        Iter {
+        Self {
             bytes: io::Cursor::new(payload),
             last_ty: None,
         }

@@ -43,7 +43,7 @@ impl PathData {
         now: Instant,
         validated: bool,
     ) -> Self {
-        PathData {
+        Self {
             remote,
             rtt: RttEstimator::new(initial_rtt),
             sending_ecn: true,
@@ -73,10 +73,10 @@ impl PathData {
         }
     }
 
-    pub fn from_previous(remote: SocketAddr, prev: &PathData, now: Instant) -> Self {
+    pub fn from_previous(remote: SocketAddr, prev: &Self, now: Instant) -> Self {
         let congestion = prev.congestion.clone_box();
         let smoothed_rtt = prev.rtt.get();
-        PathData {
+        Self {
             remote,
             rtt: prev.rtt,
             pacing: Pacer::new(smoothed_rtt, congestion.window(), prev.current_mtu(), now),
