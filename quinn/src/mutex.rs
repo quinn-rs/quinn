@@ -20,7 +20,7 @@ mod tracking {
 
     /// A Mutex which optionally allows to track the time a lock was held and
     /// emit warnings in case of excessive lock times
-    pub struct Mutex<T> {
+    pub(crate) struct Mutex<T> {
         inner: std::sync::Mutex<Inner<T>>,
     }
 
@@ -31,7 +31,7 @@ mod tracking {
     }
 
     impl<T> Mutex<T> {
-        pub fn new(value: T) -> Self {
+        pub(crate) fn new(value: T) -> Self {
             Self {
                 inner: std::sync::Mutex::new(Inner {
                     last_lock_owner: VecDeque::new(),
@@ -43,7 +43,7 @@ mod tracking {
         /// Acquires the lock for a certain purpose
         ///
         /// The purpose will be recorded in the list of last lock owners
-        pub fn lock(&self, purpose: &'static str) -> MutexGuard<T> {
+        pub(crate) fn lock(&self, purpose: &'static str) -> MutexGuard<T> {
             let now = Instant::now();
             let guard = self.inner.lock().unwrap();
 
@@ -65,7 +65,7 @@ mod tracking {
         }
     }
 
-    pub struct MutexGuard<'a, T> {
+    pub(crate) struct MutexGuard<'a, T> {
         guard: std::sync::MutexGuard<'a, Inner<T>>,
         start_time: Instant,
         purpose: &'static str,
@@ -110,7 +110,7 @@ mod tracking {
 }
 
 #[cfg(feature = "lock_tracking")]
-pub use tracking::{Mutex, MutexGuard};
+pub(crate) use tracking::Mutex;
 
 #[cfg(not(feature = "lock_tracking"))]
 mod non_tracking {
@@ -119,12 +119,12 @@ mod non_tracking {
     /// A Mutex which optionally allows to track the time a lock was held and
     /// emit warnings in case of excessive lock times
     #[derive(Debug)]
-    pub struct Mutex<T> {
+    pub(crate) struct Mutex<T> {
         inner: std::sync::Mutex<T>,
     }
 
     impl<T> Mutex<T> {
-        pub fn new(value: T) -> Self {
+        pub(crate) fn new(value: T) -> Self {
             Self {
                 inner: std::sync::Mutex::new(value),
             }
@@ -133,14 +133,14 @@ mod non_tracking {
         /// Acquires the lock for a certain purpose
         ///
         /// The purpose will be recorded in the list of last lock owners
-        pub fn lock(&self, _purpose: &'static str) -> MutexGuard<T> {
+        pub(crate) fn lock(&self, _purpose: &'static str) -> MutexGuard<T> {
             MutexGuard {
                 guard: self.inner.lock().unwrap(),
             }
         }
     }
 
-    pub struct MutexGuard<'a, T> {
+    pub(crate) struct MutexGuard<'a, T> {
         guard: std::sync::MutexGuard<'a, T>,
     }
 
@@ -160,4 +160,4 @@ mod non_tracking {
 }
 
 #[cfg(not(feature = "lock_tracking"))]
-pub use non_tracking::{Mutex, MutexGuard};
+pub(crate) use non_tracking::Mutex;

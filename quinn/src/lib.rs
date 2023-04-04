@@ -38,6 +38,7 @@
 //! with a domain name--then as with TLS, self-signed certificates can be used to provide
 //! encryption alone.
 #![warn(missing_docs)]
+#![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
 use std::time::Duration;
