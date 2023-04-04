@@ -44,7 +44,7 @@ impl Connecting {
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         udp_state: Arc<UdpState>,
         runtime: Arc<dyn Runtime>,
-    ) -> Connecting {
+    ) -> Self {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
         let conn = ConnectionRef::new(
@@ -60,7 +60,7 @@ impl Connecting {
 
         runtime.spawn(Box::pin(ConnectionDriver(conn.clone())));
 
-        Connecting {
+        Self {
             conn: Some(conn),
             connected: on_connected_recv,
             handshake_data_ready: Some(on_handshake_data_recv),
@@ -1149,6 +1149,6 @@ pub struct UnknownStream {
 
 impl From<proto::UnknownStream> for UnknownStream {
     fn from(_: proto::UnknownStream) -> Self {
-        UnknownStream { _private: () }
+        Self { _private: () }
     }
 }

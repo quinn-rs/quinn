@@ -68,7 +68,7 @@ impl ArrayRangeSet {
         false
     }
 
-    pub fn subtract(&mut self, other: &ArrayRangeSet) {
+    pub fn subtract(&mut self, other: &Self) {
         // TODO: This can potentially be made more efficient, since the we know
         // individual ranges are not overlapping, and the next range must start
         // after the last one finished

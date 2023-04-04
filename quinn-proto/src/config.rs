@@ -254,7 +254,7 @@ impl Default for TransportConfig {
                                                         // stalls
         const STREAM_RWND: u32 = MAX_STREAM_BANDWIDTH / 1000 * EXPECTED_RTT;
 
-        TransportConfig {
+        Self {
             max_concurrent_bidi_streams: 100u32.into(),
             max_concurrent_uni_streams: 100u32.into(),
             max_idle_timeout: Some(VarInt(10_000)),
@@ -664,13 +664,13 @@ pub enum ConfigError {
 
 impl From<TryFromIntError> for ConfigError {
     fn from(_: TryFromIntError) -> Self {
-        ConfigError::OutOfBounds
+        Self::OutOfBounds
     }
 }
 
 impl From<VarIntBoundsExceeded> for ConfigError {
     fn from(_: VarIntBoundsExceeded) -> Self {
-        ConfigError::OutOfBounds
+        Self::OutOfBounds
     }
 }
 

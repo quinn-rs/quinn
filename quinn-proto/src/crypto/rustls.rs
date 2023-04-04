@@ -19,8 +19,8 @@ use crate::{
 impl From<Side> for rustls::Side {
     fn from(s: Side) -> Self {
         match s {
-            Side::Client => rustls::Side::Client,
-            Side::Server => rustls::Side::Server,
+            Side::Client => Self::Client,
+            Side::Server => Self::Server,
         }
     }
 }

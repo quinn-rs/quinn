@@ -778,7 +778,7 @@ pub(crate) struct ConnectionMeta {
 pub struct ConnectionHandle(pub usize);
 
 impl From<ConnectionHandle> for usize {
-    fn from(x: ConnectionHandle) -> usize {
+    fn from(x: ConnectionHandle) -> Self {
         x.0
     }
 }

@@ -122,7 +122,7 @@ impl ResetToken {
 }
 
 impl PartialEq for ResetToken {
-    fn eq(&self, other: &ResetToken) -> bool {
+    fn eq(&self, other: &Self) -> bool {
         crate::constant_time::eq(&self.0, &other.0)
     }
 }

@@ -1,4 +1,6 @@
 //! Uniform interface to send/recv UDP packets with ECN information.
+#![warn(clippy::use_self)]
+
 #[cfg(unix)]
 use std::os::unix::io::AsRawFd;
 #[cfg(windows)]

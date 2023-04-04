@@ -18,19 +18,19 @@ pub struct VarInt(pub(crate) u64);
 
 impl VarInt {
     /// The largest representable value
-    pub const MAX: VarInt = VarInt((1 << 62) - 1);
+    pub const MAX: Self = Self((1 << 62) - 1);
     /// The largest encoded value length
     pub const MAX_SIZE: usize = 8;
 
     /// Construct a `VarInt` infallibly
     pub const fn from_u32(x: u32) -> Self {
-        VarInt(x as u64)
+        Self(x as u64)
     }
 
     /// Succeeds iff `x` < 2^62
     pub fn from_u64(x: u64) -> Result<Self, VarIntBoundsExceeded> {
         if x < 2u64.pow(62) {
-            Ok(VarInt(x))
+            Ok(Self(x))
         } else {
             Err(VarIntBoundsExceeded)
         }
@@ -42,7 +42,7 @@ impl VarInt {
     ///
     /// `x` must be less than 2^62.
     pub const unsafe fn from_u64_unchecked(x: u64) -> Self {
-        VarInt(x)
+        Self(x)
     }
 
     /// Extract the integer value
@@ -68,26 +68,26 @@ impl VarInt {
 }
 
 impl From<VarInt> for u64 {
-    fn from(x: VarInt) -> u64 {
+    fn from(x: VarInt) -> Self {
         x.0
     }
 }
 
 impl From<u8> for VarInt {
     fn from(x: u8) -> Self {
-        VarInt(x.into())
+        Self(x.into())
     }
 }
 
 impl From<u16> for VarInt {
     fn from(x: u16) -> Self {
-        VarInt(x.into())
+        Self(x.into())
     }
 }
 
 impl From<u32> for VarInt {
     fn from(x: u32) -> Self {
-        VarInt(x.into())
+        Self(x.into())
     }
 }
 
@@ -95,7 +95,7 @@ impl std::convert::TryFrom<u64> for VarInt {
     type Error = VarIntBoundsExceeded;
     /// Succeeds iff `x` < 2^62
     fn try_from(x: u64) -> Result<Self, VarIntBoundsExceeded> {
-        VarInt::from_u64(x)
+        Self::from_u64(x)
     }
 }
 
@@ -103,7 +103,7 @@ impl std::convert::TryFrom<u128> for VarInt {
     type Error = VarIntBoundsExceeded;
     /// Succeeds iff `x` < 2^62
     fn try_from(x: u128) -> Result<Self, VarIntBoundsExceeded> {
-        VarInt::from_u64(x.try_into().map_err(|_| VarIntBoundsExceeded)?)
+        Self::from_u64(x.try_into().map_err(|_| VarIntBoundsExceeded)?)
     }
 }
 
@@ -111,7 +111,7 @@ impl std::convert::TryFrom<usize> for VarInt {
     type Error = VarIntBoundsExceeded;
     /// Succeeds iff `x` < 2^62
     fn try_from(x: usize) -> Result<Self, VarIntBoundsExceeded> {
-        VarInt::try_from(x as u64)
+        Self::try_from(x as u64)
     }
 }
 
@@ -130,7 +130,7 @@ impl fmt::Display for VarInt {
 #[cfg(feature = "arbitrary")]
 impl<'arbitrary> Arbitrary<'arbitrary> for VarInt {
     fn arbitrary(u: &mut arbitrary::Unstructured<'arbitrary>) -> arbitrary::Result<Self> {
-        Ok(VarInt(u.int_in_range(0..=VarInt::MAX.0)?))
+        Ok(Self(u.int_in_range(0..=Self::MAX.0)?))
     }
 }
 
@@ -173,7 +173,7 @@ impl Codec for VarInt {
             }
             _ => unreachable!(),
         };
-        Ok(VarInt(x))
+        Ok(Self(x))
     }
 
     fn encode<B: BufMut>(&self, w: &mut B) {

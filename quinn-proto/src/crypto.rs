@@ -219,6 +219,6 @@ pub struct UnsupportedVersion;
 
 impl From<UnsupportedVersion> for ConnectError {
     fn from(_: UnsupportedVersion) -> Self {
-        ConnectError::UnsupportedVersion
+        Self::UnsupportedVersion
     }
 }

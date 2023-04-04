@@ -228,7 +228,7 @@ pub struct Chunk {
 
 impl Chunk {
     fn new(offset: u64, bytes: Bytes) -> Self {
-        Chunk { offset, bytes }
+        Self { offset, bytes }
     }
 }
 
@@ -290,7 +290,7 @@ impl Buffer {
 impl Ord for Buffer {
     // Invert ordering based on offset (max-heap, min offset first),
     // prioritize longer chunks at the same offset.
-    fn cmp(&self, other: &Buffer) -> Ordering {
+    fn cmp(&self, other: &Self) -> Ordering {
         self.offset
             .cmp(&other.offset)
             .reverse()
@@ -299,13 +299,13 @@ impl Ord for Buffer {
 }
 
 impl PartialOrd for Buffer {
-    fn partial_cmp(&self, other: &Buffer) -> Option<Ordering> {
+    fn partial_cmp(&self, other: &Self) -> Option<Ordering> {
         Some(self.cmp(other))
     }
 }
 
 impl PartialEq for Buffer {
-    fn eq(&self, other: &Buffer) -> bool {
+    fn eq(&self, other: &Self) -> bool {
         (self.offset, self.bytes.len()) == (other.offset, other.bytes.len())
     }
 }
@@ -322,13 +322,13 @@ enum State {
 
 impl State {
     fn is_ordered(&self) -> bool {
-        matches!(self, State::Ordered)
+        matches!(self, Self::Ordered)
     }
 }
 
 impl Default for State {
     fn default() -> Self {
-        State::Ordered
+        Self::Ordered
     }
 }
 

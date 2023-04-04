@@ -609,7 +609,7 @@ enum RecoveryState {
 
 impl RecoveryState {
     pub fn in_recovery(&self) -> bool {
-        !matches!(self, RecoveryState::NotInRecovery)
+        !matches!(self, Self::NotInRecovery)
     }
 }
 

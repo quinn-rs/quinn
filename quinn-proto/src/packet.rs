@@ -365,10 +365,7 @@ impl Header {
 
     /// Whether the packet is encrypted on the wire
     pub(crate) fn is_protected(&self) -> bool {
-        !matches!(
-            *self,
-            Header::Retry { .. } | Header::VersionNegotiate { .. }
-        )
+        !matches!(*self, Self::Retry { .. } | Self::VersionNegotiate { .. })
     }
 
     pub(crate) fn number(&self) -> Option<PacketNumber> {
@@ -401,13 +398,13 @@ impl Header {
 
     pub(crate) fn key_phase(&self) -> bool {
         match *self {
-            Header::Short { key_phase, .. } => key_phase,
+            Self::Short { key_phase, .. } => key_phase,
             _ => false,
         }
     }
 
     pub(crate) fn is_short(&self) -> bool {
-        matches!(*self, Header::Short { .. })
+        matches!(*self, Self::Short { .. })
     }
 
     pub(crate) fn is_1rtt(&self) -> bool {
@@ -417,7 +414,7 @@ impl Header {
     pub(crate) fn is_0rtt(&self) -> bool {
         matches!(
             *self,
-            Header::Long {
+            Self::Long {
                 ty: LongType::ZeroRtt,
                 ..
             }
@@ -450,7 +447,7 @@ impl PartialEncode {
         header_crypto: &dyn crypto::HeaderKey,
         crypto: Option<(u64, &dyn crypto::PacketKey)>,
     ) {
-        let PartialEncode { header_len, pn, .. } = self;
+        let Self { header_len, pn, .. } = self;
         let (pn_len, write_len) = match pn {
             Some((pn_len, write_len)) => (pn_len, write_len),
             None => return,
@@ -545,7 +542,7 @@ impl PlainHeader {
                 return Err(PacketDecodeError::InvalidHeader("cid out of bounds"));
             }
 
-            Ok(PlainHeader::Short {
+            Ok(Self::Short {
                 spin,
                 dst_cid: ConnectionId::from_buf(buf, local_cid_len),
             })
@@ -560,7 +557,7 @@ impl PlainHeader {
             // TODO: Support long CIDs for compatibility with future QUIC versions
             if version == 0 {
                 let random = first & !LONG_HEADER_FORM;
-                return Ok(PlainHeader::VersionNegotiate {
+                return Ok(Self::VersionNegotiate {
                     random,
                     dst_cid,
                     src_cid,
@@ -585,7 +582,7 @@ impl PlainHeader {
                     buf.advance(token_len);
 
                     let len = buf.get_var()?;
-                    Ok(PlainHeader::Initial {
+                    Ok(Self::Initial {
                         dst_cid,
                         src_cid,
                         token_pos: token_start..token_start + token_len,
@@ -593,12 +590,12 @@ impl PlainHeader {
                         version,
                     })
                 }
-                LongHeaderType::Retry => Ok(PlainHeader::Retry {
+                LongHeaderType::Retry => Ok(Self::Retry {
                     dst_cid,
                     src_cid,
                     version,
                 }),
-                LongHeaderType::Standard(ty) => Ok(PlainHeader::Long {
+                LongHeaderType::Standard(ty) => Ok(Self::Long {
                     ty,
                     dst_cid,
                     src_cid,
@@ -623,13 +620,13 @@ impl PacketNumber {
     pub(crate) fn new(n: u64, largest_acked: u64) -> Self {
         let range = (n - largest_acked) * 2;
         if range < 1 << 8 {
-            PacketNumber::U8(n as u8)
+            Self::U8(n as u8)
         } else if range < 1 << 16 {
-            PacketNumber::U16(n as u16)
+            Self::U16(n as u16)
         } else if range < 1 << 24 {
-            PacketNumber::U24(n as u32)
+            Self::U24(n as u32)
         } else if range < 1 << 32 {
-            PacketNumber::U32(n as u32)
+            Self::U32(n as u32)
         } else {
             panic!("packet number too large to encode")
         }
@@ -655,7 +652,7 @@ impl PacketNumber {
         }
     }
 
-    pub(crate) fn decode<R: Buf>(len: usize, r: &mut R) -> Result<PacketNumber, PacketDecodeError> {
+    pub(crate) fn decode<R: Buf>(len: usize, r: &mut R) -> Result<Self, PacketDecodeError> {
         use self::PacketNumber::*;
         let pn = match len {
             1 => U8(r.get()?),
@@ -736,7 +733,7 @@ impl LongHeaderType {
 }
 
 impl From<LongHeaderType> for u8 {
-    fn from(ty: LongHeaderType) -> u8 {
+    fn from(ty: LongHeaderType) -> Self {
         use self::{LongHeaderType::*, LongType::*};
         match ty {
             Initial => LONG_HEADER_FORM | FIXED_BIT,
@@ -768,7 +765,7 @@ pub enum PacketDecodeError {
 
 impl From<coding::UnexpectedEnd> for PacketDecodeError {
     fn from(_: coding::UnexpectedEnd) -> Self {
-        PacketDecodeError::InvalidHeader("unexpected end of packet")
+        Self::InvalidHeader("unexpected end of packet")
     }
 }
 
@@ -791,9 +788,7 @@ pub enum SpaceId {
 
 impl SpaceId {
     pub fn iter() -> impl Iterator<Item = Self> {
-        [SpaceId::Initial, SpaceId::Handshake, SpaceId::Data]
-            .iter()
-            .cloned()
+        [Self::Initial, Self::Handshake, Self::Data].iter().cloned()
     }
 }
 

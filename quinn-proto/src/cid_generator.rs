@@ -46,7 +46,7 @@ impl RandomConnectionIdGenerator {
         debug_assert!(cid_len <= MAX_CID_SIZE);
         Self {
             cid_len,
-            ..RandomConnectionIdGenerator::default()
+            ..Self::default()
         }
     }
 

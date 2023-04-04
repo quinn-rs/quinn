@@ -38,7 +38,7 @@ impl PacketBuilder {
         ack_eliciting: bool,
         conn: &mut Connection,
         version: u32,
-    ) -> Option<PacketBuilder> {
+    ) -> Option<Self> {
         // Initiate key update if we're approaching the confidentiality limit
         let confidentiality_limit = conn.spaces[space_id]
             .crypto
@@ -142,7 +142,7 @@ impl PacketBuilder {
         );
         let max_size = buffer_capacity - partial_encode.start - partial_encode.header_len - tag_len;
 
-        Some(PacketBuilder {
+        Some(Self {
             datagram_start,
             space: space_id,
             partial_encode,
@@ -210,11 +210,7 @@ impl PacketBuilder {
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
-    pub fn finish(
-        self: PacketBuilder,
-        conn: &mut Connection,
-        buffer: &mut Vec<u8>,
-    ) -> (usize, bool) {
+    pub fn finish(self, conn: &mut Connection, buffer: &mut Vec<u8>) -> (usize, bool) {
         let pad = buffer.len() < self.min_size;
         if pad {
             trace!("PADDING * {}", self.min_size - buffer.len());

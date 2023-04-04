@@ -44,7 +44,7 @@ impl BandwidthEstimation {
         };
 
         let send_rate = if self.sent_time > prev_sent_time {
-            BandwidthEstimation::bw_from_delta(
+            Self::bw_from_delta(
                 self.total_sent - self.prev_total_sent,
                 self.sent_time - prev_sent_time,
             )
@@ -54,7 +54,7 @@ impl BandwidthEstimation {
         };
 
         let ack_rate = match self.prev_acked_time {
-            Some(prev_acked_time) => BandwidthEstimation::bw_from_delta(
+            Some(prev_acked_time) => Self::bw_from_delta(
                 self.total_acked - self.prev_total_acked,
                 now - prev_acked_time,
             )
@@ -93,7 +93,7 @@ impl BandwidthEstimation {
 
 impl Default for BandwidthEstimation {
     fn default() -> Self {
-        BandwidthEstimation {
+        Self {
             total_acked: 0,
             prev_total_acked: 0,
             acked_time: None,

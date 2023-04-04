@@ -22,14 +22,14 @@ pub(crate) enum Timer {
 
 impl Timer {
     pub(crate) const VALUES: [Self; 8] = [
-        Timer::LossDetection,
-        Timer::Idle,
-        Timer::Close,
-        Timer::KeyDiscard,
-        Timer::PathValidation,
-        Timer::KeepAlive,
-        Timer::Pacing,
-        Timer::PushNewCid,
+        Self::LossDetection,
+        Self::Idle,
+        Self::Close,
+        Self::KeyDiscard,
+        Self::PathValidation,
+        Self::KeepAlive,
+        Self::Pacing,
+        Self::PushNewCid,
     ];
 }
 

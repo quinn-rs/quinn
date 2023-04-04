@@ -125,7 +125,7 @@ impl TransportParameters {
         initial_src_cid: ConnectionId,
         server_config: Option<&ServerConfig>,
     ) -> Self {
-        TransportParameters {
+        Self {
             initial_src_cid: Some(initial_src_cid),
             initial_max_streams_bidi: config.max_concurrent_bidi_streams,
             initial_max_streams_uni: config.max_concurrent_uni_streams,
@@ -152,10 +152,7 @@ impl TransportParameters {
 
     /// Check that these parameters are legal when resuming from
     /// certain cached parameters
-    pub(crate) fn validate_resumption_from(
-        &self,
-        cached: &TransportParameters,
-    ) -> Result<(), TransportError> {
+    pub(crate) fn validate_resumption_from(&self, cached: &Self) -> Result<(), TransportError> {
         if cached.active_connection_id_limit > self.active_connection_id_limit
             || cached.initial_max_data > self.initial_max_data
             || cached.initial_max_stream_data_bidi_local > self.initial_max_stream_data_bidi_local
@@ -261,15 +258,15 @@ pub enum Error {
 impl From<Error> for TransportError {
     fn from(e: Error) -> Self {
         match e {
-            Error::IllegalValue => TransportError::TRANSPORT_PARAMETER_ERROR("illegal value"),
-            Error::Malformed => TransportError::TRANSPORT_PARAMETER_ERROR("malformed"),
+            Error::IllegalValue => Self::TRANSPORT_PARAMETER_ERROR("illegal value"),
+            Error::Malformed => Self::TRANSPORT_PARAMETER_ERROR("malformed"),
         }
     }
 }
 
 impl From<UnexpectedEnd> for Error {
     fn from(_: UnexpectedEnd) -> Self {
-        Error::Malformed
+        Self::Malformed
     }
 }
 
@@ -337,7 +334,7 @@ impl TransportParameters {
     /// Decode `TransportParameters` from buffer
     pub fn read<R: Buf>(side: Side, r: &mut R) -> Result<Self, Error> {
         // Initialize to protocol-specified defaults
-        let mut params = TransportParameters::default();
+        let mut params = Self::default();
 
         // State to check for duplicate transport parameters.
         macro_rules! param_state {

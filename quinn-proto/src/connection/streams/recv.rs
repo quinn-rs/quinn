@@ -369,7 +369,7 @@ pub enum ReadableError {
 
 impl From<IllegalOrderedRead> for ReadableError {
     fn from(_: IllegalOrderedRead) -> Self {
-        ReadableError::IllegalOrderedRead
+        Self::IllegalOrderedRead
     }
 }
 
@@ -381,6 +381,6 @@ enum RecvState {
 
 impl Default for RecvState {
     fn default() -> Self {
-        RecvState::Recv { size: None }
+        Self::Recv { size: None }
     }
 }
