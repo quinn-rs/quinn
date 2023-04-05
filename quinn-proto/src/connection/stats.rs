@@ -137,6 +137,8 @@ pub struct PathStats {
     /// The amount of PLPMTUD probe packets lost on this path (ignored by `lost_packets` and
     /// `lost_bytes`)
     pub lost_plpmtud_probes: u64,
+    /// The number of times a black hole was detected in the path
+    pub black_holes_detected: u64,
 }
 
 /// Connection statistics
