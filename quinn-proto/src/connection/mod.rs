@@ -1470,6 +1470,7 @@ impl Connection {
                 lost_packets,
                 size_of_lost_packets
             );
+
             for packet in &lost_packets {
                 let info = self.spaces[pn_space].sent_packets.remove(packet).unwrap(); // safe: lost_packets is populated just above
                 self.remove_in_flight(pn_space, &info);
@@ -1477,8 +1478,12 @@ impl Connection {
                     self.streams.retransmit(frame);
                 }
                 self.spaces[pn_space].pending |= info.retransmits;
-                self.path.mtud.on_non_probe_lost(now, *packet, info.size);
+                self.path.mtud.on_non_probe_lost(*packet, info.size);
             }
+
+            let black_hole_detected = self.path.mtud.black_hole_detected(now);
+            self.stats.path.black_holes_detected += u64::from(black_hole_detected);
+
             // Don't apply congestion penalty for lost ack-only packets
             let lost_ack_eliciting = old_bytes_in_flight != self.in_flight.bytes;
 

@@ -2136,6 +2136,7 @@ fn blackhole_after_mtu_change_repairs_itself() {
     let client_stats = pair.client_conn_mut(client_ch).stats();
     assert!(client_stats.path.lost_packets >= 3);
     assert!(client_stats.path.congestion_events >= 3);
+    assert_eq!(client_stats.path.black_holes_detected, 1);
 }
 
 #[test]
