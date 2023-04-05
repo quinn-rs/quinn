@@ -1,4 +1,4 @@
-use std::{convert::TryInto, fmt, num::TryFromIntError, sync::Arc, time::Duration};
+use std::{fmt, num::TryFromIntError, sync::Arc, time::Duration};
 
 use thiserror::Error;
 
@@ -476,7 +476,7 @@ impl EndpointConfig {
             || Box::<RandomConnectionIdGenerator>::default();
         Self {
             reset_key,
-            max_udp_payload_size: 1480u32.into(), // Typical internet MTU minus IPv4 and UDP overhead, rounded up to a multiple of 8
+            max_udp_payload_size: MAX_UDP_PAYLOAD.into(), // See RFC 9000 (https://www.rfc-editor.org/rfc/rfc9000.html#section-18.2-4.10.1)
             connection_id_generator_factory: Arc::new(cid_factory),
             supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
             grease_quic_bit: true,
@@ -508,12 +508,17 @@ impl EndpointConfig {
         self
     }
 
-    /// Maximum UDP payload size accepted from peers. Excludes UDP and IP overhead.
+    /// Maximum UDP payload size accepted from peers (excluding UDP and IP overhead).
     ///
-    /// The default is suitable for typical internet applications. Applications which expect to run
-    /// on networks supporting Ethernet jumbo frames or similar should set this appropriately.
-    pub fn max_udp_payload_size(&mut self, value: u64) -> Result<&mut Self, ConfigError> {
-        self.max_udp_payload_size = value.try_into()?;
+    /// Must be greater or equal than 1200.
+    ///
+    /// Defaults to 65527, which is the maximum permitted UDP payload.
+    pub fn max_udp_payload_size(&mut self, value: u16) -> Result<&mut Self, ConfigError> {
+        if !(1200..=65_527).contains(&value) {
+            return Err(ConfigError::OutOfBounds);
+        }
+
+        self.max_udp_payload_size = value.into();
         Ok(self)
     }
 
