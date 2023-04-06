@@ -445,7 +445,7 @@ impl MtuDiscoveryConfig {
 
 impl Default for MtuDiscoveryConfig {
     fn default() -> Self {
-        MtuDiscoveryConfig {
+        Self {
             interval: Duration::from_secs(600),
             upper_bound: 1452,
             black_hole_cooldown: Duration::from_secs(60),
