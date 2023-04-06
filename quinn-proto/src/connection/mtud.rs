@@ -29,8 +29,7 @@ impl MtuDiscovery {
             "initial_max_udp_payload_size must be at least {BASE_UDP_PAYLOAD_SIZE}"
         );
 
-        let mut mtud =
-            MtuDiscovery::with_state(initial_plpmtu, Some(EnabledMtuDiscovery::new(config)));
+        let mut mtud = Self::with_state(initial_plpmtu, Some(EnabledMtuDiscovery::new(config)));
 
         // We might be migrating an existing connection to a new path, in which case the transport
         // parameters have already been transmitted, and we already know the value of
@@ -44,7 +43,7 @@ impl MtuDiscovery {
 
     /// MTU discovery will be disabled and the current MTU will be fixed to the provided value
     pub(crate) fn disabled(plpmtu: u16) -> Self {
-        MtuDiscovery::with_state(plpmtu, None)
+        Self::with_state(plpmtu, None)
     }
 
     fn with_state(current_mtu: u16, state: Option<EnabledMtuDiscovery>) -> Self {
