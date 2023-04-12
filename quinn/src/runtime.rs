@@ -75,6 +75,18 @@ pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
     None
 }
 
+impl<R: Runtime + ?Sized> Runtime for Box<R> {
+    fn new_timer(&self, i: Instant) -> Pin<Box<dyn AsyncTimer>> {
+        self.as_ref().new_timer(i)
+    }
+    fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+        self.as_ref().spawn(future);
+    }
+    fn wrap_udp_socket(&self, t: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
+        self.as_ref().wrap_udp_socket(t)
+    }
+}
+
 #[cfg(feature = "runtime-tokio")]
 mod tokio;
 #[cfg(feature = "runtime-tokio")]
