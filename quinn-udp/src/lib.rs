@@ -80,14 +80,14 @@ impl UdpState {
     /// Returns true if we previously got an EINVAL error from `sendmsg` or `sendmmsg` syscall.
     #[inline]
     #[cfg(not(windows))]
-    pub fn sendmsg_einval(&self) -> bool {
+    fn sendmsg_einval(&self) -> bool {
         self.sendmsg_einval.load(Ordering::Relaxed)
     }
 
     /// Sets the flag indicating we got EINVAL error from `sendmsg` or `sendmmsg` syscall.
     #[inline]
     #[cfg(not(windows))]
-    pub fn set_sendmsg_einval(&self) {
+    fn set_sendmsg_einval(&self) {
         self.sendmsg_einval.store(true, Ordering::Relaxed)
     }
 }
