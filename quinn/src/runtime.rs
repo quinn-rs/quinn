@@ -9,8 +9,7 @@ use std::{
     time::Instant,
 };
 
-use proto::Transmit;
-use udp::{RecvMeta, UdpState};
+use udp::{RecvMeta, Transmit, UdpState};
 
 /// Abstracts I/O and timer operations for runtime independence
 pub trait Runtime: Send + Sync + Debug + 'static {

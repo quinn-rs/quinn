@@ -350,7 +350,7 @@ pub(crate) struct State {
     socket: Box<dyn AsyncUdpSocket>,
     udp_state: Arc<UdpState>,
     inner: proto::Endpoint,
-    outgoing: VecDeque<proto::Transmit>,
+    outgoing: VecDeque<udp::Transmit>,
     incoming: VecDeque<Connecting>,
     driver: Option<Waker>,
     ipv6: bool,
@@ -394,10 +394,13 @@ impl State {
                         let mut data: BytesMut = buf[0..meta.len].into();
                         while !data.is_empty() {
                             let buf = data.split_to(meta.stride.min(data.len()));
-                            match self
-                                .inner
-                                .handle(now, meta.addr, meta.dst_ip, meta.ecn, buf)
-                            {
+                            match self.inner.handle(
+                                now,
+                                meta.addr,
+                                meta.dst_ip,
+                                meta.ecn.map(proto_ecn),
+                                buf,
+                            ) {
                                 Some((handle, DatagramEvent::NewConnection(conn))) => {
                                     let conn = self.connections.insert(
                                         handle,
@@ -449,7 +452,7 @@ impl State {
         let result = loop {
             while self.outgoing.len() < BATCH_SIZE {
                 match self.inner.poll_transmit() {
-                    Some(x) => self.outgoing.push_back(x),
+                    Some(t) => self.queue_transmit(t),
                     None => break,
                 }
             }
@@ -508,7 +511,7 @@ impl State {
                                 .send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t) => self.outgoing.push_back(t),
+                    Transmit(t) => self.queue_transmit(t),
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
@@ -518,6 +521,34 @@ impl State {
         }
 
         true
+    }
+
+    fn queue_transmit(&mut self, t: proto::Transmit) {
+        self.outgoing.push_back(udp::Transmit {
+            destination: t.destination,
+            ecn: t.ecn.map(udp_ecn),
+            contents: t.contents,
+            segment_size: t.segment_size,
+            src_ip: t.src_ip,
+        });
+    }
+}
+
+#[inline]
+fn udp_ecn(ecn: proto::EcnCodepoint) -> udp::EcnCodepoint {
+    match ecn {
+        proto::EcnCodepoint::Ect0 => udp::EcnCodepoint::Ect0,
+        proto::EcnCodepoint::Ect1 => udp::EcnCodepoint::Ect1,
+        proto::EcnCodepoint::Ce => udp::EcnCodepoint::Ce,
+    }
+}
+
+#[inline]
+fn proto_ecn(ecn: udp::EcnCodepoint) -> proto::EcnCodepoint {
+    match ecn {
+        udp::EcnCodepoint::Ect0 => proto::EcnCodepoint::Ect0,
+        udp::EcnCodepoint::Ect1 => proto::EcnCodepoint::Ect1,
+        udp::EcnCodepoint::Ce => proto::EcnCodepoint::Ce,
     }
 }
 

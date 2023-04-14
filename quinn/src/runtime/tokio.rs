@@ -55,7 +55,7 @@ impl AsyncUdpSocket for UdpSocket {
         &self,
         state: &udp::UdpState,
         cx: &mut Context,
-        transmits: &[proto::Transmit],
+        transmits: &[udp::Transmit],
     ) -> Poll<io::Result<usize>> {
         let inner = &self.inner;
         let io = &self.io;

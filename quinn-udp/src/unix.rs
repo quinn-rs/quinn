@@ -13,10 +13,12 @@ use std::{
     time::Instant,
 };
 
-use proto::{EcnCodepoint, Transmit};
 use socket2::SockRef;
 
-use super::{cmsg, log_sendmsg_error, RecvMeta, UdpSockRef, UdpState, IO_ERROR_LOG_INTERVAL};
+use super::{
+    cmsg, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, UdpState,
+    IO_ERROR_LOG_INTERVAL,
+};
 
 #[cfg(target_os = "freebsd")]
 type IpTosTy = libc::c_uchar;
