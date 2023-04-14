@@ -102,7 +102,7 @@ fn local_addr() {
     let runtime = rt_basic();
     let ep = {
         let _guard = runtime.enter();
-        Endpoint::new(Default::default(), None, socket, TokioRuntime).unwrap()
+        Endpoint::new(Default::default(), None, socket, Arc::new(TokioRuntime)).unwrap()
     };
     assert_eq!(
         addr,
@@ -449,7 +449,7 @@ fn run_echo(args: EchoArgs) {
                 Default::default(),
                 Some(server_config),
                 server_sock,
-                TokioRuntime,
+                Arc::new(TokioRuntime),
             )
             .unwrap()
         };
