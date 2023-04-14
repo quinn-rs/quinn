@@ -88,10 +88,10 @@ impl Endpoint {
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: std::net::UdpSocket,
-        runtime: impl Runtime,
+        runtime: Arc<dyn Runtime>,
     ) -> io::Result<Self> {
         let socket = runtime.wrap_udp_socket(socket)?;
-        Self::new_with_runtime(config, server_config, socket, Arc::new(runtime))
+        Self::new_with_runtime(config, server_config, socket, runtime)
     }
 
     /// Construct an endpoint with arbitrary configuration and pre-constructed abstract socket
@@ -102,9 +102,9 @@ impl Endpoint {
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: impl AsyncUdpSocket,
-        runtime: impl Runtime,
+        runtime: Arc<dyn Runtime>,
     ) -> io::Result<Self> {
-        Self::new_with_runtime(config, server_config, Box::new(socket), Arc::new(runtime))
+        Self::new_with_runtime(config, server_config, Box::new(socket), runtime)
     }
 
     fn new_with_runtime(

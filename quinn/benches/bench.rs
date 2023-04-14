@@ -107,7 +107,13 @@ impl Context {
             let runtime = rt();
             let endpoint = {
                 let _guard = runtime.enter();
-                Endpoint::new(Default::default(), Some(config), sock, TokioRuntime).unwrap()
+                Endpoint::new(
+                    Default::default(),
+                    Some(config),
+                    sock,
+                    Arc::new(TokioRuntime),
+                )
+                .unwrap()
             };
             let handle = runtime.spawn(
                 async move {

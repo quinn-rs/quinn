@@ -105,7 +105,7 @@ async fn run(opt: Opt) -> Result<()> {
         Default::default(),
         Some(server_config),
         socket,
-        TokioRuntime,
+        Arc::new(TokioRuntime),
     )
     .context("creating endpoint")?;
 
