@@ -6,10 +6,12 @@
 use std::os::unix::io::AsRawFd;
 #[cfg(windows)]
 use std::os::windows::io::AsRawSocket;
+#[cfg(not(windows))]
+use std::sync::atomic::AtomicBool;
 use std::{
     net::{IpAddr, Ipv6Addr, SocketAddr},
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
+        atomic::{AtomicUsize, Ordering},
         Mutex,
     },
     time::{Duration, Instant},
@@ -85,7 +87,7 @@ impl UdpState {
 
     /// Sets the flag indicating we got EINVAL error from `sendmsg` or `sendmmsg` syscall.
     #[inline]
-    #[cfg(not(windows))]
+    #[cfg(all(unix, not(any(target_os = "macos", target_os = "ios"))))]
     fn set_sendmsg_einval(&self) {
         self.sendmsg_einval.store(true, Ordering::Relaxed)
     }
