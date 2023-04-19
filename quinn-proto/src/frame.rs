@@ -129,6 +129,9 @@ frame_types! {
     CONNECTION_CLOSE = 0x1c,
     APPLICATION_CLOSE = 0x1d,
     HANDSHAKE_DONE = 0x1e,
+    // ACK Frequency
+    ACK_FREQUENCY = 0xaf,
+    IMMEDIATE_ACK = 0xac,
     // DATAGRAM
 }
 
@@ -157,6 +160,8 @@ pub(crate) enum Frame {
     PathResponse(u64),
     Close(Close),
     Datagram(Datagram),
+    AckFrequency(AckFrequency),
+    ImmediateAck,
     Invalid { ty: Type, reason: &'static str },
     HandshakeDone,
 }
@@ -197,6 +202,8 @@ impl Frame {
             Crypto(_) => Type::CRYPTO,
             NewToken { .. } => Type::NEW_TOKEN,
             Datagram(_) => Type(*DATAGRAM_TYS.start()),
+            AckFrequency(_) => Type::ACK_FREQUENCY,
+            ImmediateAck => Type::IMMEDIATE_ACK,
             Invalid { ty, .. } => ty,
             HandshakeDone => Type::HANDSHAKE_DONE,
         }
@@ -684,6 +691,19 @@ impl Iter {
                 token: self.take_len()?,
             },
             Type::HANDSHAKE_DONE => Frame::HandshakeDone,
+            Type::ACK_FREQUENCY => {
+                let sequence = self.bytes.get_var()?;
+                let ack_eliciting_threshold = self.bytes.get_var()?;
+                let request_max_ack_delay = self.bytes.get_var()?;
+                let reordering_threshold = self.bytes.get_var()?;
+                Frame::AckFrequency(AckFrequency {
+                    sequence,
+                    ack_eliciting_threshold,
+                    request_max_ack_delay,
+                    reordering_threshold,
+                })
+            }
+            Type::IMMEDIATE_ACK => Frame::ImmediateAck,
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {
@@ -871,9 +891,39 @@ impl Datagram {
     }
 }
 
+#[derive(Debug, Copy, Clone)]
+pub(crate) struct AckFrequency {
+    pub(crate) sequence: u64,
+    pub(crate) ack_eliciting_threshold: u64,
+    pub(crate) request_max_ack_delay: u64,
+    pub(crate) reordering_threshold: u64,
+}
+
+impl AckFrequency {
+    pub(crate) fn encode<W: BufMut>(
+        sequence: u64,
+        ack_eliciting_threshold: u64,
+        request_max_ack_delay_micros: u64,
+        reordering_threshold: u64,
+        buf: &mut W,
+    ) {
+        buf.write(Type::ACK_FREQUENCY);
+        buf.write_var(sequence);
+        buf.write_var(ack_eliciting_threshold);
+        buf.write_var(request_max_ack_delay_micros);
+        buf.write_var(reordering_threshold);
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::coding::Codec;
+    use assert_matches::assert_matches;
+
+    fn frames(buf: Vec<u8>) -> Vec<Frame> {
+        Iter::new(Bytes::from(buf)).collect::<Vec<_>>()
+    }
 
     #[test]
     #[allow(clippy::range_plus_one)]
@@ -890,7 +940,7 @@ mod test {
             ce: 12,
         };
         Ack::encode(42, &ranges, Some(&ECN), &mut buf);
-        let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
+        let frames = frames(buf);
         assert_eq!(frames.len(), 1);
         match frames[0] {
             Frame::Ack(ref ack) => {
@@ -901,5 +951,31 @@ mod test {
             }
             ref x => panic!("incorrect frame {x:?}"),
         }
+    }
+
+    #[test]
+    fn ack_frequency_coding() {
+        let mut buf = Vec::new();
+        AckFrequency::encode(42, 20, 50_000, 1, &mut buf);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::AckFrequency(ack_frequency) => {
+                assert_eq!(ack_frequency.sequence, 42);
+                assert_eq!(ack_frequency.ack_eliciting_threshold, 20);
+                assert_eq!(ack_frequency.request_max_ack_delay, 50_000);
+                assert_eq!(ack_frequency.reordering_threshold, 1);
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn immediate_ack_coding() {
+        let mut buf = Vec::new();
+        Type::IMMEDIATE_ACK.encode(&mut buf);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        assert_matches!(&frames[0], Frame::ImmediateAck);
     }
 }

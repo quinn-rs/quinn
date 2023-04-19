@@ -18,7 +18,7 @@ use tracing::{info_span, trace};
 
 use super::*;
 
-pub(super) const DEFAULT_MTU: usize = 1200;
+pub(super) const DEFAULT_MTU: usize = 1452;
 
 pub(super) struct Pair {
     pub(super) server: TestEndpoint,
@@ -26,6 +26,8 @@ pub(super) struct Pair {
     pub(super) time: Instant,
     /// Simulates the maximum size allowed for UDP payloads by the link (packets exceeding this size will be dropped)
     pub(super) mtu: usize,
+    /// Simulates explicit congestion notification
+    pub(super) congestion_experienced: bool,
     // One-way
     pub(super) latency: Duration,
     /// Number of spin bit flips
@@ -58,6 +60,7 @@ impl Pair {
             latency: Duration::new(0, 0),
             spins: 0,
             last_spin: false,
+            congestion_experienced: false,
         }
     }
 
@@ -131,9 +134,10 @@ impl Pair {
                 socket.send_to(&x.contents, x.destination).unwrap();
             }
             if self.server.addr == x.destination {
+                let ecn = ecn(x.ecn, self.congestion_experienced);
                 self.server
                     .inbound
-                    .push_back((self.time + self.latency, x.ecn, x.contents));
+                    .push_back((self.time + self.latency, ecn, x.contents));
             }
         }
     }
@@ -154,9 +158,10 @@ impl Pair {
                 socket.send_to(&x.contents, x.destination).unwrap();
             }
             if self.client.addr == x.destination {
+                let ecn = ecn(x.ecn, self.congestion_experienced);
                 self.client
                     .inbound
-                    .push_back((self.time + self.latency, x.ecn, x.contents));
+                    .push_back((self.time + self.latency, ecn, x.contents));
             }
         }
     }
@@ -331,15 +336,15 @@ impl TestEndpoint {
         loop {
             let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
             for (ch, conn) in self.connections.iter_mut() {
-                if self.timeout.map_or(false, |x| x <= now) {
-                    self.timeout = None;
-                    conn.handle_timeout(now);
-                }
-
                 for (_, mut events) in self.conn_events.drain() {
                     for event in events.drain(..) {
                         conn.handle_event(event);
                     }
+                }
+
+                if self.timeout.map_or(false, |x| x <= now) {
+                    self.timeout = None;
+                    conn.handle_timeout(now);
                 }
 
                 while let Some(event) = conn.poll_endpoint_events() {
@@ -522,6 +527,16 @@ fn packet_size(transmit: &Transmit) -> usize {
     }
 
     transmit.contents.len()
+}
+
+fn ecn(x: Option<EcnCodepoint>, congestion_experienced: bool) -> Option<EcnCodepoint> {
+    x.map(|codepoint| {
+        if congestion_experienced {
+            EcnCodepoint::from_bits(0b11).unwrap()
+        } else {
+            codepoint
+        }
+    })
 }
 
 lazy_static! {

@@ -21,7 +21,7 @@ use crate::{
     config::{EndpointConfig, ServerConfig, TransportConfig},
     shared::ConnectionId,
     ResetToken, Side, TransportError, VarInt, LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT,
-    RESET_TOKEN_SIZE,
+    RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with
@@ -81,6 +81,11 @@ macro_rules! make_struct {
             /// bit
             pub(crate) grease_quic_bit: bool,
 
+            /// Minimum amount of time in microseconds by which the endpoint is able to delay
+            /// sending acknowledgments (implies that the endpoint supports QUIC Acknowledgement
+            /// Frequency)
+            pub(crate) min_ack_delay: Option<VarInt>,
+
             // Server-only
             /// The value of the Destination Connection ID field from the first Initial packet sent
             /// by the client
@@ -104,6 +109,7 @@ macro_rules! make_struct {
                     max_datagram_frame_size: None,
                     initial_src_cid: None,
                     grease_quic_bit: false,
+                    min_ack_delay: None,
 
                     original_dst_cid: None,
                     retry_src_cid: None,
@@ -146,6 +152,9 @@ impl TransportParameters {
                 .datagram_receive_buffer_size
                 .map(|x| (x.min(u16::max_value().into()) as u16).into()),
             grease_quic_bit: endpoint_config.grease_quic_bit,
+            min_ack_delay: Some(
+                VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
+            ),
             ..Self::default()
         }
     }
@@ -329,6 +338,12 @@ impl TransportParameters {
             w.write_var(0x2ab2);
             w.write_var(0);
         }
+
+        if let Some(x) = self.min_ack_delay {
+            w.write_var(0xff04de1a);
+            w.write_var(x.size() as u64);
+            w.write(x);
+        }
     }
 
     /// Decode `TransportParameters` from buffer
@@ -392,6 +407,7 @@ impl TransportParameters {
                     0 => params.grease_quic_bit = true,
                     _ => return Err(Error::Malformed),
                 },
+                0xff04de1a => params.min_ack_delay = Some(r.get().unwrap()),
                 _ => {
                     macro_rules! parse {
                         {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
@@ -418,6 +434,10 @@ impl TransportParameters {
             || params.max_udp_payload_size.0 < 1200
             || params.initial_max_streams_bidi.0 > MAX_STREAM_COUNT
             || params.initial_max_streams_uni.0 > MAX_STREAM_COUNT
+            || params.min_ack_delay.map_or(false, |min_ack_delay| {
+                // min_ack_delay uses nanoseconds, whereas max_ack_delay uses milliseconds
+                min_ack_delay.0 > params.max_ack_delay.0 * 1_000_000
+            })
             || (side.is_server()
                 && (params.stateless_reset_token.is_some() || params.preferred_address.is_some()))
         {
@@ -458,6 +478,7 @@ mod test {
                 stateless_reset_token: [0xab; RESET_TOKEN_SIZE].into(),
             }),
             grease_quic_bit: true,
+            min_ack_delay: Some(2_000_000u32.into()),
             ..TransportParameters::default()
         };
         params.write(&mut buf);
@@ -465,6 +486,40 @@ mod test {
             TransportParameters::read(Side::Client, &mut buf.as_slice()).unwrap(),
             params
         );
+    }
+
+    #[test]
+    fn read_semantic_validation() {
+        #[allow(clippy::type_complexity)]
+        let illegal_params_builders: Vec<Box<dyn FnMut(&mut TransportParameters)>> = vec![
+            Box::new(|t| {
+                // This min_ack_delay is bigger than max_ack_delay!
+                let min_ack_delay = t.max_ack_delay.0 * 1_000_000 + 1;
+                t.min_ack_delay = Some(VarInt::from_u64(min_ack_delay).unwrap())
+            }),
+            Box::new(|t| {
+                // Preferred address can only be sent by senders (and we are reading the transport
+                // params as a client)
+                t.preferred_address = Some(PreferredAddress {
+                    address_v4: Some(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 42)),
+                    address_v6: None,
+                    connection_id: ConnectionId::new(&[]),
+                    stateless_reset_token: [0xab; RESET_TOKEN_SIZE].into(),
+                })
+            }),
+        ];
+
+        for mut builder in illegal_params_builders {
+            let mut buf = Vec::new();
+            let mut params = TransportParameters::default();
+            builder(&mut params);
+            params.write(&mut buf);
+
+            assert_eq!(
+                TransportParameters::read(Side::Server, &mut buf.as_slice()),
+                Err(Error::IllegalValue)
+            );
+        }
     }
 
     #[test]

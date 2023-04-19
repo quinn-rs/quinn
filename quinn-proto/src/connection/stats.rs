@@ -23,11 +23,13 @@ pub struct UdpStats {
 #[non_exhaustive]
 pub struct FrameStats {
     pub acks: u64,
+    pub ack_frequency: u64,
     pub crypto: u64,
     pub connection_close: u64,
     pub data_blocked: u64,
     pub datagram: u64,
     pub handshake_done: u8,
+    pub immediate_ack: u64,
     pub max_data: u64,
     pub max_stream_data: u64,
     pub max_streams_bidi: u64,
@@ -81,6 +83,8 @@ impl FrameStats {
             Frame::PathChallenge(_) => self.path_challenge += 1,
             Frame::PathResponse(_) => self.path_response += 1,
             Frame::Close(_) => self.connection_close += 1,
+            Frame::AckFrequency(_) => self.ack_frequency += 1,
+            Frame::ImmediateAck => self.immediate_ack += 1,
             Frame::HandshakeDone => self.handshake_done += 1,
             Frame::Invalid { .. } => {}
         }
@@ -91,11 +95,13 @@ impl std::fmt::Debug for FrameStats {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("FrameStats")
             .field("ACK", &self.acks)
+            .field("ACK_FREQUENCY", &self.ack_frequency)
             .field("CONNECTION_CLOSE", &self.connection_close)
             .field("CRYPTO", &self.crypto)
             .field("DATA_BLOCKED", &self.data_blocked)
             .field("DATAGRAM", &self.datagram)
             .field("HANDSHAKE_DONE", &self.handshake_done)
+            .field("IMMEDIATE_ACK", &self.immediate_ack)
             .field("MAX_DATA", &self.max_data)
             .field("MAX_STREAM_DATA", &self.max_stream_data)
             .field("MAX_STREAMS_BIDI", &self.max_streams_bidi)

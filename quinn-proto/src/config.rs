@@ -39,6 +39,7 @@ pub struct TransportConfig {
     pub(crate) initial_mtu: u16,
     pub(crate) min_guaranteed_mtu: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
+    pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
 
     pub(crate) persistent_congestion_threshold: u32,
     pub(crate) keep_alive_interval: Option<Duration>,
@@ -218,6 +219,17 @@ impl TransportConfig {
         self
     }
 
+    /// Specifies the ACK frequency config (see [`AckFrequencyConfig`] for details).
+    ///
+    /// The provided configuration will be ignored if the peer does not support the acknowledgement
+    /// frequency QUIC extension.
+    ///
+    /// Defaults to `None`, which disables the ACK frequency feature.
+    pub fn ack_frequency_config(&mut self, value: Option<AckFrequencyConfig>) -> &mut Self {
+        self.ack_frequency_config = value;
+        self
+    }
+
     /// Number of consecutive PTOs after which network is considered to be experiencing persistent congestion.
     pub fn persistent_congestion_threshold(&mut self, value: u32) -> &mut Self {
         self.persistent_congestion_threshold = value;
@@ -316,6 +328,7 @@ impl Default for TransportConfig {
             initial_mtu: INITIAL_MTU,
             min_guaranteed_mtu: INITIAL_MTU,
             mtu_discovery_config: None,
+            ack_frequency_config: None,
 
             persistent_congestion_threshold: 3,
             keep_alive_interval: None,
@@ -362,6 +375,71 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_send_buffer_size", &self.datagram_send_buffer_size)
             .field("congestion_controller_factory", &"[ opaque ]")
             .finish()
+    }
+}
+
+/// Parameters for controlling the peer's acknowledgement frequency
+///
+/// The parameters provided in this config will be sent to the peer at the beginning of the
+/// connection, so it can take them into account when sending acknowledgements (see each parameter's
+/// description for details on how it influences acknowledgement frequency).
+///
+/// Quinn's implementation follows the fourth draft of the
+/// [QUIC Acknowledgement Frequency extension](https://datatracker.ietf.org/doc/html/draft-ietf-quic-ack-frequency).
+#[derive(Clone, Debug)]
+pub struct AckFrequencyConfig {
+    pub(crate) ack_eliciting_threshold: u64,
+    pub(crate) max_ack_delay: Option<Duration>,
+    pub(crate) reordering_threshold: u64,
+}
+
+impl AckFrequencyConfig {
+    /// The number of ack-eliciting packets the remote peer receives before sending an ACK.
+    ///
+    /// The remote peer should send at least one ACK frame when more than this number of
+    /// ack-eliciting packets have been received. A value of 0 results in a receiver immediately
+    /// acknowledging every ack-eliciting packet.
+    ///
+    /// Defaults to 1, which sends ACK frames for every other ack-eliciting packet.
+    pub fn ack_eliciting_threshold(&mut self, value: u64) -> &mut Self {
+        self.ack_eliciting_threshold = value;
+        self
+    }
+
+    /// The maximum amount of time that the remote peer waits before sending an ACK when the
+    /// ack-eliciting threshold hasn't been reached.
+    ///
+    /// The provided `max_ack_delay` will be clamped to be at least the peer's `min_ack_delay`
+    /// transport parameter.
+    ///
+    /// Defaults to `None`, in which case the peer's original `max_ack_delay` will be used.
+    pub fn max_ack_delay(&mut self, value: Option<Duration>) -> &mut Self {
+        self.max_ack_delay = value;
+        self
+    }
+
+    /// The amount of out-of-order packets that will trigger a peer to send an ACK, without waiting
+    /// for `ack_eliciting_threshold` to be exceeded or for `max_ack_delay` to be elapsed.
+    ///
+    /// A value of 0 indicates out-of-order packets do not elicit an immediate ACK. A value of 1
+    /// immediately acknowledges any packets that are received out of order.
+    ///
+    /// It is recommended to set this value to [`TransportConfig::packet_threshold`] minus one.
+    /// Since the default value for [`TransportConfig::packet_threshold`] is 3, this value defaults
+    /// to 2.
+    pub fn reordering_threshold(&mut self, value: u64) -> &mut Self {
+        self.reordering_threshold = value;
+        self
+    }
+}
+
+impl Default for AckFrequencyConfig {
+    fn default() -> Self {
+        Self {
+            ack_eliciting_threshold: 1,
+            max_ack_delay: None,
+            reordering_threshold: 2,
+        }
     }
 }
 
