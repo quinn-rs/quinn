@@ -14,7 +14,7 @@ use crate::{
     shared::IssuedCid, Dir, StreamId, VarInt,
 };
 
-pub(super) struct PacketSpace {
+pub(crate) struct PacketSpace {
     pub(super) crypto: Option<Keys>,
     pub(super) dedup: Dedup,
     /// Highest received packet number

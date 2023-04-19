@@ -271,6 +271,8 @@ pub(super) struct TestEndpoint {
     accepted: Option<ConnectionHandle>,
     pub(super) connections: HashMap<ConnectionHandle, Connection>,
     conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
+    pub(super) captured_packets: Vec<Vec<u8>>,
+    pub(super) capture_inbound_packets: bool,
 }
 
 impl TestEndpoint {
@@ -295,6 +297,8 @@ impl TestEndpoint {
             accepted: None,
             connections: HashMap::default(),
             conn_events: HashMap::default(),
+            captured_packets: Vec::new(),
+            capture_inbound_packets: false,
         }
     }
 
@@ -320,6 +324,11 @@ impl TestEndpoint {
                         self.accepted = Some(ch);
                     }
                     DatagramEvent::ConnectionEvent(event) => {
+                        if self.capture_inbound_packets {
+                            let packet = self.connections[&ch].decode_packet(&event);
+                            self.captured_packets.extend(packet);
+                        }
+
                         self.conn_events
                             .entry(ch)
                             .or_insert_with(VecDeque::new)

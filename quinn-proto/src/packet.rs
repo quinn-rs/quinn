@@ -19,7 +19,7 @@ use crate::{
 // to inspect the version and packet type (which depends on the version).
 // This information allows us to fully decode and decrypt the packet.
 #[allow(unreachable_pub)] // fuzzing only
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct PartialDecode {
     plain_header: PlainHeader,
     buf: io::Cursor<BytesMut>,
@@ -477,7 +477,7 @@ impl PartialEncode {
     }
 }
 
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub(crate) enum PlainHeader {
     Initial {
         dst_cid: ConnectionId,
