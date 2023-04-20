@@ -9,7 +9,7 @@ use crate::congestion::bbr::bw_estimation::BandwidthEstimation;
 use crate::congestion::bbr::min_max::MinMax;
 use crate::connection::RttEstimator;
 
-use super::{Controller, ControllerFactory};
+use super::{Controller, ControllerFactory, BASE_DATAGRAM_SIZE};
 
 mod bw_estimation;
 mod min_max;
@@ -23,6 +23,7 @@ mod min_max;
 #[derive(Debug, Clone)]
 pub struct Bbr {
     config: Arc<BbrConfig>,
+    current_mtu: u64,
     max_bandwidth: BandwidthEstimation,
     acked_bytes: u64,
     mode: Mode,
@@ -59,11 +60,11 @@ pub struct Bbr {
 
 impl Bbr {
     /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<BbrConfig>) -> Self {
+    pub fn new(config: Arc<BbrConfig>, current_mtu: u16) -> Self {
         let initial_window = config.initial_window;
-        let min_window = config.minimum_window;
         Self {
             config,
+            current_mtu: current_mtu as u64,
             max_bandwidth: BandwidthEstimation::default(),
             acked_bytes: 0,
             mode: Mode::Startup,
@@ -79,7 +80,7 @@ impl Bbr {
             last_cycle_start: None,
             current_cycle_offset: 0,
             init_cwnd: initial_window,
-            min_cwnd: min_window,
+            min_cwnd: calculate_min_window(current_mtu as u64),
             prev_in_flight_count: 0,
             exit_probe_rtt_at: None,
             probe_rtt_last_started_at: None,
@@ -238,7 +239,7 @@ impl Bbr {
                 // ProbeRtt.  The CWND during ProbeRtt is
                 // kMinimumCongestionWindow, but we allow an extra packet since QUIC
                 // checks CWND before sending a packet.
-                if bytes_in_flight < self.get_probe_rtt_cwnd() + MAX_DATAGRAM_SIZE {
+                if bytes_in_flight < self.get_probe_rtt_cwnd() + self.current_mtu {
                     const K_PROBE_RTT_TIME: Duration = Duration::from_millis(200);
                     self.exit_probe_rtt_at = Some(now + K_PROBE_RTT_TIME);
                 }
@@ -344,8 +345,8 @@ impl Bbr {
         if self.recovery_window >= bytes_lost {
             self.recovery_window -= bytes_lost;
         } else {
-            const K_MAX_SEGMENT_SIZE: u64 = MAX_DATAGRAM_SIZE;
-            self.recovery_window = K_MAX_SEGMENT_SIZE;
+            // k_max_segment_size = current_mtu
+            self.recovery_window = self.current_mtu;
         }
         // In CONSERVATION mode, just subtracting losses is sufficient.  In GROWTH,
         // release additional |bytes_acked| to achieve a slow-start-like behavior.
@@ -468,6 +469,13 @@ impl Controller for Bbr {
         self.loss_state.lost_bytes += lost_bytes;
     }
 
+    fn on_mtu_update(&mut self, new_mtu: u16) {
+        self.current_mtu = new_mtu as u64;
+        self.min_cwnd = calculate_min_window(self.current_mtu);
+        self.init_cwnd = self.config.initial_window.max(self.min_cwnd);
+        self.cwnd = self.cwnd.max(self.min_cwnd);
+    }
+
     fn window(&self) -> u64 {
         if self.mode == Mode::ProbeRtt {
             return self.get_probe_rtt_cwnd();
@@ -493,20 +501,10 @@ impl Controller for Bbr {
 /// Configuration for the [`Bbr`] congestion controller
 #[derive(Debug, Clone)]
 pub struct BbrConfig {
-    max_datagram_size: u64,
     initial_window: u64,
-    minimum_window: u64,
 }
 
 impl BbrConfig {
-    /// The sender’s maximum UDP payload size. Does not include UDP or IP overhead.
-    ///
-    /// Used for calculating initial and minimum congestion windows.
-    pub fn max_datagram_size(&mut self, value: u64) -> &mut Self {
-        self.max_datagram_size = value;
-        self
-    }
-
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
@@ -514,29 +512,19 @@ impl BbrConfig {
         self.initial_window = value;
         self
     }
-
-    /// Default minimum congestion window.
-    ///
-    /// Recommended value: `2 * max_datagram_size`.
-    pub fn minimum_window(&mut self, value: u64) -> &mut Self {
-        self.minimum_window = value;
-        self
-    }
 }
 
 impl Default for BbrConfig {
     fn default() -> Self {
         Self {
-            max_datagram_size: MAX_DATAGRAM_SIZE,
-            initial_window: K_MAX_INITIAL_CONGESTION_WINDOW * MAX_DATAGRAM_SIZE,
-            minimum_window: 4 * MAX_DATAGRAM_SIZE,
+            initial_window: K_MAX_INITIAL_CONGESTION_WINDOW * BASE_DATAGRAM_SIZE,
         }
     }
 }
 
 impl ControllerFactory for Arc<BbrConfig> {
-    fn build(&self, _now: Instant) -> Box<dyn Controller> {
-        Box::new(Bbr::new(self.clone()))
+    fn build(&self, _now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+        Box::new(Bbr::new(self.clone(), current_mtu))
     }
 }
 
@@ -628,7 +616,9 @@ impl LossState {
     }
 }
 
-const MAX_DATAGRAM_SIZE: u64 = 1232;
+fn calculate_min_window(current_mtu: u64) -> u64 {
+    4 * current_mtu
+}
 
 // The gain used for the STARTUP, equal to 2/ln(2).
 const K_DEFAULT_HIGH_GAIN: f32 = 2.885;
