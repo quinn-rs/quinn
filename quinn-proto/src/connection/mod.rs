@@ -263,7 +263,9 @@ impl Connection {
             path: PathData::new(
                 remote,
                 config.initial_rtt,
-                config.congestion_controller_factory.build(now),
+                config
+                    .congestion_controller_factory
+                    .build(now, config.initial_max_udp_payload_size),
                 config.initial_max_udp_payload_size,
                 None,
                 config.mtu_discovery_config.clone(),
@@ -1220,7 +1222,13 @@ impl Connection {
                 ack_eliciting_acked |= info.ack_eliciting;
 
                 // Notify MTU discovery that a packet was acked, because it might be an MTU probe
-                self.path.mtud.on_acked(space, packet, info.size);
+                let mtu_updated = self.path.mtud.on_acked(space, packet, info.size);
+                if mtu_updated {
+                    self.path
+                        .congestion
+                        .on_mtu_update(self.path.mtud.current_mtu());
+                }
+
                 self.on_packet_acked(now, space, info);
             }
         }
@@ -2727,7 +2735,9 @@ impl Connection {
             PathData::new(
                 remote,
                 self.config.initial_rtt,
-                self.config.congestion_controller_factory.build(now),
+                self.config
+                    .congestion_controller_factory
+                    .build(now, self.config.initial_max_udp_payload_size),
                 self.config.initial_max_udp_payload_size,
                 Some(peer_max_udp_payload_size),
                 self.config.mtu_discovery_config.clone(),
