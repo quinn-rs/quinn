@@ -58,6 +58,9 @@ pub trait Controller: Send {
         lost_bytes: u64,
     );
 
+    /// The known MTU for the current network path has been updated
+    fn on_mtu_update(&mut self, new_mtu: u16);
+
     /// Number of ack-eliciting bytes that may be in flight
     fn window(&self) -> u64;
 
@@ -74,5 +77,7 @@ pub trait Controller: Send {
 /// Constructs controllers on demand
 pub trait ControllerFactory {
     /// Construct a fresh `Controller`
-    fn build(&self, now: Instant) -> Box<dyn Controller>;
+    fn build(&self, now: Instant, current_mtu: u16) -> Box<dyn Controller>;
 }
+
+const BASE_DATAGRAM_SIZE: u64 = 1200;

@@ -2,7 +2,7 @@ use std::any::Any;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use super::{Controller, ControllerFactory};
+use super::{Controller, ControllerFactory, BASE_DATAGRAM_SIZE};
 use crate::connection::RttEstimator;
 use std::cmp;
 
@@ -69,18 +69,24 @@ pub struct Cubic {
     /// after this time is acknowledged, QUIC exits recovery.
     recovery_start_time: Option<Instant>,
     cubic_state: State,
+    current_mtu: u64,
 }
 
 impl Cubic {
     /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<CubicConfig>, _now: Instant) -> Self {
+    pub fn new(config: Arc<CubicConfig>, _now: Instant, current_mtu: u16) -> Self {
         Self {
             window: config.initial_window,
             ssthresh: u64::MAX,
             recovery_start_time: None,
             config,
             cubic_state: Default::default(),
+            current_mtu: current_mtu as u64,
         }
+    }
+
+    fn minimum_window(&self) -> u64 {
+        2 * self.current_mtu
     }
 }
 
@@ -125,14 +131,10 @@ impl Controller for Cubic {
             let t = now - ca_start_time;
 
             // w_cubic(t + rtt)
-            let w_cubic = self
-                .cubic_state
-                .w_cubic(t + rtt.get(), self.config.max_datagram_size);
+            let w_cubic = self.cubic_state.w_cubic(t + rtt.get(), self.current_mtu);
 
             // w_est(t)
-            let w_est = self
-                .cubic_state
-                .w_est(t, rtt.get(), self.config.max_datagram_size);
+            let w_est = self.cubic_state.w_est(t, rtt.get(), self.current_mtu);
 
             let mut cubic_cwnd = self.window;
 
@@ -141,8 +143,8 @@ impl Controller for Cubic {
                 cubic_cwnd = cmp::max(cubic_cwnd, w_est as u64);
             } else if cubic_cwnd < w_cubic as u64 {
                 // Concave region or convex region use same increment.
-                let cubic_inc = (w_cubic - cubic_cwnd as f64) / cubic_cwnd as f64
-                    * self.config.max_datagram_size as f64;
+                let cubic_inc =
+                    (w_cubic - cubic_cwnd as f64) / cubic_cwnd as f64 * self.current_mtu as f64;
 
                 cubic_cwnd += cubic_inc as u64;
             }
@@ -153,8 +155,8 @@ impl Controller for Cubic {
             // cwnd_inc can be more than 1 MSS in the late stage of max probing.
             // however RFC9002 §7.3.3 (Congestion Avoidance) limits
             // the increase of cwnd to 1 max_datagram_size per cwnd acknowledged.
-            if self.cubic_state.cwnd_inc >= self.config.max_datagram_size {
-                self.window += self.config.max_datagram_size;
+            if self.cubic_state.cwnd_inc >= self.current_mtu {
+                self.window += self.current_mtu;
                 self.cubic_state.cwnd_inc = 0;
             }
         }
@@ -188,10 +190,10 @@ impl Controller for Cubic {
 
         self.ssthresh = cmp::max(
             (self.cubic_state.w_max * BETA_CUBIC) as u64,
-            self.config.minimum_window,
+            self.minimum_window(),
         );
         self.window = self.ssthresh;
-        self.cubic_state.k = self.cubic_state.cubic_k(self.config.max_datagram_size);
+        self.cubic_state.k = self.cubic_state.cubic_k(self.current_mtu);
 
         self.cubic_state.cwnd_inc = (self.cubic_state.cwnd_inc as f64 * BETA_CUBIC) as u64;
 
@@ -202,13 +204,18 @@ impl Controller for Cubic {
             // 4.7 Timeout - reduce ssthresh based on BETA_CUBIC
             self.ssthresh = cmp::max(
                 (self.window as f64 * BETA_CUBIC) as u64,
-                self.config.minimum_window,
+                self.minimum_window(),
             );
 
             self.cubic_state.cwnd_inc = 0;
 
-            self.window = self.config.minimum_window;
+            self.window = self.minimum_window();
         }
+    }
+
+    fn on_mtu_update(&mut self, new_mtu: u16) {
+        self.current_mtu = new_mtu as u64;
+        self.window = self.window.max(self.minimum_window());
     }
 
     fn window(&self) -> u64 {
@@ -231,20 +238,10 @@ impl Controller for Cubic {
 /// Configuration for the `Cubic` congestion controller
 #[derive(Debug, Clone)]
 pub struct CubicConfig {
-    max_datagram_size: u64,
     initial_window: u64,
-    minimum_window: u64,
 }
 
 impl CubicConfig {
-    /// The sender’s maximum UDP payload size. Does not include UDP or IP overhead.
-    ///
-    /// Used for calculating initial and minimum congestion windows.
-    pub fn max_datagram_size(&mut self, value: u64) -> &mut Self {
-        self.max_datagram_size = value;
-        self
-    }
-
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
@@ -252,29 +249,18 @@ impl CubicConfig {
         self.initial_window = value;
         self
     }
-
-    /// Default minimum congestion window.
-    ///
-    /// Recommended value: `2 * max_datagram_size`.
-    pub fn minimum_window(&mut self, value: u64) -> &mut Self {
-        self.minimum_window = value;
-        self
-    }
 }
 
 impl Default for CubicConfig {
     fn default() -> Self {
-        const MAX_DATAGRAM_SIZE: u64 = 1232;
         Self {
-            max_datagram_size: MAX_DATAGRAM_SIZE,
-            initial_window: 14720.clamp(2 * MAX_DATAGRAM_SIZE, 10 * MAX_DATAGRAM_SIZE),
-            minimum_window: 2 * MAX_DATAGRAM_SIZE,
+            initial_window: 14720.clamp(2 * BASE_DATAGRAM_SIZE, 10 * BASE_DATAGRAM_SIZE),
         }
     }
 }
 
 impl ControllerFactory for Arc<CubicConfig> {
-    fn build(&self, now: Instant) -> Box<dyn Controller> {
-        Box::new(Cubic::new(self.clone(), now))
+    fn build(&self, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+        Box::new(Cubic::new(self.clone(), now, current_mtu))
     }
 }

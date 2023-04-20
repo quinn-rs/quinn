@@ -2,13 +2,14 @@ use std::any::Any;
 use std::sync::Arc;
 use std::time::Instant;
 
-use super::{Controller, ControllerFactory};
+use super::{Controller, ControllerFactory, BASE_DATAGRAM_SIZE};
 use crate::connection::RttEstimator;
 
 /// A simple, standard congestion controller
 #[derive(Debug, Clone)]
 pub struct NewReno {
     config: Arc<NewRenoConfig>,
+    current_mtu: u64,
     /// Maximum number of bytes in flight that may be sent.
     window: u64,
     /// Slow start threshold in bytes. When the congestion window is below ssthresh, the mode is
@@ -23,14 +24,19 @@ pub struct NewReno {
 
 impl NewReno {
     /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<NewRenoConfig>, now: Instant) -> Self {
+    pub fn new(config: Arc<NewRenoConfig>, now: Instant, current_mtu: u16) -> Self {
         Self {
             window: config.initial_window,
             ssthresh: u64::max_value(),
             recovery_start_time: now,
+            current_mtu: current_mtu as u64,
             config,
             bytes_acked: 0,
         }
+    }
+
+    fn minimum_window(&self) -> u64 {
+        2 * self.current_mtu
     }
 }
 
@@ -71,7 +77,7 @@ impl Controller for NewReno {
 
             if self.bytes_acked >= self.window {
                 self.bytes_acked -= self.window;
-                self.window += self.config.max_datagram_size;
+                self.window += self.current_mtu;
             }
         }
     }
@@ -89,12 +95,17 @@ impl Controller for NewReno {
 
         self.recovery_start_time = now;
         self.window = (self.window as f32 * self.config.loss_reduction_factor) as u64;
-        self.window = self.window.max(self.config.minimum_window);
+        self.window = self.window.max(self.minimum_window());
         self.ssthresh = self.window;
 
         if is_persistent_congestion {
-            self.window = self.config.minimum_window;
+            self.window = self.minimum_window();
         }
+    }
+
+    fn on_mtu_update(&mut self, new_mtu: u16) {
+        self.current_mtu = new_mtu as u64;
+        self.window = self.window.max(self.minimum_window());
     }
 
     fn window(&self) -> u64 {
@@ -117,34 +128,16 @@ impl Controller for NewReno {
 /// Configuration for the `NewReno` congestion controller
 #[derive(Debug, Clone)]
 pub struct NewRenoConfig {
-    max_datagram_size: u64,
     initial_window: u64,
-    minimum_window: u64,
     loss_reduction_factor: f32,
 }
 
 impl NewRenoConfig {
-    /// The sender’s maximum UDP payload size. Does not include UDP or IP overhead.
-    ///
-    /// Used for calculating initial and minimum congestion windows.
-    pub fn max_datagram_size(&mut self, value: u64) -> &mut Self {
-        self.max_datagram_size = value;
-        self
-    }
-
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
     pub fn initial_window(&mut self, value: u64) -> &mut Self {
         self.initial_window = value;
-        self
-    }
-
-    /// Default minimum congestion window.
-    ///
-    /// Recommended value: `2 * max_datagram_size`.
-    pub fn minimum_window(&mut self, value: u64) -> &mut Self {
-        self.minimum_window = value;
         self
     }
 
@@ -157,18 +150,15 @@ impl NewRenoConfig {
 
 impl Default for NewRenoConfig {
     fn default() -> Self {
-        const MAX_DATAGRAM_SIZE: u64 = 1232;
         Self {
-            max_datagram_size: MAX_DATAGRAM_SIZE,
-            initial_window: 14720.clamp(2 * MAX_DATAGRAM_SIZE, 10 * MAX_DATAGRAM_SIZE),
-            minimum_window: 2 * MAX_DATAGRAM_SIZE,
+            initial_window: 14720.clamp(2 * BASE_DATAGRAM_SIZE, 10 * BASE_DATAGRAM_SIZE),
             loss_reduction_factor: 0.5,
         }
     }
 }
 
 impl ControllerFactory for Arc<NewRenoConfig> {
-    fn build(&self, now: Instant) -> Box<dyn Controller> {
-        Box::new(NewReno::new(self.clone(), now))
+    fn build(&self, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+        Box::new(NewReno::new(self.clone(), now, current_mtu))
     }
 }
