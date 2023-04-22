@@ -177,7 +177,7 @@ impl Endpoint {
                 }
                 trace!("sending version negotiation");
                 // Negotiate versions
-                let mut buf = Vec::<u8>::new();
+                let mut buf = BytesMut::new();
                 Header::VersionNegotiate {
                     random: self.rng.gen::<u8>() | 0x40,
                     src_cid: dst_cid,
@@ -340,7 +340,7 @@ impl Endpoint {
             "sending stateless reset for {} to {}",
             dst_cid, addresses.remote
         );
-        let mut buf = Vec::<u8>::new();
+        let mut buf = BytesMut::new();
         // Resets with at least this much padding can't possibly be distinguished from real packets
         const IDEAL_MIN_PADDING_LEN: usize = MIN_PADDING_LEN + MAX_CID_SIZE;
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
@@ -348,7 +348,7 @@ impl Endpoint {
         } else {
             self.rng.gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
         };
-        buf.reserve_exact(padding_len + RESET_TOKEN_SIZE);
+        buf.reserve(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);
         self.rng.fill_bytes(&mut buf[0..padding_len]);
         buf[0] = 0b0100_0000 | buf[0] >> 2;
@@ -538,7 +538,7 @@ impl Endpoint {
                     version,
                 };
 
-                let mut buf = Vec::new();
+                let mut buf = BytesMut::new();
                 let encode = header.encode(&mut buf);
                 buf.put_slice(&token);
                 buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, &buf));
@@ -689,7 +689,7 @@ impl Endpoint {
             version,
         };
 
-        let mut buf = Vec::<u8>::new();
+        let mut buf = BytesMut::new();
         let partial_encode = header.encode(&mut buf);
         let max_len =
             INITIAL_MTU as usize - partial_encode.header_len - crypto.packet.local.tag_len();
