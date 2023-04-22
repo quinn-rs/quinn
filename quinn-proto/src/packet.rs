@@ -269,7 +269,7 @@ pub(crate) enum Header {
 }
 
 impl Header {
-    pub(crate) fn encode(&self, w: &mut Vec<u8>) -> PartialEncode {
+    pub(crate) fn encode(&self, w: &mut BytesMut) -> PartialEncode {
         use self::Header::*;
         let start = w.len();
         match *self {
@@ -844,7 +844,7 @@ mod tests {
 
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
         let client = initial_keys(Version::V1, &dcid, Side::Client);
-        let mut buf = Vec::new();
+        let mut buf = BytesMut::new();
         let header = Header::Initial {
             number: PacketNumber::U8(0),
             src_cid: ConnectionId::new(&[]),
@@ -875,7 +875,7 @@ mod tests {
 
         let server = initial_keys(Version::V1, &dcid, Side::Server);
         let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
-        let decode = PartialDecode::new(buf.as_slice().into(), 0, &supported_versions, false)
+        let decode = PartialDecode::new(buf, 0, &supported_versions, false)
             .unwrap()
             .0;
         let mut packet = decode.finish(Some(&*server.header.remote)).unwrap();

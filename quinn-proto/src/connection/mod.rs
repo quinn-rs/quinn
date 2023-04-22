@@ -439,7 +439,7 @@ impl Connection {
                     SpaceId::Data,
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
-                let mut buf = Vec::with_capacity(self.path.current_mtu() as usize);
+                let mut buf = BytesMut::with_capacity(self.path.current_mtu() as usize);
                 let buf_capacity = self.path.current_mtu() as usize;
 
                 let mut builder = PacketBuilder::new(
@@ -500,7 +500,7 @@ impl Connection {
             _ => false,
         };
 
-        let mut buf = Vec::new();
+        let mut buf = BytesMut::new();
         // Reserving capacity can provide more capacity than we asked for.
         // However we are not allowed to write more than MTU size. Therefore
         // the maximum capacity is tracked separately.
@@ -2809,7 +2809,7 @@ impl Connection {
     fn populate_packet(
         &mut self,
         space_id: SpaceId,
-        buf: &mut Vec<u8>,
+        buf: &mut BytesMut,
         max_size: usize,
     ) -> SentFrames {
         let mut sent = SentFrames::default();
@@ -2981,7 +2981,7 @@ impl Connection {
         receiving_ecn: bool,
         sent: &mut SentFrames,
         space: &mut PacketSpace,
-        buf: &mut Vec<u8>,
+        buf: &mut BytesMut,
         stats: &mut ConnectionStats,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());

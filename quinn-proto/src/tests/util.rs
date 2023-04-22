@@ -262,7 +262,7 @@ pub(super) struct TestEndpoint {
     timeout: Option<Instant>,
     pub(super) outbound: VecDeque<Transmit>,
     delayed: VecDeque<Transmit>,
-    pub(super) inbound: VecDeque<(Instant, Option<EcnCodepoint>, Vec<u8>)>,
+    pub(super) inbound: VecDeque<(Instant, Option<EcnCodepoint>, BytesMut)>,
     accepted: Option<ConnectionHandle>,
     pub(super) connections: HashMap<ConnectionHandle, Connection>,
     conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
@@ -305,10 +305,7 @@ impl TestEndpoint {
 
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
-            if let Some((ch, event)) =
-                self.endpoint
-                    .handle(recv_time, remote, None, ecn, packet.as_slice().into())
-            {
+            if let Some((ch, event)) = self.endpoint.handle(recv_time, remote, None, ecn, packet) {
                 match event {
                     DatagramEvent::NewConnection(conn) => {
                         self.connections.insert(ch, conn);
@@ -482,18 +479,17 @@ pub(super) fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
 /// The maximum of datagrams TestEndpoint will produce via `poll_transmit`
 const MAX_DATAGRAMS: usize = 10;
 
-fn split_transmit(transmit: Transmit) -> Vec<Transmit> {
+fn split_transmit(mut transmit: Transmit) -> Vec<Transmit> {
     let segment_size = match transmit.segment_size {
         Some(segment_size) => segment_size,
         _ => return vec![transmit],
     };
 
-    let mut offset = 0;
     let mut transmits = Vec::new();
-    while offset < transmit.contents.len() {
-        let end = (offset + segment_size).min(transmit.contents.len());
+    while !transmit.contents.is_empty() {
+        let end = segment_size.min(transmit.contents.len());
 
-        let contents = transmit.contents[offset..end].to_vec();
+        let contents = transmit.contents.split_to(end);
         transmits.push(Transmit {
             destination: transmit.destination,
             ecn: transmit.ecn,
@@ -501,8 +497,6 @@ fn split_transmit(transmit: Transmit) -> Vec<Transmit> {
             segment_size: None,
             src_ip: transmit.src_ip,
         });
-
-        offset = end;
     }
 
     transmits
