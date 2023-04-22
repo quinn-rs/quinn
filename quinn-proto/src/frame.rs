@@ -4,7 +4,7 @@ use std::{
     ops::{Range, RangeInclusive},
 };
 
-use bytes::{Buf, BufMut, Bytes};
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use tinyvec::TinyVec;
 
 use crate::{
@@ -853,13 +853,13 @@ impl FrameStruct for Datagram {
 }
 
 impl Datagram {
-    pub(crate) fn encode<W: BufMut>(&self, length: bool, out: &mut W) {
+    pub(crate) fn encode(&self, length: bool, out: &mut BytesMut) {
         out.write(Type(*DATAGRAM_TYS.start() | u64::from(length))); // 1 byte
         if length {
             // Safe to unwrap because we check length sanity before queueing datagrams
             out.write(VarInt::from_u64(self.data.len() as u64).unwrap()); // <= 8 bytes
         }
-        out.put_slice(&self.data);
+        out.extend_from_slice(&self.data);
     }
 
     pub(crate) fn size(&self, length: bool) -> usize {
