@@ -469,7 +469,7 @@ impl Connection {
                 self.stats.udp_tx.bytes += buf.len() as u64;
                 return Some(Transmit {
                     destination,
-                    contents: buf,
+                    contents: buf.freeze(),
                     ecn: None,
                     segment_size: None,
                     src_ip: self.local_ip,
@@ -836,7 +836,7 @@ impl Connection {
 
         Some(Transmit {
             destination: self.path.remote,
-            contents: buf,
+            contents: buf.freeze(),
             ecn: if self.path.sending_ecn {
                 Some(EcnCodepoint::Ect0)
             } else {
