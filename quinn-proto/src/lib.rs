@@ -43,8 +43,9 @@ pub use varint::{VarInt, VarIntBoundsExceeded};
 mod connection;
 pub use crate::connection::{
     BytesSource, Chunk, Chunks, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
-    FinishError, ReadError, ReadableError, RecvStream, RttEstimator, SendDatagramError, SendStream,
-    StreamEvent, Streams, UnknownStream, WriteError, Written,
+    FinishError, FrameStats, PathStats, ReadError, ReadableError, RecvStream, RttEstimator,
+    SendDatagramError, SendStream, StreamEvent, Streams, UdpStats, UnknownStream, WriteError,
+    Written,
 };
 
 mod config;

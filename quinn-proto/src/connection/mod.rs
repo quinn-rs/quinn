@@ -64,7 +64,7 @@ use spaces::Retransmits;
 use spaces::{PacketSpace, SendableFrames, SentPacket, ThinRetransmits};
 
 mod stats;
-pub use stats::ConnectionStats;
+pub use stats::{ConnectionStats, FrameStats, PathStats, UdpStats};
 
 mod streams;
 #[cfg(fuzzing)]

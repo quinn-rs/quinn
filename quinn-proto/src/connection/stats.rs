@@ -18,9 +18,10 @@ pub struct UdpStats {
     pub transmits: u64,
 }
 
-/// Statistics about frames transmitted or received on a connection
+/// Number of frames transmitted of each frame type
 #[derive(Default, Copy, Clone)]
 #[non_exhaustive]
+#[allow(missing_docs)]
 pub struct FrameStats {
     pub acks: u64,
     pub crypto: u64,
