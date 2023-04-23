@@ -677,6 +677,11 @@ pub(crate) const BATCH_SIZE: usize = 32;
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub(crate) const BATCH_SIZE: usize = 1;
 
+#[inline]
+pub(crate) fn may_fragment() -> bool {
+    false
+}
+
 #[cfg(target_os = "linux")]
 mod gso {
     use super::*;
