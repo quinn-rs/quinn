@@ -1,6 +1,7 @@
 [package]
 name = "quinn-udp"
 version = "0.3.2"
+rust-version = "1.63"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
 description = "UDP sockets with ECN information for the QUIC transport protocol"
