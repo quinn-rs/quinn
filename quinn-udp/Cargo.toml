@@ -22,7 +22,7 @@ log = ["tracing/log"]
 maintenance = { status = "experimental" }
 
 [dependencies]
-libc = "0.2.69"
+libc = "0.2.113"
 socket2 = "0.4" # 0.5.1 has an MSRV of 1.63
 tracing = "0.1.10"
 

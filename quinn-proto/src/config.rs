@@ -212,7 +212,7 @@ impl TransportConfig {
     /// to disable UDP packet fragmentation (this is strongly recommended by [RFC
     /// 9000](https://www.rfc-editor.org/rfc/rfc9000.html#section-14-7), regardless of MTU
     /// discovery). They can build on top of the `quinn-udp` crate, used by `quinn` itself, which
-    /// provides Linux and Windows support for disabling packet fragmentation.
+    /// provides Linux, Windows, macOS, and FreeBSD support for disabling packet fragmentation.
     pub fn mtu_discovery_config(&mut self, value: Option<MtuDiscoveryConfig>) -> &mut Self {
         self.mtu_discovery_config = value;
         self
