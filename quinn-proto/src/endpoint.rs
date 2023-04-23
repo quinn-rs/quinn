@@ -196,7 +196,7 @@ impl Endpoint {
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
-                    contents: buf,
+                    contents: buf.freeze(),
                     segment_size: None,
                     src_ip: local_ip,
                 });
@@ -359,7 +359,7 @@ impl Endpoint {
         self.transmits.push_back(Transmit {
             destination: addresses.remote,
             ecn: None,
-            contents: buf,
+            contents: buf.freeze(),
             segment_size: None,
             src_ip: addresses.local_ip,
         });
@@ -547,7 +547,7 @@ impl Endpoint {
                 self.transmits.push_back(Transmit {
                     destination: addresses.remote,
                     ecn: None,
-                    contents: buf,
+                    contents: buf.freeze(),
                     segment_size: None,
                     src_ip: addresses.local_ip,
                 });
@@ -703,7 +703,7 @@ impl Endpoint {
         self.transmits.push_back(Transmit {
             destination: addresses.remote,
             ecn: None,
-            contents: buf,
+            contents: buf.freeze(),
             segment_size: None,
             src_ip: addresses.local_ip,
         })

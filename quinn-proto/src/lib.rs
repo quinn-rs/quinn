@@ -38,7 +38,7 @@ mod tests;
 pub mod transport_parameters;
 mod varint;
 
-use bytes::BytesMut;
+use bytes::Bytes;
 pub use varint::{VarInt, VarIntBoundsExceeded};
 
 mod connection;
@@ -278,7 +278,7 @@ pub struct Transmit {
     /// Explicit congestion notification bits to set on the packet
     pub ecn: Option<EcnCodepoint>,
     /// Contents of the datagram
-    pub contents: BytesMut,
+    pub contents: Bytes,
     /// The segment size if this transmission contains multiple datagrams.
     /// This is `None` if the transmit only contains a single datagram
     pub segment_size: Option<usize>,

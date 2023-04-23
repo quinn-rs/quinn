@@ -12,6 +12,7 @@ use std::{
 };
 
 use assert_matches::assert_matches;
+use bytes::BytesMut;
 use lazy_static::lazy_static;
 use rustls::{Certificate, KeyLogFile, PrivateKey};
 use tracing::{info_span, trace};
@@ -131,9 +132,11 @@ impl Pair {
                 socket.send_to(&x.contents, x.destination).unwrap();
             }
             if self.server.addr == x.destination {
-                self.server
-                    .inbound
-                    .push_back((self.time + self.latency, x.ecn, x.contents));
+                self.server.inbound.push_back((
+                    self.time + self.latency,
+                    x.ecn,
+                    x.contents.as_ref().into(),
+                ));
             }
         }
     }
@@ -154,9 +157,11 @@ impl Pair {
                 socket.send_to(&x.contents, x.destination).unwrap();
             }
             if self.client.addr == x.destination {
-                self.client
-                    .inbound
-                    .push_back((self.time + self.latency, x.ecn, x.contents));
+                self.client.inbound.push_back((
+                    self.time + self.latency,
+                    x.ecn,
+                    x.contents.as_ref().into(),
+                ));
             }
         }
     }
