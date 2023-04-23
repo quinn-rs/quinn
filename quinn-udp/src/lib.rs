@@ -36,6 +36,14 @@ mod imp;
 
 pub use imp::UdpSocketState;
 
+/// Whether transmitted datagrams might get fragmented by the IP layer
+///
+/// Returns `false` on targets which employ e.g. the `IPV6_DONTFRAG` socket option.
+#[inline]
+pub fn may_fragment() -> bool {
+    imp::may_fragment()
+}
+
 /// Number of UDP packets to send/receive at a time
 pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
 

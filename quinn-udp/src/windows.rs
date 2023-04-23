@@ -154,3 +154,8 @@ pub fn udp_state() -> super::UdpState {
 }
 
 pub const BATCH_SIZE: usize = 1;
+
+#[inline]
+pub(crate) fn may_fragment() -> bool {
+    false
+}
