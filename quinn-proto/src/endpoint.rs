@@ -65,8 +65,6 @@ pub struct Endpoint {
 
 impl Endpoint {
     /// Create a new endpoint
-    ///
-    /// Returns `Err` if the configuration is invalid.
     pub fn new(config: Arc<EndpointConfig>, server_config: Option<Arc<ServerConfig>>) -> Self {
         Self {
             rng: StdRng::from_entropy(),

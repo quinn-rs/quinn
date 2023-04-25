@@ -265,8 +265,9 @@ impl Connection {
                 config.initial_rtt,
                 config
                     .congestion_controller_factory
-                    .build(now, config.initial_max_udp_payload_size),
-                config.initial_max_udp_payload_size,
+                    .build(now, config.get_initial_max_udp_payload_size()),
+                config.get_initial_max_udp_payload_size(),
+                config.max_guaranteed_udp_payload_size,
                 None,
                 config.mtu_discovery_config.clone(),
                 now,
@@ -2738,8 +2739,9 @@ impl Connection {
                 self.config.initial_rtt,
                 self.config
                     .congestion_controller_factory
-                    .build(now, self.config.initial_max_udp_payload_size),
-                self.config.initial_max_udp_payload_size,
+                    .build(now, self.config.get_initial_max_udp_payload_size()),
+                self.config.get_initial_max_udp_payload_size(),
+                self.config.max_guaranteed_udp_payload_size,
                 Some(peer_max_udp_payload_size),
                 self.config.mtu_discovery_config.clone(),
                 now,
