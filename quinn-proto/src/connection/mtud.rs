@@ -18,15 +18,20 @@ pub(crate) struct MtuDiscovery {
 impl MtuDiscovery {
     pub(crate) fn new(
         initial_plpmtu: u16,
+        max_guaranteed_udp_payload_size: u16,
         peer_max_udp_payload_size: Option<u16>,
         config: MtuDiscoveryConfig,
     ) -> Self {
         debug_assert!(
-            initial_plpmtu >= BASE_UDP_PAYLOAD_SIZE,
-            "initial_max_udp_payload_size must be at least {BASE_UDP_PAYLOAD_SIZE}"
+            initial_plpmtu >= max_guaranteed_udp_payload_size,
+            "initial_max_udp_payload_size must be at least {max_guaranteed_udp_payload_size}"
         );
 
-        let mut mtud = Self::with_state(initial_plpmtu, Some(EnabledMtuDiscovery::new(config)));
+        let mut mtud = Self::with_state(
+            initial_plpmtu,
+            max_guaranteed_udp_payload_size,
+            Some(EnabledMtuDiscovery::new(config)),
+        );
 
         // We might be migrating an existing connection to a new path, in which case the transport
         // parameters have already been transmitted, and we already know the value of
@@ -39,15 +44,19 @@ impl MtuDiscovery {
     }
 
     /// MTU discovery will be disabled and the current MTU will be fixed to the provided value
-    pub(crate) fn disabled(plpmtu: u16) -> Self {
-        Self::with_state(plpmtu, None)
+    pub(crate) fn disabled(plpmtu: u16, max_guaranteed_udp_payload_size: u16) -> Self {
+        Self::with_state(plpmtu, max_guaranteed_udp_payload_size, None)
     }
 
-    fn with_state(current_mtu: u16, state: Option<EnabledMtuDiscovery>) -> Self {
+    fn with_state(
+        current_mtu: u16,
+        max_guaranteed_udp_payload_size: u16,
+        state: Option<EnabledMtuDiscovery>,
+    ) -> Self {
         Self {
             current_mtu,
             state,
-            black_hole_detector: BlackHoleDetector::new(),
+            black_hole_detector: BlackHoleDetector::new(max_guaranteed_udp_payload_size),
         }
     }
 
@@ -142,13 +151,13 @@ impl MtuDiscovery {
     /// Returns true if a black hole was detected
     ///
     /// Calling this function will close the previous loss burst. If a black hole is detected, the
-    /// current MTU will be reset to `BASE_UDP_PAYLOAD_SIZE`.
+    /// current MTU will be reset to `max_guaranteed_udp_payload_size`.
     pub(crate) fn black_hole_detected(&mut self, now: Instant) -> bool {
         if !self.black_hole_detector.black_hole_detected() {
             return false;
         }
 
-        self.current_mtu = BASE_UDP_PAYLOAD_SIZE;
+        self.current_mtu = self.black_hole_detector.max_guaranteed_udp_payload_size;
 
         if let Some(state) = &mut self.state {
             state.on_black_hole_detected(now);
@@ -362,26 +371,29 @@ struct BlackHoleDetector {
     suspicious_loss_bursts: u8,
     /// Indicates whether the current loss burst has any non-suspicious packets
     ///
-    /// Non-suspicious packets are non-probe packets of size <= `BASE_UDP_PAYLOAD_SIZE`
+    /// Non-suspicious packets are non-probe packets of size <= `max_guaranteed_udp_payload_size`
     loss_burst_has_non_suspicious_packets: bool,
     /// The largest suspicious packet that was lost in the current burst
     ///
-    /// Suspicious packets are non-probe packets of size > `BASE_UDP_PAYLOAD_SIZE`
+    /// Suspicious packets are non-probe packets of size > `max_guaranteed_udp_payload_size`
     largest_suspicious_packet_lost: Option<u64>,
     /// The largest non-probe packet that was lost (used to keep track of loss bursts)
     largest_non_probe_lost: Option<u64>,
     /// The largest acked packet of size `current_mtu`
     largest_acked_mtu_sized_packet: Option<u64>,
+    /// The UDP payload size guaranteed to be supported by the network
+    max_guaranteed_udp_payload_size: u16,
 }
 
 impl BlackHoleDetector {
-    fn new() -> Self {
+    fn new(max_guaranteed_udp_payload_size: u16) -> Self {
         Self {
             suspicious_loss_bursts: 0,
             largest_non_probe_lost: None,
             loss_burst_has_non_suspicious_packets: false,
             largest_suspicious_packet_lost: None,
             largest_acked_mtu_sized_packet: None,
+            max_guaranteed_udp_payload_size,
         }
     }
 
@@ -414,7 +426,7 @@ impl BlackHoleDetector {
             self.finish_loss_burst();
         }
 
-        if packet_bytes <= BASE_UDP_PAYLOAD_SIZE {
+        if packet_bytes <= self.max_guaranteed_udp_payload_size {
             self.loss_burst_has_non_suspicious_packets = true;
         } else {
             self.largest_suspicious_packet_lost = Some(packet_number);
@@ -472,7 +484,6 @@ impl BlackHoleDetector {
 // Corresponds to the RFC's `MAX_PROBES` constant (see
 // https://www.rfc-editor.org/rfc/rfc8899#section-5.1.2)
 const MAX_PROBE_RETRANSMITS: usize = 3;
-const BASE_UDP_PAYLOAD_SIZE: u16 = 1_200;
 const BLACK_HOLE_THRESHOLD: u8 = 3;
 const BINARY_SEARCH_MINIMUM_CHANGE: u16 = 20;
 
@@ -486,7 +497,7 @@ mod tests {
 
     fn default_mtud() -> MtuDiscovery {
         let config = MtuDiscoveryConfig::default();
-        MtuDiscovery::new(1_200, None, config)
+        MtuDiscovery::new(1_200, 1_200, None, config)
     }
 
     fn completed(mtud: &MtuDiscovery) -> bool {
@@ -569,14 +580,14 @@ mod tests {
 
     #[test]
     fn mtu_discovery_disabled_does_nothing() {
-        let mut mtud = MtuDiscovery::disabled(1_200);
+        let mut mtud = MtuDiscovery::disabled(1_200, 1_200);
         let probe_size = mtud.poll_transmit(Instant::now(), 0);
         assert_eq!(probe_size, None);
     }
 
     #[test]
     fn mtu_discovery_disabled_lost_four_packet_bursts_triggers_black_hole_detection() {
-        let mut mtud = MtuDiscovery::disabled(1_400);
+        let mut mtud = MtuDiscovery::disabled(1_400, 1_250);
         let now = Instant::now();
 
         for i in 0..4 {
@@ -585,7 +596,7 @@ mod tests {
         }
 
         assert!(mtud.black_hole_detected(now));
-        assert_eq!(mtud.current_mtu, 1200);
+        assert_eq!(mtud.current_mtu, 1250);
         assert_matches!(mtud.state, None);
     }
 
@@ -623,7 +634,7 @@ mod tests {
     fn mtu_discovery_after_complete_reactivates_when_interval_elapsed() {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(9_000);
-        let mut mtud = MtuDiscovery::new(1_200, None, config);
+        let mut mtud = MtuDiscovery::new(1_200, 1_200, None, config);
         let now = Instant::now();
         drive_to_completion(&mut mtud, now, 1_500);
 
@@ -672,7 +683,7 @@ mod tests {
         assert!(fourth_probe_size < first_probe_size);
         assert_eq!(
             fourth_probe_size,
-            first_probe_size - (first_probe_size - BASE_UDP_PAYLOAD_SIZE) / 2 - 1
+            first_probe_size - (first_probe_size - 1_200) / 2 - 1
         );
     }
 
@@ -692,7 +703,7 @@ mod tests {
 
     #[test]
     fn mtu_discovery_with_previous_peer_max_udp_payload_size_clamps_upper_bound() {
-        let mut mtud = MtuDiscovery::new(1500, Some(1400), MtuDiscoveryConfig::default());
+        let mut mtud = MtuDiscovery::new(1500, 1_200, Some(1400), MtuDiscoveryConfig::default());
 
         assert_eq!(mtud.current_mtu, 1400);
         assert_eq!(mtud.state.as_ref().unwrap().peer_max_udp_payload_size, 1400);
@@ -728,7 +739,7 @@ mod tests {
     fn mtu_discovery_with_1500_limit_and_10000_upper_bound() {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(10_000);
-        let mut mtud = MtuDiscovery::new(1_200, None, config);
+        let mut mtud = MtuDiscovery::new(1_200, 1_200, None, config);
 
         let probed_sizes = drive_to_completion(&mut mtud, Instant::now(), 1500);
 
@@ -745,7 +756,7 @@ mod tests {
     fn mtu_discovery_no_lost_probes_finds_maximum_udp_payload() {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(MAX_UDP_PAYLOAD);
-        let mut mtud = MtuDiscovery::new(1200, None, config);
+        let mut mtud = MtuDiscovery::new(1200, 1200, None, config);
 
         drive_to_completion(&mut mtud, Instant::now(), u16::MAX);
 
@@ -757,7 +768,7 @@ mod tests {
     fn mtu_discovery_lost_half_of_probes_finds_maximum_udp_payload() {
         let mut config = MtuDiscoveryConfig::default();
         config.upper_bound(MAX_UDP_PAYLOAD);
-        let mut mtud = MtuDiscovery::new(1200, None, config);
+        let mut mtud = MtuDiscovery::new(1200, 1200, None, config);
 
         let now = Instant::now();
         let mut iterations = 0;

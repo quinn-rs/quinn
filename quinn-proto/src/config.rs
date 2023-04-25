@@ -38,6 +38,7 @@ pub struct TransportConfig {
     pub(crate) time_threshold: f32,
     pub(crate) initial_rtt: Duration,
     pub(crate) initial_max_udp_payload_size: u16,
+    pub(crate) max_guaranteed_udp_payload_size: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
 
     pub(crate) persistent_congestion_threshold: u32,
@@ -160,16 +161,35 @@ impl TransportConfig {
     /// (see [`TransportConfig::mtu_discovery_config`]).
     ///
     /// Must be at least 1200, which is the default, and known to be safe for typical internet
-    /// applications. Larger values are more efficient, but increase the risk of unpredictable
-    /// catastrophic packet loss due to exceeding the network path's IP MTU. If the provided value
-    /// is higher than what the network path actually supports, packet loss will eventually trigger
-    /// black hole detection and bring it down to 1200.
-    ///
-    /// Real-world MTUs can vary according to ISP, VPN, and properties of intermediate network links
-    /// outside of either endpoint's control. Caution should be used when raising this value for
-    /// connections outside of private networks where these factors are fully controlled.
+    /// applications. Larger values are more efficient, but increase the risk of packet loss due to
+    /// exceeding the network path's IP MTU. If the provided value is higher than what the network
+    /// path actually supports, packet loss will eventually trigger black hole detection and bring
+    /// it down to [`TransportConfig::max_guaranteed_udp_payload_size`].
     pub fn initial_max_udp_payload_size(&mut self, value: u16) -> &mut Self {
         self.initial_max_udp_payload_size = value.max(INITIAL_MAX_UDP_PAYLOAD_SIZE);
+        self
+    }
+
+    pub(crate) fn get_initial_max_udp_payload_size(&self) -> u16 {
+        self.initial_max_udp_payload_size
+            .max(self.max_guaranteed_udp_payload_size)
+    }
+
+    /// The maximum UDP payload size guaranteed to be supported by the network.
+    ///
+    /// Must be at least 1200, which is the default, and lower than or equal to
+    /// [`TransportConfig::initial_max_udp_payload_size`].
+    ///
+    /// Real-world MTUs can vary according to ISP, VPN, and properties of intermediate network links
+    /// outside of either endpoint's control. Extreme care should be used when raising this value
+    /// outside of private networks where these factors are fully controlled. If the provided value
+    /// is higher than what the network path actually supports, the result will be unpredictable and
+    /// catastrophic packet loss, without a possibility of repair. Prefer
+    /// [`TransportConfig::initial_max_udp_payload_size`] together with
+    /// [`TransportConfig::mtu_discovery_config`] to set a maximum UDP payload size that robustly
+    /// adapts to the network.
+    pub fn max_guaranteed_udp_payload_size(&mut self, value: u16) -> &mut Self {
+        self.max_guaranteed_udp_payload_size = value.max(INITIAL_MAX_UDP_PAYLOAD_SIZE);
         self
     }
 
@@ -296,6 +316,7 @@ impl Default for TransportConfig {
             time_threshold: 9.0 / 8.0,
             initial_rtt: Duration::from_millis(333), // per spec, intentionally distinct from EXPECTED_RTT
             initial_max_udp_payload_size: INITIAL_MAX_UDP_PAYLOAD_SIZE,
+            max_guaranteed_udp_payload_size: INITIAL_MAX_UDP_PAYLOAD_SIZE,
             mtu_discovery_config: None,
 
             persistent_congestion_threshold: 3,
