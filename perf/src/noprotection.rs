@@ -16,6 +16,16 @@ impl NoProtectionSession {
     fn new(tls: Box<dyn crypto::Session>) -> Self {
         Self { inner: tls }
     }
+
+    /// Wraps the provided keys in `NoProtectionPacketKey` to disable packet encryption / decryption
+    fn wrap_packet_keys(
+        keys: crypto::KeyPair<Box<dyn crypto::PacketKey>>,
+    ) -> crypto::KeyPair<Box<dyn crypto::PacketKey>> {
+        crypto::KeyPair {
+            local: Box::new(NoProtectionPacketKey::new(keys.local)),
+            remote: Box::new(NoProtectionPacketKey::new(keys.remote)),
+        }
+    }
 }
 
 struct NoProtectionPacketKey {
@@ -88,17 +98,17 @@ impl crypto::Session for NoProtectionSession {
     }
 
     fn write_handshake(&mut self, buf: &mut Vec<u8>) -> Option<crypto::Keys> {
-        self.inner.write_handshake(buf)
+        let keys = self.inner.write_handshake(buf)?;
+
+        Some(crypto::Keys {
+            header: keys.header,
+            packet: Self::wrap_packet_keys(keys.packet),
+        })
     }
 
     fn next_1rtt_keys(&mut self) -> Option<crypto::KeyPair<Box<dyn crypto::PacketKey>>> {
         let keys = self.inner.next_1rtt_keys()?;
-
-        // use wrapper type to disable packet encryption/decryption
-        Some(crypto::KeyPair {
-            local: Box::new(NoProtectionPacketKey::new(keys.local)),
-            remote: Box::new(NoProtectionPacketKey::new(keys.remote)),
-        })
+        Some(Self::wrap_packet_keys(keys))
     }
 
     fn is_valid_retry(&self, orig_dst_cid: &ConnectionId, header: &[u8], payload: &[u8]) -> bool {
