@@ -151,10 +151,6 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
         set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_DONTFRAG, OPTION_ON)?;
     }
 
-    if !is_ipv4 {
-        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS, OPTION_ON)?;
-    }
-
     Ok(())
 }
 
