@@ -315,7 +315,7 @@ impl Default for TransportConfig {
             initial_rtt: Duration::from_millis(333), // per spec, intentionally distinct from EXPECTED_RTT
             initial_mtu: INITIAL_MTU,
             min_mtu: INITIAL_MTU,
-            mtu_discovery_config: None,
+            mtu_discovery_config: Some(MtuDiscoveryConfig::default()),
 
             persistent_congestion_threshold: 3,
             keep_alive_interval: None,

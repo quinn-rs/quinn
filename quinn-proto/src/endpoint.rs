@@ -61,11 +61,21 @@ pub struct Endpoint {
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
+    /// Whether the underlying UDP socket promises not to fragment packets
+    allow_mtud: bool,
 }
 
 impl Endpoint {
     /// Create a new endpoint
-    pub fn new(config: Arc<EndpointConfig>, server_config: Option<Arc<ServerConfig>>) -> Self {
+    ///
+    /// `allow_mtud` enables path MTU detection when requested by `Connection` configuration for
+    /// better performance. This requires that outgoing packets are never fragmented, which can be
+    /// achieved via e.g. the `IPV6_DONTFRAG` socket option.
+    pub fn new(
+        config: Arc<EndpointConfig>,
+        server_config: Option<Arc<ServerConfig>>,
+        allow_mtud: bool,
+    ) -> Self {
         Self {
             rng: StdRng::from_entropy(),
             transmits: VecDeque::new(),
@@ -77,6 +87,7 @@ impl Endpoint {
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
             config,
             server_config,
+            allow_mtud,
         }
     }
 
@@ -640,6 +651,7 @@ impl Endpoint {
             self.local_cid_generator.as_ref(),
             now,
             version,
+            self.allow_mtud,
         );
 
         let id = self.connections.insert(ConnectionMeta {

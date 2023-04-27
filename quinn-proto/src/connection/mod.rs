@@ -236,6 +236,7 @@ impl Connection {
         cid_gen: &dyn ConnectionIdGenerator,
         now: Instant,
         version: u32,
+        allow_mtud: bool,
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
@@ -269,7 +270,10 @@ impl Connection {
                 config.get_initial_mtu(),
                 config.min_mtu,
                 None,
-                config.mtu_discovery_config.clone(),
+                match allow_mtud {
+                    true => config.mtu_discovery_config.clone(),
+                    false => None,
+                },
                 now,
                 path_validated,
             ),

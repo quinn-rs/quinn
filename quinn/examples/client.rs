@@ -95,9 +95,7 @@ async fn run(options: Opt) -> Result<()> {
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
-    let mut client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
-    common::enable_mtud_if_supported(&mut client_config);
-
+    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
     let mut endpoint = quinn::Endpoint::client("[::]:0".parse().unwrap())?;
     endpoint.set_default_client_config(client_config);
 
