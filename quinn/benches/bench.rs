@@ -83,16 +83,11 @@ impl Context {
             quinn::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
         let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
         transport_config.max_concurrent_uni_streams(1024_u16.into());
-        enable_mtud_if_supported(transport_config);
 
         let mut roots = rustls::RootCertStore::empty();
         roots.add(&cert).unwrap();
 
-        let mut client_config = quinn::ClientConfig::with_root_certificates(roots);
-        let mut transport_config = quinn::TransportConfig::default();
-        enable_mtud_if_supported(&mut transport_config);
-        client_config.transport_config(Arc::new(transport_config));
-
+        let client_config = quinn::ClientConfig::with_root_certificates(roots);
         Self {
             server_config,
             client_config,
@@ -163,14 +158,6 @@ impl Context {
         (endpoint, connection, runtime)
     }
 }
-
-#[cfg(any(windows, os = "linux"))]
-fn enable_mtud_if_supported(transport_config: &mut quinn::TransportConfig) {
-    transport_config.mtu_discovery_config(Some(quinn::MtuDiscoveryConfig::default()));
-}
-
-#[cfg(not(any(windows, os = "linux")))]
-fn enable_mtud_if_supported(_transport_config: &mut quinn::TransportConfig) {}
 
 fn rt() -> Runtime {
     Builder::new_current_thread().enable_all().build().unwrap()

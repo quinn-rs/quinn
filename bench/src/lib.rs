@@ -142,8 +142,6 @@ pub fn transport_config(opt: &Opt) -> quinn::TransportConfig {
     // High stream windows are chosen because the amount of concurrent streams
     // is configurable as a parameter.
     let mut config = quinn::TransportConfig::default();
-    #[cfg(any(windows, os = "linux"))]
-    config.mtu_discovery_config(Some(quinn::MtuDiscoveryConfig::default()));
     config.max_concurrent_uni_streams(opt.max_streams.try_into().unwrap());
     config.initial_mtu(opt.initial_mtu);
     config
