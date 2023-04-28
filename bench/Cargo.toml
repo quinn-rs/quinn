@@ -11,6 +11,7 @@ anyhow = "1.0.22"
 bytes = "1"
 hdrhistogram = { version = "7.2", default-features = false }
 quinn = { path = "../quinn" }
+quinn-proto = { path = "../quinn-proto" }
 rcgen = "0.10.0"
 rustls = { version = "0.21.0", default-features = false, features = ["quic"] }
 clap = { version = "3.2", features = ["derive"] }

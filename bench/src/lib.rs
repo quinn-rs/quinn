@@ -13,6 +13,9 @@ use rustls::RootCertStore;
 use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
 
+use noprotection::{NoProtectionClientConfig, NoProtectionServerConfig};
+
+mod noprotection;
 pub mod stats;
 
 pub fn configure_tracing_subscriber() {
@@ -32,7 +35,7 @@ pub fn server_endpoint(
     opt: &Opt,
 ) -> (SocketAddr, quinn::Endpoint) {
     let cert_chain = vec![cert];
-    let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
+    let mut server_config = server_config(cert_chain, key, opt.no_protection);
     server_config.transport = Arc::new(transport_config(opt));
 
     let endpoint = {
@@ -56,17 +59,7 @@ pub async fn connect_client(
     let endpoint =
         quinn::Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
 
-    let mut roots = RootCertStore::empty();
-    roots.add(&server_cert)?;
-    let crypto = rustls::ClientConfig::builder()
-        .with_cipher_suites(&[opt.cipher.as_rustls()])
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-
-    let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
+    let mut client_config = client_config(&server_cert, &opt);
     client_config.transport_config(Arc::new(transport_config(&opt)));
 
     let connection = endpoint
@@ -147,6 +140,46 @@ pub fn transport_config(opt: &Opt) -> quinn::TransportConfig {
     config
 }
 
+fn server_config(
+    cert_chain: Vec<rustls::Certificate>,
+    key: rustls::PrivateKey,
+    disable_encryption: bool,
+) -> quinn::ServerConfig {
+    let mut cfg = rustls::ServerConfig::builder()
+        .with_safe_default_cipher_suites()
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, key)
+        .unwrap();
+    cfg.max_early_data_size = u32::MAX;
+
+    if disable_encryption {
+        quinn::ServerConfig::with_crypto(Arc::new(NoProtectionServerConfig::new(Arc::new(cfg))))
+    } else {
+        quinn::ServerConfig::with_crypto(Arc::new(cfg))
+    }
+}
+
+fn client_config(server_cert: &rustls::Certificate, opt: &Opt) -> quinn::ClientConfig {
+    let mut roots = RootCertStore::empty();
+    roots.add(server_cert).unwrap();
+    let crypto = rustls::ClientConfig::builder()
+        .with_cipher_suites(&[opt.cipher.as_rustls()])
+        .with_safe_default_kx_groups()
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
+
+    if opt.no_protection {
+        quinn::ClientConfig::new(Arc::new(NoProtectionClientConfig::new(Arc::new(crypto))))
+    } else {
+        quinn::ClientConfig::new(Arc::new(crypto))
+    }
+}
+
 #[derive(Parser, Debug, Clone, Copy)]
 #[clap(name = "bulk")]
 pub struct Opt {
@@ -185,6 +218,9 @@ pub struct Opt {
     /// Starting guess for maximum UDP payload size
     #[clap(long, default_value = "1200")]
     pub initial_mtu: u16,
+    /// Disable packet encryption/decryption
+    #[clap(long)]
+    no_protection: bool,
 }
 
 fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
