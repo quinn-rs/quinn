@@ -145,7 +145,7 @@ pub fn transport_config(opt: &Opt) -> quinn::TransportConfig {
     #[cfg(any(windows, os = "linux"))]
     config.mtu_discovery_config(Some(quinn::MtuDiscoveryConfig::default()));
     config.max_concurrent_uni_streams(opt.max_streams.try_into().unwrap());
-    config.initial_max_udp_payload_size(opt.initial_mtu);
+    config.initial_mtu(opt.initial_mtu);
     config
 }
 

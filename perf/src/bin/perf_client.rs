@@ -65,7 +65,7 @@ struct Opt {
     keylog: bool,
     /// UDP payload size that the network must be capable of carrying
     #[clap(long, default_value = "1200")]
-    initial_max_udp_payload_size: u16,
+    initial_mtu: u16,
     /// Disable packet encryption/decryption (for debugging purpose)
     #[clap(long = "no-protection")]
     no_protection: bool,
@@ -131,7 +131,7 @@ async fn run(opt: Opt) -> Result<()> {
     let mut transport = quinn::TransportConfig::default();
     #[cfg(any(windows, os = "linux"))]
     transport.mtu_discovery_config(Some(quinn::MtuDiscoveryConfig::default()));
-    transport.initial_max_udp_payload_size(opt.initial_max_udp_payload_size);
+    transport.initial_mtu(opt.initial_mtu);
 
     let mut cfg = if opt.no_protection {
         quinn::ClientConfig::new(Arc::new(NoProtectionClientConfig::new(Arc::new(crypto))))

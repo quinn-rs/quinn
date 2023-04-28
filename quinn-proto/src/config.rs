@@ -9,8 +9,7 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
     crypto::{self, HandshakeTokenKey, HmacKey},
-    VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MAX_UDP_PAYLOAD_SIZE,
-    MAX_UDP_PAYLOAD,
+    VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MTU, MAX_UDP_PAYLOAD,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -37,8 +36,8 @@ pub struct TransportConfig {
     pub(crate) packet_threshold: u32,
     pub(crate) time_threshold: f32,
     pub(crate) initial_rtt: Duration,
-    pub(crate) initial_max_udp_payload_size: u16,
-    pub(crate) max_guaranteed_udp_payload_size: u16,
+    pub(crate) initial_mtu: u16,
+    pub(crate) min_guaranteed_mtu: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
 
     pub(crate) persistent_congestion_threshold: u32,
@@ -164,32 +163,31 @@ impl TransportConfig {
     /// applications. Larger values are more efficient, but increase the risk of packet loss due to
     /// exceeding the network path's IP MTU. If the provided value is higher than what the network
     /// path actually supports, packet loss will eventually trigger black hole detection and bring
-    /// it down to [`TransportConfig::max_guaranteed_udp_payload_size`].
-    pub fn initial_max_udp_payload_size(&mut self, value: u16) -> &mut Self {
-        self.initial_max_udp_payload_size = value.max(INITIAL_MAX_UDP_PAYLOAD_SIZE);
+    /// it down to [`TransportConfig::min_guaranteed_mtu`].
+    pub fn initial_mtu(&mut self, value: u16) -> &mut Self {
+        self.initial_mtu = value.max(INITIAL_MTU);
         self
     }
 
-    pub(crate) fn get_initial_max_udp_payload_size(&self) -> u16 {
-        self.initial_max_udp_payload_size
-            .max(self.max_guaranteed_udp_payload_size)
+    pub(crate) fn get_initial_mtu(&self) -> u16 {
+        self.initial_mtu.max(self.min_guaranteed_mtu)
     }
 
     /// The maximum UDP payload size guaranteed to be supported by the network.
     ///
     /// Must be at least 1200, which is the default, and lower than or equal to
-    /// [`TransportConfig::initial_max_udp_payload_size`].
+    /// [`TransportConfig::initial_mtu`].
     ///
     /// Real-world MTUs can vary according to ISP, VPN, and properties of intermediate network links
     /// outside of either endpoint's control. Extreme care should be used when raising this value
     /// outside of private networks where these factors are fully controlled. If the provided value
     /// is higher than what the network path actually supports, the result will be unpredictable and
     /// catastrophic packet loss, without a possibility of repair. Prefer
-    /// [`TransportConfig::initial_max_udp_payload_size`] together with
+    /// [`TransportConfig::initial_mtu`] together with
     /// [`TransportConfig::mtu_discovery_config`] to set a maximum UDP payload size that robustly
     /// adapts to the network.
-    pub fn max_guaranteed_udp_payload_size(&mut self, value: u16) -> &mut Self {
-        self.max_guaranteed_udp_payload_size = value.max(INITIAL_MAX_UDP_PAYLOAD_SIZE);
+    pub fn min_guaranteed_mtu(&mut self, value: u16) -> &mut Self {
+        self.min_guaranteed_mtu = value.max(INITIAL_MTU);
         self
     }
 
@@ -315,8 +313,8 @@ impl Default for TransportConfig {
             packet_threshold: 3,
             time_threshold: 9.0 / 8.0,
             initial_rtt: Duration::from_millis(333), // per spec, intentionally distinct from EXPECTED_RTT
-            initial_max_udp_payload_size: INITIAL_MAX_UDP_PAYLOAD_SIZE,
-            max_guaranteed_udp_payload_size: INITIAL_MAX_UDP_PAYLOAD_SIZE,
+            initial_mtu: INITIAL_MTU,
+            min_guaranteed_mtu: INITIAL_MTU,
             mtu_discovery_config: None,
 
             persistent_congestion_threshold: 3,
@@ -406,7 +404,7 @@ impl fmt::Debug for TransportConfig {
 ///
 /// Since the search space for MTUs is quite big (the smallest possible MTU is 1200, and the highest
 /// is 65527), Quinn performs a binary search to keep the number of probes as low as possible. The
-/// lower bound of the search is equal to [`TransportConfig::initial_max_udp_payload_size`] in the
+/// lower bound of the search is equal to [`TransportConfig::initial_mtu`] in the
 /// initial MTU discovery run, and is equal to the currently discovered MTU in subsequent runs. The
 /// upper bound is determined by the minimum of [`MtuDiscoveryConfig::upper_bound`] and the
 /// `max_udp_payload_size` transport parameter received from the peer during the handshake.
