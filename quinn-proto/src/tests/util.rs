@@ -18,14 +18,14 @@ use tracing::{info_span, trace};
 
 use super::*;
 
-pub(super) const DEFAULT_MAX_UDP_PAYLOAD_SIZE: usize = 1200;
+pub(super) const DEFAULT_MTU: usize = 1200;
 
 pub(super) struct Pair {
     pub(super) server: TestEndpoint,
     pub(super) client: TestEndpoint,
     pub(super) time: Instant,
     /// Simulates the maximum size allowed for UDP payloads by the link (packets exceeding this size will be dropped)
-    pub(super) max_udp_payload_size: usize,
+    pub(super) mtu: usize,
     // One-way
     pub(super) latency: Duration,
     /// Number of spin bit flips
@@ -54,7 +54,7 @@ impl Pair {
             server: TestEndpoint::new(server, server_addr),
             client: TestEndpoint::new(client, client_addr),
             time: Instant::now(),
-            max_udp_payload_size: DEFAULT_MAX_UDP_PAYLOAD_SIZE,
+            mtu: DEFAULT_MTU,
             latency: Duration::new(0, 0),
             spins: 0,
             last_spin: false,
@@ -115,7 +115,7 @@ impl Pair {
         let _guard = span.enter();
         self.client.drive(self.time, self.server.addr);
         for x in self.client.outbound.drain(..) {
-            if packet_size(&x) > self.max_udp_payload_size {
+            if packet_size(&x) > self.mtu {
                 info!(
                     packet_size = packet_size(&x),
                     "dropping packet (max size exceeded)"
@@ -143,7 +143,7 @@ impl Pair {
         let _guard = span.enter();
         self.server.drive(self.time, self.client.addr);
         for x in self.server.outbound.drain(..) {
-            if packet_size(&x) > self.max_udp_payload_size {
+            if packet_size(&x) > self.mtu {
                 info!(
                     packet_size = packet_size(&x),
                     "dropping packet (max size exceeded)"

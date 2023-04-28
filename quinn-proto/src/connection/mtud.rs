@@ -18,18 +18,18 @@ pub(crate) struct MtuDiscovery {
 impl MtuDiscovery {
     pub(crate) fn new(
         initial_plpmtu: u16,
-        max_guaranteed_udp_payload_size: u16,
+        min_guaranteed_mtu: u16,
         peer_max_udp_payload_size: Option<u16>,
         config: MtuDiscoveryConfig,
     ) -> Self {
         debug_assert!(
-            initial_plpmtu >= max_guaranteed_udp_payload_size,
-            "initial_max_udp_payload_size must be at least {max_guaranteed_udp_payload_size}"
+            initial_plpmtu >= min_guaranteed_mtu,
+            "initial_max_udp_payload_size must be at least {min_guaranteed_mtu}"
         );
 
         let mut mtud = Self::with_state(
             initial_plpmtu,
-            max_guaranteed_udp_payload_size,
+            min_guaranteed_mtu,
             Some(EnabledMtuDiscovery::new(config)),
         );
 
@@ -44,19 +44,19 @@ impl MtuDiscovery {
     }
 
     /// MTU discovery will be disabled and the current MTU will be fixed to the provided value
-    pub(crate) fn disabled(plpmtu: u16, max_guaranteed_udp_payload_size: u16) -> Self {
-        Self::with_state(plpmtu, max_guaranteed_udp_payload_size, None)
+    pub(crate) fn disabled(plpmtu: u16, min_guaranteed_mtu: u16) -> Self {
+        Self::with_state(plpmtu, min_guaranteed_mtu, None)
     }
 
     fn with_state(
         current_mtu: u16,
-        max_guaranteed_udp_payload_size: u16,
+        min_guaranteed_mtu: u16,
         state: Option<EnabledMtuDiscovery>,
     ) -> Self {
         Self {
             current_mtu,
             state,
-            black_hole_detector: BlackHoleDetector::new(max_guaranteed_udp_payload_size),
+            black_hole_detector: BlackHoleDetector::new(min_guaranteed_mtu),
         }
     }
 
@@ -106,7 +106,7 @@ impl MtuDiscovery {
             .and_then(|state| state.on_probe_acked(packet_number))
         {
             self.current_mtu = new_mtu;
-            trace!(max_udp_payload_size = self.current_mtu, "new MTU detected");
+            trace!(current_mtu = self.current_mtu, "new MTU detected");
 
             self.black_hole_detector.on_probe_acked();
             true
@@ -151,13 +151,13 @@ impl MtuDiscovery {
     /// Returns true if a black hole was detected
     ///
     /// Calling this function will close the previous loss burst. If a black hole is detected, the
-    /// current MTU will be reset to `max_guaranteed_udp_payload_size`.
+    /// current MTU will be reset to `min_guaranteed_mtu`.
     pub(crate) fn black_hole_detected(&mut self, now: Instant) -> bool {
         if !self.black_hole_detector.black_hole_detected() {
             return false;
         }
 
-        self.current_mtu = self.black_hole_detector.max_guaranteed_udp_payload_size;
+        self.current_mtu = self.black_hole_detector.min_guaranteed_mtu;
 
         if let Some(state) = &mut self.state {
             state.on_black_hole_detected(now);
@@ -220,7 +220,7 @@ impl EnabledMtuDiscovery {
             // Retransmit lost probes, if any
             if 0 < state.lost_probe_count && state.lost_probe_count < MAX_PROBE_RETRANSMITS {
                 state.in_flight_probe = Some(next_packet_number);
-                return Some(state.last_probed_udp_payload_size);
+                return Some(state.last_probed_mtu);
             }
 
             let last_probe_succeeded = state.lost_probe_count == 0;
@@ -233,7 +233,7 @@ impl EnabledMtuDiscovery {
 
             if let Some(probe_udp_payload_size) = state.next_mtu_to_probe(last_probe_succeeded) {
                 state.in_flight_probe = Some(next_packet_number);
-                state.last_probed_udp_payload_size = probe_udp_payload_size;
+                state.last_probed_mtu = probe_udp_payload_size;
                 return Some(probe_udp_payload_size);
             } else {
                 let next_mtud_activation = now + self.config.interval;
@@ -253,7 +253,7 @@ impl EnabledMtuDiscovery {
             Phase::Searching(state) if state.in_flight_probe == Some(packet_number) => {
                 state.in_flight_probe = None;
                 state.lost_probe_count = 0;
-                Some(state.last_probed_udp_payload_size)
+                Some(state.last_probed_mtu)
             }
             _ => None,
         }
@@ -293,7 +293,7 @@ struct SearchState {
     /// The upper bound for the current binary search
     upper_bound: u16,
     /// The UDP payload size we last sent a probe for
-    last_probed_udp_payload_size: u16,
+    last_probed_mtu: u16,
     /// Packet number of an in-flight probe (if any)
     in_flight_probe: Option<u64>,
     /// Lost probes at the current probe size
@@ -320,7 +320,7 @@ impl SearchState {
             upper_bound,
             // During initialization, we consider the lower bound to have already been
             // successfully probed
-            last_probed_udp_payload_size: lower_bound,
+            last_probed_mtu: lower_bound,
         }
     }
 
@@ -329,23 +329,20 @@ impl SearchState {
         debug_assert_eq!(self.in_flight_probe, None);
 
         if last_probe_succeeded {
-            self.lower_bound = self.last_probed_udp_payload_size;
+            self.lower_bound = self.last_probed_mtu;
         } else {
-            self.upper_bound = self.last_probed_udp_payload_size - 1;
+            self.upper_bound = self.last_probed_mtu - 1;
         }
 
         let next_mtu = (self.lower_bound as i32 + self.upper_bound as i32) / 2;
 
         // Binary search stopping condition
-        if ((next_mtu - self.last_probed_udp_payload_size as i32).unsigned_abs() as u16)
+        if ((next_mtu - self.last_probed_mtu as i32).unsigned_abs() as u16)
             < BINARY_SEARCH_MINIMUM_CHANGE
         {
             // Special case: if the upper bound is far enough, we want to probe it as a last
             // step (otherwise we will never achieve the upper bound)
-            if self
-                .upper_bound
-                .saturating_sub(self.last_probed_udp_payload_size)
-                >= BINARY_SEARCH_MINIMUM_CHANGE
+            if self.upper_bound.saturating_sub(self.last_probed_mtu) >= BINARY_SEARCH_MINIMUM_CHANGE
             {
                 return Some(self.upper_bound);
             }
@@ -371,29 +368,29 @@ struct BlackHoleDetector {
     suspicious_loss_bursts: u8,
     /// Indicates whether the current loss burst has any non-suspicious packets
     ///
-    /// Non-suspicious packets are non-probe packets of size <= `max_guaranteed_udp_payload_size`
+    /// Non-suspicious packets are non-probe packets of size <= `min_guaranteed_mtu`
     loss_burst_has_non_suspicious_packets: bool,
     /// The largest suspicious packet that was lost in the current burst
     ///
-    /// Suspicious packets are non-probe packets of size > `max_guaranteed_udp_payload_size`
+    /// Suspicious packets are non-probe packets of size > `min_guaranteed_mtu`
     largest_suspicious_packet_lost: Option<u64>,
     /// The largest non-probe packet that was lost (used to keep track of loss bursts)
     largest_non_probe_lost: Option<u64>,
     /// The largest acked packet of size `current_mtu`
     largest_acked_mtu_sized_packet: Option<u64>,
     /// The UDP payload size guaranteed to be supported by the network
-    max_guaranteed_udp_payload_size: u16,
+    min_guaranteed_mtu: u16,
 }
 
 impl BlackHoleDetector {
-    fn new(max_guaranteed_udp_payload_size: u16) -> Self {
+    fn new(min_guaranteed_mtu: u16) -> Self {
         Self {
             suspicious_loss_bursts: 0,
             largest_non_probe_lost: None,
             loss_burst_has_non_suspicious_packets: false,
             largest_suspicious_packet_lost: None,
             largest_acked_mtu_sized_packet: None,
-            max_guaranteed_udp_payload_size,
+            min_guaranteed_mtu,
         }
     }
 
@@ -426,7 +423,7 @@ impl BlackHoleDetector {
             self.finish_loss_burst();
         }
 
-        if packet_bytes <= self.max_guaranteed_udp_payload_size {
+        if packet_bytes <= self.min_guaranteed_mtu {
             self.loss_burst_has_non_suspicious_packets = true;
         } else {
             self.largest_suspicious_packet_lost = Some(packet_number);
