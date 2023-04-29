@@ -267,7 +267,7 @@ impl Connection {
                     .congestion_controller_factory
                     .build(now, config.get_initial_mtu()),
                 config.get_initial_mtu(),
-                config.min_guaranteed_mtu,
+                config.min_mtu,
                 None,
                 config.mtu_discovery_config.clone(),
                 now,
@@ -2740,7 +2740,7 @@ impl Connection {
                     .congestion_controller_factory
                     .build(now, self.config.get_initial_mtu()),
                 self.config.get_initial_mtu(),
-                self.config.min_guaranteed_mtu,
+                self.config.min_mtu,
                 Some(peer_max_udp_payload_size),
                 self.config.mtu_discovery_config.clone(),
                 now,

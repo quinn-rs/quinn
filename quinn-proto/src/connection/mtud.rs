@@ -18,18 +18,18 @@ pub(crate) struct MtuDiscovery {
 impl MtuDiscovery {
     pub(crate) fn new(
         initial_plpmtu: u16,
-        min_guaranteed_mtu: u16,
+        min_mtu: u16,
         peer_max_udp_payload_size: Option<u16>,
         config: MtuDiscoveryConfig,
     ) -> Self {
         debug_assert!(
-            initial_plpmtu >= min_guaranteed_mtu,
-            "initial_max_udp_payload_size must be at least {min_guaranteed_mtu}"
+            initial_plpmtu >= min_mtu,
+            "initial_max_udp_payload_size must be at least {min_mtu}"
         );
 
         let mut mtud = Self::with_state(
             initial_plpmtu,
-            min_guaranteed_mtu,
+            min_mtu,
             Some(EnabledMtuDiscovery::new(config)),
         );
 
@@ -44,19 +44,15 @@ impl MtuDiscovery {
     }
 
     /// MTU discovery will be disabled and the current MTU will be fixed to the provided value
-    pub(crate) fn disabled(plpmtu: u16, min_guaranteed_mtu: u16) -> Self {
-        Self::with_state(plpmtu, min_guaranteed_mtu, None)
+    pub(crate) fn disabled(plpmtu: u16, min_mtu: u16) -> Self {
+        Self::with_state(plpmtu, min_mtu, None)
     }
 
-    fn with_state(
-        current_mtu: u16,
-        min_guaranteed_mtu: u16,
-        state: Option<EnabledMtuDiscovery>,
-    ) -> Self {
+    fn with_state(current_mtu: u16, min_mtu: u16, state: Option<EnabledMtuDiscovery>) -> Self {
         Self {
             current_mtu,
             state,
-            black_hole_detector: BlackHoleDetector::new(min_guaranteed_mtu),
+            black_hole_detector: BlackHoleDetector::new(min_mtu),
         }
     }
 
@@ -151,13 +147,13 @@ impl MtuDiscovery {
     /// Returns true if a black hole was detected
     ///
     /// Calling this function will close the previous loss burst. If a black hole is detected, the
-    /// current MTU will be reset to `min_guaranteed_mtu`.
+    /// current MTU will be reset to `min_mtu`.
     pub(crate) fn black_hole_detected(&mut self, now: Instant) -> bool {
         if !self.black_hole_detector.black_hole_detected() {
             return false;
         }
 
-        self.current_mtu = self.black_hole_detector.min_guaranteed_mtu;
+        self.current_mtu = self.black_hole_detector.min_mtu;
 
         if let Some(state) = &mut self.state {
             state.on_black_hole_detected(now);
@@ -368,29 +364,29 @@ struct BlackHoleDetector {
     suspicious_loss_bursts: u8,
     /// Indicates whether the current loss burst has any non-suspicious packets
     ///
-    /// Non-suspicious packets are non-probe packets of size <= `min_guaranteed_mtu`
+    /// Non-suspicious packets are non-probe packets of size <= `min_mtu`
     loss_burst_has_non_suspicious_packets: bool,
     /// The largest suspicious packet that was lost in the current burst
     ///
-    /// Suspicious packets are non-probe packets of size > `min_guaranteed_mtu`
+    /// Suspicious packets are non-probe packets of size > `min_mtu`
     largest_suspicious_packet_lost: Option<u64>,
     /// The largest non-probe packet that was lost (used to keep track of loss bursts)
     largest_non_probe_lost: Option<u64>,
     /// The largest acked packet of size `current_mtu`
     largest_acked_mtu_sized_packet: Option<u64>,
     /// The UDP payload size guaranteed to be supported by the network
-    min_guaranteed_mtu: u16,
+    min_mtu: u16,
 }
 
 impl BlackHoleDetector {
-    fn new(min_guaranteed_mtu: u16) -> Self {
+    fn new(min_mtu: u16) -> Self {
         Self {
             suspicious_loss_bursts: 0,
             largest_non_probe_lost: None,
             loss_burst_has_non_suspicious_packets: false,
             largest_suspicious_packet_lost: None,
             largest_acked_mtu_sized_packet: None,
-            min_guaranteed_mtu,
+            min_mtu,
         }
     }
 
@@ -423,7 +419,7 @@ impl BlackHoleDetector {
             self.finish_loss_burst();
         }
 
-        if packet_bytes <= self.min_guaranteed_mtu {
+        if packet_bytes <= self.min_mtu {
             self.loss_burst_has_non_suspicious_packets = true;
         } else {
             self.largest_suspicious_packet_lost = Some(packet_number);
