@@ -38,7 +38,7 @@ impl PathData {
         initial_rtt: Duration,
         congestion: Box<dyn congestion::Controller>,
         initial_mtu: u16,
-        min_guaranteed_mtu: u16,
+        min_mtu: u16,
         peer_max_udp_payload_size: Option<u16>,
         mtud_config: Option<MtuDiscoveryConfig>,
         now: Instant,
@@ -55,17 +55,9 @@ impl PathData {
             validated,
             total_sent: 0,
             total_recvd: 0,
-            mtud: mtud_config.map_or(
-                MtuDiscovery::disabled(initial_mtu, min_guaranteed_mtu),
-                |config| {
-                    MtuDiscovery::new(
-                        initial_mtu,
-                        min_guaranteed_mtu,
-                        peer_max_udp_payload_size,
-                        config,
-                    )
-                },
-            ),
+            mtud: mtud_config.map_or(MtuDiscovery::disabled(initial_mtu, min_mtu), |config| {
+                MtuDiscovery::new(initial_mtu, min_mtu, peer_max_udp_payload_size, config)
+            }),
             first_packet_after_rtt_sample: None,
         }
     }

@@ -37,7 +37,7 @@ pub struct TransportConfig {
     pub(crate) time_threshold: f32,
     pub(crate) initial_rtt: Duration,
     pub(crate) initial_mtu: u16,
-    pub(crate) min_guaranteed_mtu: u16,
+    pub(crate) min_mtu: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
 
     pub(crate) persistent_congestion_threshold: u32,
@@ -163,14 +163,14 @@ impl TransportConfig {
     /// applications. Larger values are more efficient, but increase the risk of packet loss due to
     /// exceeding the network path's IP MTU. If the provided value is higher than what the network
     /// path actually supports, packet loss will eventually trigger black hole detection and bring
-    /// it down to [`TransportConfig::min_guaranteed_mtu`].
+    /// it down to [`TransportConfig::min_mtu`].
     pub fn initial_mtu(&mut self, value: u16) -> &mut Self {
         self.initial_mtu = value.max(INITIAL_MTU);
         self
     }
 
     pub(crate) fn get_initial_mtu(&self) -> u16 {
-        self.initial_mtu.max(self.min_guaranteed_mtu)
+        self.initial_mtu.max(self.min_mtu)
     }
 
     /// The maximum UDP payload size guaranteed to be supported by the network.
@@ -186,8 +186,8 @@ impl TransportConfig {
     /// [`TransportConfig::initial_mtu`] together with
     /// [`TransportConfig::mtu_discovery_config`] to set a maximum UDP payload size that robustly
     /// adapts to the network.
-    pub fn min_guaranteed_mtu(&mut self, value: u16) -> &mut Self {
-        self.min_guaranteed_mtu = value.max(INITIAL_MTU);
+    pub fn min_mtu(&mut self, value: u16) -> &mut Self {
+        self.min_mtu = value.max(INITIAL_MTU);
         self
     }
 
@@ -314,7 +314,7 @@ impl Default for TransportConfig {
             time_threshold: 9.0 / 8.0,
             initial_rtt: Duration::from_millis(333), // per spec, intentionally distinct from EXPECTED_RTT
             initial_mtu: INITIAL_MTU,
-            min_guaranteed_mtu: INITIAL_MTU,
+            min_mtu: INITIAL_MTU,
             mtu_discovery_config: None,
 
             persistent_congestion_threshold: 3,
