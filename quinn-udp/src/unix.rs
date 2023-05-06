@@ -363,14 +363,7 @@ unsafe fn sendmmsg_fallback(
     if n == -1 {
         -1
     } else {
-        #[cfg(not(target_os = "freebsd"))]
-        {
-            (*msgvec).msg_len = n as libc::c_uint;
-        }
-        #[cfg(target_os = "freebsd")]
-        {
-            (*msgvec).msg_len = n as libc::ssize_t;
-        }
+        (*msgvec).msg_len = n as _;
         1
     }
 }
@@ -497,14 +490,7 @@ unsafe fn recvmmsg_fallback(
     if n == -1 {
         -1
     } else {
-        #[cfg(not(target_os = "freebsd"))]
-        {
-            (*msgvec).msg_len = n as libc::c_uint;
-        }
-        #[cfg(target_os = "freebsd")]
-        {
-            (*msgvec).msg_len = n as libc::ssize_t;
-        }
+        (*msgvec).msg_len = n as _;
         1
     }
 }
