@@ -129,8 +129,6 @@ async fn run(opt: Opt) -> Result<()> {
     }
 
     let mut transport = quinn::TransportConfig::default();
-    #[cfg(any(windows, os = "linux"))]
-    transport.mtu_discovery_config(Some(quinn::MtuDiscoveryConfig::default()));
     transport.initial_mtu(opt.initial_mtu);
 
     let mut cfg = if opt.no_protection {

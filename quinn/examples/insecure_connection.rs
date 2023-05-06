@@ -31,10 +31,8 @@ async fn run_server(addr: SocketAddr) {
 }
 
 async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error>> {
-    let mut client_cfg = configure_client();
-    common::enable_mtud_if_supported(&mut client_cfg);
     let mut endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap())?;
-    endpoint.set_default_client_config(client_cfg);
+    endpoint.set_default_client_config(configure_client());
 
     // connect to server
     let connection = endpoint

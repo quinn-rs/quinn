@@ -80,4 +80,8 @@ impl AsyncUdpSocket for UdpSocket {
     fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
         self.io.as_ref().local_addr()
     }
+
+    fn may_fragment(&self) -> bool {
+        udp::may_fragment()
+    }
 }

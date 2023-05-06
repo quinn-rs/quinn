@@ -125,6 +125,12 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
             )?;
         }
     }
+    #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
+    {
+        if is_ipv4 {
+            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_DONTFRAG, OPTION_ON)?;
+        }
+    }
     #[cfg(any(target_os = "freebsd", target_os = "macos"))]
     // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
     // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS
@@ -135,14 +141,14 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
         }
     }
 
-    // IPV6_RECVPKTINFO is standardized
+    // Options standardized in RFC 3542
     if !is_ipv4 {
         set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVPKTINFO, OPTION_ON)?;
         set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS, OPTION_ON)?;
-    }
-
-    if !is_ipv4 {
-        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS, OPTION_ON)?;
+        // Linux's IP_PMTUDISC_PROBE allows us to operate under interface MTU rather than the
+        // kernel's path MTU guess, but actually disabling fragmentation requires this too. See
+        // __ip6_append_data in ip6_output.c.
+        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_DONTFRAG, OPTION_ON)?;
     }
 
     Ok(())
@@ -694,6 +700,11 @@ pub(crate) const BATCH_SIZE: usize = 32;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub(crate) const BATCH_SIZE: usize = 1;
+
+#[inline]
+pub(crate) fn may_fragment() -> bool {
+    false
+}
 
 #[cfg(target_os = "linux")]
 mod gso {
