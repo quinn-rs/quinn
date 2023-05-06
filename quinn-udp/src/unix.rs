@@ -162,7 +162,7 @@ fn send(
     last_send_error: &Mutex<Instant>,
     transmits: &[Transmit],
 ) -> io::Result<usize> {
-    #[allow(unused_mut)] // only mutable on FeeBSD
+    #[allow(unused_mut)] // only mutable on FreeBSD
     let mut encode_src_ip = true;
     #[cfg(target_os = "freebsd")]
     {
@@ -322,9 +322,23 @@ unsafe fn sendmmsg_with_fallback(
     vlen: libc::c_uint,
 ) -> libc::c_int {
     let flags = 0;
-    let ret = libc::syscall(libc::SYS_sendmmsg, sockfd, msgvec, vlen, flags) as libc::c_int;
-    if ret != -1 {
-        return ret;
+
+    #[cfg(not(target_os = "freebsd"))]
+    {
+        let ret = libc::syscall(libc::SYS_sendmmsg, sockfd, msgvec, vlen, flags) as libc::c_int;
+        if ret != -1 {
+            return ret;
+        }
+    }
+
+    // libc on FreeBSD implements `sendmmsg` as a high-level abstraction over `sendmsg`,
+    // thus `SYS_sendmmsg` constant and direct system call do not exist
+    #[cfg(target_os = "freebsd")]
+    {
+        let ret = libc::sendmmsg(sockfd, msgvec, vlen as usize, flags) as libc::c_int;
+        if ret != -1 {
+            return ret;
+        }
     }
 
     let e = io::Error::last_os_error();
@@ -355,7 +369,9 @@ unsafe fn sendmmsg_fallback(
     if n == -1 {
         -1
     } else {
-        (*msgvec).msg_len = n as libc::c_uint;
+        // type of `msg_len` field differs on Linux and FreeBSD,
+        // it is up to the compiler to infer and cast `n` to correct type
+        (*msgvec).msg_len = n as _;
         1
     }
 }
@@ -434,10 +450,24 @@ unsafe fn recvmmsg_with_fallback(
 ) -> libc::c_int {
     let flags = 0;
     let timeout = ptr::null_mut::<libc::timespec>();
-    let ret =
-        libc::syscall(libc::SYS_recvmmsg, sockfd, msgvec, vlen, flags, timeout) as libc::c_int;
-    if ret != -1 {
-        return ret;
+
+    #[cfg(not(target_os = "freebsd"))]
+    {
+        let ret =
+            libc::syscall(libc::SYS_recvmmsg, sockfd, msgvec, vlen, flags, timeout) as libc::c_int;
+        if ret != -1 {
+            return ret;
+        }
+    }
+
+    // libc on FreeBSD implements `recvmmsg` as a high-level abstraction over `recvmsg`,
+    // thus `SYS_recvmmsg` constant and direct system call do not exist
+    #[cfg(target_os = "freebsd")]
+    {
+        let ret = libc::recvmmsg(sockfd, msgvec, vlen as usize, flags, timeout) as libc::c_int;
+        if ret != -1 {
+            return ret;
+        }
     }
 
     let e = io::Error::last_os_error();
@@ -468,7 +498,9 @@ unsafe fn recvmmsg_fallback(
     if n == -1 {
         -1
     } else {
-        (*msgvec).msg_len = n as libc::c_uint;
+        // type of `msg_len` field differs on Linux and FreeBSD,
+        // it is up to the compiler to infer and cast `n` to correct type
+        (*msgvec).msg_len = n as _;
         1
     }
 }
