@@ -316,7 +316,7 @@ unsafe fn sendmmsg_with_fallback(
     vlen: libc::c_uint,
 ) -> libc::c_int {
     let flags = 0;
-    
+
     #[cfg(not(target_os = "freebsd"))]
     {
         let ret = libc::syscall(libc::SYS_sendmmsg, sockfd, msgvec, vlen, flags) as libc::c_int;
