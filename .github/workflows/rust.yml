@@ -29,9 +29,7 @@ jobs:
             $HOME/.cargo/bin/rustc --version
             echo "~~~~ freebsd-version ~~~~"
             freebsd-version
-          run: |
-            $HOME/.cargo/bin/cargo build --all-targets
-            $HOME/.cargo/bin/cargo test
+          run: $HOME/.cargo/bin/cargo build --all-targets && $HOME/.cargo/bin/cargo test && $HOME/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml
   test:
     strategy:
       matrix:
