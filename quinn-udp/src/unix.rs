@@ -369,6 +369,8 @@ unsafe fn sendmmsg_fallback(
     if n == -1 {
         -1
     } else {
+        // type of `msg_len` field differs on Linux and FreeBSD,
+        // it is up to the compiler to infer and cast `n` to correct type
         (*msgvec).msg_len = n as _;
         1
     }
@@ -496,6 +498,8 @@ unsafe fn recvmmsg_fallback(
     if n == -1 {
         -1
     } else {
+        // type of `msg_len` field differs on Linux and FreeBSD,
+        // it is up to the compiler to infer and cast `n` to correct type
         (*msgvec).msg_len = n as _;
         1
     }
