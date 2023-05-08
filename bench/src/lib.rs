@@ -169,6 +169,10 @@ pub fn transport_config(opt: &Opt) -> quinn::TransportConfig {
     let mut config = quinn::TransportConfig::default();
     config.max_concurrent_uni_streams(opt.max_streams.try_into().unwrap());
     config.initial_mtu(opt.initial_mtu);
+    config.min_mtu(opt.min_mtu);
+    if opt.disable_mtud {
+        config.mtu_discovery_config(None);
+    }
     config
 }
 
@@ -250,6 +254,12 @@ pub struct Opt {
     /// Starting guess for maximum UDP payload size
     #[clap(long, default_value = "1200")]
     pub initial_mtu: u16,
+    /// The MTU that is guaranteed to be supported by the network
+    #[clap(long, default_value = "1200")]
+    min_mtu: u16,
+    /// Disable MTU discovery, to make the output more predictable
+    #[clap(long)]
+    disable_mtud: bool,
     /// Disable packet encryption/decryption
     #[clap(long)]
     no_protection: bool,
