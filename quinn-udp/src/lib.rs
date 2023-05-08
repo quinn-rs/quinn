@@ -3,9 +3,9 @@
 #![warn(clippy::use_self)]
 
 #[cfg(unix)]
-use std::os::unix::io::AsRawFd;
+use std::os::unix::io::AsFd;
 #[cfg(windows)]
-use std::os::windows::io::AsRawSocket;
+use std::os::windows::io::AsSocket;
 #[cfg(not(windows))]
 use std::sync::atomic::AtomicBool;
 use std::{
@@ -179,7 +179,7 @@ pub struct UdpSockRef<'a>(socket2::SockRef<'a>);
 #[cfg(unix)]
 impl<'s, S> From<&'s S> for UdpSockRef<'s>
 where
-    S: AsRawFd,
+    S: AsFd,
 {
     fn from(socket: &'s S) -> Self {
         Self(socket.into())
@@ -189,7 +189,7 @@ where
 #[cfg(windows)]
 impl<'s, S> From<&'s S> for UdpSockRef<'s>
 where
-    S: AsRawSocket,
+    S: AsSocket,
 {
     fn from(socket: &'s S) -> Self {
         Self(socket.into())
