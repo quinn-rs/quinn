@@ -4,6 +4,7 @@ use std::{
     num::ParseIntError,
     str::FromStr,
     sync::Arc,
+    time::Duration,
 };
 
 use anyhow::{Context, Result};
@@ -13,9 +14,13 @@ use rustls::RootCertStore;
 use tokio::runtime::{Builder, Runtime};
 use tracing::trace;
 
+use quinn_proto::EndpointConfig;
+
 use noprotection::{NoProtectionClientConfig, NoProtectionServerConfig};
+use simulated_network::InMemoryNetwork;
 
 mod noprotection;
+pub mod simulated_network;
 pub mod stats;
 
 pub fn configure_tracing_subscriber() {
@@ -29,25 +34,42 @@ pub fn configure_tracing_subscriber() {
 
 /// Creates a server endpoint which runs on the given runtime
 pub fn server_endpoint(
-    rt: &tokio::runtime::Runtime,
+    rt: &Runtime,
     cert: rustls::Certificate,
     key: rustls::PrivateKey,
     opt: &Opt,
-) -> (SocketAddr, quinn::Endpoint) {
+) -> (SocketAddr, quinn::Endpoint, Option<Arc<InMemoryNetwork>>) {
     let cert_chain = vec![cert];
     let mut server_config = server_config(cert_chain, key, opt.no_protection);
     server_config.transport = Arc::new(transport_config(opt));
 
+    let simulated_network = opt.simulate_network.then(|| {
+        Arc::new(InMemoryNetwork::initialize(
+            Duration::from_millis(opt.simulated_link_delay),
+            opt.simulated_link_capacity as usize,
+        ))
+    });
+
     let endpoint = {
         let _guard = rt.enter();
-        quinn::Endpoint::server(
-            server_config,
-            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
-        )
-        .unwrap()
+        if let Some(network) = simulated_network.clone() {
+            quinn::Endpoint::new_with_abstract_socket(
+                EndpointConfig::default(),
+                Some(server_config),
+                network.server_socket(),
+                quinn::default_runtime().unwrap(),
+            )
+            .unwrap()
+        } else {
+            quinn::Endpoint::server(
+                server_config,
+                SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0),
+            )
+            .unwrap()
+        }
     };
     let server_addr = endpoint.local_addr().unwrap();
-    (server_addr, endpoint)
+    (server_addr, endpoint, simulated_network)
 }
 
 /// Create a client endpoint and client connection
@@ -55,9 +77,19 @@ pub async fn connect_client(
     server_addr: SocketAddr,
     server_cert: rustls::Certificate,
     opt: Opt,
+    simulated_network: Option<Arc<InMemoryNetwork>>,
 ) -> Result<(quinn::Endpoint, quinn::Connection)> {
-    let endpoint =
-        quinn::Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap();
+    let endpoint = if let Some(network) = simulated_network {
+        quinn::Endpoint::new_with_abstract_socket(
+            EndpointConfig::default(),
+            None,
+            network.client_socket(),
+            quinn::default_runtime().unwrap(),
+        )
+        .unwrap()
+    } else {
+        quinn::Endpoint::client(SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0)).unwrap()
+    };
 
     let mut client_config = client_config(&server_cert, &opt);
     client_config.transport_config(Arc::new(transport_config(&opt)));
@@ -194,13 +226,13 @@ pub struct Opt {
     pub max_streams: usize,
     /// Number of bytes to transmit from server to client
     ///
-    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10GiB
+    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10G
     /// will transfer 10GiB.
     #[clap(long, default_value = "1G", parse(try_from_str = parse_byte_size))]
     pub download_size: u64,
     /// Number of bytes to transmit from client to server
     ///
-    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10GiB
+    /// This can use SI prefixes for sizes. E.g. 1M will transfer 1MiB, 10G
     /// will transfer 10GiB.
     #[clap(long, default_value = "0", parse(try_from_str = parse_byte_size))]
     pub upload_size: u64,
@@ -221,6 +253,18 @@ pub struct Opt {
     /// Disable packet encryption/decryption
     #[clap(long)]
     no_protection: bool,
+    /// Simulate network in-memory, instead of using the network stack
+    #[clap(long)]
+    simulate_network: bool,
+    /// Simulated link delay (one way), in milliseconds
+    #[clap(long, default_value = "0")]
+    simulated_link_delay: u64,
+    /// Simulated link capacity (one way), in bytes per `simulated_link_delay`
+    ///
+    /// This can use SI prefixes for sizes. E.g. 1M will result in 1MiB, 10G
+    /// will result in 10GiB
+    #[clap(long, default_value = "10G", parse(try_from_str = parse_byte_size))]
+    simulated_link_capacity: u64,
 }
 
 fn parse_byte_size(s: &str) -> Result<u64, ParseIntError> {
