@@ -99,7 +99,7 @@ impl Default for UdpSocketState {
 }
 
 /// Returns the platforms UDP socket capabilities
-pub fn udp_state() -> super::UdpState {
+pub(crate) fn udp_state() -> super::UdpState {
     super::UdpState {
         max_gso_segments: std::sync::atomic::AtomicUsize::new(1),
         gro_segments: 1,
@@ -111,4 +111,4 @@ pub(crate) fn may_fragment() -> bool {
     true
 }
 
-pub const BATCH_SIZE: usize = 1;
+pub(crate) const BATCH_SIZE: usize = 1;
