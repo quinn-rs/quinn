@@ -1,4 +1,4 @@
-use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
+use std::{net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
 use bytes::Bytes;
@@ -6,7 +6,7 @@ use clap::Parser;
 use quinn::TokioRuntime;
 use tracing::{debug, error, info};
 
-use perf::{bind_socket, noprotection::NoProtectionServerConfig};
+use perf::{bind_socket, drain_stream, get_server_config, get_server_crypto, get_transport_config};
 
 #[derive(Parser)]
 #[clap(name = "server")]
@@ -52,51 +52,9 @@ async fn main() {
 }
 
 async fn run(opt: Opt) -> Result<()> {
-    let (key, cert) = match (&opt.key, &opt.cert) {
-        (Some(key), Some(cert)) => {
-            let key = fs::read(key).context("reading key")?;
-            let cert = fs::read(cert).expect("reading cert");
-
-            let mut certs = Vec::new();
-            for cert in rustls_pemfile::certs(&mut cert.as_ref()).context("parsing cert")? {
-                certs.push(rustls::Certificate(cert));
-            }
-
-            (rustls::PrivateKey(key), certs)
-        }
-        _ => {
-            let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-            (
-                rustls::PrivateKey(cert.serialize_private_key_der()),
-                vec![rustls::Certificate(cert.serialize_der().unwrap())],
-            )
-        }
-    };
-
-    let mut crypto = rustls::ServerConfig::builder()
-        .with_cipher_suites(perf::PERF_CIPHER_SUITES)
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_no_client_auth()
-        .with_single_cert(cert, key)
-        .unwrap();
-    crypto.alpn_protocols = vec![b"perf".to_vec()];
-
-    if opt.keylog {
-        crypto.key_log = Arc::new(rustls::KeyLogFile::new());
-    }
-
-    let mut transport = quinn::TransportConfig::default();
-    transport.initial_mtu(opt.initial_mtu);
-
-    let mut server_config = if opt.no_protection {
-        quinn::ServerConfig::with_crypto(Arc::new(NoProtectionServerConfig::new(Arc::new(crypto))))
-    } else {
-        quinn::ServerConfig::with_crypto(Arc::new(crypto))
-    };
-    server_config.transport_config(Arc::new(transport));
-
+    let crypto = get_server_crypto(opt.key.as_deref(), opt.cert.as_deref(), opt.keylog)?;
+    let transport_config = get_transport_config(opt.initial_mtu);
+    let server_config = get_server_config(transport_config, crypto, opt.no_protection);
     let socket = bind_socket(opt.listen, opt.send_buffer_size, opt.recv_buffer_size)?;
 
     let endpoint = quinn::Endpoint::new(
@@ -191,23 +149,6 @@ async fn read_req(mut stream: quinn::RecvStream) -> Result<u64> {
     debug!("got req for {} bytes on {}", n, stream.id());
     drain_stream(stream).await?;
     Ok(n)
-}
-
-async fn drain_stream(mut stream: quinn::RecvStream) -> Result<()> {
-    #[rustfmt::skip]
-    let mut bufs = [
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-        Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
-    ];
-    while stream.read_chunks(&mut bufs[..]).await?.is_some() {}
-    debug!("finished reading {}", stream.id());
-    Ok(())
 }
 
 async fn respond(mut bytes: u64, mut stream: quinn::SendStream) -> Result<()> {

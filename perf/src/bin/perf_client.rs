@@ -1,5 +1,5 @@
 use std::{
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
+    net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -12,7 +12,10 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use perf::stats::{OpenStreamStats, Stats};
-use perf::{bind_socket, noprotection::NoProtectionClientConfig};
+use perf::{
+    bind_socket, get_client_config, get_client_crypto, get_local_addr, get_transport_config,
+    lookup_host,
+};
 #[cfg(feature = "json-output")]
 use std::path::PathBuf;
 
@@ -83,60 +86,19 @@ async fn main() {
 }
 
 async fn run(opt: Opt) -> Result<()> {
-    let mut host_parts = opt.host.split(':');
-    let host_name = host_parts.next().unwrap();
-    let host_port = host_parts
-        .next()
-        .map_or(Ok(443), |x| x.parse())
-        .context("parsing port")?;
-    let addr = match opt.ip {
-        None => tokio::net::lookup_host(&opt.host)
-            .await
-            .context("resolving host")?
-            .next()
-            .unwrap(),
-        Some(ip) => SocketAddr::new(ip, host_port),
-    };
-
+    let (host_name, addr) = lookup_host(&opt.host, opt.ip).await?;
     info!("connecting to {} at {}", host_name, addr);
 
-    let bind_addr = opt.local_addr.unwrap_or_else(|| {
-        let unspec = if addr.is_ipv4() {
-            Ipv4Addr::UNSPECIFIED.into()
-        } else {
-            Ipv6Addr::UNSPECIFIED.into()
-        };
-        SocketAddr::new(unspec, 0)
-    });
-
+    let bind_addr = get_local_addr(addr, opt.local_addr);
     info!("local addr {:?}", bind_addr);
 
     let socket = bind_socket(bind_addr, opt.send_buffer_size, opt.recv_buffer_size)?;
 
     let endpoint = quinn::Endpoint::new(Default::default(), None, socket, Arc::new(TokioRuntime))?;
 
-    let mut crypto = rustls::ClientConfig::builder()
-        .with_cipher_suites(perf::PERF_CIPHER_SUITES)
-        .with_safe_default_kx_groups()
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
-        .with_no_client_auth();
-    crypto.alpn_protocols = vec![b"perf".to_vec()];
-
-    if opt.keylog {
-        crypto.key_log = Arc::new(rustls::KeyLogFile::new());
-    }
-
-    let mut transport = quinn::TransportConfig::default();
-    transport.initial_mtu(opt.initial_mtu);
-
-    let mut cfg = if opt.no_protection {
-        quinn::ClientConfig::new(Arc::new(NoProtectionClientConfig::new(Arc::new(crypto))))
-    } else {
-        quinn::ClientConfig::new(Arc::new(crypto))
-    };
-    cfg.transport_config(Arc::new(transport));
+    let crypto = get_client_crypto(opt.keylog)?;
+    let transport = get_transport_config(opt.initial_mtu);
+    let cfg = get_client_config(transport, crypto, opt.no_protection);
 
     let stream_stats = OpenStreamStats::default();
 
@@ -353,26 +315,4 @@ async fn request_bi(
     request(send, upload, download, stream_stats.clone()).await?;
     drain_stream(recv, download, stream_stats).await?;
     Ok(())
-}
-
-struct SkipServerVerification;
-
-impl SkipServerVerification {
-    fn new() -> Arc<Self> {
-        Arc::new(Self)
-    }
-}
-
-impl rustls::client::ServerCertVerifier for SkipServerVerification {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
-    }
 }
