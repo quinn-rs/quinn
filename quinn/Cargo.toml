@@ -20,7 +20,7 @@ default = ["native-certs", "tls-rustls", "runtime-tokio", "log"]
 lock_tracking = []
 # Provides `ClientConfig::with_native_roots()` convenience method
 native-certs = ["proto/native-certs"]
-tls-rustls = ["rustls", "webpki", "proto/tls-rustls", "ring"]
+tls-rustls = ["rustls", "proto/tls-rustls", "ring"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
@@ -46,7 +46,6 @@ thiserror = "1.0.21"
 tracing = "0.1.10"
 tokio = { version = "1.28.1", features = ["sync"] }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.4", default-features = false }
-webpki = { version = "0.22", default-features = false, optional = true }
 
 [dev-dependencies]
 anyhow = "1.0.22"

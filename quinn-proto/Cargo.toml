@@ -18,7 +18,7 @@ maintenance = { status = "experimental" }
 
 [features]
 default = ["tls-rustls", "log"]
-tls-rustls = ["rustls", "webpki", "ring"]
+tls-rustls = ["rustls", "ring"]
 # Provides `ClientConfig::with_native_roots()` convenience method
 native-certs = ["rustls-native-certs"]
 # Write logs via the `log` crate when no `tracing` subscriber exists
@@ -36,7 +36,6 @@ slab = "0.4"
 thiserror = "1.0.21"
 tinyvec = { version = "1.1", features = ["alloc"] }
 tracing = "0.1.10"
-webpki = { version = "0.22", default-features = false, optional = true }
 
 [dev-dependencies]
 assert_matches = "1.1"
