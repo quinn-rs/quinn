@@ -2997,7 +2997,7 @@ impl Connection {
 
         let delay_micros = space.pending_acks.ack_delay().as_micros() as u64;
 
-        // TODO: This should come frome `TransportConfig` if that gets configurable
+        // TODO: This should come from `TransportConfig` if that gets configurable.
         let ack_delay_exp = TransportParameters::default().ack_delay_exponent;
         let delay = delay_micros >> ack_delay_exp.into_inner();
 

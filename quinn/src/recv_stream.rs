@@ -63,7 +63,7 @@ use crate::{
 /// that indicates graceful receiver-initiated stream shutdown, rather than a true error condition.
 ///
 /// [`RecvStream::read_chunk`] could be used instead which does not take ownership and
-/// allows using an explit call to [`RecvStream::stop`] with a custom error code.
+/// allows using an explicit call to [`RecvStream::stop`] with a custom error code.
 ///
 /// [`ReadError`]: crate::ReadError
 /// [`stop()`]: RecvStream::stop

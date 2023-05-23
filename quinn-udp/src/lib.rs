@@ -48,7 +48,7 @@ pub fn may_fragment() -> bool {
 /// Number of UDP packets to send/receive at a time
 pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
 
-/// The capabilities a UDP socket suppports on a certain platform
+/// The capabilities a UDP socket supports on a certain platform
 #[derive(Debug)]
 pub struct UdpState {
     max_gso_segments: AtomicUsize,
