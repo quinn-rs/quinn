@@ -239,7 +239,7 @@ fn send(
                         state.set_sendmsg_einval();
                     }
 
-                    // Other errors are ignored, since they will ususally be handled
+                    // Other errors are ignored, since they will usually be handled
                     // by higher level retransmits and timeouts.
                     // - PermissionDenied errors have been observed due to iptable rules.
                     //   Those are not fatal errors, since the
@@ -293,7 +293,7 @@ fn send(
                 io::ErrorKind::WouldBlock if sent != 0 => return Ok(sent),
                 io::ErrorKind::WouldBlock => return Err(e),
                 _ => {
-                    // Other errors are ignored, since they will ususally be handled
+                    // Other errors are ignored, since they will usually be handled
                     // by higher level retransmits and timeouts.
                     // - PermissionDenied errors have been observed due to iptable rules.
                     //   Those are not fatal errors, since the

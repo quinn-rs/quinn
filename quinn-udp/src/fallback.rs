@@ -53,7 +53,7 @@ impl UdpSocketState {
                         return Err(e);
                     }
 
-                    // Other errors are ignored, since they will ususally be handled
+                    // Other errors are ignored, since they will usually be handled
                     // by higher level retransmits and timeouts.
                     // - PermissionDenied errors have been observed due to iptable rules.
                     //   Those are not fatal errors, since the

@@ -779,7 +779,7 @@ impl StreamsState {
         self.allocated_remote_count[dir as usize]
     }
 
-    /// Set the receive_window and returns wether the receive_window has been
+    /// Set the receive_window and returns whether the receive_window has been
     /// expanded or shrunk: true if expanded, false if shrunk.
     pub(crate) fn set_receive_window(&mut self, receive_window: VarInt) -> bool {
         let receive_window = receive_window.into();
@@ -842,7 +842,7 @@ impl StreamsState {
         // Only announce a window update if it's significant enough
         // to make it worthwhile sending a MAX_DATA frame.
         // We use a fraction of the configured connection receive window to make
-        // the decision, to accomodate for connection using bigger windows requring
+        // the decision, to accommodate for connection using bigger windows requiring
         // less updates.
         let diff = self.local_max_data - self.sent_max_data.into_inner();
         ShouldTransmit(diff >= (self.receive_window / 8))

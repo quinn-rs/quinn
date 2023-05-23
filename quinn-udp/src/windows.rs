@@ -104,7 +104,7 @@ impl UdpSocketState {
                         return Err(e);
                     }
 
-                    // Other errors are ignored, since they will ususally be handled
+                    // Other errors are ignored, since they will usually be handled
                     // by higher level retransmits and timeouts.
                     log_sendmsg_error(&self.last_send_error, e, transmit);
                     sent += 1;

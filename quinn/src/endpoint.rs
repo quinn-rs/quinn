@@ -473,7 +473,7 @@ impl State {
                 Poll::Ready(Ok(n)) => {
                     self.outgoing.drain(..n);
                     // We count transmits instead of `poll_send` calls since the cost
-                    // of a `sendmmsg` still linearily increases with number of packets.
+                    // of a `sendmmsg` still linearly increases with number of packets.
                     self.send_limiter.record_work(n);
                 }
                 Poll::Pending => {
