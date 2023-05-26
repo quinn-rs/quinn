@@ -27,6 +27,7 @@ pub struct SendStream {
     stream: StreamId,
     is_0rtt: bool,
     finishing: Option<oneshot::Receiver<Option<WriteError>>>,
+    finished: bool,
 }
 
 impl SendStream {
@@ -36,6 +37,7 @@ impl SendStream {
             stream,
             is_0rtt,
             finishing: None,
+            finished: false,
         }
     }
 
@@ -122,6 +124,10 @@ impl SendStream {
 
     #[doc(hidden)]
     pub fn poll_finish(&mut self, cx: &mut Context) -> Poll<Result<(), WriteError>> {
+        if self.finished {
+            return Poll::Ready(Err(WriteError::UnknownStream));
+        }
+
         let mut conn = self.conn.state.lock("poll_finish");
         if self.is_0rtt {
             conn.check_0rtt()
@@ -144,8 +150,13 @@ impl SendStream {
             .poll(cx)
             .map(|x| x.unwrap())
         {
-            Poll::Ready(None) => Poll::Ready(Ok(())),
-            Poll::Ready(Some(e)) => Poll::Ready(Err(e)),
+            Poll::Ready(res) => {
+                self.finished = true;
+                match res {
+                    None => Poll::Ready(Ok(())),
+                    Some(e) => Poll::Ready(Err(e)),
+                }
+            }
             Poll::Pending => {
                 // To ensure that finished streams can be detected even after the connection is
                 // closed, we must only check for connection errors after determining that the
