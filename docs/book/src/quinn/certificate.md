@@ -97,7 +97,7 @@ certbot must answer a cryptographic challenge of the Let's Encrypt API to prove 
 It needs to listen on port 80 (HTTP) or 443 (HTTPS) to achieve this. Open the appropriate port in your firewall and router.
 
 If certbot is installed, run `certbot certonly --standalone`, this command will start a web server in the background and start the challenge.
-certbot asks for the required data and writes the certificate to `cert.pem` and the private key to `privkey.pem`.
+certbot asks for the required data and writes the certificates to `fullchain.pem` and the private key to `privkey.pem`.
 These files can then be referenced in code.
 
 ```rust
@@ -105,7 +105,7 @@ use std::{error::Error, fs::File, io::BufReader};
 
 pub fn read_certs_from_file(
 ) -> Result<(Vec<rustls::Certificate>, rustls::PrivateKey), Box<dyn Error>> {
-    let mut cert_chain_reader = BufReader::new(File::open("./certificates.pem")?);
+    let mut cert_chain_reader = BufReader::new(File::open("./fullchain.pem")?);
     let certs = rustls_pemfile::certs(&mut cert_chain_reader)?
         .into_iter()
         .map(rustls::Certificate)
