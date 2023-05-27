@@ -374,7 +374,7 @@ Because we're generating a certificate for an internal test server, the process 
 certbot must answer a cryptographic challenge of the Let's Encrypt API to prove that you control the domain.
 It needs to listen on port 80 (HTTP) or 443 (HTTPS) to achieve this. Open the appropriate port in your firewall and router.</p>
 <p>If certbot is installed, run <code>certbot certonly --standalone</code>, this command will start a web server in the background and start the challenge.
-certbot asks for the required data and writes the certificate to <code>cert.pem</code> and the private key to <code>privkey.pem</code>.
+certbot asks for the required data and writes the certificates to <code>fullchain.pem</code> and the private key to <code>privkey.pem</code>.
 These files can then be referenced in code.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
@@ -382,7 +382,7 @@ These files can then be referenced in code.</p>
 
 pub fn read_certs_from_file(
 ) -&gt; Result&lt;(Vec&lt;rustls::Certificate&gt;, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt; {
-    let mut cert_chain_reader = BufReader::new(File::open(&quot;./certificates.pem&quot;)?);
+    let mut cert_chain_reader = BufReader::new(File::open(&quot;./fullchain.pem&quot;)?);
     let certs = rustls_pemfile::certs(&amp;mut cert_chain_reader)?
         .into_iter()
         .map(rustls::Certificate)
