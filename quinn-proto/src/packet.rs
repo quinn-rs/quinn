@@ -98,7 +98,7 @@ impl PartialDecode {
         }
     }
 
-    pub(crate) fn dst_cid(&self) -> ConnectionId {
+    pub(crate) fn dst_cid(&self) -> &ConnectionId {
         self.plain_header.dst_cid()
     }
 
@@ -510,14 +510,14 @@ pub(crate) enum PlainHeader {
 }
 
 impl PlainHeader {
-    fn dst_cid(&self) -> ConnectionId {
+    fn dst_cid(&self) -> &ConnectionId {
         use self::PlainHeader::*;
         match self {
-            Initial { dst_cid, .. } => *dst_cid,
-            Long { dst_cid, .. } => *dst_cid,
-            Retry { dst_cid, .. } => *dst_cid,
-            Short { dst_cid, .. } => *dst_cid,
-            VersionNegotiate { dst_cid, .. } => *dst_cid,
+            Initial { dst_cid, .. } => dst_cid,
+            Long { dst_cid, .. } => dst_cid,
+            Retry { dst_cid, .. } => dst_cid,
+            Short { dst_cid, .. } => dst_cid,
+            VersionNegotiate { dst_cid, .. } => dst_cid,
         }
     }
 
