@@ -752,7 +752,7 @@ impl Endpoint {
 
 impl fmt::Debug for Endpoint {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_struct("Endpoint<T>")
+        fmt.debug_struct("Endpoint")
             .field("rng", &self.rng)
             .field("transmits", &self.transmits)
             .field("connection_ids_initial", &self.connection_ids_initial)
