@@ -613,7 +613,7 @@ impl Endpoint {
     }
 
     fn initial_close(
-        &mut self,
+        &self,
         version: u32,
         addresses: FourTuple,
         crypto: &Keys,
