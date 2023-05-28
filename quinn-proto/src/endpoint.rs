@@ -214,7 +214,7 @@ impl Endpoint {
 
         let addresses = FourTuple { remote, local_ip };
         let dst_cid = first_decode.dst_cid();
-        let known_ch = (self.local_cid_generator.cid_len() > 0)
+        let known_ch = (dst_cid.len() > 0)
             .then(|| self.connection_ids.get(dst_cid))
             .flatten()
             .or_else(|| {
@@ -225,7 +225,7 @@ impl Endpoint {
                 }
             })
             .or_else(|| {
-                if self.local_cid_generator.cid_len() == 0 {
+                if dst_cid.len() == 0 {
                     self.connection_remotes.get(&addresses)
                 } else {
                     None
