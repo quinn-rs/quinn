@@ -9,7 +9,7 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
+use rand::{Rng, RngCore};
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
@@ -37,7 +37,6 @@ use crate::{
 /// This object performs no I/O whatsoever. Instead, it consumes incoming packets and
 /// connection-generated events via `handle` and `handle_event`.
 pub struct Endpoint {
-    rng: StdRng,
     index: ConnectionIndex,
     connections: Slab<ConnectionMeta>,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
@@ -59,7 +58,6 @@ impl Endpoint {
         allow_mtud: bool,
     ) -> Self {
         Self {
-            rng: StdRng::from_entropy(),
             index: ConnectionIndex::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
@@ -142,7 +140,7 @@ impl Endpoint {
                 // Negotiate versions
                 let mut buf = BytesMut::new();
                 Header::VersionNegotiate {
-                    random: self.rng.gen::<u8>() | 0x40,
+                    random: rand::thread_rng().gen::<u8>() | 0x40,
                     src_cid: dst_cid,
                     dst_cid: src_cid,
                 }
@@ -256,7 +254,7 @@ impl Endpoint {
     }
 
     fn stateless_reset(
-        &mut self,
+        &self,
         inciting_dgram_len: usize,
         addresses: FourTuple,
         dst_cid: &ConnectionId,
@@ -284,11 +282,11 @@ impl Endpoint {
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
             max_padding_len
         } else {
-            self.rng.gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
+            rand::thread_rng().gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
         };
         buf.reserve(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);
-        self.rng.fill_bytes(&mut buf[0..padding_len]);
+        rand::thread_rng().fill_bytes(&mut buf[0..padding_len]);
         buf[0] = 0b0100_0000 | buf[0] >> 2;
         buf.extend_from_slice(&ResetToken::new(&*self.config.reset_key, dst_cid));
 
@@ -459,7 +457,7 @@ impl Endpoint {
             if token.is_empty() {
                 // First Initial
                 let mut random_bytes = vec![0u8; RetryToken::RANDOM_BYTES_LEN];
-                self.rng.fill_bytes(&mut random_bytes);
+                rand::thread_rng().fill_bytes(&mut random_bytes);
                 // The peer will use this as the DCID of its following Initials. Initial DCIDs are
                 // looked up separately from Handshake/Data DCIDs, so there is no risk of collision
                 // with established connections. In the unlikely event that a collision occurs
@@ -702,7 +700,6 @@ impl Endpoint {
 impl fmt::Debug for Endpoint {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Endpoint")
-            .field("rng", &self.rng)
             .field("index", &self.index)
             .field("connections", &self.connections)
             .field("config", &self.config)
