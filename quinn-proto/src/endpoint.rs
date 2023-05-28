@@ -1,5 +1,5 @@
 use std::{
-    collections::HashMap,
+    collections::{hash_map, HashMap},
     convert::TryFrom,
     fmt, iter,
     net::{IpAddr, SocketAddr},
@@ -324,7 +324,8 @@ impl Endpoint {
         let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
 
-        let loc_cid = self.new_cid();
+        let ch = ConnectionHandle(self.connections.vacant_key());
+        let loc_cid = self.new_cid(ch);
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
@@ -336,7 +337,8 @@ impl Endpoint {
             .crypto
             .start_session(config.version, server_name, &params)?;
 
-        let (ch, conn) = self.add_connection(
+        let conn = self.add_connection(
+            ch,
             config.version,
             remote_id,
             loc_cid,
@@ -361,8 +363,7 @@ impl Endpoint {
     ) -> ConnectionEvent {
         let mut ids = vec![];
         for _ in 0..num {
-            let id = self.new_cid();
-            self.index.insert_cid(id, ch);
+            let id = self.new_cid(ch);
             let meta = &mut self.connections[ch];
             meta.cids_issued += 1;
             let sequence = meta.cids_issued;
@@ -376,10 +377,12 @@ impl Endpoint {
         ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
     }
 
-    fn new_cid(&mut self) -> ConnectionId {
+    /// Generate a connection ID for `ch`
+    fn new_cid(&mut self, ch: ConnectionHandle) -> ConnectionId {
         loop {
             let cid = self.local_cid_generator.generate_cid();
-            if !self.index.connection_ids.contains_key(&cid) {
+            if let hash_map::Entry::Vacant(e) = self.index.connection_ids.entry(cid) {
+                e.insert(ch);
                 break cid;
             }
             assert!(self.local_cid_generator.cid_len() > 0);
@@ -423,8 +426,7 @@ impl Endpoint {
             return None;
         }
 
-        let loc_cid = self.new_cid();
-        let server_config = self.server_config.as_ref().unwrap();
+        let server_config = self.server_config.as_ref().unwrap().clone();
 
         if self.connections.len() >= server_config.concurrent_connections as usize || self.is_full()
         {
@@ -434,7 +436,6 @@ impl Endpoint {
                 addresses,
                 crypto,
                 &src_cid,
-                &loc_cid,
                 TransportError::CONNECTION_REFUSED(""),
             )));
         }
@@ -451,7 +452,6 @@ impl Endpoint {
                 addresses,
                 crypto,
                 &src_cid,
-                &loc_cid,
                 TransportError::PROTOCOL_VIOLATION("invalid destination CID length"),
             )));
         }
@@ -461,6 +461,12 @@ impl Endpoint {
                 // First Initial
                 let mut random_bytes = vec![0u8; RetryToken::RANDOM_BYTES_LEN];
                 self.rng.fill_bytes(&mut random_bytes);
+                // The peer will use this as the DCID of its following Initials. Initial DCIDs are
+                // looked up separately from Handshake/Data DCIDs, so there is no risk of collision
+                // with established connections. In the unlikely event that a collision occurs
+                // between two connections in the initial phase, both will fail fast and may be
+                // retried by the application layer.
+                let loc_cid = self.local_cid_generator.generate_cid();
 
                 let token = RetryToken {
                     orig_dst_cid: dst_cid,
@@ -508,7 +514,6 @@ impl Endpoint {
                         addresses,
                         crypto,
                         &src_cid,
-                        &loc_cid,
                         TransportError::INVALID_TOKEN(""),
                     )));
                 }
@@ -517,7 +522,8 @@ impl Endpoint {
             (None, dst_cid)
         };
 
-        let server_config = server_config.clone();
+        let ch = ConnectionHandle(self.connections.vacant_key());
+        let loc_cid = self.new_cid(ch);
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -531,7 +537,8 @@ impl Endpoint {
 
         let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
-        let (ch, mut conn) = self.add_connection(
+        let mut conn = self.add_connection(
+            ch,
             version,
             dst_cid,
             loc_cid,
@@ -555,7 +562,7 @@ impl Endpoint {
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 match e {
                     ConnectionError::TransportError(e) => Some(DatagramEvent::Response(
-                        self.initial_close(version, addresses, crypto, &src_cid, &loc_cid, e),
+                        self.initial_close(version, addresses, crypto, &src_cid, e),
                     )),
                     _ => None,
                 }
@@ -565,6 +572,7 @@ impl Endpoint {
 
     fn add_connection(
         &mut self,
+        ch: ConnectionHandle,
         version: u32,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
@@ -574,7 +582,7 @@ impl Endpoint {
         tls: Box<dyn crypto::Session>,
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
-    ) -> (ConnectionHandle, Connection) {
+    ) -> Connection {
         let conn = Connection::new(
             self.config.clone(),
             server_config,
@@ -598,11 +606,11 @@ impl Endpoint {
             addresses,
             reset_token: None,
         });
+        debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
-        let ch = ConnectionHandle(id);
         self.index.insert_conn(addresses, loc_cid, ch);
 
-        (ch, conn)
+        conn
     }
 
     fn initial_close(
@@ -611,13 +619,16 @@ impl Endpoint {
         addresses: FourTuple,
         crypto: &Keys,
         remote_id: &ConnectionId,
-        local_id: &ConnectionId,
         reason: TransportError,
     ) -> Transmit {
+        // We don't need to worry about CID collisions in initial closes because the peer
+        // shouldn't respond, and if it does, and the CID collides, we'll just drop the
+        // unexpected response.
+        let local_id = self.local_cid_generator.generate_cid();
         let number = PacketNumber::U8(0);
         let header = Header::Initial {
             dst_cid: *remote_id,
-            src_cid: *local_id,
+            src_cid: local_id,
             number,
             token: Bytes::new(),
             version,
@@ -733,11 +744,6 @@ impl ConnectionIndex {
                 self.connection_ids.insert(dst_cid, connection);
             }
         }
-    }
-
-    /// Add a new CID to an existing connection
-    fn insert_cid(&mut self, dst_cid: ConnectionId, connection: ConnectionHandle) {
-        self.connection_ids.insert(dst_cid, connection);
     }
 
     /// Discard a connection ID
