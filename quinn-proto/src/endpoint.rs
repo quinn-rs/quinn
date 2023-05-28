@@ -334,21 +334,23 @@ impl Endpoint {
             .crypto
             .start_session(config.version, server_name, &params)?;
 
-        let conn = self.add_connection(
-            ch,
+        let addresses = FourTuple {
+            remote,
+            local_ip: None,
+        };
+        let (meta, conn) = self.make_connection(
             config.version,
             remote_id,
             loc_cid,
             remote_id,
-            FourTuple {
-                remote,
-                local_ip: None,
-            },
+            addresses,
             Instant::now(),
             tls,
             None,
             config.transport,
         );
+        self.connections.insert(meta);
+        self.index.insert_conn(addresses, loc_cid, ch);
         Ok((ch, conn))
     }
 
@@ -534,8 +536,7 @@ impl Endpoint {
 
         let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
-        let mut conn = self.add_connection(
-            ch,
+        let (meta, mut conn) = self.make_connection(
             version,
             dst_cid,
             loc_cid,
@@ -546,6 +547,8 @@ impl Endpoint {
             Some(server_config),
             transport_config,
         );
+        self.connections.insert(meta);
+        self.index.insert_conn(addresses, loc_cid, ch);
         if dst_cid.len() != 0 {
             self.index.insert_initial(dst_cid, ch);
         }
@@ -567,9 +570,8 @@ impl Endpoint {
         }
     }
 
-    fn add_connection(
-        &mut self,
-        ch: ConnectionHandle,
+    fn make_connection(
+        &self,
         version: u32,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
@@ -579,7 +581,7 @@ impl Endpoint {
         tls: Box<dyn crypto::Session>,
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
-    ) -> Connection {
+    ) -> (ConnectionMeta, Connection) {
         let conn = Connection::new(
             self.config.clone(),
             server_config,
@@ -596,18 +598,15 @@ impl Endpoint {
             self.allow_mtud,
         );
 
-        let id = self.connections.insert(ConnectionMeta {
+        let meta = ConnectionMeta {
             init_cid,
             cids_issued: 0,
             loc_cids: iter::once((0, loc_cid)).collect(),
             addresses,
             reset_token: None,
-        });
-        debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
+        };
 
-        self.index.insert_conn(addresses, loc_cid, ch);
-
-        conn
+        (meta, conn)
     }
 
     fn initial_close(
