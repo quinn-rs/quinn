@@ -25,7 +25,7 @@ use util::*;
 fn version_negotiate_server() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
-    let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
+    let server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
     let now = Instant::now();
     let event = server.handle(
         now,
@@ -52,7 +52,7 @@ fn version_negotiate_client() {
     // packet
     let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
         || Box::new(RandomConnectionIdGenerator::new(0));
-    let mut client = Endpoint::new(
+    let client = Endpoint::new(
         Arc::new(EndpointConfig {
             connection_id_generator_factory: Arc::new(cid_generator_factory),
             ..Default::default()
@@ -1901,7 +1901,7 @@ fn big_cert_and_key() -> (rustls::Certificate, rustls::PrivateKey) {
 fn malformed_token_len() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
-    let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
+    let server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
     server.handle(
         Instant::now(),
         client_addr,
