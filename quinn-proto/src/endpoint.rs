@@ -215,11 +215,11 @@ impl Endpoint {
         let addresses = FourTuple { remote, local_ip };
         let dst_cid = first_decode.dst_cid();
         let known_ch = (self.local_cid_generator.cid_len() > 0)
-            .then(|| self.connection_ids.get(&dst_cid))
+            .then(|| self.connection_ids.get(dst_cid))
             .flatten()
             .or_else(|| {
                 if first_decode.is_initial() || first_decode.is_0rtt() {
-                    self.connection_ids_initial.get(&dst_cid)
+                    self.connection_ids_initial.get(dst_cid)
                 } else {
                     None
                 }
@@ -261,7 +261,7 @@ impl Endpoint {
             Some(config) => config,
             None => {
                 debug!("packet for unrecognized connection {}", dst_cid);
-                self.stateless_reset(datagram_len, addresses, &dst_cid);
+                self.stateless_reset(datagram_len, addresses, dst_cid);
                 return None;
             }
         };
@@ -274,7 +274,7 @@ impl Endpoint {
 
             let crypto = match server_config
                 .crypto
-                .initial_keys(version, &dst_cid, Side::Server)
+                .initial_keys(version, dst_cid, Side::Server)
             {
                 Ok(keys) => keys,
                 Err(UnsupportedVersion) => {
@@ -310,7 +310,7 @@ impl Endpoint {
         //
 
         if !dst_cid.is_empty() {
-            self.stateless_reset(datagram_len, addresses, &dst_cid);
+            self.stateless_reset(datagram_len, addresses, dst_cid);
         } else {
             trace!("dropping unrecognized short packet without ID");
         }
