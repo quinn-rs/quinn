@@ -40,23 +40,7 @@ use crate::{
 pub struct Endpoint {
     rng: StdRng,
     transmits: VecDeque<Transmit>,
-    /// Identifies connections based on the initial DCID the peer utilized
-    ///
-    /// Uses a standard `HashMap` to protect against hash collision attacks.
-    connection_ids_initial: HashMap<ConnectionId, ConnectionHandle>,
-    /// Identifies connections based on locally created CIDs
-    ///
-    /// Uses a cheaper hash function since keys are locally created
-    connection_ids: FxHashMap<ConnectionId, ConnectionHandle>,
-    /// Identifies connections with zero-length CIDs
-    ///
-    /// Uses a standard `HashMap` to protect against hash collision attacks.
-    connection_remotes: HashMap<FourTuple, ConnectionHandle>,
-    /// Reset tokens provided by the peer for the CID each connection is currently sending to
-    ///
-    /// Incoming stateless resets do not have correct CIDs, so we need this to identify the correct
-    /// recipient, if any.
-    connection_reset_tokens: ResetTokenTable,
+    index: ConnectionIndex,
     connections: Slab<ConnectionMeta>,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig>,
@@ -79,10 +63,7 @@ impl Endpoint {
         Self {
             rng: StdRng::from_entropy(),
             transmits: VecDeque::new(),
-            connection_ids_initial: HashMap::default(),
-            connection_ids: FxHashMap::default(),
-            connection_remotes: HashMap::default(),
-            connection_reset_tokens: ResetTokenTable::default(),
+            index: ConnectionIndex::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
             config,
@@ -117,16 +98,16 @@ impl Endpoint {
             }
             ResetToken(remote, token) => {
                 if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
-                    self.connection_reset_tokens.remove(old.0, old.1);
+                    self.index.connection_reset_tokens.remove(old.0, old.1);
                 }
-                if self.connection_reset_tokens.insert(remote, token, ch) {
+                if self.index.connection_reset_tokens.insert(remote, token, ch) {
                     warn!("duplicate reset token");
                 }
             }
             RetireConnectionId(now, seq, allow_more_cids) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
                     trace!("peer retired CID {}: {}", seq, cid);
-                    self.connection_ids.remove(&cid);
+                    self.index.retire(&cid);
                     if allow_more_cids {
                         return Some(self.send_new_identifiers(now, ch, 1));
                     }
@@ -134,16 +115,7 @@ impl Endpoint {
             }
             Drained => {
                 let conn = self.connections.remove(ch.0);
-                if conn.init_cid.len() > 0 {
-                    self.connection_ids_initial.remove(&conn.init_cid);
-                }
-                for cid in conn.loc_cids.values() {
-                    self.connection_ids.remove(cid);
-                }
-                self.connection_remotes.remove(&conn.addresses);
-                if let Some((remote, token)) = conn.reset_token {
-                    self.connection_reset_tokens.remove(remote, token);
-                }
+                self.index.remove(&conn);
             }
         }
         None
@@ -213,34 +185,7 @@ impl Endpoint {
         //
 
         let addresses = FourTuple { remote, local_ip };
-        let dst_cid = first_decode.dst_cid();
-        let known_ch = (dst_cid.len() > 0)
-            .then(|| self.connection_ids.get(dst_cid))
-            .flatten()
-            .or_else(|| {
-                if first_decode.is_initial() || first_decode.is_0rtt() {
-                    self.connection_ids_initial.get(dst_cid)
-                } else {
-                    None
-                }
-            })
-            .or_else(|| {
-                if dst_cid.len() == 0 {
-                    self.connection_remotes.get(&addresses)
-                } else {
-                    None
-                }
-            })
-            .or_else(|| {
-                let data = first_decode.data();
-                if data.len() < RESET_TOKEN_SIZE {
-                    return None;
-                }
-                self.connection_reset_tokens
-                    .get(addresses.remote, &data[data.len() - RESET_TOKEN_SIZE..])
-            })
-            .cloned();
-        if let Some(ch) = known_ch {
+        if let Some(ch) = self.index.get(&addresses, &first_decode) {
             return Some((
                 ch,
                 DatagramEvent::ConnectionEvent(ConnectionEvent(ConnectionEventInner::Datagram {
@@ -257,6 +202,7 @@ impl Endpoint {
         // Potentially create a new connection
         //
 
+        let dst_cid = first_decode.dst_cid();
         let server_config = match &self.server_config {
             Some(config) => config,
             None => {
@@ -423,7 +369,7 @@ impl Endpoint {
         let mut ids = vec![];
         for _ in 0..num {
             let id = self.new_cid();
-            self.connection_ids.insert(id, ch);
+            self.index.insert_cid(id, ch);
             let meta = &mut self.connections[ch];
             meta.cids_issued += 1;
             let sequence = meta.cids_issued;
@@ -440,7 +386,7 @@ impl Endpoint {
     fn new_cid(&mut self) -> ConnectionId {
         loop {
             let cid = self.local_cid_generator.generate_cid();
-            if !self.connection_ids.contains_key(&cid) {
+            if !self.index.connection_ids.contains_key(&cid) {
                 break cid;
             }
             assert!(self.local_cid_generator.cid_len() > 0);
@@ -608,7 +554,7 @@ impl Endpoint {
             transport_config,
         );
         if dst_cid.len() != 0 {
-            self.connection_ids_initial.insert(dst_cid, ch);
+            self.index.insert_initial(dst_cid, ch);
         }
         match conn.handle_first_packet(now, addresses.remote, ecn, packet_number, packet, rest) {
             Ok(()) => {
@@ -663,10 +609,7 @@ impl Endpoint {
         });
 
         let ch = ConnectionHandle(id);
-        match self.local_cid_generator.cid_len() {
-            0 => self.connection_remotes.insert(addresses, ch),
-            _ => self.connection_ids.insert(loc_cid, ch),
-        };
+        self.index.insert_conn(addresses, loc_cid, ch);
 
         (ch, conn)
     }
@@ -717,17 +660,17 @@ impl Endpoint {
     #[cfg(test)]
     pub(crate) fn known_connections(&self) -> usize {
         let x = self.connections.len();
-        debug_assert_eq!(x, self.connection_ids_initial.len());
+        debug_assert_eq!(x, self.index.connection_ids_initial.len());
         // Not all connections have known reset tokens
-        debug_assert!(x >= self.connection_reset_tokens.0.len());
+        debug_assert!(x >= self.index.connection_reset_tokens.0.len());
         // Not all connections have unique remotes, and 0-length CIDs might not be in use.
-        debug_assert!(x >= self.connection_remotes.len());
+        debug_assert!(x >= self.index.connection_remotes.len());
         x
     }
 
     #[cfg(test)]
     pub(crate) fn known_cids(&self) -> usize {
-        self.connection_ids.len()
+        self.index.connection_ids.len()
     }
 
     /// Whether we've used up 3/4 of the available CID space
@@ -738,7 +681,7 @@ impl Endpoint {
         self.local_cid_generator.cid_len() <= 4
             && self.local_cid_generator.cid_len() != 0
             && (2usize.pow(self.local_cid_generator.cid_len() as u32 * 8)
-                - self.connection_ids.len())
+                - self.index.connection_ids.len())
                 < 2usize.pow(self.local_cid_generator.cid_len() as u32 * 8 - 2)
     }
 }
@@ -748,14 +691,108 @@ impl fmt::Debug for Endpoint {
         fmt.debug_struct("Endpoint")
             .field("rng", &self.rng)
             .field("transmits", &self.transmits)
-            .field("connection_ids_initial", &self.connection_ids_initial)
-            .field("connection_ids", &self.connection_ids)
-            .field("connection_remotes", &self.connection_remotes)
-            .field("connection_reset_tokens", &self.connection_reset_tokens)
+            .field("index", &self.index)
             .field("connections", &self.connections)
             .field("config", &self.config)
             .field("server_config", &self.server_config)
             .finish()
+    }
+}
+
+/// Maps packets to existing connections
+#[derive(Default, Debug)]
+struct ConnectionIndex {
+    /// Identifies connections based on the initial DCID the peer utilized
+    ///
+    /// Uses a standard `HashMap` to protect against hash collision attacks.
+    connection_ids_initial: HashMap<ConnectionId, ConnectionHandle>,
+    /// Identifies connections based on locally created CIDs
+    ///
+    /// Uses a cheaper hash function since keys are locally created
+    connection_ids: FxHashMap<ConnectionId, ConnectionHandle>,
+    /// Identifies connections with zero-length CIDs
+    ///
+    /// Uses a standard `HashMap` to protect against hash collision attacks.
+    connection_remotes: HashMap<FourTuple, ConnectionHandle>,
+    /// Reset tokens provided by the peer for the CID each connection is currently sending to
+    ///
+    /// Incoming stateless resets do not have correct CIDs, so we need this to identify the correct
+    /// recipient, if any.
+    connection_reset_tokens: ResetTokenTable,
+}
+
+impl ConnectionIndex {
+    /// Associate a connection with its initial destination CID
+    fn insert_initial(&mut self, dst_cid: ConnectionId, connection: ConnectionHandle) {
+        self.connection_ids_initial.insert(dst_cid, connection);
+    }
+
+    /// Associate a connection with its first locally-chosen destination CID if used, or otherwise
+    /// its current 4-tuple
+    fn insert_conn(
+        &mut self,
+        addresses: FourTuple,
+        dst_cid: ConnectionId,
+        connection: ConnectionHandle,
+    ) {
+        match dst_cid.len() {
+            0 => {
+                self.connection_remotes.insert(addresses, connection);
+            }
+            _ => {
+                self.connection_ids.insert(dst_cid, connection);
+            }
+        }
+    }
+
+    /// Add a new CID to an existing connection
+    fn insert_cid(&mut self, dst_cid: ConnectionId, connection: ConnectionHandle) {
+        self.connection_ids.insert(dst_cid, connection);
+    }
+
+    /// Discard a connection ID
+    fn retire(&mut self, dst_cid: &ConnectionId) {
+        self.connection_ids.remove(dst_cid);
+    }
+
+    /// Remove all references to a connection
+    fn remove(&mut self, conn: &ConnectionMeta) {
+        if conn.init_cid.len() > 0 {
+            self.connection_ids_initial.remove(&conn.init_cid);
+        }
+        for cid in conn.loc_cids.values() {
+            self.connection_ids.remove(cid);
+        }
+        self.connection_remotes.remove(&conn.addresses);
+        if let Some((remote, token)) = conn.reset_token {
+            self.connection_reset_tokens.remove(remote, token);
+        }
+    }
+
+    /// Find the existing connection that `datagram` should be routed to, if any
+    fn get(&self, addresses: &FourTuple, datagram: &PartialDecode) -> Option<ConnectionHandle> {
+        if datagram.dst_cid().len() != 0 {
+            if let Some(&ch) = self.connection_ids.get(datagram.dst_cid()) {
+                return Some(ch);
+            }
+        }
+        if datagram.is_initial() || datagram.is_0rtt() {
+            if let Some(&ch) = self.connection_ids_initial.get(datagram.dst_cid()) {
+                return Some(ch);
+            }
+        }
+        if datagram.dst_cid().len() == 0 {
+            if let Some(&ch) = self.connection_remotes.get(addresses) {
+                return Some(ch);
+            }
+        }
+        let data = datagram.data();
+        if data.len() < RESET_TOKEN_SIZE {
+            return None;
+        }
+        self.connection_reset_tokens
+            .get(addresses.remote, &data[data.len() - RESET_TOKEN_SIZE..])
+            .cloned()
     }
 }
 
