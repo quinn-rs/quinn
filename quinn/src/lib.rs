@@ -95,7 +95,7 @@ enum ConnectionEvent {
 
 #[derive(Debug)]
 enum EndpointEvent {
-    Proto(proto::EndpointEvent),
+    Drained,
     Transmit(proto::Transmit),
 }
 
