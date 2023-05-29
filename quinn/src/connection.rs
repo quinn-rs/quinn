@@ -904,8 +904,8 @@ impl State {
                 Poll::Ready(Some(ConnectionEvent::Ping)) => {
                     self.inner.ping();
                 }
-                Poll::Ready(Some(ConnectionEvent::Proto(event))) => {
-                    self.inner.handle_event(event, &shared.endpoint);
+                Poll::Ready(Some(ConnectionEvent::Datagram(datagram))) => {
+                    self.inner.handle(datagram, &shared.endpoint);
                 }
                 Poll::Ready(Some(ConnectionEvent::Close { reason, error_code })) => {
                     self.close(error_code, reason, shared);

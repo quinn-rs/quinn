@@ -270,7 +270,7 @@ pub(super) struct TestEndpoint {
     pub(super) inbound: VecDeque<(Instant, Option<EcnCodepoint>, BytesMut)>,
     accepted: Option<ConnectionHandle>,
     pub(super) connections: HashMap<ConnectionHandle, Connection>,
-    conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
+    conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionDatagram>>,
 }
 
 impl TestEndpoint {
@@ -337,7 +337,7 @@ impl TestEndpoint {
 
             for (_, mut events) in self.conn_events.drain() {
                 for event in events.drain(..) {
-                    conn.handle_event(event, &self.endpoint);
+                    conn.handle(event, &self.endpoint);
                 }
             }
 

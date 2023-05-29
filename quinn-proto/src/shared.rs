@@ -4,20 +4,15 @@ use bytes::{Buf, BufMut, BytesMut};
 
 use crate::{coding::BufExt, packet::PartialDecode, ResetToken, MAX_CID_SIZE};
 
-/// Events sent from an Endpoint to a Connection
+/// UDP datagram addressed to a specific
+/// [`Connection`](crate::Connection)
 #[derive(Debug)]
-pub struct ConnectionEvent(pub(crate) ConnectionEventInner);
-
-#[derive(Debug)]
-pub(crate) enum ConnectionEventInner {
-    /// A datagram has been received for the Connection
-    Datagram {
-        now: Instant,
-        remote: SocketAddr,
-        ecn: Option<EcnCodepoint>,
-        first_decode: PartialDecode,
-        remaining: Option<BytesMut>,
-    },
+pub struct ConnectionDatagram {
+    pub(crate) now: Instant,
+    pub(crate) remote: SocketAddr,
+    pub(crate) ecn: Option<EcnCodepoint>,
+    pub(crate) first_decode: PartialDecode,
+    pub(crate) remaining: Option<BytesMut>,
 }
 
 /// Protocol-level identifier for a connection.

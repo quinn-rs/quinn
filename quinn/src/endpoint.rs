@@ -434,14 +434,14 @@ impl State {
                                     );
                                     self.incoming.push_back(conn);
                                 }
-                                Some(DatagramEvent::ConnectionEvent(handle, event)) => {
+                                Some(DatagramEvent::ConnectionEvent(handle, datagram)) => {
                                     // Ignoring errors from dropped connections that haven't yet been cleaned up
                                     let _ = self
                                         .connections
                                         .senders
                                         .get_mut(&handle)
                                         .unwrap()
-                                        .send(ConnectionEvent::Proto(event));
+                                        .send(ConnectionEvent::Datagram(datagram));
                                 }
                                 Some(DatagramEvent::Response(t)) => {
                                     self.outgoing.push_back(udp_transmit(t));

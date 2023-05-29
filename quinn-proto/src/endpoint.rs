@@ -23,7 +23,7 @@ use crate::{
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
-    shared::{ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, IssuedCid},
+    shared::{ConnectionDatagram, ConnectionId, EcnCodepoint, IssuedCid},
     transport_parameters::TransportParameters,
     ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
     MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
@@ -168,13 +168,13 @@ impl Endpoint {
         if let Some(ch) = self.index.read().unwrap().get(&addresses, &first_decode) {
             return Some(DatagramEvent::ConnectionEvent(
                 ch,
-                ConnectionEvent(ConnectionEventInner::Datagram {
+                ConnectionDatagram {
                     now,
                     remote: addresses.remote,
                     ecn,
                     first_decode,
                     remaining,
-                }),
+                },
             ));
         }
 
@@ -858,7 +858,7 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
 #[allow(clippy::large_enum_variant)] // Not passed around extensively
 pub enum DatagramEvent {
     /// The datagram is redirected to its `Connection`
-    ConnectionEvent(ConnectionHandle, ConnectionEvent),
+    ConnectionEvent(ConnectionHandle, ConnectionDatagram),
     /// The datagram has resulted in starting a new `Connection`
     NewConnection(ConnectionHandle, Connection),
     /// Response generated directly by the endpoint
