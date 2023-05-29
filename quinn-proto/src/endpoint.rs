@@ -85,9 +85,6 @@ impl Endpoint {
     ) -> Option<ConnectionEvent> {
         use EndpointEventInner::*;
         match event.0 {
-            NeedIdentifiers(now, n) => {
-                return Some(self.send_new_identifiers(now, ch, n));
-            }
             ResetToken(remote, token) => {
                 let old = self.connections.lock().unwrap()[ch]
                     .reset_token
@@ -106,7 +103,10 @@ impl Endpoint {
                     trace!("peer retired CID {}: {}", seq, cid);
                     self.index.write().unwrap().retire(&cid);
                     if allow_more_cids {
-                        return Some(self.send_new_identifiers(now, ch, 1));
+                        return Some(ConnectionEvent(ConnectionEventInner::NewIdentifiers(
+                            self.alloc_new_identifiers(ch, 1),
+                            now,
+                        )));
                     }
                 }
             }
@@ -349,6 +349,7 @@ impl Endpoint {
             local_ip: None,
         };
         let (meta, conn) = self.make_connection(
+            ch,
             config.version,
             remote_id,
             loc_cid,
@@ -364,13 +365,8 @@ impl Endpoint {
         Ok((ch, conn))
     }
 
-    fn send_new_identifiers(
-        &self,
-        now: Instant,
-        ch: ConnectionHandle,
-        num: u64,
-    ) -> ConnectionEvent {
-        let mut ids = vec![];
+    pub(crate) fn alloc_new_identifiers(&self, ch: ConnectionHandle, num: u64) -> Vec<IssuedCid> {
+        let mut ids = Vec::with_capacity(num as usize);
         let mut index = self.index.write().unwrap();
         let mut connections = self.connections.lock().unwrap();
         for _ in 0..num {
@@ -385,7 +381,7 @@ impl Endpoint {
                 reset_token: ResetToken::new(&*self.config.reset_key, &id),
             });
         }
-        ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
+        ids
     }
 
     fn handle_first_packet(
@@ -541,6 +537,7 @@ impl Endpoint {
         let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
         let (meta, mut conn) = self.make_connection(
+            ch,
             version,
             dst_cid,
             loc_cid,
@@ -558,7 +555,16 @@ impl Endpoint {
         }
         drop((connections, index));
 
-        match conn.handle_first_packet(now, addresses.remote, ecn, packet_number, packet, rest) {
+        let result = conn.handle_first_packet(
+            now,
+            addresses.remote,
+            ecn,
+            packet_number,
+            packet,
+            rest,
+            self,
+        );
+        match result {
             Ok(()) => {
                 trace!(id = ch.0, icid = %dst_cid, "connection incoming");
                 Some(DatagramEvent::NewConnection(ch, conn))
@@ -578,6 +584,7 @@ impl Endpoint {
 
     fn make_connection(
         &self,
+        ch: ConnectionHandle,
         version: u32,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
@@ -589,6 +596,7 @@ impl Endpoint {
         transport_config: Arc<TransportConfig>,
     ) -> (ConnectionMeta, Connection) {
         let conn = Connection::new(
+            ch,
             self.config.clone(),
             server_config,
             transport_config,

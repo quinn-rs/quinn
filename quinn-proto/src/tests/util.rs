@@ -334,12 +334,12 @@ impl TestEndpoint {
             for (ch, conn) in self.connections.iter_mut() {
                 if self.timeout.map_or(false, |x| x <= now) {
                     self.timeout = None;
-                    conn.handle_timeout(now);
+                    conn.handle_timeout(now, &self.endpoint);
                 }
 
                 for (_, mut events) in self.conn_events.drain() {
                     for event in events.drain(..) {
-                        conn.handle_event(event);
+                        conn.handle_event(event, &self.endpoint);
                     }
                 }
 
@@ -360,7 +360,7 @@ impl TestEndpoint {
             for (ch, event) in endpoint_events {
                 if let Some(event) = self.handle_event(ch, event) {
                     if let Some(conn) = self.connections.get_mut(&ch) {
-                        conn.handle_event(event);
+                        conn.handle_event(event, &self.endpoint);
                     }
                 }
             }

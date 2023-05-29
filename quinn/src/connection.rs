@@ -233,7 +233,7 @@ impl Future for ConnectionDriver {
         let mut keep_going = conn.drive_transmit();
         // If a timer expires, there might be more to transmit. When we transmit something, we
         // might need to reset a timer. Hence, we must loop until neither happens.
-        keep_going |= conn.drive_timer(cx);
+        keep_going |= conn.drive_timer(cx, &self.0.shared);
         // Connection might request and receive new CIDs, which prompts a transmit. Future work:
         // this should probably happen synchronously inside the connection.
         keep_going |= conn.forward_endpoint_events(&self.0.shared);
@@ -901,7 +901,7 @@ impl State {
                     .send((self.handle, EndpointEvent::Drained));
             }
             if let Some(event) = shared.endpoint.handle_event(self.handle, event) {
-                self.inner.handle_event(event);
+                self.inner.handle_event(event, &shared.endpoint);
                 keep_going = true;
             }
         }
@@ -920,7 +920,7 @@ impl State {
                     self.inner.ping();
                 }
                 Poll::Ready(Some(ConnectionEvent::Proto(event))) => {
-                    self.inner.handle_event(event);
+                    self.inner.handle_event(event, &shared.endpoint);
                 }
                 Poll::Ready(Some(ConnectionEvent::Close { reason, error_code })) => {
                     self.close(error_code, reason, shared);
@@ -1005,7 +1005,7 @@ impl State {
         }
     }
 
-    fn drive_timer(&mut self, cx: &mut Context) -> bool {
+    fn drive_timer(&mut self, cx: &mut Context, shared: &Shared) -> bool {
         // Check whether we need to (re)set the timer. If so, we must poll again to ensure the
         // timer is registered with the runtime (and check whether it's already
         // expired).
@@ -1050,7 +1050,7 @@ impl State {
 
         // A timer expired, so the caller needs to check for
         // new transmits, which might cause new timers to be set.
-        self.inner.handle_timeout(Instant::now());
+        self.inner.handle_timeout(Instant::now(), &shared.endpoint);
         self.timer_deadline = None;
         true
     }

@@ -26,12 +26,13 @@ use crate::{
     range_set::ArrayRangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner,
+        EndpointEventInner, IssuedCid,
     },
     token::ResetToken,
     transport_parameters::TransportParameters,
-    Dir, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
-    VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    ConnectionHandle, Dir, Endpoint, EndpointConfig, Frame, Side, StreamId, Transmit,
+    TransportError, TransportErrorCode, VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE,
+    RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 mod assembler;
@@ -121,6 +122,7 @@ use timer::{Timer, TimerTable};
 /// call to [`handle_event`](Self::handle_event) at that same instant; however
 /// events or timeouts with different instants must not be interleaved.
 pub struct Connection {
+    handle: ConnectionHandle,
     endpoint_config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
     config: Arc<TransportConfig>,
@@ -224,6 +226,7 @@ pub struct Connection {
 
 impl Connection {
     pub(crate) fn new(
+        handle: ConnectionHandle,
         endpoint_config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         config: Arc<TransportConfig>,
@@ -255,6 +258,7 @@ impl Connection {
         let mut rng = StdRng::from_entropy();
         let path_validated = server_config.as_ref().map_or(true, |c| c.use_retry);
         let mut this = Self {
+            handle,
             endpoint_config,
             server_config,
             crypto,
@@ -886,7 +890,7 @@ impl Connection {
     /// Will execute protocol logic upon receipt of a connection event, in turn preparing signals
     /// (including application `Event`s, `EndpointEvent`s and outgoing datagrams) that should be
     /// extracted through the relevant methods.
-    pub fn handle_event(&mut self, event: ConnectionEvent) {
+    pub fn handle_event(&mut self, event: ConnectionEvent, endpoint: &Endpoint) {
         use self::ConnectionEventInner::*;
         match event.0 {
             Datagram {
@@ -912,7 +916,7 @@ impl Connection {
                 self.stats.udp_rx.bytes += first_decode.len() as u64;
                 let data_len = first_decode.len();
 
-                self.handle_decode(now, remote, ecn, first_decode);
+                self.handle_decode(now, remote, ecn, first_decode, endpoint);
                 // The current `path` might have changed inside `handle_decode`,
                 // since the packet could have triggered a migration. Make sure
                 // the data received is accounted for the most recent path by accessing
@@ -921,7 +925,7 @@ impl Connection {
 
                 if let Some(data) = remaining {
                     self.stats.udp_rx.bytes += data.len() as u64;
-                    self.handle_coalesced(now, remote, ecn, data);
+                    self.handle_coalesced(now, remote, ecn, data, endpoint);
                 }
 
                 if was_anti_amplification_blocked {
@@ -932,19 +936,23 @@ impl Connection {
                 }
             }
             NewIdentifiers(ids, now) => {
-                self.local_cid_state.new_cids(&ids, now);
-                ids.into_iter().rev().for_each(|frame| {
-                    self.spaces[SpaceId::Data].pending.new_cids.push(frame);
-                });
-                // Update Timer::PushNewCid
-                if self
-                    .timers
-                    .get(Timer::PushNewCid)
-                    .map_or(true, |x| x <= now)
-                {
-                    self.reset_cid_retirement();
-                }
+                self.queue_new_cids(now, ids);
             }
+        }
+    }
+
+    fn queue_new_cids(&mut self, now: Instant, ids: Vec<IssuedCid>) {
+        self.local_cid_state.new_cids(&ids, now);
+        ids.into_iter().rev().for_each(|frame| {
+            self.spaces[SpaceId::Data].pending.new_cids.push(frame);
+        });
+        // Update Timer::PushNewCid
+        if self
+            .timers
+            .get(Timer::PushNewCid)
+            .map_or(true, |x| x <= now)
+        {
+            self.reset_cid_retirement();
         }
     }
 
@@ -957,7 +965,7 @@ impl Connection {
     /// It is most efficient to call this immediately after the system clock reaches the latest
     /// `Instant` that was output by `poll_timeout`; however spurious extra calls will simply
     /// no-op and therefore are safe.
-    pub fn handle_timeout(&mut self, now: Instant) {
+    pub fn handle_timeout(&mut self, now: Instant, endpoint: &Endpoint) {
         for &timer in &Timer::VALUES {
             if !self.timers.is_expired(timer, now) {
                 continue;
@@ -1000,8 +1008,8 @@ impl Connection {
                             "push a new cid to peer RETIRE_PRIOR_TO field {}",
                             self.local_cid_state.retire_prior_to()
                         );
-                        self.endpoint_events
-                            .push_back(EndpointEventInner::NeedIdentifiers(now, num_new_cid));
+                        let ids = endpoint.alloc_new_identifiers(self.handle, num_new_cid);
+                        self.queue_new_cids(now, ids);
                     }
                 }
             }
@@ -1701,6 +1709,7 @@ impl Connection {
         packet_number: u64,
         packet: Packet,
         remaining: Option<BytesMut>,
+        endpoint: &Endpoint,
     ) -> Result<(), ConnectionError> {
         let span = trace_span!("first recv");
         let _guard = span.enter();
@@ -1726,9 +1735,9 @@ impl Connection {
             false,
             false,
         );
-        self.process_decrypted_packet(now, remote, Some(packet_number), packet)?;
+        self.process_decrypted_packet(now, remote, Some(packet_number), packet, endpoint)?;
         if let Some(data) = remaining {
-            self.handle_coalesced(now, remote, ecn, data);
+            self.handle_coalesced(now, remote, ecn, data, endpoint);
         }
         Ok(())
     }
@@ -1905,6 +1914,7 @@ impl Connection {
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
+        endpoint: &Endpoint,
     ) {
         self.path.total_recvd = self.path.total_recvd.saturating_add(data.len() as u64);
         let mut remaining = Some(data);
@@ -1917,7 +1927,7 @@ impl Connection {
             ) {
                 Ok((partial_decode, rest)) => {
                     remaining = rest;
-                    self.handle_decode(now, remote, ecn, partial_decode);
+                    self.handle_decode(now, remote, ecn, partial_decode, endpoint);
                 }
                 Err(e) => {
                     trace!("malformed header: {}", e);
@@ -1933,6 +1943,7 @@ impl Connection {
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
+        endpoint: &Endpoint,
     ) {
         let header_crypto = if partial_decode.is_0rtt() {
             if let Some(ref crypto) = self.zero_rtt_crypto {
@@ -1963,8 +1974,10 @@ impl Connection {
                 == Some(&packet[packet.len() - RESET_TOKEN_SIZE..]);
 
         match partial_decode.finish(header_crypto) {
-            Ok(packet) => self.handle_packet(now, remote, ecn, Some(packet), stateless_reset),
-            Err(_) if stateless_reset => self.handle_packet(now, remote, ecn, None, true),
+            Ok(packet) => {
+                self.handle_packet(now, remote, ecn, Some(packet), stateless_reset, endpoint)
+            }
+            Err(_) if stateless_reset => self.handle_packet(now, remote, ecn, None, true, endpoint),
             Err(e) => {
                 trace!("unable to complete packet decoding: {}", e);
             }
@@ -1978,6 +1991,7 @@ impl Connection {
         ecn: Option<EcnCodepoint>,
         packet: Option<Packet>,
         stateless_reset: bool,
+        endpoint: &Endpoint,
     ) {
         if let Some(ref packet) = packet {
             trace!(
@@ -2075,7 +2089,7 @@ impl Connection {
                             packet.header.is_1rtt(),
                         );
                     }
-                    self.process_decrypted_packet(now, remote, number, packet)
+                    self.process_decrypted_packet(now, remote, number, packet, endpoint)
                 }
             }
         };
@@ -2130,6 +2144,7 @@ impl Connection {
         remote: SocketAddr,
         number: Option<u64>,
         packet: Packet,
+        endpoint: &Endpoint,
     ) -> Result<(), ConnectionError> {
         let state = match self.state {
             State::Established => {
@@ -2292,7 +2307,7 @@ impl Connection {
                             .push_back(EndpointEventInner::ResetToken(self.path.remote, token));
                     }
                     self.handle_peer_params(params)?;
-                    self.issue_first_cids(now);
+                    self.issue_first_cids(now, endpoint);
                 } else {
                     // Server-only
                     self.spaces[SpaceId::Data].pending.handshake_done = true;
@@ -2339,7 +2354,7 @@ impl Connection {
                                 reason: "transport parameters missing".into(),
                             })?;
                     self.handle_peer_params(params)?;
-                    self.issue_first_cids(now);
+                    self.issue_first_cids(now, endpoint);
                     self.init_0rtt();
                 }
                 Ok(())
@@ -2795,15 +2810,15 @@ impl Connection {
     }
 
     /// Issue an initial set of connection IDs to the peer upon connection
-    fn issue_first_cids(&mut self, now: Instant) {
+    fn issue_first_cids(&mut self, now: Instant, endpoint: &Endpoint) {
         if self.local_cid_state.cid_len() == 0 {
             return;
         }
 
         // Subtract 1 to account for the CID we supplied while handshaking
         let n = self.peer_params.issue_cids_limit() - 1;
-        self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(now, n));
+        let ids = endpoint.alloc_new_identifiers(self.handle, n);
+        self.queue_new_cids(now, ids);
     }
 
     fn populate_packet(
@@ -3214,10 +3229,10 @@ impl Connection {
     /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
     /// with updated `retire_prior_to` field set to `v`
     #[cfg(test)]
-    pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant) {
+    pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant, endpoint: &Endpoint) {
         let n = self.local_cid_state.assign_retire_seq(v);
-        self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(now, n));
+        let ids = endpoint.alloc_new_identifiers(self.handle, n);
+        self.queue_new_cids(now, ids);
     }
 
     /// Check the current active remote CID sequence
