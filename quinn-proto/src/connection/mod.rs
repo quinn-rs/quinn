@@ -26,7 +26,7 @@ use crate::{
     range_set::ArrayRangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner, IssuedCid,
+        EndpointEventInner,
     },
     token::ResetToken,
     transport_parameters::TransportParameters,
@@ -938,7 +938,8 @@ impl Connection {
         }
     }
 
-    fn queue_new_cids(&mut self, now: Instant, ids: Vec<IssuedCid>) {
+    fn queue_new_cids(&mut self, now: Instant, count: u64, endpoint: &Endpoint) {
+        let ids = endpoint.alloc_new_identifiers(self.handle, count);
         self.local_cid_state.new_cids(&ids, now);
         ids.into_iter().rev().for_each(|frame| {
             self.spaces[SpaceId::Data].pending.new_cids.push(frame);
@@ -1005,8 +1006,7 @@ impl Connection {
                             "push a new cid to peer RETIRE_PRIOR_TO field {}",
                             self.local_cid_state.retire_prior_to()
                         );
-                        let ids = endpoint.alloc_new_identifiers(self.handle, num_new_cid);
-                        self.queue_new_cids(now, ids);
+                        self.queue_new_cids(now, num_new_cid, endpoint);
                     }
                 }
             }
@@ -2624,8 +2624,7 @@ impl Connection {
                         .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
                     endpoint.retire_cid(self.handle, sequence);
                     if allow_more_cids {
-                        let ids = endpoint.alloc_new_identifiers(self.handle, 1);
-                        self.queue_new_cids(now, ids);
+                        self.queue_new_cids(now, 1, endpoint);
                     }
                 }
                 Frame::NewConnectionId(frame) => {
@@ -2824,8 +2823,7 @@ impl Connection {
 
         // Subtract 1 to account for the CID we supplied while handshaking
         let n = self.peer_params.issue_cids_limit() - 1;
-        let ids = endpoint.alloc_new_identifiers(self.handle, n);
-        self.queue_new_cids(now, ids);
+        self.queue_new_cids(now, n, endpoint);
     }
 
     fn populate_packet(
@@ -3238,8 +3236,7 @@ impl Connection {
     #[cfg(test)]
     pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant, endpoint: &Endpoint) {
         let n = self.local_cid_state.assign_retire_seq(v);
-        let ids = endpoint.alloc_new_identifiers(self.handle, n);
-        self.queue_new_cids(now, ids);
+        self.queue_new_cids(now, n, endpoint);
     }
 
     /// Check the current active remote CID sequence
