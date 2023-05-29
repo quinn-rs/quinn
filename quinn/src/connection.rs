@@ -234,12 +234,14 @@ impl Future for ConnectionDriver {
         // If a timer expires, there might be more to transmit. When we transmit something, we
         // might need to reset a timer. Hence, we must loop until neither happens.
         keep_going |= conn.drive_timer(cx, &self.0.shared);
-        // Connection might request and receive new CIDs, which prompts a transmit. Future work:
-        // this should probably happen synchronously inside the connection.
-        keep_going |= conn.forward_endpoint_events(&self.0.shared);
         conn.forward_app_events(&self.0.shared);
 
-        if !conn.inner.is_drained() {
+        if conn.inner.is_drained() {
+            // Notify endpoint driver to clean up its own resources
+            let _ = conn
+                .endpoint_events
+                .send((conn.handle, EndpointEvent::Drained));
+        } else {
             if keep_going {
                 // If the connection hasn't processed all tasks, schedule it again
                 cx.waker().wake_by_ref();
@@ -889,23 +891,6 @@ impl State {
         }
 
         false
-    }
-
-    fn forward_endpoint_events(&mut self, shared: &Shared) -> bool {
-        let mut keep_going = false;
-        while let Some(event) = self.inner.poll_endpoint_events() {
-            if event.is_drained() {
-                // Notify endpoint driver to clean up its own resources
-                let _ = self
-                    .endpoint_events
-                    .send((self.handle, EndpointEvent::Drained));
-            }
-            if let Some(event) = shared.endpoint.handle_event(self.handle, event) {
-                self.inner.handle_event(event, &shared.endpoint);
-                keep_going = true;
-            }
-        }
-        keep_going
     }
 
     /// If this returns `Err`, the endpoint is dead, so the driver should exit immediately.

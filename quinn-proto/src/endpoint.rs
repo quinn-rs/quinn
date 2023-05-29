@@ -23,10 +23,7 @@ use crate::{
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
-    shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner, IssuedCid,
-    },
+    shared::{ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, IssuedCid},
     transport_parameters::TransportParameters,
     ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
     MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
@@ -74,23 +71,9 @@ impl Endpoint {
         *self.server_config.write().unwrap() = server_config;
     }
 
-    /// Process `EndpointEvent`s emitted from related `Connection`s
-    ///
-    /// In turn, processing this event may return a `ConnectionEvent` for the same
-    /// `Connection`. Must never be called concurrently with the same `ch`.
-    pub fn handle_event(
-        &self,
-        ch: ConnectionHandle,
-        event: EndpointEvent,
-    ) -> Option<ConnectionEvent> {
-        use EndpointEventInner::*;
-        match event.0 {
-            Drained => {
-                let conn = self.connections.lock().unwrap().remove(ch.0);
-                self.index.write().unwrap().remove(&conn);
-            }
-        }
-        None
+    pub(crate) fn handle_drained(&self, ch: ConnectionHandle) {
+        let conn = self.connections.lock().unwrap().remove(ch.0);
+        self.index.write().unwrap().remove(&conn);
     }
 
     pub(crate) fn set_reset_token(
@@ -572,7 +555,7 @@ impl Endpoint {
             }
             Err(e) => {
                 debug!("handshake failed: {}", e);
-                self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
+                self.handle_drained(ch);
                 match e {
                     ConnectionError::TransportError(e) => Some(DatagramEvent::Response(
                         self.initial_close(version, addresses, crypto, &src_cid, e),
