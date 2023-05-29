@@ -45,8 +45,6 @@ impl EndpointEvent {
 pub(crate) enum EndpointEventInner {
     /// The connection has been drained
     Drained,
-    /// The reset token and/or address eligible for generating resets has been updated
-    ResetToken(SocketAddr, ResetToken),
 }
 
 /// Protocol-level identifier for a connection.

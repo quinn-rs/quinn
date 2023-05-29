@@ -85,24 +85,30 @@ impl Endpoint {
     ) -> Option<ConnectionEvent> {
         use EndpointEventInner::*;
         match event.0 {
-            ResetToken(remote, token) => {
-                let old = self.connections.lock().unwrap()[ch]
-                    .reset_token
-                    .replace((remote, token));
-                let mut index = self.index.write().unwrap();
-                if let Some(old) = old {
-                    index.connection_reset_tokens.remove(old.0, old.1);
-                }
-                if index.connection_reset_tokens.insert(remote, token, ch) {
-                    warn!("duplicate reset token");
-                }
-            }
             Drained => {
                 let conn = self.connections.lock().unwrap().remove(ch.0);
                 self.index.write().unwrap().remove(&conn);
             }
         }
         None
+    }
+
+    pub(crate) fn set_reset_token(
+        &self,
+        ch: ConnectionHandle,
+        remote: SocketAddr,
+        token: ResetToken,
+    ) {
+        let old = self.connections.lock().unwrap()[ch]
+            .reset_token
+            .replace((remote, token));
+        let mut index = self.index.write().unwrap();
+        if let Some(old) = old {
+            index.connection_reset_tokens.remove(old.0, old.1);
+        }
+        if index.connection_reset_tokens.insert(remote, token, ch) {
+            warn!("duplicate reset token");
+        }
     }
 
     pub(crate) fn retire_cid(&self, ch: ConnectionHandle, seq: u64) {

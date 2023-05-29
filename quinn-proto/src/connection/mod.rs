@@ -2304,8 +2304,7 @@ impl Connection {
                         }
                     }
                     if let Some(token) = params.stateless_reset_token {
-                        self.endpoint_events
-                            .push_back(EndpointEventInner::ResetToken(self.path.remote, token));
+                        endpoint.set_reset_token(self.handle, self.path.remote, token);
                     }
                     self.handle_peer_params(params)?;
                     self.issue_first_cids(now, endpoint);
@@ -2652,7 +2651,7 @@ impl Connection {
                                 .pending
                                 .retire_cids
                                 .extend(retired);
-                            self.set_reset_token(reset_token);
+                            self.set_reset_token(reset_token, endpoint);
                         }
                         Err(InsertError::ExceedsLimit) => {
                             return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
@@ -2673,7 +2672,7 @@ impl Connection {
                     if self.side.is_server() && self.rem_cids.active_seq() == 0 {
                         // We're a server still using the initial remote CID for the client, so
                         // let's switch immediately to enable clientside stateless resets.
-                        self.update_rem_cid();
+                        self.update_rem_cid(endpoint);
                     }
                 }
                 Frame::NewToken { token } => {
@@ -2741,7 +2740,7 @@ impl Connection {
             );
             self.migrate(now, remote);
             // Break linkability, if possible
-            self.update_rem_cid();
+            self.update_rem_cid(endpoint);
             self.spin = false;
         }
 
@@ -2792,7 +2791,7 @@ impl Connection {
     }
 
     /// Switch to a previously unused remote connection ID, if possible
-    fn update_rem_cid(&mut self) {
+    fn update_rem_cid(&mut self, endpoint: &Endpoint) {
         let (reset_token, retired) = match self.rem_cids.next() {
             Some(x) => x,
             None => return,
@@ -2803,15 +2802,11 @@ impl Connection {
             .pending
             .retire_cids
             .extend(retired);
-        self.set_reset_token(reset_token);
+        self.set_reset_token(reset_token, endpoint);
     }
 
-    fn set_reset_token(&mut self, reset_token: ResetToken) {
-        self.endpoint_events
-            .push_back(EndpointEventInner::ResetToken(
-                self.path.remote,
-                reset_token,
-            ));
+    fn set_reset_token(&mut self, reset_token: ResetToken, endpoint: &Endpoint) {
+        endpoint.set_reset_token(self.handle, self.path.remote, reset_token);
         self.peer_params.stateless_reset_token = Some(reset_token);
     }
 
