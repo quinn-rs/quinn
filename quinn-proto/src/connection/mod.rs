@@ -2292,7 +2292,7 @@ impl Connection {
                             .push_back(EndpointEventInner::ResetToken(self.path.remote, token));
                     }
                     self.handle_peer_params(params)?;
-                    self.issue_cids(now);
+                    self.issue_first_cids(now);
                 } else {
                     // Server-only
                     self.spaces[SpaceId::Data].pending.handshake_done = true;
@@ -2339,7 +2339,7 @@ impl Connection {
                                 reason: "transport parameters missing".into(),
                             })?;
                     self.handle_peer_params(params)?;
-                    self.issue_cids(now);
+                    self.issue_first_cids(now);
                     self.init_0rtt();
                 }
                 Ok(())
@@ -2794,8 +2794,8 @@ impl Connection {
         self.peer_params.stateless_reset_token = Some(reset_token);
     }
 
-    /// Issue an initial set of connection IDs to the peer
-    fn issue_cids(&mut self, now: Instant) {
+    /// Issue an initial set of connection IDs to the peer upon connection
+    fn issue_first_cids(&mut self, now: Instant) {
         if self.local_cid_state.cid_len() == 0 {
             return;
         }
