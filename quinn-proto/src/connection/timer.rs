@@ -18,10 +18,15 @@ pub(crate) enum Timer {
     Pacing = 6,
     /// When to invalidate old CID and proactively push new one via NEW_CONNECTION_ID frame
     PushNewCid = 7,
+    /// When to send an immediate ACK if there are unacked ack-eliciting packets of the peer
+    MaxAckDelay = 8,
+    /// When the RTT is elapsed (used to request an immediate ack if there are local unacked
+    /// ack-eliciting packets)
+    Rtt = 9,
 }
 
 impl Timer {
-    pub(crate) const VALUES: [Self; 8] = [
+    pub(crate) const VALUES: [Self; 10] = [
         Self::LossDetection,
         Self::Idle,
         Self::Close,
@@ -30,13 +35,15 @@ impl Timer {
         Self::KeepAlive,
         Self::Pacing,
         Self::PushNewCid,
+        Self::MaxAckDelay,
+        Self::Rtt,
     ];
 }
 
 /// A table of data associated with each distinct kind of `Timer`
 #[derive(Debug, Copy, Clone, Default)]
 pub(crate) struct TimerTable {
-    data: [Option<Instant>; 8],
+    data: [Option<Instant>; 10],
 }
 
 impl TimerTable {

@@ -129,6 +129,9 @@ frame_types! {
     CONNECTION_CLOSE = 0x1c,
     APPLICATION_CLOSE = 0x1d,
     HANDSHAKE_DONE = 0x1e,
+    // ACK Frequency
+    ACK_FREQUENCY = 0xaf,
+    IMMEDIATE_ACK = 0xac,
     // DATAGRAM
 }
 
@@ -157,6 +160,8 @@ pub(crate) enum Frame {
     PathResponse(u64),
     Close(Close),
     Datagram(Datagram),
+    AckFrequency(AckFrequency),
+    ImmediateAck,
     Invalid { ty: Type, reason: &'static str },
     HandshakeDone,
 }
@@ -197,6 +202,8 @@ impl Frame {
             Crypto(_) => Type::CRYPTO,
             NewToken { .. } => Type::NEW_TOKEN,
             Datagram(_) => Type(*DATAGRAM_TYS.start()),
+            AckFrequency(_) => Type::ACK_FREQUENCY,
+            ImmediateAck => Type::IMMEDIATE_ACK,
             Invalid { ty, .. } => ty,
             HandshakeDone => Type::HANDSHAKE_DONE,
         }
@@ -684,6 +691,13 @@ impl Iter {
                 token: self.take_len()?,
             },
             Type::HANDSHAKE_DONE => Frame::HandshakeDone,
+            Type::ACK_FREQUENCY => Frame::AckFrequency(AckFrequency {
+                sequence: self.bytes.get()?,
+                ack_eliciting_threshold: self.bytes.get()?,
+                request_max_ack_delay: self.bytes.get()?,
+                reordering_threshold: self.bytes.get()?,
+            }),
+            Type::IMMEDIATE_ACK => Frame::ImmediateAck,
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {
@@ -871,9 +885,33 @@ impl Datagram {
     }
 }
 
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+pub(crate) struct AckFrequency {
+    pub(crate) sequence: VarInt,
+    pub(crate) ack_eliciting_threshold: VarInt,
+    pub(crate) request_max_ack_delay: VarInt,
+    pub(crate) reordering_threshold: VarInt,
+}
+
+impl AckFrequency {
+    pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
+        buf.write(Type::ACK_FREQUENCY);
+        buf.write(self.sequence);
+        buf.write(self.ack_eliciting_threshold);
+        buf.write(self.request_max_ack_delay);
+        buf.write(self.reordering_threshold);
+    }
+}
+
 #[cfg(test)]
 mod test {
     use super::*;
+    use crate::coding::Codec;
+    use assert_matches::assert_matches;
+
+    fn frames(buf: Vec<u8>) -> Vec<Frame> {
+        Iter::new(Bytes::from(buf)).collect::<Vec<_>>()
+    }
 
     #[test]
     #[allow(clippy::range_plus_one)]
@@ -890,7 +928,7 @@ mod test {
             ce: 12,
         };
         Ack::encode(42, &ranges, Some(&ECN), &mut buf);
-        let frames = Iter::new(Bytes::from(buf)).collect::<Vec<_>>();
+        let frames = frames(buf);
         assert_eq!(frames.len(), 1);
         match frames[0] {
             Frame::Ack(ref ack) => {
@@ -901,5 +939,32 @@ mod test {
             }
             ref x => panic!("incorrect frame {x:?}"),
         }
+    }
+
+    #[test]
+    fn ack_frequency_coding() {
+        let mut buf = Vec::new();
+        let original = AckFrequency {
+            sequence: VarInt(42),
+            ack_eliciting_threshold: VarInt(20),
+            request_max_ack_delay: VarInt(50_000),
+            reordering_threshold: VarInt(1),
+        };
+        original.encode(&mut buf);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::AckFrequency(decoded) => assert_eq!(decoded, &original),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn immediate_ack_coding() {
+        let mut buf = Vec::new();
+        Type::IMMEDIATE_ACK.encode(&mut buf);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        assert_matches!(&frames[0], Frame::ImmediateAck);
     }
 }

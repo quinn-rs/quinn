@@ -161,6 +161,11 @@ impl EcnCodepoint {
             }
         })
     }
+
+    /// Returns whether the codepoint is a CE, signalling that congestion was experienced
+    pub fn is_ce(self) -> bool {
+        matches!(self, Self::Ce)
+    }
 }
 
 #[derive(Debug, Copy, Clone)]
