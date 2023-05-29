@@ -19,7 +19,7 @@ use tracing::{info_span, trace};
 
 use super::*;
 
-pub(super) const DEFAULT_MTU: usize = 1200;
+pub(super) const DEFAULT_MTU: usize = 1452;
 
 pub(super) struct Pair {
     pub(super) server: TestEndpoint,
@@ -27,6 +27,8 @@ pub(super) struct Pair {
     pub(super) time: Instant,
     /// Simulates the maximum size allowed for UDP payloads by the link (packets exceeding this size will be dropped)
     pub(super) mtu: usize,
+    /// Simulates explicit congestion notification
+    pub(super) congestion_experienced: bool,
     // One-way
     pub(super) latency: Duration,
     /// Number of spin bit flips
@@ -59,6 +61,7 @@ impl Pair {
             latency: Duration::new(0, 0),
             spins: 0,
             last_spin: false,
+            congestion_experienced: false,
         }
     }
 
@@ -132,9 +135,10 @@ impl Pair {
                 socket.send_to(&x.contents, x.destination).unwrap();
             }
             if self.server.addr == x.destination {
+                let ecn = set_congestion_experienced(x.ecn, self.congestion_experienced);
                 self.server.inbound.push_back((
                     self.time + self.latency,
-                    x.ecn,
+                    ecn,
                     x.contents.as_ref().into(),
                 ));
             }
@@ -157,9 +161,10 @@ impl Pair {
                 socket.send_to(&x.contents, x.destination).unwrap();
             }
             if self.client.addr == x.destination {
+                let ecn = set_congestion_experienced(x.ecn, self.congestion_experienced);
                 self.client.inbound.push_back((
                     self.time + self.latency,
-                    x.ecn,
+                    ecn,
                     x.contents.as_ref().into(),
                 ));
             }
@@ -512,6 +517,16 @@ fn packet_size(transmit: &Transmit) -> usize {
     }
 
     transmit.contents.len()
+}
+
+fn set_congestion_experienced(
+    x: Option<EcnCodepoint>,
+    congestion_experienced: bool,
+) -> Option<EcnCodepoint> {
+    x.map(|codepoint| match congestion_experienced {
+        true => EcnCodepoint::Ce,
+        false => codepoint,
+    })
 }
 
 lazy_static! {

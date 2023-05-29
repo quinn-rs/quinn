@@ -1,5 +1,6 @@
 use std::{
     convert::TryInto,
+    mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
@@ -17,6 +18,7 @@ use super::*;
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     frame::FrameStruct,
+    transport_parameters::TransportParameters,
 };
 mod util;
 use util::*;
@@ -1046,6 +1048,10 @@ fn migration() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     let (client_ch, server_ch) = pair.connect();
+    pair.drive();
+
+    let client_stats_after_connect = pair.client_conn_mut(client_ch).stats();
+
     pair.client.addr = SocketAddr::new(
         Ipv4Addr::new(127, 0, 0, 1).into(),
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
@@ -1063,6 +1069,19 @@ fn migration() {
     assert_eq!(
         pair.server_conn_mut(server_ch).remote_address(),
         pair.client.addr
+    );
+
+    // Assert that the client's response to the PATH_CHALLENGE was an IMMEDIATE_ACK, instead of a
+    // second ping
+    let client_stats_after_migrate = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(
+        client_stats_after_migrate.frame_tx.ping - client_stats_after_connect.frame_tx.ping,
+        1
+    );
+    assert_eq!(
+        client_stats_after_migrate.frame_tx.immediate_ack
+            - client_stats_after_connect.frame_tx.immediate_ack,
+        1
     );
 }
 
@@ -1912,6 +1931,32 @@ fn malformed_token_len() {
 }
 
 #[test]
+fn loss_probe_requests_immediate_ack() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+    pair.drive();
+
+    let stats_after_connect = pair.client_conn_mut(client_ch).stats();
+
+    // Lose a ping
+    let default_mtu = mem::replace(&mut pair.mtu, 0);
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+    pair.mtu = default_mtu;
+
+    // Drive the connection further so a loss probe is sent
+    pair.drive();
+
+    // Assert that two IMMEDIATE_ACKs were sent (two loss probes)
+    let stats_after_recovery = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(
+        stats_after_recovery.frame_tx.immediate_ack - stats_after_connect.frame_tx.immediate_ack,
+        2
+    );
+}
+
+#[test]
 /// This is mostly a sanity check to ensure our testing code is correctly dropping packets above the
 /// pmtu
 fn connect_too_low_mtu() {
@@ -1930,6 +1975,7 @@ fn connect_too_low_mtu() {
 fn connect_lost_mtu_probes_do_not_trigger_congestion_control() {
     let _guard = subscribe();
     let mut pair = Pair::default();
+    pair.mtu = 1200;
 
     let (client_ch, server_ch) = pair.connect();
     pair.drive();
@@ -1954,7 +2000,6 @@ fn connect_detects_mtu() {
     let max_udp_payload_and_expected_mtu = &[(1200, 1200), (1400, 1389), (1500, 1452)];
 
     for &(pair_max_udp, expected_mtu) in max_udp_payload_and_expected_mtu {
-        println!("Trying {pair_max_udp}");
         let mut pair = Pair::default();
         pair.mtu = pair_max_udp;
         let (client_ch, server_ch) = pair.connect();
@@ -2068,39 +2113,6 @@ fn connect_runs_mtud_again_after_600_seconds() {
 }
 
 #[test]
-fn packet_loss_and_retry_too_low_mtu() {
-    let _guard = subscribe();
-    let mut pair = Pair::default();
-    let (client_ch, server_ch) = pair.connect();
-
-    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
-
-    pair.client_send(client_ch, s).write(b"hello").unwrap();
-    pair.drive();
-
-    // Nothing will get past this mtu
-    pair.mtu = 10;
-    pair.client_send(client_ch, s).write(b" world").unwrap();
-    pair.drive_client();
-
-    // The packet was dropped
-    assert!(pair.client.outbound.is_empty());
-    assert!(pair.server.inbound.is_empty());
-
-    // Restore the default mtu, so future packets are properly transmitted
-    pair.mtu = DEFAULT_MTU;
-
-    // The lost packet is resent
-    pair.drive();
-    assert!(pair.client.outbound.is_empty());
-
-    let recv = pair.server_recv(server_ch, s);
-    let buf = stream_chunks(recv);
-
-    assert_eq!(buf, b"hello world".as_slice());
-}
-
-#[test]
 fn blackhole_after_mtu_change_repairs_itself() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -2140,6 +2152,21 @@ fn blackhole_after_mtu_change_repairs_itself() {
 }
 
 #[test]
+fn mtud_probes_include_immediate_ack() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+    pair.drive();
+
+    let stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(stats.path.sent_plpmtud_probes, 4);
+
+    // Each probe contains a ping and an immediate ack
+    assert_eq!(stats.frame_tx.ping, 4);
+    assert_eq!(stats.frame_tx.immediate_ack, 4);
+}
+
+#[test]
 fn packet_splitting_with_default_mtu() {
     let _guard = subscribe();
 
@@ -2147,6 +2174,7 @@ fn packet_splitting_with_default_mtu() {
     let payload = vec![42; 1300];
 
     let mut pair = Pair::default();
+    pair.mtu = 1200;
     let (client_ch, _) = pair.connect();
     pair.drive();
 
@@ -2179,6 +2207,524 @@ fn packet_splitting_not_necessary_after_higher_mtu_discovered() {
 
     pair.drive_client();
     assert_eq!(pair.server.inbound.len(), 1);
+}
+
+#[test]
+fn single_ack_eliciting_packet_triggers_ack_after_delay() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+    pair.drive();
+
+    let stats_after_connect = pair.client_conn_mut(client_ch).stats();
+
+    let start = pair.time;
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client(); // Send ping
+    pair.drive_server(); // Process ping
+    pair.drive_client(); // Give the client a chance to process an ack, so our assertion can fail
+
+    // Sanity check: the time hasn't advanced in the meantime)
+    assert_eq!(pair.time, start);
+
+    let stats_after_ping = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(
+        stats_after_ping.frame_tx.ping - stats_after_connect.frame_tx.ping,
+        1
+    );
+    assert_eq!(
+        stats_after_ping.frame_rx.acks - stats_after_connect.frame_rx.acks,
+        0
+    );
+
+    pair.drive();
+    let stats_after_drive = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(
+        stats_after_drive.frame_rx.acks - stats_after_ping.frame_rx.acks,
+        1
+    );
+
+    // The time is start + max_ack_delay
+    let default_max_ack_delay_ms = TransportParameters::default().max_ack_delay.into_inner();
+    assert_eq!(
+        pair.time,
+        start + Duration::from_millis(default_max_ack_delay_ms)
+    );
+
+    // Sanity check: no loss probe was sent, because the delayed ACK was received on time
+    assert_eq!(
+        stats_after_drive.frame_tx.ping - stats_after_connect.frame_tx.ping,
+        1
+    );
+}
+
+#[test]
+fn immediate_ack_triggers_ack() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+    pair.drive();
+
+    let acks_after_connect = pair.client_conn_mut(client_ch).stats().frame_rx.acks;
+
+    pair.client_conn_mut(client_ch).immediate_ack();
+    pair.drive_client(); // Send immediate ack
+    pair.drive_server(); // Process immediate ack
+    pair.drive_client(); // Give the client a chance to process the ack
+
+    let acks_after_ping = pair.client_conn_mut(client_ch).stats().frame_rx.acks;
+
+    assert_eq!(acks_after_ping - acks_after_connect, 1);
+}
+
+#[test]
+fn out_of_order_ack_eliciting_packet_triggers_ack() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+    pair.drive();
+
+    let default_mtu = pair.mtu;
+
+    let client_stats_after_connect = pair.client_conn_mut(client_ch).stats();
+    let server_stats_after_connect = pair.server_conn_mut(server_ch).stats();
+
+    // Send a packet that won't arrive right away (it will be dropped and be re-sent later)
+    pair.mtu = 0;
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    // Sanity check (ping sent, no ACK received)
+    let client_stats_after_first_ping = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(
+        client_stats_after_first_ping.frame_tx.ping - client_stats_after_connect.frame_tx.ping,
+        1
+    );
+    assert_eq!(
+        client_stats_after_first_ping.frame_rx.acks - client_stats_after_connect.frame_rx.acks,
+        0
+    );
+
+    // Restore the default MTU and send another ping, which will arrive earlier than the dropped one
+    pair.mtu = default_mtu;
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+    pair.drive_server();
+    pair.drive_client();
+
+    // Client sanity check (ping sent, one ACK received)
+    let client_stats_after_second_ping = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(
+        client_stats_after_second_ping.frame_tx.ping - client_stats_after_connect.frame_tx.ping,
+        2
+    );
+    assert_eq!(
+        client_stats_after_second_ping.frame_rx.acks - client_stats_after_connect.frame_rx.acks,
+        1
+    );
+
+    // Server checks (single ping received, ACK sent)
+    let server_stats_after_second_ping = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after_second_ping.frame_rx.ping - server_stats_after_connect.frame_rx.ping,
+        1
+    );
+    assert_eq!(
+        server_stats_after_second_ping.frame_tx.acks - server_stats_after_connect.frame_tx.acks,
+        1
+    );
+}
+
+#[test]
+fn single_ack_eliciting_packet_with_ce_bit_triggers_immediate_ack() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+    pair.drive();
+
+    let stats_after_connect = pair.client_conn_mut(client_ch).stats();
+
+    let start = pair.time;
+
+    pair.client_conn_mut(client_ch).ping();
+
+    pair.congestion_experienced = true;
+    pair.drive_client(); // Send ping
+    pair.congestion_experienced = false;
+
+    pair.drive_server(); // Process ping, send ACK in response to congestion
+    pair.drive_client(); // Process ACK
+
+    // Sanity check: the time hasn't advanced in the meantime)
+    assert_eq!(pair.time, start);
+
+    let stats_after_ping = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(
+        stats_after_ping.frame_tx.ping - stats_after_connect.frame_tx.ping,
+        1
+    );
+    assert_eq!(
+        stats_after_ping.frame_rx.acks - stats_after_connect.frame_rx.acks,
+        1
+    );
+    assert_eq!(
+        stats_after_ping.path.congestion_events - stats_after_connect.path.congestion_events,
+        1
+    );
+}
+
+fn setup_ack_frequency_test(max_ack_delay: Duration) -> (Pair, ConnectionHandle, ConnectionHandle) {
+    let mut client_config = client_config();
+    let mut ack_freq_config = AckFrequencyConfig::default();
+    ack_freq_config
+        .ack_eliciting_threshold(10u32.into())
+        .max_ack_delay(Some(max_ack_delay));
+    Arc::get_mut(&mut client_config.transport)
+        .unwrap()
+        .ack_frequency_config(Some(ack_freq_config))
+        .mtu_discovery_config(None); // To keep traffic cleaner
+
+    let mut pair = Pair::default();
+    pair.latency = Duration::from_millis(10); // Need latency to avoid an RTT = 0
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+    pair.drive();
+
+    assert_eq!(
+        pair.client_conn_mut(client_ch)
+            .stats()
+            .frame_tx
+            .ack_frequency,
+        1
+    );
+    assert_eq!(pair.client_conn_mut(client_ch).stats().frame_tx.ping, 0);
+    (pair, client_ch, server_ch)
+}
+
+#[test]
+fn ack_frequency_start_of_ack_eliciting_sequence() {
+    let _guard = subscribe();
+    let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(Duration::from_millis(30));
+
+    // The client sends the following frames:
+    //
+    // * 0 ms: ping + IMMEDIATE_ACK
+    // * 5 ms: ping
+    // * 5 ms: ping
+    // * 10 ms: IMMEDIATE_ACK
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    pair.time += Duration::from_millis(5);
+    for _ in 0..2 {
+        pair.client_conn_mut(client_ch).ping();
+        pair.drive_client();
+    }
+
+    pair.time += Duration::from_millis(15);
+    pair.drive_client();
+
+    // Server: receive the first ping and send an ACK
+    pair.time -= Duration::from_millis(10);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        1
+    );
+
+    // Server: receive the second and third ping and send no ACK
+    pair.time += Duration::from_millis(5);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        2
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        0
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        0
+    );
+
+    // Server: receive the IMMEDIATE_ACK and reply to it
+    pair.time += Duration::from_millis(15);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        1
+    );
+}
+
+#[test]
+fn ack_frequency_ack_sent_after_max_ack_delay() {
+    let _guard = subscribe();
+    let max_ack_delay = Duration::from_millis(30);
+    let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(max_ack_delay);
+
+    // The client sends the following frames:
+    //
+    // * 0 ms: ping + IMMEDIATE_ACK
+    // * 5 ms: ping
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+    pair.time += Duration::from_millis(5);
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    // Server: receive the first IMMEDIATE_ACK and reply to it
+    pair.time += Duration::from_millis(5);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        1
+    );
+
+    // Server: receive the second ping, send no ACK
+    pair.time += Duration::from_millis(5);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        0
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        0
+    );
+
+    // Server: send an ack after max_ack_delay has elapsed
+    pair.time += max_ack_delay;
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        0
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        0
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        1
+    );
+}
+
+#[test]
+fn ack_frequency_ack_sent_after_packets_above_threshold() {
+    let _guard = subscribe();
+    let max_ack_delay = Duration::from_millis(30);
+    let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(max_ack_delay);
+
+    // The client sends the following frames:
+    //
+    // * 0 ms: ping + IMMEDIATE_ACK
+    // * 5 ms: ping (11x)
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    pair.time += Duration::from_millis(5);
+    for _ in 0..11 {
+        pair.client_conn_mut(client_ch).ping();
+        pair.drive_client();
+    }
+
+    // Server: receive the first ping, send ACK
+    pair.time += Duration::from_millis(5);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        1
+    );
+
+    // Server: receive the remaining pings, send ACK
+    pair.time += Duration::from_millis(5);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        11
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        0
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        1
+    );
+}
+
+#[test]
+fn ack_frequency_ack_sent_after_reordered_packets_below_threshold() {
+    let _guard = subscribe();
+    let max_ack_delay = Duration::from_millis(30);
+    let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(max_ack_delay);
+
+    // The client sends the following frames:
+    //
+    // * 0 ms: ping + IMMEDIATE_ACK
+    // * 5 ms: ping (lost)
+    // * 5 ms: ping
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    pair.time += Duration::from_millis(5);
+
+    // Send and lose an ack-eliciting packet
+    pair.mtu = 0;
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    // Restore the default MTU and send another ping, which will arrive earlier than the dropped one
+    pair.mtu = DEFAULT_MTU;
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    // Server: receive first ping, send ACK
+    pair.time += Duration::from_millis(5);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        1
+    );
+
+    // Server: receive second ping, send no ACK
+    pair.time += Duration::from_millis(5);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        0
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        0
+    );
+}
+
+#[test]
+fn ack_frequency_ack_sent_after_reordered_packets_above_threshold() {
+    let _guard = subscribe();
+    let max_ack_delay = Duration::from_millis(30);
+    let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(max_ack_delay);
+
+    // The client sends the following frames:
+    //
+    // * 0 ms: ping + IMMEDIATE_ACK
+    // * 5 ms: ping
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    // Send and lose two ack-eliciting packets
+    pair.time += Duration::from_millis(5);
+    pair.mtu = 0;
+    for _ in 0..2 {
+        pair.client_conn_mut(client_ch).ping();
+        pair.drive_client();
+    }
+
+    // Restore the default MTU and send another ping, which will arrive earlier than the dropped ones
+    pair.mtu = DEFAULT_MTU;
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    // Server: receive first ping, send ACK
+    pair.time += Duration::from_millis(5);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        1
+    );
+
+    // Server: receive remaining ping, send ACK
+    pair.time += Duration::from_millis(5);
+    let server_stats_before = pair.server_conn_mut(server_ch).stats();
+    pair.drive_server();
+    let server_stats_after = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(
+        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
+        1
+    );
+    assert_eq!(
+        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
+        0
+    );
+    assert_eq!(
+        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
+        1
+    );
 }
 
 fn stream_chunks(mut recv: RecvStream) -> Vec<u8> {

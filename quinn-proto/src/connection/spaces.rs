@@ -57,6 +57,7 @@ pub(super) struct PacketSpace {
     /// Number of tail loss probes to send
     pub(super) loss_probes: u32,
     pub(super) ping_pending: bool,
+    pub(super) immediate_ack_pending: bool,
     /// Number of congestion control "in flight" bytes
     pub(super) in_flight: u64,
     /// Number of packets sent in the current key phase
@@ -71,7 +72,7 @@ impl PacketSpace {
             rx_packet: 0,
 
             pending: Retransmits::default(),
-            pending_acks: PendingAcks::default(),
+            pending_acks: PendingAcks::new(),
 
             next_packet_number: 0,
             largest_acked_packet: None,
@@ -87,6 +88,7 @@ impl PacketSpace {
             loss_time: None,
             loss_probes: 0,
             ping_pending: false,
+            immediate_ack_pending: false,
             in_flight: 0,
             sent_with_keys: 0,
         }
@@ -104,9 +106,19 @@ impl PacketSpace {
     /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
     /// in-flight data either, we're probably a client guarding against a handshake
     /// anti-amplification deadlock and we just make something up.
-    pub(super) fn maybe_queue_probe(&mut self, streams: &StreamsState) {
+    pub(super) fn maybe_queue_probe(
+        &mut self,
+        request_immediate_ack: bool,
+        streams: &StreamsState,
+    ) {
         if self.loss_probes == 0 {
             return;
+        }
+
+        if request_immediate_ack {
+            // The probe should be ACKed without delay (should only be used in the Data space and
+            // when the peer supports the acknowledgement frequency extension)
+            self.immediate_ack_pending = true;
         }
 
         // Retransmit the data of the oldest in-flight packet
@@ -141,7 +153,8 @@ impl PacketSpace {
 
     pub(super) fn can_send(&self, streams: &StreamsState) -> SendableFrames {
         let acks = self.pending_acks.can_send();
-        let other = !self.pending.is_empty(streams) || self.ping_pending;
+        let other =
+            !self.pending.is_empty(streams) || self.ping_pending || self.immediate_ack_pending;
 
         SendableFrames { acks, other }
     }
@@ -233,6 +246,7 @@ pub struct Retransmits {
     pub(super) crypto: VecDeque<frame::Crypto>,
     pub(super) new_cids: Vec<IssuedCid>,
     pub(super) retire_cids: Vec<u64>,
+    pub(super) ack_frequency: bool,
     pub(super) handshake_done: bool,
 }
 
@@ -249,6 +263,7 @@ impl Retransmits {
             && self.crypto.is_empty()
             && self.new_cids.is_empty()
             && self.retire_cids.is_empty()
+            && !self.ack_frequency
             && !self.handshake_done
     }
 }
@@ -269,6 +284,7 @@ impl ::std::ops::BitOrAssign for Retransmits {
         }
         self.new_cids.extend(&rhs.new_cids);
         self.retire_cids.extend(rhs.retire_cids);
+        self.ack_frequency |= rhs.ack_frequency;
         self.handshake_done |= rhs.handshake_done;
     }
 }
@@ -390,6 +406,67 @@ impl Dedup {
             true
         }
     }
+
+    /// Returns the packet number of the smallest packet missing between the provided interval
+    ///
+    /// If there are no missing packets, returns `None`
+    fn smallest_missing_in_interval(&self, lower_bound: u64, upper_bound: u64) -> Option<u64> {
+        debug_assert!(lower_bound <= upper_bound);
+        debug_assert!(upper_bound <= self.highest());
+        const BITFIELD_SIZE: u64 = (mem::size_of::<Window>() * 8) as u64;
+
+        // Since we already know the packets at the boundaries have been received, we only need to
+        // check those in between them (this removes the necessity of extra logic to deal with the
+        // highest packet, which is stored outside the bitfield)
+        let lower_bound = lower_bound + 1;
+        let upper_bound = upper_bound.saturating_sub(1);
+
+        // Note: the offsets are counted from the right
+        // The highest packet is not included in the bitfield, so we subtract 1 to account for that
+        let start_offset = (self.highest() - upper_bound).max(1) - 1;
+        if start_offset >= BITFIELD_SIZE {
+            // The start offset is outside of the window. All packets outside of the window are
+            // considered to be received.
+            return None;
+        }
+
+        let end_offset_exclusive = self.highest().saturating_sub(lower_bound);
+
+        // The range is clamped at the edge of the window, because any earlier packets are
+        // considered to be received
+        let range_len = end_offset_exclusive
+            .saturating_sub(start_offset)
+            .min(BITFIELD_SIZE);
+        if range_len == 0 {
+            return None;
+        }
+
+        // Ensure the shift is within bounds (we already know start_offset < BITFIELD_SIZE,
+        // because of the early return)
+        let mask = if range_len == BITFIELD_SIZE {
+            u128::MAX
+        } else {
+            ((1u128 << range_len) - 1) << start_offset
+        };
+        let gaps = !self.window & mask;
+
+        let smallest_missing_offset = 128 - gaps.leading_zeros() as u64;
+        let smallest_missing_packet = self.highest() - smallest_missing_offset;
+
+        if smallest_missing_packet <= upper_bound {
+            Some(smallest_missing_packet)
+        } else {
+            None
+        }
+    }
+
+    /// Returns true if there are any missing packets between the provided interval
+    ///
+    /// The provided packet numbers must have been received before calling this function
+    fn missing_in_interval(&self, lower_bound: u64, upper_bound: u64) -> bool {
+        self.smallest_missing_in_interval(lower_bound, upper_bound)
+            .is_some()
+    }
 }
 
 /// Indicates which data is available for sending
@@ -414,51 +491,181 @@ impl SendableFrames {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(super) struct PendingAcks {
-    permit_ack_only: bool,
-    ranges: ArrayRangeSet,
-    /// This value will be used for calculating ACK delay once it is implemented
+    /// Whether we should send an ACK immediately, even if that means sending an ACK-only packet
     ///
-    /// ACK delay will be the delay between when a packet arrived (`latest_incoming`)
-    /// and between it will be allowed to be acknowledged (`can_send() == true`).
-    latest_incoming: Option<Instant>,
-    ack_delay: Duration,
+    /// When `immediate_ack_required` is false, the normal behavior is to send ACK frames only when
+    /// there is other data to send, or when the `MaxAckDelay` timer expires.
+    immediate_ack_required: bool,
+    /// The number of ack-eliciting packets received since the last ACK frame was sent
+    ///
+    /// Once the count _exceeds_ `ack_eliciting_threshold`, an immediate ACK is required
+    ack_eliciting_since_last_ack_sent: u64,
+    ack_eliciting_threshold: u64,
+    /// The reordering threshold, controlling how we respond to out-of-order ack-eliciting packets
+    ///
+    /// Different values enable different behavior:
+    ///
+    /// * `0`: no special action is taken
+    /// * `1`: an ACK is immediately sent if it is out-of-order according to RFC 9000
+    /// * `>1`: an ACK is immediately sent if it is out-of-order according to the ACK frequency draft
+    reordering_threshold: u64,
+    /// The earliest ack-eliciting packet since the last ACK was sent, used to calculate the moment
+    /// upon which `max_ack_delay` elapses
+    earliest_ack_eliciting_since_last_ack_sent: Option<Instant>,
+    /// The packet number ranges of ack-eliciting packets the peer hasn't confirmed receipt of ACKs
+    /// for
+    ranges: ArrayRangeSet,
+    /// The packet with the largest packet number, and the time upon which it was received (used to
+    /// calculate ACK delay in [`PendingAcks::ack_delay`])
+    largest_packet: Option<(u64, Instant)>,
+    /// The ack-eliciting packet we have received with the largest packet number
+    largest_ack_eliciting_packet: Option<u64>,
+    /// The largest acknowledged packet number sent in an ACK frame
+    largest_acked: Option<u64>,
 }
 
 impl PendingAcks {
-    /// Whether any ACK frames can be sent
-    pub(super) fn can_send(&self) -> bool {
-        self.permit_ack_only && !self.ranges.is_empty()
+    fn new() -> Self {
+        Self {
+            immediate_ack_required: false,
+            ack_eliciting_since_last_ack_sent: 0,
+            ack_eliciting_threshold: 1,
+            reordering_threshold: 1,
+            earliest_ack_eliciting_since_last_ack_sent: None,
+            ranges: ArrayRangeSet::default(),
+            largest_packet: None,
+            largest_ack_eliciting_packet: None,
+            largest_acked: None,
+        }
     }
 
-    /// Returns the duration the acknowledgement of the latest incoming packet has been delayed
-    pub(super) fn ack_delay(&self) -> Duration {
-        self.ack_delay
+    pub(super) fn set_ack_frequency_params(&mut self, frame: &frame::AckFrequency) {
+        self.ack_eliciting_threshold = frame.ack_eliciting_threshold.into_inner();
+        self.reordering_threshold = frame.reordering_threshold.into_inner();
+    }
+
+    pub(super) fn set_immediate_ack_required(&mut self) {
+        self.immediate_ack_required = true;
+    }
+
+    pub(super) fn on_max_ack_delay_timeout(&mut self) {
+        self.immediate_ack_required = self.ack_eliciting_since_last_ack_sent > 0;
+    }
+
+    pub(super) fn max_ack_delay_timeout(&self, max_ack_delay: Duration) -> Option<Instant> {
+        self.earliest_ack_eliciting_since_last_ack_sent
+            .map(|earliest_unacked| earliest_unacked + max_ack_delay)
+    }
+
+    /// Whether any ACK frames can be sent
+    pub(super) fn can_send(&self) -> bool {
+        self.immediate_ack_required && !self.ranges.is_empty()
+    }
+
+    /// Returns the delay since the packet with the largest packet number was received
+    pub(super) fn ack_delay(&self, now: Instant) -> Duration {
+        self.largest_packet
+            .map_or(Duration::default(), |(_, received)| now - received)
     }
 
     /// Handle receipt of a new packet
-    pub(super) fn packet_received(&mut self, ack_eliciting: bool) {
-        self.permit_ack_only |= ack_eliciting;
+    ///
+    /// Returns true if the max ack delay timer should be armed
+    pub(super) fn packet_received(
+        &mut self,
+        now: Instant,
+        packet_number: u64,
+        ack_eliciting: bool,
+        dedup: &Dedup,
+    ) -> bool {
+        if !ack_eliciting {
+            return false;
+        }
+
+        let prev_largest_ack_eliciting = self.largest_ack_eliciting_packet.unwrap_or(0);
+
+        // Track largest ack-eliciting packet
+        self.largest_ack_eliciting_packet = self
+            .largest_ack_eliciting_packet
+            .map(|pn| pn.max(packet_number))
+            .or(Some(packet_number));
+
+        // Handle ack_eliciting_threshold
+        self.ack_eliciting_since_last_ack_sent += 1;
+        self.immediate_ack_required |=
+            self.ack_eliciting_since_last_ack_sent > self.ack_eliciting_threshold;
+
+        // Handle out-of-order packets
+        self.immediate_ack_required |=
+            self.is_out_of_order(packet_number, prev_largest_ack_eliciting, dedup);
+
+        // Arm max_ack_delay timer if necessary
+        if self.earliest_ack_eliciting_since_last_ack_sent.is_none() && !self.can_send() {
+            self.earliest_ack_eliciting_since_last_ack_sent = Some(now);
+            return true;
+        }
+
+        false
+    }
+
+    fn is_out_of_order(
+        &self,
+        packet_number: u64,
+        prev_largest_ack_eliciting: u64,
+        dedup: &Dedup,
+    ) -> bool {
+        match self.reordering_threshold {
+            0 => false,
+            1 => {
+                // From https://www.rfc-editor.org/rfc/rfc9000#section-13.2.1-7
+                packet_number < prev_largest_ack_eliciting
+                    || dedup.missing_in_interval(prev_largest_ack_eliciting, packet_number)
+            }
+            _ => {
+                // From acknowledgement frequency draft, section 6.1
+                if let Some((largest_acked, largest_unacked)) =
+                    self.largest_acked.zip(self.largest_ack_eliciting_packet)
+                {
+                    dedup
+                        .smallest_missing_in_interval(largest_acked, largest_unacked)
+                        .map_or(false, |smallest_missing| {
+                            largest_unacked - smallest_missing >= self.reordering_threshold
+                        })
+                } else {
+                    false
+                }
+            }
+        }
     }
 
     /// Should be called whenever ACKs have been sent
     ///
     /// This will suppress sending further ACKs until additional ACK eliciting frames arrive
     pub(super) fn acks_sent(&mut self) {
-        // If we sent any acks, don't immediately resend them. Setting this even if ack_only is
-        // false needlessly prevents us from ACKing the next packet if it's ACK-only, but saves
-        // the need for subtler logic to avoid double-transmitting acks all the time.
-        // This reset needs to happen before we check whether more data
-        // is available in this space - because otherwise it would return
-        // `true` purely due to the ACKs
-        self.permit_ack_only = false;
+        // It is possible (though unlikely) that the ACKs we just sent do not cover all the
+        // ACK-eliciting packets we have received (e.g. if there is not enough room in the packet to
+        // fit all the ranges). To keep things simple, however, we assume they do. If there are
+        // indeed some ACKs that weren't covered, the packets might be ACKed later anyway, because
+        // they are still contained in `self.ranges`. If we somehow fail to send the ACKs at a later
+        // moment, the peer will assume the packets got lost and will retransmit their frames in a
+        // new packet, which is suboptimal, because we already received them. Our assumption here is
+        // that simplicity results in code that is more performant, even in the presence of
+        // occasional redundant retransmits.
+        self.immediate_ack_required = false;
+        self.ack_eliciting_since_last_ack_sent = 0;
+        self.earliest_ack_eliciting_since_last_ack_sent = None;
+        self.largest_acked = self.largest_ack_eliciting_packet;
     }
 
     /// Insert one packet that needs to be acknowledged
     pub(super) fn insert_one(&mut self, packet: u64, now: Instant) {
         self.ranges.insert_one(packet);
-        self.latest_incoming = Some(now);
+
+        if self.largest_packet.map_or(true, |(pn, _)| packet > pn) {
+            self.largest_packet = Some((packet, now));
+        }
 
         if self.ranges.len() > MAX_ACK_BLOCKS {
             self.ranges.pop_min();
@@ -537,6 +744,135 @@ mod test {
         assert!(!dedup.insert(WINDOW_SIZE + 1));
         assert_eq!(dedup.next, 2 * WINDOW_SIZE + 1);
         assert_eq!(dedup.window, 1 << (WINDOW_SIZE - 2));
+    }
+
+    #[test]
+    fn dedup_has_missing() {
+        let mut dedup = Dedup::new();
+
+        dedup.insert(0);
+        assert!(!dedup.missing_in_interval(0, 0));
+
+        dedup.insert(1);
+        assert!(!dedup.missing_in_interval(0, 1));
+
+        dedup.insert(3);
+        assert!(dedup.missing_in_interval(1, 3));
+
+        dedup.insert(4);
+        assert!(!dedup.missing_in_interval(3, 4));
+        assert!(dedup.missing_in_interval(0, 4));
+
+        dedup.insert(2);
+        assert!(!dedup.missing_in_interval(0, 4));
+    }
+
+    #[test]
+    fn dedup_outside_of_window_has_missing() {
+        let mut dedup = Dedup::new();
+
+        for i in 0..140 {
+            dedup.insert(i);
+        }
+
+        // 0 and 4 are outside of the window
+        assert!(!dedup.missing_in_interval(0, 4));
+        dedup.insert(160);
+        assert!(!dedup.missing_in_interval(0, 4));
+        assert!(!dedup.missing_in_interval(0, 140));
+        assert!(dedup.missing_in_interval(0, 160));
+    }
+
+    #[test]
+    fn dedup_smallest_missing() {
+        let mut dedup = Dedup::new();
+
+        dedup.insert(0);
+        assert_eq!(dedup.smallest_missing_in_interval(0, 0), None);
+
+        dedup.insert(1);
+        assert_eq!(dedup.smallest_missing_in_interval(0, 1), None);
+
+        dedup.insert(5);
+        dedup.insert(7);
+        assert_eq!(dedup.smallest_missing_in_interval(0, 7), Some(2));
+        assert_eq!(dedup.smallest_missing_in_interval(5, 7), Some(6));
+
+        dedup.insert(2);
+        assert_eq!(dedup.smallest_missing_in_interval(1, 7), Some(3));
+
+        dedup.insert(170);
+        dedup.insert(172);
+        dedup.insert(300);
+        assert_eq!(dedup.smallest_missing_in_interval(170, 172), None);
+
+        dedup.insert(500);
+        assert_eq!(dedup.smallest_missing_in_interval(0, 500), Some(372));
+        assert_eq!(dedup.smallest_missing_in_interval(0, 373), Some(372));
+        assert_eq!(dedup.smallest_missing_in_interval(0, 372), None);
+    }
+
+    #[test]
+    fn pending_acks_first_packet_is_not_considered_reordered() {
+        let mut acks = PendingAcks::new();
+        let mut dedup = Dedup::new();
+        dedup.insert(0);
+        acks.packet_received(Instant::now(), 0, true, &dedup);
+        assert!(!acks.immediate_ack_required);
+    }
+
+    #[test]
+    fn pending_acks_after_immediate_ack_set() {
+        let mut acks = PendingAcks::new();
+        let mut dedup = Dedup::new();
+
+        // Receive ack-eliciting packet
+        dedup.insert(0);
+        let now = Instant::now();
+        acks.insert_one(0, now);
+        acks.packet_received(now, 0, true, &dedup);
+
+        // Sanity check
+        assert!(!acks.ranges.is_empty());
+        assert!(!acks.can_send());
+
+        // Can send ACK after max_ack_delay exceeded
+        acks.set_immediate_ack_required();
+        assert!(acks.can_send());
+    }
+
+    #[test]
+    fn pending_acks_ack_delay() {
+        let mut acks = PendingAcks::new();
+        let mut dedup = Dedup::new();
+
+        let t1 = Instant::now();
+        let t2 = t1 + Duration::from_millis(2);
+        let t3 = t2 + Duration::from_millis(5);
+        assert_eq!(acks.ack_delay(t1), Duration::from_millis(0));
+        assert_eq!(acks.ack_delay(t2), Duration::from_millis(0));
+        assert_eq!(acks.ack_delay(t3), Duration::from_millis(0));
+
+        // In-order packet
+        dedup.insert(0);
+        acks.insert_one(0, t1);
+        acks.packet_received(t1, 0, true, &dedup);
+        assert_eq!(acks.ack_delay(t1), Duration::from_millis(0));
+        assert_eq!(acks.ack_delay(t2), Duration::from_millis(2));
+        assert_eq!(acks.ack_delay(t3), Duration::from_millis(7));
+
+        // Out of order (higher than expected)
+        dedup.insert(3);
+        acks.insert_one(3, t2);
+        acks.packet_received(t2, 3, true, &dedup);
+        assert_eq!(acks.ack_delay(t2), Duration::from_millis(0));
+        assert_eq!(acks.ack_delay(t3), Duration::from_millis(5));
+
+        // Out of order (lower than expected, so previous instant is kept)
+        dedup.insert(2);
+        acks.insert_one(2, t3);
+        acks.packet_received(t3, 2, true, &dedup);
+        assert_eq!(acks.ack_delay(t3), Duration::from_millis(5));
     }
 
     #[test]
