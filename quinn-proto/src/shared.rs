@@ -18,8 +18,6 @@ pub(crate) enum ConnectionEventInner {
         first_decode: PartialDecode,
         remaining: Option<BytesMut>,
     },
-    /// New connection identifiers have been issued for the Connection
-    NewIdentifiers(Vec<IssuedCid>, Instant),
 }
 
 /// Events sent from a Connection to an Endpoint
@@ -49,9 +47,6 @@ pub(crate) enum EndpointEventInner {
     Drained,
     /// The reset token and/or address eligible for generating resets has been updated
     ResetToken(SocketAddr, ResetToken),
-    /// Stop routing connection ID for this sequence number to the connection
-    /// When `bool == true`, a new connection ID will be issued to peer
-    RetireConnectionId(Instant, u64, bool),
 }
 
 /// Protocol-level identifier for a connection.

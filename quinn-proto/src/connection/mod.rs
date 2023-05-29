@@ -935,9 +935,6 @@ impl Connection {
                     self.set_loss_detection_timer(now);
                 }
             }
-            NewIdentifiers(ids, now) => {
-                self.queue_new_cids(now, ids);
-            }
         }
     }
 
@@ -2149,9 +2146,13 @@ impl Connection {
         let state = match self.state {
             State::Established => {
                 match packet.header.space() {
-                    SpaceId::Data => {
-                        self.process_payload(now, remote, number.unwrap(), packet.payload.freeze())?
-                    }
+                    SpaceId::Data => self.process_payload(
+                        now,
+                        remote,
+                        number.unwrap(),
+                        packet.payload.freeze(),
+                        endpoint,
+                    )?,
                     _ => self.process_early_payload(now, packet)?,
                 }
                 return Ok(());
@@ -2363,7 +2364,13 @@ impl Connection {
                 ty: LongType::ZeroRtt,
                 ..
             } => {
-                self.process_payload(now, remote, number.unwrap(), packet.payload.freeze())?;
+                self.process_payload(
+                    now,
+                    remote,
+                    number.unwrap(),
+                    packet.payload.freeze(),
+                    endpoint,
+                )?;
                 Ok(())
             }
             Header::VersionNegotiate { .. } => {
@@ -2450,6 +2457,7 @@ impl Connection {
         remote: SocketAddr,
         number: u64,
         payload: Bytes,
+        endpoint: &Endpoint,
     ) -> Result<(), TransportError> {
         let is_0rtt = self.spaces[SpaceId::Data].crypto.is_none();
         let mut is_probing_packet = true;
@@ -2614,12 +2622,11 @@ impl Connection {
                     let allow_more_cids = self
                         .local_cid_state
                         .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
-                    self.endpoint_events
-                        .push_back(EndpointEventInner::RetireConnectionId(
-                            now,
-                            sequence,
-                            allow_more_cids,
-                        ));
+                    endpoint.retire_cid(self.handle, sequence);
+                    if allow_more_cids {
+                        let ids = endpoint.alloc_new_identifiers(self.handle, 1);
+                        self.queue_new_cids(now, ids);
+                    }
                 }
                 Frame::NewConnectionId(frame) => {
                     trace!(

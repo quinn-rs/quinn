@@ -97,25 +97,20 @@ impl Endpoint {
                     warn!("duplicate reset token");
                 }
             }
-            RetireConnectionId(now, seq, allow_more_cids) => {
-                let cid = self.connections.lock().unwrap()[ch].loc_cids.remove(&seq);
-                if let Some(cid) = cid {
-                    trace!("peer retired CID {}: {}", seq, cid);
-                    self.index.write().unwrap().retire(&cid);
-                    if allow_more_cids {
-                        return Some(ConnectionEvent(ConnectionEventInner::NewIdentifiers(
-                            self.alloc_new_identifiers(ch, 1),
-                            now,
-                        )));
-                    }
-                }
-            }
             Drained => {
                 let conn = self.connections.lock().unwrap().remove(ch.0);
                 self.index.write().unwrap().remove(&conn);
             }
         }
         None
+    }
+
+    pub(crate) fn retire_cid(&self, ch: ConnectionHandle, seq: u64) {
+        let cid = self.connections.lock().unwrap()[ch].loc_cids.remove(&seq);
+        if let Some(cid) = cid {
+            trace!("peer retired CID {}: {}", seq, cid);
+            self.index.write().unwrap().retire(&cid);
+        }
     }
 
     /// Process an incoming UDP datagram
