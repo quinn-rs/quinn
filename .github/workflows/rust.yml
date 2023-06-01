@@ -45,64 +45,35 @@ jobs:
 
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@master
         with:
-          profile: minimal
           toolchain: ${{ matrix.rust }}
-          override: true
       - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
-        with:
-          command: build
-          args: --all-targets
-      - uses: actions-rs/cargo@v1
-        with:
-          command: test
-      - uses: actions-rs/cargo@v1
+      - run: cargo build --all-targets
+      - run: cargo test
+      - run: cargo test --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust }} == "stable"
-        with:
-          command: test
-          args: --manifest-path fuzz/Cargo.toml
 
   msrv:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: 1.63.0
-          override: true
+      - uses: dtolnay/rust-toolchain@1.63.0
       - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
-        with:
-          command: check
-          args: --lib --all-features -p quinn-udp -p quinn-proto -p quinn
+      - run: cargo check --lib --all-features -p quinn-udp -p quinn-proto -p quinn
 
   lint:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
-      - uses: actions-rs/toolchain@v1
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          profile: minimal
-          toolchain: stable
-          override: true
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v1
-      - uses: actions-rs/cargo@v1
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --all-targets -- -D warnings
+      - uses: dtolnay/rust-toolchain@stable
         with:
-          command: fmt
-          args: --all -- --check
-      - uses: actions-rs/cargo@v1
-        with:
-          command: clippy
-          args: --all-targets -- -D warnings
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
           components: clippy
       - name: doc
         run: cargo doc --no-deps --document-private-items
