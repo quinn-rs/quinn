@@ -310,13 +310,13 @@ impl TestEndpoint {
 
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
-            if let Some((ch, event)) = self.endpoint.handle(recv_time, remote, None, ecn, packet) {
+            if let Some(event) = self.endpoint.handle(recv_time, remote, None, ecn, packet) {
                 match event {
-                    DatagramEvent::NewConnection(conn) => {
+                    DatagramEvent::NewConnection(ch, conn) => {
                         self.connections.insert(ch, conn);
                         self.accepted = Some(ch);
                     }
-                    DatagramEvent::ConnectionEvent(event) => {
+                    DatagramEvent::ConnectionEvent(ch, event) => {
                         self.conn_events
                             .entry(ch)
                             .or_insert_with(VecDeque::new)
