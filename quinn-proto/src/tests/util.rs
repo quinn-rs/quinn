@@ -322,12 +322,11 @@ impl TestEndpoint {
                             .or_insert_with(VecDeque::new)
                             .push_back(event);
                     }
+                    DatagramEvent::Response(transmit) => {
+                        self.outbound.extend(split_transmit(transmit));
+                    }
                 }
             }
-        }
-
-        while let Some(x) = self.poll_transmit() {
-            self.outbound.extend(split_transmit(x));
         }
 
         loop {
