@@ -420,6 +420,9 @@ impl State {
                                         .unwrap()
                                         .send(ConnectionEvent::Proto(event));
                                 }
+                                Some(DatagramEvent::Response(t)) => {
+                                    self.outgoing.push_back(udp_transmit(t));
+                                }
                                 None => {}
                             }
                         }
@@ -451,13 +454,6 @@ impl State {
         self.send_limiter.start_cycle();
 
         let result = loop {
-            while self.outgoing.len() < BATCH_SIZE {
-                match self.inner.poll_transmit() {
-                    Some(t) => self.queue_transmit(t),
-                    None => break,
-                }
-            }
-
             if self.outgoing.is_empty() {
                 break Ok(false);
             }
@@ -512,7 +508,7 @@ impl State {
                                 .send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t) => self.queue_transmit(t),
+                    Transmit(t) => self.outgoing.push_back(udp_transmit(t)),
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
@@ -523,15 +519,16 @@ impl State {
 
         true
     }
+}
 
-    fn queue_transmit(&mut self, t: proto::Transmit) {
-        self.outgoing.push_back(udp::Transmit {
-            destination: t.destination,
-            ecn: t.ecn.map(udp_ecn),
-            contents: t.contents,
-            segment_size: t.segment_size,
-            src_ip: t.src_ip,
-        });
+#[inline]
+fn udp_transmit(t: proto::Transmit) -> udp::Transmit {
+    udp::Transmit {
+        destination: t.destination,
+        ecn: t.ecn.map(udp_ecn),
+        contents: t.contents,
+        segment_size: t.segment_size,
+        src_ip: t.src_ip,
     }
 }
 

@@ -1,5 +1,5 @@
 use std::{
-    collections::{HashMap, VecDeque},
+    collections::HashMap,
     convert::TryFrom,
     fmt, iter,
     net::{IpAddr, SocketAddr},
@@ -39,7 +39,6 @@ use crate::{
 /// `handle_event`.
 pub struct Endpoint {
     rng: StdRng,
-    transmits: VecDeque<Transmit>,
     index: ConnectionIndex,
     connections: Slab<ConnectionMeta>,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
@@ -62,7 +61,6 @@ impl Endpoint {
     ) -> Self {
         Self {
             rng: StdRng::from_entropy(),
-            transmits: VecDeque::new(),
             index: ConnectionIndex::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
@@ -70,12 +68,6 @@ impl Endpoint {
             server_config,
             allow_mtud,
         }
-    }
-
-    /// Get the next packet to transmit
-    #[must_use]
-    pub fn poll_transmit(&mut self) -> Option<Transmit> {
-        self.transmits.pop_front()
     }
 
     /// Replace the server configuration, affecting new incoming connections only
@@ -165,14 +157,13 @@ impl Endpoint {
                 for &version in &self.config.supported_versions {
                     buf.write(version);
                 }
-                self.transmits.push_back(Transmit {
+                return Some(DatagramEvent::Response(Transmit {
                     destination: remote,
                     ecn: None,
                     contents: buf.freeze(),
                     segment_size: None,
                     src_ip: local_ip,
-                });
-                return None;
+                }));
             }
             Err(e) => {
                 trace!("malformed header: {}", e);
@@ -207,8 +198,9 @@ impl Endpoint {
             Some(config) => config,
             None => {
                 debug!("packet for unrecognized connection {}", dst_cid);
-                self.stateless_reset(datagram_len, addresses, dst_cid);
-                return None;
+                return self
+                    .stateless_reset(datagram_len, addresses, dst_cid)
+                    .map(DatagramEvent::Response);
             }
         };
 
@@ -252,14 +244,15 @@ impl Endpoint {
 
         //
         // If we got this far, we're a server receiving a seemingly valid packet for an unknown
-        // connection. Send a stateless reset.
+        // connection. Send a stateless reset if possible.
         //
-
         if !dst_cid.is_empty() {
-            self.stateless_reset(datagram_len, addresses, dst_cid);
-        } else {
-            trace!("dropping unrecognized short packet without ID");
+            return self
+                .stateless_reset(datagram_len, addresses, dst_cid)
+                .map(DatagramEvent::Response);
         }
+
+        trace!("dropping unrecognized short packet without ID");
         None
     }
 
@@ -268,7 +261,7 @@ impl Endpoint {
         inciting_dgram_len: usize,
         addresses: FourTuple,
         dst_cid: &ConnectionId,
-    ) {
+    ) -> Option<Transmit> {
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
         const MIN_PADDING_LEN: usize = 5;
 
@@ -278,7 +271,7 @@ impl Endpoint {
             Some(headroom) if headroom > MIN_PADDING_LEN => headroom - 1,
             _ => {
                 debug!("ignoring unexpected {} byte packet: not larger than minimum stateless reset size", inciting_dgram_len);
-                return;
+                return None;
             }
         };
 
@@ -302,13 +295,13 @@ impl Endpoint {
 
         debug_assert!(buf.len() < inciting_dgram_len);
 
-        self.transmits.push_back(Transmit {
+        Some(Transmit {
             destination: addresses.remote,
             ecn: None,
             contents: buf.freeze(),
             segment_size: None,
             src_ip: addresses.local_ip,
-        });
+        })
     }
 
     /// Initiate a connection
@@ -436,15 +429,14 @@ impl Endpoint {
         if self.connections.len() >= server_config.concurrent_connections as usize || self.is_full()
         {
             debug!("refusing connection");
-            self.initial_close(
+            return Some(DatagramEvent::Response(self.initial_close(
                 version,
                 addresses,
                 crypto,
                 &src_cid,
                 &loc_cid,
                 TransportError::CONNECTION_REFUSED(""),
-            );
-            return None;
+            )));
         }
 
         if dst_cid.len() < 8
@@ -454,15 +446,14 @@ impl Endpoint {
                 "rejecting connection due to invalid DCID length {}",
                 dst_cid.len()
             );
-            self.initial_close(
+            return Some(DatagramEvent::Response(self.initial_close(
                 version,
                 addresses,
                 crypto,
                 &src_cid,
                 &loc_cid,
                 TransportError::PROTOCOL_VIOLATION("invalid destination CID length"),
-            );
-            return None;
+            )));
         }
 
         let (retry_src_cid, orig_dst_cid) = if server_config.use_retry {
@@ -490,14 +481,13 @@ impl Endpoint {
                 buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, &buf));
                 encode.finish(&mut buf, &*crypto.header.local, None);
 
-                self.transmits.push_back(Transmit {
+                return Some(DatagramEvent::Response(Transmit {
                     destination: addresses.remote,
                     ecn: None,
                     contents: buf.freeze(),
                     segment_size: None,
                     src_ip: addresses.local_ip,
-                });
-                return None;
+                }));
             }
 
             match RetryToken::from_bytes(
@@ -513,15 +503,14 @@ impl Endpoint {
                 }
                 _ => {
                     debug!("rejecting invalid stateless retry token");
-                    self.initial_close(
+                    return Some(DatagramEvent::Response(self.initial_close(
                         version,
                         addresses,
                         crypto,
                         &src_cid,
                         &loc_cid,
                         TransportError::INVALID_TOKEN(""),
-                    );
-                    return None;
+                    )));
                 }
             }
         } else {
@@ -564,10 +553,12 @@ impl Endpoint {
             Err(e) => {
                 debug!("handshake failed: {}", e);
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
-                if let ConnectionError::TransportError(e) = e {
-                    self.initial_close(version, addresses, crypto, &src_cid, &loc_cid, e);
+                match e {
+                    ConnectionError::TransportError(e) => Some(DatagramEvent::Response(
+                        self.initial_close(version, addresses, crypto, &src_cid, &loc_cid, e),
+                    )),
+                    _ => None,
                 }
-                None
             }
         }
     }
@@ -622,7 +613,7 @@ impl Endpoint {
         remote_id: &ConnectionId,
         local_id: &ConnectionId,
         reason: TransportError,
-    ) {
+    ) -> Transmit {
         let number = PacketNumber::U8(0);
         let header = Header::Initial {
             dst_cid: *remote_id,
@@ -643,13 +634,13 @@ impl Endpoint {
             &*crypto.header.local,
             Some((0, &*crypto.packet.local)),
         );
-        self.transmits.push_back(Transmit {
+        Transmit {
             destination: addresses.remote,
             ecn: None,
             contents: buf.freeze(),
             segment_size: None,
             src_ip: addresses.local_ip,
-        })
+        }
     }
 
     /// Access the configuration used by this endpoint
@@ -690,7 +681,6 @@ impl fmt::Debug for Endpoint {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Endpoint")
             .field("rng", &self.rng)
-            .field("transmits", &self.transmits)
             .field("index", &self.index)
             .field("connections", &self.connections)
             .field("config", &self.config)
@@ -842,6 +832,8 @@ pub enum DatagramEvent {
     ConnectionEvent(ConnectionHandle, ConnectionEvent),
     /// The datagram has resulted in starting a new `Connection`
     NewConnection(ConnectionHandle, Connection),
+    /// Response generated directly by the endpoint
+    Response(Transmit),
 }
 
 /// Errors in the parameters being used to create a new connection

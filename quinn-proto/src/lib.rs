@@ -275,6 +275,7 @@ impl coding::Codec for StreamId {
 
 /// An outgoing packet
 #[derive(Debug)]
+#[must_use]
 pub struct Transmit {
     /// The socket this datagram should be sent to
     pub destination: SocketAddr,
