@@ -402,7 +402,7 @@ impl State {
                                 meta.ecn.map(proto_ecn),
                                 buf,
                             ) {
-                                Some((handle, DatagramEvent::NewConnection(conn))) => {
+                                Some(DatagramEvent::NewConnection(handle, conn)) => {
                                     let conn = self.connections.insert(
                                         handle,
                                         conn,
@@ -411,7 +411,7 @@ impl State {
                                     );
                                     self.incoming.push_back(conn);
                                 }
-                                Some((handle, DatagramEvent::ConnectionEvent(event))) => {
+                                Some(DatagramEvent::ConnectionEvent(handle, event)) => {
                                     // Ignoring errors from dropped connections that haven't yet been cleaned up
                                     let _ = self
                                         .connections

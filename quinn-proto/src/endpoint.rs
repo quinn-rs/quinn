@@ -129,7 +129,7 @@ impl Endpoint {
         local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
-    ) -> Option<(ConnectionHandle, DatagramEvent)> {
+    ) -> Option<DatagramEvent> {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(
             data,
@@ -186,15 +186,15 @@ impl Endpoint {
 
         let addresses = FourTuple { remote, local_ip };
         if let Some(ch) = self.index.get(&addresses, &first_decode) {
-            return Some((
+            return Some(DatagramEvent::ConnectionEvent(
                 ch,
-                DatagramEvent::ConnectionEvent(ConnectionEvent(ConnectionEventInner::Datagram {
+                ConnectionEvent(ConnectionEventInner::Datagram {
                     now,
                     remote: addresses.remote,
                     ecn,
                     first_decode,
                     remaining,
-                })),
+                }),
             ));
         }
 
@@ -234,9 +234,9 @@ impl Endpoint {
                 }
             };
             return match first_decode.finish(Some(&*crypto.header.remote)) {
-                Ok(packet) => self
-                    .handle_first_packet(now, addresses, ecn, packet, remaining, &crypto)
-                    .map(|(ch, conn)| (ch, DatagramEvent::NewConnection(conn))),
+                Ok(packet) => {
+                    self.handle_first_packet(now, addresses, ecn, packet, remaining, &crypto)
+                }
                 Err(e) => {
                     trace!("unable to decode initial packet: {}", e);
                     None
@@ -401,7 +401,7 @@ impl Endpoint {
         mut packet: Packet,
         rest: Option<BytesMut>,
         crypto: &Keys,
-    ) -> Option<(ConnectionHandle, Connection)> {
+    ) -> Option<DatagramEvent> {
         let (src_cid, dst_cid, token, packet_number, version) = match packet.header {
             Header::Initial {
                 src_cid,
@@ -559,7 +559,7 @@ impl Endpoint {
         match conn.handle_first_packet(now, addresses.remote, ecn, packet_number, packet, rest) {
             Ok(()) => {
                 trace!(id = ch.0, icid = %dst_cid, "connection incoming");
-                Some((ch, conn))
+                Some(DatagramEvent::NewConnection(ch, conn))
             }
             Err(e) => {
                 debug!("handshake failed: {}", e);
@@ -839,9 +839,9 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
 #[allow(clippy::large_enum_variant)] // Not passed around extensively
 pub enum DatagramEvent {
     /// The datagram is redirected to its `Connection`
-    ConnectionEvent(ConnectionEvent),
+    ConnectionEvent(ConnectionHandle, ConnectionEvent),
     /// The datagram has resulted in starting a new `Connection`
-    NewConnection(Connection),
+    NewConnection(ConnectionHandle, Connection),
 }
 
 /// Errors in the parameters being used to create a new connection
