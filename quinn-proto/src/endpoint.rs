@@ -34,9 +34,8 @@ use crate::{
 
 /// The main entry point to the library
 ///
-/// This object performs no I/O whatsoever. Instead, it generates a stream of packets to send via
-/// `poll_transmit`, and consumes incoming packets and connection-generated events via `handle` and
-/// `handle_event`.
+/// This object performs no I/O whatsoever. Instead, it consumes incoming packets and
+/// connection-generated events via `handle` and `handle_event`.
 pub struct Endpoint {
     rng: StdRng,
     index: ConnectionIndex,
