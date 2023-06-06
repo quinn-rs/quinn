@@ -2193,3 +2193,11 @@ fn stream_chunks(mut recv: RecvStream) -> Vec<u8> {
 
     buf
 }
+
+#[test]
+fn reject_new_connections() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.server.reject_new_connections();
+    pair.assert_connection_refused();
+}

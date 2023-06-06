@@ -653,6 +653,13 @@ impl Endpoint {
         }
     }
 
+    /// Rejects new connections without affecting existing connections.
+    pub fn reject_new_connections(&mut self) {
+        if let Some(config) = self.server_config.as_mut() {
+            Arc::make_mut(config).concurrent_connections(0);
+        }
+    }
+
     /// Access the configuration used by this endpoint
     pub fn config(&self) -> &EndpointConfig {
         &self.config

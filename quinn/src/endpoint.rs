@@ -236,6 +236,16 @@ impl Endpoint {
         self.inner.state.lock().unwrap().socket.local_addr()
     }
 
+    /// Rejects new connections without affecting existing connections.
+    pub fn reject_new_connections(&self) {
+        self.inner
+            .state
+            .lock()
+            .unwrap()
+            .inner
+            .reject_new_connections();
+    }
+
     /// Close all of this endpoint's connections immediately and cease accepting new connections.
     ///
     /// See [`Connection::close()`] for details.
