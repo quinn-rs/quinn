@@ -2199,5 +2199,10 @@ fn reject_new_connections() {
     let _guard = subscribe();
     let mut pair = Pair::default();
     pair.server.reject_new_connections();
-    pair.assert_connection_refused();
+
+    // The server should now reject incoming connections.
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive();
+    pair.server.assert_no_accept();
+    assert!(pair.client.connections.get(&client_ch).unwrap().is_closed());
 }

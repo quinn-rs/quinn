@@ -166,15 +166,6 @@ impl Pair {
         }
     }
 
-    /// Attempts to connect, asserting that the server doesn't accept the
-    /// connection and the client marks the connection as closed.
-    pub(super) fn assert_connection_refused(&mut self) {
-        let client_ch = self.begin_connect(client_config());
-        self.drive();
-        self.server.assert_no_accept();
-        assert!(self.client.connections.get(&client_ch).unwrap().is_closed());
-    }
-
     pub(super) fn connect(&mut self) -> (ConnectionHandle, ConnectionHandle) {
         self.connect_with(client_config())
     }

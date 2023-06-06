@@ -653,7 +653,12 @@ impl Endpoint {
         }
     }
 
-    /// Rejects new connections without affecting existing connections.
+    /// Reject new incoming connections without affecting existing connections
+    ///
+    /// Convenience short-hand for using
+    /// [`set_server_config`](Self::set_server_config) to update
+    /// [`concurrent_connections`](ServerConfig::concurrent_connections) to
+    /// zero.
     pub fn reject_new_connections(&mut self) {
         if let Some(config) = self.server_config.as_mut() {
             Arc::make_mut(config).concurrent_connections(0);
