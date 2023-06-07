@@ -2196,3 +2196,16 @@ fn stream_chunks(mut recv: RecvStream) -> Vec<u8> {
 
     buf
 }
+
+#[test]
+fn reject_new_connections() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.server.reject_new_connections();
+
+    // The server should now reject incoming connections.
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive();
+    pair.server.assert_no_accept();
+    assert!(pair.client.connections.get(&client_ch).unwrap().is_closed());
+}
