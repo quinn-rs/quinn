@@ -144,8 +144,10 @@ impl SendStream {
             .poll(cx)
             .map(|x| x.unwrap())
         {
-            Poll::Ready(None) => Poll::Ready(Ok(())),
-            Poll::Ready(Some(e)) => Poll::Ready(Err(e)),
+            Poll::Ready(x) => {
+                self.finishing = None;
+                Poll::Ready(x.map_or(Ok(()), Err))
+            }
             Poll::Pending => {
                 // To ensure that finished streams can be detected even after the connection is
                 // closed, we must only check for connection errors after determining that the
