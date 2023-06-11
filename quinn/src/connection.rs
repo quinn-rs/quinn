@@ -157,6 +157,14 @@ impl Connecting {
 
         inner.inner.local_ip()
     }
+
+    /// The peer's UDP address.
+    ///
+    /// Will panic if called after `poll` has returned `Ready`.
+    pub fn remote_address(&self) -> SocketAddr {
+        let conn_ref: &ConnectionRef = self.conn.as_ref().expect("used after yielding Ready");
+        conn_ref.state.lock("remote_address").inner.remote_address()
+    }
 }
 
 impl Future for Connecting {
@@ -175,16 +183,6 @@ impl Future for Connecting {
                     .expect("connected signaled without connection success or error"))
             }
         })
-    }
-}
-
-impl Connecting {
-    /// The peer's UDP address.
-    ///
-    /// Will panic if called after `poll` has returned `Ready`.
-    pub fn remote_address(&self) -> SocketAddr {
-        let conn_ref: &ConnectionRef = self.conn.as_ref().expect("used after yielding Ready");
-        conn_ref.state.lock("remote_address").inner.remote_address()
     }
 }
 
