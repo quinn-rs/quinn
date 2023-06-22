@@ -54,7 +54,7 @@ mod packet_builder;
 use packet_builder::PacketBuilder;
 
 mod packet_crypto;
-use packet_crypto::ZeroRttCrypto;
+use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
 use paths::PathData;
@@ -3226,78 +3226,34 @@ impl Connection {
         now: Instant,
         packet: &mut Packet,
     ) -> Result<Option<u64>, Option<TransportError>> {
-        if !packet.header.is_protected() {
-            // Unprotected packets also don't have packet numbers
-            return Ok(None);
-        }
-        let space = packet.header.space();
-        let rx_packet = self.spaces[space].rx_packet;
-        let number = packet.header.number().ok_or(None)?.expand(rx_packet + 1);
-        let key_phase = packet.header.key_phase();
+        let result = packet_crypto::decrypt_packet_body(
+            packet,
+            &self.spaces,
+            self.zero_rtt_crypto.as_ref(),
+            self.key_phase,
+            self.prev_crypto.as_ref(),
+            self.next_crypto.as_ref(),
+        )?;
 
-        let mut crypto_update = false;
-        let crypto = if packet.header.is_0rtt() {
-            &self.zero_rtt_crypto.as_ref().unwrap().packet
-        } else if key_phase == self.key_phase || space != SpaceId::Data {
-            &self.spaces[space].crypto.as_mut().unwrap().packet.remote
-        } else if let Some(prev) = self.prev_crypto.as_ref().and_then(|crypto| {
-            // If this packet comes prior to acknowledgment of the key update by the peer,
-            if crypto.end_packet.map_or(true, |(pn, _)| number < pn) {
-                // use the previous keys.
-                Some(crypto)
-            } else {
-                // Otherwise, this must be a remotely-initiated key update, so fall through to the
-                // final case.
-                None
-            }
-        }) {
-            &prev.crypto.remote
-        } else {
-            // We're in the Data space with a key phase mismatch and either there is no locally
-            // initiated key update or the locally initiated key update was acknowledged by a
-            // lower-numbered packet. The key phase mismatch must therefore represent a new
-            // remotely-initiated key update.
-            crypto_update = true;
-            &self.next_crypto.as_ref().unwrap().remote
+        let result = match result {
+            Some(r) => r,
+            None => return Ok(None),
         };
 
-        crypto
-            .decrypt(number, &packet.header_data, &mut packet.payload)
-            .map_err(|_| {
-                trace!("decryption failed with packet number {}", number);
-                None
-            })?;
-
-        if let Some(ref mut prev) = self.prev_crypto {
-            if prev.end_packet.is_none() && key_phase == self.key_phase {
-                // Outgoing key update newly acknowledged
-                prev.end_packet = Some((number, now));
-                self.set_key_discard_timer(now, space);
+        if result.outgoing_key_update_acked {
+            if let Some(prev) = self.prev_crypto.as_mut() {
+                prev.end_packet = Some((result.number, now));
+                self.set_key_discard_timer(now, packet.header.space());
             }
         }
 
-        if !packet.reserved_bits_valid() {
-            return Err(Some(TransportError::PROTOCOL_VIOLATION(
-                "reserved bits set",
-            )));
-        }
-
-        if crypto_update {
-            // Validate and commit incoming key update
-            if number <= rx_packet
-                || self
-                    .prev_crypto
-                    .as_ref()
-                    .map_or(false, |x| x.update_unacked)
-            {
-                return Err(Some(TransportError::KEY_UPDATE_ERROR("")));
-            }
+        if result.incoming_key_update {
             trace!("key update authenticated");
-            self.update_keys(Some((number, now)), true);
-            self.set_key_discard_timer(now, space);
+            self.update_keys(Some((result.number, now)), true);
+            self.set_key_discard_timer(now, packet.header.space());
         }
 
-        Ok(Some(number))
+        Ok(Some(result.number))
     }
 
     fn update_keys(&mut self, end_packet: Option<(u64, Instant)>, remote: bool) {
@@ -3559,21 +3515,6 @@ mod state {
     pub struct Closed {
         pub(super) reason: Close,
     }
-}
-
-struct PrevCrypto {
-    /// The keys used for the previous key phase, temporarily retained to decrypt packets sent by
-    /// the peer prior to its own key update.
-    crypto: KeyPair<Box<dyn PacketKey>>,
-    /// The incoming packet that ends the interval for which these keys are applicable, and the time
-    /// of its receipt.
-    ///
-    /// Incoming packets should be decrypted using these keys iff this is `None` or their packet
-    /// number is lower. `None` indicates that we have not yet received a packet using newer keys,
-    /// which implies that the update was locally initiated.
-    end_packet: Option<(u64, Instant)>,
-    /// Whether the following key phase is from a remotely initiated update that we haven't acked
-    update_unacked: bool,
 }
 
 struct InFlight {
