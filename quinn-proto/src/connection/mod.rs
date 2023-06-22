@@ -3293,6 +3293,43 @@ impl Connection {
         self.spaces[self.highest_space].immediate_ack_pending = true;
     }
 
+    /// Decodes a packet, returning its decrypted payload, so it can be inspected in tests
+    #[cfg(test)]
+    pub(crate) fn decode_packet(&self, event: &ConnectionEvent) -> Option<Vec<u8>> {
+        let (first_decode, remaining) = match &event.0 {
+            ConnectionEventInner::Datagram {
+                first_decode,
+                remaining,
+                ..
+            } => (first_decode, remaining),
+            _ => return None,
+        };
+
+        if remaining.is_some() {
+            panic!("Packets should never be coalesced in tests");
+        }
+
+        let decrypted_header = packet_crypto::unprotect_header(
+            first_decode.clone(),
+            &self.spaces,
+            self.zero_rtt_crypto.as_ref(),
+            self.peer_params.stateless_reset_token,
+        )?;
+
+        let mut packet = decrypted_header.packet?;
+        packet_crypto::decrypt_packet_body(
+            &mut packet,
+            &self.spaces,
+            self.zero_rtt_crypto.as_ref(),
+            self.key_phase,
+            self.prev_crypto.as_ref(),
+            self.next_crypto.as_ref(),
+        )
+        .ok()?;
+
+        Some(packet.payload.to_vec())
+    }
+
     /// The number of bytes of packets containing retransmittable frames that have not been
     /// acknowledged or declared lost.
     #[cfg(test)]
