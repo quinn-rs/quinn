@@ -19,7 +19,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
-    crypto::{self, HeaderKey, KeyPair, Keys, PacketKey},
+    crypto::{self, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
     packet::{Header, LongType, Packet, PartialDecode, SpaceId},
@@ -31,7 +31,7 @@ use crate::{
     token::ResetToken,
     transport_parameters::TransportParameters,
     Dir, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
-    VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, TIMER_GRANULARITY,
+    VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, TIMER_GRANULARITY,
 };
 
 mod ack_frequency;
@@ -52,6 +52,9 @@ mod pacing;
 
 mod packet_builder;
 use packet_builder::PacketBuilder;
+
+mod packet_crypto;
+use packet_crypto::ZeroRttCrypto;
 
 mod paths;
 use paths::PathData;
@@ -2027,40 +2030,13 @@ impl Connection {
         ecn: Option<EcnCodepoint>,
         partial_decode: PartialDecode,
     ) {
-        let header_crypto = if partial_decode.is_0rtt() {
-            if let Some(ref crypto) = self.zero_rtt_crypto {
-                Some(&*crypto.header)
-            } else {
-                debug!("dropping unexpected 0-RTT packet");
-                return;
-            }
-        } else if let Some(space) = partial_decode.space() {
-            if let Some(ref crypto) = self.spaces[space].crypto {
-                Some(&*crypto.header.remote)
-            } else {
-                debug!(
-                    "discarding unexpected {:?} packet ({} bytes)",
-                    space,
-                    partial_decode.len(),
-                );
-                return;
-            }
-        } else {
-            // Unprotected packet
-            None
-        };
-
-        let packet = partial_decode.data();
-        let stateless_reset = packet.len() >= RESET_TOKEN_SIZE + 5
-            && self.peer_params.stateless_reset_token.as_deref()
-                == Some(&packet[packet.len() - RESET_TOKEN_SIZE..]);
-
-        match partial_decode.finish(header_crypto) {
-            Ok(packet) => self.handle_packet(now, remote, ecn, Some(packet), stateless_reset),
-            Err(_) if stateless_reset => self.handle_packet(now, remote, ecn, None, true),
-            Err(e) => {
-                trace!("unable to complete packet decoding: {}", e);
-            }
+        if let Some(decoded) = packet_crypto::unprotect_header(
+            partial_decode,
+            &self.spaces,
+            self.zero_rtt_crypto.as_ref(),
+            self.peer_params.stateless_reset_token,
+        ) {
+            self.handle_packet(now, remote, ecn, decoded.packet, decoded.stateless_reset);
         }
     }
 
@@ -3676,11 +3652,6 @@ const MIN_PACKET_SPACE: usize = 40;
 /// memory allocations when calling `poll_transmit()`. Benchmarks have shown
 /// that numbers around 10 are a good compromise.
 const MAX_TRANSMIT_SEGMENTS: usize = 10;
-
-struct ZeroRttCrypto {
-    header: Box<dyn HeaderKey>,
-    packet: Box<dyn PacketKey>,
-}
 
 #[derive(Default)]
 struct SentFrames {
