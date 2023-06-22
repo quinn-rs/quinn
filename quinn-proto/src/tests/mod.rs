@@ -2237,6 +2237,7 @@ fn single_ack_eliciting_packet_triggers_ack_after_delay() {
         0
     );
 
+    pair.client.capture_inbound_packets = true;
     pair.drive();
     let stats_after_drive = pair.client_conn_mut(client_ch).stats();
     assert_eq!(
@@ -2250,6 +2251,19 @@ fn single_ack_eliciting_packet_triggers_ack_after_delay() {
         pair.time,
         start + Duration::from_millis(default_max_ack_delay_ms)
     );
+
+    // The ACK delay is properly calculated
+    assert_eq!(pair.client.captured_packets.len(), 1);
+    let mut frames =
+        frame::Iter::new(pair.client.captured_packets.remove(0).into()).collect::<Vec<_>>();
+    assert_eq!(frames.len(), 1);
+    if let Frame::Ack(ack) = frames.remove(0) {
+        let ack_delay_exp = TransportParameters::default().ack_delay_exponent;
+        let delay = ack.delay << ack_delay_exp.into_inner();
+        assert_eq!(delay, default_max_ack_delay_ms * 1_000);
+    } else {
+        panic!("Expected ACK frame");
+    }
 
     // Sanity check: no loss probe was sent, because the delayed ACK was received on time
     assert_eq!(
