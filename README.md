@@ -24,7 +24,7 @@ Quinn is a pure-rust, async-compatible implementation of the IETF [QUIC][quic] t
 
 ## Overview
 
-- **quinn:** High-level async API based on tokio, see for usage. This will be used by most developers. (Basic benchmarks are included.)
+- **quinn:** High-level async API based on tokio, see [examples][examples] for usage. This will be used by most developers. (Basic benchmarks are included.)
 - **quinn-proto:** Deterministic state machine of the protocol which performs [**no** I/O][sans-io] internally and is suitable for use with custom event loops (and potentially a C or C++ API).
 - **quinn-udp:** UDP sockets with ECN information tuned for the protocol.
 - **bench:** Benchmarks without any framework.
