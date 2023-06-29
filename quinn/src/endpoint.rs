@@ -7,7 +7,10 @@ use std::{
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     task::{Context, Poll, Waker},
     time::Instant,
 };
@@ -24,7 +27,8 @@ use udp::{RecvMeta, UdpState, BATCH_SIZE};
 
 use crate::{
     connection::Connecting, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
-    EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND, SEND_TIME_BOUND,
+    EndpointEvent, VarInt, IO_LOOP_BOUND, MAX_TRANSMIT_QUEUE_SIZE, RECV_TIME_BOUND,
+    SEND_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -115,11 +119,13 @@ impl Endpoint {
     ) -> io::Result<Self> {
         let addr = socket.local_addr()?;
         let allow_mtud = !socket.may_fragment();
+        let transmit_queue_size = Arc::new(AtomicUsize::default());
         let rc = EndpointRef::new(
             socket,
             proto::Endpoint::new(Arc::new(config), server_config.map(Arc::new), allow_mtud),
             addr.is_ipv6(),
             runtime.clone(),
+            transmit_queue_size,
         );
         let driver = EndpointDriver(rc.clone());
         runtime.spawn(Box::pin(async {
@@ -379,6 +385,7 @@ pub(crate) struct State {
     recv_buf: Box<[u8]>,
     send_limiter: WorkLimiter,
     runtime: Arc<dyn Runtime>,
+    transmit_queue_size: Arc<AtomicUsize>,
 }
 
 #[derive(Debug)]
@@ -436,7 +443,18 @@ impl State {
                                         .send(ConnectionEvent::Proto(event));
                                 }
                                 Some(DatagramEvent::Response(t)) => {
-                                    self.outgoing.push_back(udp_transmit(t));
+                                    if self.transmit_queue_size.load(Ordering::Relaxed)
+                                        < MAX_TRANSMIT_QUEUE_SIZE
+                                    {
+                                        self.outgoing.push_back(udp_transmit(t));
+                                        self.transmit_queue_size.fetch_add(1, Ordering::Relaxed);
+                                    } else {
+                                        println!(
+                                            "Too many transmit packets in the queue: {}, limit: {}",
+                                            self.transmit_queue_size.load(Ordering::Relaxed),
+                                            MAX_TRANSMIT_QUEUE_SIZE
+                                        );
+                                    }
                                 }
                                 None => {}
                             }
@@ -483,6 +501,7 @@ impl State {
             {
                 Poll::Ready(Ok(n)) => {
                     self.outgoing.drain(..n);
+                    self.transmit_queue_size.fetch_add(n, Ordering::Relaxed);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearly increases with number of packets.
                     self.send_limiter.record_work(n);
@@ -523,7 +542,10 @@ impl State {
                                 .send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t) => self.outgoing.push_back(udp_transmit(t)),
+                    Transmit(t) => {
+                        self.outgoing.push_back(udp_transmit(t));
+                        self.transmit_queue_size.fetch_add(1, Ordering::Relaxed);
+                    }
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
@@ -652,6 +674,7 @@ impl EndpointRef {
         inner: proto::Endpoint,
         ipv6: bool,
         runtime: Arc<dyn Runtime>,
+        transmit_queue_size: Arc<AtomicUsize>,
     ) -> Self {
         let udp_state = Arc::new(UdpState::new());
         let recv_buf = vec![
@@ -686,6 +709,7 @@ impl EndpointRef {
                 recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
                 send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
                 runtime,
+                transmit_queue_size,
             }),
         }))
     }
