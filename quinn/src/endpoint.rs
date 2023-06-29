@@ -501,7 +501,7 @@ impl State {
             {
                 Poll::Ready(Ok(n)) => {
                     self.outgoing.drain(..n);
-                    self.transmit_queue_size.fetch_add(n, Ordering::Relaxed);
+                    self.transmit_queue_size.fetch_sub(n, Ordering::Relaxed);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearly increases with number of packets.
                     self.send_limiter.record_work(n);
