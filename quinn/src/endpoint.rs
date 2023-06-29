@@ -101,10 +101,10 @@ impl Endpoint {
     pub fn new_with_abstract_socket(
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
-        socket: impl AsyncUdpSocket,
+        socket: Box<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> io::Result<Self> {
-        Self::new_with_runtime(config, server_config, Box::new(socket), runtime)
+        Self::new_with_runtime(config, server_config, socket, runtime)
     }
 
     fn new_with_runtime(
