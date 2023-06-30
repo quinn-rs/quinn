@@ -448,12 +448,6 @@ impl State {
                                     {
                                         self.outgoing.push_back(udp_transmit(t));
                                         self.transmit_queue_size.fetch_add(1, Ordering::Relaxed);
-                                    } else {
-                                        println!(
-                                            "Too many transmit packets in the queue: {}, limit: {}",
-                                            self.transmit_queue_size.load(Ordering::Relaxed),
-                                            MAX_TRANSMIT_QUEUE_SIZE
-                                        );
                                     }
                                 }
                                 None => {}
