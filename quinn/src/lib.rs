@@ -117,5 +117,5 @@ const RECV_TIME_BOUND: Duration = Duration::from_micros(50);
 const SEND_TIME_BOUND: Duration = Duration::from_micros(50);
 
 /// The maximum size of the outgoing transmit queue. Transmit packets generated from endpoint
-/// (retry or initial close) can be dropped when this limit is being execeeded. 
+/// (retry or initial close) can be dropped when this limit is being execeeded.
 const MAX_TRANSMIT_QUEUE_SIZE: usize = 100000;
