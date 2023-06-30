@@ -56,7 +56,7 @@ impl Endpoint {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime = default_runtime()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
-        Self::new_with_runtime(
+        Self::new_with_abstract_socket(
             EndpointConfig::default(),
             None,
             runtime.wrap_udp_socket(socket)?,
@@ -75,7 +75,7 @@ impl Endpoint {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime = default_runtime()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
-        Self::new_with_runtime(
+        Self::new_with_abstract_socket(
             EndpointConfig::default(),
             Some(config),
             runtime.wrap_udp_socket(socket)?,
@@ -91,23 +91,14 @@ impl Endpoint {
         runtime: Arc<dyn Runtime>,
     ) -> io::Result<Self> {
         let socket = runtime.wrap_udp_socket(socket)?;
-        Self::new_with_runtime(config, server_config, socket, runtime)
+        Self::new_with_abstract_socket(config, server_config, socket, runtime)
     }
 
     /// Construct an endpoint with arbitrary configuration and pre-constructed abstract socket
     ///
     /// Useful when `socket` has additional state (e.g. sidechannels) attached for which shared
     /// ownership is needed.
-    pub fn new_with_abstract_socket(
-        config: EndpointConfig,
-        server_config: Option<ServerConfig>,
-        socket: Box<dyn AsyncUdpSocket>,
-        runtime: Arc<dyn Runtime>,
-    ) -> io::Result<Self> {
-        Self::new_with_runtime(config, server_config, socket, runtime)
-    }
-
-    fn new_with_runtime(
+    fn new_with_abstract_socket(
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: Box<dyn AsyncUdpSocket>,
