@@ -98,7 +98,7 @@ impl Endpoint {
     ///
     /// Useful when `socket` has additional state (e.g. sidechannels) attached for which shared
     /// ownership is needed.
-    fn new_with_abstract_socket(
+    pub fn new_with_abstract_socket(
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: Box<dyn AsyncUdpSocket>,
