@@ -116,6 +116,6 @@ const RECV_TIME_BOUND: Duration = Duration::from_micros(50);
 /// The maximum amount of time that should be spent in `sendmsg()` calls per endpoint iteration
 const SEND_TIME_BOUND: Duration = Duration::from_micros(50);
 
-/// The maximum size of the outgoing transmit queue. Transmit packets generated from endpoint
+/// The maximum size of the outgoing transmit queue. Transmit packets generated from the endpoint
 /// (retry or initial close) can be dropped when this limit is being execeeded.
 const MAX_TRANSMIT_QUEUE_SIZE: usize = 100000;
