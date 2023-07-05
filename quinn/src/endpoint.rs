@@ -449,7 +449,8 @@ impl State {
                                     {
                                         let contents_len = t.contents.len();
                                         self.outgoing.push_back(udp_transmit(t));
-                                        self.transmit_queue_contents_len.fetch_add(contents_len, Ordering::Relaxed);
+                                        self.transmit_queue_contents_len
+                                            .fetch_add(contents_len, Ordering::Relaxed);
                                     }
                                 }
                                 None => {}
@@ -496,8 +497,10 @@ impl State {
                 .poll_send(&self.udp_state, cx, self.outgoing.as_slices().0)
             {
                 Poll::Ready(Ok(n)) => {
-                    let contents_len: usize = self.outgoing.drain(..n).map(|t| t.contents.len()).sum();
-                    self.transmit_queue_contents_len.fetch_sub(contents_len, Ordering::Relaxed);
+                    let contents_len: usize =
+                        self.outgoing.drain(..n).map(|t| t.contents.len()).sum();
+                    self.transmit_queue_contents_len
+                        .fetch_sub(contents_len, Ordering::Relaxed);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearly increases with number of packets.
                     self.send_limiter.record_work(n);
@@ -541,7 +544,8 @@ impl State {
                     Transmit(t) => {
                         let contents_len = t.contents.len();
                         self.outgoing.push_back(udp_transmit(t));
-                        self.transmit_queue_contents_len.fetch_add(contents_len, Ordering::Relaxed);
+                        self.transmit_queue_contents_len
+                            .fetch_add(contents_len, Ordering::Relaxed);
                     }
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
