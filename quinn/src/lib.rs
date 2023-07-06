@@ -119,4 +119,4 @@ const SEND_TIME_BOUND: Duration = Duration::from_micros(50);
 /// The maximum size of content length of packets in the outgoing transmit queue. Transmit packets
 /// generated from the endpoint (retry or initial close) can be dropped when this limit is being execeeded.
 /// Chose to represent 100 MB of data.
-const MAX_TRANSMIT_QUEUE_CONTENTS_LEN: usize = 10_0000_000;
+const MAX_TRANSMIT_QUEUE_CONTENTS_LEN: usize = 100_0000_000;
