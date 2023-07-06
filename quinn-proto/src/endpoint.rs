@@ -4,7 +4,10 @@ use std::{
     fmt, iter,
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
-    sync::Arc,
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc,
+    },
     time::{Instant, SystemTime},
 };
 
@@ -63,6 +66,7 @@ pub struct Endpoint {
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
+    transmit_queue_contents_len: Arc<AtomicUsize>,
 }
 
 impl Endpoint {
@@ -75,6 +79,7 @@ impl Endpoint {
         config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         allow_mtud: bool,
+        transmit_queue_contents_len: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             rng: StdRng::from_entropy(),
@@ -88,13 +93,19 @@ impl Endpoint {
             config,
             server_config,
             allow_mtud,
+            transmit_queue_contents_len,
         }
     }
 
     /// Get the next packet to transmit
     #[must_use]
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
-        self.transmits.pop_front()
+        let t = self.transmits.pop_front();
+        self.transmit_queue_contents_len.fetch_sub(
+            t.as_ref().map_or(0, |t| t.contents.len()),
+            Ordering::Relaxed,
+        );
+        t
     }
 
     /// Replace the server configuration, affecting new incoming connections only
@@ -193,6 +204,8 @@ impl Endpoint {
                 for &version in &self.config.supported_versions {
                     buf.write(version);
                 }
+                self.transmit_queue_contents_len
+                    .fetch_add(buf.len(), Ordering::Relaxed);
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
@@ -355,6 +368,8 @@ impl Endpoint {
         buf.extend_from_slice(&ResetToken::new(&*self.config.reset_key, dst_cid));
 
         debug_assert!(buf.len() < inciting_dgram_len);
+        self.transmit_queue_contents_len
+            .fetch_add(buf.len(), Ordering::Relaxed);
 
         self.transmits.push_back(Transmit {
             destination: addresses.remote,
@@ -544,6 +559,8 @@ impl Endpoint {
                 buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, &buf));
                 encode.finish(&mut buf, &*crypto.header.local, None);
 
+                self.transmit_queue_contents_len
+                    .fetch_add(buf.len(), Ordering::Relaxed);
                 self.transmits.push_back(Transmit {
                     destination: addresses.remote,
                     ecn: None,
@@ -700,6 +717,8 @@ impl Endpoint {
             &*crypto.header.local,
             Some((0, &*crypto.packet.local)),
         );
+        self.transmit_queue_contents_len
+            .fetch_add(buf.len(), Ordering::Relaxed);
         self.transmits.push_back(Transmit {
             destination: addresses.remote,
             ecn: None,

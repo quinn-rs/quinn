@@ -7,7 +7,10 @@ use std::{
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
-    sync::{Arc, Mutex},
+    sync::{
+        atomic::{AtomicUsize, Ordering},
+        Arc, Mutex,
+    },
     task::{Context, Poll, Waker},
     time::Instant,
 };
@@ -24,7 +27,8 @@ use udp::{RecvMeta, UdpState, BATCH_SIZE};
 
 use crate::{
     connection::Connecting, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
-    EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND, SEND_TIME_BOUND,
+    EndpointEvent, VarInt, IO_LOOP_BOUND, MAX_TRANSMIT_QUEUE_CONTENTS_LEN, RECV_TIME_BOUND,
+    SEND_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -115,11 +119,18 @@ impl Endpoint {
     ) -> io::Result<Self> {
         let addr = socket.local_addr()?;
         let allow_mtud = !socket.may_fragment();
+        let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
         let rc = EndpointRef::new(
             socket,
-            proto::Endpoint::new(Arc::new(config), server_config.map(Arc::new), allow_mtud),
+            proto::Endpoint::new(
+                Arc::new(config),
+                server_config.map(Arc::new),
+                allow_mtud,
+                transmit_queue_contents_len.clone(),
+            ),
             addr.is_ipv6(),
             runtime.clone(),
+            transmit_queue_contents_len,
         );
         let driver = EndpointDriver(rc.clone());
         runtime.spawn(Box::pin(async {
@@ -379,6 +390,8 @@ pub(crate) struct State {
     recv_buf: Box<[u8]>,
     send_limiter: WorkLimiter,
     runtime: Arc<dyn Runtime>,
+    /// The aggregateed contents length of the packets in the transmit queue
+    transmit_queue_contents_len: Arc<AtomicUsize>,
 }
 
 #[derive(Debug)]
@@ -486,7 +499,10 @@ impl State {
                 .poll_send(&self.udp_state, cx, self.outgoing.as_slices().0)
             {
                 Poll::Ready(Ok(n)) => {
-                    self.outgoing.drain(..n);
+                    let contents_len: usize =
+                        self.outgoing.drain(..n).map(|t| t.contents.len()).sum();
+                    self.transmit_queue_contents_len
+                        .fetch_sub(contents_len, Ordering::Relaxed);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearily increases with number of packets.
                     self.send_limiter.record_work(n);
@@ -527,7 +543,17 @@ impl State {
                                 .send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t) => self.queue_transmit(t),
+                    Transmit(t) => {
+                        // Limiting the memory usage for items queued in the outgoing queue from endpoint
+                        // generated packets. Otherwise, we may see a build-up of the queue under test with
+                        // flood of initial packets against the endpoint. The sender with the sender-limiter
+                        // may not keep up the pace of these packets queued into the queue.
+                        if self.transmit_queue_contents_len.load(Ordering::Relaxed)
+                            < MAX_TRANSMIT_QUEUE_CONTENTS_LEN
+                        {
+                            self.queue_transmit(t);
+                        }
+                    }
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
@@ -540,6 +566,9 @@ impl State {
     }
 
     fn queue_transmit(&mut self, t: proto::Transmit) {
+        let contents_len = t.contents.len();
+        self.transmit_queue_contents_len
+            .fetch_add(contents_len, Ordering::Relaxed);
         self.outgoing.push_back(udp::Transmit {
             destination: t.destination,
             ecn: t.ecn.map(udp_ecn),
@@ -655,6 +684,7 @@ impl EndpointRef {
         inner: proto::Endpoint,
         ipv6: bool,
         runtime: Arc<dyn Runtime>,
+        transmit_queue_contents_len: Arc<AtomicUsize>,
     ) -> Self {
         let udp_state = Arc::new(UdpState::new());
         let recv_buf = vec![
@@ -689,6 +719,7 @@ impl EndpointRef {
                 recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
                 send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
                 runtime,
+                transmit_queue_contents_len,
             }),
         }))
     }
