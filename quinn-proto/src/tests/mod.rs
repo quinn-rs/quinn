@@ -1,7 +1,7 @@
 use std::{
     convert::TryInto,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
+    sync::{atomic::AtomicUsize, Arc},
     time::{Duration, Instant},
 };
 
@@ -25,7 +25,14 @@ use util::*;
 fn version_negotiate_server() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
-    let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
+    let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
+
+    let mut server = Endpoint::new(
+        Default::default(),
+        Some(Arc::new(server_config())),
+        true,
+        transmit_queue_contents_len,
+    );
     let now = Instant::now();
     let event = server.handle(
         now,
@@ -55,6 +62,7 @@ fn version_negotiate_client() {
     let server_addr = "[::2]:7890".parse().unwrap();
     let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
         || Box::new(RandomConnectionIdGenerator::new(0));
+    let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
     let mut client = Endpoint::new(
         Arc::new(EndpointConfig {
             connection_id_generator_factory: Arc::new(cid_generator_factory),
@@ -62,6 +70,7 @@ fn version_negotiate_client() {
         }),
         None,
         true,
+        transmit_queue_contents_len,
     );
     let (_, mut client_ch) = client
         .connect(client_config(), server_addr, "localhost")
@@ -173,11 +182,17 @@ fn server_stateless_reset() {
     let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &reset_key);
 
     let endpoint_config = Arc::new(EndpointConfig::new(Arc::new(reset_key)));
+    let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (client_ch, _) = pair.connect();
     pair.drive(); // Flush any post-handshake frames
-    pair.server.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config())), true);
+    pair.server.endpoint = Endpoint::new(
+        endpoint_config,
+        Some(Arc::new(server_config())),
+        true,
+        transmit_queue_contents_len,
+    );
     // Force the server to generate the smallest possible stateless reset
     pair.client.connections.get_mut(&client_ch).unwrap().ping();
     info!("resetting");
@@ -202,7 +217,14 @@ fn client_stateless_reset() {
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (_, server_ch) = pair.connect();
-    pair.client.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config())), true);
+    let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
+
+    pair.client.endpoint = Endpoint::new(
+        endpoint_config,
+        Some(Arc::new(server_config())),
+        true,
+        transmit_queue_contents_len,
+    );
     // Send something big enough to allow room for a smaller stateless reset.
     pair.server.connections.get_mut(&server_ch).unwrap().close(
         pair.time,
@@ -1316,6 +1338,7 @@ fn cid_rotation() {
 
     let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
         || Box::new(*RandomConnectionIdGenerator::new(8).set_lifetime(CID_TIMEOUT));
+    let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
 
     // Only test cid rotation on server side to have a clear output trace
     let server = Endpoint::new(
@@ -1325,8 +1348,15 @@ fn cid_rotation() {
         }),
         Some(Arc::new(server_config())),
         true,
+        transmit_queue_contents_len,
     );
-    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
+    let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
+    let client = Endpoint::new(
+        Arc::new(EndpointConfig::default()),
+        None,
+        true,
+        transmit_queue_contents_len,
+    );
 
     let mut pair = Pair::new_from_endpoint(client, server);
     let (_, server_ch) = pair.connect();
@@ -1904,7 +1934,14 @@ fn big_cert_and_key() -> (rustls::Certificate, rustls::PrivateKey) {
 fn malformed_token_len() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
-    let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
+    let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
+
+    let mut server = Endpoint::new(
+        Default::default(),
+        Some(Arc::new(server_config())),
+        true,
+        transmit_queue_contents_len,
+    );
     server.handle(
         Instant::now(),
         client_addr,
@@ -1976,16 +2013,25 @@ fn migrate_detects_new_mtu_and_respects_original_peer_max_udp_payload_size() {
 
     // Set up a client with a max payload size of 1400 (and use the defaults for the server)
     let server_endpoint_config = EndpointConfig::default();
+    let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
+
     let server = Endpoint::new(
         Arc::new(server_endpoint_config),
         Some(Arc::new(server_config())),
         true,
+        transmit_queue_contents_len,
     );
     let client_endpoint_config = EndpointConfig {
         max_udp_payload_size: VarInt::from(client_max_udp_payload_size),
         ..EndpointConfig::default()
     };
-    let client = Endpoint::new(Arc::new(client_endpoint_config), None, true);
+    let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
+    let client = Endpoint::new(
+        Arc::new(client_endpoint_config),
+        None,
+        true,
+        transmit_queue_contents_len,
+    );
     let mut pair = Pair::new_from_endpoint(client, server);
     pair.mtu = 1300;
 

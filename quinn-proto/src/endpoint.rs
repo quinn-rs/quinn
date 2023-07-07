@@ -66,9 +66,13 @@ pub struct Endpoint {
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
-    max_transmit_queue_contents_len: usize,
     transmit_queue_contents_len: Arc<AtomicUsize>,
 }
+
+/// The maximum size of content length of packets in the outgoing transmit queue. Transmit packets
+/// generated from the endpoint (retry or initial close) can be dropped when this limit is being execeeded.
+/// Chose to represent 100 MB of data.
+const MAX_TRANSMIT_QUEUE_CONTENTS_LEN: usize = 100_000_000;
 
 impl Endpoint {
     /// Create a new endpoint
@@ -80,7 +84,6 @@ impl Endpoint {
         config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         allow_mtud: bool,
-        max_transmit_queue_contents_len: usize,
         transmit_queue_contents_len: Arc<AtomicUsize>,
     ) -> Self {
         Self {
@@ -95,7 +98,6 @@ impl Endpoint {
             config,
             server_config,
             allow_mtud,
-            max_transmit_queue_contents_len,
             transmit_queue_contents_len,
         }
     }
@@ -470,8 +472,7 @@ impl Endpoint {
         // generated packets. Otherwise, we may see a build-up of the queue under test with
         // flood of initial packets against the endpoint. The sender with the sender-limiter
         // may not keep up the pace of these packets queued into the queue.
-        self.transmit_queue_contents_len.load(Ordering::Relaxed)
-            >= self.max_transmit_queue_contents_len
+        self.transmit_queue_contents_len.load(Ordering::Relaxed) >= MAX_TRANSMIT_QUEUE_CONTENTS_LEN
     }
 
     fn handle_first_packet(

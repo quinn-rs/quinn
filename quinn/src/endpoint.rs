@@ -27,8 +27,7 @@ use udp::{RecvMeta, UdpState, BATCH_SIZE};
 
 use crate::{
     connection::Connecting, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
-    EndpointEvent, VarInt, IO_LOOP_BOUND, MAX_TRANSMIT_QUEUE_CONTENTS_LEN, RECV_TIME_BOUND,
-    SEND_TIME_BOUND,
+    EndpointEvent, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND, SEND_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -126,7 +125,6 @@ impl Endpoint {
                 Arc::new(config),
                 server_config.map(Arc::new),
                 allow_mtud,
-                MAX_TRANSMIT_QUEUE_CONTENTS_LEN,
                 transmit_queue_contents_len.clone(),
             ),
             addr.is_ipv6(),
