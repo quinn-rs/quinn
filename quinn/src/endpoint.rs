@@ -126,6 +126,7 @@ impl Endpoint {
                 Arc::new(config),
                 server_config.map(Arc::new),
                 allow_mtud,
+                MAX_TRANSMIT_QUEUE_CONTENTS_LEN,
                 transmit_queue_contents_len.clone(),
             ),
             addr.is_ipv6(),
@@ -543,17 +544,7 @@ impl State {
                                 .send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t) => {
-                        // Limiting the memory usage for items queued in the outgoing queue from endpoint
-                        // generated packets. Otherwise, we may see a build-up of the queue under test with
-                        // flood of initial packets against the endpoint. The sender with the sender-limiter
-                        // may not keep up the pace of these packets queued into the queue.
-                        if self.transmit_queue_contents_len.load(Ordering::Relaxed)
-                            < MAX_TRANSMIT_QUEUE_CONTENTS_LEN
-                        {
-                            self.queue_transmit(t);
-                        }
-                    }
+                    Transmit(t) => self.queue_transmit(t),
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {

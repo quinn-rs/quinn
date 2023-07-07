@@ -66,6 +66,7 @@ pub struct Endpoint {
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
+    max_transmit_queue_contents_len: usize,
     transmit_queue_contents_len: Arc<AtomicUsize>,
 }
 
@@ -79,6 +80,7 @@ impl Endpoint {
         config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         allow_mtud: bool,
+        max_transmit_queue_contents_len: usize,
         transmit_queue_contents_len: Arc<AtomicUsize>,
     ) -> Self {
         Self {
@@ -93,6 +95,7 @@ impl Endpoint {
             config,
             server_config,
             allow_mtud,
+            max_transmit_queue_contents_len,
             transmit_queue_contents_len,
         }
     }
@@ -462,6 +465,15 @@ impl Endpoint {
         }
     }
 
+    fn to_supresss_stateless_packet(&self) -> bool {
+        // Limiting the memory usage for items queued in the outgoing queue from endpoint
+        // generated packets. Otherwise, we may see a build-up of the queue under test with
+        // flood of initial packets against the endpoint. The sender with the sender-limiter
+        // may not keep up the pace of these packets queued into the queue.
+        self.transmit_queue_contents_len.load(Ordering::Relaxed)
+            >= self.max_transmit_queue_contents_len
+    }
+
     fn handle_first_packet(
         &mut self,
         now: Instant,
@@ -536,6 +548,9 @@ impl Endpoint {
 
         let (retry_src_cid, orig_dst_cid) = if server_config.use_retry {
             if token.is_empty() {
+                if self.to_supresss_stateless_packet() {
+                    return None;
+                }
                 // First Initial
                 let mut random_bytes = vec![0u8; RetryToken::RANDOM_BYTES_LEN];
                 self.rng.fill_bytes(&mut random_bytes);
@@ -697,6 +712,9 @@ impl Endpoint {
         local_id: &ConnectionId,
         reason: TransportError,
     ) {
+        if self.to_supresss_stateless_packet() {
+            return;
+        }
         let number = PacketNumber::U8(0);
         let header = Header::Initial {
             dst_cid: *remote_id,
