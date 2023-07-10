@@ -467,11 +467,11 @@ impl Endpoint {
         }
     }
 
-    fn to_supresss_stateless_packet(&self) -> bool {
-        // Limiting the memory usage for items queued in the outgoing queue from endpoint
-        // generated packets. Otherwise, we may see a build-up of the queue under test with
-        // flood of initial packets against the endpoint. The sender with the sender-limiter
-        // may not keep up the pace of these packets queued into the queue.
+    /// Limiting the memory usage for items queued in the outgoing queue from endpoint
+    /// generated packets. Otherwise, we may see a build-up of the queue under test with
+    /// flood of initial packets against the endpoint. The sender with the sender-limiter
+    /// may not keep up the pace of these packets queued into the queue.
+    fn to_supresss_stateless_packets(&self) -> bool {
         self.transmit_queue_contents_len.load(Ordering::Relaxed) >= MAX_TRANSMIT_QUEUE_CONTENTS_LEN
     }
 
@@ -549,7 +549,7 @@ impl Endpoint {
 
         let (retry_src_cid, orig_dst_cid) = if server_config.use_retry {
             if token.is_empty() {
-                if self.to_supresss_stateless_packet() {
+                if self.to_supresss_stateless_packets() {
                     return None;
                 }
                 // First Initial
@@ -713,7 +713,7 @@ impl Endpoint {
         local_id: &ConnectionId,
         reason: TransportError,
     ) {
-        if self.to_supresss_stateless_packet() {
+        if self.to_supresss_stateless_packets() {
             return;
         }
         let number = PacketNumber::U8(0);
