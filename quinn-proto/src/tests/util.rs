@@ -7,7 +7,7 @@ use std::{
     net::{Ipv6Addr, SocketAddr, UdpSocket},
     ops::RangeFrom,
     str,
-    sync::{atomic::AtomicUsize, Arc, Mutex},
+    sync::{Arc, Mutex},
     time::{Duration, Instant},
 };
 
@@ -36,16 +36,8 @@ pub(super) struct Pair {
 
 impl Pair {
     pub(super) fn new(endpoint_config: Arc<EndpointConfig>, server_config: ServerConfig) -> Self {
-        let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
-
-        let server = Endpoint::new(
-            endpoint_config.clone(),
-            Some(Arc::new(server_config)),
-            true,
-            transmit_queue_contents_len,
-        );
-        let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
-        let client = Endpoint::new(endpoint_config, None, true, transmit_queue_contents_len);
+        let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)), true);
+        let client = Endpoint::new(endpoint_config, None, true);
 
         Self::new_from_endpoint(client, server)
     }

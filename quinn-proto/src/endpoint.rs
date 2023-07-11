@@ -84,7 +84,6 @@ impl Endpoint {
         config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         allow_mtud: bool,
-        transmit_queue_contents_len: Arc<AtomicUsize>,
     ) -> Self {
         Self {
             rng: StdRng::from_entropy(),
@@ -98,7 +97,7 @@ impl Endpoint {
             config,
             server_config,
             allow_mtud,
-            transmit_queue_contents_len,
+            transmit_queue_contents_len: Arc::new(AtomicUsize::default()),
         }
     }
 
@@ -106,10 +105,7 @@ impl Endpoint {
     #[must_use]
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
         let t = self.transmits.pop_front();
-        self.transmit_queue_contents_len.fetch_sub(
-            t.as_ref().map_or(0, |t| t.contents.len()),
-            Ordering::Relaxed,
-        );
+        self.decrement_transmit_queue_contents_len(t.as_ref().map_or(0, |t| t.contents.len()));
         t
     }
 
@@ -209,8 +205,7 @@ impl Endpoint {
                 for &version in &self.config.supported_versions {
                     buf.write(version);
                 }
-                self.transmit_queue_contents_len
-                    .fetch_add(buf.len(), Ordering::Relaxed);
+                self.increment_transmit_queue_contents_len(buf.len());
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
@@ -373,9 +368,7 @@ impl Endpoint {
         buf.extend_from_slice(&ResetToken::new(&*self.config.reset_key, dst_cid));
 
         debug_assert!(buf.len() < inciting_dgram_len);
-        self.transmit_queue_contents_len
-            .fetch_add(buf.len(), Ordering::Relaxed);
-
+        self.increment_transmit_queue_contents_len(buf.len());
         self.transmits.push_back(Transmit {
             destination: addresses.remote,
             ecn: None,
@@ -473,6 +466,18 @@ impl Endpoint {
     /// may not keep up the pace of these packets queued into the queue.
     fn to_supresss_stateless_packets(&self) -> bool {
         self.transmit_queue_contents_len.load(Ordering::Relaxed) >= MAX_TRANSMIT_QUEUE_CONTENTS_LEN
+    }
+
+    /// Increment the contents length in the transmit queue.
+    pub fn increment_transmit_queue_contents_len(&self, contents_len: usize) {
+        self.transmit_queue_contents_len
+            .fetch_add(contents_len, Ordering::Relaxed);
+    }
+
+    /// Decrement the contents length in the transmit queue.
+    pub fn decrement_transmit_queue_contents_len(&self, contents_len: usize) {
+        self.transmit_queue_contents_len
+            .fetch_sub(contents_len, Ordering::Relaxed);
     }
 
     fn handle_first_packet(
@@ -575,8 +580,7 @@ impl Endpoint {
                 buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, &buf));
                 encode.finish(&mut buf, &*crypto.header.local, None);
 
-                self.transmit_queue_contents_len
-                    .fetch_add(buf.len(), Ordering::Relaxed);
+                self.increment_transmit_queue_contents_len(buf.len());
                 self.transmits.push_back(Transmit {
                     destination: addresses.remote,
                     ecn: None,
@@ -736,8 +740,7 @@ impl Endpoint {
             &*crypto.header.local,
             Some((0, &*crypto.packet.local)),
         );
-        self.transmit_queue_contents_len
-            .fetch_add(buf.len(), Ordering::Relaxed);
+        self.increment_transmit_queue_contents_len(buf.len());
         self.transmits.push_back(Transmit {
             destination: addresses.remote,
             ecn: None,

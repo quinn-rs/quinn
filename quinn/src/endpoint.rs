@@ -7,10 +7,7 @@ use std::{
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc, Mutex,
-    },
+    sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
     time::Instant,
 };
@@ -118,18 +115,11 @@ impl Endpoint {
     ) -> io::Result<Self> {
         let addr = socket.local_addr()?;
         let allow_mtud = !socket.may_fragment();
-        let transmit_queue_contents_len = Arc::new(AtomicUsize::default());
         let rc = EndpointRef::new(
             socket,
-            proto::Endpoint::new(
-                Arc::new(config),
-                server_config.map(Arc::new),
-                allow_mtud,
-                transmit_queue_contents_len.clone(),
-            ),
+            proto::Endpoint::new(Arc::new(config), server_config.map(Arc::new), allow_mtud),
             addr.is_ipv6(),
             runtime.clone(),
-            transmit_queue_contents_len,
         );
         let driver = EndpointDriver(rc.clone());
         runtime.spawn(Box::pin(async {
@@ -389,8 +379,6 @@ pub(crate) struct State {
     recv_buf: Box<[u8]>,
     send_limiter: WorkLimiter,
     runtime: Arc<dyn Runtime>,
-    /// The aggregateed contents length of the packets in the transmit queue
-    transmit_queue_contents_len: Arc<AtomicUsize>,
 }
 
 #[derive(Debug)]
@@ -500,8 +488,8 @@ impl State {
                 Poll::Ready(Ok(n)) => {
                     let contents_len: usize =
                         self.outgoing.drain(..n).map(|t| t.contents.len()).sum();
-                    self.transmit_queue_contents_len
-                        .fetch_sub(contents_len, Ordering::Relaxed);
+                    self.inner
+                        .decrement_transmit_queue_contents_len(contents_len);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearily increases with number of packets.
                     self.send_limiter.record_work(n);
@@ -556,8 +544,8 @@ impl State {
 
     fn queue_transmit(&mut self, t: proto::Transmit) {
         let contents_len = t.contents.len();
-        self.transmit_queue_contents_len
-            .fetch_add(contents_len, Ordering::Relaxed);
+        self.inner
+            .increment_transmit_queue_contents_len(contents_len);
         self.outgoing.push_back(udp::Transmit {
             destination: t.destination,
             ecn: t.ecn.map(udp_ecn),
@@ -673,7 +661,6 @@ impl EndpointRef {
         inner: proto::Endpoint,
         ipv6: bool,
         runtime: Arc<dyn Runtime>,
-        transmit_queue_contents_len: Arc<AtomicUsize>,
     ) -> Self {
         let udp_state = Arc::new(UdpState::new());
         let recv_buf = vec![
@@ -708,7 +695,6 @@ impl EndpointRef {
                 recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
                 send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
                 runtime,
-                transmit_queue_contents_len,
             }),
         }))
     }
