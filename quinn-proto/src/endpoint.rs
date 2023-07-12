@@ -4,10 +4,7 @@ use std::{
     fmt, iter,
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
-    sync::{
-        atomic::{AtomicUsize, Ordering},
-        Arc,
-    },
+    sync::Arc,
     time::{Instant, SystemTime},
 };
 
@@ -66,7 +63,12 @@ pub struct Endpoint {
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
-    transmit_queue_contents_len: Arc<AtomicUsize>,
+    /// The contents length for packets in the transmits queue
+    transmit_queue_contents_len: usize,
+    /// The socket buffer aggregated contents length
+    /// `transmit_queue_contents_len` + `socket_buffer_fill` represents the total contents length
+    /// of outstanding outgoing packets.
+    socket_buffer_fill: usize,
 }
 
 /// The maximum size of content length of packets in the outgoing transmit queue. Transmit packets
@@ -97,7 +99,8 @@ impl Endpoint {
             config,
             server_config,
             allow_mtud,
-            transmit_queue_contents_len: Arc::new(AtomicUsize::default()),
+            transmit_queue_contents_len: 0,
+            socket_buffer_fill: 0,
         }
     }
 
@@ -465,19 +468,28 @@ impl Endpoint {
     /// flood of initial packets against the endpoint. The sender with the sender-limiter
     /// may not keep up the pace of these packets queued into the queue.
     fn to_supresss_stateless_packets(&self) -> bool {
-        self.transmit_queue_contents_len.load(Ordering::Relaxed) >= MAX_TRANSMIT_QUEUE_CONTENTS_LEN
+        self.transmit_queue_contents_len
+            .saturating_add(self.socket_buffer_fill)
+            >= MAX_TRANSMIT_QUEUE_CONTENTS_LEN
     }
 
     /// Increment the contents length in the transmit queue.
-    pub fn increment_transmit_queue_contents_len(&self, contents_len: usize) {
-        self.transmit_queue_contents_len
-            .fetch_add(contents_len, Ordering::Relaxed);
+    fn increment_transmit_queue_contents_len(&mut self, contents_len: usize) {
+        self.transmit_queue_contents_len = self
+            .transmit_queue_contents_len
+            .saturating_add(contents_len);
     }
 
     /// Decrement the contents length in the transmit queue.
-    pub fn decrement_transmit_queue_contents_len(&self, contents_len: usize) {
-        self.transmit_queue_contents_len
-            .fetch_sub(contents_len, Ordering::Relaxed);
+    fn decrement_transmit_queue_contents_len(&mut self, contents_len: usize) {
+        self.transmit_queue_contents_len = self
+            .transmit_queue_contents_len
+            .saturating_sub(contents_len);
+    }
+
+    /// Set the `socket_buffer_fill` to the input `len`
+    pub fn set_socket_buffer_fill(&mut self, len: usize) {
+        self.socket_buffer_fill = len;
     }
 
     fn handle_first_packet(

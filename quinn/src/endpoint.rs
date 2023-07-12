@@ -379,6 +379,8 @@ pub(crate) struct State {
     recv_buf: Box<[u8]>,
     send_limiter: WorkLimiter,
     runtime: Arc<dyn Runtime>,
+    /// The packet contents length in the outgoing queue.
+    outgoing_queue_contents_len: usize,
 }
 
 #[derive(Debug)]
@@ -488,8 +490,7 @@ impl State {
                 Poll::Ready(Ok(n)) => {
                     let contents_len: usize =
                         self.outgoing.drain(..n).map(|t| t.contents.len()).sum();
-                    self.inner
-                        .decrement_transmit_queue_contents_len(contents_len);
+                    self.decrement_outgoing_contents_len(contents_len);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearily increases with number of packets.
                     self.send_limiter.record_work(n);
@@ -544,8 +545,7 @@ impl State {
 
     fn queue_transmit(&mut self, t: proto::Transmit) {
         let contents_len = t.contents.len();
-        self.inner
-            .increment_transmit_queue_contents_len(contents_len);
+        self.increment_outgoing_queue_contents_len(contents_len);
         self.outgoing.push_back(udp::Transmit {
             destination: t.destination,
             ecn: t.ecn.map(udp_ecn),
@@ -553,6 +553,22 @@ impl State {
             segment_size: t.segment_size,
             src_ip: t.src_ip,
         });
+    }
+
+    fn increment_outgoing_queue_contents_len(&mut self, contents_len: usize) {
+        self.outgoing_queue_contents_len = self
+            .outgoing_queue_contents_len
+            .saturating_add(contents_len);
+        self.inner
+            .set_socket_buffer_fill(self.outgoing_queue_contents_len);
+    }
+
+    fn decrement_outgoing_contents_len(&mut self, contents_len: usize) {
+        self.outgoing_queue_contents_len = self
+            .outgoing_queue_contents_len
+            .saturating_sub(contents_len);
+        self.inner
+            .set_socket_buffer_fill(self.outgoing_queue_contents_len);
     }
 }
 
@@ -695,6 +711,7 @@ impl EndpointRef {
                 recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
                 send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
                 runtime,
+                outgoing_queue_contents_len: 0,
             }),
         }))
     }
