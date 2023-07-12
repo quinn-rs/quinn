@@ -25,7 +25,6 @@ use util::*;
 fn version_negotiate_server() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
-
     let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
     let now = Instant::now();
     let event = server.handle(
@@ -203,7 +202,6 @@ fn client_stateless_reset() {
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (_, server_ch) = pair.connect();
-
     pair.client.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config())), true);
     // Send something big enough to allow room for a smaller stateless reset.
     pair.server.connections.get_mut(&server_ch).unwrap().close(
@@ -1906,7 +1904,6 @@ fn big_cert_and_key() -> (rustls::Certificate, rustls::PrivateKey) {
 fn malformed_token_len() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
-
     let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
     server.handle(
         Instant::now(),
@@ -1979,7 +1976,6 @@ fn migrate_detects_new_mtu_and_respects_original_peer_max_udp_payload_size() {
 
     // Set up a client with a max payload size of 1400 (and use the defaults for the server)
     let server_endpoint_config = EndpointConfig::default();
-
     let server = Endpoint::new(
         Arc::new(server_endpoint_config),
         Some(Arc::new(server_config())),
