@@ -63,7 +63,19 @@ pub struct Endpoint {
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
+    /// The contents length for packets in the transmits queue
+    transmit_queue_contents_len: usize,
+    /// The socket buffer aggregated contents length
+    /// `transmit_queue_contents_len` + `socket_buffer_fill` represents the total contents length
+    /// of outstanding outgoing packets.
+    socket_buffer_fill: usize,
 }
+
+/// The maximum size of content length of packets in the outgoing transmit queue. Transmit packets
+/// generated from the endpoint (retry, initial close, stateless reset and version negotiation)
+/// can be dropped when this limit is being execeeded.
+/// Chose to represent 100 MB of data.
+const MAX_TRANSMIT_QUEUE_CONTENTS_LEN: usize = 100_000_000;
 
 impl Endpoint {
     /// Create a new endpoint
@@ -88,13 +100,17 @@ impl Endpoint {
             config,
             server_config,
             allow_mtud,
+            transmit_queue_contents_len: 0,
+            socket_buffer_fill: 0,
         }
     }
 
     /// Get the next packet to transmit
     #[must_use]
     pub fn poll_transmit(&mut self) -> Option<Transmit> {
-        self.transmits.pop_front()
+        let t = self.transmits.pop_front();
+        self.decrement_transmit_queue_contents_len(t.as_ref().map_or(0, |t| t.contents.len()));
+        t
     }
 
     /// Replace the server configuration, affecting new incoming connections only
@@ -175,6 +191,9 @@ impl Endpoint {
                     debug!("dropping packet with unsupported version");
                     return None;
                 }
+                if self.stateless_packets_supressed() {
+                    return None;
+                }
                 trace!("sending version negotiation");
                 // Negotiate versions
                 let mut buf = BytesMut::new();
@@ -193,6 +212,7 @@ impl Endpoint {
                 for &version in &self.config.supported_versions {
                     buf.write(version);
                 }
+                self.increment_transmit_queue_contents_len(buf.len());
                 self.transmits.push_back(Transmit {
                     destination: remote,
                     ecn: None,
@@ -323,6 +343,9 @@ impl Endpoint {
         addresses: FourTuple,
         dst_cid: &ConnectionId,
     ) {
+        if self.stateless_packets_supressed() {
+            return;
+        }
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
         const MIN_PADDING_LEN: usize = 5;
 
@@ -355,7 +378,7 @@ impl Endpoint {
         buf.extend_from_slice(&ResetToken::new(&*self.config.reset_key, dst_cid));
 
         debug_assert!(buf.len() < inciting_dgram_len);
-
+        self.increment_transmit_queue_contents_len(buf.len());
         self.transmits.push_back(Transmit {
             destination: addresses.remote,
             ecn: None,
@@ -447,6 +470,35 @@ impl Endpoint {
         }
     }
 
+    /// Limiting the memory usage for items queued in the outgoing queue from endpoint
+    /// generated packets. Otherwise, we may see a build-up of the queue under test with
+    /// flood of initial packets against the endpoint. The sender with the sender-limiter
+    /// may not keep up the pace of these packets queued into the queue.
+    fn stateless_packets_supressed(&self) -> bool {
+        self.transmit_queue_contents_len
+            .saturating_add(self.socket_buffer_fill)
+            >= MAX_TRANSMIT_QUEUE_CONTENTS_LEN
+    }
+
+    /// Increment the contents length in the transmit queue.
+    fn increment_transmit_queue_contents_len(&mut self, contents_len: usize) {
+        self.transmit_queue_contents_len = self
+            .transmit_queue_contents_len
+            .saturating_add(contents_len);
+    }
+
+    /// Decrement the contents length in the transmit queue.
+    fn decrement_transmit_queue_contents_len(&mut self, contents_len: usize) {
+        self.transmit_queue_contents_len = self
+            .transmit_queue_contents_len
+            .saturating_sub(contents_len);
+    }
+
+    /// Set the `socket_buffer_fill` to the input `len`
+    pub fn set_socket_buffer_fill(&mut self, len: usize) {
+        self.socket_buffer_fill = len;
+    }
+
     fn handle_first_packet(
         &mut self,
         now: Instant,
@@ -521,6 +573,9 @@ impl Endpoint {
 
         let (retry_src_cid, orig_dst_cid) = if server_config.use_retry {
             if token.is_empty() {
+                if self.stateless_packets_supressed() {
+                    return None;
+                }
                 // First Initial
                 let mut random_bytes = vec![0u8; RetryToken::RANDOM_BYTES_LEN];
                 self.rng.fill_bytes(&mut random_bytes);
@@ -544,6 +599,7 @@ impl Endpoint {
                 buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, &buf));
                 encode.finish(&mut buf, &*crypto.header.local, None);
 
+                self.increment_transmit_queue_contents_len(buf.len());
                 self.transmits.push_back(Transmit {
                     destination: addresses.remote,
                     ecn: None,
@@ -680,6 +736,9 @@ impl Endpoint {
         local_id: &ConnectionId,
         reason: TransportError,
     ) {
+        if self.stateless_packets_supressed() {
+            return;
+        }
         let number = PacketNumber::U8(0);
         let header = Header::Initial {
             dst_cid: *remote_id,
@@ -700,6 +759,7 @@ impl Endpoint {
             &*crypto.header.local,
             Some((0, &*crypto.packet.local)),
         );
+        self.increment_transmit_queue_contents_len(buf.len());
         self.transmits.push_back(Transmit {
             destination: addresses.remote,
             ecn: None,
