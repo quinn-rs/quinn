@@ -72,7 +72,8 @@ pub struct Endpoint {
 }
 
 /// The maximum size of content length of packets in the outgoing transmit queue. Transmit packets
-/// generated from the endpoint (retry or initial close) can be dropped when this limit is being execeeded.
+/// generated from the endpoint (retry, initial close, stateless reset and version negotiation)
+/// can be dropped when this limit is being execeeded.
 /// Chose to represent 100 MB of data.
 const MAX_TRANSMIT_QUEUE_CONTENTS_LEN: usize = 100_000_000;
 
@@ -188,6 +189,9 @@ impl Endpoint {
             }) => {
                 if self.server_config.is_none() {
                     debug!("dropping packet with unsupported version");
+                    return None;
+                }
+                if self.stateless_packets_supressed() {
                     return None;
                 }
                 trace!("sending version negotiation");
@@ -339,6 +343,9 @@ impl Endpoint {
         addresses: FourTuple,
         dst_cid: &ConnectionId,
     ) {
+        if self.stateless_packets_supressed() {
+            return;
+        }
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
         const MIN_PADDING_LEN: usize = 5;
 
