@@ -193,26 +193,7 @@ impl TransportConfig {
 
     /// Specifies the MTU discovery config (see [`MtuDiscoveryConfig`] for details).
     ///
-    /// Defaults to `None`, which disables MTU discovery altogether.
-    ///
-    /// # Important
-    ///
-    /// MTU discovery depends on platform support for disabling UDP packet fragmentation, which is
-    /// not always available. If the platform allows fragmenting UDP packets, MTU discovery may end
-    /// up "discovering" an MTU that is not really supported by the network, causing packet loss
-    /// down the line.
-    ///
-    /// The `quinn` crate provides the `Endpoint::server` and `Endpoint::client` constructors that
-    /// automatically disable UDP packet fragmentation on Linux and Windows. When using these
-    /// constructors, MTU discovery will reliably work, unless the code is compiled targeting an
-    /// unsupported platform (e.g. iOS). In the latter case, it is advisable to keep MTU discovery
-    /// disabled.
-    ///
-    /// Users of `quinn-proto` and authors of custom `AsyncUdpSocket` implementations should ensure
-    /// to disable UDP packet fragmentation (this is strongly recommended by [RFC
-    /// 9000](https://www.rfc-editor.org/rfc/rfc9000.html#section-14-7), regardless of MTU
-    /// discovery). They can build on top of the `quinn-udp` crate, used by `quinn` itself, which
-    /// provides Linux, Windows, macOS, and FreeBSD support for disabling packet fragmentation.
+    /// Enabled by default.
     pub fn mtu_discovery_config(&mut self, value: Option<MtuDiscoveryConfig>) -> &mut Self {
         self.mtu_discovery_config = value;
         self
