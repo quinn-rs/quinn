@@ -65,6 +65,8 @@ pub use proto::{
     ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
     ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
 };
+#[cfg(feature = "tls-rustls")]
+pub use rustls;
 pub use udp;
 
 pub use crate::connection::{
