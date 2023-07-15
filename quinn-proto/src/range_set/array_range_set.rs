@@ -204,6 +204,6 @@ impl ArrayRangeSet {
     }
 
     pub fn max(&self) -> Option<u64> {
-        self.iter().rev().next().map(|x| x.end - 1)
+        self.iter().next_back().map(|x| x.end - 1)
     }
 }
