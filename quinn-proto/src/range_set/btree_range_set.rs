@@ -85,8 +85,7 @@ impl RangeSet {
     fn pred(&self, x: u64) -> Option<(u64, u64)> {
         self.0
             .range((Included(0), Included(x)))
-            .rev()
-            .next()
+            .next_back()
             .map(|(&x, &y)| (x, y))
     }
 
@@ -181,7 +180,7 @@ impl RangeSet {
         self.iter().next().map(|x| x.start)
     }
     pub fn max(&self) -> Option<u64> {
-        self.iter().rev().next().map(|x| x.end - 1)
+        self.iter().next_back().map(|x| x.end - 1)
     }
 
     pub fn len(&self) -> usize {
