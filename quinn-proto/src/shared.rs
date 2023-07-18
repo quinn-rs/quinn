@@ -4,56 +4,15 @@ use bytes::{Buf, BufMut, BytesMut};
 
 use crate::{coding::BufExt, packet::PartialDecode, ResetToken, MAX_CID_SIZE};
 
-/// Events sent from an Endpoint to a Connection
+/// UDP datagram addressed to a specific
+/// [`Connection`](crate::Connection)
 #[derive(Debug)]
-pub struct ConnectionEvent(pub(crate) ConnectionEventInner);
-
-#[derive(Debug)]
-pub(crate) enum ConnectionEventInner {
-    /// A datagram has been received for the Connection
-    Datagram {
-        now: Instant,
-        remote: SocketAddr,
-        ecn: Option<EcnCodepoint>,
-        first_decode: PartialDecode,
-        remaining: Option<BytesMut>,
-    },
-    /// New connection identifiers have been issued for the Connection
-    NewIdentifiers(Vec<IssuedCid>, Instant),
-}
-
-/// Events sent from a Connection to an Endpoint
-#[derive(Debug)]
-pub struct EndpointEvent(pub(crate) EndpointEventInner);
-
-impl EndpointEvent {
-    /// Construct an event that indicating that a `Connection` will no longer emit events
-    ///
-    /// Useful for notifying an `Endpoint` that a `Connection` has been destroyed outside of the
-    /// usual state machine flow, e.g. when being dropped by the user.
-    pub fn drained() -> Self {
-        Self(EndpointEventInner::Drained)
-    }
-
-    /// Determine whether this is the last event a `Connection` will emit
-    ///
-    /// Useful for determining when connection-related event loop state can be freed.
-    pub fn is_drained(&self) -> bool {
-        self.0 == EndpointEventInner::Drained
-    }
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum EndpointEventInner {
-    /// The connection has been drained
-    Drained,
-    /// The reset token and/or address eligible for generating resets has been updated
-    ResetToken(SocketAddr, ResetToken),
-    /// The connection needs connection identifiers
-    NeedIdentifiers(Instant, u64),
-    /// Stop routing connection ID for this sequence number to the connection
-    /// When `bool == true`, a new connection ID will be issued to peer
-    RetireConnectionId(Instant, u64, bool),
+pub struct ConnectionDatagram {
+    pub(crate) now: Instant,
+    pub(crate) remote: SocketAddr,
+    pub(crate) ecn: Option<EcnCodepoint>,
+    pub(crate) first_decode: PartialDecode,
+    pub(crate) remaining: Option<BytesMut>,
 }
 
 /// Protocol-level identifier for a connection.

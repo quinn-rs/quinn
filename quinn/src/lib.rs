@@ -91,13 +91,13 @@ enum ConnectionEvent {
         error_code: VarInt,
         reason: bytes::Bytes,
     },
-    Proto(proto::ConnectionEvent),
+    Datagram(proto::ConnectionDatagram),
     Ping,
 }
 
 #[derive(Debug)]
 enum EndpointEvent {
-    Proto(proto::EndpointEvent),
+    Drained,
     Transmit(proto::Transmit),
 }
 

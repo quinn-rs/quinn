@@ -6,14 +6,14 @@ use crate::shared::ConnectionId;
 use crate::MAX_CID_SIZE;
 
 /// Generates connection IDs for incoming connections
-pub trait ConnectionIdGenerator: Send {
+pub trait ConnectionIdGenerator: Send + Sync {
     /// Generates a new CID
     ///
     /// Connection IDs MUST NOT contain any information that can be used by
     /// an external observer (that is, one that does not cooperate with the
     /// issuer) to correlate them with other connection IDs for the same
     /// connection.
-    fn generate_cid(&mut self) -> ConnectionId;
+    fn generate_cid(&self) -> ConnectionId;
     /// Returns the length of a CID for connections created by this generator
     fn cid_len(&self) -> usize;
     /// Returns the lifetime of generated Connection IDs
@@ -58,7 +58,7 @@ impl RandomConnectionIdGenerator {
 }
 
 impl ConnectionIdGenerator for RandomConnectionIdGenerator {
-    fn generate_cid(&mut self) -> ConnectionId {
+    fn generate_cid(&self) -> ConnectionId {
         let mut bytes_arr = [0; MAX_CID_SIZE];
         rand::thread_rng().fill_bytes(&mut bytes_arr[..self.cid_len]);
 

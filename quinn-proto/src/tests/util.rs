@@ -270,7 +270,7 @@ pub(super) struct TestEndpoint {
     pub(super) inbound: VecDeque<(Instant, Option<EcnCodepoint>, BytesMut)>,
     accepted: Option<ConnectionHandle>,
     pub(super) connections: HashMap<ConnectionHandle, Connection>,
-    conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
+    conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionDatagram>>,
 }
 
 impl TestEndpoint {
@@ -329,41 +329,22 @@ impl TestEndpoint {
             }
         }
 
-        loop {
-            let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
-            for (ch, conn) in self.connections.iter_mut() {
-                if self.timeout.map_or(false, |x| x <= now) {
-                    self.timeout = None;
-                    conn.handle_timeout(now);
-                }
-
-                for (_, mut events) in self.conn_events.drain() {
-                    for event in events.drain(..) {
-                        conn.handle_event(event);
-                    }
-                }
-
-                while let Some(event) = conn.poll_endpoint_events() {
-                    endpoint_events.push((*ch, event));
-                }
-
-                while let Some(x) = conn.poll_transmit(now, MAX_DATAGRAMS) {
-                    self.outbound.extend(split_transmit(x));
-                }
-                self.timeout = conn.poll_timeout();
+        for conn in self.connections.values_mut() {
+            if self.timeout.map_or(false, |x| x <= now) {
+                self.timeout = None;
+                conn.handle_timeout(now, &self.endpoint);
             }
 
-            if endpoint_events.is_empty() {
-                break;
-            }
-
-            for (ch, event) in endpoint_events {
-                if let Some(event) = self.handle_event(ch, event) {
-                    if let Some(conn) = self.connections.get_mut(&ch) {
-                        conn.handle_event(event);
-                    }
+            for (_, mut events) in self.conn_events.drain() {
+                for event in events.drain(..) {
+                    conn.handle(event, &self.endpoint);
                 }
             }
+
+            while let Some(x) = conn.poll_transmit(now, MAX_DATAGRAMS) {
+                self.outbound.extend(split_transmit(x));
+            }
+            self.timeout = conn.poll_timeout();
         }
     }
 

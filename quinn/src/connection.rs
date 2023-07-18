@@ -43,6 +43,7 @@ impl Connecting {
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         udp_state: Arc<UdpState>,
+        endpoint: Arc<proto::Endpoint>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
@@ -55,6 +56,7 @@ impl Connecting {
             on_handshake_data_send,
             on_connected_send,
             udp_state,
+            endpoint,
             runtime.clone(),
         );
 
@@ -231,11 +233,15 @@ impl Future for ConnectionDriver {
         let mut keep_going = conn.drive_transmit();
         // If a timer expires, there might be more to transmit. When we transmit something, we
         // might need to reset a timer. Hence, we must loop until neither happens.
-        keep_going |= conn.drive_timer(cx);
-        conn.forward_endpoint_events();
+        keep_going |= conn.drive_timer(cx, &self.0.shared);
         conn.forward_app_events(&self.0.shared);
 
-        if !conn.inner.is_drained() {
+        if conn.inner.is_drained() {
+            // Notify endpoint driver to clean up its own resources
+            let _ = conn
+                .endpoint_events
+                .send((conn.handle, EndpointEvent::Drained));
+        } else {
             if keep_going {
                 // If the connection hasn't processed all tasks, schedule it again
                 cx.waker().wake_by_ref();
@@ -748,6 +754,7 @@ impl ConnectionRef {
         on_handshake_data: oneshot::Sender<()>,
         on_connected: oneshot::Sender<bool>,
         udp_state: Arc<UdpState>,
+        endpoint: Arc<proto::Endpoint>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
         Self(Arc::new(ConnectionInner {
@@ -771,7 +778,13 @@ impl ConnectionRef {
                 udp_state,
                 runtime,
             }),
-            shared: Shared::default(),
+            shared: Shared {
+                stream_budget_available: Default::default(),
+                stream_incoming: Default::default(),
+                datagrams: Default::default(),
+                closed: Default::default(),
+                endpoint,
+            },
         }))
     }
 
@@ -816,7 +829,7 @@ pub(crate) struct ConnectionInner {
     pub(crate) shared: Shared,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Shared {
     /// Notified when new streams may be locally initiated due to an increase in stream ID flow
     /// control budget
@@ -825,6 +838,7 @@ pub(crate) struct Shared {
     stream_incoming: [Notify; 2],
     datagrams: Notify,
     closed: Notify,
+    endpoint: Arc<proto::Endpoint>,
 }
 
 pub(crate) struct State {
@@ -879,15 +893,6 @@ impl State {
         false
     }
 
-    fn forward_endpoint_events(&mut self) {
-        while let Some(event) = self.inner.poll_endpoint_events() {
-            // If the endpoint driver is gone, noop.
-            let _ = self
-                .endpoint_events
-                .send((self.handle, EndpointEvent::Proto(event)));
-        }
-    }
-
     /// If this returns `Err`, the endpoint is dead, so the driver should exit immediately.
     fn process_conn_events(
         &mut self,
@@ -899,8 +904,8 @@ impl State {
                 Poll::Ready(Some(ConnectionEvent::Ping)) => {
                     self.inner.ping();
                 }
-                Poll::Ready(Some(ConnectionEvent::Proto(event))) => {
-                    self.inner.handle_event(event);
+                Poll::Ready(Some(ConnectionEvent::Datagram(datagram))) => {
+                    self.inner.handle(datagram, &shared.endpoint);
                 }
                 Poll::Ready(Some(ConnectionEvent::Close { reason, error_code })) => {
                     self.close(error_code, reason, shared);
@@ -985,7 +990,7 @@ impl State {
         }
     }
 
-    fn drive_timer(&mut self, cx: &mut Context) -> bool {
+    fn drive_timer(&mut self, cx: &mut Context, shared: &Shared) -> bool {
         // Check whether we need to (re)set the timer. If so, we must poll again to ensure the
         // timer is registered with the runtime (and check whether it's already
         // expired).
@@ -1030,7 +1035,7 @@ impl State {
 
         // A timer expired, so the caller needs to check for
         // new transmits, which might cause new timers to be set.
-        self.inner.handle_timeout(Instant::now());
+        self.inner.handle_timeout(Instant::now(), &shared.endpoint);
         self.timer_deadline = None;
         true
     }
@@ -1098,10 +1103,9 @@ impl Drop for State {
     fn drop(&mut self) {
         if !self.inner.is_drained() {
             // Ensure the endpoint can tidy up
-            let _ = self.endpoint_events.send((
-                self.handle,
-                EndpointEvent::Proto(proto::EndpointEvent::drained()),
-            ));
+            let _ = self
+                .endpoint_events
+                .send((self.handle, EndpointEvent::Drained));
         }
     }
 }

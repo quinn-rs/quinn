@@ -182,11 +182,15 @@ impl Endpoint {
         } else {
             addr
         };
-        let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
+        let (ch, conn) = self.inner.shared.inner.connect(config, addr, server_name)?;
         let udp_state = endpoint.udp_state.clone();
-        Ok(endpoint
-            .connections
-            .insert(ch, conn, udp_state, self.runtime.clone()))
+        Ok(endpoint.connections.insert(
+            ch,
+            conn,
+            udp_state,
+            self.inner.shared.inner.clone(),
+            self.runtime.clone(),
+        ))
     }
 
     /// Switch to a new UDP socket
@@ -216,9 +220,7 @@ impl Endpoint {
     /// Useful for e.g. refreshing TLS certificates without disrupting existing connections.
     pub fn set_server_config(&self, server_config: Option<ServerConfig>) {
         self.inner
-            .state
-            .lock()
-            .unwrap()
+            .shared
             .inner
             .set_server_config(server_config.map(Arc::new))
     }
@@ -313,7 +315,7 @@ impl Future for EndpointDriver {
 
         let now = Instant::now();
         let mut keep_going = false;
-        keep_going |= endpoint.drive_recv(cx, now)?;
+        keep_going |= endpoint.drive_recv(cx, now, &self.0.shared)?;
         keep_going |= endpoint.handle_events(cx, &self.0.shared);
         keep_going |= endpoint.drive_send(cx)?;
 
@@ -357,7 +359,6 @@ pub(crate) struct EndpointInner {
 pub(crate) struct State {
     socket: Box<dyn AsyncUdpSocket>,
     udp_state: Arc<UdpState>,
-    inner: proto::Endpoint,
     outgoing: VecDeque<udp::Transmit>,
     incoming: VecDeque<Connecting>,
     driver: Option<Waker>,
@@ -379,10 +380,16 @@ pub(crate) struct State {
 pub(crate) struct Shared {
     incoming: Notify,
     idle: Notify,
+    inner: Arc<proto::Endpoint>,
 }
 
 impl State {
-    fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv<'a>(
+        &'a mut self,
+        cx: &mut Context,
+        now: Instant,
+        shared: &Shared,
+    ) -> Result<bool, io::Error> {
         self.recv_limiter.start_cycle();
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
         let mut iovs = MaybeUninit::<[IoSliceMut<'a>; BATCH_SIZE]>::uninit();
@@ -404,7 +411,7 @@ impl State {
                         let mut data: BytesMut = buf[0..meta.len].into();
                         while !data.is_empty() {
                             let buf = data.split_to(meta.stride.min(data.len()));
-                            match self.inner.handle(
+                            match shared.inner.handle(
                                 now,
                                 meta.addr,
                                 meta.dst_ip,
@@ -416,18 +423,19 @@ impl State {
                                         handle,
                                         conn,
                                         self.udp_state.clone(),
+                                        shared.inner.clone(),
                                         self.runtime.clone(),
                                     );
                                     self.incoming.push_back(conn);
                                 }
-                                Some(DatagramEvent::ConnectionEvent(handle, event)) => {
+                                Some(DatagramEvent::ConnectionEvent(handle, datagram)) => {
                                     // Ignoring errors from dropped connections that haven't yet been cleaned up
                                     let _ = self
                                         .connections
                                         .senders
                                         .get_mut(&handle)
                                         .unwrap()
-                                        .send(ConnectionEvent::Proto(event));
+                                        .send(ConnectionEvent::Datagram(datagram));
                                 }
                                 Some(DatagramEvent::Response(t)) => {
                                     // Limiting the memory usage for items queued in the outgoing queue from endpoint
@@ -516,21 +524,10 @@ impl State {
         for _ in 0..IO_LOOP_BOUND {
             match self.events.poll_recv(cx) {
                 Poll::Ready(Some((ch, event))) => match event {
-                    Proto(e) => {
-                        if e.is_drained() {
-                            self.connections.senders.remove(&ch);
-                            if self.connections.is_empty() {
-                                shared.idle.notify_waiters();
-                            }
-                        }
-                        if let Some(event) = self.inner.handle_event(ch, e) {
-                            // Ignoring errors from dropped connections that haven't yet been cleaned up
-                            let _ = self
-                                .connections
-                                .senders
-                                .get_mut(&ch)
-                                .unwrap()
-                                .send(ConnectionEvent::Proto(event));
+                    Drained => {
+                        self.connections.senders.remove(&ch);
+                        if self.connections.is_empty() {
+                            shared.idle.notify_waiters();
                         }
                     }
                     Transmit(t) => {
@@ -597,6 +594,7 @@ impl ConnectionSet {
         handle: ConnectionHandle,
         conn: proto::Connection,
         udp_state: Arc<UdpState>,
+        endpoint: Arc<proto::Endpoint>,
         runtime: Arc<dyn Runtime>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
@@ -608,7 +606,15 @@ impl ConnectionSet {
             .unwrap();
         }
         self.senders.insert(handle, send);
-        Connecting::new(handle, conn, self.sender.clone(), recv, udp_state, runtime)
+        Connecting::new(
+            handle,
+            conn,
+            self.sender.clone(),
+            recv,
+            udp_state,
+            endpoint,
+            runtime,
+        )
     }
 
     fn is_empty(&self) -> bool {
@@ -681,11 +687,11 @@ impl EndpointRef {
             shared: Shared {
                 incoming: Notify::new(),
                 idle: Notify::new(),
+                inner: Arc::new(inner),
             },
             state: Mutex::new(State {
                 socket,
                 udp_state,
-                inner,
                 ipv6,
                 events,
                 outgoing: VecDeque::new(),

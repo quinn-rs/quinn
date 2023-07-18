@@ -4,12 +4,12 @@ use std::{
     fmt, iter,
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
-    sync::Arc,
+    sync::{Arc, Mutex, RwLock},
     time::{Instant, SystemTime},
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
+use rand::{Rng, RngCore};
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
@@ -23,10 +23,7 @@ use crate::{
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
-    shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner, IssuedCid,
-    },
+    shared::{ConnectionDatagram, ConnectionId, EcnCodepoint, IssuedCid},
     transport_parameters::TransportParameters,
     ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
     MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
@@ -37,12 +34,13 @@ use crate::{
 /// This object performs no I/O whatsoever. Instead, it consumes incoming packets and
 /// connection-generated events via `handle` and `handle_event`.
 pub struct Endpoint {
-    rng: StdRng,
-    index: ConnectionIndex,
-    connections: Slab<ConnectionMeta>,
+    index: RwLock<ConnectionIndex>,
+    /// Must be locked after `index` when locks overlap
+    connections: Mutex<Slab<ConnectionMeta>>,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig>,
-    server_config: Option<Arc<ServerConfig>>,
+    /// Must never be locked concurrently with other locks
+    server_config: RwLock<Option<Arc<ServerConfig>>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
 }
@@ -59,62 +57,54 @@ impl Endpoint {
         allow_mtud: bool,
     ) -> Self {
         Self {
-            rng: StdRng::from_entropy(),
-            index: ConnectionIndex::default(),
-            connections: Slab::new(),
+            index: RwLock::new(ConnectionIndex::default()),
+            connections: Mutex::new(Slab::new()),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
             config,
-            server_config,
+            server_config: RwLock::new(server_config),
             allow_mtud,
         }
     }
 
     /// Replace the server configuration, affecting new incoming connections only
-    pub fn set_server_config(&mut self, server_config: Option<Arc<ServerConfig>>) {
-        self.server_config = server_config;
+    pub fn set_server_config(&self, server_config: Option<Arc<ServerConfig>>) {
+        *self.server_config.write().unwrap() = server_config;
     }
 
-    /// Process `EndpointEvent`s emitted from related `Connection`s
-    ///
-    /// In turn, processing this event may return a `ConnectionEvent` for the same `Connection`.
-    pub fn handle_event(
-        &mut self,
+    pub(crate) fn handle_drained(&self, ch: ConnectionHandle) {
+        let conn = self.connections.lock().unwrap().remove(ch.0);
+        self.index.write().unwrap().remove(&conn);
+    }
+
+    pub(crate) fn set_reset_token(
+        &self,
         ch: ConnectionHandle,
-        event: EndpointEvent,
-    ) -> Option<ConnectionEvent> {
-        use EndpointEventInner::*;
-        match event.0 {
-            NeedIdentifiers(now, n) => {
-                return Some(self.send_new_identifiers(now, ch, n));
-            }
-            ResetToken(remote, token) => {
-                if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
-                    self.index.connection_reset_tokens.remove(old.0, old.1);
-                }
-                if self.index.connection_reset_tokens.insert(remote, token, ch) {
-                    warn!("duplicate reset token");
-                }
-            }
-            RetireConnectionId(now, seq, allow_more_cids) => {
-                if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
-                    trace!("peer retired CID {}: {}", seq, cid);
-                    self.index.retire(&cid);
-                    if allow_more_cids {
-                        return Some(self.send_new_identifiers(now, ch, 1));
-                    }
-                }
-            }
-            Drained => {
-                let conn = self.connections.remove(ch.0);
-                self.index.remove(&conn);
-            }
+        remote: SocketAddr,
+        token: ResetToken,
+    ) {
+        let old = self.connections.lock().unwrap()[ch]
+            .reset_token
+            .replace((remote, token));
+        let mut index = self.index.write().unwrap();
+        if let Some(old) = old {
+            index.connection_reset_tokens.remove(old.0, old.1);
         }
-        None
+        if index.connection_reset_tokens.insert(remote, token, ch) {
+            warn!("duplicate reset token");
+        }
+    }
+
+    pub(crate) fn retire_cid(&self, ch: ConnectionHandle, seq: u64) {
+        let cid = self.connections.lock().unwrap()[ch].loc_cids.remove(&seq);
+        if let Some(cid) = cid {
+            trace!("peer retired CID {}: {}", seq, cid);
+            self.index.write().unwrap().retire(&cid);
+        }
     }
 
     /// Process an incoming UDP datagram
     pub fn handle(
-        &mut self,
+        &self,
         now: Instant,
         remote: SocketAddr,
         local_ip: Option<IpAddr>,
@@ -134,7 +124,7 @@ impl Endpoint {
                 dst_cid,
                 version,
             }) => {
-                if self.server_config.is_none() {
+                if self.server_config.read().unwrap().is_none() {
                     debug!("dropping packet with unsupported version");
                     return None;
                 }
@@ -142,7 +132,7 @@ impl Endpoint {
                 // Negotiate versions
                 let mut buf = BytesMut::new();
                 Header::VersionNegotiate {
-                    random: self.rng.gen::<u8>() | 0x40,
+                    random: rand::thread_rng().gen::<u8>() | 0x40,
                     src_cid: dst_cid,
                     dst_cid: src_cid,
                 }
@@ -175,16 +165,16 @@ impl Endpoint {
         //
 
         let addresses = FourTuple { remote, local_ip };
-        if let Some(ch) = self.index.get(&addresses, &first_decode) {
+        if let Some(ch) = self.index.read().unwrap().get(&addresses, &first_decode) {
             return Some(DatagramEvent::ConnectionEvent(
                 ch,
-                ConnectionEvent(ConnectionEventInner::Datagram {
+                ConnectionDatagram {
                     now,
                     remote: addresses.remote,
                     ecn,
                     first_decode,
                     remaining,
-                }),
+                },
             ));
         }
 
@@ -193,8 +183,8 @@ impl Endpoint {
         //
 
         let dst_cid = first_decode.dst_cid();
-        let server_config = match &self.server_config {
-            Some(config) => config,
+        let server_config = match &*self.server_config.read().unwrap() {
+            Some(config) => config.clone(),
             None => {
                 debug!("packet for unrecognized connection {}", dst_cid);
                 return self
@@ -256,7 +246,7 @@ impl Endpoint {
     }
 
     fn stateless_reset(
-        &mut self,
+        &self,
         inciting_dgram_len: usize,
         addresses: FourTuple,
         dst_cid: &ConnectionId,
@@ -284,11 +274,11 @@ impl Endpoint {
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
             max_padding_len
         } else {
-            self.rng.gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
+            rand::thread_rng().gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
         };
         buf.reserve(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);
-        self.rng.fill_bytes(&mut buf[0..padding_len]);
+        rand::thread_rng().fill_bytes(&mut buf[0..padding_len]);
         buf[0] = 0b0100_0000 | buf[0] >> 2;
         buf.extend_from_slice(&ResetToken::new(&*self.config.reset_key, dst_cid));
 
@@ -305,7 +295,7 @@ impl Endpoint {
 
     /// Initiate a connection
     pub fn connect(
-        &mut self,
+        &self,
         config: ClientConfig,
         remote: SocketAddr,
         server_name: &str,
@@ -323,8 +313,10 @@ impl Endpoint {
         let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
 
-        let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(ch);
+        let mut index = self.index.write().unwrap();
+        let mut connections = self.connections.lock().unwrap();
+        let ch = ConnectionHandle(connections.vacant_key());
+        let loc_cid = new_cid(&*self.local_cid_generator, &mut index, ch);
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
@@ -336,34 +328,34 @@ impl Endpoint {
             .crypto
             .start_session(config.version, server_name, &params)?;
 
-        let conn = self.add_connection(
+        let addresses = FourTuple {
+            remote,
+            local_ip: None,
+        };
+        let (meta, conn) = self.make_connection(
             ch,
             config.version,
             remote_id,
             loc_cid,
             remote_id,
-            FourTuple {
-                remote,
-                local_ip: None,
-            },
+            addresses,
             Instant::now(),
             tls,
             None,
             config.transport,
         );
+        connections.insert(meta);
+        index.insert_conn(addresses, loc_cid, ch);
         Ok((ch, conn))
     }
 
-    fn send_new_identifiers(
-        &mut self,
-        now: Instant,
-        ch: ConnectionHandle,
-        num: u64,
-    ) -> ConnectionEvent {
-        let mut ids = vec![];
+    pub(crate) fn alloc_new_identifiers(&self, ch: ConnectionHandle, num: u64) -> Vec<IssuedCid> {
+        let mut ids = Vec::with_capacity(num as usize);
+        let mut index = self.index.write().unwrap();
+        let mut connections = self.connections.lock().unwrap();
         for _ in 0..num {
-            let id = self.new_cid(ch);
-            let meta = &mut self.connections[ch];
+            let id = new_cid(&*self.local_cid_generator, &mut index, ch);
+            let meta = &mut connections[ch];
             meta.cids_issued += 1;
             let sequence = meta.cids_issued;
             meta.loc_cids.insert(sequence, id);
@@ -373,23 +365,11 @@ impl Endpoint {
                 reset_token: ResetToken::new(&*self.config.reset_key, &id),
             });
         }
-        ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
-    }
-
-    /// Generate a connection ID for `ch`
-    fn new_cid(&mut self, ch: ConnectionHandle) -> ConnectionId {
-        loop {
-            let cid = self.local_cid_generator.generate_cid();
-            if let hash_map::Entry::Vacant(e) = self.index.connection_ids.entry(cid) {
-                e.insert(ch);
-                break cid;
-            }
-            assert!(self.local_cid_generator.cid_len() > 0);
-        }
+        ids
     }
 
     fn handle_first_packet(
-        &mut self,
+        &self,
         now: Instant,
         addresses: FourTuple,
         ecn: Option<EcnCodepoint>,
@@ -425,9 +405,10 @@ impl Endpoint {
             return None;
         }
 
-        let server_config = self.server_config.as_ref().unwrap().clone();
+        let server_config = self.server_config.read().unwrap().as_ref().unwrap().clone();
 
-        if self.connections.len() >= server_config.concurrent_connections as usize || self.is_full()
+        if self.connections.lock().unwrap().len() >= server_config.concurrent_connections as usize
+            || self.is_full()
         {
             debug!("refusing connection");
             return Some(DatagramEvent::Response(self.initial_close(
@@ -459,7 +440,7 @@ impl Endpoint {
             if token.is_empty() {
                 // First Initial
                 let mut random_bytes = vec![0u8; RetryToken::RANDOM_BYTES_LEN];
-                self.rng.fill_bytes(&mut random_bytes);
+                rand::thread_rng().fill_bytes(&mut random_bytes);
                 // The peer will use this as the DCID of its following Initials. Initial DCIDs are
                 // looked up separately from Handshake/Data DCIDs, so there is no risk of collision
                 // with established connections. In the unlikely event that a collision occurs
@@ -521,8 +502,11 @@ impl Endpoint {
             (None, dst_cid)
         };
 
-        let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(ch);
+        let mut index = self.index.write().unwrap();
+        let mut connections = self.connections.lock().unwrap();
+
+        let ch = ConnectionHandle(connections.vacant_key());
+        let loc_cid = new_cid(&*self.local_cid_generator, &mut index, ch);
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -536,7 +520,7 @@ impl Endpoint {
 
         let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
-        let mut conn = self.add_connection(
+        let (meta, mut conn) = self.make_connection(
             ch,
             version,
             dst_cid,
@@ -548,17 +532,30 @@ impl Endpoint {
             Some(server_config),
             transport_config,
         );
+        connections.insert(meta);
+        index.insert_conn(addresses, loc_cid, ch);
         if dst_cid.len() != 0 {
-            self.index.insert_initial(dst_cid, ch);
+            index.insert_initial(dst_cid, ch);
         }
-        match conn.handle_first_packet(now, addresses.remote, ecn, packet_number, packet, rest) {
+        drop((connections, index));
+
+        let result = conn.handle_first_packet(
+            now,
+            addresses.remote,
+            ecn,
+            packet_number,
+            packet,
+            rest,
+            self,
+        );
+        match result {
             Ok(()) => {
                 trace!(id = ch.0, icid = %dst_cid, "connection incoming");
                 Some(DatagramEvent::NewConnection(ch, conn))
             }
             Err(e) => {
                 debug!("handshake failed: {}", e);
-                self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
+                self.handle_drained(ch);
                 match e {
                     ConnectionError::TransportError(e) => Some(DatagramEvent::Response(
                         self.initial_close(version, addresses, crypto, &src_cid, e),
@@ -569,8 +566,8 @@ impl Endpoint {
         }
     }
 
-    fn add_connection(
-        &mut self,
+    fn make_connection(
+        &self,
         ch: ConnectionHandle,
         version: u32,
         init_cid: ConnectionId,
@@ -581,8 +578,9 @@ impl Endpoint {
         tls: Box<dyn crypto::Session>,
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
-    ) -> Connection {
+    ) -> (ConnectionMeta, Connection) {
         let conn = Connection::new(
+            ch,
             self.config.clone(),
             server_config,
             transport_config,
@@ -598,22 +596,19 @@ impl Endpoint {
             self.allow_mtud,
         );
 
-        let id = self.connections.insert(ConnectionMeta {
+        let meta = ConnectionMeta {
             init_cid,
             cids_issued: 0,
             loc_cids: iter::once((0, loc_cid)).collect(),
             addresses,
             reset_token: None,
-        });
-        debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
+        };
 
-        self.index.insert_conn(addresses, loc_cid, ch);
-
-        conn
+        (meta, conn)
     }
 
     fn initial_close(
-        &mut self,
+        &self,
         version: u32,
         addresses: FourTuple,
         crypto: &Keys,
@@ -672,18 +667,19 @@ impl Endpoint {
 
     #[cfg(test)]
     pub(crate) fn known_connections(&self) -> usize {
-        let x = self.connections.len();
-        debug_assert_eq!(x, self.index.connection_ids_initial.len());
+        let x = self.connections.lock().unwrap().len();
+        let index = self.index.read().unwrap();
+        debug_assert_eq!(x, index.connection_ids_initial.len());
         // Not all connections have known reset tokens
-        debug_assert!(x >= self.index.connection_reset_tokens.0.len());
+        debug_assert!(x >= index.connection_reset_tokens.0.len());
         // Not all connections have unique remotes, and 0-length CIDs might not be in use.
-        debug_assert!(x >= self.index.connection_remotes.len());
+        debug_assert!(x >= index.connection_remotes.len());
         x
     }
 
     #[cfg(test)]
     pub(crate) fn known_cids(&self) -> usize {
-        self.index.connection_ids.len()
+        self.index.read().unwrap().connection_ids.len()
     }
 
     /// Whether we've used up 3/4 of the available CID space
@@ -694,7 +690,7 @@ impl Endpoint {
         self.local_cid_generator.cid_len() <= 4
             && self.local_cid_generator.cid_len() != 0
             && (2usize.pow(self.local_cid_generator.cid_len() as u32 * 8)
-                - self.index.connection_ids.len())
+                - self.index.read().unwrap().connection_ids.len())
                 < 2usize.pow(self.local_cid_generator.cid_len() as u32 * 8 - 2)
     }
 }
@@ -702,12 +698,28 @@ impl Endpoint {
 impl fmt::Debug for Endpoint {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("Endpoint")
-            .field("rng", &self.rng)
             .field("index", &self.index)
             .field("connections", &self.connections)
             .field("config", &self.config)
             .field("server_config", &self.server_config)
             .finish()
+    }
+}
+
+// Standalone method for use with split borrows of `Endpoint`
+/// Generate a connection ID for `ch` if specified
+fn new_cid(
+    generator: &dyn ConnectionIdGenerator,
+    index: &mut ConnectionIndex,
+    ch: ConnectionHandle,
+) -> ConnectionId {
+    loop {
+        let cid = generator.generate_cid();
+        if let hash_map::Entry::Vacant(e) = index.connection_ids.entry(cid) {
+            e.insert(ch);
+            break cid;
+        }
+        assert!(generator.cid_len() > 0);
     }
 }
 
@@ -846,7 +858,7 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
 #[allow(clippy::large_enum_variant)] // Not passed around extensively
 pub enum DatagramEvent {
     /// The datagram is redirected to its `Connection`
-    ConnectionEvent(ConnectionHandle, ConnectionEvent),
+    ConnectionEvent(ConnectionHandle, ConnectionDatagram),
     /// The datagram has resulted in starting a new `Connection`
     NewConnection(ConnectionHandle, Connection),
     /// Response generated directly by the endpoint
