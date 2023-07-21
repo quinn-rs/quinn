@@ -20,7 +20,7 @@ use proto::{
 };
 use rustc_hash::FxHashMap;
 use tokio::sync::{futures::Notified, mpsc, Notify};
-use udp::{RecvMeta, UdpState, BATCH_SIZE};
+use udp::{RecvMeta, BATCH_SIZE};
 
 use crate::{
     connection::Connecting, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
@@ -102,7 +102,7 @@ impl Endpoint {
     pub fn new_with_abstract_socket(
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
-        socket: Box<dyn AsyncUdpSocket>,
+        socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> io::Result<Self> {
         let addr = socket.local_addr()?;
@@ -183,10 +183,10 @@ impl Endpoint {
             addr
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
-        let udp_state = endpoint.udp_state.clone();
+        let socket = endpoint.socket.clone();
         Ok(endpoint
             .connections
-            .insert(ch, conn, udp_state, self.runtime.clone()))
+            .insert(ch, conn, socket, self.runtime.clone()))
     }
 
     /// Switch to a new UDP socket
@@ -355,8 +355,7 @@ pub(crate) struct EndpointInner {
 
 #[derive(Debug)]
 pub(crate) struct State {
-    socket: Box<dyn AsyncUdpSocket>,
-    udp_state: Arc<UdpState>,
+    socket: Arc<dyn AsyncUdpSocket>,
     inner: proto::Endpoint,
     outgoing: VecDeque<udp::Transmit>,
     incoming: VecDeque<Connecting>,
@@ -415,7 +414,7 @@ impl State {
                                     let conn = self.connections.insert(
                                         handle,
                                         conn,
-                                        self.udp_state.clone(),
+                                        self.socket.clone(),
                                         self.runtime.clone(),
                                     );
                                     self.incoming.push_back(conn);
@@ -483,10 +482,7 @@ impl State {
                 break Ok(true);
             }
 
-            match self
-                .socket
-                .poll_send(&self.udp_state, cx, self.outgoing.as_slices().0)
-            {
+            match self.socket.poll_send(cx, self.outgoing.as_slices().0) {
                 Poll::Ready(Ok(n)) => {
                     let contents_len: usize =
                         self.outgoing.drain(..n).map(|t| t.contents.len()).sum();
@@ -596,7 +592,7 @@ impl ConnectionSet {
         &mut self,
         handle: ConnectionHandle,
         conn: proto::Connection,
-        udp_state: Arc<UdpState>,
+        socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
@@ -608,7 +604,7 @@ impl ConnectionSet {
             .unwrap();
         }
         self.senders.insert(handle, send);
-        Connecting::new(handle, conn, self.sender.clone(), recv, udp_state, runtime)
+        Connecting::new(handle, conn, self.sender.clone(), recv, socket, runtime)
     }
 
     fn is_empty(&self) -> bool {
@@ -664,16 +660,15 @@ pub(crate) struct EndpointRef(Arc<EndpointInner>);
 
 impl EndpointRef {
     pub(crate) fn new(
-        socket: Box<dyn AsyncUdpSocket>,
+        socket: Arc<dyn AsyncUdpSocket>,
         inner: proto::Endpoint,
         ipv6: bool,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
-        let udp_state = Arc::new(UdpState::new());
         let recv_buf = vec![
             0;
             inner.config().get_max_udp_payload_size().min(64 * 1024) as usize
-                * udp_state.gro_segments()
+                * socket.max_receive_segments()
                 * BATCH_SIZE
         ];
         let (sender, events) = mpsc::unbounded_channel();
@@ -684,7 +679,6 @@ impl EndpointRef {
             },
             state: Mutex::new(State {
                 socket,
-                udp_state,
                 inner,
                 ipv6,
                 events,

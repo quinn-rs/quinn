@@ -9,7 +9,7 @@ use std::{
     time::Instant,
 };
 
-use udp::{RecvMeta, Transmit, UdpState};
+use udp::{RecvMeta, Transmit};
 
 /// Abstracts I/O and timer operations for runtime independence
 pub trait Runtime: Send + Sync + Debug + 'static {
@@ -18,7 +18,7 @@ pub trait Runtime: Send + Sync + Debug + 'static {
     /// Drive `future` to completion in the background
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
     /// Convert `t` into the socket type used by this runtime
-    fn wrap_udp_socket(&self, t: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>>;
+    fn wrap_udp_socket(&self, t: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>>;
 }
 
 /// Abstract implementation of an async timer for runtime independence
@@ -30,15 +30,11 @@ pub trait AsyncTimer: Send + Debug + 'static {
 }
 
 /// Abstract implementation of a UDP socket for runtime independence
-pub trait AsyncUdpSocket: Send + Debug + 'static {
+pub trait AsyncUdpSocket: Send + Sync + Debug + 'static {
     /// Send UDP datagrams from `transmits`, or register to be woken if sending may succeed in the
     /// future
-    fn poll_send(
-        &self,
-        state: &UdpState,
-        cx: &mut Context,
-        transmits: &[Transmit],
-    ) -> Poll<Result<usize, io::Error>>;
+    fn poll_send(&self, cx: &mut Context, transmits: &[Transmit])
+        -> Poll<Result<usize, io::Error>>;
 
     /// Receive UDP datagrams, or register to be woken if receiving may succeed in the future
     fn poll_recv(
@@ -50,6 +46,16 @@ pub trait AsyncUdpSocket: Send + Debug + 'static {
 
     /// Look up the local IP address and port used by this socket
     fn local_addr(&self) -> io::Result<SocketAddr>;
+
+    /// Maximum number of datagrams that a [`Transmit`] may encode
+    fn max_transmit_segments(&self) -> usize {
+        1
+    }
+
+    /// Maximum number of datagrams that might be described by a single [`RecvMeta`]
+    fn max_receive_segments(&self) -> usize {
+        1
+    }
 
     /// Whether datagrams might get fragmented into multiple parts
     ///

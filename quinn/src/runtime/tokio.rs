@@ -2,6 +2,7 @@ use std::{
     future::Future,
     io,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
     time::Instant,
 };
@@ -26,10 +27,11 @@ impl Runtime for TokioRuntime {
         tokio::spawn(future);
     }
 
-    fn wrap_udp_socket(&self, sock: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
+    fn wrap_udp_socket(&self, sock: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>> {
         udp::UdpSocketState::configure((&sock).into())?;
-        Ok(Box::new(UdpSocket {
+        Ok(Arc::new(UdpSocket {
             io: tokio::net::UdpSocket::from_std(sock)?,
+            state: udp::UdpState::new(),
             inner: udp::UdpSocketState::new(),
         }))
     }
@@ -47,22 +49,18 @@ impl AsyncTimer for Sleep {
 #[derive(Debug)]
 struct UdpSocket {
     io: tokio::net::UdpSocket,
+    state: udp::UdpState,
     inner: udp::UdpSocketState,
 }
 
 impl AsyncUdpSocket for UdpSocket {
-    fn poll_send(
-        &self,
-        state: &udp::UdpState,
-        cx: &mut Context,
-        transmits: &[udp::Transmit],
-    ) -> Poll<io::Result<usize>> {
+    fn poll_send(&self, cx: &mut Context, transmits: &[udp::Transmit]) -> Poll<io::Result<usize>> {
         let inner = &self.inner;
         let io = &self.io;
         loop {
             ready!(io.poll_send_ready(cx))?;
             if let Ok(res) = io.try_io(Interest::WRITABLE, || {
-                inner.send(io.into(), state, transmits)
+                inner.send(io.into(), &self.state, transmits)
             }) {
                 return Poll::Ready(Ok(res));
             }
@@ -91,5 +89,13 @@ impl AsyncUdpSocket for UdpSocket {
 
     fn may_fragment(&self) -> bool {
         udp::may_fragment()
+    }
+
+    fn max_transmit_segments(&self) -> usize {
+        self.state.max_gso_segments()
+    }
+
+    fn max_receive_segments(&self) -> usize {
+        self.state.gro_segments()
     }
 }
