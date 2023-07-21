@@ -384,20 +384,20 @@ pub(crate) struct Shared {
 impl State {
     fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
         self.recv_limiter.start_cycle();
+        let recv_count = recv_datagram_count(&self.udp_state) / self.udp_state.gro_segments();
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
-        let mut iovs = MaybeUninit::<[IoSliceMut<'a>; BATCH_SIZE]>::uninit();
+        let mut iovs = std::array::from_fn::<MaybeUninit<IoSliceMut<'a>>, BATCH_SIZE, _>(|_| {
+            MaybeUninit::uninit()
+        });
         self.recv_buf
-            .chunks_mut(self.recv_buf.len() / BATCH_SIZE)
+            .chunks_mut(self.recv_buf.len() / recv_count)
             .enumerate()
-            .for_each(|(i, buf)| unsafe {
-                iovs.as_mut_ptr()
-                    .cast::<IoSliceMut>()
-                    .add(i)
-                    .write(IoSliceMut::<'a>::new(buf));
+            .for_each(|(i, buf)| {
+                iovs[i].write(IoSliceMut::<'a>::new(buf));
             });
-        let mut iovs = unsafe { iovs.assume_init() };
+        let iovs = unsafe { slice_assume_init_mut(&mut iovs[..recv_count]) };
         loop {
-            match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
+            match self.socket.poll_recv(cx, iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
                     self.recv_limiter.record_work(msgs);
                     for (meta, buf) in metas.iter().zip(iovs.iter()).take(msgs) {
@@ -552,6 +552,12 @@ impl State {
     }
 }
 
+// TODO: Remove once feature maybe_uninit_slice (https://github.com/rust-lang/rust/issues/63569)
+// stabilizes
+unsafe fn slice_assume_init_mut<T>(x: &mut [MaybeUninit<T>]) -> &mut [T] {
+    std::slice::from_raw_parts_mut(x.as_mut_ptr().cast(), x.len())
+}
+
 #[inline]
 fn udp_transmit(t: proto::Transmit) -> udp::Transmit {
     udp::Transmit {
@@ -673,8 +679,7 @@ impl EndpointRef {
         let recv_buf = vec![
             0;
             inner.config().get_max_udp_payload_size().min(64 * 1024) as usize
-                * udp_state.gro_segments()
-                * BATCH_SIZE
+                * recv_datagram_count(&udp_state)
         ];
         let (sender, events) = mpsc::unbounded_channel();
         Self(Arc::new(EndpointInner {
@@ -736,4 +741,11 @@ impl std::ops::Deref for EndpointRef {
     fn deref(&self) -> &Self::Target {
         &self.0
     }
+}
+
+/// Number of datagrams to allocate space for per recv
+fn recv_datagram_count(udp: &UdpState) -> usize {
+    // We must receive in multiples of a GRO batch to avoid datagram truncation, and we want to
+    // accept at least `BATCH_SIZE` packets per receive.
+    usize::max(1, BATCH_SIZE / udp.gro_segments()) * udp.gro_segments()
 }
