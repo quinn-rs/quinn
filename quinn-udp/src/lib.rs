@@ -78,6 +78,15 @@ impl UdpState {
         self.max_gso_segments.load(Ordering::Relaxed)
     }
 
+    /// Disables GSO, if your platform looks to support it but in reality doesn't.
+    pub fn disable_gso(&self) {
+        self.max_gso_segments.store(1, Ordering::SeqCst);
+    }
+    /// Disables GRO, if your platform looks to support it but in reality doesn't.
+    pub fn disable_gro(&mut self) {
+        self.gro_segments = 1;
+    }
+
     /// The number of segments to read when GRO is enabled. Used as a factor to
     /// compute the receive buffer size.
     ///
@@ -90,14 +99,14 @@ impl UdpState {
     /// Returns true if we previously got an EINVAL error from `sendmsg` or `sendmmsg` syscall.
     #[inline]
     #[cfg(not(windows))]
-    fn sendmsg_einval(&self) -> bool {
+    pub fn sendmsg_einval(&self) -> bool {
         self.sendmsg_einval.load(Ordering::Relaxed)
     }
 
     /// Sets the flag indicating we got EINVAL error from `sendmsg` or `sendmmsg` syscall.
     #[inline]
     #[cfg(all(unix, not(any(target_os = "macos", target_os = "ios"))))]
-    fn set_sendmsg_einval(&self) {
+    pub fn set_sendmsg_einval(&self) {
         self.sendmsg_einval.store(true, Ordering::Relaxed)
     }
 }

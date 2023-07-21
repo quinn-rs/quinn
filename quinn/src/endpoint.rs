@@ -105,6 +105,26 @@ impl Endpoint {
         socket: Box<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> io::Result<Self> {
+        Self::new_with_abstract_socket_and_udp_state(
+            config,
+            server_config,
+            socket,
+            runtime,
+            UdpState::new(),
+        )
+    }
+
+    /// Construct an endpoint with arbitrary configuration, pre-constructed abstract socket, and a
+    /// custom [`UdpState`].
+    ///
+    /// Useful when you want to set the capabilities of the system.
+    pub fn new_with_abstract_socket_and_udp_state(
+        config: EndpointConfig,
+        server_config: Option<ServerConfig>,
+        socket: Box<dyn AsyncUdpSocket>,
+        runtime: Arc<dyn Runtime>,
+        udp_state: UdpState,
+    ) -> io::Result<Self> {
         let addr = socket.local_addr()?;
         let allow_mtud = !socket.may_fragment();
         let rc = EndpointRef::new(
@@ -112,6 +132,7 @@ impl Endpoint {
             proto::Endpoint::new(Arc::new(config), server_config.map(Arc::new), allow_mtud),
             addr.is_ipv6(),
             runtime.clone(),
+            udp_state,
         );
         let driver = EndpointDriver(rc.clone());
         runtime.spawn(Box::pin(async {
@@ -668,8 +689,9 @@ impl EndpointRef {
         inner: proto::Endpoint,
         ipv6: bool,
         runtime: Arc<dyn Runtime>,
+        udp_state: UdpState,
     ) -> Self {
-        let udp_state = Arc::new(UdpState::new());
+        let udp_state = Arc::new(udp_state);
         let recv_buf = vec![
             0;
             inner.config().get_max_udp_payload_size().min(64 * 1024) as usize
