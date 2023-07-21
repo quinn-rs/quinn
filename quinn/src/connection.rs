@@ -9,7 +9,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::runtime::{AsyncTimer, Runtime};
+use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime};
 use bytes::Bytes;
 use pin_project_lite::pin_project;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
@@ -17,7 +17,6 @@ use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{futures::Notified, mpsc, oneshot, Notify};
 use tracing::debug_span;
-use udp::UdpState;
 
 use crate::{
     mutex::Mutex,
@@ -42,7 +41,7 @@ impl Connecting {
         conn: proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
-        udp_state: Arc<UdpState>,
+        socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
@@ -54,7 +53,7 @@ impl Connecting {
             conn_events,
             on_handshake_data_send,
             on_connected_send,
-            udp_state,
+            socket,
             runtime.clone(),
         );
 
@@ -747,7 +746,7 @@ impl ConnectionRef {
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         on_handshake_data: oneshot::Sender<()>,
         on_connected: oneshot::Sender<bool>,
-        udp_state: Arc<UdpState>,
+        socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
         Self(Arc::new(ConnectionInner {
@@ -768,7 +767,7 @@ impl ConnectionRef {
                 stopped: FxHashMap::default(),
                 error: None,
                 ref_count: 0,
-                udp_state,
+                socket,
                 runtime,
             }),
             shared: Shared::default(),
@@ -846,7 +845,7 @@ pub(crate) struct State {
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
-    udp_state: Arc<UdpState>,
+    socket: Arc<dyn AsyncUdpSocket>,
     runtime: Arc<dyn Runtime>,
 }
 
@@ -855,7 +854,7 @@ impl State {
         let now = Instant::now();
         let mut transmits = 0;
 
-        let max_datagrams = self.udp_state.max_gso_segments();
+        let max_datagrams = self.socket.max_transmit_segments();
 
         while let Some(t) = self.inner.poll_transmit(now, max_datagrams) {
             transmits += match t.segment_size {
