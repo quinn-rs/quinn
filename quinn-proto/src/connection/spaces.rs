@@ -6,12 +6,14 @@ use std::{
     time::{Duration, Instant},
 };
 
+use rand::Rng;
 use rustc_hash::FxHashSet;
+use tracing::trace;
 
 use super::assembler::Assembler;
 use crate::{
     connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
-    shared::IssuedCid, Dir, StreamId, VarInt,
+    shared::IssuedCid, Dir, StreamId, TransportError, VarInt,
 };
 
 pub(super) struct PacketSpace {
@@ -25,7 +27,8 @@ pub(super) struct PacketSpace {
     /// Packet numbers to acknowledge
     pub(super) pending_acks: PendingAcks,
 
-    /// The packet number of the next packet that will be sent, if any.
+    /// The packet number of the next packet that will be sent, if any. In the Data space, the
+    /// packet number stored here is sometimes skipped by [`PacketNumberFilter`] logic.
     pub(super) next_packet_number: u64,
     /// The largest packet number the remote peer acknowledged in an ACK frame.
     pub(super) largest_acked_packet: Option<u64>,
@@ -130,6 +133,10 @@ impl PacketSpace {
         self.ping_pending = true;
     }
 
+    /// Get the next outgoing packet number in this space
+    ///
+    /// In the Data space, the connection's [`PacketNumberFilter`] must be used rather than calling
+    /// this directly.
     pub(super) fn get_tx_number(&mut self) -> u64 {
         // TODO: Handle packet number overflow gracefully
         assert!(self.next_packet_number < 2u64.pow(62));
@@ -473,6 +480,87 @@ impl PendingAcks {
     /// Returns the set of currently pending ACK ranges
     pub(super) fn ranges(&self) -> &ArrayRangeSet {
         &self.ranges
+    }
+}
+
+/// Helper for mitigating [optimistic ACK attacks]
+///
+/// A malicious peer could prompt the local application to begin a large data transfer, and then
+/// send ACKs without first waiting for data to be received. This could defeat congestion control,
+/// allowing the connection to consume disproportionate resources. We therefore occasionally skip
+/// packet numbers, and classify any ACK referencing a skipped packet number as a transport error.
+///
+/// Skipped packet numbers occur only in the application data space (where costly transfers might
+/// take place) and are distributed exponentially to reflect the reduced likelihood and impact of
+/// bad behavior from a peer that has been well-behaved for an extended period.
+///
+/// ACKs for packet numbers that have not yet been allocated are also a transport error, but an
+/// attacker with knowledge of the congestion control algorithm in use could time falsified ACKs to
+/// arrive after the packets they reference are sent.
+///
+/// [optimistic ACK attacks]: https://www.rfc-editor.org/rfc/rfc9000.html#name-optimistic-ack-attack
+pub(super) struct PacketNumberFilter {
+    /// Next outgoing packet number to skip
+    next_skipped_packet_number: u64,
+    /// Most recently skipped packet number
+    prev_skipped_packet_number: Option<u64>,
+    /// Next packet number to skip is randomly selected from 2^n..2^n+1
+    exponent: u32,
+}
+
+impl PacketNumberFilter {
+    pub(super) fn new(rng: &mut (impl Rng + ?Sized)) -> Self {
+        // First skipped PN is in 0..64
+        let exponent = 6;
+        Self {
+            next_skipped_packet_number: rng.gen_range(0..2u64.saturating_pow(exponent)),
+            prev_skipped_packet_number: None,
+            exponent,
+        }
+    }
+
+    pub(super) fn peek(&self, space: &PacketSpace) -> u64 {
+        let n = space.next_packet_number;
+        if n != self.next_skipped_packet_number {
+            return n;
+        }
+        n + 1
+    }
+
+    pub(super) fn allocate(
+        &mut self,
+        rng: &mut (impl Rng + ?Sized),
+        space: &mut PacketSpace,
+    ) -> u64 {
+        let n = space.get_tx_number();
+        if n != self.next_skipped_packet_number {
+            return n;
+        }
+
+        trace!("skipping pn {n}");
+        // Skip this packet number, and choose the next one to skip
+        self.prev_skipped_packet_number = Some(self.next_skipped_packet_number);
+        let next_exponent = self.exponent.saturating_add(1);
+        self.next_skipped_packet_number =
+            rng.gen_range(2u64.saturating_pow(self.exponent)..2u64.saturating_pow(next_exponent));
+        self.exponent = next_exponent;
+
+        space.get_tx_number()
+    }
+
+    pub(super) fn check_ack(
+        &self,
+        space_id: SpaceId,
+        range: std::ops::RangeInclusive<u64>,
+    ) -> Result<(), TransportError> {
+        if space_id == SpaceId::Data
+            && self
+                .prev_skipped_packet_number
+                .map_or(false, |x| range.contains(&x))
+        {
+            return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
+        }
+        Ok(())
     }
 }
 
