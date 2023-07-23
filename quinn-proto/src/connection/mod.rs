@@ -67,7 +67,7 @@ mod spaces;
 pub use spaces::Retransmits;
 #[cfg(not(fuzzing))]
 use spaces::Retransmits;
-use spaces::{PacketSpace, SendableFrames, SentPacket, ThinRetransmits};
+use spaces::{PacketNumberFilter, PacketSpace, SendableFrames, SentPacket, ThinRetransmits};
 
 mod stats;
 pub use stats::{ConnectionStats, FrameStats, PathStats, UdpStats};
@@ -191,6 +191,8 @@ pub struct Connection {
     /// Sent in every outgoing Initial packet. Always empty for servers and after Initial keys are
     /// discarded.
     retry_token: Bytes,
+    /// Identifies Data-space packet numbers to skip. Not used in earlier spaces.
+    packet_number_filter: PacketNumberFilter,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -324,6 +326,7 @@ impl Connection {
             authentication_failures: 0,
             error: None,
             retry_token: Bytes::new(),
+            packet_number_filter: PacketNumberFilter::new(&mut rng),
 
             path_response: None,
             close: false,
@@ -847,7 +850,7 @@ impl Connection {
             let probe_size = match self
                 .path
                 .mtud
-                .poll_transmit(now, self.spaces[space_id].next_packet_number)
+                .poll_transmit(now, self.packet_number_filter.peek(&self.spaces[space_id]))
             {
                 Some(next_probe_size) => next_probe_size,
                 None => return None,
@@ -1300,6 +1303,7 @@ impl Connection {
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
         let mut newly_acked = ArrayRangeSet::new();
         for range in ack.iter() {
+            self.packet_number_filter.check_ack(space, range.clone())?;
             for (&pn, _) in self.spaces[space].sent_packets.range(range) {
                 newly_acked.insert_one(pn);
             }

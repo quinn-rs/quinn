@@ -76,7 +76,10 @@ impl PacketBuilder {
         let space = &mut conn.spaces[space_id];
 
         space.loss_probes = space.loss_probes.saturating_sub(1);
-        let exact_number = space.get_tx_number();
+        let exact_number = match space_id {
+            SpaceId::Data => conn.packet_number_filter.allocate(&mut conn.rng, space),
+            _ => space.get_tx_number(),
+        };
 
         let span = trace_span!("send", space = ?space_id, pn = exact_number);
         span.with_subscriber(|(id, dispatch)| dispatch.enter(id));
