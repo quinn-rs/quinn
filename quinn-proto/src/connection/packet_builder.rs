@@ -40,33 +40,37 @@ impl PacketBuilder {
         version: u32,
     ) -> Option<Self> {
         // Initiate key update if we're approaching the confidentiality limit
-        let confidentiality_limit = conn.spaces[space_id]
-            .crypto
-            .as_ref()
-            .map_or_else(
-                || &conn.zero_rtt_crypto.as_ref().unwrap().packet,
-                |keys| &keys.packet.local,
-            )
-            .confidentiality_limit();
         let sent_with_keys = conn.spaces[space_id].sent_with_keys;
         if space_id == SpaceId::Data {
-            if sent_with_keys.saturating_add(KEY_UPDATE_MARGIN) >= confidentiality_limit {
+            if sent_with_keys >= conn.key_phase_size {
                 conn.initiate_key_update();
             }
-        } else if sent_with_keys.saturating_add(1) == confidentiality_limit {
-            // We still have time to attempt a graceful close
-            conn.close_inner(
-                now,
-                Close::Connection(frame::ConnectionClose {
-                    error_code: TransportErrorCode::AEAD_LIMIT_REACHED,
-                    frame_type: None,
-                    reason: Bytes::from_static(b"confidentiality limit reached"),
-                }),
-            )
-        } else if sent_with_keys > confidentiality_limit {
-            // Confidentiality limited violated and there's nothing we can do
-            conn.kill(TransportError::AEAD_LIMIT_REACHED("confidentiality limit reached").into());
-            return None;
+        } else {
+            let confidentiality_limit = conn.spaces[space_id]
+                .crypto
+                .as_ref()
+                .map_or_else(
+                    || &conn.zero_rtt_crypto.as_ref().unwrap().packet,
+                    |keys| &keys.packet.local,
+                )
+                .confidentiality_limit();
+            if sent_with_keys.saturating_add(1) == confidentiality_limit {
+                // We still have time to attempt a graceful close
+                conn.close_inner(
+                    now,
+                    Close::Connection(frame::ConnectionClose {
+                        error_code: TransportErrorCode::AEAD_LIMIT_REACHED,
+                        frame_type: None,
+                        reason: Bytes::from_static(b"confidentiality limit reached"),
+                    }),
+                )
+            } else if sent_with_keys > confidentiality_limit {
+                // Confidentiality limited violated and there's nothing we can do
+                conn.kill(
+                    TransportError::AEAD_LIMIT_REACHED("confidentiality limit reached").into(),
+                );
+                return None;
+            }
         }
 
         let space = &mut conn.spaces[space_id];
@@ -247,8 +251,3 @@ impl PacketBuilder {
         (buffer.len() - encode_start, pad)
     }
 }
-
-/// Perform key updates this many packets before the AEAD confidentiality limit.
-///
-/// Chosen arbitrarily, intended to be large enough to prevent spurious connection loss.
-const KEY_UPDATE_MARGIN: u64 = 10000;
