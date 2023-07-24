@@ -567,7 +567,7 @@ impl EndpointConfig {
             || Box::<RandomConnectionIdGenerator>::default();
         Self {
             reset_key,
-            max_udp_payload_size: MAX_UDP_PAYLOAD.into(), // See RFC 9000 (https://www.rfc-editor.org/rfc/rfc9000.html#section-18.2-4.10.1)
+            max_udp_payload_size: (1500u32 - 28).into(), // Ethernet MTU minus IP + UDP headers
             connection_id_generator_factory: Arc::new(cid_factory),
             supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
             grease_quic_bit: true,
@@ -603,7 +603,10 @@ impl EndpointConfig {
     ///
     /// Must be greater or equal than 1200.
     ///
-    /// Defaults to 65527, which is the maximum permitted UDP payload.
+    /// Defaults to 1472, which is the largest UDP payload that can be transmitted in the typical
+    /// 1500 byte Ethernet MTU. Deployments on links with larger MTUs (e.g. loopback or Ethernet
+    /// with jumbo frames) can raise this to improve performance at the cost of a linear increase in
+    /// datagram receive buffer size.
     pub fn max_udp_payload_size(&mut self, value: u16) -> Result<&mut Self, ConfigError> {
         if !(1200..=65_527).contains(&value) {
             return Err(ConfigError::OutOfBounds);
