@@ -28,7 +28,6 @@ impl Runtime for AsyncStdRuntime {
         udp::UdpSocketState::configure((&sock).into())?;
         Ok(Arc::new(UdpSocket {
             io: Async::new(sock)?,
-            state: udp::UdpState::new(),
             inner: udp::UdpSocketState::new(),
         }))
     }
@@ -47,7 +46,6 @@ impl AsyncTimer for Timer {
 #[derive(Debug)]
 struct UdpSocket {
     io: Async<std::net::UdpSocket>,
-    state: udp::UdpState,
     inner: udp::UdpSocketState,
 }
 
@@ -55,7 +53,7 @@ impl AsyncUdpSocket for UdpSocket {
     fn poll_send(&self, cx: &mut Context, transmits: &[udp::Transmit]) -> Poll<io::Result<usize>> {
         loop {
             ready!(self.io.poll_writable(cx))?;
-            if let Ok(res) = self.inner.send((&self.io).into(), &self.state, transmits) {
+            if let Ok(res) = self.inner.send((&self.io).into(), transmits) {
                 return Poll::Ready(Ok(res));
             }
         }
@@ -84,10 +82,10 @@ impl AsyncUdpSocket for UdpSocket {
     }
 
     fn max_transmit_segments(&self) -> usize {
-        self.state.max_gso_segments()
+        self.inner.max_gso_segments()
     }
 
     fn max_receive_segments(&self) -> usize {
-        self.state.gro_segments()
+        self.inner.gro_segments()
     }
 }

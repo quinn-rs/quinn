@@ -7,7 +7,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
     sync::{
-        atomic::{AtomicBool, AtomicUsize},
+        atomic::{AtomicBool, AtomicUsize, Ordering},
         Mutex,
     },
     time::Instant,
@@ -16,8 +16,7 @@ use std::{
 use socket2::SockRef;
 
 use super::{
-    cmsg, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, UdpState,
-    IO_ERROR_LOG_INTERVAL,
+    cmsg, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
 };
 
 #[cfg(target_os = "freebsd")]
@@ -32,6 +31,15 @@ type IpTosTy = libc::c_int;
 #[derive(Debug)]
 pub struct UdpSocketState {
     last_send_error: Mutex<Instant>,
+    max_gso_segments: AtomicUsize,
+    gro_segments: usize,
+
+    /// True if we have received EINVAL error from `sendmsg` or `sendmmsg` system call at least once.
+    ///
+    /// If enabled, we assume that old kernel is used and switch to fallback mode.
+    /// In particular, we do not use IP_TOS cmsg_type in this case,
+    /// which is not supported on Linux <3.13 and results in not sending the UDP packet at all.
+    sendmsg_einval: AtomicBool,
 }
 
 impl UdpSocketState {
@@ -39,6 +47,9 @@ impl UdpSocketState {
         let now = Instant::now();
         Self {
             last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
+            max_gso_segments: AtomicUsize::new(gso::max_gso_segments()),
+            gro_segments: gro::gro_segments(),
+            sendmsg_einval: AtomicBool::new(false),
         }
     }
 
@@ -46,13 +57,8 @@ impl UdpSocketState {
         init(sock.0)
     }
 
-    pub fn send(
-        &self,
-        socket: UdpSockRef<'_>,
-        state: &UdpState,
-        transmits: &[Transmit],
-    ) -> Result<usize, io::Error> {
-        send(state, socket.0, &self.last_send_error, transmits)
+    pub fn send(&self, socket: UdpSockRef<'_>, transmits: &[Transmit]) -> Result<usize, io::Error> {
+        send(self, socket.0, transmits)
     }
 
     pub fn recv(
@@ -62,6 +68,36 @@ impl UdpSocketState {
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
         recv(socket.0, bufs, meta)
+    }
+
+    /// The maximum amount of segments which can be transmitted if a platform
+    /// supports Generic Send Offload (GSO).
+    ///
+    /// This is 1 if the platform doesn't support GSO. Subject to change if errors are detected
+    /// while using GSO.
+    #[inline]
+    pub fn max_gso_segments(&self) -> usize {
+        self.max_gso_segments.load(Ordering::Relaxed)
+    }
+
+    /// The number of segments to read when GRO is enabled. Used as a factor to
+    /// compute the receive buffer size.
+    ///
+    /// Returns 1 if the platform doesn't support GRO.
+    #[inline]
+    pub fn gro_segments(&self) -> usize {
+        self.gro_segments
+    }
+
+    /// Returns true if we previously got an EINVAL error from `sendmsg` or `sendmmsg` syscall.
+    fn sendmsg_einval(&self) -> bool {
+        self.sendmsg_einval.load(Ordering::Relaxed)
+    }
+
+    /// Sets the flag indicating we got EINVAL error from `sendmsg` or `sendmmsg` syscall.
+    #[cfg(not(any(target_os = "macos", target_os = "ios")))]
+    fn set_sendmsg_einval(&self) {
+        self.sendmsg_einval.store(true, Ordering::Relaxed)
     }
 }
 
@@ -157,9 +193,8 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 fn send(
     #[allow(unused_variables)] // only used on Linux
-    state: &UdpState,
+    state: &UdpSocketState,
     io: SockRef<'_>,
-    last_send_error: &Mutex<Instant>,
     transmits: &[Transmit],
 ) -> io::Result<usize> {
     #[allow(unused_mut)] // only mutable on FreeBSD
@@ -245,7 +280,7 @@ fn send(
                     //   Those are not fatal errors, since the
                     //   configuration can be dynamically changed.
                     // - Destination unreachable errors have been observed for other
-                    log_sendmsg_error(last_send_error, e, &transmits[0]);
+                    log_sendmsg_error(&state.last_send_error, e, &transmits[0]);
 
                     // The ERRORS section in https://man7.org/linux/man-pages/man2/sendmmsg.2.html
                     // describes that errors will only be returned if no message could be transmitted
@@ -260,12 +295,7 @@ fn send(
 }
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
-fn send(
-    state: &UdpState,
-    io: SockRef<'_>,
-    last_send_error: &Mutex<Instant>,
-    transmits: &[Transmit],
-) -> io::Result<usize> {
+fn send(state: &UdpSocketState, io: SockRef<'_>, transmits: &[Transmit]) -> io::Result<usize> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iov: libc::iovec = unsafe { mem::zeroed() };
     let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
@@ -299,7 +329,7 @@ fn send(
                     //   Those are not fatal errors, since the
                     //   configuration can be dynamically changed.
                     // - Destination unreachable errors have been observed for other
-                    log_sendmsg_error(last_send_error, e, &transmits[sent]);
+                    log_sendmsg_error(&state.last_send_error, e, &transmits[sent]);
                     sent += 1;
                 }
             }
@@ -502,15 +532,6 @@ unsafe fn recvmmsg_fallback(
         // it is up to the compiler to infer and cast `n` to correct type
         (*msgvec).msg_len = n as _;
         1
-    }
-}
-
-/// Returns the platforms UDP socket capabilities
-pub(crate) fn udp_state() -> UdpState {
-    UdpState {
-        max_gso_segments: AtomicUsize::new(gso::max_gso_segments()),
-        gro_segments: gro::gro_segments(),
-        sendmsg_einval: AtomicBool::new(false),
     }
 }
 
