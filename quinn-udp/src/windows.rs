@@ -8,7 +8,7 @@ use std::{
 
 use windows_sys::Win32::Networking::WinSock;
 
-use super::{log_sendmsg_error, RecvMeta, Transmit, UdpSockRef, UdpState, IO_ERROR_LOG_INTERVAL};
+use super::{log_sendmsg_error, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL};
 
 /// QUIC-friendly UDP interface for Windows
 #[derive(Debug)]
@@ -80,12 +80,7 @@ impl UdpSocketState {
         Ok(())
     }
 
-    pub fn send(
-        &self,
-        socket: UdpSockRef<'_>,
-        _state: &UdpState,
-        transmits: &[Transmit],
-    ) -> Result<usize, io::Error> {
+    pub fn send(&self, socket: UdpSockRef<'_>, transmits: &[Transmit]) -> Result<usize, io::Error> {
         let mut sent = 0;
         for transmit in transmits {
             match socket.0.send_to(
@@ -137,19 +132,30 @@ impl UdpSocketState {
         };
         Ok(1)
     }
+
+    /// The maximum amount of segments which can be transmitted if a platform
+    /// supports Generic Send Offload (GSO).
+    ///
+    /// This is 1 if the platform doesn't support GSO. Subject to change if errors are detected
+    /// while using GSO.
+    #[inline]
+    pub fn max_gso_segments(&self) -> usize {
+        1
+    }
+
+    /// The number of segments to read when GRO is enabled. Used as a factor to
+    /// compute the receive buffer size.
+    ///
+    /// Returns 1 if the platform doesn't support GRO.
+    #[inline]
+    pub fn gro_segments(&self) -> usize {
+        1
+    }
 }
 
 impl Default for UdpSocketState {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-/// Returns the platforms UDP socket capabilities
-pub(crate) fn udp_state() -> super::UdpState {
-    super::UdpState {
-        max_gso_segments: std::sync::atomic::AtomicUsize::new(1),
-        gro_segments: 1,
     }
 }
 

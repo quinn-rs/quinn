@@ -31,7 +31,6 @@ impl Runtime for TokioRuntime {
         udp::UdpSocketState::configure((&sock).into())?;
         Ok(Arc::new(UdpSocket {
             io: tokio::net::UdpSocket::from_std(sock)?,
-            state: udp::UdpState::new(),
             inner: udp::UdpSocketState::new(),
         }))
     }
@@ -49,7 +48,6 @@ impl AsyncTimer for Sleep {
 #[derive(Debug)]
 struct UdpSocket {
     io: tokio::net::UdpSocket,
-    state: udp::UdpState,
     inner: udp::UdpSocketState,
 }
 
@@ -59,9 +57,7 @@ impl AsyncUdpSocket for UdpSocket {
         let io = &self.io;
         loop {
             ready!(io.poll_send_ready(cx))?;
-            if let Ok(res) = io.try_io(Interest::WRITABLE, || {
-                inner.send(io.into(), &self.state, transmits)
-            }) {
+            if let Ok(res) = io.try_io(Interest::WRITABLE, || inner.send(io.into(), transmits)) {
                 return Poll::Ready(Ok(res));
             }
         }
@@ -92,10 +88,10 @@ impl AsyncUdpSocket for UdpSocket {
     }
 
     fn max_transmit_segments(&self) -> usize {
-        self.state.max_gso_segments()
+        self.inner.max_gso_segments()
     }
 
     fn max_receive_segments(&self) -> usize {
-        self.state.gro_segments()
+        self.inner.gro_segments()
     }
 }

@@ -90,6 +90,16 @@ impl UdpSocketState {
         };
         Ok(1)
     }
+
+    #[inline]
+    pub fn max_gso_segments(&self) -> usize {
+        1
+    }
+
+    #[inline]
+    pub fn gro_segments(&self) -> usize {
+        1
+    }
 }
 
 impl Default for UdpSocketState {
