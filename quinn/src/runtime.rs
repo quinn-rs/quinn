@@ -10,6 +10,7 @@ use std::{
 };
 
 use udp::{RecvMeta, Transmit};
+use crate::endpoint::GLOBAL_RUNTIME;
 
 /// Abstracts I/O and timer operations for runtime independence
 pub trait Runtime: Send + Sync + Debug + 'static {
@@ -17,8 +18,6 @@ pub trait Runtime: Send + Sync + Debug + 'static {
     fn new_timer(&self, i: Instant) -> Pin<Box<dyn AsyncTimer>>;
     /// Drive `future` to completion in the background
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
-    /// Convert `t` into the socket type used by this runtime
-    fn wrap_udp_socket(&self, t: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>>;
 }
 
 /// Abstract implementation of an async timer for runtime independence
@@ -72,20 +71,7 @@ pub trait AsyncUdpSocket: Send + Sync + Debug + 'static {
 /// then `TokioRuntime` is returned. Otherwise, if `runtime-async-std` is enabled, `AsyncStdRuntime`
 /// is returned. Otherwise, `None` is returned.
 pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
-    #[cfg(feature = "runtime-tokio")]
-    {
-        if ::tokio::runtime::Handle::try_current().is_ok() {
-            return Some(Arc::new(TokioRuntime));
-        }
-    }
-
-    #[cfg(feature = "runtime-async-std")]
-    {
-        return Some(Arc::new(AsyncStdRuntime));
-    }
-
-    #[cfg(not(feature = "runtime-async-std"))]
-    None
+    GLOBAL_RUNTIME.get().map(|rt|rt.clone())
 }
 
 #[cfg(feature = "runtime-tokio")]

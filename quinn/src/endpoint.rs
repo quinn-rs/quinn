@@ -11,6 +11,7 @@ use std::{
     task::{Context, Poll, Waker},
     time::Instant,
 };
+use std::sync::OnceLock;
 
 use crate::runtime::{default_runtime, AsyncUdpSocket, Runtime};
 use bytes::{Bytes, BytesMut};
@@ -42,7 +43,14 @@ pub struct Endpoint {
     runtime: Arc<dyn Runtime>,
 }
 
+pub(crate) static GLOBAL_RUNTIME:OnceLock<Arc<dyn Runtime>> = OnceLock::new();
+
 impl Endpoint {
+    /// set global async runtime
+    pub fn global_runtime(rt:Arc<dyn Runtime>) {
+        GLOBAL_RUNTIME.set(rt).unwrap()
+    }
+
     /// Helper to construct an endpoint for use with outgoing connections only
     ///
     /// Note that `addr` is the *local* address to bind to, which should usually be a wildcard
@@ -54,16 +62,17 @@ impl Endpoint {
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
     #[cfg(feature = "ring")]
-    pub fn client(addr: SocketAddr) -> io::Result<Self> {
-        let socket = std::net::UdpSocket::bind(addr)?;
+    pub fn client(config:ClientConfig, socket:Arc<dyn AsyncUdpSocket>) -> io::Result<Self> {
         let runtime = default_runtime()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
-        Self::new_with_abstract_socket(
+        let mut ep = Self::new_with_abstract_socket(
             EndpointConfig::default(),
             None,
-            runtime.wrap_udp_socket(socket)?,
+            socket,
             runtime,
-        )
+        )?;
+        ep.set_default_client_config(config);
+        Ok(ep)
     }
 
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
@@ -73,14 +82,13 @@ impl Endpoint {
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
     #[cfg(feature = "ring")]
-    pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
-        let socket = std::net::UdpSocket::bind(addr)?;
+    pub fn server(config: ServerConfig,socket:Arc<dyn AsyncUdpSocket>) -> io::Result<Self> {
         let runtime = default_runtime()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
         Self::new_with_abstract_socket(
             EndpointConfig::default(),
             Some(config),
-            runtime.wrap_udp_socket(socket)?,
+            socket,
             runtime,
         )
     }
@@ -89,10 +97,10 @@ impl Endpoint {
     pub fn new(
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
-        socket: std::net::UdpSocket,
-        runtime: Arc<dyn Runtime>,
+        socket:Arc<dyn AsyncUdpSocket>,
     ) -> io::Result<Self> {
-        let socket = runtime.wrap_udp_socket(socket)?;
+        let runtime = default_runtime()
+            .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
         Self::new_with_abstract_socket(config, server_config, socket, runtime)
     }
 
@@ -100,7 +108,7 @@ impl Endpoint {
     ///
     /// Useful when `socket` has additional state (e.g. sidechannels) attached for which shared
     /// ownership is needed.
-    pub fn new_with_abstract_socket(
+    fn new_with_abstract_socket(
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
         socket: Arc<dyn AsyncUdpSocket>,
@@ -199,9 +207,8 @@ impl Endpoint {
     /// connections and connections to servers unreachable from the new address will be lost.
     ///
     /// On error, the old UDP socket is retained.
-    pub fn rebind(&self, socket: std::net::UdpSocket) -> io::Result<()> {
+    pub fn rebind(&self,socket:Arc<dyn AsyncUdpSocket>) -> io::Result<()> {
         let addr = socket.local_addr()?;
-        let socket = self.runtime.wrap_udp_socket(socket)?;
         let mut inner = self.inner.state.lock().unwrap();
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
