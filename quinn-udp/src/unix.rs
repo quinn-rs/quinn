@@ -164,7 +164,7 @@ fn init(io: SockRef<'_>) -> io::Result<()> {
     #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
     {
         if is_ipv4 {
-            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_DONTFRAG, OPTION_ON)?;
+            let _ = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_DONTFRAG, OPTION_ON);
         }
     }
     #[cfg(any(target_os = "freebsd", target_os = "macos"))]
