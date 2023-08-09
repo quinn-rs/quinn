@@ -101,9 +101,12 @@ macro_rules! make_struct {
             pub(crate) preferred_address: Option<PreferredAddress>,
         }
 
-        impl Default for TransportParameters {
+        // We deliberately don't implement the `Default` trait, since that would be public, and
+        // downstream crates should never construct `TransportParameters` except by decoding those
+        // supplied by a peer.
+        impl TransportParameters {
             /// Standard defaults, used if the peer does not supply a given parameter.
-            fn default() -> Self {
+            pub(crate) fn default() -> Self {
                 Self {
                     $($name: VarInt::from_u32($default),)*
 
@@ -528,11 +531,11 @@ mod test {
     fn resumption_params_validation() {
         let high_limit = TransportParameters {
             initial_max_streams_uni: 32u32.into(),
-            ..Default::default()
+            ..TransportParameters::default()
         };
         let low_limit = TransportParameters {
             initial_max_streams_uni: 16u32.into(),
-            ..Default::default()
+            ..TransportParameters::default()
         };
         high_limit.validate_resumption_from(&low_limit).unwrap();
         low_limit.validate_resumption_from(&high_limit).unwrap_err();

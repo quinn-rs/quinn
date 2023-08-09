@@ -1168,7 +1168,7 @@ mod tests {
             initial_max_streams_uni: 1u32.into(),
             initial_max_data: 42u32.into(),
             initial_max_stream_data_uni: 42u32.into(),
-            ..Default::default()
+            ..TransportParameters::default()
         });
 
         let (mut pending, state) = (Retransmits::default(), ConnState::Established);
@@ -1227,7 +1227,7 @@ mod tests {
             initial_max_streams_bidi: 3u32.into(),
             initial_max_data: 10u32.into(),
             initial_max_stream_data_bidi_remote: 10u32.into(),
-            ..Default::default()
+            ..TransportParameters::default()
         });
 
         let (mut pending, state) = (Retransmits::default(), ConnState::Established);
@@ -1283,7 +1283,7 @@ mod tests {
             initial_max_streams_bidi: 3u32.into(),
             initial_max_data: 1000u32.into(),
             initial_max_stream_data_bidi_remote: 1000u32.into(),
-            ..Default::default()
+            ..TransportParameters::default()
         });
 
         let (mut pending, state) = (Retransmits::default(), ConnState::Established);
@@ -1377,7 +1377,7 @@ mod tests {
             initial_max_streams_uni: 1u32.into(),
             initial_max_data: 42u32.into(),
             initial_max_stream_data_uni: 42u32.into(),
-            ..Default::default()
+            ..TransportParameters::default()
         });
         let (mut pending, state) = (Retransmits::default(), ConnState::Established);
         let mut streams = Streams {
