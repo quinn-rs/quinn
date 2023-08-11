@@ -1,8 +1,7 @@
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]
 use std::ptr;
 use std::{
-    io,
-    io::IoSliceMut,
+    io::{self, IoSliceMut},
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
@@ -43,18 +42,95 @@ pub struct UdpSocketState {
 }
 
 impl UdpSocketState {
-    pub fn new() -> Self {
+    pub fn new(sock: UdpSockRef<'_>) -> io::Result<Self> {
+        let io = sock.0;
+        let mut cmsg_platform_space = 0;
+        if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") || cfg!(target_os = "macos") {
+            cmsg_platform_space +=
+                unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
+        }
+
+        assert!(
+            CMSG_LEN
+                >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
+                    + cmsg_platform_space
+        );
+        assert!(
+            mem::align_of::<libc::cmsghdr>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
+            "control message buffers will be misaligned"
+        );
+
+        io.set_nonblocking(true)?;
+
+        let addr = io.local_addr()?;
+        let is_ipv4 = addr.family() == libc::AF_INET as libc::sa_family_t;
+
+        // mac and ios do not support IP_RECVTOS on dual-stack sockets :(
+        // older macos versions also don't have the flag and will error out if we don't ignore it
+        if is_ipv4 || !io.only_v6()? {
+            if let Err(err) = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
+            {
+                tracing::debug!("Ignoring error setting IP_RECVTOS on socket: {err:?}",);
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // opportunistically try to enable GRO. See gro::gro_segments().
+            let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
+
+            // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
+            set_socket_option(
+                &*io,
+                libc::IPPROTO_IP,
+                libc::IP_MTU_DISCOVER,
+                libc::IP_PMTUDISC_PROBE,
+            )?;
+
+            if is_ipv4 {
+                set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_PKTINFO, OPTION_ON)?;
+            } else {
+                set_socket_option(
+                    &*io,
+                    libc::IPPROTO_IPV6,
+                    libc::IPV6_MTU_DISCOVER,
+                    libc::IP_PMTUDISC_PROBE,
+                )?;
+            }
+        }
+        #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
+        {
+            if is_ipv4 {
+                set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_DONTFRAG, OPTION_ON)?;
+            }
+        }
+        #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+        // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
+        // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS
+        // macOS also supports IP_PKTINFO
+        {
+            if is_ipv4 {
+                set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVDSTADDR, OPTION_ON)?;
+            }
+        }
+
+        // Options standardized in RFC 3542
+        if !is_ipv4 {
+            set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVPKTINFO, OPTION_ON)?;
+            set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS, OPTION_ON)?;
+            // Linux's IP_PMTUDISC_PROBE allows us to operate under interface MTU rather than the
+            // kernel's path MTU guess, but actually disabling fragmentation requires this too. See
+            // __ip6_append_data in ip6_output.c.
+            set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_DONTFRAG, OPTION_ON)?;
+        }
+
         let now = Instant::now();
-        Self {
+        Ok(Self {
             last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
             max_gso_segments: AtomicUsize::new(gso::max_gso_segments()),
             gro_segments: gro::gro_segments(),
             sendmsg_einval: AtomicBool::new(false),
-        }
-    }
-
-    pub fn configure(sock: UdpSockRef<'_>) -> io::Result<()> {
-        init(sock.0)
+        })
     }
 
     pub fn send(&self, socket: UdpSockRef<'_>, transmits: &[Transmit]) -> Result<usize, io::Error> {
@@ -99,95 +175,6 @@ impl UdpSocketState {
     fn set_sendmsg_einval(&self) {
         self.sendmsg_einval.store(true, Ordering::Relaxed)
     }
-}
-
-impl Default for UdpSocketState {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-fn init(io: SockRef<'_>) -> io::Result<()> {
-    let mut cmsg_platform_space = 0;
-    if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") || cfg!(target_os = "macos") {
-        cmsg_platform_space +=
-            unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
-    }
-
-    assert!(
-        CMSG_LEN
-            >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
-                + cmsg_platform_space
-    );
-    assert!(
-        mem::align_of::<libc::cmsghdr>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
-        "control message buffers will be misaligned"
-    );
-
-    io.set_nonblocking(true)?;
-
-    let addr = io.local_addr()?;
-    let is_ipv4 = addr.family() == libc::AF_INET as libc::sa_family_t;
-
-    // mac and ios do not support IP_RECVTOS on dual-stack sockets :(
-    // older macos versions also don't have the flag and will error out if we don't ignore it
-    if is_ipv4 || !io.only_v6()? {
-        if let Err(err) = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON) {
-            tracing::debug!("Ignoring error setting IP_RECVTOS on socket: {err:?}",);
-        }
-    }
-
-    #[cfg(target_os = "linux")]
-    {
-        // opportunistically try to enable GRO. See gro::gro_segments().
-        let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
-
-        // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
-        set_socket_option(
-            &*io,
-            libc::IPPROTO_IP,
-            libc::IP_MTU_DISCOVER,
-            libc::IP_PMTUDISC_PROBE,
-        )?;
-
-        if is_ipv4 {
-            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_PKTINFO, OPTION_ON)?;
-        } else {
-            set_socket_option(
-                &*io,
-                libc::IPPROTO_IPV6,
-                libc::IPV6_MTU_DISCOVER,
-                libc::IP_PMTUDISC_PROBE,
-            )?;
-        }
-    }
-    #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
-    {
-        if is_ipv4 {
-            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_DONTFRAG, OPTION_ON)?;
-        }
-    }
-    #[cfg(any(target_os = "freebsd", target_os = "macos"))]
-    // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
-    // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS
-    // macOS also supports IP_PKTINFO
-    {
-        if is_ipv4 {
-            set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVDSTADDR, OPTION_ON)?;
-        }
-    }
-
-    // Options standardized in RFC 3542
-    if !is_ipv4 {
-        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVPKTINFO, OPTION_ON)?;
-        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVTCLASS, OPTION_ON)?;
-        // Linux's IP_PMTUDISC_PROBE allows us to operate under interface MTU rather than the
-        // kernel's path MTU guess, but actually disabling fragmentation requires this too. See
-        // __ip6_append_data in ip6_output.c.
-        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_DONTFRAG, OPTION_ON)?;
-    }
-
-    Ok(())
 }
 
 #[cfg(not(any(target_os = "macos", target_os = "ios")))]

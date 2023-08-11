@@ -18,15 +18,12 @@ pub struct UdpSocketState {
 }
 
 impl UdpSocketState {
-    pub fn new() -> Self {
+    pub fn new(socket: UdpSocketRef<'_>) -> io::Result<Self> {
+        socket.0.set_nonblocking(true)?;
         let now = Instant::now();
         Self {
             last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
         }
-    }
-
-    pub fn configure(socket: UdpSockRef<'_>) -> io::Result<()> {
-        socket.0.set_nonblocking(true)
     }
 
     pub fn send(

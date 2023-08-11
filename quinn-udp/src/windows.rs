@@ -17,14 +17,7 @@ pub struct UdpSocketState {
 }
 
 impl UdpSocketState {
-    pub fn new() -> Self {
-        let now = Instant::now();
-        Self {
-            last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
-        }
-    }
-
-    pub fn configure(socket: UdpSockRef<'_>) -> io::Result<()> {
+    pub fn new(socket: UdpSockRef<'_>) -> io::Result<Self> {
         socket.0.set_nonblocking(true)?;
         let addr = socket.0.local_addr()?;
         let is_ipv6 = addr.as_socket_ipv6().is_some();
@@ -77,7 +70,10 @@ impl UdpSocketState {
             }
         }
 
-        Ok(())
+        let now = Instant::now();
+        Ok(Self {
+            last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
+        })
     }
 
     pub fn send(&self, socket: UdpSockRef<'_>, transmits: &[Transmit]) -> Result<usize, io::Error> {
@@ -150,12 +146,6 @@ impl UdpSocketState {
     #[inline]
     pub fn gro_segments(&self) -> usize {
         1
-    }
-}
-
-impl Default for UdpSocketState {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

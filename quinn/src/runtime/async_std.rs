@@ -25,10 +25,9 @@ impl Runtime for AsyncStdRuntime {
     }
 
     fn wrap_udp_socket(&self, sock: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>> {
-        udp::UdpSocketState::configure((&sock).into())?;
         Ok(Arc::new(UdpSocket {
+            inner: udp::UdpSocketState::new((&sock).into())?,
             io: Async::new(sock)?,
-            inner: udp::UdpSocketState::new(),
         }))
     }
 }
