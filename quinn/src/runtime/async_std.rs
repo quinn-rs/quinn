@@ -77,7 +77,7 @@ impl AsyncUdpSocket for UdpSocket {
     }
 
     fn may_fragment(&self) -> bool {
-        udp::may_fragment()
+        self.inner.may_fragment()
     }
 
     fn max_transmit_segments(&self) -> usize {

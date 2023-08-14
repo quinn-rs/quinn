@@ -147,11 +147,11 @@ impl UdpSocketState {
     pub fn gro_segments(&self) -> usize {
         1
     }
+
+    #[inline]
+    pub fn may_fragment(&self) -> bool {
+        false
+    }
 }
 
 pub(crate) const BATCH_SIZE: usize = 1;
-
-#[inline]
-pub(crate) fn may_fragment() -> bool {
-    false
-}
