@@ -165,6 +165,14 @@ impl UdpSocketState {
         self.gro_segments
     }
 
+    /// Whether transmitted datagrams might get fragmented by the IP layer
+    ///
+    /// Returns `false` on targets which employ e.g. the `IPV6_DONTFRAG` socket option.
+    #[inline]
+    pub fn may_fragment(&self) -> bool {
+        false
+    }
+
     /// Returns true if we previously got an EINVAL error from `sendmsg` or `sendmmsg` syscall.
     fn sendmsg_einval(&self) -> bool {
         self.sendmsg_einval.load(Ordering::Relaxed)
@@ -712,11 +720,6 @@ pub(crate) const BATCH_SIZE: usize = 32;
 
 #[cfg(any(target_os = "macos", target_os = "ios"))]
 pub(crate) const BATCH_SIZE: usize = 1;
-
-#[inline]
-pub(crate) fn may_fragment() -> bool {
-    false
-}
 
 #[cfg(target_os = "linux")]
 mod gso {
