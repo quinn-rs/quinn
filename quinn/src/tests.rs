@@ -15,7 +15,7 @@ use tokio::{
     runtime::{Builder, Runtime},
     time::{Duration, Instant},
 };
-use tracing::{info, info_span};
+use tracing::{error_span, info};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
@@ -445,6 +445,7 @@ fn run_echo(args: EchoArgs) {
         let server_addr = server_sock.local_addr().unwrap();
         let server = {
             let _guard = runtime.enter();
+            let _guard = error_span!("server").entered();
             Endpoint::new(
                 Default::default(),
                 Some(server_config),
@@ -464,6 +465,7 @@ fn run_echo(args: EchoArgs) {
 
         let mut client = {
             let _guard = runtime.enter();
+            let _guard = error_span!("client").entered();
             Endpoint::client(args.client_addr).unwrap()
         };
         let mut client_config = ClientConfig::new(Arc::new(client_crypto));
@@ -485,7 +487,7 @@ fn run_echo(args: EchoArgs) {
                 assert_eq!(None, incoming.local_ip());
             }
 
-            let new_conn = incoming.instrument(info_span!("server")).await.unwrap();
+            let new_conn = incoming.await.unwrap();
             tokio::spawn(async move {
                 while let Ok(stream) = new_conn.accept_bi().await {
                     tokio::spawn(echo(stream));
@@ -495,35 +497,38 @@ fn run_echo(args: EchoArgs) {
         });
 
         info!("connecting from {} to {}", args.client_addr, server_addr);
-        runtime.block_on(async move {
-            let new_conn = client
-                .connect(server_addr, "localhost")
-                .unwrap()
-                .instrument(info_span!("client"))
-                .await
-                .expect("connect");
+        runtime.block_on(
+            async move {
+                let new_conn = client
+                    .connect(server_addr, "localhost")
+                    .unwrap()
+                    .await
+                    .expect("connect");
 
-            /// This is just an arbitrary number to generate deterministic test data
-            const SEED: u64 = 0x12345678;
+                /// This is just an arbitrary number to generate deterministic test data
+                const SEED: u64 = 0x12345678;
 
-            for i in 0..args.nr_streams {
-                println!("Opening stream {i}");
-                let (mut send, mut recv) = new_conn.open_bi().await.expect("stream open");
-                let msg = gen_data(args.stream_size, SEED);
+                for i in 0..args.nr_streams {
+                    println!("Opening stream {i}");
+                    let (mut send, mut recv) = new_conn.open_bi().await.expect("stream open");
+                    let msg = gen_data(args.stream_size, SEED);
 
-                let send_task = async {
-                    send.write_all(&msg).await.expect("write");
-                    send.finish().await.expect("finish");
-                };
-                let recv_task = async { recv.read_to_end(usize::max_value()).await.expect("read") };
+                    let send_task = async {
+                        send.write_all(&msg).await.expect("write");
+                        send.finish().await.expect("finish");
+                    };
+                    let recv_task =
+                        async { recv.read_to_end(usize::max_value()).await.expect("read") };
 
-                let (_, data) = tokio::join!(send_task, recv_task);
+                    let (_, data) = tokio::join!(send_task, recv_task);
 
-                assert_eq!(data[..], msg[..], "Data mismatch");
+                    assert_eq!(data[..], msg[..], "Data mismatch");
+                }
+                new_conn.close(0u32.into(), b"done");
+                client.wait_idle().await;
             }
-            new_conn.close(0u32.into(), b"done");
-            client.wait_idle().await;
-        });
+            .instrument(error_span!("client")),
+        );
         handle
     };
     runtime.block_on(handle).unwrap();
