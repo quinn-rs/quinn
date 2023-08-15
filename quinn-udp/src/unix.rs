@@ -32,6 +32,7 @@ pub struct UdpSocketState {
     last_send_error: Mutex<Instant>,
     max_gso_segments: AtomicUsize,
     gro_segments: usize,
+    may_fragment: bool,
 
     /// True if we have received EINVAL error from `sendmsg` or `sendmmsg` system call at least once.
     ///
@@ -74,34 +75,45 @@ impl UdpSocketState {
             }
         }
 
+        let mut may_fragment = false;
         #[cfg(target_os = "linux")]
         {
             // opportunistically try to enable GRO. See gro::gro_segments().
             let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
 
             // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
-            set_socket_option(
+            may_fragment = set_socket_option(
                 &*io,
                 libc::IPPROTO_IP,
                 libc::IP_MTU_DISCOVER,
                 libc::IP_PMTUDISC_PROBE,
-            )?;
+            )
+                .err()
+                .is_some_and(|error| error.raw_os_error() == Some(libc::ENOPROTOOPT))
+                || may_fragment;
 
             if is_ipv4 {
                 set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_PKTINFO, OPTION_ON)?;
             } else {
-                set_socket_option(
+                may_fragment = set_socket_option(
                     &*io,
                     libc::IPPROTO_IPV6,
                     libc::IPV6_MTU_DISCOVER,
                     libc::IP_PMTUDISC_PROBE,
-                )?;
+                )
+                    .err()
+                    .is_some_and(|error| error.raw_os_error() == Some(libc::ENOPROTOOPT))
+                    || may_fragment;
             }
         }
         #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
         {
             if is_ipv4 {
-                set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_DONTFRAG, OPTION_ON)?;
+                may_fragment =
+                    set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_DONTFRAG, OPTION_ON)
+                        .err()
+                        .is_some_and(|error| error.raw_os_error() == Some(libc::ENOPROTOOPT))
+                        || may_fragment;
             }
         }
         #[cfg(any(target_os = "freebsd", target_os = "macos"))]
@@ -121,7 +133,11 @@ impl UdpSocketState {
             // Linux's IP_PMTUDISC_PROBE allows us to operate under interface MTU rather than the
             // kernel's path MTU guess, but actually disabling fragmentation requires this too. See
             // __ip6_append_data in ip6_output.c.
-            set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_DONTFRAG, OPTION_ON)?;
+            may_fragment =
+                set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_DONTFRAG, OPTION_ON)
+                    .err()
+                    .is_some_and(|error| error.raw_os_error() == Some(libc::ENOPROTOOPT))
+                    || may_fragment;
         }
 
         let now = Instant::now();
@@ -129,6 +145,7 @@ impl UdpSocketState {
             last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
             max_gso_segments: AtomicUsize::new(gso::max_gso_segments()),
             gro_segments: gro::gro_segments(),
+            may_fragment,
             sendmsg_einval: AtomicBool::new(false),
         })
     }
@@ -170,7 +187,7 @@ impl UdpSocketState {
     /// Returns `false` on targets which employ e.g. the `IPV6_DONTFRAG` socket option.
     #[inline]
     pub fn may_fragment(&self) -> bool {
-        false
+        self.may_fragment
     }
 
     /// Returns true if we previously got an EINVAL error from `sendmsg` or `sendmmsg` syscall.
