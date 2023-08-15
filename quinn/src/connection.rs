@@ -16,7 +16,7 @@ use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{futures::Notified, mpsc, oneshot, Notify};
-use tracing::debug_span;
+use tracing::{debug_span, Instrument, Span};
 
 use crate::{
     mutex::Mutex,
@@ -57,7 +57,9 @@ impl Connecting {
             runtime.clone(),
         );
 
-        runtime.spawn(Box::pin(ConnectionDriver(conn.clone())));
+        runtime.spawn(Box::pin(
+            ConnectionDriver(conn.clone()).instrument(Span::current()),
+        ));
 
         Self {
             conn: Some(conn),
