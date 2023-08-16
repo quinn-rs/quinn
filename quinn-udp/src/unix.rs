@@ -82,32 +82,36 @@ impl UdpSocketState {
             let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
 
             // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
-            let result = set_socket_option(
+            // Set `may_fragment` to `true` if this option is not supported on the platform.
+            may_fragment |= !set_socket_option_supported(
                 &*io,
                 libc::IPPROTO_IP,
                 libc::IP_MTU_DISCOVER,
                 libc::IP_PMTUDISC_PROBE,
-            );
-            may_fragment = is_result_noprotoopt_err(result) || may_fragment;
+            )?;
 
             if is_ipv4 {
                 set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_PKTINFO, OPTION_ON)?;
             } else {
-                let result = set_socket_option(
+                // Set `may_fragment` to `true` if this option is not supported on the platform.
+                may_fragment |= !set_socket_option_supported(
                     &*io,
                     libc::IPPROTO_IPV6,
                     libc::IPV6_MTU_DISCOVER,
                     libc::IP_PMTUDISC_PROBE,
-                );
-                may_fragment = is_result_noprotoopt_err(result) || may_fragment;
+                )?;
             }
         }
         #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
         {
             if is_ipv4 {
-                let result =
-                    set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_DONTFRAG, OPTION_ON);
-                may_fragment = is_result_noprotoopt_err(result) || may_fragment;
+                // Set `may_fragment` to `true` if this option is not supported on the platform.
+                may_fragment |= !set_socket_option_supported(
+                    &*io,
+                    libc::IPPROTO_IP,
+                    libc::IP_DONTFRAG,
+                    OPTION_ON,
+                )?;
             }
         }
         #[cfg(any(target_os = "freebsd", target_os = "macos"))]
@@ -127,9 +131,13 @@ impl UdpSocketState {
             // Linux's IP_PMTUDISC_PROBE allows us to operate under interface MTU rather than the
             // kernel's path MTU guess, but actually disabling fragmentation requires this too. See
             // __ip6_append_data in ip6_output.c.
-            let result =
-                set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_DONTFRAG, OPTION_ON);
-            may_fragment = is_result_noprotoopt_err(result) || may_fragment;
+            // Set `may_fragment` to `true` if this option is not supported on the platform.
+            may_fragment |= !set_socket_option_supported(
+                &*io,
+                libc::IPPROTO_IPV6,
+                libc::IPV6_DONTFRAG,
+                OPTION_ON,
+            )?;
         }
 
         let now = Instant::now();
@@ -798,6 +806,23 @@ mod gro {
     }
 }
 
+/// Returns whether the given socket option is supported on the current platform
+///
+/// Yields `Ok(true)` if the option was set successfully, `Ok(false)` if setting
+/// the option raised an `ENOPROTOOPT` error, and `Err` for any other error.
+fn set_socket_option_supported(
+    socket: &impl AsRawFd,
+    level: libc::c_int,
+    name: libc::c_int,
+    value: libc::c_int,
+) -> Result<bool, io::Error> {
+    match set_socket_option(socket, level, name, value) {
+        Ok(()) => Ok(true),
+        Err(err) if err.raw_os_error() == Some(libc::ENOPROTOOPT) => Ok(false),
+        Err(err) => Err(err),
+    }
+}
+
 fn set_socket_option(
     socket: &impl AsRawFd,
     level: libc::c_int,
@@ -817,17 +842,6 @@ fn set_socket_option(
     match rc == 0 {
         true => Ok(()),
         false => Err(io::Error::last_os_error()),
-    }
-}
-
-#[inline]
-fn is_result_noprotoopt_err(result: Result<(), io::Error>) -> bool {
-    match result {
-        Err(error) => match error.raw_os_error() {
-            Some(raw_os_error) => raw_os_error == libc::ENOPROTOOPT,
-            None => false,
-        },
-        Ok(_) => false,
     }
 }
 
