@@ -35,28 +35,28 @@ pub use imp::UdpSocketState;
 /// Number of UDP packets to send/receive at a time
 pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
 
-/// Metadata for a single buffer filled with bytes received from the network.
+/// Metadata for a single buffer filled with bytes received from the network
 ///
 /// This associated buffer can contain one or more datagrams, see [`stride`].
 ///
 /// [`stride`]: RecvMeta::stride
 #[derive(Debug, Copy, Clone)]
 pub struct RecvMeta {
-    /// The source address of the datagram(s) contained in the buffer.
+    /// The source address of the datagram(s) contained in the buffer
     pub addr: SocketAddr,
-    /// The number of bytes the associated buffer has.
+    /// The number of bytes the associated buffer has
     pub len: usize,
-    /// The size of a single datagram in the associated buffer.
+    /// The size of a single datagram in the associated buffer
     ///
     /// When GRO (Generic Receive Offload) is used this indicates the size of a single
-    /// datagram inside the buffer.  If the buffer is larger, that is if [`len`] is greater
+    /// datagram inside the buffer. If the buffer is larger, that is if [`len`] is greater
     /// then this value, then the individual datagrams contained have their boundaries at
-    /// `stride` increments from the start.  The last datagram could be smaller than
+    /// `stride` increments from the start. The last datagram could be smaller than
     /// `stride`.
     ///
     /// [`len`]: RecvMeta::len
     pub stride: usize,
-    /// The Explicit Congestion Notification bits for the datagram(s) in the buffer.
+    /// The Explicit Congestion Notification bits for the datagram(s) in the buffer
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address which was encoded in this datagram
     pub dst_ip: Option<IpAddr>,
