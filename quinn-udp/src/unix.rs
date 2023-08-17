@@ -284,7 +284,11 @@ fn send(
                     //   Those are not fatal errors, since the
                     //   configuration can be dynamically changed.
                     // - Destination unreachable errors have been observed for other
-                    log_sendmsg_error(&state.last_send_error, e, &transmits[0]);
+                    // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
+                    //   these by automatically clamping the MTUD upper bound to the interface MTU.
+                    if e.raw_os_error() != Some(libc::EMSGSIZE) {
+                        log_sendmsg_error(&state.last_send_error, e, &transmits[0]);
+                    }
 
                     // The ERRORS section in https://man7.org/linux/man-pages/man2/sendmmsg.2.html
                     // describes that errors will only be returned if no message could be transmitted
@@ -333,7 +337,11 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmits: &[Transmit]) -> io::
                     //   Those are not fatal errors, since the
                     //   configuration can be dynamically changed.
                     // - Destination unreachable errors have been observed for other
-                    log_sendmsg_error(&state.last_send_error, e, &transmits[sent]);
+                    // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
+                    //   these by automatically clamping the MTUD upper bound to the interface MTU.
+                    if e.raw_os_error() != Some(libc::EMSGSIZE) {
+                        log_sendmsg_error(&state.last_send_error, e, &transmits[sent]);
+                    }
                     sent += 1;
                 }
             }
