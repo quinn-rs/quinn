@@ -85,8 +85,8 @@ impl Endpoint {
     ) -> Option<ConnectionEvent> {
         use EndpointEventInner::*;
         match event.0 {
-            NeedIdentifiers(now, n) => {
-                return Some(self.send_new_identifiers(now, ch, n));
+            NeedIdentifiers(n) => {
+                return Some(self.send_new_identifiers(ch, n));
             }
             ResetToken(remote, token) => {
                 if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
@@ -96,12 +96,12 @@ impl Endpoint {
                     warn!("duplicate reset token");
                 }
             }
-            RetireConnectionId(now, seq, allow_more_cids) => {
+            RetireConnectionId(seq, allow_more_cids) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
                     trace!("peer retired CID {}: {}", seq, cid);
                     self.index.retire(&cid);
                     if allow_more_cids {
-                        return Some(self.send_new_identifiers(now, ch, 1));
+                        return Some(self.send_new_identifiers(ch, 1));
                     }
                 }
             }
@@ -362,12 +362,7 @@ impl Endpoint {
         Ok((ch, conn))
     }
 
-    fn send_new_identifiers(
-        &mut self,
-        now: Instant,
-        ch: ConnectionHandle,
-        num: u64,
-    ) -> ConnectionEvent {
+    fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: u64) -> ConnectionEvent {
         let mut ids = vec![];
         for _ in 0..num {
             let id = self.new_cid(ch);
@@ -381,7 +376,7 @@ impl Endpoint {
                 reset_token: ResetToken::new(&*self.config.reset_key, &id),
             });
         }
-        ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
+        ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids))
     }
 
     /// Generate a connection ID for `ch`

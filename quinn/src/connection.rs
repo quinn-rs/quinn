@@ -913,13 +913,14 @@ impl State {
         shared: &Shared,
         cx: &mut Context,
     ) -> Result<(), ConnectionError> {
+        let now = Instant::now();
         loop {
             match self.conn_events.poll_recv(cx) {
                 Poll::Ready(Some(ConnectionEvent::Ping)) => {
                     self.inner.ping();
                 }
                 Poll::Ready(Some(ConnectionEvent::Proto(event))) => {
-                    self.inner.handle_event(event);
+                    self.inner.handle_event(event, now);
                 }
                 Poll::Ready(Some(ConnectionEvent::Close { reason, error_code })) => {
                     self.close(error_code, reason, shared);
