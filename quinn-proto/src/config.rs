@@ -47,6 +47,8 @@ pub struct TransportConfig {
     pub(crate) allow_spin: bool,
     pub(crate) datagram_receive_buffer_size: Option<usize>,
     pub(crate) datagram_send_buffer_size: usize,
+    #[cfg(test)]
+    pub(crate) deterministic_packet_numbers: bool,
 
     pub(crate) congestion_controller_factory: Box<dyn congestion::ControllerFactory + Send + Sync>,
 }
@@ -266,6 +268,16 @@ impl TransportConfig {
         self
     }
 
+    /// Whether to force every packet number to be used
+    ///
+    /// By default, packet numbers are occasionally skipped to ensure peers aren't ACKing packets
+    /// before they see them.
+    #[cfg(test)]
+    pub(crate) fn deterministic_packet_numbers(&mut self, enabled: bool) -> &mut Self {
+        self.deterministic_packet_numbers = enabled;
+        self
+    }
+
     /// How to construct new `congestion::Controller`s
     ///
     /// Typically the refcounted configuration of a `congestion::Controller`,
@@ -317,6 +329,8 @@ impl Default for TransportConfig {
             allow_spin: true,
             datagram_receive_buffer_size: Some(STREAM_RWND as usize),
             datagram_send_buffer_size: 1024 * 1024,
+            #[cfg(test)]
+            deterministic_packet_numbers: false,
 
             congestion_controller_factory: Box::new(Arc::new(congestion::CubicConfig::default())),
         }

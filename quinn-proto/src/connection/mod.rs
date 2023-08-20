@@ -326,6 +326,12 @@ impl Connection {
             authentication_failures: 0,
             error: None,
             retry_token: Bytes::new(),
+            #[cfg(test)]
+            packet_number_filter: match config.deterministic_packet_numbers {
+                false => PacketNumberFilter::new(&mut rng),
+                true => PacketNumberFilter::disabled(),
+            },
+            #[cfg(not(test))]
             packet_number_filter: PacketNumberFilter::new(&mut rng),
 
             path_response: None,
