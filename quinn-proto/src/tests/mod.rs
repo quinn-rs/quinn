@@ -2212,8 +2212,8 @@ fn packet_splitting_not_necessary_after_higher_mtu_discovered() {
 #[test]
 fn single_ack_eliciting_packet_triggers_ack_after_delay() {
     let _guard = subscribe();
-    let mut pair = Pair::default();
-    let (client_ch, _) = pair.connect();
+    let mut pair = Pair::default_with_deterministic_pns();
+    let (client_ch, _) = pair.connect_with(client_config_with_deterministic_pns());
     pair.drive();
 
     let stats_after_connect = pair.client_conn_mut(client_ch).stats();
@@ -2275,8 +2275,8 @@ fn single_ack_eliciting_packet_triggers_ack_after_delay() {
 #[test]
 fn immediate_ack_triggers_ack() {
     let _guard = subscribe();
-    let mut pair = Pair::default();
-    let (client_ch, _) = pair.connect();
+    let mut pair = Pair::default_with_deterministic_pns();
+    let (client_ch, _) = pair.connect_with(client_config_with_deterministic_pns());
     pair.drive();
 
     let acks_after_connect = pair.client_conn_mut(client_ch).stats().frame_rx.acks;
@@ -2294,8 +2294,8 @@ fn immediate_ack_triggers_ack() {
 #[test]
 fn out_of_order_ack_eliciting_packet_triggers_ack() {
     let _guard = subscribe();
-    let mut pair = Pair::default();
-    let (client_ch, server_ch) = pair.connect();
+    let mut pair = Pair::default_with_deterministic_pns();
+    let (client_ch, server_ch) = pair.connect_with(client_config_with_deterministic_pns());
     pair.drive();
 
     let default_mtu = pair.mtu;
@@ -2352,8 +2352,8 @@ fn out_of_order_ack_eliciting_packet_triggers_ack() {
 #[test]
 fn single_ack_eliciting_packet_with_ce_bit_triggers_immediate_ack() {
     let _guard = subscribe();
-    let mut pair = Pair::default();
-    let (client_ch, _) = pair.connect();
+    let mut pair = Pair::default_with_deterministic_pns();
+    let (client_ch, _) = pair.connect_with(client_config_with_deterministic_pns());
     pair.drive();
 
     let stats_after_connect = pair.client_conn_mut(client_ch).stats();
@@ -2388,7 +2388,7 @@ fn single_ack_eliciting_packet_with_ce_bit_triggers_immediate_ack() {
 }
 
 fn setup_ack_frequency_test(max_ack_delay: Duration) -> (Pair, ConnectionHandle, ConnectionHandle) {
-    let mut client_config = client_config();
+    let mut client_config = client_config_with_deterministic_pns();
     let mut ack_freq_config = AckFrequencyConfig::default();
     ack_freq_config
         .ack_eliciting_threshold(10u32.into())
@@ -2398,7 +2398,7 @@ fn setup_ack_frequency_test(max_ack_delay: Duration) -> (Pair, ConnectionHandle,
         .ack_frequency_config(Some(ack_freq_config))
         .mtu_discovery_config(None); // To keep traffic cleaner
 
-    let mut pair = Pair::default();
+    let mut pair = Pair::default_with_deterministic_pns();
     pair.latency = Duration::from_millis(10); // Need latency to avoid an RTT = 0
     let (client_ch, server_ch) = pair.connect_with(client_config);
     pair.drive();
