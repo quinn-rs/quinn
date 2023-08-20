@@ -1,6 +1,6 @@
 [package]
 name = "quinn-proto"
-version = "0.10.2"
+version = "0.10.3"
 edition = "2021"
 rust-version = "1.63"
 license = "MIT OR Apache-2.0"
