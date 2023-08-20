@@ -344,7 +344,8 @@ impl TestEndpoint {
         }
 
         loop {
-            for (ch, conn) in self.connections.iter_mut() {
+            let mut endpoint_events_pending = false;
+            for conn in self.connections.values_mut() {
                 if self.timeout.map_or(false, |x| x <= now) {
                     self.timeout = None;
                     conn.handle_timeout(now);
@@ -360,9 +361,10 @@ impl TestEndpoint {
                     self.outbound.extend(split_transmit(x));
                 }
                 self.timeout = conn.poll_timeout();
+                endpoint_events_pending |= conn.poll_endpoint_events();
             }
 
-            if !self.has_endpoint_events() {
+            if !endpoint_events_pending {
                 break;
             }
 

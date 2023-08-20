@@ -10,7 +10,9 @@ use std::{
 
 use bytes::{Buf, BufMut, BytesMut};
 
-use crate::{coding::BufExt, packet::PartialDecode, ResetToken, MAX_CID_SIZE};
+use crate::{
+    coding::BufExt, packet::PartialDecode, shared_list, ConnectionHandle, ResetToken, MAX_CID_SIZE,
+};
 
 /// Events sent from an Endpoint to a Connection
 #[derive(Debug)]
@@ -30,12 +32,35 @@ pub(crate) enum ConnectionEventInner {
     NewIdentifiers(Vec<IssuedCid>),
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct EndpointEvents {
+    pub(crate) ch: ConnectionHandle,
     pub(crate) need_identifiers: AtomicU64,
     pub(crate) reset_token: Mutex<Option<(SocketAddr, ResetToken)>>,
     pub(crate) retire_cids: Mutex<Vec<u64>>,
     pub(crate) drained: AtomicBool,
+    link: shared_list::Link<EndpointEvents>,
+}
+
+impl EndpointEvents {
+    pub(crate) fn new(ch: ConnectionHandle) -> Self {
+        Self {
+            ch,
+            need_identifiers: AtomicU64::new(0),
+            reset_token: Mutex::new(None),
+            retire_cids: Mutex::new(Vec::new()),
+            drained: AtomicBool::new(false),
+            link: shared_list::Link::default(),
+        }
+    }
+}
+
+pub(crate) enum EndpointEventsQueue {}
+
+impl shared_list::LinkGetter<EndpointEvents> for EndpointEventsQueue {
+    fn get(x: &EndpointEvents) -> &shared_list::Link<EndpointEvents> {
+        &x.link
+    }
 }
 
 /// Protocol-level identifier for a connection.

@@ -67,6 +67,9 @@ pub use crate::endpoint::{ConnectError, ConnectionHandle, DatagramEvent, Endpoin
 mod shared;
 pub use crate::shared::{ConnectionEvent, ConnectionId, EcnCodepoint};
 
+mod shared_list;
+use crate::shared_list::SharedList;
+
 mod transport_error;
 pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
 

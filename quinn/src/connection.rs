@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime};
+use atomic_waker::AtomicWaker;
 use bytes::Bytes;
 use pin_project_lite::pin_project;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
@@ -43,6 +44,7 @@ impl Connecting {
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
+        endpoint: Arc<AtomicWaker>,
     ) -> Self {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
         let (on_connected_send, on_connected_recv) = oneshot::channel();
@@ -55,6 +57,7 @@ impl Connecting {
             on_connected_send,
             socket,
             runtime.clone(),
+            endpoint,
         );
 
         runtime.spawn(Box::pin(ConnectionDriver(conn.clone())));
@@ -748,6 +751,7 @@ impl ConnectionRef {
         on_connected: oneshot::Sender<bool>,
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
+        endpoint: Arc<AtomicWaker>,
     ) -> Self {
         Self(Arc::new(ConnectionInner {
             state: Mutex::new(State {
@@ -769,6 +773,7 @@ impl ConnectionRef {
                 ref_count: 0,
                 socket,
                 runtime,
+                endpoint,
             }),
             shared: Shared::default(),
         }))
@@ -847,6 +852,7 @@ pub(crate) struct State {
     ref_count: usize,
     socket: Arc<dyn AsyncUdpSocket>,
     runtime: Arc<dyn Runtime>,
+    endpoint: Arc<AtomicWaker>,
 }
 
 impl State {
@@ -879,6 +885,9 @@ impl State {
     }
 
     fn forward_endpoint_events(&mut self) {
+        if self.inner.poll_endpoint_events() {
+            self.endpoint.wake();
+        }
         if self.inner.is_drained() {
             // If the endpoint driver is gone, noop.
             let _ = self

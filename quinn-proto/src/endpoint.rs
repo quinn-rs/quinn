@@ -19,17 +19,18 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
-    connection::{Connection, ConnectionError},
+    connection::{self, Connection, ConnectionError},
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvents,
-        IssuedCid,
+        EndpointEventsQueue, IssuedCid,
     },
+    shared_list,
     transport_parameters::TransportParameters,
-    ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
-    MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    ResetToken, RetryToken, SharedList, Side, Transmit, TransportConfig, TransportError,
+    INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -46,6 +47,10 @@ pub struct Endpoint {
     server_config: RwLock<Option<Arc<ServerConfig>>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
+    /// Queue of endpoint events in need of processing
+    event_queue: Arc<SharedList<EndpointEvents, EndpointEventsQueue>>,
+    /// Partially-consumed iterator from `event_queue` to be emptied before fetching a new one
+    event_queue_iter: Mutex<shared_list::Drain<EndpointEvents, EndpointEventsQueue>>,
 }
 
 impl Endpoint {
@@ -66,6 +71,8 @@ impl Endpoint {
             config,
             server_config: RwLock::new(server_config),
             allow_mtud,
+            event_queue: Arc::<SharedList<_, _>>::default(),
+            event_queue_iter: Mutex::default(),
         }
     }
 
@@ -74,40 +81,35 @@ impl Endpoint {
         *self.server_config.write().unwrap() = server_config;
     }
 
-    #[cfg(test)]
-    pub(crate) fn has_endpoint_events(&self) -> bool {
-        // HACKITY HACK: Scan all connections for events. Efficient work queue coming in followup.
-        let conns = self.connections.lock().unwrap();
-        conns.iter().any(|(_, conn)| {
-            let e = &*conn.events;
-            e.need_identifiers.load(Ordering::Relaxed) > 0
-                || e.reset_token.lock().unwrap().is_some()
-                || !e.retire_cids.lock().unwrap().is_empty()
-                || e.drained.load(Ordering::Relaxed)
-        })
-    }
-
     /// Process `EndpointEvent`s emitted from related `Connection`s
     ///
-    /// In turn, processing this event may return a `ConnectionEvent` for the same
-    /// `Connection`. Must never be called concurrently with the same `ch`
+    /// Must be called until `None` is returned.
     pub fn handle_events(&self) -> Option<(ConnectionHandle, ConnectionEvent)> {
-        // HACKITY HACK: Scan all connections for events. Efficient work queue coming in followup.
-        let n = self.connections.lock().unwrap().capacity();
-        for i in 0..n {
-            if !self.connections.lock().unwrap().contains(i) {
-                continue;
+        // Consume events until one requires a response, starting at `self.event_queue_iter`, then
+        // refreshing it at most once from `self.events_queue`. Ensures forward progress without
+        // starvation.
+        fn traverse(
+            this: &Endpoint,
+            iter: &mut shared_list::Drain<EndpointEvents, EndpointEventsQueue>,
+        ) -> Option<(ConnectionHandle, ConnectionEvent)> {
+            for events in iter {
+                if let Some(x) = this.handle_events_for(&events) {
+                    return Some((events.ch, x));
+                }
             }
-            let ch = ConnectionHandle(i);
-            if let Some(x) = self.handle_events_for(ch) {
-                return Some((ch, x));
-            }
+            None
         }
-        None
+
+        let iter = &mut *self.event_queue_iter.lock().unwrap();
+        if let Some(x) = traverse(self, iter) {
+            return Some(x);
+        }
+        *iter = self.event_queue.drain();
+        traverse(self, iter)
     }
 
-    fn handle_events_for(&self, ch: ConnectionHandle) -> Option<ConnectionEvent> {
-        let events = self.connections.lock().unwrap()[ch].events.clone();
+    fn handle_events_for(&self, events: &EndpointEvents) -> Option<ConnectionEvent> {
+        let ch = events.ch;
         let needed_identifers = events.need_identifiers.swap(0, Ordering::Relaxed);
         let result =
             (needed_identifers > 0).then(|| self.send_new_identifiers(ch, needed_identifers));
@@ -373,6 +375,7 @@ impl Endpoint {
             local_ip: None,
         };
         let (meta, conn) = self.make_connection(
+            ch,
             config.version,
             remote_id,
             loc_cid,
@@ -560,6 +563,7 @@ impl Endpoint {
         let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
         let (meta, mut conn) = self.make_connection(
+            ch,
             version,
             dst_cid,
             loc_cid,
@@ -597,6 +601,7 @@ impl Endpoint {
 
     fn make_connection(
         &self,
+        ch: ConnectionHandle,
         version: u32,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
@@ -607,13 +612,13 @@ impl Endpoint {
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
     ) -> (ConnectionMeta, Connection) {
-        let events = Arc::<EndpointEvents>::default();
+        let events = connection::EndpointEventsTracker::new(ch, self.event_queue.clone());
 
         let conn = Connection::new(
             self.config.clone(),
             server_config,
             transport_config,
-            events.clone(),
+            events,
             init_cid,
             loc_cid,
             rem_cid,
@@ -632,7 +637,6 @@ impl Endpoint {
             loc_cids: iter::once((0, loc_cid)).collect(),
             addresses,
             reset_token: None,
-            events,
         };
 
         (meta, conn)
@@ -860,8 +864,6 @@ pub(crate) struct ConnectionMeta {
     /// Reset token provided by the peer for the CID we're currently sending to, and the address
     /// being sent to
     reset_token: Option<(SocketAddr, ResetToken)>,
-    // TODO: queue of dirty connections to drive reading these (ArcSwap based?)
-    events: Arc<EndpointEvents>,
 }
 
 /// Internal identifier for a `Connection` currently associated with an endpoint

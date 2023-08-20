@@ -35,6 +35,7 @@ maintenance = { status = "experimental" }
 [dependencies]
 async-io = { version = "1.6", optional = true }
 async-std = { version = "1.11", optional = true }
+atomic-waker = "1.1.1"
 bytes = "1"
 # Enables futures::io::{AsyncRead, AsyncWrite} support for streams
 futures-io = { version = "0.3.19", optional = true }
