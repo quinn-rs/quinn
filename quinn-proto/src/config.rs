@@ -48,6 +48,8 @@ pub struct TransportConfig {
     pub(crate) datagram_send_buffer_size: usize,
 
     pub(crate) congestion_controller_factory: Box<dyn congestion::ControllerFactory + Send + Sync>,
+
+    pub(crate) enable_segmentation_offload: bool,
 }
 
 impl TransportConfig {
@@ -291,6 +293,21 @@ impl TransportConfig {
         self.congestion_controller_factory = Box::new(factory);
         self
     }
+
+    /// Whether to use "Generic Segmentation Offload" to accelerate transmits, when supported by the
+    /// environment
+    ///
+    /// Defaults to `true`.
+    ///
+    /// GSO dramatically reduces CPU consumption when sending large numbers of packets with the same
+    /// headers, such as when transmitting bulk data on a connection. However, it is not supported
+    /// by all network interface drivers or packet inspection tools. `quinn-udp` will attempt to
+    /// disable GSO automatically when unavailable, but this can lead to spurious packet loss at
+    /// startup, temporarily degrading performance.
+    pub fn enable_segmentation_offload(&mut self, enabled: bool) -> &mut Self {
+        self.enable_segmentation_offload = enabled;
+        self
+    }
 }
 
 impl Default for TransportConfig {
@@ -325,6 +342,8 @@ impl Default for TransportConfig {
             datagram_send_buffer_size: 1024 * 1024,
 
             congestion_controller_factory: Box::new(Arc::new(congestion::CubicConfig::default())),
+
+            enable_segmentation_offload: true,
         }
     }
 }
