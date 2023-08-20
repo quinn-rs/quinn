@@ -956,7 +956,7 @@ impl Connection {
     /// Will execute protocol logic upon receipt of a connection event, in turn preparing signals
     /// (including application `Event`s, `EndpointEvent`s and outgoing datagrams) that should be
     /// extracted through the relevant methods.
-    pub fn handle_event(&mut self, event: ConnectionEvent) {
+    pub fn handle_event(&mut self, event: ConnectionEvent, now: Instant) {
         use self::ConnectionEventInner::*;
         match event.0 {
             Datagram {
@@ -1001,7 +1001,7 @@ impl Connection {
                     self.set_loss_detection_timer(now);
                 }
             }
-            NewIdentifiers(ids, now) => {
+            NewIdentifiers(ids) => {
                 self.local_cid_state.new_cids(&ids, now);
                 ids.into_iter().rev().for_each(|frame| {
                     self.spaces[SpaceId::Data].pending.new_cids.push(frame);
@@ -1071,7 +1071,7 @@ impl Connection {
                             self.local_cid_state.retire_prior_to()
                         );
                         self.endpoint_events
-                            .push_back(EndpointEventInner::NeedIdentifiers(now, num_new_cid));
+                            .push_back(EndpointEventInner::NeedIdentifiers(num_new_cid));
                     }
                 }
                 Timer::MaxAckDelay => {
@@ -2374,7 +2374,7 @@ impl Connection {
                             .push_back(EndpointEventInner::ResetToken(self.path.remote, token));
                     }
                     self.handle_peer_params(params)?;
-                    self.issue_first_cids(now);
+                    self.issue_first_cids();
                 } else {
                     // Server-only
                     self.spaces[SpaceId::Data].pending.handshake_done = true;
@@ -2421,7 +2421,7 @@ impl Connection {
                                 reason: "transport parameters missing".into(),
                             })?;
                     self.handle_peer_params(params)?;
-                    self.issue_first_cids(now);
+                    self.issue_first_cids();
                     self.init_0rtt();
                 }
                 Ok(())
@@ -2690,7 +2690,6 @@ impl Connection {
                         .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
                     self.endpoint_events
                         .push_back(EndpointEventInner::RetireConnectionId(
-                            now,
                             sequence,
                             allow_more_cids,
                         ));
@@ -2916,7 +2915,7 @@ impl Connection {
     }
 
     /// Issue an initial set of connection IDs to the peer upon connection
-    fn issue_first_cids(&mut self, now: Instant) {
+    fn issue_first_cids(&mut self) {
         if self.local_cid_state.cid_len() == 0 {
             return;
         }
@@ -2924,7 +2923,7 @@ impl Connection {
         // Subtract 1 to account for the CID we supplied while handshaking
         let n = self.peer_params.issue_cids_limit() - 1;
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(now, n));
+            .push_back(EndpointEventInner::NeedIdentifiers(n));
     }
 
     fn populate_packet(
@@ -3401,10 +3400,10 @@ impl Connection {
     /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
     /// with updated `retire_prior_to` field set to `v`
     #[cfg(test)]
-    pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant) {
+    pub(crate) fn rotate_local_cid(&mut self, v: u64) {
         let n = self.local_cid_state.assign_retire_seq(v);
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(now, n));
+            .push_back(EndpointEventInner::NeedIdentifiers(n));
     }
 
     /// Check the current active remote CID sequence
