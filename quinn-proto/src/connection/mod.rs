@@ -411,7 +411,10 @@ impl Connection {
     #[must_use]
     pub fn poll_transmit(&mut self, now: Instant, max_datagrams: usize) -> Option<Transmit> {
         assert!(max_datagrams != 0);
-        let max_datagrams = max_datagrams.min(MAX_TRANSMIT_SEGMENTS);
+        let max_datagrams = match self.config.enable_segmentation_offload {
+            false => 1,
+            true => max_datagrams.min(MAX_TRANSMIT_SEGMENTS),
+        };
 
         let mut num_datagrams = 0;
 
