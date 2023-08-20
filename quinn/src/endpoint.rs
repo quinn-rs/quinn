@@ -13,6 +13,7 @@ use std::{
 };
 
 use crate::runtime::{default_runtime, AsyncUdpSocket, Runtime};
+use atomic_waker::AtomicWaker;
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use proto::{
@@ -188,9 +189,13 @@ impl Endpoint {
         };
         let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
         let socket = endpoint.socket.clone();
-        Ok(endpoint
-            .connections
-            .insert(ch, conn, socket, self.runtime.clone()))
+        Ok(endpoint.connections.insert(
+            ch,
+            conn,
+            socket,
+            self.runtime.clone(),
+            self.inner.shared.endpoint_events.clone(),
+        ))
     }
 
     /// Switch to a new UDP socket
@@ -310,6 +315,7 @@ impl Future for EndpointDriver {
 
     #[allow(unused_mut)] // MSRV
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.0.shared.endpoint_events.register(cx.waker());
         let mut endpoint = self.0.state.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());
@@ -317,7 +323,7 @@ impl Future for EndpointDriver {
 
         let now = Instant::now();
         let mut keep_going = false;
-        keep_going |= endpoint.drive_recv(cx, now)?;
+        keep_going |= endpoint.drive_recv(cx, now, &self.0.shared)?;
         keep_going |= endpoint.handle_events(cx, &self.0.shared);
         keep_going |= endpoint.drive_send(cx)?;
 
@@ -382,10 +388,16 @@ pub(crate) struct State {
 pub(crate) struct Shared {
     incoming: Notify,
     idle: Notify,
+    endpoint_events: Arc<AtomicWaker>,
 }
 
 impl State {
-    fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv<'a>(
+        &'a mut self,
+        cx: &mut Context,
+        now: Instant,
+        shared: &Shared,
+    ) -> Result<bool, io::Error> {
         self.recv_limiter.start_cycle();
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
         let mut iovs = MaybeUninit::<[IoSliceMut<'a>; BATCH_SIZE]>::uninit();
@@ -420,6 +432,7 @@ impl State {
                                         conn,
                                         self.socket.clone(),
                                         self.runtime.clone(),
+                                        shared.endpoint_events.clone(),
                                     );
                                     self.incoming.push_back(conn);
                                 }
@@ -538,6 +551,7 @@ impl State {
             }
         }
 
+        let mut n = 0;
         while let Some((ch, event)) = self.inner.handle_events() {
             // Ignoring errors from dropped connections that haven't yet been cleaned up
             let _ = self
@@ -546,6 +560,10 @@ impl State {
                 .get_mut(&ch)
                 .unwrap()
                 .send(ConnectionEvent::Proto(event));
+            n += 1;
+            if n > IO_LOOP_BOUND {
+                return true;
+            }
         }
 
         keep_going
@@ -598,6 +616,7 @@ impl ConnectionSet {
         conn: proto::Connection,
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
+        endpoint: Arc<AtomicWaker>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
         if let Some((error_code, ref reason)) = self.close {
@@ -608,7 +627,15 @@ impl ConnectionSet {
             .unwrap();
         }
         self.senders.insert(handle, send);
-        Connecting::new(handle, conn, self.sender.clone(), recv, socket, runtime)
+        Connecting::new(
+            handle,
+            conn,
+            self.sender.clone(),
+            recv,
+            socket,
+            runtime,
+            endpoint,
+        )
     }
 
     fn is_empty(&self) -> bool {
@@ -680,6 +707,7 @@ impl EndpointRef {
             shared: Shared {
                 incoming: Notify::new(),
                 idle: Notify::new(),
+                endpoint_events: Arc::<AtomicWaker>::default(),
             },
             state: Mutex::new(State {
                 socket,

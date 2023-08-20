@@ -19,17 +19,18 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
-    connection::{Connection, ConnectionError},
+    connection::{self, Connection, ConnectionError},
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvents,
-        IssuedCid,
+        EndpointEventsQueue, IssuedCid,
     },
+    shared_list,
     transport_parameters::TransportParameters,
-    ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
-    MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    ResetToken, RetryToken, SharedList, Side, Transmit, TransportConfig, TransportError,
+    INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -45,6 +46,10 @@ pub struct Endpoint {
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
+    /// Queue of endpoint events in need of processing
+    event_queue: Arc<SharedList<EndpointEvents, EndpointEventsQueue>>,
+    /// Partially-consumed iterator from `event_queue` to be emptied before fetching a new one
+    event_queue_iter: shared_list::Drain<EndpointEvents, EndpointEventsQueue>,
 }
 
 impl Endpoint {
@@ -66,6 +71,8 @@ impl Endpoint {
             config,
             server_config,
             allow_mtud,
+            event_queue: Arc::<SharedList<_, _>>::default(),
+            event_queue_iter: shared_list::Drain::default(),
         }
     }
 
@@ -74,39 +81,38 @@ impl Endpoint {
         self.server_config = server_config;
     }
 
-    #[cfg(test)]
-    pub(crate) fn has_endpoint_events(&self) -> bool {
-        // HACKITY HACK: Scan all connections for events. Efficient work queue coming in followup.
-        self.connections.iter().any(|(_, conn)| {
-            let e = &*conn.events;
-            e.need_identifiers.load(Ordering::Relaxed) > 0
-                || e.reset_token.lock().unwrap().is_some()
-                || !e.retire_cids.lock().unwrap().is_empty()
-                || e.drained.load(Ordering::Relaxed)
-        })
-    }
-
     /// Process `EndpointEvent`s emitted from related `Connection`s
     ///
-    /// In turn, processing this event may return a `ConnectionEvent` for the same
-    /// `Connection`. Must never be called concurrently with the same `ch`
+    /// Must be called until `None` is returned.
     pub fn handle_events(&mut self) -> Option<(ConnectionHandle, ConnectionEvent)> {
-        // HACKITY HACK: Scan all connections for events. Efficient work queue coming in followup.
-        let n = self.connections.capacity();
-        for i in 0..n {
-            if !self.connections.contains(i) {
-                continue;
+        // Consume events until one requires a response, starting at `self.event_queue_iter`, then
+        // refreshing it at most once from `self.events_queue`. Ensures the caller can handle each
+        // response without us dropping any events.
+        fn traverse(
+            this: &mut Endpoint,
+            iter: &mut shared_list::Drain<EndpointEvents, EndpointEventsQueue>,
+        ) -> Option<(ConnectionHandle, ConnectionEvent)> {
+            for events in iter {
+                if let Some(x) = this.handle_events_for(&events) {
+                    return Some((events.ch, x));
+                }
             }
-            let ch = ConnectionHandle(i);
-            if let Some(x) = self.handle_events_for(ch) {
-                return Some((ch, x));
-            }
+            None
         }
-        None
+
+        let mut iter = mem::take(&mut self.event_queue_iter);
+        if let Some(x) = traverse(self, &mut iter) {
+            self.event_queue_iter = iter;
+            return Some(x);
+        }
+        iter = self.event_queue.drain();
+        let result = traverse(self, &mut iter);
+        self.event_queue_iter = iter;
+        result
     }
 
-    fn handle_events_for(&mut self, ch: ConnectionHandle) -> Option<ConnectionEvent> {
-        let events = self.connections[ch].events.clone();
+    fn handle_events_for(&mut self, events: &EndpointEvents) -> Option<ConnectionEvent> {
+        let ch = events.ch;
         let needed_identifers = events.need_identifiers.swap(0, Ordering::Relaxed);
         let result =
             (needed_identifers > 0).then(|| self.send_new_identifiers(ch, needed_identifers));
@@ -136,6 +142,11 @@ impl Endpoint {
     fn handle_drained(&mut self, ch: ConnectionHandle) {
         if let Some(conn) = self.connections.try_remove(ch.0) {
             self.index.remove(&conn);
+        } else {
+            // This indicates a bug in downstream code, which could cause spurious
+            // connection loss instead of this error if the CID was (re)allocated prior to
+            // the illegal call.
+            error!(id = ch.0, "unknown connection drained");
         }
     }
 
@@ -604,13 +615,13 @@ impl Endpoint {
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
     ) -> Connection {
-        let events = Arc::<EndpointEvents>::default();
+        let events = connection::EndpointEventsTracker::new(ch, self.event_queue.clone());
 
         let conn = Connection::new(
             self.config.clone(),
             server_config,
             transport_config,
-            events.clone(),
+            events,
             init_cid,
             loc_cid,
             rem_cid,
@@ -629,7 +640,6 @@ impl Endpoint {
             loc_cids: iter::once((0, loc_cid)).collect(),
             addresses,
             reset_token: None,
-            events,
         });
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
@@ -843,8 +853,6 @@ pub(crate) struct ConnectionMeta {
     /// Reset token provided by the peer for the CID we're currently sending to, and the address
     /// being sent to
     reset_token: Option<(SocketAddr, ResetToken)>,
-    // TODO: Intrusive queue of dirty connections to drive reading these
-    events: Arc<EndpointEvents>,
 }
 
 /// Internal identifier for a `Connection` currently associated with an endpoint
