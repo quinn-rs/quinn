@@ -157,8 +157,8 @@ impl Default for NewRenoConfig {
     }
 }
 
-impl ControllerFactory for Arc<NewRenoConfig> {
-    fn build(&self, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
-        Box::new(NewReno::new(self.clone(), now, current_mtu))
+impl ControllerFactory for NewRenoConfig {
+    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+        Box::new(NewReno::new(self, now, current_mtu))
     }
 }

@@ -2,6 +2,7 @@
 
 use crate::connection::RttEstimator;
 use std::any::Any;
+use std::sync::Arc;
 use std::time::Instant;
 
 mod bbr;
@@ -77,7 +78,7 @@ pub trait Controller: Send {
 /// Constructs controllers on demand
 pub trait ControllerFactory {
     /// Construct a fresh `Controller`
-    fn build(&self, now: Instant, current_mtu: u16) -> Box<dyn Controller>;
+    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller>;
 }
 
 const BASE_DATAGRAM_SIZE: u64 = 1200;

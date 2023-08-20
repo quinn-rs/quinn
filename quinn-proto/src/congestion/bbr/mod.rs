@@ -522,9 +522,9 @@ impl Default for BbrConfig {
     }
 }
 
-impl ControllerFactory for Arc<BbrConfig> {
-    fn build(&self, _now: Instant, current_mtu: u16) -> Box<dyn Controller> {
-        Box::new(Bbr::new(self.clone(), current_mtu))
+impl ControllerFactory for BbrConfig {
+    fn build(self: Arc<Self>, _now: Instant, current_mtu: u16) -> Box<dyn Controller> {
+        Box::new(Bbr::new(self, current_mtu))
     }
 }
 
