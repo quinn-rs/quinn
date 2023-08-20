@@ -726,6 +726,15 @@ impl PacketNumberFilter {
         }
     }
 
+    #[cfg(test)]
+    pub(super) fn disabled() -> Self {
+        Self {
+            next_skipped_packet_number: u64::MAX,
+            prev_skipped_packet_number: None,
+            exponent: u32::MAX,
+        }
+    }
+
     pub(super) fn peek(&self, space: &PacketSpace) -> u64 {
         let n = space.next_packet_number;
         if n != self.next_skipped_packet_number {
