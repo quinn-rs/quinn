@@ -361,7 +361,7 @@ impl TestEndpoint {
 
                 for (_, mut events) in self.conn_events.drain() {
                     for event in events.drain(..) {
-                        conn.handle_event(event);
+                        conn.handle_event(event, now);
                     }
                 }
 
@@ -382,7 +382,7 @@ impl TestEndpoint {
             for (ch, event) in endpoint_events {
                 if let Some(event) = self.handle_event(ch, event) {
                     if let Some(conn) = self.connections.get_mut(&ch) {
-                        conn.handle_event(event);
+                        conn.handle_event(event, now);
                     }
                 }
             }
