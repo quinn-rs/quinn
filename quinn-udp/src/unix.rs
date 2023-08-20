@@ -265,15 +265,15 @@ fn send(
                 }
                 io::ErrorKind::WouldBlock => return Err(e),
                 _ => {
-                    // Some network adapters do not support GSO. Unfortunately, Linux offers no easy way
-                    // for us to detect this short of an I/O error when we try to actually send
-                    // datagrams using it.
+                    // Some network adapters and drivers do not support GSO. Unfortunately, Linux
+                    // offers no easy way for us to detect this short of an EIO or sometimes EINVAL
+                    // when we try to actually send datagrams using it.
                     #[cfg(target_os = "linux")]
-                    if e.raw_os_error() == Some(libc::EIO) {
+                    if let Some(libc::EIO) | Some(libc::EINVAL) = e.raw_os_error() {
                         // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
                         // may already be in the pipeline, so we need to tolerate additional failures.
                         if state.max_gso_segments() > 1 {
-                            tracing::error!("got EIO, halting segmentation offload");
+                            tracing::error!("got transmit error, halting segmentation offload");
                             state
                                 .max_gso_segments
                                 .store(1, std::sync::atomic::Ordering::Relaxed);
