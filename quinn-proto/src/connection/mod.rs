@@ -281,6 +281,7 @@ impl Connection {
                 config.initial_rtt,
                 config
                     .congestion_controller_factory
+                    .clone()
                     .build(now, config.get_initial_mtu()),
                 config.get_initial_mtu(),
                 config.min_mtu,
@@ -2867,6 +2868,7 @@ impl Connection {
                 self.config.initial_rtt,
                 self.config
                     .congestion_controller_factory
+                    .clone()
                     .build(now, self.config.get_initial_mtu()),
                 self.config.get_initial_mtu(),
                 self.config.min_mtu,

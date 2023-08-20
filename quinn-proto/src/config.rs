@@ -48,7 +48,7 @@ pub struct TransportConfig {
     pub(crate) datagram_receive_buffer_size: Option<usize>,
     pub(crate) datagram_send_buffer_size: usize,
 
-    pub(crate) congestion_controller_factory: Box<dyn congestion::ControllerFactory + Send + Sync>,
+    pub(crate) congestion_controller_factory: Arc<dyn congestion::ControllerFactory + Send + Sync>,
 
     pub(crate) enable_segmentation_offload: bool,
 }
@@ -281,9 +281,9 @@ impl TransportConfig {
     /// ```
     pub fn congestion_controller_factory(
         &mut self,
-        factory: impl congestion::ControllerFactory + Send + Sync + 'static,
+        factory: Arc<dyn congestion::ControllerFactory + Send + Sync + 'static>,
     ) -> &mut Self {
-        self.congestion_controller_factory = Box::new(factory);
+        self.congestion_controller_factory = factory;
         self
     }
 
@@ -335,7 +335,7 @@ impl Default for TransportConfig {
             datagram_receive_buffer_size: Some(STREAM_RWND as usize),
             datagram_send_buffer_size: 1024 * 1024,
 
-            congestion_controller_factory: Box::new(Arc::new(congestion::CubicConfig::default())),
+            congestion_controller_factory: Arc::new(congestion::CubicConfig::default()),
 
             enable_segmentation_offload: true,
         }
