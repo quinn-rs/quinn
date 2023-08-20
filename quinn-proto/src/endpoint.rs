@@ -1,10 +1,10 @@
 use std::{
     collections::{hash_map, HashMap},
     convert::TryFrom,
-    fmt, iter,
+    fmt, iter, mem,
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
-    sync::Arc,
+    sync::{atomic::Ordering, Arc, Mutex, RwLock},
     time::{Instant, SystemTime},
 };
 
@@ -24,8 +24,8 @@ use crate::{
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner, IssuedCid,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvents,
+        IssuedCid,
     },
     transport_parameters::TransportParameters,
     ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
@@ -37,11 +37,13 @@ use crate::{
 /// This object performs no I/O whatsoever. Instead, it consumes incoming packets and
 /// connection-generated events via `handle` and `handle_event`.
 pub struct Endpoint {
-    index: ConnectionIndex,
-    connections: Slab<ConnectionMeta>,
+    index: RwLock<ConnectionIndex>,
+    /// Must be locked after `index` when locks overlap
+    connections: Mutex<Slab<ConnectionMeta>>,
     local_cid_generator: Box<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig>,
-    server_config: Option<Arc<ServerConfig>>,
+    /// Must never be locked concurrently with other locks
+    server_config: RwLock<Option<Arc<ServerConfig>>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
 }
@@ -58,61 +60,91 @@ impl Endpoint {
         allow_mtud: bool,
     ) -> Self {
         Self {
-            index: ConnectionIndex::default(),
-            connections: Slab::new(),
+            index: RwLock::new(ConnectionIndex::default()),
+            connections: Mutex::new(Slab::new()),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
             config,
-            server_config,
+            server_config: RwLock::new(server_config),
             allow_mtud,
         }
     }
 
     /// Replace the server configuration, affecting new incoming connections only
-    pub fn set_server_config(&mut self, server_config: Option<Arc<ServerConfig>>) {
-        self.server_config = server_config;
+    pub fn set_server_config(&self, server_config: Option<Arc<ServerConfig>>) {
+        *self.server_config.write().unwrap() = server_config;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn has_endpoint_events(&self) -> bool {
+        // HACKITY HACK: Scan all connections for events. Efficient work queue coming in followup.
+        let conns = self.connections.lock().unwrap();
+        conns.iter().any(|(_, conn)| {
+            let e = &*conn.events;
+            e.need_identifiers.load(Ordering::Relaxed) > 0
+                || e.reset_token.lock().unwrap().is_some()
+                || !e.retire_cids.lock().unwrap().is_empty()
+                || e.drained.load(Ordering::Relaxed)
+        })
     }
 
     /// Process `EndpointEvent`s emitted from related `Connection`s
     ///
-    /// In turn, processing this event may return a `ConnectionEvent` for the same `Connection`.
-    pub fn handle_event(
-        &mut self,
-        ch: ConnectionHandle,
-        event: EndpointEvent,
-    ) -> Option<ConnectionEvent> {
-        use EndpointEventInner::*;
-        match event.0 {
-            NeedIdentifiers(n) => {
-                return Some(self.send_new_identifiers(ch, n));
+    /// In turn, processing this event may return a `ConnectionEvent` for the same
+    /// `Connection`. Must never be called concurrently with the same `ch`
+    pub fn handle_events(&self) -> Option<(ConnectionHandle, ConnectionEvent)> {
+        // HACKITY HACK: Scan all connections for events. Efficient work queue coming in followup.
+        let n = self.connections.lock().unwrap().capacity();
+        for i in 0..n {
+            if !self.connections.lock().unwrap().contains(i) {
+                continue;
             }
-            ResetToken(remote, token) => {
-                if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
-                    self.index.connection_reset_tokens.remove(old.0, old.1);
-                }
-                if self.index.connection_reset_tokens.insert(remote, token, ch) {
-                    warn!("duplicate reset token");
-                }
-            }
-            RetireConnectionId(seq, allow_more_cids) => {
-                if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
-                    trace!("peer retired CID {}: {}", seq, cid);
-                    self.index.retire(&cid);
-                    if allow_more_cids {
-                        return Some(self.send_new_identifiers(ch, 1));
-                    }
-                }
-            }
-            Drained => {
-                let conn = self.connections.remove(ch.0);
-                self.index.remove(&conn);
+            let ch = ConnectionHandle(i);
+            if let Some(x) = self.handle_events_for(ch) {
+                return Some((ch, x));
             }
         }
         None
     }
 
+    fn handle_events_for(&self, ch: ConnectionHandle) -> Option<ConnectionEvent> {
+        let events = self.connections.lock().unwrap()[ch].events.clone();
+        let needed_identifers = events.need_identifiers.swap(0, Ordering::Relaxed);
+        let result =
+            (needed_identifers > 0).then(|| self.send_new_identifiers(ch, needed_identifers));
+        if let Some((remote, token)) = events.reset_token.lock().unwrap().take() {
+            let old = self.connections.lock().unwrap()[ch]
+                .reset_token
+                .replace((remote, token));
+            let mut index = self.index.write().unwrap();
+            if let Some(old) = old {
+                index.connection_reset_tokens.remove(old.0, old.1);
+            }
+            if index.connection_reset_tokens.insert(remote, token, ch) {
+                warn!("duplicate reset token");
+            }
+        }
+        let retire_cids = mem::take(&mut *events.retire_cids.lock().unwrap());
+        for seq in retire_cids {
+            let cid = self.connections.lock().unwrap()[ch].loc_cids.remove(&seq);
+            if let Some(cid) = cid {
+                trace!("peer retired CID {}: {}", seq, cid);
+                self.index.write().unwrap().retire(&cid);
+            }
+        }
+        if events.drained.swap(false, Ordering::Relaxed) {
+            self.handle_drained(ch);
+        }
+        result
+    }
+
+    fn handle_drained(&self, ch: ConnectionHandle) {
+        let conn = self.connections.lock().unwrap().remove(ch.0);
+        self.index.write().unwrap().remove(&conn);
+    }
+
     /// Process an incoming UDP datagram
     pub fn handle(
-        &mut self,
+        &self,
         now: Instant,
         remote: SocketAddr,
         local_ip: Option<IpAddr>,
@@ -132,7 +164,7 @@ impl Endpoint {
                 dst_cid,
                 version,
             }) => {
-                if self.server_config.is_none() {
+                if self.server_config.read().unwrap().is_none() {
                     debug!("dropping packet with unsupported version");
                     return None;
                 }
@@ -173,7 +205,7 @@ impl Endpoint {
         //
 
         let addresses = FourTuple { remote, local_ip };
-        if let Some(ch) = self.index.get(&addresses, &first_decode) {
+        if let Some(ch) = self.index.read().unwrap().get(&addresses, &first_decode) {
             return Some(DatagramEvent::ConnectionEvent(
                 ch,
                 ConnectionEvent(ConnectionEventInner::Datagram {
@@ -191,8 +223,8 @@ impl Endpoint {
         //
 
         let dst_cid = first_decode.dst_cid();
-        let server_config = match &self.server_config {
-            Some(config) => config,
+        let server_config = match &*self.server_config.read().unwrap() {
+            Some(config) => config.clone(),
             None => {
                 debug!("packet for unrecognized connection {}", dst_cid);
                 return self
@@ -303,7 +335,7 @@ impl Endpoint {
 
     /// Initiate a connection
     pub fn connect(
-        &mut self,
+        &self,
         config: ClientConfig,
         remote: SocketAddr,
         server_name: &str,
@@ -321,8 +353,10 @@ impl Endpoint {
         let remote_id = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         trace!(initial_dcid = %remote_id);
 
-        let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(ch);
+        let mut index = self.index.write().unwrap();
+        let mut connections = self.connections.lock().unwrap();
+        let ch = ConnectionHandle(connections.vacant_key());
+        let loc_cid = new_cid(&*self.local_cid_generator, &mut index, ch);
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
@@ -349,16 +383,18 @@ impl Endpoint {
             None,
             config.transport,
         );
-        self.connections.insert(meta);
-        self.index.insert_conn(addresses, loc_cid, ch);
+        connections.insert(meta);
+        index.insert_conn(addresses, loc_cid, ch);
         Ok((ch, conn))
     }
 
-    fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: u64) -> ConnectionEvent {
+    fn send_new_identifiers(&self, ch: ConnectionHandle, num: u64) -> ConnectionEvent {
         let mut ids = vec![];
+        let mut index = self.index.write().unwrap();
+        let mut connections = self.connections.lock().unwrap();
         for _ in 0..num {
-            let id = self.new_cid(ch);
-            let meta = &mut self.connections[ch];
+            let id = new_cid(&*self.local_cid_generator, &mut index, ch);
+            let meta = &mut connections[ch];
             meta.cids_issued += 1;
             let sequence = meta.cids_issued;
             meta.loc_cids.insert(sequence, id);
@@ -371,20 +407,8 @@ impl Endpoint {
         ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids))
     }
 
-    /// Generate a connection ID for `ch`
-    fn new_cid(&mut self, ch: ConnectionHandle) -> ConnectionId {
-        loop {
-            let cid = self.local_cid_generator.generate_cid();
-            if let hash_map::Entry::Vacant(e) = self.index.connection_ids.entry(cid) {
-                e.insert(ch);
-                break cid;
-            }
-            assert!(self.local_cid_generator.cid_len() > 0);
-        }
-    }
-
     fn handle_first_packet(
-        &mut self,
+        &self,
         now: Instant,
         addresses: FourTuple,
         ecn: Option<EcnCodepoint>,
@@ -420,9 +444,10 @@ impl Endpoint {
             return None;
         }
 
-        let server_config = self.server_config.as_ref().unwrap().clone();
+        let server_config = self.server_config.read().unwrap().as_ref().unwrap().clone();
 
-        if self.connections.len() >= server_config.concurrent_connections as usize || self.is_full()
+        if self.connections.lock().unwrap().len() >= server_config.concurrent_connections as usize
+            || self.is_full()
         {
             debug!("refusing connection");
             return Some(DatagramEvent::Response(self.initial_close(
@@ -516,8 +541,11 @@ impl Endpoint {
             (None, dst_cid)
         };
 
-        let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(ch);
+        let mut index = self.index.write().unwrap();
+        let mut connections = self.connections.lock().unwrap();
+
+        let ch = ConnectionHandle(connections.vacant_key());
+        let loc_cid = new_cid(&*self.local_cid_generator, &mut index, ch);
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -542,11 +570,13 @@ impl Endpoint {
             Some(server_config),
             transport_config,
         );
-        self.connections.insert(meta);
-        self.index.insert_conn(addresses, loc_cid, ch);
+        connections.insert(meta);
+        index.insert_conn(addresses, loc_cid, ch);
         if dst_cid.len() != 0 {
-            self.index.insert_initial(dst_cid, ch);
+            index.insert_initial(dst_cid, ch);
         }
+        drop((connections, index));
+
         match conn.handle_first_packet(now, addresses.remote, ecn, packet_number, packet, rest) {
             Ok(()) => {
                 trace!(id = ch.0, icid = %dst_cid, "connection incoming");
@@ -554,7 +584,7 @@ impl Endpoint {
             }
             Err(e) => {
                 debug!("handshake failed: {}", e);
-                self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
+                self.handle_drained(ch);
                 match e {
                     ConnectionError::TransportError(e) => Some(DatagramEvent::Response(
                         self.initial_close(version, addresses, crypto, &src_cid, e),
@@ -577,10 +607,13 @@ impl Endpoint {
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
     ) -> (ConnectionMeta, Connection) {
+        let events = Arc::<EndpointEvents>::default();
+
         let conn = Connection::new(
             self.config.clone(),
             server_config,
             transport_config,
+            events.clone(),
             init_cid,
             loc_cid,
             rem_cid,
@@ -599,6 +632,7 @@ impl Endpoint {
             loc_cids: iter::once((0, loc_cid)).collect(),
             addresses,
             reset_token: None,
+            events,
         };
 
         (meta, conn)
@@ -651,8 +685,8 @@ impl Endpoint {
     /// [`set_server_config`](Self::set_server_config) to update
     /// [`concurrent_connections`](ServerConfig::concurrent_connections) to
     /// zero.
-    pub fn reject_new_connections(&mut self) {
-        if let Some(config) = self.server_config.as_mut() {
+    pub fn reject_new_connections(&self) {
+        if let Some(config) = self.server_config.write().unwrap().as_mut() {
             Arc::make_mut(config).concurrent_connections(0);
         }
     }
@@ -664,18 +698,19 @@ impl Endpoint {
 
     #[cfg(test)]
     pub(crate) fn known_connections(&self) -> usize {
-        let x = self.connections.len();
-        debug_assert_eq!(x, self.index.connection_ids_initial.len());
+        let x = self.connections.lock().unwrap().len();
+        let index = self.index.read().unwrap();
+        debug_assert_eq!(x, index.connection_ids_initial.len());
         // Not all connections have known reset tokens
-        debug_assert!(x >= self.index.connection_reset_tokens.0.len());
+        debug_assert!(x >= index.connection_reset_tokens.0.len());
         // Not all connections have unique remotes, and 0-length CIDs might not be in use.
-        debug_assert!(x >= self.index.connection_remotes.len());
+        debug_assert!(x >= index.connection_remotes.len());
         x
     }
 
     #[cfg(test)]
     pub(crate) fn known_cids(&self) -> usize {
-        self.index.connection_ids.len()
+        self.index.read().unwrap().connection_ids.len()
     }
 
     /// Whether we've used up 3/4 of the available CID space
@@ -686,7 +721,7 @@ impl Endpoint {
         self.local_cid_generator.cid_len() <= 4
             && self.local_cid_generator.cid_len() != 0
             && (2usize.pow(self.local_cid_generator.cid_len() as u32 * 8)
-                - self.index.connection_ids.len())
+                - self.index.read().unwrap().connection_ids.len())
                 < 2usize.pow(self.local_cid_generator.cid_len() as u32 * 8 - 2)
     }
 }
@@ -699,6 +734,23 @@ impl fmt::Debug for Endpoint {
             .field("config", &self.config)
             .field("server_config", &self.server_config)
             .finish()
+    }
+}
+
+// Standalone method for use with split borrows of `Endpoint`
+/// Generate a connection ID for `ch` if specified
+fn new_cid(
+    generator: &dyn ConnectionIdGenerator,
+    index: &mut ConnectionIndex,
+    ch: ConnectionHandle,
+) -> ConnectionId {
+    loop {
+        let cid = generator.generate_cid();
+        if let hash_map::Entry::Vacant(e) = index.connection_ids.entry(cid) {
+            e.insert(ch);
+            break cid;
+        }
+        assert!(generator.cid_len() > 0);
     }
 }
 
@@ -808,6 +860,8 @@ pub(crate) struct ConnectionMeta {
     /// Reset token provided by the peer for the CID we're currently sending to, and the address
     /// being sent to
     reset_token: Option<(SocketAddr, ResetToken)>,
+    // TODO: queue of dirty connections to drive reading these (ArcSwap based?)
+    events: Arc<EndpointEvents>,
 }
 
 /// Internal identifier for a `Connection` currently associated with an endpoint

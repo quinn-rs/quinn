@@ -4,7 +4,7 @@ use std::{
     convert::TryFrom,
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     time::{Duration, Instant},
 };
 
@@ -24,10 +24,7 @@ use crate::{
     frame::{Close, Datagram, FrameStruct},
     packet::{Header, LongType, Packet, PartialDecode, SpaceId},
     range_set::ArrayRangeSet,
-    shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner,
-    },
+    shared::{ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvents},
     token::ResetToken,
     transport_parameters::TransportParameters,
     Dir, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
@@ -130,6 +127,7 @@ pub struct Connection {
     endpoint_config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
     config: Arc<TransportConfig>,
+    endpoint_events: Arc<EndpointEvents>,
     rng: StdRng,
     crypto: Box<dyn crypto::Session>,
     /// The CID we initially chose, for use during the handshake
@@ -162,7 +160,6 @@ pub struct Connection {
     /// Total number of outgoing packets that have been deemed lost
     lost_packets: u64,
     events: VecDeque<Event>,
-    endpoint_events: VecDeque<EndpointEventInner>,
     /// Whether the spin bit is in use for this connection
     spin_enabled: bool,
     /// Outgoing spin bit state
@@ -242,6 +239,7 @@ impl Connection {
         endpoint_config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         config: Arc<TransportConfig>,
+        endpoint_events: Arc<EndpointEvents>,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
@@ -272,6 +270,7 @@ impl Connection {
         let mut this = Self {
             endpoint_config,
             server_config,
+            endpoint_events,
             crypto,
             handshake_cid: loc_cid,
             rem_handshake_cid: rem_cid,
@@ -312,7 +311,6 @@ impl Connection {
             retry_src_cid: None,
             lost_packets: 0,
             events: VecDeque::new(),
-            endpoint_events: VecDeque::new(),
             spin_enabled: config.allow_spin && rng.gen_ratio(7, 8),
             spin: false,
             spaces: [initial_space, PacketSpace::new(now), PacketSpace::new(now)],
@@ -397,12 +395,6 @@ impl Connection {
         }
 
         None
-    }
-
-    /// Return endpoint-facing events
-    #[must_use]
-    pub fn poll_endpoint_events(&mut self) -> Option<EndpointEvent> {
-        self.endpoint_events.pop_front().map(EndpointEvent)
     }
 
     /// Provide control over streams
@@ -1007,13 +999,7 @@ impl Connection {
                     self.spaces[SpaceId::Data].pending.new_cids.push(frame);
                 });
                 // Update Timer::PushNewCid
-                if self
-                    .timers
-                    .get(Timer::PushNewCid)
-                    .map_or(true, |x| x <= now)
-                {
-                    self.reset_cid_retirement();
-                }
+                self.reset_cid_retirement();
             }
         }
     }
@@ -1037,7 +1023,7 @@ impl Connection {
             match timer {
                 Timer::Close => {
                     self.state = State::Drained;
-                    self.endpoint_events.push_back(EndpointEventInner::Drained);
+                    self.endpoint_events.drained.store(true, Ordering::Relaxed);
                 }
                 Timer::Idle => {
                     self.kill(ConnectionError::TimedOut);
@@ -1071,7 +1057,8 @@ impl Connection {
                             self.local_cid_state.retire_prior_to()
                         );
                         self.endpoint_events
-                            .push_back(EndpointEventInner::NeedIdentifiers(num_new_cid));
+                            .need_identifiers
+                            .fetch_add(num_new_cid, Ordering::Relaxed);
                     }
                 }
                 Timer::MaxAckDelay => {
@@ -2194,7 +2181,7 @@ impl Connection {
             }
         }
         if !was_drained && self.state.is_drained() {
-            self.endpoint_events.push_back(EndpointEventInner::Drained);
+            self.endpoint_events.drained.store(true, Ordering::Relaxed);
             // Close timer may have been started previously, e.g. if we sent a close and got a
             // stateless reset in response
             self.timers.stop(Timer::Close);
@@ -2370,8 +2357,8 @@ impl Connection {
                         }
                     }
                     if let Some(token) = params.stateless_reset_token {
-                        self.endpoint_events
-                            .push_back(EndpointEventInner::ResetToken(self.path.remote, token));
+                        *self.endpoint_events.reset_token.lock().unwrap() =
+                            Some((self.path.remote, token));
                     }
                     self.handle_peer_params(params)?;
                     self.issue_first_cids();
@@ -2688,11 +2675,16 @@ impl Connection {
                     let allow_more_cids = self
                         .local_cid_state
                         .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
+                    if allow_more_cids {
+                        self.endpoint_events
+                            .need_identifiers
+                            .fetch_add(1, Ordering::Relaxed);
+                    }
                     self.endpoint_events
-                        .push_back(EndpointEventInner::RetireConnectionId(
-                            sequence,
-                            allow_more_cids,
-                        ));
+                        .retire_cids
+                        .lock()
+                        .unwrap()
+                        .push(sequence);
                 }
                 Frame::NewConnectionId(frame) => {
                     trace!(
@@ -2906,11 +2898,7 @@ impl Connection {
     }
 
     fn set_reset_token(&mut self, reset_token: ResetToken) {
-        self.endpoint_events
-            .push_back(EndpointEventInner::ResetToken(
-                self.path.remote,
-                reset_token,
-            ));
+        *self.endpoint_events.reset_token.lock().unwrap() = Some((self.path.remote, reset_token));
         self.peer_params.stateless_reset_token = Some(reset_token);
     }
 
@@ -2923,7 +2911,8 @@ impl Connection {
         // Subtract 1 to account for the CID we supplied while handshaking
         let n = self.peer_params.issue_cids_limit() - 1;
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(n));
+            .need_identifiers
+            .fetch_add(n, Ordering::Relaxed);
     }
 
     fn populate_packet(
@@ -3403,7 +3392,8 @@ impl Connection {
     pub(crate) fn rotate_local_cid(&mut self, v: u64) {
         let n = self.local_cid_state.assign_retire_seq(v);
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(n));
+            .need_identifiers
+            .fetch_add(n, Ordering::Relaxed);
     }
 
     /// Check the current active remote CID sequence
@@ -3444,7 +3434,7 @@ impl Connection {
         self.close_common();
         self.error = Some(reason);
         self.state = State::Drained;
-        self.endpoint_events.push_back(EndpointEventInner::Drained);
+        self.endpoint_events.drained.store(true, Ordering::Relaxed);
     }
 }
 
