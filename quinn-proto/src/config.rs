@@ -358,36 +358,58 @@ impl Default for TransportConfig {
 
 impl fmt::Debug for TransportConfig {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let Self {
+            max_concurrent_bidi_streams,
+            max_concurrent_uni_streams,
+            max_idle_timeout,
+            stream_receive_window,
+            receive_window,
+            send_window,
+            max_tlps,
+            packet_threshold,
+            time_threshold,
+            initial_rtt,
+            initial_mtu,
+            min_mtu,
+            mtu_discovery_config,
+            ack_frequency_config,
+            persistent_congestion_threshold,
+            keep_alive_interval,
+            crypto_buffer_size,
+            allow_spin,
+            datagram_receive_buffer_size,
+            datagram_send_buffer_size,
+            #[cfg(test)]
+                deterministic_packet_numbers: _,
+            congestion_controller_factory: _,
+            enable_segmentation_offload,
+        } = self;
         fmt.debug_struct("TranportConfig")
-            .field(
-                "max_concurrent_bidi_streams",
-                &self.max_concurrent_bidi_streams,
-            )
-            .field(
-                "max_concurrent_uni_streams",
-                &self.max_concurrent_uni_streams,
-            )
-            .field("max_idle_timeout", &self.max_idle_timeout)
-            .field("stream_receive_window", &self.stream_receive_window)
-            .field("receive_window", &self.receive_window)
-            .field("send_window", &self.send_window)
-            .field("max_tlps", &self.max_tlps)
-            .field("packet_threshold", &self.packet_threshold)
-            .field("time_threshold", &self.time_threshold)
-            .field("initial_rtt", &self.initial_rtt)
+            .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
+            .field("max_concurrent_uni_streams", max_concurrent_uni_streams)
+            .field("max_idle_timeout", max_idle_timeout)
+            .field("stream_receive_window", stream_receive_window)
+            .field("receive_window", receive_window)
+            .field("send_window", send_window)
+            .field("max_tlps", max_tlps)
+            .field("packet_threshold", packet_threshold)
+            .field("time_threshold", time_threshold)
+            .field("initial_rtt", initial_rtt)
+            .field("initial_mtu", initial_mtu)
+            .field("min_mtu", min_mtu)
+            .field("mtu_discovery_config", mtu_discovery_config)
+            .field("ack_frequency_config", ack_frequency_config)
             .field(
                 "persistent_congestion_threshold",
-                &self.persistent_congestion_threshold,
+                persistent_congestion_threshold,
             )
-            .field("keep_alive_interval", &self.keep_alive_interval)
-            .field("crypto_buffer_size", &self.crypto_buffer_size)
-            .field("allow_spin", &self.allow_spin)
-            .field(
-                "datagram_receive_buffer_size",
-                &self.datagram_receive_buffer_size,
-            )
-            .field("datagram_send_buffer_size", &self.datagram_send_buffer_size)
+            .field("keep_alive_interval", keep_alive_interval)
+            .field("crypto_buffer_size", crypto_buffer_size)
+            .field("allow_spin", allow_spin)
+            .field("datagram_receive_buffer_size", datagram_receive_buffer_size)
+            .field("datagram_send_buffer_size", datagram_send_buffer_size)
             .field("congestion_controller_factory", &"[ opaque ]")
+            .field("enable_segmentation_offload", enable_segmentation_offload)
             .finish()
     }
 }
