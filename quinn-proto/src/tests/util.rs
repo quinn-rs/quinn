@@ -37,6 +37,14 @@ pub(super) struct Pair {
 }
 
 impl Pair {
+    pub(super) fn default_with_deterministic_pns() -> Self {
+        let mut cfg = server_config();
+        let mut transport = TransportConfig::default();
+        transport.deterministic_packet_numbers(true);
+        cfg.transport = Arc::new(transport);
+        Self::new(Default::default(), cfg)
+    }
+
     pub(super) fn new(endpoint_config: Arc<EndpointConfig>, server_config: ServerConfig) -> Self {
         let server = Endpoint::new(endpoint_config.clone(), Some(Arc::new(server_config)), true);
         let client = Endpoint::new(endpoint_config, None, true);
@@ -464,6 +472,14 @@ pub(super) fn server_crypto_with_cert(cert: Certificate, key: PrivateKey) -> rus
 
 pub(super) fn client_config() -> ClientConfig {
     ClientConfig::new(Arc::new(client_crypto()))
+}
+
+pub(super) fn client_config_with_deterministic_pns() -> ClientConfig {
+    let mut cfg = ClientConfig::new(Arc::new(client_crypto()));
+    let mut transport = TransportConfig::default();
+    transport.deterministic_packet_numbers(true);
+    cfg.transport = Arc::new(transport);
+    cfg
 }
 
 pub(super) fn client_config_with_certs(certs: Vec<rustls::Certificate>) -> ClientConfig {
