@@ -1,10 +1,10 @@
 use std::{
     collections::{hash_map, HashMap},
     convert::TryFrom,
-    fmt, iter,
+    fmt, iter, mem,
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
-    sync::Arc,
+    sync::{atomic::Ordering, Arc},
     time::{Instant, SystemTime},
 };
 
@@ -24,8 +24,8 @@ use crate::{
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner, IssuedCid,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvents,
+        IssuedCid,
     },
     transport_parameters::TransportParameters,
     ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
@@ -74,48 +74,69 @@ impl Endpoint {
         self.server_config = server_config;
     }
 
+    #[cfg(test)]
+    pub(crate) fn has_endpoint_events(&self) -> bool {
+        // HACKITY HACK: Scan all connections for events. Efficient work queue coming in followup.
+        self.connections.iter().any(|(_, conn)| {
+            let e = &*conn.events;
+            e.need_identifiers.load(Ordering::Relaxed) > 0
+                || e.reset_token.lock().unwrap().is_some()
+                || !e.retire_cids.lock().unwrap().is_empty()
+                || e.drained.load(Ordering::Relaxed)
+        })
+    }
+
     /// Process `EndpointEvent`s emitted from related `Connection`s
     ///
-    /// In turn, processing this event may return a `ConnectionEvent` for the same `Connection`.
-    pub fn handle_event(
-        &mut self,
-        ch: ConnectionHandle,
-        event: EndpointEvent,
-    ) -> Option<ConnectionEvent> {
-        use EndpointEventInner::*;
-        match event.0 {
-            NeedIdentifiers(n) => {
-                return Some(self.send_new_identifiers(ch, n));
+    /// In turn, processing this event may return a `ConnectionEvent` for the same
+    /// `Connection`. Must never be called concurrently with the same `ch`
+    pub fn handle_events(&mut self) -> Option<(ConnectionHandle, ConnectionEvent)> {
+        // HACKITY HACK: Scan all connections for events. Efficient work queue coming in followup.
+        let n = self.connections.capacity();
+        for i in 0..n {
+            if !self.connections.contains(i) {
+                continue;
             }
-            ResetToken(remote, token) => {
-                if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
-                    self.index.connection_reset_tokens.remove(old.0, old.1);
-                }
-                if self.index.connection_reset_tokens.insert(remote, token, ch) {
-                    warn!("duplicate reset token");
-                }
-            }
-            RetireConnectionId(seq, allow_more_cids) => {
-                if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
-                    trace!("peer retired CID {}: {}", seq, cid);
-                    self.index.retire(&cid);
-                    if allow_more_cids {
-                        return Some(self.send_new_identifiers(ch, 1));
-                    }
-                }
-            }
-            Drained => {
-                if let Some(conn) = self.connections.try_remove(ch.0) {
-                    self.index.remove(&conn);
-                } else {
-                    // This indicates a bug in downstream code, which could cause spurious
-                    // connection loss instead of this error if the CID was (re)allocated prior to
-                    // the illegal call.
-                    error!(id = ch.0, "unknown connection drained");
-                }
+            let ch = ConnectionHandle(i);
+            if let Some(x) = self.handle_events_for(ch) {
+                return Some((ch, x));
             }
         }
         None
+    }
+
+    fn handle_events_for(&mut self, ch: ConnectionHandle) -> Option<ConnectionEvent> {
+        let events = self.connections[ch].events.clone();
+        let needed_identifers = events.need_identifiers.swap(0, Ordering::Relaxed);
+        let result =
+            (needed_identifers > 0).then(|| self.send_new_identifiers(ch, needed_identifers));
+        if let Some((remote, token)) = events.reset_token.lock().unwrap().take() {
+            let old = self.connections[ch].reset_token.replace((remote, token));
+            if let Some(old) = old {
+                self.index.connection_reset_tokens.remove(old.0, old.1);
+            }
+            if self.index.connection_reset_tokens.insert(remote, token, ch) {
+                warn!("duplicate reset token");
+            }
+        }
+        let retire_cids = mem::take(&mut *events.retire_cids.lock().unwrap());
+        for seq in retire_cids {
+            let cid = self.connections[ch].loc_cids.remove(&seq);
+            if let Some(cid) = cid {
+                trace!("peer retired CID {}: {}", seq, cid);
+                self.index.retire(&cid);
+            }
+        }
+        if events.drained.swap(false, Ordering::Relaxed) {
+            self.handle_drained(ch);
+        }
+        result
+    }
+
+    fn handle_drained(&mut self, ch: ConnectionHandle) {
+        if let Some(conn) = self.connections.try_remove(ch.0) {
+            self.index.remove(&conn);
+        }
     }
 
     /// Process an incoming UDP datagram
@@ -559,7 +580,7 @@ impl Endpoint {
             }
             Err(e) => {
                 debug!("handshake failed: {}", e);
-                self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
+                self.handle_drained(ch);
                 match e {
                     ConnectionError::TransportError(e) => Some(DatagramEvent::Response(
                         self.initial_close(version, addresses, crypto, &src_cid, e),
@@ -583,10 +604,13 @@ impl Endpoint {
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
     ) -> Connection {
+        let events = Arc::<EndpointEvents>::default();
+
         let conn = Connection::new(
             self.config.clone(),
             server_config,
             transport_config,
+            events.clone(),
             init_cid,
             loc_cid,
             rem_cid,
@@ -605,6 +629,7 @@ impl Endpoint {
             loc_cids: iter::once((0, loc_cid)).collect(),
             addresses,
             reset_token: None,
+            events,
         });
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
@@ -818,6 +843,8 @@ pub(crate) struct ConnectionMeta {
     /// Reset token provided by the peer for the CID we're currently sending to, and the address
     /// being sent to
     reset_token: Option<(SocketAddr, ResetToken)>,
+    // TODO: Intrusive queue of dirty connections to drive reading these
+    events: Arc<EndpointEvents>,
 }
 
 /// Internal identifier for a `Connection` currently associated with an endpoint

@@ -881,11 +881,11 @@ impl State {
     }
 
     fn forward_endpoint_events(&mut self) {
-        while let Some(event) = self.inner.poll_endpoint_events() {
+        if self.inner.is_drained() {
             // If the endpoint driver is gone, noop.
             let _ = self
                 .endpoint_events
-                .send((self.handle, EndpointEvent::Proto(event)));
+                .send((self.handle, EndpointEvent::Drained));
         }
     }
 
@@ -1100,10 +1100,9 @@ impl Drop for State {
     fn drop(&mut self) {
         if !self.inner.is_drained() {
             // Ensure the endpoint can tidy up
-            let _ = self.endpoint_events.send((
-                self.handle,
-                EndpointEvent::Proto(proto::EndpointEvent::drained()),
-            ));
+            let _ = self
+                .endpoint_events
+                .send((self.handle, EndpointEvent::Drained));
         }
     }
 }
