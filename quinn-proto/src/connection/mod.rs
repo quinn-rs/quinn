@@ -2096,29 +2096,28 @@ impl Connection {
                 .map(move |number| (packet, number)),
         };
         let result = match decrypted {
+            _ if stateless_reset => {
+                debug!("got stateless reset");
+                Err(ConnectionError::Reset)
+            }
             Err(Some(e)) => {
                 warn!("illegal packet: {}", e);
                 Err(e.into())
             }
             Err(None) => {
-                if stateless_reset {
-                    debug!("got stateless reset");
-                    Err(ConnectionError::Reset)
+                debug!("failed to authenticate packet");
+                self.authentication_failures += 1;
+                let integrity_limit = self.spaces[self.highest_space]
+                    .crypto
+                    .as_ref()
+                    .unwrap()
+                    .packet
+                    .local
+                    .integrity_limit();
+                if self.authentication_failures > integrity_limit {
+                    Err(TransportError::AEAD_LIMIT_REACHED("integrity limit violated").into())
                 } else {
-                    debug!("failed to authenticate packet");
-                    self.authentication_failures += 1;
-                    let integrity_limit = self.spaces[self.highest_space]
-                        .crypto
-                        .as_ref()
-                        .unwrap()
-                        .packet
-                        .local
-                        .integrity_limit();
-                    if self.authentication_failures > integrity_limit {
-                        Err(TransportError::AEAD_LIMIT_REACHED("integrity limit violated").into())
-                    } else {
-                        return;
-                    }
+                    return;
                 }
             }
             Ok((packet, number)) => {
@@ -2130,12 +2129,8 @@ impl Connection {
 
                 let is_duplicate = |n| self.spaces[packet.header.space()].dedup.insert(n);
                 if number.map_or(false, is_duplicate) {
-                    if stateless_reset {
-                        Err(ConnectionError::Reset)
-                    } else {
-                        warn!("discarding possible duplicate packet");
-                        return;
-                    }
+                    warn!("discarding possible duplicate packet");
+                    return;
                 } else if self.state.is_handshake() && packet.header.is_short() {
                     // TODO: SHOULD buffer these to improve reordering tolerance.
                     trace!("dropping short packet during handshake");
