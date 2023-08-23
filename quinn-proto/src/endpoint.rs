@@ -13,7 +13,7 @@ use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
-use tracing::{debug, trace, warn};
+use tracing::{debug, error, trace, warn};
 
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
@@ -105,8 +105,14 @@ impl Endpoint {
                 }
             }
             Drained => {
-                let conn = self.connections.remove(ch.0);
-                self.index.remove(&conn);
+                if let Some(conn) = self.connections.try_remove(ch.0) {
+                    self.index.remove(&conn);
+                } else {
+                    // This indicates a bug in downstream code, which could cause spurious
+                    // connection loss instead of this error if the CID was (re)allocated prior to
+                    // the illegal call.
+                    error!(id = ch.0, "unknown connection drained");
+                }
             }
         }
         None
