@@ -37,7 +37,9 @@ fn version_negotiate_server() {
         // Long-header packet with reserved version number
         hex!("80 0a1a2a3a 04 00000000 04 00000000 00")[..].into(),
     );
-    let Some(DatagramEvent::Response(Transmit { contents, .. })) = event else { panic!("expected a response"); };
+    let Some(DatagramEvent::Response(Transmit { contents, .. })) = event else {
+        panic!("expected a response");
+    };
 
     assert_ne!(contents[0] & 0x80, 0);
     assert_eq!(&contents[1..15], hex!("00000000 04 00000000 04 00000000"));
