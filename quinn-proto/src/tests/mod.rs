@@ -65,7 +65,7 @@ fn version_negotiate_client() {
         true,
     );
     let (_, mut client_ch) = client
-        .connect(client_config(), server_addr, "localhost")
+        .connect(Instant::now(), client_config(), server_addr, "localhost")
         .unwrap();
     let now = Instant::now();
     let opt_event = client.handle(

@@ -186,7 +186,11 @@ impl Endpoint {
         } else {
             addr
         };
-        let (ch, conn) = endpoint.inner.connect(config, addr, server_name)?;
+
+        let (ch, conn) = endpoint
+            .inner
+            .connect(Instant::now(), config, addr, server_name)?;
+
         let socket = endpoint.socket.clone();
         Ok(endpoint
             .connections
