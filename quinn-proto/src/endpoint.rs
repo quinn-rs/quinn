@@ -312,6 +312,7 @@ impl Endpoint {
     /// Initiate a connection
     pub fn connect(
         &mut self,
+        now: Instant,
         config: ClientConfig,
         remote: SocketAddr,
         server_name: &str,
@@ -352,7 +353,7 @@ impl Endpoint {
                 remote,
                 local_ip: None,
             },
-            Instant::now(),
+            now,
             tls,
             None,
             config.transport,
