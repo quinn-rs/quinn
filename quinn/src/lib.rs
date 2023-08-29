@@ -61,9 +61,9 @@ mod send_stream;
 mod work_limiter;
 
 pub use proto::{
-    congestion, crypto, ApplicationClose, Chunk, ClientConfig, ConfigError, ConnectError,
-    ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
-    ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
+    congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ConfigError,
+    ConnectError, ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout,
+    MtuDiscoveryConfig, ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
 };
 #[cfg(feature = "tls-rustls")]
 pub use rustls;
