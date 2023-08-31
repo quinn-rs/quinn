@@ -799,7 +799,7 @@ impl Connection {
                 // Request an immediate ACK to ensure we receive one within RTT, as recommended by
                 // the acknowledgement frequency draft
                 self.spaces[SpaceId::Data].immediate_ack_pending = true;
-                tracing::info!(
+                tracing::debug!(
                     "setting RTT timer with RTT = {} ms",
                     self.path.rtt.get().as_millis()
                 );
