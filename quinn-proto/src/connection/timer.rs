@@ -22,7 +22,7 @@ pub(crate) enum Timer {
     MaxAckDelay = 8,
     /// When the RTT is elapsed (used to request an immediate ack if there are local unacked
     /// ack-eliciting packets)
-    Rtt = 9,
+    ImmediateAck = 9,
 }
 
 impl Timer {
@@ -36,7 +36,7 @@ impl Timer {
         Self::Pacing,
         Self::PushNewCid,
         Self::MaxAckDelay,
-        Self::Rtt,
+        Self::ImmediateAck,
     ];
 }
 

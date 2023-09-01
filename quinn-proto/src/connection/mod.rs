@@ -794,7 +794,7 @@ impl Connection {
                 && builder.space == SpaceId::Data
                 && self.peer_supports_ack_frequency()
                 && self.config.ack_frequency_config.is_some()
-                && self.timers.get(Timer::Rtt).is_none()
+                && self.timers.get(Timer::ImmediateAck).is_none()
             {
                 // Request an immediate ACK to ensure we receive one within RTT, as recommended by
                 // the acknowledgement frequency draft
@@ -803,7 +803,8 @@ impl Connection {
                     "setting RTT timer with RTT = {} ms",
                     self.path.rtt.get().as_millis()
                 );
-                self.timers.set(Timer::Rtt, now + self.path.rtt.get());
+                self.timers
+                    .set(Timer::ImmediateAck, now + self.path.rtt.get());
             }
 
             let sent = self.populate_packet(
@@ -1091,7 +1092,7 @@ impl Connection {
                         .pending_acks
                         .on_max_ack_delay_timeout()
                 }
-                Timer::Rtt => {
+                Timer::ImmediateAck => {
                     // This timer is only armed when ACK frequency has been enabled, the peer
                     // supports it, and we are in the Data space
                     let space = &mut self.spaces[SpaceId::Data];
@@ -1110,7 +1111,8 @@ impl Connection {
                     // for more details)
                     if space.sent_packets.len() > 1 {
                         space.immediate_ack_pending = true;
-                        self.timers.set(Timer::Rtt, now + self.path.rtt.get());
+                        self.timers
+                            .set(Timer::ImmediateAck, now + self.path.rtt.get());
                     }
                 }
             }
@@ -3375,7 +3377,9 @@ impl Connection {
     pub(crate) fn is_idle(&self) -> bool {
         Timer::VALUES
             .iter()
-            .filter(|&&t| t != Timer::KeepAlive && t != Timer::PushNewCid && t != Timer::Rtt)
+            .filter(|&&t| {
+                t != Timer::KeepAlive && t != Timer::PushNewCid && t != Timer::ImmediateAck
+            })
             .filter_map(|&t| Some((t, self.timers.get(t)?)))
             .min_by_key(|&(_, time)| time)
             .map_or(true, |(timer, _)| timer == Timer::Idle)
