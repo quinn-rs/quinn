@@ -803,8 +803,10 @@ impl Connection {
                     "setting RTT timer with RTT = {} ms",
                     self.path.rtt.get().as_millis()
                 );
-                self.timers
-                    .set(Timer::ImmediateAck, now + self.path.rtt.get());
+                self.timers.set(
+                    Timer::ImmediateAck,
+                    now + self.path.rtt.get().max(IMMEDIATE_ACK_PERIOD_LOWER_BOUND),
+                );
             }
 
             let sent = self.populate_packet(
@@ -1111,8 +1113,10 @@ impl Connection {
                     // for more details)
                     if space.sent_packets.len() > 1 {
                         space.immediate_ack_pending = true;
-                        self.timers
-                            .set(Timer::ImmediateAck, now + self.path.rtt.get());
+                        self.timers.set(
+                            Timer::ImmediateAck,
+                            now + self.path.rtt.get().max(IMMEDIATE_ACK_PERIOD_LOWER_BOUND),
+                        );
                     }
                 }
             }
@@ -3683,3 +3687,7 @@ impl SentFrames {
             && self.retransmits.is_empty(streams)
     }
 }
+
+/// Minimum period between ImmediateAck frames triggered by the ImmediateAck timer
+// 10ms selected somewhat arbitrarily
+const IMMEDIATE_ACK_PERIOD_LOWER_BOUND: Duration = Duration::from_millis(10);
