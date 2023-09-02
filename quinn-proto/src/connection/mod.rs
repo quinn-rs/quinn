@@ -502,7 +502,7 @@ impl Connection {
 
                 builder.finish(self, &mut buf);
                 self.stats.udp_tx.datagrams += 1;
-                self.stats.udp_tx.transmits += 1;
+                self.stats.udp_tx.ios += 1;
                 self.stats.udp_tx.bytes += buf.len() as u64;
                 return Some(Transmit {
                     destination,
@@ -912,7 +912,7 @@ impl Connection {
 
         self.stats.udp_tx.datagrams += num_datagrams as u64;
         self.stats.udp_tx.bytes += buf.len() as u64;
-        self.stats.udp_tx.transmits += 1;
+        self.stats.udp_tx.ios += 1;
 
         Some(Transmit {
             destination: self.path.remote,
@@ -2071,6 +2071,7 @@ impl Connection {
         packet: Option<Packet>,
         stateless_reset: bool,
     ) {
+        self.stats.udp_rx.ios += 1;
         if let Some(ref packet) = packet {
             trace!(
                 "got {:?} packet ({} bytes) from {} using id {}",
