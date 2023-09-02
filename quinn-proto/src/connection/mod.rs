@@ -2985,8 +2985,6 @@ impl Connection {
 
         // ACK_FREQUENCY
         if mem::replace(&mut space.pending.ack_frequency, false) {
-            trace!("ACK_FREQUENCY");
-
             let sequence_number = self.ack_frequency.next_sequence_number();
 
             // Safe to unwrap because these are always provided when ACK frequency is enabled
@@ -3000,6 +2998,8 @@ impl Connection {
                 .try_into()
                 .unwrap_or(VarInt::MAX)
                 .max(min_ack_delay_micros);
+
+            trace!(?max_ack_delay, "ACK_FREQUENCY");
 
             frame::AckFrequency {
                 sequence: sequence_number,
