@@ -24,6 +24,9 @@ pub(super) const DEFAULT_MTU: usize = 1452;
 pub(super) struct Pair {
     pub(super) server: TestEndpoint,
     pub(super) client: TestEndpoint,
+    /// Start time
+    epoch: Instant,
+    /// Current time
     pub(super) time: Instant,
     /// Simulates the maximum size allowed for UDP payloads by the link (packets exceeding this size will be dropped)
     pub(super) mtu: usize,
@@ -61,10 +64,12 @@ impl Pair {
             Ipv6Addr::LOCALHOST.into(),
             CLIENT_PORTS.lock().unwrap().next().unwrap(),
         );
+        let now = Instant::now();
         Self {
             server: TestEndpoint::new(server, server_addr),
             client: TestEndpoint::new(client, client_addr),
-            time: Instant::now(),
+            epoch: now,
+            time: now,
             mtu: DEFAULT_MTU,
             latency: Duration::new(0, 0),
             spins: 0,
@@ -87,14 +92,14 @@ impl Pair {
             Some(t) if Some(t) == client_t => {
                 if t != self.time {
                     self.time = self.time.max(t);
-                    trace!("advancing to {:?} for client", self.time);
+                    trace!("advancing to {:?} for client", self.time - self.epoch);
                 }
                 true
             }
             Some(t) if Some(t) == server_t => {
                 if t != self.time {
                     self.time = self.time.max(t);
-                    trace!("advancing to {:?} for server", self.time);
+                    trace!("advancing to {:?} for server", self.time - self.epoch);
                 }
                 true
             }
