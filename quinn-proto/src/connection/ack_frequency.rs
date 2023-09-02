@@ -1,5 +1,6 @@
 use crate::connection::spaces::PendingAcks;
 use crate::frame::AckFrequency;
+use crate::transport_parameters::TransportParameters;
 use crate::{AckFrequencyConfig, TransportError, VarInt, TIMER_GRANULARITY};
 use std::time::Duration;
 
@@ -35,16 +36,17 @@ impl AckFrequencyState {
     /// ACK_FREQUENCY frame
     pub(super) fn candidate_max_ack_delay(
         &self,
+        rtt: Duration,
         config: &AckFrequencyConfig,
         peer_params: &TransportParameters,
     ) -> Duration {
         // Use the peer's max_ack_delay if no custom max_ack_delay was provided in the config
+        let min_ack_delay =
+            Duration::from_micros(peer_params.min_ack_delay.map_or(0, |x| x.into()));
         config
             .max_ack_delay
             .unwrap_or(self.peer_max_ack_delay)
-            .max(Duration::from_micros(
-                peer_params.min_ack_delay.map_or(0, |x| x.into()),
-            ))
+            .clamp(min_ack_delay, rtt)
     }
 
     /// Returns the `max_ack_delay` for the purposes of calculating the PTO
@@ -71,10 +73,22 @@ impl AckFrequencyState {
     }
 
     /// Returns true if we should send an ACK_FREQUENCY frame
-    pub(super) fn should_send_ack_frequency(&self) -> bool {
-        // Currently, we only allow sending a single ACK_FREQUENCY frame. There is no need to send
-        // more, because none of the sent values needs to be updated in the course of the connection
-        self.next_outgoing_sequence_number.0 == 0
+    pub(super) fn should_send_ack_frequency(
+        &self,
+        rtt: Duration,
+        config: &AckFrequencyConfig,
+        peer_params: &TransportParameters,
+    ) -> bool {
+        if self.next_outgoing_sequence_number.0 == 0 {
+            // Always send at startup
+            return true;
+        }
+        let current = self
+            .in_flight_ack_frequency_frame
+            .map_or(self.peer_max_ack_delay, |(_, pending)| pending);
+        let desired = self.candidate_max_ack_delay(rtt, config, peer_params);
+        let error = (desired.as_secs_f32() / current.as_secs_f32()) - 1.0;
+        error.abs() > MAX_RTT_ERROR
     }
 
     /// Notifies the [`AckFrequencyState`] that a packet containing an ACK_FREQUENCY frame was sent
@@ -131,3 +145,8 @@ impl AckFrequencyState {
         Ok(true)
     }
 }
+
+/// Maximum proportion difference between the most recently requested max ACK delay and the
+/// currently desired one before a new request is sent, when the peer supports the ACK frequency
+/// extension and an explicit max ACK delay is not configured.
+const MAX_RTT_ERROR: f32 = 0.2;

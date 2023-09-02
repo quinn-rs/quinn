@@ -540,12 +540,12 @@ impl Connection {
         };
 
         // Check whether we need to send an ACK_FREQUENCY frame
-        if self.ack_frequency.should_send_ack_frequency()
-            && self.highest_space == SpaceId::Data
-            && self.peer_supports_ack_frequency()
-            && self.config.ack_frequency_config.is_some()
-        {
-            self.spaces[SpaceId::Data].pending.ack_frequency = true;
+        if let Some(config) = &self.config.ack_frequency_config {
+            self.spaces[SpaceId::Data].pending.ack_frequency = self
+                .ack_frequency
+                .should_send_ack_frequency(self.path.rtt.get(), config, &self.peer_params)
+                && self.highest_space == SpaceId::Data
+                && self.peer_supports_ack_frequency();
         }
 
         let mut buf = BytesMut::new();
@@ -2991,9 +2991,11 @@ impl Connection {
             let config = self.config.ack_frequency_config.as_ref().unwrap();
 
             // Ensure the delay is within bounds to avoid a PROTOCOL_VIOLATION error
-            let max_ack_delay = self
-                .ack_frequency
-                .candidate_max_ack_delay(config, &self.peer_params);
+            let max_ack_delay = self.ack_frequency.candidate_max_ack_delay(
+                self.path.rtt.get(),
+                config,
+                &self.peer_params,
+            );
 
             trace!(?max_ack_delay, "ACK_FREQUENCY");
 
