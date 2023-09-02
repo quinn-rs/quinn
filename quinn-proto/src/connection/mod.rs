@@ -790,22 +790,6 @@ impl Connection {
                 break;
             }
 
-            if builder.ack_eliciting
-                && builder.space == SpaceId::Data
-                && self.peer_supports_ack_frequency()
-                && self.config.ack_frequency_config.is_some()
-                && self.timers.get(Timer::Rtt).is_none()
-            {
-                // Request an immediate ACK to ensure we receive one within RTT, as recommended by
-                // the acknowledgement frequency draft
-                self.spaces[SpaceId::Data].immediate_ack_pending = true;
-                tracing::trace!(
-                    "setting RTT timer with RTT = {} ms",
-                    self.path.rtt.get().as_millis()
-                );
-                self.timers.set(Timer::Rtt, now + self.path.rtt.get());
-            }
-
             let sent = self.populate_packet(
                 now,
                 space_id,
@@ -1090,28 +1074,6 @@ impl Connection {
                     self.spaces[SpaceId::Data]
                         .pending_acks
                         .on_max_ack_delay_timeout()
-                }
-                Timer::Rtt => {
-                    // This timer is only armed when ACK frequency has been enabled, the peer
-                    // supports it, and we are in the Data space
-                    let space = &mut self.spaces[SpaceId::Data];
-                    trace!(
-                        in_flight_ack_eliciting = space.sent_packets.len(),
-                        "rtt timer"
-                    );
-
-                    // It is recommended to request an immediate ACK once per RTT if there are
-                    // unacked packets. Packets with timer-triggered `IMMEDIATE_ACK` frames count
-                    // towards unacked packets, but we don't want to take them into account here.
-                    // For that reason, we only send an `IMMEDIATE_ACK` frame when there
-                    // are at least _two_ unacked packets. This is an approximation, but should work
-                    // well in practice (see
-                    // [this comment](https://github.com/quinn-rs/quinn/pull/1553#discussion_r1251268689)
-                    // for more details)
-                    if space.sent_packets.len() > 1 {
-                        space.immediate_ack_pending = true;
-                        self.timers.set(Timer::Rtt, now + self.path.rtt.get());
-                    }
                 }
             }
         }
@@ -3374,7 +3336,7 @@ impl Connection {
     pub(crate) fn is_idle(&self) -> bool {
         Timer::VALUES
             .iter()
-            .filter(|&&t| t != Timer::KeepAlive && t != Timer::PushNewCid && t != Timer::Rtt)
+            .filter(|&&t| t != Timer::KeepAlive && t != Timer::PushNewCid)
             .filter_map(|&t| Some((t, self.timers.get(t)?)))
             .min_by_key(|&(_, time)| time)
             .map_or(true, |(timer, _)| timer == Timer::Idle)
