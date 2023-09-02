@@ -2416,17 +2416,16 @@ fn setup_ack_frequency_test(max_ack_delay: Duration) -> (Pair, ConnectionHandle,
     (pair, client_ch, server_ch)
 }
 
+/// Verify that max ACK delay is counted from the first ACK-eliciting packet
 #[test]
-fn ack_frequency_start_of_ack_eliciting_sequence() {
+fn ack_frequency_ack_delayed_from_first_of_flight() {
     let _guard = subscribe();
     let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(Duration::from_millis(30));
 
     // The client sends the following frames:
     //
-    // * 0 ms: ping + IMMEDIATE_ACK
-    // * 5 ms: ping
-    // * 5 ms: ping
-    // * 10 ms: IMMEDIATE_ACK
+    // * 0 ms: ping
+    // * 5 ms: ping x2
     pair.client_conn_mut(client_ch).ping();
     pair.drive_client();
 
@@ -2436,11 +2435,8 @@ fn ack_frequency_start_of_ack_eliciting_sequence() {
         pair.drive_client();
     }
 
-    pair.time += Duration::from_millis(15);
-    pair.drive_client();
-
-    // Server: receive the first ping and send an ACK
-    pair.time -= Duration::from_millis(10);
+    pair.time += Duration::from_millis(5);
+    // Server: receive the first ping and send no ACK
     let server_stats_before = pair.server_conn_mut(server_ch).stats();
     pair.drive_server();
     let server_stats_after = pair.server_conn_mut(server_ch).stats();
@@ -2449,16 +2445,12 @@ fn ack_frequency_start_of_ack_eliciting_sequence() {
         1
     );
     assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        1
-    );
-    assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
-        1
+        0
     );
 
-    // Server: receive the second and third ping and send no ACK
-    pair.time += Duration::from_millis(5);
+    // Server: receive the second and third pings and send no ACK
+    pair.time += Duration::from_millis(10);
     let server_stats_before = pair.server_conn_mut(server_ch).stats();
     pair.drive_server();
     let server_stats_after = pair.server_conn_mut(server_ch).stats();
@@ -2467,23 +2459,15 @@ fn ack_frequency_start_of_ack_eliciting_sequence() {
         2
     );
     assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        0
-    );
-    assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
         0
     );
 
-    // Server: receive the IMMEDIATE_ACK and reply to it
-    pair.time += Duration::from_millis(15);
+    // Server: Send an ACK after ACK delay expires
+    pair.time += Duration::from_millis(20);
     let server_stats_before = pair.server_conn_mut(server_ch).stats();
     pair.drive_server();
     let server_stats_after = pair.server_conn_mut(server_ch).stats();
-    assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        1
-    );
     assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
         1
@@ -2496,46 +2480,18 @@ fn ack_frequency_ack_sent_after_max_ack_delay() {
     let max_ack_delay = Duration::from_millis(30);
     let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(max_ack_delay);
 
-    // The client sends the following frames:
-    //
-    // * 0 ms: ping + IMMEDIATE_ACK
-    // * 5 ms: ping
-    pair.client_conn_mut(client_ch).ping();
-    pair.drive_client();
-    pair.time += Duration::from_millis(5);
+    // Client sends a ping
     pair.client_conn_mut(client_ch).ping();
     pair.drive_client();
 
-    // Server: receive the first IMMEDIATE_ACK and reply to it
-    pair.time += Duration::from_millis(5);
+    // Server: receive the ping, send no ACK
+    pair.time += pair.latency;
     let server_stats_before = pair.server_conn_mut(server_ch).stats();
     pair.drive_server();
     let server_stats_after = pair.server_conn_mut(server_ch).stats();
     assert_eq!(
         server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
         1
-    );
-    assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        1
-    );
-    assert_eq!(
-        server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
-        1
-    );
-
-    // Server: receive the second ping, send no ACK
-    pair.time += Duration::from_millis(5);
-    let server_stats_before = pair.server_conn_mut(server_ch).stats();
-    pair.drive_server();
-    let server_stats_after = pair.server_conn_mut(server_ch).stats();
-    assert_eq!(
-        server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
-        1
-    );
-    assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        0
     );
     assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
@@ -2552,10 +2508,6 @@ fn ack_frequency_ack_sent_after_max_ack_delay() {
         0
     );
     assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        0
-    );
-    assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
         1
     );
@@ -2569,7 +2521,7 @@ fn ack_frequency_ack_sent_after_packets_above_threshold() {
 
     // The client sends the following frames:
     //
-    // * 0 ms: ping + IMMEDIATE_ACK
+    // * 0 ms: ping
     // * 5 ms: ping (11x)
     pair.client_conn_mut(client_ch).ping();
     pair.drive_client();
@@ -2580,7 +2532,7 @@ fn ack_frequency_ack_sent_after_packets_above_threshold() {
         pair.drive_client();
     }
 
-    // Server: receive the first ping, send ACK
+    // Server: receive the first ping, send no ACK
     pair.time += Duration::from_millis(5);
     let server_stats_before = pair.server_conn_mut(server_ch).stats();
     pair.drive_server();
@@ -2590,12 +2542,8 @@ fn ack_frequency_ack_sent_after_packets_above_threshold() {
         1
     );
     assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        1
-    );
-    assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
-        1
+        0
     );
 
     // Server: receive the remaining pings, send ACK
@@ -2606,10 +2554,6 @@ fn ack_frequency_ack_sent_after_packets_above_threshold() {
     assert_eq!(
         server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
         11
-    );
-    assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        0
     );
     assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
@@ -2625,7 +2569,7 @@ fn ack_frequency_ack_sent_after_reordered_packets_below_threshold() {
 
     // The client sends the following frames:
     //
-    // * 0 ms: ping + IMMEDIATE_ACK
+    // * 0 ms: ping
     // * 5 ms: ping (lost)
     // * 5 ms: ping
     pair.client_conn_mut(client_ch).ping();
@@ -2643,7 +2587,7 @@ fn ack_frequency_ack_sent_after_reordered_packets_below_threshold() {
     pair.client_conn_mut(client_ch).ping();
     pair.drive_client();
 
-    // Server: receive first ping, send ACK
+    // Server: receive first ping, send no ACK
     pair.time += Duration::from_millis(5);
     let server_stats_before = pair.server_conn_mut(server_ch).stats();
     pair.drive_server();
@@ -2653,12 +2597,8 @@ fn ack_frequency_ack_sent_after_reordered_packets_below_threshold() {
         1
     );
     assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        1
-    );
-    assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
-        1
+        0
     );
 
     // Server: receive second ping, send no ACK
@@ -2669,10 +2609,6 @@ fn ack_frequency_ack_sent_after_reordered_packets_below_threshold() {
     assert_eq!(
         server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
         1
-    );
-    assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        0
     );
     assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
@@ -2686,10 +2622,7 @@ fn ack_frequency_ack_sent_after_reordered_packets_above_threshold() {
     let max_ack_delay = Duration::from_millis(30);
     let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(max_ack_delay);
 
-    // The client sends the following frames:
-    //
-    // * 0 ms: ping + IMMEDIATE_ACK
-    // * 5 ms: ping
+    // Send a ping
     pair.client_conn_mut(client_ch).ping();
     pair.drive_client();
 
@@ -2706,7 +2639,7 @@ fn ack_frequency_ack_sent_after_reordered_packets_above_threshold() {
     pair.client_conn_mut(client_ch).ping();
     pair.drive_client();
 
-    // Server: receive first ping, send ACK
+    // Server: receive first ping, send no ACK
     pair.time += Duration::from_millis(5);
     let server_stats_before = pair.server_conn_mut(server_ch).stats();
     pair.drive_server();
@@ -2716,12 +2649,8 @@ fn ack_frequency_ack_sent_after_reordered_packets_above_threshold() {
         1
     );
     assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        1
-    );
-    assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,
-        1
+        0
     );
 
     // Server: receive remaining ping, send ACK
@@ -2732,10 +2661,6 @@ fn ack_frequency_ack_sent_after_reordered_packets_above_threshold() {
     assert_eq!(
         server_stats_after.frame_rx.ping - server_stats_before.frame_rx.ping,
         1
-    );
-    assert_eq!(
-        server_stats_after.frame_rx.immediate_ack - server_stats_before.frame_rx.immediate_ack,
-        0
     );
     assert_eq!(
         server_stats_after.frame_tx.acks - server_stats_before.frame_tx.acks,

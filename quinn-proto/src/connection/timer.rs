@@ -20,13 +20,10 @@ pub(crate) enum Timer {
     PushNewCid = 7,
     /// When to send an immediate ACK if there are unacked ack-eliciting packets of the peer
     MaxAckDelay = 8,
-    /// When the RTT is elapsed (used to request an immediate ack if there are local unacked
-    /// ack-eliciting packets)
-    Rtt = 9,
 }
 
 impl Timer {
-    pub(crate) const VALUES: [Self; 10] = [
+    pub(crate) const VALUES: [Self; 9] = [
         Self::LossDetection,
         Self::Idle,
         Self::Close,
@@ -36,7 +33,6 @@ impl Timer {
         Self::Pacing,
         Self::PushNewCid,
         Self::MaxAckDelay,
-        Self::Rtt,
     ];
 }
 
