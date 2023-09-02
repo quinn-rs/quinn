@@ -2988,24 +2988,20 @@ impl Connection {
         if mem::replace(&mut space.pending.ack_frequency, false) {
             let sequence_number = self.ack_frequency.next_sequence_number();
 
-            // Safe to unwrap because these are always provided when ACK frequency is enabled
+            // Safe to unwrap because this is always provided when ACK frequency is enabled
             let config = self.config.ack_frequency_config.as_ref().unwrap();
-            let min_ack_delay_micros = self.peer_params.min_ack_delay.unwrap();
 
             // Ensure the delay is within bounds to avoid a PROTOCOL_VIOLATION error
-            let max_ack_delay = self.ack_frequency.candidate_max_ack_delay(config);
-            let max_ack_delay_micros = max_ack_delay
-                .as_micros()
-                .try_into()
-                .unwrap_or(VarInt::MAX)
-                .max(min_ack_delay_micros);
+            let max_ack_delay = self
+                .ack_frequency
+                .candidate_max_ack_delay(config, &self.peer_params);
 
             trace!(?max_ack_delay, "ACK_FREQUENCY");
 
             frame::AckFrequency {
                 sequence: sequence_number,
                 ack_eliciting_threshold: config.ack_eliciting_threshold,
-                request_max_ack_delay: max_ack_delay_micros,
+                request_max_ack_delay: max_ack_delay.as_micros().try_into().unwrap_or(VarInt::MAX),
                 reordering_threshold: config.reordering_threshold,
             }
             .encode(buf);

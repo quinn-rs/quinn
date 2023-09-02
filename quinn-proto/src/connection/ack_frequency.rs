@@ -33,9 +33,18 @@ impl AckFrequencyState {
 
     /// Returns the `max_ack_delay` that should be requested of the peer when sending an
     /// ACK_FREQUENCY frame
-    pub(super) fn candidate_max_ack_delay(&self, config: &AckFrequencyConfig) -> Duration {
+    pub(super) fn candidate_max_ack_delay(
+        &self,
+        config: &AckFrequencyConfig,
+        peer_params: &TransportParameters,
+    ) -> Duration {
         // Use the peer's max_ack_delay if no custom max_ack_delay was provided in the config
-        config.max_ack_delay.unwrap_or(self.peer_max_ack_delay)
+        config
+            .max_ack_delay
+            .unwrap_or(self.peer_max_ack_delay)
+            .max(Duration::from_micros(
+                peer_params.min_ack_delay.map_or(0, |x| x.into()),
+            ))
     }
 
     /// Returns the `max_ack_delay` for the purposes of calculating the PTO
