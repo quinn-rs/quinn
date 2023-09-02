@@ -453,8 +453,8 @@ impl AckFrequencyConfig {
     /// This parameter represents the maximum amount of time that an endpoint waits before sending
     /// an ACK when the ack-eliciting threshold hasn't been reached.
     ///
-    /// The provided `max_ack_delay` will be clamped to be at least the peer's `min_ack_delay`
-    /// transport parameter.
+    /// The effective `max_ack_delay` will be clamped to be at least the peer's `min_ack_delay`
+    /// transport parameter, and at most the current path RTT.
     ///
     /// Defaults to `None`, in which case the peer's original `max_ack_delay` will be used, as
     /// obtained from its transport parameters.
