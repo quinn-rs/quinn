@@ -2743,6 +2743,50 @@ fn ack_frequency_ack_sent_after_reordered_packets_above_threshold() {
     );
 }
 
+#[test]
+fn ack_frequency_update_max_delay() {
+    let _guard = subscribe();
+    let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(Duration::from_millis(200));
+
+    // Ack frequency was sent initially
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .ack_frequency,
+        1
+    );
+
+    // Client sends a PING
+    info!("first ping");
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive();
+
+    // No change in ACK frequency
+    assert_eq!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .ack_frequency,
+        1
+    );
+
+    // RTT jumps, client sends another ping
+    info!("delayed ping");
+    pair.latency *= 10;
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive();
+
+    // ACK frequency updated
+    assert!(
+        pair.server_conn_mut(server_ch)
+            .stats()
+            .frame_rx
+            .ack_frequency
+            >= 2
+    );
+}
+
 fn stream_chunks(mut recv: RecvStream) -> Vec<u8> {
     let mut buf = Vec::new();
 
