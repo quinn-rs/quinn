@@ -24,19 +24,25 @@ fn main() {
     let key = rustls::PrivateKey(cert.serialize_private_key_der());
     let cert = rustls::Certificate(cert.serialize_der().unwrap());
 
+    let server_span = tracing::error_span!("server");
     let runtime = rt();
-    let (server_addr, endpoint) = server_endpoint(&runtime, cert.clone(), key, &opt);
+    let (server_addr, endpoint) = {
+        let _guard = server_span.enter();
+        server_endpoint(&runtime, cert.clone(), key, &opt)
+    };
 
     let server_thread = std::thread::spawn(move || {
+        let _guard = server_span.entered();
         if let Err(e) = runtime.block_on(server(endpoint, opt)) {
             eprintln!("server failed: {e:#}");
         }
     });
 
     let mut handles = Vec::new();
-    for _ in 0..opt.clients {
+    for id in 0..opt.clients {
         let cert = cert.clone();
         handles.push(std::thread::spawn(move || {
+            let _guard = tracing::error_span!("client", id).entered();
             let runtime = rt();
             match runtime.block_on(client(server_addr, cert, opt)) {
                 Ok(stats) => Ok(stats),
