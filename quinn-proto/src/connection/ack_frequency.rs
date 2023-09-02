@@ -46,7 +46,7 @@ impl AckFrequencyState {
         config
             .max_ack_delay
             .unwrap_or(self.peer_max_ack_delay)
-            .clamp(min_ack_delay, rtt)
+            .clamp(min_ack_delay, rtt.max(MIN_AUTOMATIC_ACK_DELAY))
     }
 
     /// Returns the `max_ack_delay` for the purposes of calculating the PTO
@@ -150,3 +150,8 @@ impl AckFrequencyState {
 /// currently desired one before a new request is sent, when the peer supports the ACK frequency
 /// extension and an explicit max ACK delay is not configured.
 const MAX_RTT_ERROR: f32 = 0.2;
+
+/// Minimum value to request the peer set max ACK delay to when the peer supports the ACK frequency
+/// extension and an explicit max ACK delay is not configured.
+// Keep in sync with `AckFrequencyConfig::max_ack_delay` documentation
+const MIN_AUTOMATIC_ACK_DELAY: Duration = Duration::from_millis(25);
