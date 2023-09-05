@@ -9,3 +9,6 @@
 
 cargo-test-*
 tarpaulin-report.html
+
+perf/docker/work/
+
