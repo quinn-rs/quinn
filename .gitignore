@@ -6,3 +6,5 @@ Cargo.lock
 .idea
 .DS_Store
 .vscode
+
+perf/docker/work/
