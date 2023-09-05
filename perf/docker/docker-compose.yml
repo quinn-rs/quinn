@@ -1,0 +1,38 @@
+networks:
+  quinn-perf:
+    ipam:
+      config:
+        - subnet: 172.42.0.0/16
+
+services:
+  server:
+    build: .
+    image: quinn_perf
+    networks:
+      quinn-perf:
+        ipv4_address: 172.42.0.2
+    volumes:
+      - ./work:/root/.local/share/quinn
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - SSLKEYLOGFILE=/root/.local/share/quinn/server.key
+      - TOKIO_CONSOLE_BIND=0.0.0.0:6669  # tokio-console
+    ports:
+      - 6669:6669 # tokio-console
+
+  client:
+    image: quinn_perf
+    networks:
+      quinn-perf:
+        ipv4_address: 172.42.0.3
+    volumes:
+      - ./work:/root/.local/share/quinn
+    cap_add:
+      - NET_ADMIN
+    environment:
+      - SSLKEYLOGFILE=/root/.local/share/quinn/client.key
+      - TOKIO_CONSOLE_BIND=0.0.0.0:6669  # tokio-console
+    ports:
+      - 6668:6669 # tokio-console
+
