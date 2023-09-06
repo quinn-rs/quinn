@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S bash -eu
 
 SERVICE=server
 PERF_SERVER_ARGS="--keylog --listen 172.42.0.2:4433"

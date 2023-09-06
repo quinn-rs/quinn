@@ -1,4 +1,4 @@
-#!/usr/bin/env bash
+#!/usr/bin/env -S bash -eu
 
 SERVICE=client
 PERF_CLIENT_ARGS="--keylog --duration 5 172.42.0.2:4433"
