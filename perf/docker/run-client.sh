@@ -4,23 +4,26 @@ SERVICE=client
 PERF_CLIENT_ARGS="--keylog --duration 5 172.42.0.2:4433"
 
 LATENCY=0
+GSO=0
 CAPTURE=0
 OPEN=0
 
 function usage() {
-	echo "usage: $0 [-hco] [-l number]"
-	echo "  -h      display help"
+	echo "usage: $0 [-cgho] [-l number]"
 	echo "  -c      enable packet capture"
-	echo "  -o      open packet capture"
+	echo "  -g      enable GSO (default: disabled)"
+	echo "  -h      display help"
 	echo "  -l number   specify simulated latency in ms (default: ${LATENCY}ms)"
+	echo "  -o      open packet capture"
 	exit 1
 }
 
-while getopts "hcl:" opt; do
+while getopts "cghl:o" opt; do
 	case $opt in
 		c) CAPTURE=1;;
-		o) OPEN=1;;
+		g) GSO=1;;
 		l) LATENCY=$OPTARG;;
+		o) OPEN=1;;
 		h) usage;;
 		*) usage;;
 	esac
@@ -35,9 +38,11 @@ if [ ${LATENCY} -ne 0 ]; then
 	docker compose exec -it ${SERVICE} tc qdisc add dev eth0 root netem delay ${LATENCY}ms
 fi
 
-# FIXME disable GSO due to this issue
-# https://gitlab.com/wireshark/wireshark/-/issues/19109
-docker compose exec -it ${SERVICE} ethtool -K eth0 tx-udp-segmentation off
+if [ ${GSO} -eq 0 ]; then
+	# FIXME disable GSO due to this issue
+	# https://gitlab.com/wireshark/wireshark/-/issues/19109
+	docker compose exec -it ${SERVICE} ethtool -K eth0 tx-udp-segmentation off
+fi
 
 if [ ${CAPTURE} -eq 1 ]; then
 	echo "Starting capture within docker"
