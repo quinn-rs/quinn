@@ -2256,8 +2256,9 @@ fn single_ack_eliciting_packet_triggers_ack_after_delay() {
 
     // The ACK delay is properly calculated
     assert_eq!(pair.client.captured_packets.len(), 1);
-    let mut frames =
-        frame::Iter::new(pair.client.captured_packets.remove(0).into()).collect::<Vec<_>>();
+    let mut frames = frame::Iter::new(pair.client.captured_packets.remove(0).into())
+        .collect::<Result<Vec<_>, _>>()
+        .unwrap();
     assert_eq!(frames.len(), 1);
     if let Frame::Ack(ack) = frames.remove(0) {
         let ack_delay_exp = TransportParameters::default().ack_delay_exponent;

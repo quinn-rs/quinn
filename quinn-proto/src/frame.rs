@@ -162,7 +162,6 @@ pub(crate) enum Frame {
     Datagram(Datagram),
     AckFrequency(AckFrequency),
     ImmediateAck,
-    Invalid { ty: Type, reason: &'static str },
     HandshakeDone,
 }
 
@@ -204,7 +203,6 @@ impl Frame {
             Datagram(_) => Type(*DATAGRAM_TYS.start()),
             AckFrequency(_) => Type::ACK_FREQUENCY,
             ImmediateAck => Type::IMMEDIATE_ACK,
-            Invalid { ty, .. } => ty,
             HandshakeDone => Type::HANDSHAKE_DONE,
         }
     }
@@ -734,22 +732,36 @@ impl Iter {
 }
 
 impl Iterator for Iter {
-    type Item = Frame;
+    type Item = Result<Frame, InvalidFrame>;
     fn next(&mut self) -> Option<Self::Item> {
         if !self.bytes.has_remaining() {
             return None;
         }
         match self.try_next() {
-            Ok(x) => Some(x),
+            Ok(x) => Some(Ok(x)),
             Err(e) => {
                 // Corrupt frame, skip it and everything that follows
                 self.bytes = io::Cursor::new(Bytes::new());
-                Some(Frame::Invalid {
-                    ty: self.last_ty.unwrap(),
+                Some(Err(InvalidFrame {
+                    ty: self.last_ty,
                     reason: e.reason(),
-                })
+                }))
             }
         }
+    }
+}
+
+#[derive(Debug)]
+pub(crate) struct InvalidFrame {
+    pub(crate) ty: Option<Type>,
+    pub(crate) reason: &'static str,
+}
+
+impl From<InvalidFrame> for TransportError {
+    fn from(err: InvalidFrame) -> Self {
+        let mut te = Self::FRAME_ENCODING_ERROR(err.reason);
+        te.frame = err.ty;
+        te
     }
 }
 
@@ -910,7 +922,9 @@ mod test {
     use assert_matches::assert_matches;
 
     fn frames(buf: Vec<u8>) -> Vec<Frame> {
-        Iter::new(Bytes::from(buf)).collect::<Vec<_>>()
+        Iter::new(Bytes::from(buf))
+            .collect::<Result<Vec<_>, _>>()
+            .unwrap()
     }
 
     #[test]
