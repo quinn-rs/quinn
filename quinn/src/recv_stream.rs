@@ -537,12 +537,14 @@ impl<'a> Future for ReadExact<'a> {
     type Output = Result<(), ReadExactError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let mut remaining = this.buf.remaining();
+        let total = this.buf.remaining();
+        let mut remaining = total;
         while remaining > 0 {
             ready!(this.stream.poll_read(cx, &mut this.buf))?;
             let new = this.buf.remaining();
             if new == remaining {
-                return Poll::Ready(Err(ReadExactError::FinishedEarly));
+                let read = total - remaining;
+                return Poll::Ready(Err(ReadExactError::FinishedEarly(read)));
             }
             remaining = new;
         }
@@ -554,8 +556,8 @@ impl<'a> Future for ReadExact<'a> {
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum ReadExactError {
     /// The stream finished before all bytes were read
-    #[error("stream finished early")]
-    FinishedEarly,
+    #[error("stream finished early ({0} bytes read)")]
+    FinishedEarly(usize),
     /// A read error occurred
     #[error(transparent)]
     ReadError(#[from] ReadError),
