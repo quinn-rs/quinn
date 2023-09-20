@@ -514,7 +514,7 @@ impl Crypto {
     }
 }
 
-pub struct Iter {
+pub(crate) struct Iter {
     // TODO: ditch io::Cursor after bytes 0.5
     bytes: io::Cursor<Bytes>,
     last_ty: Option<Type>,
