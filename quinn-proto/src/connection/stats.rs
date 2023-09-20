@@ -83,7 +83,6 @@ impl FrameStats {
             Frame::PathResponse(_) => self.path_response += 1,
             Frame::Close(_) => self.connection_close += 1,
             Frame::HandshakeDone => self.handshake_done += 1,
-            Frame::Invalid { .. } => {}
         }
     }
 }
