@@ -58,7 +58,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.63.0
+      - uses: dtolnay/rust-toolchain@1.65.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --lib --all-features -p quinn-udp -p quinn-proto -p quinn
 
