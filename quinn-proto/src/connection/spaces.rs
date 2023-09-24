@@ -631,12 +631,19 @@ impl PendingAcks {
                     || dedup.missing_in_interval(prev_largest_ack_eliciting, packet_number)
             }
             _ => {
-                // From acknowledgement frequency draft, section 6.1
+                // From acknowledgement frequency draft, section 6.1: send an ACK immediately if
+                // doing so would cause the sender to detect a new packet loss
                 if let Some((largest_acked, largest_unacked)) =
                     self.largest_acked.zip(self.largest_ack_eliciting_packet)
                 {
+                    if self.reordering_threshold > largest_acked {
+                        return false;
+                    }
+                    // The largest packet number that could be declared lost without a new ACK being
+                    // sent
+                    let largest_reported = largest_acked - self.reordering_threshold + 1;
                     dedup
-                        .smallest_missing_in_interval(largest_acked, largest_unacked)
+                        .smallest_missing_in_interval(largest_reported, largest_unacked)
                         .map_or(false, |smallest_missing| {
                             largest_unacked - smallest_missing >= self.reordering_threshold
                         })
