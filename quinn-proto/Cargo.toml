@@ -1,6 +1,6 @@
 [package]
 name = "quinn-proto"
-version = "0.9.5"
+version = "0.9.6"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
 description = "State machine for the QUIC transport protocol"
