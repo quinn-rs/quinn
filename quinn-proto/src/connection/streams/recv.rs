@@ -226,7 +226,7 @@ impl<'a> Chunks<'a> {
             .stopped
         {
             true => return Err(ReadableError::UnknownStream),
-            false => entry.remove().unwrap(), // this can't fail at this point
+            false => entry.remove().unwrap(), // this can't fail due to the previous get_or_insert_with
         };
 
         recv.assembler.ensure_ordering(ordered)?;

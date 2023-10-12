@@ -605,10 +605,15 @@ impl StreamsState {
     }
 
     pub(crate) fn received_ack_of(&mut self, frame: frame::StreamMeta) {
-        let stream = match self.send.get_mut(&frame.id).and_then(|s| s.as_mut()) {
-            None => return,
-            Some(s) => s,
+        let max_send_data = self.max_send_data(&frame.id);
+        let mut entry = match self.send.entry(frame.id) {
+            hash_map::Entry::Vacant(_) => return,
+            hash_map::Entry::Occupied(e) => e,
         };
+
+        let stream = entry
+            .get_mut()
+            .get_or_insert_with(|| Box::new(Send::new(max_send_data)));
 
         if stream.is_reset() {
             // We account for outstanding data on reset streams at time of reset
@@ -621,7 +626,7 @@ impl StreamsState {
             return;
         }
 
-        self.send.remove(&id);
+        entry.remove_entry();
         self.stream_freed(id, StreamHalf::Send);
         self.events.push_back(StreamEvent::Finished { id });
     }
@@ -643,7 +648,10 @@ impl StreamsState {
         for dir in Dir::iter() {
             for index in 0..self.next[dir as usize] {
                 let id = StreamId::new(Side::Client, dir, index);
-                let stream = self.send.get_mut(&id).and_then(|s| s.as_mut()).unwrap();
+                let stream = match self.send.get_mut(&id).and_then(|s| s.as_mut()) {
+                    Some(stream) => stream,
+                    None => continue,
+                };
                 if stream.pending.is_fully_acked() && !stream.fin_pending {
                     // Stream data can't be acked in 0-RTT, so we must not have sent anything on
                     // this stream
@@ -833,25 +841,25 @@ impl StreamsState {
         let bi = id.dir() == Dir::Bi;
         // bidirectional OR (unidirectional AND NOT remote)
         if bi || !remote {
-            if remote {
-                assert!(self.send.insert(id, None).is_none());
-            } else {
-                assert!(self
-                    .send
-                    .insert(id, Some(Box::new(Send::new(self.max_send_data(&id)))))
-                    .is_none());
-            }
+            // if remote {
+            assert!(self.send.insert(id, None).is_none());
+            // } else {
+            //     assert!(self
+            //         .send
+            //         .insert(id, Some(Box::new(Send::new(self.max_send_data(&id)))))
+            //         .is_none());
+            // }
         }
         // bidirectional OR (unidirectional AND remote)
         if bi || remote {
-            if remote {
-                assert!(self.recv.insert(id, None).is_none());
-            } else {
-                assert!(self
-                    .recv
-                    .insert(id, Some(Box::new(Recv::new(self.stream_receive_window))))
-                    .is_none());
-            }
+            // if remote {
+            assert!(self.recv.insert(id, None).is_none());
+            // } else {
+            //     assert!(self
+            //         .recv
+            //         .insert(id, Some(Box::new(Recv::new(self.stream_receive_window))))
+            //         .is_none());
+            // }
         }
     }
 
