@@ -7,8 +7,10 @@ use bytes::Bytes;
 use thiserror::Error;
 use tracing::trace;
 
+use self::state::get_or_insert_recv;
+
 use super::spaces::{Retransmits, ThinRetransmits};
-use crate::{frame, Dir, StreamId, VarInt};
+use crate::{connection::streams::state::get_or_insert_send, frame, Dir, StreamId, VarInt};
 
 mod recv;
 use recv::Recv;
@@ -133,7 +135,7 @@ impl<'a> RecvStream<'a> {
             hash_map::Entry::Occupied(s) => s,
             hash_map::Entry::Vacant(_) => return Err(UnknownStream { _private: () }),
         };
-        let stream = entry.get_mut();
+        let stream = get_or_insert_recv(self.state.stream_receive_window)(entry.get_mut());
 
         let (read_credits, stop_sending) = stream.stop()?;
         if stop_sending.should_transmit() {
@@ -207,11 +209,16 @@ impl<'a> SendStream<'a> {
         }
 
         let limit = self.state.write_limit();
+
+        let max_send_data = self.state.initial_max_send_data(self.id);
+
         let stream = self
             .state
             .send
             .get_mut(&self.id)
+            .map(get_or_insert_send(max_send_data))
             .ok_or(WriteError::UnknownStream)?;
+
         if limit == 0 {
             trace!(
                 stream = %self.id, max_data = self.state.max_data, data_sent = self.state.data_sent,
@@ -237,8 +244,9 @@ impl<'a> SendStream<'a> {
 
     /// Check if this stream was stopped, get the reason if it was
     pub fn stopped(&mut self) -> Result<Option<VarInt>, UnknownStream> {
-        match self.state.send.get(&self.id) {
-            Some(s) => Ok(s.stop_reason),
+        match self.state.send.get(&self.id).as_ref() {
+            Some(Some(s)) => Ok(s.stop_reason),
+            Some(None) => Ok(None),
             None => Err(UnknownStream { _private: () }),
         }
     }
@@ -249,10 +257,12 @@ impl<'a> SendStream<'a> {
     ///
     /// [`StreamEvent::Finished`]: crate::StreamEvent::Finished
     pub fn finish(&mut self) -> Result<(), FinishError> {
+        let max_send_data = self.state.initial_max_send_data(self.id);
         let stream = self
             .state
             .send
             .get_mut(&self.id)
+            .map(get_or_insert_send(max_send_data))
             .ok_or(FinishError::UnknownStream)?;
 
         let was_pending = stream.is_pending();
@@ -269,10 +279,12 @@ impl<'a> SendStream<'a> {
     /// # Panics
     /// - when applied to a receive stream
     pub fn reset(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
+        let max_send_data = self.state.initial_max_send_data(self.id);
         let stream = self
             .state
             .send
             .get_mut(&self.id)
+            .map(get_or_insert_send(max_send_data))
             .ok_or(UnknownStream { _private: () })?;
 
         if matches!(stream.state, SendState::ResetSent) {
@@ -296,10 +308,12 @@ impl<'a> SendStream<'a> {
     /// # Panics
     /// - when applied to a receive stream
     pub fn set_priority(&mut self, priority: i32) -> Result<(), UnknownStream> {
+        let max_send_data = self.state.initial_max_send_data(self.id);
         let stream = self
             .state
             .send
             .get_mut(&self.id)
+            .map(get_or_insert_send(max_send_data))
             .ok_or(UnknownStream { _private: () })?;
 
         stream.priority = priority;
@@ -317,7 +331,7 @@ impl<'a> SendStream<'a> {
             .get(&self.id)
             .ok_or(UnknownStream { _private: () })?;
 
-        Ok(stream.priority)
+        Ok(stream.as_ref().map(|s| s.priority).unwrap_or_default())
     }
 }
 
