@@ -215,12 +215,16 @@ impl<'a> Chunks<'a> {
         streams: &'a mut StreamsState,
         pending: &'a mut Retransmits,
     ) -> Result<Self, ReadableError> {
-        let entry = match streams.recv.entry(id) {
+        let mut entry = match streams.recv.entry(id) {
             Entry::Occupied(entry) => entry,
             Entry::Vacant(_) => return Err(ReadableError::UnknownStream),
         };
 
-        let mut recv = match entry.get().as_ref().map(|s| s.stopped).unwrap_or(true) {
+        let mut recv = match entry
+            .get_mut()
+            .get_or_insert_with(|| Box::new(Recv::new(streams.stream_receive_window)))
+            .stopped
+        {
             true => return Err(ReadableError::UnknownStream),
             false => entry.remove().unwrap(), // this can't fail at this point
         };

@@ -808,6 +808,28 @@ impl StreamsState {
         expanded
     }
 
+    // pub(super) fn get_or_insert_send(&mut self, id: &StreamId) -> Option<&mut Send> {
+    //     self.send.get_mut(id).map(|s| {
+    //         s.get_or_insert_with(|| Box::new(Send::new(self.max_send_data(id))))
+    //             .as_mut()
+    //     })
+    // }
+
+    pub(super) fn max_send_data(&self, id: &StreamId) -> VarInt {
+        let remote = self.side != id.initiator();
+        match id.dir() {
+            Dir::Uni => self.initial_max_stream_data_uni,
+            // Remote/local appear reversed here because the transport parameters are named from
+            // the perspective of the peer.
+            Dir::Bi if remote => self.initial_max_stream_data_bidi_local,
+            Dir::Bi => self.initial_max_stream_data_bidi_remote,
+        }
+    }
+
+    pub(super) fn make_send_stream(&self, id: &StreamId) -> Send {
+        Send::new(self.max_send_data(id))
+    }
+
     pub(super) fn insert(&mut self, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
         // bidirectional OR (unidirectional AND NOT remote)
@@ -815,15 +837,12 @@ impl StreamsState {
             if remote {
                 assert!(self.send.insert(id, None).is_none());
             } else {
-                let max_data = match id.dir() {
-                    Dir::Uni => self.initial_max_stream_data_uni,
-                    // Remote/local appear reversed here because the transport parameters are named from
-                    // the perspective of the peer.
-                    Dir::Bi if remote => self.initial_max_stream_data_bidi_local,
-                    Dir::Bi => self.initial_max_stream_data_bidi_remote,
-                };
-                let stream = Send::new(max_data);
-                assert!(self.send.insert(id, Some(Box::new(stream))).is_none());
+                println!("inserted local send stream");
+
+                assert!(self
+                    .send
+                    .insert(id, Some(Box::new(self.make_send_stream(&id))))
+                    .is_none());
             }
         }
         // bidirectional OR (unidirectional AND remote)
@@ -831,6 +850,7 @@ impl StreamsState {
             if remote {
                 assert!(self.recv.insert(id, None).is_none());
             } else {
+                println!("inserted local recv stream");
                 assert!(self
                     .recv
                     .insert(id, Some(Box::new(Recv::new(self.stream_receive_window))))

@@ -206,12 +206,17 @@ impl<'a> SendStream<'a> {
         }
 
         let limit = self.state.write_limit();
+
+        // annoying to have to do this pre-emptively
+        let max_send_data = self.state.max_send_data(&self.id);
+
         let stream = self
             .state
             .send
             .get_mut(&self.id)
-            .and_then(|s| s.as_mut())
+            .map(|s| s.get_or_insert_with(|| Box::new(Send::new(max_send_data))))
             .ok_or(WriteError::UnknownStream)?;
+
         if limit == 0 {
             trace!(
                 stream = %self.id, max_data = self.state.max_data, data_sent = self.state.data_sent,
