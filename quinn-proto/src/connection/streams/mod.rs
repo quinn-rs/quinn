@@ -210,7 +210,6 @@ impl<'a> SendStream<'a> {
 
         let limit = self.state.write_limit();
 
-        // annoying to have to do this pre-emptively
         let max_send_data = self.state.max_send_data(&self.id);
 
         let stream = self

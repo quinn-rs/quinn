@@ -841,25 +841,11 @@ impl StreamsState {
         let bi = id.dir() == Dir::Bi;
         // bidirectional OR (unidirectional AND NOT remote)
         if bi || !remote {
-            // if remote {
             assert!(self.send.insert(id, None).is_none());
-            // } else {
-            //     assert!(self
-            //         .send
-            //         .insert(id, Some(Box::new(Send::new(self.max_send_data(&id)))))
-            //         .is_none());
-            // }
         }
         // bidirectional OR (unidirectional AND remote)
         if bi || remote {
-            // if remote {
             assert!(self.recv.insert(id, None).is_none());
-            // } else {
-            //     assert!(self
-            //         .recv
-            //         .insert(id, Some(Box::new(Recv::new(self.stream_receive_window))))
-            //         .is_none());
-            // }
         }
     }
 
