@@ -24,8 +24,8 @@ use crate::{
 pub struct StreamsState {
     pub(super) side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
-    pub(super) send: FxHashMap<StreamId, Send>,
-    pub(super) recv: FxHashMap<StreamId, Recv>,
+    pub(super) send: FxHashMap<StreamId, Option<Box<Send>>>,
+    pub(super) recv: FxHashMap<StreamId, Option<Box<Recv>>>,
     pub(super) next: [u64; 2],
     /// Maximum number of locally-initiated streams that may be opened over the lifetime of the
     /// connection so far, per direction
@@ -152,8 +152,9 @@ impl StreamsState {
         self.received_max_data(params.initial_max_data);
         for i in 0..self.max_remote[Dir::Bi as usize] {
             let id = StreamId::new(!self.side, Dir::Bi, i);
-            self.send.get_mut(&id).unwrap().max_data =
-                params.initial_max_stream_data_bidi_local.into();
+            if let Some(s) = self.send.get_mut(&id).and_then(|s| s.as_mut()) {
+                s.max_data = params.initial_max_stream_data_bidi_local.into();
+            }
         }
     }
 
@@ -205,13 +206,17 @@ impl StreamsState {
         frame: frame::Stream,
         payload_len: usize,
     ) -> Result<ShouldTransmit, TransportError> {
-        let stream = frame.id;
-        self.validate_receive_id(stream).map_err(|e| {
+        let id = frame.id;
+        self.validate_receive_id(id).map_err(|e| {
             debug!("received illegal STREAM frame");
             e
         })?;
 
-        let rs = match self.recv.get_mut(&stream) {
+        let rs = match self
+            .recv
+            .get_mut(&id)
+            .map(get_or_insert_recv(self.stream_receive_window))
+        {
             Some(rs) => rs,
             None => {
                 trace!("dropping frame for closed stream");
@@ -229,14 +234,14 @@ impl StreamsState {
         self.data_recvd = self.data_recvd.saturating_add(new_bytes);
 
         if !rs.stopped {
-            self.on_stream_frame(true, stream);
+            self.on_stream_frame(true, id);
             return Ok(ShouldTransmit(false));
         }
 
         // Stopped streams become closed instantly on FIN, so check whether we need to clean up
         if closed {
-            self.recv.remove(&stream);
-            self.stream_freed(stream, StreamHalf::Recv);
+            self.recv.remove(&id);
+            self.stream_freed(id, StreamHalf::Recv);
         }
 
         // We don't buffer data on stopped streams, so issue flow control credit immediately
@@ -261,7 +266,11 @@ impl StreamsState {
             e
         })?;
 
-        let rs = match self.recv.get_mut(&id) {
+        let rs = match self
+            .recv
+            .get_mut(&id)
+            .map(get_or_insert_recv(self.stream_receive_window))
+        {
             Some(stream) => stream,
             None => {
                 trace!("received RESET_STREAM on closed stream");
@@ -304,7 +313,12 @@ impl StreamsState {
     /// Process incoming `STOP_SENDING` frame
     #[allow(unreachable_pub)] // fuzzing only
     pub fn received_stop_sending(&mut self, id: StreamId, error_code: VarInt) {
-        let stream = match self.send.get_mut(&id) {
+        let max_send_data = self.max_send_data(id);
+        let stream = match self
+            .send
+            .get_mut(&id)
+            .map(get_or_insert_send(max_send_data))
+        {
             Some(ss) => ss,
             None => return,
         };
@@ -320,7 +334,7 @@ impl StreamsState {
         match self.send.entry(id) {
             hash_map::Entry::Vacant(_) => {}
             hash_map::Entry::Occupied(e) => {
-                if let SendState::ResetSent = e.get().state {
+                if let Some(SendState::ResetSent) = e.get().as_ref().map(|s| s.state) {
                     e.remove_entry();
                     self.stream_freed(id, StreamHalf::Send);
                 }
@@ -332,11 +346,12 @@ impl StreamsState {
     pub(crate) fn can_send_stream_data(&self) -> bool {
         // Reset streams may linger in the pending stream list, but will never produce stream frames
         self.pending.iter().any(|level| {
-            level
-                .queue
-                .borrow()
-                .iter()
-                .any(|id| self.send.get(id).map_or(false, |s| !s.is_reset()))
+            level.queue.borrow().iter().any(|id| {
+                self.send
+                    .get(id)
+                    .and_then(|s| s.as_ref())
+                    .map_or(false, |s| !s.is_reset())
+            })
         })
     }
 
@@ -344,6 +359,7 @@ impl StreamsState {
     pub(crate) fn can_send_flow_control(&self, id: StreamId) -> bool {
         self.recv
             .get(&id)
+            .and_then(|s| s.as_ref())
             .map_or(false, |s| s.receiving_unknown_size())
     }
 
@@ -361,7 +377,7 @@ impl StreamsState {
                 Some(x) => x,
                 None => break,
             };
-            let stream = match self.send.get_mut(&id) {
+            let stream = match self.send.get_mut(&id).and_then(|s| s.as_mut()) {
                 Some(x) => x,
                 None => continue,
             };
@@ -428,7 +444,7 @@ impl StreamsState {
                 None => break,
             };
             pending.max_stream_data.remove(&id);
-            let rs = match self.recv.get_mut(&id) {
+            let rs = match self.recv.get_mut(&id).and_then(|s| s.as_mut()) {
                 Some(x) => x,
                 None => continue,
             };
@@ -507,7 +523,7 @@ impl StreamsState {
                     break;
                 }
             };
-            let stream = match self.send.get_mut(&id) {
+            let stream = match self.send.get_mut(&id).and_then(|s| s.as_mut()) {
                 Some(s) => s,
                 // Stream was reset with pending data and the reset was acknowledged
                 None => continue,
@@ -593,7 +609,18 @@ impl StreamsState {
             hash_map::Entry::Vacant(_) => return,
             hash_map::Entry::Occupied(e) => e,
         };
-        let stream = entry.get_mut();
+
+        let stream = match entry.get_mut().as_mut() {
+            Some(s) => s,
+            None => {
+                // Because we only call this after sending data on this stream,
+                // this closure should be unreachable. If we did somehow screw that up,
+                // then we might hit an underflow below with unpredictable effects down
+                // the line. Best to short-circuit.
+                return;
+            }
+        };
+
         if stream.is_reset() {
             // We account for outstanding data on reset streams at time of reset
             return;
@@ -611,7 +638,7 @@ impl StreamsState {
     }
 
     pub(crate) fn retransmit(&mut self, frame: frame::StreamMeta) {
-        let stream = match self.send.get_mut(&frame.id) {
+        let stream = match self.send.get_mut(&frame.id).and_then(|s| s.as_mut()) {
             // Loss of data on a closed stream is a noop
             None => return,
             Some(x) => x,
@@ -627,7 +654,10 @@ impl StreamsState {
         for dir in Dir::iter() {
             for index in 0..self.next[dir as usize] {
                 let id = StreamId::new(Side::Client, dir, index);
-                let stream = self.send.get_mut(&id).unwrap();
+                let stream = match self.send.get_mut(&id).and_then(|s| s.as_mut()) {
+                    Some(stream) => stream,
+                    None => continue,
+                };
                 if stream.pending.is_fully_acked() && !stream.fin_pending {
                     // Stream data can't be acked in 0-RTT, so we must not have sent anything on
                     // this stream
@@ -679,7 +709,12 @@ impl StreamsState {
         }
 
         let write_limit = self.write_limit();
-        if let Some(ss) = self.send.get_mut(&id) {
+        let max_send_data = self.max_send_data(id);
+        if let Some(ss) = self
+            .send
+            .get_mut(&id)
+            .map(get_or_insert_send(max_send_data))
+        {
             if ss.increase_max_data(offset) {
                 if write_limit > 0 {
                     self.events.push_back(StreamEvent::Writable { id });
@@ -716,7 +751,7 @@ impl StreamsState {
 
         if self.write_limit() > 0 {
             while let Some(id) = self.connection_blocked.pop() {
-                let stream = match self.send.get_mut(&id) {
+                let stream = match self.send.get_mut(&id).and_then(|s| s.as_mut()) {
                     None => continue,
                     Some(s) => s,
                 };
@@ -799,15 +834,13 @@ impl StreamsState {
 
     pub(super) fn insert(&mut self, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
+        // bidirectional OR (unidirectional AND NOT remote)
         if bi || !remote {
-            let stream = Send::new(self.max_send_data(id));
-            assert!(self.send.insert(id, stream).is_none());
+            assert!(self.send.insert(id, None).is_none());
         }
+        // bidirectional OR (unidirectional AND remote)
         if bi || remote {
-            assert!(self
-                .recv
-                .insert(id, Recv::new(self.stream_receive_window))
-                .is_none());
+            assert!(self.recv.insert(id, None).is_none());
         }
     }
 
@@ -869,6 +902,20 @@ impl StreamsState {
             Dir::Bi => self.initial_max_stream_data_bidi_remote,
         }
     }
+}
+
+#[inline]
+pub(super) fn get_or_insert_send(
+    max_data: VarInt,
+) -> impl Fn(&mut Option<Box<Send>>) -> &mut Box<Send> {
+    move |opt| opt.get_or_insert_with(|| Send::new(max_data))
+}
+
+#[inline]
+pub(super) fn get_or_insert_recv(
+    initial_max_data: u64,
+) -> impl Fn(&mut Option<Box<Recv>>) -> &mut Box<Recv> {
+    move |opt| opt.get_or_insert_with(|| Recv::new(initial_max_data))
 }
 
 #[cfg(test)]
