@@ -244,8 +244,9 @@ impl<'a> SendStream<'a> {
 
     /// Check if this stream was stopped, get the reason if it was
     pub fn stopped(&mut self) -> Result<Option<VarInt>, UnknownStream> {
-        match self.state.send.get(&self.id).and_then(|s| s.as_ref()) {
-            Some(s) => Ok(s.stop_reason),
+        match self.state.send.get(&self.id).as_ref() {
+            Some(Some(s)) => Ok(s.stop_reason),
+            Some(None) => Ok(None),
             None => Err(UnknownStream { _private: () }),
         }
     }
