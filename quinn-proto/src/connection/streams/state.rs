@@ -313,7 +313,12 @@ impl StreamsState {
     /// Process incoming `STOP_SENDING` frame
     #[allow(unreachable_pub)] // fuzzing only
     pub fn received_stop_sending(&mut self, id: StreamId, error_code: VarInt) {
-        let stream = match self.send.get_mut(&id).and_then(|s| s.as_mut()) {
+        let max_send_data = self.max_send_data(&id);
+        let stream = match self
+            .send
+            .get_mut(&id)
+            .map(|s| s.get_or_insert_with(|| Box::new(Send::new(max_send_data))))
+        {
             Some(ss) => ss,
             None => return,
         };
@@ -690,7 +695,12 @@ impl StreamsState {
         }
 
         let write_limit = self.write_limit();
-        if let Some(ss) = self.send.get_mut(&id).and_then(|s| s.as_mut()) {
+        let max_send_data = self.max_send_data(&id);
+        if let Some(ss) = self
+            .send
+            .get_mut(&id)
+            .map(|s| s.get_or_insert_with(|| Box::new(Send::new(max_send_data))))
+        {
             if ss.increase_max_data(offset) {
                 if write_limit > 0 {
                     self.events.push_back(StreamEvent::Writable { id });
@@ -808,13 +818,6 @@ impl StreamsState {
         expanded
     }
 
-    // pub(super) fn get_or_insert_send(&mut self, id: &StreamId) -> Option<&mut Send> {
-    //     self.send.get_mut(id).map(|s| {
-    //         s.get_or_insert_with(|| Box::new(Send::new(self.max_send_data(id))))
-    //             .as_mut()
-    //     })
-    // }
-
     pub(super) fn max_send_data(&self, id: &StreamId) -> VarInt {
         let remote = self.side != id.initiator();
         match id.dir() {
@@ -826,10 +829,6 @@ impl StreamsState {
         }
     }
 
-    pub(super) fn make_send_stream(&self, id: &StreamId) -> Send {
-        Send::new(self.max_send_data(id))
-    }
-
     pub(super) fn insert(&mut self, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
         // bidirectional OR (unidirectional AND NOT remote)
@@ -837,11 +836,9 @@ impl StreamsState {
             if remote {
                 assert!(self.send.insert(id, None).is_none());
             } else {
-                println!("inserted local send stream");
-
                 assert!(self
                     .send
-                    .insert(id, Some(Box::new(self.make_send_stream(&id))))
+                    .insert(id, Some(Box::new(Send::new(self.max_send_data(&id)))))
                     .is_none());
             }
         }
@@ -850,7 +847,6 @@ impl StreamsState {
             if remote {
                 assert!(self.recv.insert(id, None).is_none());
             } else {
-                println!("inserted local recv stream");
                 assert!(self
                     .recv
                     .insert(id, Some(Box::new(Recv::new(self.stream_receive_window))))

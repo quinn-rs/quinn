@@ -129,10 +129,13 @@ impl<'a> RecvStream<'a> {
     /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
     /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
-        let stream = match self.state.recv.get_mut(&self.id).and_then(|s| s.as_mut()) {
-            Some(s) => s,
-            None => return Err(UnknownStream { _private: () }),
-        };
+        let stream =
+            match self.state.recv.get_mut(&self.id).map(|s| {
+                s.get_or_insert_with(|| Box::new(Recv::new(self.state.stream_receive_window)))
+            }) {
+                Some(s) => s,
+                None => return Err(UnknownStream { _private: () }),
+            };
 
         let (read_credits, stop_sending) = stream.stop()?;
         if stop_sending.should_transmit() {
