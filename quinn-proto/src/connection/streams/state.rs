@@ -605,15 +605,16 @@ impl StreamsState {
     }
 
     pub(crate) fn received_ack_of(&mut self, frame: frame::StreamMeta) {
-        let max_send_data = self.max_send_data(&frame.id);
         let mut entry = match self.send.entry(frame.id) {
             hash_map::Entry::Vacant(_) => return,
             hash_map::Entry::Occupied(e) => e,
         };
 
-        let stream = entry
-            .get_mut()
-            .get_or_insert_with(|| Box::new(Send::new(max_send_data)));
+        // Because we only call this after sending data on this stream,
+        // this closure should be unreachable. If we did somehow screw that up,
+        // then we might hit an underflow below with unpredictable effects down
+        // the line. Best to short-circuit.
+        let stream = entry.get_mut().as_mut().unwrap();
 
         if stream.is_reset() {
             // We account for outstanding data on reset streams at time of reset
