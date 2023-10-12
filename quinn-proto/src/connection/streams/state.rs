@@ -610,11 +610,16 @@ impl StreamsState {
             hash_map::Entry::Occupied(e) => e,
         };
 
-        // Because we only call this after sending data on this stream,
-        // this closure should be unreachable. If we did somehow screw that up,
-        // then we might hit an underflow below with unpredictable effects down
-        // the line. Best to short-circuit.
-        let stream = entry.get_mut().as_mut().unwrap();
+        let stream = match entry.get_mut().as_mut() {
+            Some(s) => s,
+            None => {
+                // Because we only call this after sending data on this stream,
+                // this closure should be unreachable. If we did somehow screw that up,
+                // then we might hit an underflow below with unpredictable effects down
+                // the line. Best to short-circuit.
+                return;
+            }
+        };
 
         if stream.is_reset() {
             // We account for outstanding data on reset streams at time of reset
