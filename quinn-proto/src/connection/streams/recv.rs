@@ -220,9 +220,9 @@ impl<'a> Chunks<'a> {
             Entry::Vacant(_) => return Err(ReadableError::UnknownStream),
         };
 
-        let mut recv = match entry.get().stopped {
+        let mut recv = match entry.get().as_ref().map(|s| s.stopped).unwrap_or(true) {
             true => return Err(ReadableError::UnknownStream),
-            false => entry.remove(),
+            false => entry.remove().unwrap(), // this can't fail at this point
         };
 
         recv.assembler.ensure_ordering(ordered)?;
@@ -313,7 +313,7 @@ impl<'a> Chunks<'a> {
                 self.pending.max_stream_data.insert(self.id);
             }
             // Return the stream to storage for future use
-            self.streams.recv.insert(self.id, rs);
+            self.streams.recv.insert(self.id, Some(rs));
         }
 
         // Issue connection-level flow control credit for any data we read regardless of state
@@ -331,7 +331,7 @@ impl<'a> Drop for Chunks<'a> {
 }
 
 enum ChunksState {
-    Readable(Recv),
+    Readable(Box<Recv>),
     Reset(VarInt),
     Finished,
     Finalized,

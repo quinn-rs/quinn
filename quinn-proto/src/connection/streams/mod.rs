@@ -1,6 +1,6 @@
 use std::{
     cell::RefCell,
-    collections::{hash_map, BinaryHeap, VecDeque},
+    collections::{BinaryHeap, VecDeque},
 };
 
 use bytes::Bytes;
@@ -129,11 +129,10 @@ impl<'a> RecvStream<'a> {
     /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
     /// attempts to operate on a stream will yield `UnknownStream` errors.
     pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
-        let mut entry = match self.state.recv.entry(self.id) {
-            hash_map::Entry::Occupied(s) => s,
-            hash_map::Entry::Vacant(_) => return Err(UnknownStream { _private: () }),
+        let stream = match self.state.recv.get_mut(&self.id).and_then(|s| s.as_mut()) {
+            Some(s) => s,
+            None => return Err(UnknownStream { _private: () }),
         };
-        let stream = entry.get_mut();
 
         let (read_credits, stop_sending) = stream.stop()?;
         if stop_sending.should_transmit() {
@@ -147,7 +146,7 @@ impl<'a> RecvStream<'a> {
         // connection-level flow control to account for discarded data. Otherwise, we can discard
         // state immediately.
         if !stream.receiving_unknown_size() {
-            entry.remove();
+            self.state.recv.remove(&self.id);
             self.state.stream_freed(self.id, StreamHalf::Recv);
         }
 
@@ -211,6 +210,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
+            .and_then(|s| s.as_mut())
             .ok_or(WriteError::UnknownStream)?;
         if limit == 0 {
             trace!(
@@ -237,7 +237,7 @@ impl<'a> SendStream<'a> {
 
     /// Check if this stream was stopped, get the reason if it was
     pub fn stopped(&mut self) -> Result<Option<VarInt>, UnknownStream> {
-        match self.state.send.get(&self.id) {
+        match self.state.send.get(&self.id).and_then(|s| s.as_ref()) {
             Some(s) => Ok(s.stop_reason),
             None => Err(UnknownStream { _private: () }),
         }
@@ -253,6 +253,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
+            .and_then(|s| s.as_mut())
             .ok_or(FinishError::UnknownStream)?;
 
         let was_pending = stream.is_pending();
@@ -273,6 +274,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
+            .and_then(|s| s.as_mut())
             .ok_or(UnknownStream { _private: () })?;
 
         if matches!(stream.state, SendState::ResetSent) {
@@ -300,6 +302,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
+            .and_then(|s| s.as_mut())
             .ok_or(UnknownStream { _private: () })?;
 
         stream.priority = priority;
@@ -315,6 +318,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get(&self.id)
+            .and_then(|s| s.as_ref())
             .ok_or(UnknownStream { _private: () })?;
 
         Ok(stream.priority)
