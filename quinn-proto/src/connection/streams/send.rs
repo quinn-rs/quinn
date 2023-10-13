@@ -18,8 +18,8 @@ pub(super) struct Send {
 }
 
 impl Send {
-    pub(super) fn new(max_data: VarInt) -> Self {
-        Self {
+    pub(super) fn new(max_data: VarInt) -> Box<Self> {
+        Box::new(Self {
             max_data: max_data.into(),
             state: SendState::Ready,
             pending: SendBuffer::new(),
@@ -27,7 +27,7 @@ impl Send {
             fin_pending: false,
             connection_blocked: false,
             stop_reason: None,
-        }
+        })
     }
 
     /// Whether the stream has been reset

@@ -4,6 +4,7 @@ use std::mem;
 use thiserror::Error;
 use tracing::debug;
 
+use super::state::get_or_insert_recv;
 use super::{Retransmits, ShouldTransmit, StreamHalf, StreamId, StreamsState, UnknownStream};
 use crate::connection::assembler::{Assembler, Chunk, IllegalOrderedRead};
 use crate::{frame, TransportError, VarInt};
@@ -18,14 +19,14 @@ pub(super) struct Recv {
 }
 
 impl Recv {
-    pub(super) fn new(initial_max_data: u64) -> Self {
-        Self {
+    pub(super) fn new(initial_max_data: u64) -> Box<Self> {
+        Box::new(Self {
             state: RecvState::default(),
             assembler: Assembler::new(),
             sent_max_stream_data: initial_max_data,
             end: 0,
             stopped: false,
-        }
+        })
     }
 
     /// Process a STREAM frame
@@ -220,14 +221,11 @@ impl<'a> Chunks<'a> {
             Entry::Vacant(_) => return Err(ReadableError::UnknownStream),
         };
 
-        let mut recv = match entry
-            .get_mut()
-            .get_or_insert_with(|| Box::new(Recv::new(streams.stream_receive_window)))
-            .stopped
-        {
-            true => return Err(ReadableError::UnknownStream),
-            false => entry.remove().unwrap(), // this can't fail due to the previous get_or_insert_with
-        };
+        let mut recv =
+            match get_or_insert_recv(streams.stream_receive_window)(entry.get_mut()).stopped {
+                true => return Err(ReadableError::UnknownStream),
+                false => entry.remove().unwrap(), // this can't fail due to the previous get_or_insert_with
+            };
 
         recv.assembler.ensure_ordering(ordered)?;
         Ok(Self {

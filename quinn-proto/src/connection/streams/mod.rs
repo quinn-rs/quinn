@@ -7,8 +7,10 @@ use bytes::Bytes;
 use thiserror::Error;
 use tracing::trace;
 
+use self::state::get_or_insert_recv;
+
 use super::spaces::{Retransmits, ThinRetransmits};
-use crate::{frame, Dir, StreamId, VarInt};
+use crate::{connection::streams::state::get_or_insert_send, frame, Dir, StreamId, VarInt};
 
 mod recv;
 use recv::Recv;
@@ -133,9 +135,7 @@ impl<'a> RecvStream<'a> {
             hash_map::Entry::Occupied(s) => s,
             hash_map::Entry::Vacant(_) => return Err(UnknownStream { _private: () }),
         };
-        let stream = entry
-            .get_mut()
-            .get_or_insert_with(|| Box::new(Recv::new(self.state.stream_receive_window)));
+        let stream = get_or_insert_recv(self.state.stream_receive_window)(entry.get_mut());
 
         let (read_credits, stop_sending) = stream.stop()?;
         if stop_sending.should_transmit() {
@@ -216,7 +216,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
-            .map(|s| s.get_or_insert_with(|| Box::new(Send::new(max_send_data))))
+            .map(get_or_insert_send(max_send_data))
             .ok_or(WriteError::UnknownStream)?;
 
         if limit == 0 {
@@ -262,7 +262,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
-            .map(|s| s.get_or_insert_with(|| Box::new(Send::new(max_send_data))))
+            .map(get_or_insert_send(max_send_data))
             .ok_or(FinishError::UnknownStream)?;
 
         let was_pending = stream.is_pending();
@@ -284,7 +284,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
-            .map(|s| s.get_or_insert_with(|| Box::new(Send::new(max_send_data))))
+            .map(get_or_insert_send(max_send_data))
             .ok_or(UnknownStream { _private: () })?;
 
         if matches!(stream.state, SendState::ResetSent) {
@@ -313,7 +313,7 @@ impl<'a> SendStream<'a> {
             .state
             .send
             .get_mut(&self.id)
-            .map(|s| s.get_or_insert_with(|| Box::new(Send::new(max_send_data))))
+            .map(get_or_insert_send(max_send_data))
             .ok_or(UnknownStream { _private: () })?;
 
         stream.priority = priority;

@@ -215,7 +215,7 @@ impl StreamsState {
         let rs = match self
             .recv
             .get_mut(&id)
-            .map(|s| s.get_or_insert_with(|| Box::new(Recv::new(self.stream_receive_window))))
+            .map(get_or_insert_recv(self.stream_receive_window))
         {
             Some(rs) => rs,
             None => {
@@ -269,7 +269,7 @@ impl StreamsState {
         let rs = match self
             .recv
             .get_mut(&id)
-            .map(|s| s.get_or_insert_with(|| Box::new(Recv::new(self.stream_receive_window))))
+            .map(get_or_insert_recv(self.stream_receive_window))
         {
             Some(stream) => stream,
             None => {
@@ -317,7 +317,7 @@ impl StreamsState {
         let stream = match self
             .send
             .get_mut(&id)
-            .map(|s| s.get_or_insert_with(|| Box::new(Send::new(max_send_data))))
+            .map(get_or_insert_send(max_send_data))
         {
             Some(ss) => ss,
             None => return,
@@ -713,7 +713,7 @@ impl StreamsState {
         if let Some(ss) = self
             .send
             .get_mut(&id)
-            .map(|s| s.get_or_insert_with(|| Box::new(Send::new(max_send_data))))
+            .map(get_or_insert_send(max_send_data))
         {
             if ss.increase_max_data(offset) {
                 if write_limit > 0 {
@@ -902,6 +902,20 @@ impl StreamsState {
             self.send_streams -= 1;
         }
     }
+}
+
+#[inline]
+pub(super) fn get_or_insert_send(
+    max_data: VarInt,
+) -> impl Fn(&mut Option<Box<Send>>) -> &mut Box<Send> {
+    move |opt| opt.get_or_insert_with(|| Send::new(max_data))
+}
+
+#[inline]
+pub(super) fn get_or_insert_recv(
+    initial_max_data: u64,
+) -> impl Fn(&mut Option<Box<Recv>>) -> &mut Box<Recv> {
+    move |opt| opt.get_or_insert_with(|| Recv::new(initial_max_data))
 }
 
 #[cfg(test)]
