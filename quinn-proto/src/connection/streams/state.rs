@@ -800,14 +800,7 @@ impl StreamsState {
     pub(super) fn insert(&mut self, remote: bool, id: StreamId) {
         let bi = id.dir() == Dir::Bi;
         if bi || !remote {
-            let max_data = match id.dir() {
-                Dir::Uni => self.initial_max_stream_data_uni,
-                // Remote/local appear reversed here because the transport parameters are named from
-                // the perspective of the peer.
-                Dir::Bi if remote => self.initial_max_stream_data_bidi_local,
-                Dir::Bi => self.initial_max_stream_data_bidi_remote,
-            };
-            let stream = Send::new(max_data);
+            let stream = Send::new(self.initial_max_send_data(id));
             assert!(self.send.insert(id, stream).is_none());
         }
         if bi || remote {
@@ -863,6 +856,17 @@ impl StreamsState {
         }
         if half == StreamHalf::Send {
             self.send_streams -= 1;
+        }
+    }
+
+    pub(super) fn initial_max_send_data(&self, id: StreamId) -> VarInt {
+        let remote = self.side != id.initiator();
+        match id.dir() {
+            Dir::Uni => self.initial_max_stream_data_uni,
+            // Remote/local appear reversed here because the transport parameters are named from
+            // the perspective of the peer.
+            Dir::Bi if remote => self.initial_max_stream_data_bidi_local,
+            Dir::Bi => self.initial_max_stream_data_bidi_remote,
         }
     }
 }
