@@ -7,7 +7,7 @@ use std::{
 };
 
 use assert_matches::assert_matches;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use hex_literal::hex;
 use rand::RngCore;
 use ring::hmac;
@@ -34,6 +34,7 @@ fn version_negotiate_server() {
         None,
     );
     let now = Instant::now();
+    let mut buf = BytesMut::with_capacity(1500);
     let event = server.handle(
         now,
         client_addr,
@@ -41,14 +42,15 @@ fn version_negotiate_server() {
         None,
         // Long-header packet with reserved version number
         hex!("80 0a1a2a3a 04 00000000 04 00000000 00")[..].into(),
+        &mut buf,
     );
-    let Some(DatagramEvent::Response(Transmit { contents, .. })) = event else {
+    let Some(DatagramEvent::Response(Transmit { .. })) = event else {
         panic!("expected a response");
     };
 
-    assert_ne!(contents[0] & 0x80, 0);
-    assert_eq!(&contents[1..15], hex!("00000000 04 00000000 04 00000000"));
-    assert!(contents[15..].chunks(4).any(|x| {
+    assert_ne!(buf[0] & 0x80, 0);
+    assert_eq!(&buf[1..15], hex!("00000000 04 00000000 04 00000000"));
+    assert!(buf[15..].chunks(4).any(|x| {
         DEFAULT_SUPPORTED_VERSIONS.contains(&u32::from_be_bytes(x.try_into().unwrap()))
     }));
 }
@@ -74,6 +76,7 @@ fn version_negotiate_client() {
         .connect(Instant::now(), client_config(), server_addr, "localhost")
         .unwrap();
     let now = Instant::now();
+    let mut buf = BytesMut::with_capacity(1500);
     let opt_event = client.handle(
         now,
         server_addr,
@@ -85,6 +88,7 @@ fn version_negotiate_client() {
              0a1a2a3a"
         )[..]
             .into(),
+        &mut buf,
     );
     if let Some(DatagramEvent::ConnectionEvent(_, event)) = opt_event {
         client_ch.handle_event(event);
@@ -1937,12 +1941,14 @@ fn malformed_token_len() {
         true,
         None,
     );
+    let mut buf = BytesMut::with_capacity(1500);
     server.handle(
         Instant::now(),
         client_addr,
         None,
         None,
         hex!("8900 0000 0101 0000 1b1b 841b 0000 0000 3f00")[..].into(),
+        &mut buf,
     );
 }
 

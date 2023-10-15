@@ -2,7 +2,8 @@ use std::{
     cmp,
     collections::VecDeque,
     convert::TryFrom,
-    fmt, io, mem,
+    fmt, io,
+    mem::{self},
     net::{IpAddr, SocketAddr},
     sync::Arc,
     time::{Duration, Instant},
@@ -455,7 +456,12 @@ impl Connection {
     /// `max_datagrams` specifies how many datagrams can be returned inside a
     /// single Transmit using GSO. This must be at least 1.
     #[must_use]
-    pub fn poll_transmit(&mut self, now: Instant, max_datagrams: usize) -> Option<Transmit> {
+    pub fn poll_transmit(
+        &mut self,
+        now: Instant,
+        max_datagrams: usize,
+        buf: &mut BytesMut,
+    ) -> Option<Transmit> {
         assert!(max_datagrams != 0);
         let max_datagrams = match self.config.enable_segmentation_offload {
             false => 1,
@@ -477,13 +483,18 @@ impl Connection {
                     SpaceId::Data,
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
-                let mut buf = BytesMut::with_capacity(self.path.current_mtu() as usize);
-                let buf_capacity = self.path.current_mtu() as usize;
+                // let mut buf = BytesMut::with_capacity(self.path.current_mtu() as usize);
+                // let buf_capacity = self.path.current_mtu() as usize;
+                if buf.capacity() < self.path.current_mtu() as usize {
+                    //TODO
+                    buf.reserve(self.path.current_mtu() as usize - buf.capacity() as usize);
+                }
+                let buf_capacity = buf.capacity() as usize;
 
                 let mut builder = PacketBuilder::new(
                     now,
                     SpaceId::Data,
-                    &mut buf,
+                    buf,
                     buf_capacity,
                     0,
                     false,
@@ -501,13 +512,13 @@ impl Connection {
                 // sending a datagram of this size
                 builder.pad_to(MIN_INITIAL_SIZE);
 
-                builder.finish(self, &mut buf);
+                builder.finish(self, buf);
                 self.stats.udp_tx.datagrams += 1;
                 self.stats.udp_tx.ios += 1;
                 self.stats.udp_tx.bytes += buf.len() as u64;
                 return Some(Transmit {
                     destination,
-                    contents: buf.freeze(),
+                    size: buf.len(),
                     ecn: None,
                     segment_size: None,
                     src_ip: self.local_ip,
@@ -549,7 +560,6 @@ impl Connection {
                 && self.peer_supports_ack_frequency();
         }
 
-        let mut buf = BytesMut::new();
         // Reserving capacity can provide more capacity than we asked for.
         // However we are not allowed to write more than MTU size. Therefore
         // the maximum capacity is tracked separately.
@@ -664,7 +674,7 @@ impl Connection {
                     // which will always send the maximum PDU.
                     builder.pad_to(self.path.current_mtu());
 
-                    builder.finish_and_track(now, self, sent_frames.take(), &mut buf);
+                    builder.finish_and_track(now, self, sent_frames.take(), buf);
 
                     debug_assert_eq!(buf.len(), buf_capacity, "Packet must be padded");
                 }
@@ -690,7 +700,7 @@ impl Connection {
                 // datagram.
                 // Finish current packet without adding extra padding
                 if let Some(builder) = builder.take() {
-                    builder.finish_and_track(now, self, sent_frames.take(), &mut buf);
+                    builder.finish_and_track(now, self, sent_frames.take(), buf);
                 }
             }
 
@@ -723,7 +733,7 @@ impl Connection {
             let builder = builder.get_or_insert(PacketBuilder::new(
                 now,
                 space_id,
-                &mut buf,
+                buf,
                 buf_capacity,
                 (num_datagrams - 1) * (self.path.current_mtu() as usize),
                 ack_eliciting,
@@ -748,7 +758,7 @@ impl Connection {
                         self.receiving_ecn,
                         &mut SentFrames::default(),
                         &mut self.spaces[space_id],
-                        &mut buf,
+                        buf,
                         &mut self.stats,
                     );
                 }
@@ -764,14 +774,14 @@ impl Connection {
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
                             if space_id == SpaceId::Data {
-                                reason.encode(&mut buf, builder.max_size)
+                                reason.encode(buf, builder.max_size)
                             } else {
                                 frame::ConnectionClose {
                                     error_code: TransportErrorCode::APPLICATION_ERROR,
                                     frame_type: None,
                                     reason: Bytes::new(),
                                 }
-                                .encode(&mut buf, builder.max_size)
+                                .encode(buf, builder.max_size)
                             }
                         }
                         State::Draining => frame::ConnectionClose {
@@ -779,7 +789,7 @@ impl Connection {
                             frame_type: None,
                             reason: Bytes::new(),
                         }
-                        .encode(&mut buf, builder.max_size),
+                        .encode(buf, builder.max_size),
                         _ => unreachable!(
                             "tried to make a close packet when the connection wasn't closed"
                         ),
@@ -794,7 +804,7 @@ impl Connection {
             let sent = self.populate_packet(
                 now,
                 space_id,
-                &mut buf,
+                buf,
                 buf_capacity - builder.tag_len,
                 builder.exact_number,
             );
@@ -831,7 +841,7 @@ impl Connection {
                 builder.pad_to(MIN_INITIAL_SIZE);
             }
             let last_packet_number = builder.exact_number;
-            builder.finish_and_track(now, self, sent_frames, &mut buf);
+            builder.finish_and_track(now, self, sent_frames, buf);
             self.path
                 .congestion
                 .on_sent(now, buf.len() as u64, last_packet_number);
@@ -857,7 +867,7 @@ impl Connection {
             let mut builder = PacketBuilder::new(
                 now,
                 space_id,
-                &mut buf,
+                buf,
                 buf_capacity,
                 0,
                 true,
@@ -880,7 +890,7 @@ impl Connection {
                 non_retransmits: true,
                 ..Default::default()
             };
-            builder.finish_and_track(now, self, Some(sent_frames), &mut buf);
+            builder.finish_and_track(now, self, Some(sent_frames), buf);
 
             self.stats.path.sent_plpmtud_probes += 1;
             num_datagrams = 1;
@@ -901,14 +911,14 @@ impl Connection {
 
         Some(Transmit {
             destination: self.path.remote,
-            contents: buf.freeze(),
+            size: buf.len(),
             ecn: if self.path.sending_ecn {
                 Some(EcnCodepoint::Ect0)
             } else {
                 None
             },
             segment_size: match num_datagrams {
-                1 => None,
+                1 | 0 => None,
                 _ => Some(self.path.current_mtu() as usize),
             },
             src_ip: self.local_ip,

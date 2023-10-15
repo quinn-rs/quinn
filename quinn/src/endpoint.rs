@@ -408,6 +408,7 @@ impl State {
                     .write(IoSliceMut::<'a>::new(buf));
             });
         let mut iovs = unsafe { iovs.assume_init() };
+        let mut buffer = BytesMut::with_capacity(1500);
         loop {
             match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
@@ -422,6 +423,7 @@ impl State {
                                 meta.dst_ip,
                                 meta.ecn.map(proto_ecn),
                                 buf,
+                                &mut buffer,
                             ) {
                                 Some(DatagramEvent::NewConnection(handle, conn)) => {
                                     let conn = self.connections.insert(
@@ -449,11 +451,13 @@ impl State {
                                     if self.transmit_queue_contents_len
                                         < MAX_TRANSMIT_QUEUE_CONTENTS_LEN
                                     {
-                                        let contents_len = t.contents.len();
-                                        self.outgoing.push_back(udp_transmit(t));
+                                        let contents_len = buffer.len();
+                                        self.outgoing
+                                            .push_back(udp_transmit(t, buffer.clone().freeze()));
                                         self.transmit_queue_contents_len = self
                                             .transmit_queue_contents_len
                                             .saturating_add(contents_len);
+                                        buffer.clear();
                                     }
                                 }
                                 None => {}
@@ -521,7 +525,6 @@ impl State {
 
     fn handle_events(&mut self, cx: &mut Context, shared: &Shared) -> bool {
         use EndpointEvent::*;
-
         for _ in 0..IO_LOOP_BOUND {
             match self.events.poll_recv(cx) {
                 Poll::Ready(Some((ch, event))) => match event {
@@ -542,9 +545,9 @@ impl State {
                                 .send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t) => {
-                        let contents_len = t.contents.len();
-                        self.outgoing.push_back(udp_transmit(t));
+                    Transmit(t, buf) => {
+                        let contents_len = buf.len();
+                        self.outgoing.push_back(udp_transmit(t, buf));
                         self.transmit_queue_contents_len = self
                             .transmit_queue_contents_len
                             .saturating_add(contents_len);
@@ -562,11 +565,11 @@ impl State {
 }
 
 #[inline]
-fn udp_transmit(t: proto::Transmit) -> udp::Transmit {
+fn udp_transmit(t: proto::Transmit, buffer: Bytes) -> udp::Transmit {
     udp::Transmit {
         destination: t.destination,
+        contents: buffer,
         ecn: t.ecn.map(udp_ecn),
-        contents: t.contents,
         segment_size: t.segment_size,
         src_ip: t.src_ip,
     }

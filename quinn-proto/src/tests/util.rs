@@ -144,21 +144,19 @@ impl Pair {
                 );
                 continue;
             }
-            if x.contents[0] & packet::LONG_HEADER_FORM == 0 {
-                let spin = x.contents[0] & packet::SPIN_BIT != 0;
+            if x.1[0] & packet::LONG_HEADER_FORM == 0 {
+                let spin = x.1[0] & packet::SPIN_BIT != 0;
                 self.spins += (spin == self.last_spin) as u64;
                 self.last_spin = spin;
             }
             if let Some(ref socket) = self.client.socket {
-                socket.send_to(&x.contents, x.destination).unwrap();
+                socket.send_to(&x.1, x.0.destination).unwrap();
             }
-            if self.server.addr == x.destination {
-                let ecn = set_congestion_experienced(x.ecn, self.congestion_experienced);
-                self.server.inbound.push_back((
-                    self.time + self.latency,
-                    ecn,
-                    x.contents.as_ref().into(),
-                ));
+            if self.server.addr == x.0.destination {
+                let ecn = set_congestion_experienced(x.0.ecn, self.congestion_experienced);
+                self.server
+                    .inbound
+                    .push_back((self.time + self.latency, ecn, x.1.as_ref().into()));
             }
         }
     }
@@ -176,15 +174,13 @@ impl Pair {
                 continue;
             }
             if let Some(ref socket) = self.server.socket {
-                socket.send_to(&x.contents, x.destination).unwrap();
+                socket.send_to(&x.1, x.0.destination).unwrap();
             }
-            if self.client.addr == x.destination {
-                let ecn = set_congestion_experienced(x.ecn, self.congestion_experienced);
-                self.client.inbound.push_back((
-                    self.time + self.latency,
-                    ecn,
-                    x.contents.as_ref().into(),
-                ));
+            if self.client.addr == x.0.destination {
+                let ecn = set_congestion_experienced(x.0.ecn, self.congestion_experienced);
+                self.client
+                    .inbound
+                    .push_back((self.time + self.latency, ecn, x.1.as_ref().into()));
             }
         }
     }
@@ -288,8 +284,8 @@ pub(super) struct TestEndpoint {
     pub(super) addr: SocketAddr,
     socket: Option<UdpSocket>,
     timeout: Option<Instant>,
-    pub(super) outbound: VecDeque<Transmit>,
-    delayed: VecDeque<Transmit>,
+    pub(super) outbound: VecDeque<(Transmit, Bytes)>,
+    delayed: VecDeque<(Transmit, Bytes)>,
     pub(super) inbound: VecDeque<(Instant, Option<EcnCodepoint>, BytesMut)>,
     accepted: Option<ConnectionHandle>,
     pub(super) connections: HashMap<ConnectionHandle, Connection>,
@@ -334,10 +330,14 @@ impl TestEndpoint {
                 }
             }
         }
+        let mut buf = BytesMut::with_capacity(1500);
 
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
-            if let Some(event) = self.endpoint.handle(recv_time, remote, None, ecn, packet) {
+            if let Some(event) = self
+                .endpoint
+                .handle(recv_time, remote, None, ecn, packet, &mut buf)
+            {
                 match event {
                     DatagramEvent::NewConnection(ch, conn) => {
                         self.connections.insert(ch, conn);
@@ -352,7 +352,9 @@ impl TestEndpoint {
                         self.conn_events.entry(ch).or_default().push_back(event);
                     }
                     DatagramEvent::Response(transmit) => {
-                        self.outbound.extend(split_transmit(transmit));
+                        self.outbound
+                            .extend(split_transmit(transmit, buf.clone().freeze()));
+                        buf.clear();
                     }
                 }
             }
@@ -375,9 +377,10 @@ impl TestEndpoint {
                 while let Some(event) = conn.poll_endpoint_events() {
                     endpoint_events.push((*ch, event));
                 }
-
-                while let Some(x) = conn.poll_transmit(now, MAX_DATAGRAMS) {
-                    self.outbound.extend(split_transmit(x));
+                while let Some(x) = conn.poll_transmit(now, MAX_DATAGRAMS, &mut buf) {
+                    self.outbound
+                        .extend(split_transmit(x, buf.clone().freeze()));
+                    buf.clear();
                 }
                 self.timeout = conn.poll_timeout();
             }
@@ -520,35 +523,38 @@ pub(super) fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
 /// The maximum of datagrams TestEndpoint will produce via `poll_transmit`
 const MAX_DATAGRAMS: usize = 10;
 
-fn split_transmit(mut transmit: Transmit) -> Vec<Transmit> {
+fn split_transmit(transmit: Transmit, mut buffer: Bytes) -> Vec<(Transmit, Bytes)> {
     let segment_size = match transmit.segment_size {
         Some(segment_size) => segment_size,
-        _ => return vec![transmit],
+        _ => return vec![(transmit, buffer)],
     };
 
     let mut transmits = Vec::new();
-    while !transmit.contents.is_empty() {
-        let end = segment_size.min(transmit.contents.len());
+    while !buffer.is_empty() {
+        let end = segment_size.min(buffer.len());
 
-        let contents = transmit.contents.split_to(end);
-        transmits.push(Transmit {
-            destination: transmit.destination,
-            ecn: transmit.ecn,
+        let contents = buffer.split_to(end);
+        transmits.push((
+            Transmit {
+                destination: transmit.destination,
+                size: buffer.len(),
+                ecn: transmit.ecn,
+                segment_size: None,
+                src_ip: transmit.src_ip,
+            },
             contents,
-            segment_size: None,
-            src_ip: transmit.src_ip,
-        });
+        ));
     }
 
     transmits
 }
 
-fn packet_size(transmit: &Transmit) -> usize {
+fn packet_size((transmit, buffer): &(Transmit, Bytes)) -> usize {
     if transmit.segment_size.is_some() {
         panic!("This transmit is meant to be split into multiple packets!");
     }
 
-    transmit.contents.len()
+    buffer.len()
 }
 
 fn set_congestion_experienced(

@@ -127,6 +127,7 @@ impl Endpoint {
         local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
+        buf: &mut BytesMut,
     ) -> Option<DatagramEvent> {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(
@@ -147,13 +148,12 @@ impl Endpoint {
                 }
                 trace!("sending version negotiation");
                 // Negotiate versions
-                let mut buf = BytesMut::new();
                 Header::VersionNegotiate {
                     random: self.rng.gen::<u8>() | 0x40,
                     src_cid: dst_cid,
                     dst_cid: src_cid,
                 }
-                .encode(&mut buf);
+                .encode(buf);
                 // Grease with a reserved version
                 if version != 0x0a1a_2a3a {
                     buf.write::<u32>(0x0a1a_2a3a);
@@ -166,7 +166,7 @@ impl Endpoint {
                 return Some(DatagramEvent::Response(Transmit {
                     destination: remote,
                     ecn: None,
-                    contents: buf.freeze(),
+                    size: buf.len(),
                     segment_size: None,
                     src_ip: local_ip,
                 }));
@@ -205,7 +205,7 @@ impl Endpoint {
             None => {
                 debug!("packet for unrecognized connection {}", dst_cid);
                 return self
-                    .stateless_reset(datagram_len, addresses, dst_cid)
+                    .stateless_reset(datagram_len, addresses, dst_cid, buf)
                     .map(DatagramEvent::Response);
             }
         };
@@ -233,7 +233,7 @@ impl Endpoint {
             };
             return match first_decode.finish(Some(&*crypto.header.remote)) {
                 Ok(packet) => {
-                    self.handle_first_packet(now, addresses, ecn, packet, remaining, &crypto)
+                    self.handle_first_packet(now, addresses, ecn, packet, remaining, &crypto, buf)
                 }
                 Err(e) => {
                     trace!("unable to decode initial packet: {}", e);
@@ -254,7 +254,7 @@ impl Endpoint {
         //
         if !dst_cid.is_empty() {
             return self
-                .stateless_reset(datagram_len, addresses, dst_cid)
+                .stateless_reset(datagram_len, addresses, dst_cid, buf)
                 .map(DatagramEvent::Response);
         }
 
@@ -267,6 +267,7 @@ impl Endpoint {
         inciting_dgram_len: usize,
         addresses: FourTuple,
         dst_cid: &ConnectionId,
+        buf: &mut BytesMut,
     ) -> Option<Transmit> {
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
         const MIN_PADDING_LEN: usize = 5;
@@ -285,7 +286,6 @@ impl Endpoint {
             "sending stateless reset for {} to {}",
             dst_cid, addresses.remote
         );
-        let mut buf = BytesMut::new();
         // Resets with at least this much padding can't possibly be distinguished from real packets
         const IDEAL_MIN_PADDING_LEN: usize = MIN_PADDING_LEN + MAX_CID_SIZE;
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
@@ -304,7 +304,7 @@ impl Endpoint {
         Some(Transmit {
             destination: addresses.remote,
             ecn: None,
-            contents: buf.freeze(),
+            size: buf.len(),
             segment_size: None,
             src_ip: addresses.local_ip,
         })
@@ -404,6 +404,7 @@ impl Endpoint {
         mut packet: Packet,
         rest: Option<BytesMut>,
         crypto: &Keys,
+        buf: &mut BytesMut,
     ) -> Option<DatagramEvent> {
         let (src_cid, dst_cid, token, packet_number, version) = match packet.header {
             Header::Initial {
@@ -444,6 +445,7 @@ impl Endpoint {
                 crypto,
                 &src_cid,
                 TransportError::CONNECTION_REFUSED(""),
+                buf,
             )));
         }
 
@@ -460,6 +462,7 @@ impl Endpoint {
                 crypto,
                 &src_cid,
                 TransportError::PROTOCOL_VIOLATION("invalid destination CID length"),
+                buf,
             )));
         }
 
@@ -488,16 +491,15 @@ impl Endpoint {
                     version,
                 };
 
-                let mut buf = BytesMut::new();
-                let encode = header.encode(&mut buf);
+                let encode = header.encode(buf);
                 buf.put_slice(&token);
                 buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, &buf));
-                encode.finish(&mut buf, &*crypto.header.local, None);
+                encode.finish(buf, &*crypto.header.local, None);
 
                 return Some(DatagramEvent::Response(Transmit {
                     destination: addresses.remote,
                     ecn: None,
-                    contents: buf.freeze(),
+                    size: buf.len(),
                     segment_size: None,
                     src_ip: addresses.local_ip,
                 }));
@@ -522,6 +524,7 @@ impl Endpoint {
                         crypto,
                         &src_cid,
                         TransportError::INVALID_TOKEN(""),
+                        buf,
                     )));
                 }
             }
@@ -569,7 +572,7 @@ impl Endpoint {
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 match e {
                     ConnectionError::TransportError(e) => Some(DatagramEvent::Response(
-                        self.initial_close(version, addresses, crypto, &src_cid, e),
+                        self.initial_close(version, addresses, crypto, &src_cid, e, buf),
                     )),
                     _ => None,
                 }
@@ -630,6 +633,7 @@ impl Endpoint {
         crypto: &Keys,
         remote_id: &ConnectionId,
         reason: TransportError,
+        buf: &mut BytesMut,
     ) -> Transmit {
         // We don't need to worry about CID collisions in initial closes because the peer
         // shouldn't respond, and if it does, and the CID collides, we'll just drop the
@@ -644,21 +648,16 @@ impl Endpoint {
             version,
         };
 
-        let mut buf = BytesMut::new();
-        let partial_encode = header.encode(&mut buf);
+        let partial_encode = header.encode(buf);
         let max_len =
             INITIAL_MTU as usize - partial_encode.header_len - crypto.packet.local.tag_len();
-        frame::Close::from(reason).encode(&mut buf, max_len);
+        frame::Close::from(reason).encode(buf, max_len);
         buf.resize(buf.len() + crypto.packet.local.tag_len(), 0);
-        partial_encode.finish(
-            &mut buf,
-            &*crypto.header.local,
-            Some((0, &*crypto.packet.local)),
-        );
+        partial_encode.finish(buf, &*crypto.header.local, Some((0, &*crypto.packet.local)));
         Transmit {
             destination: addresses.remote,
             ecn: None,
-            contents: buf.freeze(),
+            size: buf.len(),
             segment_size: None,
             src_ip: addresses.local_ip,
         }

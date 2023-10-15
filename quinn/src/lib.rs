@@ -60,6 +60,7 @@ mod runtime;
 mod send_stream;
 mod work_limiter;
 
+use bytes::Bytes;
 pub use proto::{
     congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ConfigError,
     ConnectError, ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout,
@@ -98,7 +99,7 @@ enum ConnectionEvent {
 #[derive(Debug)]
 enum EndpointEvent {
     Proto(proto::EndpointEvent),
-    Transmit(proto::Transmit),
+    Transmit(proto::Transmit, Bytes),
 }
 
 /// Maximum number of datagrams processed in send/recv calls to make before moving on to other processing
