@@ -1301,9 +1301,14 @@ impl Connection {
                 // Notify MTU discovery that a packet was acked, because it might be an MTU probe
                 let mtu_updated = self.path.mtud.on_acked(space, packet, info.size);
                 if mtu_updated {
+                    let new_mtu = self.path.mtud.current_mtu();
                     self.path
                         .congestion
-                        .on_mtu_update(self.path.mtud.current_mtu());
+                        .on_mtu_update(new_mtu);
+
+                    if let Some(ref event_sink) = self.endpoint_config.event_sink {
+                        event_sink.on_mtu_update(self, new_mtu);
+                    }
                 }
 
                 // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame

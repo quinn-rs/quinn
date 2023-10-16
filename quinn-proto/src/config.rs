@@ -599,6 +599,14 @@ impl Default for MtuDiscoveryConfig {
     }
 }
 
+/// Event Sink (FIXME find a good name)
+pub trait EventSink: Send + Sync {
+    // FIXME how to make it usable for people that use quinn but not with quinn-proto ?
+    /// The known MTU for the network path of a connection has been updated
+    fn on_mtu_update(&self, _connection: &crate::connection::Connection, _new_mtu: u16) {
+    }
+}
+
 /// Global configuration for the endpoint, affecting all connections
 ///
 /// Default values should be suitable for most internet applications.
@@ -613,6 +621,7 @@ pub struct EndpointConfig {
         Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
     pub(crate) supported_versions: Vec<u32>,
     pub(crate) grease_quic_bit: bool,
+    pub(crate) event_sink: Option<Arc<dyn EventSink>>,
 }
 
 impl EndpointConfig {
@@ -626,6 +635,7 @@ impl EndpointConfig {
             connection_id_generator_factory: Arc::new(cid_factory),
             supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
             grease_quic_bit: true,
+            event_sink: None,
         }
     }
 
@@ -699,6 +709,12 @@ impl EndpointConfig {
         self.grease_quic_bit = value;
         self
     }
+
+    /// Event Sink (FIXME).
+    pub fn event_sink(&mut self, event_sink: Option<Arc<dyn EventSink>>) -> &mut Self {
+        self.event_sink = event_sink;
+        self
+    }
 }
 
 impl fmt::Debug for EndpointConfig {
@@ -709,6 +725,7 @@ impl fmt::Debug for EndpointConfig {
             .field("cid_generator_factory", &"[ elided ]")
             .field("supported_versions", &self.supported_versions)
             .field("grease_quic_bit", &self.grease_quic_bit)
+            .field("event_sink", &"[ elided ]")
             .finish()
     }
 }

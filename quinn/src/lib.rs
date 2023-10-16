@@ -62,7 +62,7 @@ mod work_limiter;
 
 pub use proto::{
     congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ConfigError,
-    ConnectError, ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout,
+    ConnectError, ConnectionClose, ConnectionError, EndpointConfig, EventSink, IdleTimeout,
     MtuDiscoveryConfig, ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
 };
 #[cfg(feature = "tls-rustls")]
