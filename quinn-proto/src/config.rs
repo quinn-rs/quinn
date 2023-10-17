@@ -384,7 +384,7 @@ impl fmt::Debug for TransportConfig {
             congestion_controller_factory: _,
             enable_segmentation_offload,
         } = self;
-        fmt.debug_struct("TranportConfig")
+        fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
             .field("max_concurrent_uni_streams", max_concurrent_uni_streams)
             .field("max_idle_timeout", max_idle_timeout)
@@ -997,5 +997,11 @@ impl std::convert::TryFrom<Duration> for IdleTimeout {
     fn try_from(timeout: Duration) -> Result<Self, Self::Error> {
         let inner = VarInt::try_from(timeout.as_millis())?;
         Ok(Self(inner))
+    }
+}
+
+impl fmt::Debug for IdleTimeout {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        self.0.fmt(f)
     }
 }
