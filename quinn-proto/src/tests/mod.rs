@@ -9,7 +9,7 @@ use std::{
 use assert_matches::assert_matches;
 use bytes::Bytes;
 use hex_literal::hex;
-use rand::RngCore;
+use rand::{rngs::StdRng, RngCore, SeedableRng};
 use ring::hmac;
 use rustls::AlertDescription;
 use tracing::info;
@@ -27,7 +27,12 @@ use util::*;
 fn version_negotiate_server() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
-    let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
+    let mut server = Endpoint::new(
+        Default::default(),
+        Some(Arc::new(server_config())),
+        true,
+        StdRng::from_entropy(),
+    );
     let now = Instant::now();
     let event = server.handle(
         now,
@@ -36,6 +41,7 @@ fn version_negotiate_server() {
         None,
         // Long-header packet with reserved version number
         hex!("80 0a1a2a3a 04 00000000 04 00000000 00")[..].into(),
+        StdRng::from_entropy,
     );
     let Some(DatagramEvent::Response(Transmit { contents, .. })) = event else {
         panic!("expected a response");
@@ -63,9 +69,16 @@ fn version_negotiate_client() {
         }),
         None,
         true,
+        StdRng::from_entropy(),
     );
     let (_, mut client_ch) = client
-        .connect(Instant::now(), client_config(), server_addr, "localhost")
+        .connect(
+            Instant::now(),
+            client_config(),
+            server_addr,
+            "localhost",
+            StdRng::from_entropy,
+        )
         .unwrap();
     let now = Instant::now();
     let opt_event = client.handle(
@@ -79,6 +92,7 @@ fn version_negotiate_client() {
              0a1a2a3a"
         )[..]
             .into(),
+        StdRng::from_entropy,
     );
     if let Some(DatagramEvent::ConnectionEvent(_, event)) = opt_event {
         client_ch.handle_event(event);
@@ -178,7 +192,12 @@ fn server_stateless_reset() {
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (client_ch, _) = pair.connect();
     pair.drive(); // Flush any post-handshake frames
-    pair.server.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config())), true);
+    pair.server.endpoint = Endpoint::new(
+        endpoint_config,
+        Some(Arc::new(server_config())),
+        true,
+        StdRng::from_entropy(),
+    );
     // Force the server to generate the smallest possible stateless reset
     pair.client.connections.get_mut(&client_ch).unwrap().ping();
     info!("resetting");
@@ -203,7 +222,12 @@ fn client_stateless_reset() {
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (_, server_ch) = pair.connect();
-    pair.client.endpoint = Endpoint::new(endpoint_config, Some(Arc::new(server_config())), true);
+    pair.client.endpoint = Endpoint::new(
+        endpoint_config,
+        Some(Arc::new(server_config())),
+        true,
+        StdRng::from_entropy(),
+    );
     // Send something big enough to allow room for a smaller stateless reset.
     pair.server.connections.get_mut(&server_ch).unwrap().close(
         pair.time,
@@ -1343,8 +1367,14 @@ fn cid_rotation() {
         }),
         Some(Arc::new(server_config())),
         true,
+        StdRng::from_entropy(),
     );
-    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true);
+    let client = Endpoint::new(
+        Arc::new(EndpointConfig::default()),
+        None,
+        true,
+        StdRng::from_entropy(),
+    );
 
     let mut pair = Pair::new_from_endpoint(client, server);
     let (_, server_ch) = pair.connect();
@@ -1922,13 +1952,19 @@ fn big_cert_and_key() -> (rustls::Certificate, rustls::PrivateKey) {
 fn malformed_token_len() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
-    let mut server = Endpoint::new(Default::default(), Some(Arc::new(server_config())), true);
+    let mut server = Endpoint::new(
+        Default::default(),
+        Some(Arc::new(server_config())),
+        true,
+        StdRng::from_entropy(),
+    );
     server.handle(
         Instant::now(),
         client_addr,
         None,
         None,
         hex!("8900 0000 0101 0000 1b1b 841b 0000 0000 3f00")[..].into(),
+        StdRng::from_entropy,
     );
 }
 
@@ -2024,12 +2060,18 @@ fn migrate_detects_new_mtu_and_respects_original_peer_max_udp_payload_size() {
         Arc::new(server_endpoint_config),
         Some(Arc::new(server_config())),
         true,
+        StdRng::from_entropy(),
     );
     let client_endpoint_config = EndpointConfig {
         max_udp_payload_size: VarInt::from(client_max_udp_payload_size),
         ..EndpointConfig::default()
     };
-    let client = Endpoint::new(Arc::new(client_endpoint_config), None, true);
+    let client = Endpoint::new(
+        Arc::new(client_endpoint_config),
+        None,
+        true,
+        StdRng::from_entropy(),
+    );
     let mut pair = Pair::new_from_endpoint(client, server);
     pair.mtu = 1300;
 

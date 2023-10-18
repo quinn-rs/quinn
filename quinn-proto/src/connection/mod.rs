@@ -10,7 +10,7 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use frame::StreamMetaVec;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{rngs::StdRng, Rng};
 use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
@@ -252,6 +252,7 @@ impl Connection {
         now: Instant,
         version: u32,
         allow_mtud: bool,
+        mut rng: StdRng,
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
@@ -267,7 +268,6 @@ impl Connection {
             expected_token: Bytes::new(),
             client_hello: None,
         });
-        let mut rng = StdRng::from_entropy();
         let path_validated = server_config.as_ref().map_or(true, |c| c.use_retry);
         let mut this = Self {
             endpoint_config,
