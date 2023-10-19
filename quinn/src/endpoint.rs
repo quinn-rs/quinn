@@ -490,7 +490,7 @@ impl State {
                 break Ok(true);
             }
 
-            match self.socket.poll_send(cx, self.outgoing.as_slices().0) {
+            match self.socket.poll_send(cx, self.outgoing.as_mut_slices().0) {
                 Poll::Ready(Ok(n)) => {
                     let contents_len: usize =
                         self.outgoing.drain(..n).map(|t| t.contents.len()).sum();
