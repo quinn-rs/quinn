@@ -18,7 +18,6 @@ use pin_project_lite::pin_project;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
 };
-use rand::{rngs::StdRng, SeedableRng};
 use rustc_hash::FxHashMap;
 use tokio::sync::{futures::Notified, mpsc, Notify};
 use tracing::{Instrument, Span};
@@ -115,7 +114,7 @@ impl Endpoint {
                 Arc::new(config),
                 server_config.map(Arc::new),
                 allow_mtud,
-                StdRng::from_entropy(),
+                None,
             ),
             addr.is_ipv6(),
             runtime.clone(),
@@ -193,13 +192,9 @@ impl Endpoint {
             addr
         };
 
-        let (ch, conn) = endpoint.inner.connect(
-            Instant::now(),
-            config,
-            addr,
-            server_name,
-            StdRng::from_entropy,
-        )?;
+        let (ch, conn) = endpoint
+            .inner
+            .connect(Instant::now(), config, addr, server_name)?;
 
         let socket = endpoint.socket.clone();
         Ok(endpoint
@@ -427,7 +422,6 @@ impl State {
                                 meta.dst_ip,
                                 meta.ecn.map(proto_ecn),
                                 buf,
-                                StdRng::from_entropy,
                             ) {
                                 Some(DatagramEvent::NewConnection(handle, conn)) => {
                                     let conn = self.connections.insert(

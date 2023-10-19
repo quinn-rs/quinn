@@ -14,7 +14,6 @@ use std::{
 use assert_matches::assert_matches;
 use bytes::BytesMut;
 use lazy_static::lazy_static;
-use rand::{rngs::StdRng, SeedableRng};
 use rustls::{Certificate, KeyLogFile, PrivateKey};
 use tracing::{info_span, trace};
 
@@ -54,9 +53,9 @@ impl Pair {
             endpoint_config.clone(),
             Some(Arc::new(server_config)),
             true,
-            StdRng::from_entropy(),
+            None,
         );
-        let client = Endpoint::new(endpoint_config, None, true, StdRng::from_entropy());
+        let client = Endpoint::new(endpoint_config, None, true, None);
 
         Self::new_from_endpoint(client, server)
     }
@@ -212,13 +211,7 @@ impl Pair {
         let _guard = span.enter();
         let (client_ch, client_conn) = self
             .client
-            .connect(
-                Instant::now(),
-                config,
-                self.server.addr,
-                "localhost",
-                StdRng::from_entropy,
-            )
+            .connect(Instant::now(), config, self.server.addr, "localhost")
             .unwrap();
         self.client.connections.insert(client_ch, client_conn);
         client_ch
@@ -344,12 +337,7 @@ impl TestEndpoint {
 
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
-            if let Some(event) = self
-                .endpoint
-                .handle(recv_time, remote, None, ecn, packet, || {
-                    StdRng::from_entropy()
-                })
-            {
+            if let Some(event) = self.endpoint.handle(recv_time, remote, None, ecn, packet) {
                 match event {
                     DatagramEvent::NewConnection(ch, conn) => {
                         self.connections.insert(ch, conn);

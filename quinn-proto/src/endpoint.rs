@@ -9,7 +9,7 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use rand::{rngs::StdRng, Rng, RngCore};
+use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
@@ -57,10 +57,10 @@ impl Endpoint {
         config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         allow_mtud: bool,
-        rng: StdRng,
+        rng_seed: Option<<StdRng as SeedableRng>::Seed>,
     ) -> Self {
         Self {
-            rng,
+            rng: rng_seed.map_or(StdRng::from_entropy(), StdRng::from_seed),
             index: ConnectionIndex::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
@@ -127,7 +127,6 @@ impl Endpoint {
         local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
-        rng: impl FnOnce() -> StdRng,
     ) -> Option<DatagramEvent> {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(
@@ -234,7 +233,7 @@ impl Endpoint {
             };
             return match first_decode.finish(Some(&*crypto.header.remote)) {
                 Ok(packet) => {
-                    self.handle_first_packet(now, addresses, ecn, packet, remaining, &crypto, rng)
+                    self.handle_first_packet(now, addresses, ecn, packet, remaining, &crypto)
                 }
                 Err(e) => {
                     trace!("unable to decode initial packet: {}", e);
@@ -318,7 +317,6 @@ impl Endpoint {
         config: ClientConfig,
         remote: SocketAddr,
         server_name: &str,
-        rng: impl FnOnce() -> StdRng,
     ) -> Result<(ConnectionHandle, Connection), ConnectError> {
         if self.is_full() {
             return Err(ConnectError::TooManyConnections);
@@ -360,7 +358,6 @@ impl Endpoint {
             tls,
             None,
             config.transport,
-            rng,
         );
         Ok((ch, conn))
     }
@@ -407,7 +404,6 @@ impl Endpoint {
         mut packet: Packet,
         rest: Option<BytesMut>,
         crypto: &Keys,
-        rng: impl FnOnce() -> StdRng,
     ) -> Option<DatagramEvent> {
         let (src_cid, dst_cid, token, packet_number, version) = match packet.header {
             Header::Initial {
@@ -559,7 +555,6 @@ impl Endpoint {
             tls,
             Some(server_config),
             transport_config,
-            rng,
         );
         if dst_cid.len() != 0 {
             self.index.insert_initial(dst_cid, ch);
@@ -594,8 +589,9 @@ impl Endpoint {
         tls: Box<dyn crypto::Session>,
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
-        rng: impl FnOnce() -> StdRng,
     ) -> Connection {
+        let mut rng_seed = [0; 32];
+        self.rng.fill_bytes(&mut rng_seed);
         let conn = Connection::new(
             self.config.clone(),
             server_config,
@@ -610,7 +606,7 @@ impl Endpoint {
             now,
             version,
             self.allow_mtud,
-            rng(),
+            rng_seed,
         );
 
         let id = self.connections.insert(ConnectionMeta {
