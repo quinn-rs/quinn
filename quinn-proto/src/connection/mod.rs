@@ -2192,7 +2192,7 @@ impl Connection {
                 return Ok(());
             }
             State::Closed(_) => {
-                for result in frame::Iter::new(packet.payload.freeze()) {
+                for result in frame::Iter::new(packet.payload.freeze())? {
                     let frame = match result {
                         Ok(frame) => frame,
                         Err(err) => {
@@ -2441,7 +2441,7 @@ impl Connection {
         debug_assert_ne!(packet.header.space(), SpaceId::Data);
         let payload_len = packet.payload.len();
         let mut ack_eliciting = false;
-        for result in frame::Iter::new(packet.payload.freeze()) {
+        for result in frame::Iter::new(packet.payload.freeze())? {
             let frame = result?;
             let span = match frame {
                 Frame::Padding => continue,
@@ -2499,7 +2499,7 @@ impl Connection {
         let mut close = None;
         let payload_len = payload.len();
         let mut ack_eliciting = false;
-        for result in frame::Iter::new(payload) {
+        for result in frame::Iter::new(payload)? {
             let frame = result?;
             let span = match frame {
                 Frame::Padding => continue,

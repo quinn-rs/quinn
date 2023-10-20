@@ -550,11 +550,20 @@ impl From<UnexpectedEnd> for IterErr {
 }
 
 impl Iter {
-    pub(crate) fn new(payload: Bytes) -> Self {
-        Self {
+    pub(crate) fn new(payload: Bytes) -> Result<Self, TransportError> {
+        if payload.is_empty() {
+            // "An endpoint MUST treat receipt of a packet containing no frames as a
+            // connection error of type PROTOCOL_VIOLATION."
+            // https://www.rfc-editor.org/rfc/rfc9000.html#name-frames-and-frame-types
+            return Err(TransportError::PROTOCOL_VIOLATION(
+                "packet payload is empty",
+            ));
+        }
+
+        Ok(Self {
             bytes: io::Cursor::new(payload),
             last_ty: None,
-        }
+        })
     }
 
     fn take_len(&mut self) -> Result<Bytes, UnexpectedEnd> {
@@ -923,6 +932,7 @@ mod test {
 
     fn frames(buf: Vec<u8>) -> Vec<Frame> {
         Iter::new(Bytes::from(buf))
+            .unwrap()
             .collect::<Result<Vec<_>, _>>()
             .unwrap()
     }
