@@ -526,29 +526,6 @@ pub(crate) struct Iter {
     last_ty: Option<Type>,
 }
 
-enum IterErr {
-    UnexpectedEnd,
-    InvalidFrameId,
-    Malformed,
-}
-
-impl IterErr {
-    fn reason(&self) -> &'static str {
-        use self::IterErr::*;
-        match *self {
-            UnexpectedEnd => "unexpected end",
-            InvalidFrameId => "invalid frame ID",
-            Malformed => "malformed",
-        }
-    }
-}
-
-impl From<UnexpectedEnd> for IterErr {
-    fn from(_: UnexpectedEnd) -> Self {
-        Self::UnexpectedEnd
-    }
-}
-
 impl Iter {
     pub(crate) fn new(payload: Bytes) -> Result<Self, TransportError> {
         if payload.is_empty() {
@@ -784,6 +761,29 @@ fn scan_ack_blocks(buf: &mut io::Cursor<Bytes>, largest: u64, n: usize) -> Resul
         smallest = smallest.checked_sub(block).ok_or(IterErr::Malformed)?;
     }
     Ok(())
+}
+
+enum IterErr {
+    UnexpectedEnd,
+    InvalidFrameId,
+    Malformed,
+}
+
+impl IterErr {
+    fn reason(&self) -> &'static str {
+        use self::IterErr::*;
+        match *self {
+            UnexpectedEnd => "unexpected end",
+            InvalidFrameId => "invalid frame ID",
+            Malformed => "malformed",
+        }
+    }
+}
+
+impl From<UnexpectedEnd> for IterErr {
+    fn from(_: UnexpectedEnd) -> Self {
+        Self::UnexpectedEnd
+    }
 }
 
 #[derive(Debug, Clone)]
