@@ -57,7 +57,7 @@ impl Endpoint {
         config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         allow_mtud: bool,
-        rng_seed: Option<<StdRng as SeedableRng>::Seed>,
+        rng_seed: Option<[u8; 32]>,
     ) -> Self {
         Self {
             rng: rng_seed.map_or(StdRng::from_entropy(), StdRng::from_seed),

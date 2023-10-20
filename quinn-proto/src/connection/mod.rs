@@ -252,7 +252,7 @@ impl Connection {
         now: Instant,
         version: u32,
         allow_mtud: bool,
-        rng_seed: <StdRng as SeedableRng>::Seed,
+        rng_seed: [u8; 32],
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
