@@ -317,10 +317,7 @@ impl TestEndpoint {
                         self.accepted = Some(ch);
                     }
                     DatagramEvent::ConnectionEvent(event) => {
-                        self.conn_events
-                            .entry(ch)
-                            .or_insert_with(VecDeque::new)
-                            .push_back(event);
+                        self.conn_events.entry(ch).or_default().push_back(event);
                     }
                 }
             }
