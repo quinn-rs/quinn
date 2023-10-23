@@ -344,10 +344,7 @@ impl TestEndpoint {
                             self.captured_packets.extend(packet);
                         }
 
-                        self.conn_events
-                            .entry(ch)
-                            .or_insert_with(VecDeque::new)
-                            .push_back(event);
+                        self.conn_events.entry(ch).or_default().push_back(event);
                     }
                     DatagramEvent::Response(transmit) => {
                         self.outbound.extend(split_transmit(transmit));
