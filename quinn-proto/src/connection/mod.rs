@@ -252,6 +252,7 @@ impl Connection {
         now: Instant,
         version: u32,
         allow_mtud: bool,
+        rng_seed: [u8; 32],
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
@@ -267,7 +268,7 @@ impl Connection {
             expected_token: Bytes::new(),
             client_hello: None,
         });
-        let mut rng = StdRng::from_entropy();
+        let mut rng = StdRng::from_seed(rng_seed);
         let path_validated = server_config.as_ref().map_or(true, |c| c.use_retry);
         let mut this = Self {
             endpoint_config,

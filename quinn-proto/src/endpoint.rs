@@ -57,9 +57,10 @@ impl Endpoint {
         config: Arc<EndpointConfig>,
         server_config: Option<Arc<ServerConfig>>,
         allow_mtud: bool,
+        rng_seed: Option<[u8; 32]>,
     ) -> Self {
         Self {
-            rng: StdRng::from_entropy(),
+            rng: rng_seed.map_or(StdRng::from_entropy(), StdRng::from_seed),
             index: ConnectionIndex::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
@@ -589,6 +590,8 @@ impl Endpoint {
         server_config: Option<Arc<ServerConfig>>,
         transport_config: Arc<TransportConfig>,
     ) -> Connection {
+        let mut rng_seed = [0; 32];
+        self.rng.fill_bytes(&mut rng_seed);
         let conn = Connection::new(
             self.config.clone(),
             server_config,
@@ -603,6 +606,7 @@ impl Endpoint {
             now,
             version,
             self.allow_mtud,
+            rng_seed,
         );
 
         let id = self.connections.insert(ConnectionMeta {

@@ -110,7 +110,12 @@ impl Endpoint {
         let allow_mtud = !socket.may_fragment();
         let rc = EndpointRef::new(
             socket,
-            proto::Endpoint::new(Arc::new(config), server_config.map(Arc::new), allow_mtud),
+            proto::Endpoint::new(
+                Arc::new(config),
+                server_config.map(Arc::new),
+                allow_mtud,
+                None,
+            ),
             addr.is_ipv6(),
             runtime.clone(),
         );
