@@ -136,27 +136,27 @@ impl Pair {
         let span = info_span!("client");
         let _guard = span.enter();
         self.client.drive(self.time, self.server.addr);
-        for x in self.client.outbound.drain(..) {
-            if packet_size(&x) > self.mtu {
-                info!(
-                    packet_size = packet_size(&x),
-                    "dropping packet (max size exceeded)"
-                );
+        for (packet, buffer) in self.client.outbound.drain(..) {
+            let packet_size = packet_size(&packet, &buffer);
+            if packet_size > self.mtu {
+                info!(packet_size, "dropping packet (max size exceeded)");
                 continue;
             }
-            if x.1[0] & packet::LONG_HEADER_FORM == 0 {
-                let spin = x.1[0] & packet::SPIN_BIT != 0;
+            if &buffer[0] & packet::LONG_HEADER_FORM == 0 {
+                let spin = buffer[0] & packet::SPIN_BIT != 0;
                 self.spins += (spin == self.last_spin) as u64;
                 self.last_spin = spin;
             }
             if let Some(ref socket) = self.client.socket {
-                socket.send_to(&x.1, x.0.destination).unwrap();
+                socket.send_to(&buffer, packet.destination).unwrap();
             }
-            if self.server.addr == x.0.destination {
-                let ecn = set_congestion_experienced(x.0.ecn, self.congestion_experienced);
-                self.server
-                    .inbound
-                    .push_back((self.time + self.latency, ecn, x.1.as_ref().into()));
+            if self.server.addr == packet.destination {
+                let ecn = set_congestion_experienced(packet.ecn, self.congestion_experienced);
+                self.server.inbound.push_back((
+                    self.time + self.latency,
+                    ecn,
+                    buffer.as_ref().into(),
+                ));
             }
         }
     }
@@ -165,22 +165,22 @@ impl Pair {
         let span = info_span!("server");
         let _guard = span.enter();
         self.server.drive(self.time, self.client.addr);
-        for x in self.server.outbound.drain(..) {
-            if packet_size(&x) > self.mtu {
-                info!(
-                    packet_size = packet_size(&x),
-                    "dropping packet (max size exceeded)"
-                );
+        for (packet, buffer) in self.server.outbound.drain(..) {
+            let packet_size = packet_size(&packet, &buffer);
+            if packet_size > self.mtu {
+                info!(packet_size, "dropping packet (max size exceeded)");
                 continue;
             }
             if let Some(ref socket) = self.server.socket {
-                socket.send_to(&x.1, x.0.destination).unwrap();
+                socket.send_to(&buffer, packet.destination).unwrap();
             }
-            if self.client.addr == x.0.destination {
-                let ecn = set_congestion_experienced(x.0.ecn, self.congestion_experienced);
-                self.client
-                    .inbound
-                    .push_back((self.time + self.latency, ecn, x.1.as_ref().into()));
+            if self.client.addr == packet.destination {
+                let ecn = set_congestion_experienced(packet.ecn, self.congestion_experienced);
+                self.client.inbound.push_back((
+                    self.time + self.latency,
+                    ecn,
+                    buffer.as_ref().into(),
+                ));
             }
         }
     }
@@ -330,7 +330,8 @@ impl TestEndpoint {
                 }
             }
         }
-        let mut buf = BytesMut::with_capacity(1500);
+        let buffer_size = self.endpoint.config().get_max_udp_payload_size() as usize;
+        let mut buf = BytesMut::with_capacity(buffer_size);
 
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
@@ -549,7 +550,7 @@ fn split_transmit(transmit: Transmit, mut buffer: Bytes) -> Vec<(Transmit, Bytes
     transmits
 }
 
-fn packet_size((transmit, buffer): &(Transmit, Bytes)) -> usize {
+fn packet_size(transmit: &Transmit, buffer: &Bytes) -> usize {
     if transmit.segment_size.is_some() {
         panic!("This transmit is meant to be split into multiple packets!");
     }

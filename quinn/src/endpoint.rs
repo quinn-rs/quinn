@@ -408,7 +408,8 @@ impl State {
                     .write(IoSliceMut::<'a>::new(buf));
             });
         let mut iovs = unsafe { iovs.assume_init() };
-        let mut buffer = BytesMut::with_capacity(1500);
+        let buffer_size = self.inner.config().get_max_udp_payload_size() as usize;
+        let mut buffer = BytesMut::with_capacity(buffer_size);
         loop {
             match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
@@ -568,8 +569,8 @@ impl State {
 fn udp_transmit(t: proto::Transmit, buffer: Bytes) -> udp::Transmit {
     udp::Transmit {
         destination: t.destination,
-        contents: buffer,
         ecn: t.ecn.map(udp_ecn),
+        contents: buffer,
         segment_size: t.segment_size,
         src_ip: t.src_ip,
     }
