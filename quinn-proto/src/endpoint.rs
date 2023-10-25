@@ -493,7 +493,7 @@ impl Endpoint {
 
                 let encode = header.encode(buf);
                 buf.put_slice(&token);
-                buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, &buf));
+                buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, buf));
                 encode.finish(buf, &*crypto.header.local, None);
 
                 return Some(DatagramEvent::Response(Transmit {

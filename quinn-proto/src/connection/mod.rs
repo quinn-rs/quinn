@@ -482,13 +482,12 @@ impl Connection {
                     SpaceId::Data,
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
-                // let mut buf = BytesMut::with_capacity(self.path.current_mtu() as usize);
-                // let buf_capacity = self.path.current_mtu() as usize;
+
                 if buf.capacity() < self.path.current_mtu() as usize {
-                    //TODO
-                    buf.reserve(self.path.current_mtu() as usize - buf.capacity() as usize);
+                    buf.reserve(self.path.current_mtu() as usize - buf.capacity());
                 }
-                let buf_capacity = buf.capacity() as usize;
+
+                let buf_capacity = buf.capacity();
 
                 let mut builder = PacketBuilder::new(
                     now,

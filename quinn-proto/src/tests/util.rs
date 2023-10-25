@@ -142,7 +142,7 @@ impl Pair {
                 info!(packet_size, "dropping packet (max size exceeded)");
                 continue;
             }
-            if &buffer[0] & packet::LONG_HEADER_FORM == 0 {
+            if buffer[0] & packet::LONG_HEADER_FORM == 0 {
                 let spin = buffer[0] & packet::SPIN_BIT != 0;
                 self.spins += (spin == self.last_spin) as u64;
                 self.last_spin = spin;
