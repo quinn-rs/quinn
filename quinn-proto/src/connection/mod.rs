@@ -3423,6 +3423,11 @@ impl Connection {
         self.state = State::Drained;
         self.endpoint_events.push_back(EndpointEventInner::Drained);
     }
+
+    /// Returns the connection's current MTU
+    pub fn get_current_mtu(&self) -> u16 {
+        self.path.current_mtu()
+    }
 }
 
 impl fmt::Debug for Connection {
