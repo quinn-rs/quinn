@@ -483,7 +483,7 @@ impl Connection {
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
 
-                if buf.capacity() < self.path.current_mtu() as usize {
+                if (buf.capacity() - buf.len()) < self.path.current_mtu() as usize {
                     buf.reserve(self.path.current_mtu() as usize - buf.capacity());
                 }
 
@@ -916,7 +916,7 @@ impl Connection {
                 None
             },
             segment_size: match num_datagrams {
-                1 | 0 => None,
+                1 => None,
                 _ => Some(self.path.current_mtu() as usize),
             },
             src_ip: self.local_ip,

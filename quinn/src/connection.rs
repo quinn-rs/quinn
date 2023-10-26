@@ -857,7 +857,9 @@ impl State {
         let mut transmits = 0;
 
         let max_datagrams = self.socket.max_transmit_segments();
-        let mut buffer = BytesMut::with_capacity(1500);
+        let capacity = 1500;
+        let mut buffer = BytesMut::with_capacity(capacity);
+
         while let Some(t) = self.inner.poll_transmit(now, max_datagrams, &mut buffer) {
             transmits += match t.segment_size {
                 None => 1,
