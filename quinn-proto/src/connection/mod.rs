@@ -482,9 +482,9 @@ impl Connection {
                     SpaceId::Data,
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
-
-                if (buf.capacity() - buf.len()) < self.path.current_mtu() as usize {
-                    buf.reserve(self.path.current_mtu() as usize - buf.capacity());
+                let remaining_capacity = buf.capacity() - buf.len();
+                if remaining_capacity < self.path.current_mtu() as usize {
+                    buf.reserve(self.path.current_mtu() as usize - remaining_capacity);
                 }
 
                 let buf_capacity = buf.capacity();
@@ -3424,8 +3424,10 @@ impl Connection {
         self.endpoint_events.push_back(EndpointEventInner::Drained);
     }
 
-    /// Returns the connection's current MTU
-    pub fn get_current_mtu(&self) -> u16 {
+    /// Storage size required for the largest packet known to be supported by the current path
+    ///
+    /// Buffers passed to [`Connection::poll_transmit`] should be at least this large.
+    pub fn current_mtu(&self) -> u16 {
         self.path.current_mtu()
     }
 }
