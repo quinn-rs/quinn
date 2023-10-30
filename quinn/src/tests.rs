@@ -241,7 +241,7 @@ fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
         server_config,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
     )
-    .unwrap();
+        .unwrap();
     let mut client_config = ClientConfig::with_root_certificates(roots);
     client_config.transport_config(transport_config);
     endpoint.set_default_client_config(client_config);
@@ -452,7 +452,7 @@ fn run_echo(args: EchoArgs) {
                 server_sock,
                 Arc::new(TokioRuntime),
             )
-            .unwrap()
+                .unwrap()
         };
 
         let mut roots = rustls::RootCertStore::empty();
@@ -527,7 +527,7 @@ fn run_echo(args: EchoArgs) {
                 new_conn.close(0u32.into(), b"done");
                 client.wait_idle().await;
             }
-            .instrument(error_span!("client")),
+                .instrument(error_span!("client")),
         );
         handle
     };
@@ -547,7 +547,7 @@ async fn echo((mut send, mut recv): (SendStream, RecvStream)) {
     loop {
         // These are 32 buffers, for reading approximately 32kB at once
         #[rustfmt::skip]
-        let mut bufs = [
+            let mut bufs = [
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
@@ -639,7 +639,7 @@ async fn rebind_recv() {
         server_config,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
     )
-    .unwrap();
+        .unwrap();
     let server_addr = server.local_addr().unwrap();
 
     const MSG: &[u8; 5] = b"hello";
@@ -743,4 +743,45 @@ async fn two_datagram_readers() {
     );
     assert!(*a == *b"one" || *b == *b"one");
     assert!(*a == *b"two" || *b == *b"two");
+}
+
+#[tokio::test]
+async fn finish_finished_stream_no_error() {
+    let _guard = subscribe();
+    let endpoint = endpoint();
+
+    let (client, server) = tokio::join!(
+        async { endpoint
+            .connect(endpoint.local_addr().unwrap(), "localhost")
+            .unwrap().await.unwrap() },
+        async { endpoint.accept().await.unwrap().await.unwrap() }
+    );
+
+    let client = async {
+        let (mut send_stream, mut recv_stream) = client.open_bi().await.unwrap();
+        send_stream.write_all(b"request").await.unwrap();
+
+        let mut buf = [0u8; 8];
+        recv_stream.read_exact(&mut buf).await.unwrap();
+
+        assert_eq!(&buf, b"response");
+
+        tokio::time::sleep(Duration::from_millis(100)).await; // Simulate some more processing of the response.
+
+        send_stream.finish().await.unwrap(); // Be a good citizen and close stream instead of dropping.
+    };
+
+    let server = async {
+        let (mut send_stream, mut recv_stream) = server.accept_bi().await.unwrap();
+
+        let mut buf = [0u8; 7];
+        recv_stream.read_exact(&mut buf).await.unwrap();
+
+        assert_eq!(&buf, b"request");
+
+        send_stream.write_all(b"response").await.unwrap();
+        send_stream.finish().await.unwrap();
+    };
+
+    tokio::join!(client, server);
 }
