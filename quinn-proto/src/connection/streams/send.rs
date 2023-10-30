@@ -37,6 +37,19 @@ impl Send {
 
     pub(super) fn finish(&mut self) -> Result<(), FinishError> {
         if let Some(error_code) = self.stop_reason {
+            // Remote has already stopped the stream ..
+
+            if self.pending.is_fully_acked() {
+                // All data we sent was already acked
+
+                tracing::debug!(%error_code, "Stream is already stopped");
+                self.state = SendState::DataSent {
+                    finish_acked: true, // Pretend that the remote acked the `FIN`. Actually trying to send it would fail because the remote has stopped the stream already.
+                };
+
+                return Ok(())
+            }
+
             return Err(FinishError::Stopped(error_code))
         }
 
