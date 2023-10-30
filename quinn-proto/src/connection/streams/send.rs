@@ -42,7 +42,7 @@ impl Send {
             if self.pending.is_fully_acked() {
                 // All data we sent was already acked
 
-                tracing::debug!(%error_code, "Stream is already stopped");
+                tracing::debug!(%error_code, "Stream is already stopped, unable to send `FIN`");
                 self.state = SendState::DataSent {
                     finish_acked: true, // Pretend that the remote acked the `FIN`. Actually trying to send it would fail because the remote has stopped the stream already.
                 };
