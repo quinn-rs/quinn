@@ -37,16 +37,19 @@ impl Send {
 
     pub(super) fn finish(&mut self) -> Result<(), FinishError> {
         if let Some(error_code) = self.stop_reason {
-            Err(FinishError::Stopped(error_code))
-        } else if self.state == SendState::Ready {
+            return Err(FinishError::Stopped(error_code))
+        }
+
+        if self.state == SendState::Ready {
             self.state = SendState::DataSent {
                 finish_acked: false,
             };
             self.fin_pending = true;
-            Ok(())
-        } else {
-            Err(FinishError::UnknownStream)
+
+            return Ok(())
         }
+
+        Err(FinishError::UnknownStream)
     }
 
     pub(super) fn write<S: BytesSource>(
