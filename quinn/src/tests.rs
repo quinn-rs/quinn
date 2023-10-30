@@ -241,7 +241,7 @@ fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
         server_config,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
     )
-        .unwrap();
+    .unwrap();
     let mut client_config = ClientConfig::with_root_certificates(roots);
     client_config.transport_config(transport_config);
     endpoint.set_default_client_config(client_config);
@@ -452,7 +452,7 @@ fn run_echo(args: EchoArgs) {
                 server_sock,
                 Arc::new(TokioRuntime),
             )
-                .unwrap()
+            .unwrap()
         };
 
         let mut roots = rustls::RootCertStore::empty();
@@ -527,7 +527,7 @@ fn run_echo(args: EchoArgs) {
                 new_conn.close(0u32.into(), b"done");
                 client.wait_idle().await;
             }
-                .instrument(error_span!("client")),
+            .instrument(error_span!("client")),
         );
         handle
     };
@@ -639,7 +639,7 @@ async fn rebind_recv() {
         server_config,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
     )
-        .unwrap();
+    .unwrap();
     let server_addr = server.local_addr().unwrap();
 
     const MSG: &[u8; 5] = b"hello";
@@ -751,9 +751,13 @@ async fn finish_finished_stream_no_error() {
     let endpoint = endpoint();
 
     let (client, server) = tokio::join!(
-        async { endpoint
-            .connect(endpoint.local_addr().unwrap(), "localhost")
-            .unwrap().await.unwrap() },
+        async {
+            endpoint
+                .connect(endpoint.local_addr().unwrap(), "localhost")
+                .unwrap()
+                .await
+                .unwrap()
+        },
         async { endpoint.accept().await.unwrap().await.unwrap() }
     );
 

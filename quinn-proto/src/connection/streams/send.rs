@@ -47,10 +47,10 @@ impl Send {
                     finish_acked: true, // Pretend that the remote acked the `FIN`. Actually trying to send it would fail because the remote has stopped the stream already.
                 };
 
-                return Ok(())
+                return Ok(());
             }
 
-            return Err(FinishError::Stopped(error_code))
+            return Err(FinishError::Stopped(error_code));
         }
 
         if self.state == SendState::Ready {
@@ -59,7 +59,7 @@ impl Send {
             };
             self.fin_pending = true;
 
-            return Ok(())
+            return Ok(());
         }
 
         Err(FinishError::UnknownStream)
