@@ -351,7 +351,7 @@ fn stop_stream() {
     );
     assert_matches!(
         pair.client_send(client_ch, s).finish(),
-        Err(FinishError::Stopped(ERROR))
+        Ok(()) // No unacknowledged data, hence `finish` succeeds.
     );
 }
 
@@ -1519,18 +1519,25 @@ fn stop_before_finish() {
     let (client_ch, server_ch) = pair.connect();
 
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
-    const MSG: &[u8] = b"hello";
-    pair.client_send(client_ch, s).write(MSG).unwrap();
-    pair.drive();
 
-    info!("stopping stream");
     const ERROR: VarInt = VarInt(42);
-    pair.server_recv(server_ch, s).stop(ERROR).unwrap();
-    pair.drive();
 
+    // 1. Stop the stream (but don't send anything yet)
+    pair.server_recv(server_ch, s).stop(ERROR).unwrap();
+
+    // 2. Queue data to be sent (client has no idea server has stopped the stream already)
+    pair.client_send(client_ch, s).write(b"hello1").unwrap();
+
+    // 3. Transmit `STOP_SENDING` to client
+    pair.drive_server();
+
+    // 4. Actually send data to server, now waiting for ACKs
+    pair.drive_client();
+
+    // 5. Finish the stream
     assert_matches!(
         pair.client_send(client_ch, s).finish(),
-        Err(FinishError::Stopped(ERROR))
+        Err(FinishError::Stopped(ERROR)) // Fails because we have unacknowledged data.
     );
 }
 
