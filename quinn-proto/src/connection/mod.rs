@@ -482,7 +482,6 @@ impl Connection {
                     SpaceId::Data,
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
-
                 buf.reserve(self.path.current_mtu() as usize);
 
                 let buf_capacity = buf.capacity();
@@ -686,7 +685,7 @@ impl Connection {
                     // (e.g. purely containing ACKs), modern memory allocators
                     // (e.g. mimalloc and jemalloc) will pool certain allocation sizes
                     // and therefore this is still rather efficient.
-                    buf.reserve(max_datagrams * self.path.current_mtu() as usize - buf.capacity());
+                    buf.reserve(max_datagrams * self.path.current_mtu() as usize);
                 }
                 num_datagrams += 1;
                 coalesce = true;

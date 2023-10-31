@@ -879,7 +879,6 @@ impl State {
                 // See https://github.com/quinn-rs/quinn/issues/1126
                 return true;
             }
-            buffer.clear();
         }
 
         false

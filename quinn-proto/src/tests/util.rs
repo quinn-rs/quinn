@@ -353,9 +353,9 @@ impl TestEndpoint {
                         self.conn_events.entry(ch).or_default().push_back(event);
                     }
                     DatagramEvent::Response(transmit) => {
+                        let size = transmit.size;
                         self.outbound
-                            .extend(split_transmit(transmit, buf.clone().freeze()));
-                        buf.clear();
+                            .extend(split_transmit(transmit, buf.split_to(size).freeze()));
                     }
                 }
             }
@@ -378,10 +378,10 @@ impl TestEndpoint {
                 while let Some(event) = conn.poll_endpoint_events() {
                     endpoint_events.push((*ch, event));
                 }
-                while let Some(x) = conn.poll_transmit(now, MAX_DATAGRAMS, &mut buf) {
+                while let Some(transmit) = conn.poll_transmit(now, MAX_DATAGRAMS, &mut buf) {
+                    let size = transmit.size;
                     self.outbound
-                        .extend(split_transmit(x, buf.clone().freeze()));
-                    buf.clear();
+                        .extend(split_transmit(transmit, buf.split_to(size).freeze()));
                 }
                 self.timeout = conn.poll_timeout();
             }

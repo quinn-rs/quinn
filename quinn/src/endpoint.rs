@@ -444,7 +444,7 @@ impl State {
                                         .unwrap()
                                         .send(ConnectionEvent::Proto(event));
                                 }
-                                Some(DatagramEvent::Response(t)) => {
+                                Some(DatagramEvent::Response(transmit)) => {
                                     // Limiting the memory usage for items queued in the outgoing queue from endpoint
                                     // generated packets. Otherwise, we may see a build-up of the queue under test with
                                     // flood of initial packets against the endpoint. The sender with the sender-limiter
@@ -452,9 +452,11 @@ impl State {
                                     if self.transmit_queue_contents_len
                                         < MAX_TRANSMIT_QUEUE_CONTENTS_LEN
                                     {
-                                        let contents_len = buffer.len();
-                                        self.outgoing
-                                            .push_back(udp_transmit(t, buffer.clone().freeze()));
+                                        let contents_len = transmit.size;
+                                        self.outgoing.push_back(udp_transmit(
+                                            transmit,
+                                            buffer.split_to(contents_len).freeze(),
+                                        ));
                                         self.transmit_queue_contents_len = self
                                             .transmit_queue_contents_len
                                             .saturating_add(contents_len);
