@@ -866,9 +866,10 @@ impl State {
                 Some(s) => (t.size + s - 1) / s, // round up
             };
             // If the endpoint driver is gone, noop.
+            let size = t.size;
             let _ = self.endpoint_events.send((
                 self.handle,
-                EndpointEvent::Transmit(t, buffer.clone().freeze()),
+                EndpointEvent::Transmit(t, buffer.split_to(size).freeze()),
             ));
 
             if transmits >= MAX_TRANSMIT_DATAGRAMS {
