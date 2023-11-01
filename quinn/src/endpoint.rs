@@ -408,6 +408,8 @@ impl State {
                     .write(IoSliceMut::<'a>::new(buf));
             });
         let mut iovs = unsafe { iovs.assume_init() };
+        let buffer_size = self.inner.config().get_max_udp_payload_size() as usize;
+        let mut buffer = BytesMut::with_capacity(buffer_size);
         loop {
             match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
@@ -422,6 +424,7 @@ impl State {
                                 meta.dst_ip,
                                 meta.ecn.map(proto_ecn),
                                 buf,
+                                &mut buffer,
                             ) {
                                 Some(DatagramEvent::NewConnection(handle, conn)) => {
                                     let conn = self.connections.insert(
@@ -441,7 +444,7 @@ impl State {
                                         .unwrap()
                                         .send(ConnectionEvent::Proto(event));
                                 }
-                                Some(DatagramEvent::Response(t)) => {
+                                Some(DatagramEvent::Response(transmit)) => {
                                     // Limiting the memory usage for items queued in the outgoing queue from endpoint
                                     // generated packets. Otherwise, we may see a build-up of the queue under test with
                                     // flood of initial packets against the endpoint. The sender with the sender-limiter
@@ -449,8 +452,11 @@ impl State {
                                     if self.transmit_queue_contents_len
                                         < MAX_TRANSMIT_QUEUE_CONTENTS_LEN
                                     {
-                                        let contents_len = t.contents.len();
-                                        self.outgoing.push_back(udp_transmit(t));
+                                        let contents_len = transmit.size;
+                                        self.outgoing.push_back(udp_transmit(
+                                            transmit,
+                                            buffer.split_to(contents_len).freeze(),
+                                        ));
                                         self.transmit_queue_contents_len = self
                                             .transmit_queue_contents_len
                                             .saturating_add(contents_len);
@@ -521,7 +527,6 @@ impl State {
 
     fn handle_events(&mut self, cx: &mut Context, shared: &Shared) -> bool {
         use EndpointEvent::*;
-
         for _ in 0..IO_LOOP_BOUND {
             match self.events.poll_recv(cx) {
                 Poll::Ready(Some((ch, event))) => match event {
@@ -542,9 +547,9 @@ impl State {
                                 .send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t) => {
-                        let contents_len = t.contents.len();
-                        self.outgoing.push_back(udp_transmit(t));
+                    Transmit(t, buf) => {
+                        let contents_len = buf.len();
+                        self.outgoing.push_back(udp_transmit(t, buf));
                         self.transmit_queue_contents_len = self
                             .transmit_queue_contents_len
                             .saturating_add(contents_len);
@@ -562,11 +567,11 @@ impl State {
 }
 
 #[inline]
-fn udp_transmit(t: proto::Transmit) -> udp::Transmit {
+fn udp_transmit(t: proto::Transmit, buffer: Bytes) -> udp::Transmit {
     udp::Transmit {
         destination: t.destination,
         ecn: t.ecn.map(udp_ecn),
-        contents: t.contents,
+        contents: buffer,
         segment_size: t.segment_size,
         src_ip: t.src_ip,
     }

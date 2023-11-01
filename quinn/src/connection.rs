@@ -10,7 +10,7 @@ use std::{
 };
 
 use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime};
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
@@ -857,16 +857,20 @@ impl State {
         let mut transmits = 0;
 
         let max_datagrams = self.socket.max_transmit_segments();
+        let capacity = self.inner.current_mtu();
+        let mut buffer = BytesMut::with_capacity(capacity as usize);
 
-        while let Some(t) = self.inner.poll_transmit(now, max_datagrams) {
+        while let Some(t) = self.inner.poll_transmit(now, max_datagrams, &mut buffer) {
             transmits += match t.segment_size {
                 None => 1,
-                Some(s) => (t.contents.len() + s - 1) / s, // round up
+                Some(s) => (t.size + s - 1) / s, // round up
             };
             // If the endpoint driver is gone, noop.
-            let _ = self
-                .endpoint_events
-                .send((self.handle, EndpointEvent::Transmit(t)));
+            let size = t.size;
+            let _ = self.endpoint_events.send((
+                self.handle,
+                EndpointEvent::Transmit(t, buffer.split_to(size).freeze()),
+            ));
 
             if transmits >= MAX_TRANSMIT_DATAGRAMS {
                 // TODO: What isn't ideal here yet is that if we don't poll all
