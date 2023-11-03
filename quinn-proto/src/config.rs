@@ -552,6 +552,7 @@ impl Default for AckFrequencyConfig {
 pub struct MtuDiscoveryConfig {
     pub(crate) interval: Duration,
     pub(crate) upper_bound: u16,
+    pub(crate) minimum_change: u16,
     pub(crate) black_hole_cooldown: Duration,
 }
 
@@ -587,6 +588,13 @@ impl MtuDiscoveryConfig {
         self.black_hole_cooldown = value;
         self
     }
+
+    /// Specifies the minimum MTU change to stop the MTU discovery phase.
+    /// Defaults to 20.
+    pub fn minimum_change(&mut self, value: u16) -> &mut Self {
+        self.minimum_change = value;
+        self
+    }
 }
 
 impl Default for MtuDiscoveryConfig {
@@ -595,6 +603,7 @@ impl Default for MtuDiscoveryConfig {
             interval: Duration::from_secs(600),
             upper_bound: 1452,
             black_hole_cooldown: Duration::from_secs(60),
+            minimum_change: 20,
         }
     }
 }

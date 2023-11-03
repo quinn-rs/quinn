@@ -288,6 +288,8 @@ struct SearchState {
     lower_bound: u16,
     /// The upper bound for the current binary search
     upper_bound: u16,
+    /// The minimum change to stop the current binary search
+    minimum_change: u16,
     /// The UDP payload size we last sent a probe for
     last_probed_mtu: u16,
     /// Packet number of an in-flight probe (if any)
@@ -314,6 +316,7 @@ impl SearchState {
             lost_probe_count: 0,
             lower_bound,
             upper_bound,
+            minimum_change: config.minimum_change,
             // During initialization, we consider the lower bound to have already been
             // successfully probed
             last_probed_mtu: lower_bound,
@@ -333,13 +336,10 @@ impl SearchState {
         let next_mtu = (self.lower_bound as i32 + self.upper_bound as i32) / 2;
 
         // Binary search stopping condition
-        if ((next_mtu - self.last_probed_mtu as i32).unsigned_abs() as u16)
-            < BINARY_SEARCH_MINIMUM_CHANGE
-        {
+        if ((next_mtu - self.last_probed_mtu as i32).unsigned_abs() as u16) < self.minimum_change {
             // Special case: if the upper bound is far enough, we want to probe it as a last
             // step (otherwise we will never achieve the upper bound)
-            if self.upper_bound.saturating_sub(self.last_probed_mtu) >= BINARY_SEARCH_MINIMUM_CHANGE
-            {
+            if self.upper_bound.saturating_sub(self.last_probed_mtu) >= self.minimum_change {
                 return Some(self.upper_bound);
             }
 
@@ -478,7 +478,6 @@ impl BlackHoleDetector {
 // https://www.rfc-editor.org/rfc/rfc8899#section-5.1.2)
 const MAX_PROBE_RETRANSMITS: usize = 3;
 const BLACK_HOLE_THRESHOLD: u8 = 3;
-const BINARY_SEARCH_MINIMUM_CHANGE: u16 = 20;
 
 #[cfg(test)]
 mod tests {
