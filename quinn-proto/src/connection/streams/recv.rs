@@ -281,15 +281,12 @@ impl<'a> Chunks<'a> {
 
     /// Finalize
     pub fn finalize(mut self) -> ShouldTransmit {
-        self.finalize_inner(false)
+        self.finalize_inner()
     }
 
-    fn finalize_inner(&mut self, drop: bool) -> ShouldTransmit {
+    fn finalize_inner(&mut self) -> ShouldTransmit {
         let state = mem::replace(&mut self.state, ChunksState::Finalized);
-        debug_assert!(
-            !drop || matches!(state, ChunksState::Finalized),
-            "finalize must be called before drop"
-        );
+
         if let ChunksState::Finalized = state {
             // Noop on repeated calls
             return ShouldTransmit(false);
@@ -326,7 +323,7 @@ impl<'a> Chunks<'a> {
 
 impl<'a> Drop for Chunks<'a> {
     fn drop(&mut self) {
-        let _ = self.finalize_inner(true);
+        let _ = self.finalize_inner();
     }
 }
 
