@@ -2098,7 +2098,7 @@ impl Connection {
 
                 let is_duplicate = |n| self.spaces[packet.header.space()].dedup.insert(n);
                 if number.map_or(false, is_duplicate) {
-                    warn!("discarding possible duplicate packet");
+                    debug!("discarding possible duplicate packet");
                     return;
                 } else if self.state.is_handshake() && packet.header.is_short() {
                     // TODO: SHOULD buffer these to improve reordering tolerance.
