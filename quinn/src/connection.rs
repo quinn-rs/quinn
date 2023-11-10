@@ -282,7 +282,12 @@ impl Connection {
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
     /// consequence, the peer won't be notified that a stream has been opened until the stream is
-    /// actually used.
+    /// actually used. Calling [`open_bi()`] then waiting on the [`RecvStream`] without writing
+    /// anything to [`SendStream`] will never succeed.
+    ///
+    /// [`open_bi()`]: crate::Connection::open_bi
+    /// [`SendStream`]: crate::SendStream
+    /// [`RecvStream`]: crate::RecvStream
     pub fn open_bi(&self) -> OpenBi<'_> {
         OpenBi {
             conn: &self.0,
@@ -299,6 +304,15 @@ impl Connection {
     }
 
     /// Accept the next incoming bidirectional stream
+    ///
+    /// **Important Note**: The `Connection` that calls [`open_bi()`] must write to its [`SendStream`]
+    /// before the other `Connection` is able to `accept_bi()`. Calling [`open_bi()`] then
+    /// waiting on the [`RecvStream`] without writing anything to [`SendStream`] will never succeed.
+    ///
+    /// [`accept_bi()`]: crate::Connection::accept_bi
+    /// [`open_bi()`]: crate::Connection::open_bi
+    /// [`SendStream`]: crate::SendStream
+    /// [`RecvStream`]: crate::RecvStream
     pub fn accept_bi(&self) -> AcceptBi<'_> {
         AcceptBi {
             conn: &self.0,
