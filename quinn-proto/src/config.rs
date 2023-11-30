@@ -32,7 +32,6 @@ pub struct TransportConfig {
     pub(crate) receive_window: VarInt,
     pub(crate) send_window: u64,
 
-    pub(crate) max_tlps: u32,
     pub(crate) packet_threshold: u32,
     pub(crate) time_threshold: f32,
     pub(crate) initial_rtt: Duration,
@@ -132,12 +131,6 @@ impl TransportConfig {
     /// every connection uses the entire window.
     pub fn send_window(&mut self, value: u64) -> &mut Self {
         self.send_window = value;
-        self
-    }
-
-    /// Maximum number of tail loss probes before an RTO fires.
-    pub fn max_tlps(&mut self, value: u32) -> &mut Self {
-        self.max_tlps = value;
         self
     }
 
@@ -331,7 +324,6 @@ impl Default for TransportConfig {
             receive_window: VarInt::MAX,
             send_window: (8 * STREAM_RWND).into(),
 
-            max_tlps: 2,
             packet_threshold: 3,
             time_threshold: 9.0 / 8.0,
             initial_rtt: Duration::from_millis(333), // per spec, intentionally distinct from EXPECTED_RTT
@@ -365,7 +357,6 @@ impl fmt::Debug for TransportConfig {
             stream_receive_window,
             receive_window,
             send_window,
-            max_tlps,
             packet_threshold,
             time_threshold,
             initial_rtt,
@@ -391,7 +382,6 @@ impl fmt::Debug for TransportConfig {
             .field("stream_receive_window", stream_receive_window)
             .field("receive_window", receive_window)
             .field("send_window", send_window)
-            .field("max_tlps", max_tlps)
             .field("packet_threshold", packet_threshold)
             .field("time_threshold", time_threshold)
             .field("initial_rtt", initial_rtt)
