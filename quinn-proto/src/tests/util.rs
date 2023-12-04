@@ -14,7 +14,10 @@ use std::{
 use assert_matches::assert_matches;
 use bytes::BytesMut;
 use lazy_static::lazy_static;
-use rustls::{Certificate, KeyLogFile, PrivateKey};
+use rustls::{
+    pki_types::{CertificateDer, PrivateKeyDer},
+    KeyLogFile,
+};
 use tracing::{info_span, trace};
 
 use super::crypto::rustls::ServerVerifier;
@@ -550,17 +553,23 @@ pub(super) fn server_config() -> ServerConfig {
     ServerConfig::with_crypto(Arc::new(server_crypto()))
 }
 
-pub(super) fn server_config_with_cert(cert: Certificate, key: PrivateKey) -> ServerConfig {
+pub(super) fn server_config_with_cert(
+    cert: CertificateDer<'static>,
+    key: PrivateKeyDer<'static>,
+) -> ServerConfig {
     ServerConfig::with_crypto(Arc::new(server_crypto_with_cert(cert, key)))
 }
 
 pub(super) fn server_crypto() -> rustls::ServerConfig {
-    let cert = Certificate(CERTIFICATE.serialize_der().unwrap());
-    let key = PrivateKey(CERTIFICATE.serialize_private_key_der());
+    let cert = CertificateDer::from(CERTIFICATE.serialize_der().unwrap());
+    let key = PrivateKeyDer::Pkcs8(CERTIFICATE.serialize_private_key_der().into());
     server_crypto_with_cert(cert, key)
 }
 
-pub(super) fn server_crypto_with_cert(cert: Certificate, key: PrivateKey) -> rustls::ServerConfig {
+pub(super) fn server_crypto_with_cert(
+    cert: CertificateDer<'static>,
+    key: PrivateKeyDer<'static>,
+) -> rustls::ServerConfig {
     crate::crypto::rustls::server_config(vec![cert], key).unwrap()
 }
 
@@ -576,7 +585,7 @@ pub(super) fn client_config_with_deterministic_pns() -> ClientConfig {
     cfg
 }
 
-pub(super) fn client_config_with_certs(certs: Vec<rustls::Certificate>) -> ClientConfig {
+pub(super) fn client_config_with_certs(certs: Vec<CertificateDer<'static>>) -> ClientConfig {
     ClientConfig::new(Arc::new(client_crypto_inner(Some(certs), None)))
 }
 
@@ -589,15 +598,15 @@ pub(super) fn client_crypto_with_alpn(protocols: Vec<Vec<u8>>) -> rustls::Client
 }
 
 fn client_crypto_inner(
-    certs: Option<Vec<rustls::Certificate>>,
+    certs: Option<Vec<CertificateDer<'static>>>,
     alpn: Option<Vec<Vec<u8>>>,
 ) -> rustls::ClientConfig {
     let certs =
-        certs.unwrap_or_else(|| vec![rustls::Certificate(CERTIFICATE.serialize_der().unwrap())]);
+        certs.unwrap_or_else(|| vec![CertificateDer::from(CERTIFICATE.serialize_der().unwrap())]);
 
     let mut roots = rustls::RootCertStore::empty();
     for cert in certs {
-        roots.add(&cert).unwrap();
+        roots.add(cert).unwrap();
     }
 
     let mut config = crate::crypto::rustls::client_config(ServerVerifier::Roots(roots));
