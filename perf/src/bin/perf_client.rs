@@ -8,6 +8,7 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
 use quinn::TokioRuntime;
+use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
@@ -115,12 +116,17 @@ async fn run(opt: Opt) -> Result<()> {
 
     let endpoint = quinn::Endpoint::new(Default::default(), None, socket, Arc::new(TokioRuntime))?;
 
-    let mut crypto = rustls::ClientConfig::builder()
-        .with_cipher_suites(perf::PERF_CIPHER_SUITES)
-        .with_safe_default_kx_groups()
+    let default_provider = rustls::crypto::ring::default_provider();
+    let provider = Arc::new(rustls::crypto::CryptoProvider {
+        cipher_suites: perf::PERF_CIPHER_SUITES.into(),
+        ..default_provider
+    });
+
+    let mut crypto = rustls::ClientConfig::builder_with_provider(provider.clone())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .unwrap()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
+        .dangerous()
+        .with_custom_certificate_verifier(SkipServerVerification::new(provider))
         .with_no_client_auth();
     crypto.alpn_protocols = vec![b"perf".to_vec()];
 
@@ -355,24 +361,56 @@ async fn request_bi(
     Ok(())
 }
 
-struct SkipServerVerification;
+#[derive(Debug)]
+struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
 
 impl SkipServerVerification {
-    fn new() -> Arc<Self> {
-        Arc::new(Self)
+    fn new(provider: Arc<rustls::crypto::CryptoProvider>) -> Arc<Self> {
+        Arc::new(Self(provider))
     }
 }
 
-impl rustls::client::ServerCertVerifier for SkipServerVerification {
+impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
+        _ocsp: &[u8],
+        _now: UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        message: &[u8],
+        cert: &CertificateDer<'_>,
+        dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        self.0.signature_verification_algorithms.supported_schemes()
     }
 }

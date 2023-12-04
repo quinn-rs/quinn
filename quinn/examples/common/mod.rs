@@ -2,6 +2,8 @@
 //! Commonly used code in most examples.
 
 use quinn::{ClientConfig, Endpoint, ServerConfig};
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
 /// Constructs a QUIC endpoint configured for use a client only.
@@ -42,7 +44,7 @@ pub fn make_server_endpoint(bind_addr: SocketAddr) -> Result<(Endpoint, Vec<u8>)
 fn configure_client(server_certs: &[&[u8]]) -> Result<ClientConfig, Box<dyn Error>> {
     let mut certs = rustls::RootCertStore::empty();
     for cert in server_certs {
-        certs.add(&rustls::Certificate(cert.to_vec()))?;
+        certs.add(CertificateDer::from(*cert))?;
     }
 
     let client_config = ClientConfig::with_root_certificates(certs);
@@ -54,10 +56,10 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
     let cert_der = cert.serialize_der().unwrap();
     let priv_key = cert.serialize_private_key_der();
-    let priv_key = rustls::PrivateKey(priv_key);
-    let cert_chain = vec![rustls::Certificate(cert_der.clone())];
+    let priv_key = PrivatePkcs8KeyDer::from(priv_key);
+    let cert_chain = vec![CertificateDer::from(cert_der.clone())];
 
-    let mut server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
+    let mut server_config = ServerConfig::with_single_cert(cert_chain, priv_key.into())?;
     let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
     transport_config.max_concurrent_uni_streams(0_u8.into());
 
