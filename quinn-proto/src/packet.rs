@@ -827,6 +827,7 @@ impl SpaceId {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(feature = "rustls")]
     use crate::DEFAULT_SUPPORTED_VERSIONS;
     use hex_literal::hex;
     use std::io;
@@ -867,11 +868,16 @@ mod tests {
     #[cfg(feature = "rustls")]
     #[test]
     fn header_encoding() {
-        use crate::{crypto::rustls::initial_keys, Side};
+        use crate::crypto::rustls::{initial_keys, suite_from_provider};
+        use crate::Side;
+        use rustls::crypto::ring::default_provider;
         use rustls::quic::Version;
 
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
-        let client = initial_keys(Version::V1, &dcid, Side::Client);
+        let provider = default_provider();
+
+        let suite = suite_from_provider(&std::sync::Arc::new(provider)).unwrap();
+        let client = initial_keys(Version::V1, &dcid, Side::Client, &suite);
         let mut buf = BytesMut::new();
         let header = Header::Initial(InitialHeader {
             number: PacketNumber::U8(0),
@@ -901,7 +907,7 @@ mod tests {
             )[..]
         );
 
-        let server = initial_keys(Version::V1, &dcid, Side::Server);
+        let server = initial_keys(Version::V1, &dcid, Side::Server, &suite);
         let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
         let decode = PartialDecode::new(buf, 0, &supported_versions, false)
             .unwrap()

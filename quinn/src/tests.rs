@@ -11,6 +11,10 @@ use std::{
 use crate::runtime::TokioRuntime;
 use bytes::Bytes;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
+use rustls::{
+    pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
+    RootCertStore,
+};
 use tokio::{
     runtime::{Builder, Runtime},
     time::{Duration, Instant},
@@ -30,8 +34,14 @@ fn handshake_timeout() {
         Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap()
     };
 
-    let mut client_config =
-        crate::ClientConfig::with_root_certificates(rustls::RootCertStore::empty()).unwrap();
+    // Avoid NoRootAnchors error
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let mut roots = RootCertStore::empty();
+    roots
+        .add(CertificateDer::from(cert.serialize_der().unwrap()))
+        .unwrap();
+
+    let mut client_config = crate::ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
     const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
     let mut transport_config = crate::TransportConfig::default();
     transport_config
@@ -62,11 +72,18 @@ fn handshake_timeout() {
 #[tokio::test]
 async fn close_endpoint() {
     let _guard = subscribe();
+
+    // Avoid NoRootAnchors error
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+    let mut roots = RootCertStore::empty();
+    roots
+        .add(CertificateDer::from(cert.serialize_der().unwrap()))
+        .unwrap();
+
     let mut endpoint =
         Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
-    endpoint.set_default_client_config(
-        ClientConfig::with_root_certificates(rustls::RootCertStore::empty()).unwrap(),
-    );
+    endpoint
+        .set_default_client_config(ClientConfig::with_root_certificates(Arc::new(roots)).unwrap());
 
     let conn = endpoint
         .connect(
@@ -260,22 +277,21 @@ impl EndpointFactory {
     }
 
     fn endpoint_with_config(&self, transport_config: TransportConfig) -> Endpoint {
-        let cert = &self.0;
-        let key = rustls::PrivateKey(cert.serialize_private_key_der());
-        let cert = rustls::Certificate(cert.serialize_der().unwrap());
+        let cert = CertificateDer::from(self.0.serialize_der().unwrap());
+        let key = PrivateKeyDer::Pkcs8(self.0.serialize_private_key_der().into());
         let transport_config = Arc::new(transport_config);
         let mut server_config =
             crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
         server_config.transport_config(transport_config.clone());
 
         let mut roots = rustls::RootCertStore::empty();
-        roots.add(&cert).unwrap();
+        roots.add(cert).unwrap();
         let mut endpoint = Endpoint::server(
             server_config,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         )
         .unwrap();
-        let mut client_config = ClientConfig::with_root_certificates(roots).unwrap();
+        let mut client_config = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
         client_config.transport_config(transport_config);
         endpoint.set_default_client_config(client_config);
 
@@ -468,11 +484,11 @@ fn run_echo(args: EchoArgs) {
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-        let key = rustls::PrivateKey(cert.serialize_private_key_der());
+        let key = PrivatePkcs8KeyDer::from(cert.serialize_private_key_der());
         let cert_der = cert.serialize_der().unwrap();
-        let cert = rustls::Certificate(cert_der);
+        let cert = CertificateDer::from(cert_der);
         let mut server_config =
-            crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
+            crate::ServerConfig::with_single_cert(vec![cert.clone()], key.into()).unwrap();
 
         server_config.transport = transport_config.clone();
         let server_sock = UdpSocket::bind(args.server_addr).unwrap();
@@ -490,11 +506,14 @@ fn run_echo(args: EchoArgs) {
         };
 
         let mut roots = rustls::RootCertStore::empty();
-        roots.add(&cert).unwrap();
-        let mut client_crypto = rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_root_certificates(roots)
-            .with_no_client_auth();
+        roots.add(cert).unwrap();
+        let mut client_crypto = rustls::ClientConfig::builder_with_provider(
+            rustls::crypto::ring::default_provider().into(),
+        )
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_root_certificates(roots)
+        .with_no_client_auth();
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
 
         let mut client = {
@@ -651,14 +670,14 @@ async fn rebind_recv() {
     let _guard = subscribe();
 
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key = rustls::PrivateKey(cert.serialize_private_key_der());
-    let cert = rustls::Certificate(cert.serialize_der().unwrap());
+    let key = PrivatePkcs8KeyDer::from(cert.serialize_private_key_der());
+    let cert = CertificateDer::from(cert.serialize_der().unwrap());
 
     let mut roots = rustls::RootCertStore::empty();
-    roots.add(&cert).unwrap();
+    roots.add(cert.clone()).unwrap();
 
     let mut client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
-    let mut client_config = ClientConfig::with_root_certificates(roots).unwrap();
+    let mut client_config = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
     client_config.transport_config(Arc::new({
         let mut cfg = TransportConfig::default();
         cfg.max_concurrent_uni_streams(1u32.into());
@@ -666,7 +685,8 @@ async fn rebind_recv() {
     }));
     client.set_default_client_config(client_config);
 
-    let server_config = crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
+    let server_config =
+        crate::ServerConfig::with_single_cert(vec![cert.clone()], key.into()).unwrap();
     let server = Endpoint::server(
         server_config,
         SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),

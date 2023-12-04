@@ -4,9 +4,10 @@ use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
 use quinn::TokioRuntime;
+use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tracing::{debug, error, info};
 
-use perf::{bind_socket, noprotection::NoProtectionServerConfig};
+use perf::{bind_socket, noprotection::NoProtectionServerConfig, PERF_CIPHER_SUITES};
 
 #[derive(Parser)]
 #[clap(name = "server")]
@@ -56,30 +57,33 @@ async fn run(opt: Opt) -> Result<()> {
         (Some(key), Some(cert)) => {
             let key = fs::read(key).context("reading key")?;
             let cert = fs::read(cert).expect("reading cert");
-
-            let mut certs = Vec::new();
-            for cert in rustls_pemfile::certs(&mut cert.as_ref()).context("parsing cert")? {
-                certs.push(rustls::Certificate(cert));
-            }
-
-            (rustls::PrivateKey(key), certs)
+            (
+                PrivatePkcs8KeyDer::from(key),
+                rustls_pemfile::certs(&mut cert.as_ref())
+                    .collect::<Result<_, _>>()
+                    .context("parsing cert")?,
+            )
         }
         _ => {
             let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
             (
-                rustls::PrivateKey(cert.serialize_private_key_der()),
-                vec![rustls::Certificate(cert.serialize_der().unwrap())],
+                PrivatePkcs8KeyDer::from(cert.serialize_private_key_der()),
+                vec![CertificateDer::from(cert.serialize_der().unwrap())],
             )
         }
     };
 
-    let mut crypto = rustls::ServerConfig::builder()
-        .with_cipher_suites(perf::PERF_CIPHER_SUITES)
-        .with_safe_default_kx_groups()
+    let default_provider = rustls::crypto::ring::default_provider();
+    let provider = rustls::crypto::CryptoProvider {
+        cipher_suites: PERF_CIPHER_SUITES.into(),
+        ..default_provider
+    };
+
+    let mut crypto = rustls::ServerConfig::builder_with_provider(provider.into())
         .with_protocol_versions(&[&rustls::version::TLS13])
         .unwrap()
         .with_no_client_auth()
-        .with_single_cert(cert, key)
+        .with_single_cert(cert, key.into())
         .unwrap();
     crypto.alpn_protocols = vec![b"perf".to_vec()];
 
