@@ -1,9 +1,10 @@
 use std::{fmt, num::TryFromIntError, sync::Arc, time::Duration};
 
-use thiserror::Error;
-
 #[cfg(feature = "ring")]
 use rand::RngCore;
+#[cfg(feature = "rustls")]
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use thiserror::Error;
 
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
@@ -829,8 +830,8 @@ impl ServerConfig {
     ///
     /// Uses a randomized handshake token key.
     pub fn with_single_cert(
-        cert_chain: Vec<rustls::Certificate>,
-        key: rustls::PrivateKey,
+        cert_chain: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
     ) -> Result<Self, rustls::Error> {
         let crypto = crypto::rustls::server_config(cert_chain, key)?;
         Ok(Self::with_crypto(Arc::new(crypto)))

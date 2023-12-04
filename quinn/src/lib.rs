@@ -66,7 +66,7 @@ pub use proto::{
     ConnectError, ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout,
     MtuDiscoveryConfig, ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
 };
-#[cfg(feature = "tls-rustls")]
+#[cfg(feature = "rustls")]
 pub use rustls;
 pub use udp;
 
