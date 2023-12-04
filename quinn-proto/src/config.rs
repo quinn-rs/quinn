@@ -6,10 +6,12 @@ use std::{
     time::Duration,
 };
 
-use thiserror::Error;
-
 #[cfg(feature = "ring")]
 use rand::RngCore;
+use rustls::client::WebPkiServerVerifier;
+#[cfg(feature = "rustls")]
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use thiserror::Error;
 
 use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
@@ -844,8 +846,8 @@ impl ServerConfig {
     ///
     /// Uses a randomized handshake token key.
     pub fn with_single_cert(
-        cert_chain: Vec<rustls::Certificate>,
-        key: rustls::PrivateKey,
+        cert_chain: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
     ) -> Result<Self, rustls::Error> {
         let crypto = crypto::rustls::server_config(cert_chain, key)?;
         Ok(Self::with_crypto(Arc::new(crypto)))
@@ -924,17 +926,19 @@ impl ClientConfig {
 impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
     #[cfg(feature = "platform-verifier")]
-    pub fn with_platform_verifier() -> Result<Self, rustls::Error> {
-        Ok(Self::new(Arc::new(crypto::rustls::client_config(
+    pub fn with_platform_verifier() -> Self {
+        Self::new(Arc::new(crypto::rustls::client_config(Arc::new(
             rustls_platform_verifier::Verifier::new(),
-        )?)))
+        ))))
     }
 
     /// Create a client configuration that trusts specified trust anchors
-    pub fn with_root_certificates(roots: rustls::RootCertStore) -> Result<Self, rustls::Error> {
+    pub fn with_root_certificates(
+        roots: Arc<rustls::RootCertStore>,
+    ) -> Result<Self, rustls::client::VerifierBuilderError> {
         Ok(Self::new(Arc::new(crypto::rustls::client_config(
-            rustls::client::WebPkiVerifier::new(roots, None),
-        )?)))
+            WebPkiServerVerifier::builder(roots).build()?,
+        ))))
     }
 }
 

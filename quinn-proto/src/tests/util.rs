@@ -14,7 +14,11 @@ use std::{
 use assert_matches::assert_matches;
 use bytes::BytesMut;
 use lazy_static::lazy_static;
-use rustls::{client::WebPkiVerifier, Certificate, KeyLogFile, PrivateKey};
+use rustls::{
+    client::WebPkiServerVerifier,
+    pki_types::{CertificateDer, PrivateKeyDer},
+    KeyLogFile,
+};
 use tracing::{info_span, trace};
 
 use super::*;
@@ -549,7 +553,10 @@ pub(super) fn server_config() -> ServerConfig {
     ServerConfig::with_crypto(Arc::new(server_crypto()))
 }
 
-pub(super) fn server_config_with_cert(cert: Certificate, key: PrivateKey) -> ServerConfig {
+pub(super) fn server_config_with_cert(
+    cert: CertificateDer<'static>,
+    key: PrivateKeyDer<'static>,
+) -> ServerConfig {
     ServerConfig::with_crypto(Arc::new(server_crypto_with_cert(cert, key)))
 }
 
@@ -561,18 +568,21 @@ pub(super) fn server_crypto_with_alpn(alpn: Vec<Vec<u8>>) -> rustls::ServerConfi
     server_crypto_inner(None, Some(alpn))
 }
 
-pub(super) fn server_crypto_with_cert(cert: Certificate, key: PrivateKey) -> rustls::ServerConfig {
+pub(super) fn server_crypto_with_cert(
+    cert: CertificateDer<'static>,
+    key: PrivateKeyDer<'static>,
+) -> rustls::ServerConfig {
     server_crypto_inner(Some((cert, key)), None)
 }
 
 fn server_crypto_inner(
-    identity: Option<(Certificate, PrivateKey)>,
+    identity: Option<(CertificateDer<'static>, PrivateKeyDer<'static>)>,
     alpn: Option<Vec<Vec<u8>>>,
 ) -> rustls::ServerConfig {
     let (cert, key) = identity.unwrap_or_else(|| {
         (
-            Certificate(CERTIFICATE.serialize_der().unwrap()),
-            PrivateKey(CERTIFICATE.serialize_private_key_der()),
+            CertificateDer::from(CERTIFICATE.serialize_der().unwrap()),
+            PrivateKeyDer::Pkcs8(CERTIFICATE.serialize_private_key_der().into()),
         )
     });
 
@@ -596,7 +606,7 @@ pub(super) fn client_config_with_deterministic_pns() -> ClientConfig {
     cfg
 }
 
-pub(super) fn client_config_with_certs(certs: Vec<rustls::Certificate>) -> ClientConfig {
+pub(super) fn client_config_with_certs(certs: Vec<CertificateDer<'static>>) -> ClientConfig {
     ClientConfig::new(Arc::new(client_crypto_inner(Some(certs), None)))
 }
 
@@ -609,19 +619,22 @@ pub(super) fn client_crypto_with_alpn(protocols: Vec<Vec<u8>>) -> rustls::Client
 }
 
 fn client_crypto_inner(
-    certs: Option<Vec<rustls::Certificate>>,
+    certs: Option<Vec<CertificateDer<'static>>>,
     alpn: Option<Vec<Vec<u8>>>,
 ) -> rustls::ClientConfig {
     let certs =
-        certs.unwrap_or_else(|| vec![rustls::Certificate(CERTIFICATE.serialize_der().unwrap())]);
+        certs.unwrap_or_else(|| vec![CertificateDer::from(CERTIFICATE.serialize_der().unwrap())]);
 
     let mut roots = rustls::RootCertStore::empty();
     for cert in certs {
-        roots.add(&cert).unwrap();
+        roots.add(cert).unwrap();
     }
 
-    let mut config =
-        crate::crypto::rustls::client_config(WebPkiVerifier::new(roots, None)).unwrap();
+    let mut config = crate::crypto::rustls::client_config(
+        WebPkiServerVerifier::builder(Arc::new(roots))
+            .build()
+            .unwrap(),
+    );
     config.key_log = Arc::new(KeyLogFile::new());
     if let Some(alpn) = alpn {
         config.alpn_protocols = alpn;
