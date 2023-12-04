@@ -17,10 +17,12 @@ all-features = true
 maintenance = { status = "experimental" }
 
 [features]
-default = ["tls-rustls", "log"]
-tls-rustls = ["rustls", "ring"]
+default = ["rustls", "log"]
+rustls = ["dep:rustls", "ring"]
+ring = ["dep:ring"]
+# Enable rustls ring provider and direct ring usage
 # Provides `ClientConfig::with_platform_verifier()` convenience method
-platform-verifier = ["rustls-platform-verifier"]
+platform-verifier = ["dep:rustls-platform-verifier"]
 # Write logs via the `log` crate when no `tracing` subscriber exists
 log = ["tracing/log"]
 
@@ -29,9 +31,9 @@ arbitrary = { version = "1.0.1", features = ["derive"], optional = true }
 bytes = "1"
 rustc-hash = "1.1"
 rand = "0.8"
-ring = { version = "0.16.7", optional = true }
-rustls = { version = "0.21.0", default-features = false, features = ["quic"], optional = true }
-rustls-platform-verifier = { version = "0.1.1", optional = true }
+ring = { version = "0.17", optional = true }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
+rustls-platform-verifier = { version = "0.3", optional = true }
 slab = "0.4"
 thiserror = "1.0.21"
 tinyvec = { version = "1.1", features = ["alloc"] }
