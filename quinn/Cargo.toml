@@ -25,6 +25,7 @@ tls-rustls = ["rustls", "proto/tls-rustls", "ring"]
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
 runtime-async-std = ["async-io", "async-std"]
+
 # Write logs via the `log` crate when no `tracing` subscriber exists
 log = ["tracing/log", "proto/log", "udp/log"]
 
@@ -42,6 +43,7 @@ rustc-hash = "1.1"
 pin-project-lite = "0.2"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.11", default-features = false }
 rustls = { version = "0.21.0", default-features = false, features = ["quic"], optional = true }
+smol = { version = "1.3", optional = true }
 thiserror = "1.0.21"
 tracing = "0.1.10"
 tokio = { version = "1.28.1", features = ["sync"] }

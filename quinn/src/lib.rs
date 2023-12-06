@@ -78,6 +78,8 @@ pub use crate::endpoint::{Accept, Endpoint};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream};
 #[cfg(feature = "runtime-async-std")]
 pub use crate::runtime::AsyncStdRuntime;
+#[cfg(feature = "runtime-smol")]
+pub use crate::runtime::SmolRuntime;
 #[cfg(feature = "runtime-tokio")]
 pub use crate::runtime::TokioRuntime;
 pub use crate::runtime::{default_runtime, AsyncTimer, AsyncUdpSocket, Runtime};
