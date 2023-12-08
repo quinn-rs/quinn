@@ -2499,7 +2499,6 @@ impl Connection {
         packet: Packet,
     ) -> Result<(), TransportError> {
         let payload = packet.payload.freeze();
-        let is_0rtt = self.spaces[SpaceId::Data].crypto.is_none();
         let mut is_probing_packet = true;
         let mut close = None;
         let payload_len = payload.len();
@@ -2530,7 +2529,7 @@ impl Connection {
             }
 
             let _guard = span.as_ref().map(|x| x.enter());
-            if is_0rtt {
+            if packet.header.is_0rtt() {
                 match frame {
                     Frame::Crypto(_) | Frame::Close(Close::Application(_)) => {
                         return Err(TransportError::PROTOCOL_VIOLATION(
