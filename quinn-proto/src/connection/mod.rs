@@ -2190,9 +2190,7 @@ impl Connection {
         let state = match self.state {
             State::Established => {
                 match packet.header.space() {
-                    SpaceId::Data => {
-                        self.process_payload(now, remote, number.unwrap(), packet.payload.freeze())?
-                    }
+                    SpaceId::Data => self.process_payload(now, remote, number.unwrap(), packet)?,
                     _ => self.process_early_payload(now, packet)?,
                 }
                 return Ok(());
@@ -2412,7 +2410,7 @@ impl Connection {
                 ty: LongType::ZeroRtt,
                 ..
             } => {
-                self.process_payload(now, remote, number.unwrap(), packet.payload.freeze())?;
+                self.process_payload(now, remote, number.unwrap(), packet)?;
                 Ok(())
             }
             Header::VersionNegotiate { .. } => {
@@ -2498,8 +2496,9 @@ impl Connection {
         now: Instant,
         remote: SocketAddr,
         number: u64,
-        payload: Bytes,
+        packet: Packet,
     ) -> Result<(), TransportError> {
+        let payload = packet.payload.freeze();
         let is_0rtt = self.spaces[SpaceId::Data].crypto.is_none();
         let mut is_probing_packet = true;
         let mut close = None;
