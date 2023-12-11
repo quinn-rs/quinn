@@ -70,7 +70,8 @@ pub trait AsyncUdpSocket: Send + Sync + Debug + 'static {
 ///
 /// If `runtime-tokio` is enabled and this function is called from within a Tokio runtime context,
 /// then `TokioRuntime` is returned. Otherwise, if `runtime-async-std` is enabled, `AsyncStdRuntime`
-/// is returned. Otherwise, `None` is returned.
+/// is returned. Otherwise, if `runtime-smol` is enabled, `SmolRuntime` is returned.
+/// Otherwise, `None` is returned.
 pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
     #[cfg(feature = "runtime-tokio")]
     {
@@ -84,7 +85,12 @@ pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
         return Some(Arc::new(AsyncStdRuntime));
     }
 
-    #[cfg(not(feature = "runtime-async-std"))]
+    #[cfg(all(feature = "runtime-smol", not(feature = "runtime-async-std")))]
+    {
+        return Some(Arc::new(SmolRuntime));
+    }
+
+    #[cfg(not(any(feature = "runtime-async-std", feature = "runtime-smol")))]
     None
 }
 
@@ -93,7 +99,7 @@ mod tokio;
 #[cfg(feature = "runtime-tokio")]
 pub use self::tokio::TokioRuntime;
 
-#[cfg(feature = "runtime-async-std")]
-mod async_std;
-#[cfg(feature = "runtime-async-std")]
-pub use self::async_std::AsyncStdRuntime;
+#[cfg(feature = "async-io")]
+mod async_io;
+#[cfg(feature = "async-io")]
+pub use self::async_io::*;
