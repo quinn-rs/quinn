@@ -11,21 +11,32 @@ use async_io::{Async, Timer};
 
 use super::{AsyncTimer, AsyncUdpSocket, Runtime};
 
-/// A Quinn runtime for async-std
-#[derive(Debug)]
-pub struct AsyncStdRuntime;
+#[cfg(feature = "async-std")]
+pub use self::async_std::AsyncStdRuntime;
 
-impl Runtime for AsyncStdRuntime {
-    fn new_timer(&self, t: Instant) -> Pin<Box<dyn AsyncTimer>> {
-        Box::pin(Timer::at(t))
-    }
+#[cfg(feature = "async-std")]
+mod async_std {
+    use super::*;
 
-    fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
-        async_std::task::spawn(future);
-    }
+    /// A Quinn runtime for async-std
+    #[derive(Debug)]
+    pub struct AsyncStdRuntime;
 
-    fn wrap_udp_socket(&self, sock: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>> {
-        Ok(Arc::new(UdpSocket::new(sock)?))
+    impl Runtime for AsyncStdRuntime {
+        fn new_timer(&self, t: Instant) -> Pin<Box<dyn AsyncTimer>> {
+            Box::pin(Timer::at(t))
+        }
+
+        fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>) {
+            ::async_std::task::spawn(future);
+        }
+
+        fn wrap_udp_socket(
+            &self,
+            sock: std::net::UdpSocket,
+        ) -> io::Result<Arc<dyn AsyncUdpSocket>> {
+            Ok(Arc::new(UdpSocket::new(sock)?))
+        }
     }
 }
 
