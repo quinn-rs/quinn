@@ -387,7 +387,7 @@ pub(crate) struct State {
     transmit_queue_contents_len: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct Shared {
     incoming: Notify,
     idle: Notify,
@@ -691,10 +691,7 @@ impl EndpointRef {
         ];
         let (sender, events) = mpsc::unbounded_channel();
         Self(Arc::new(EndpointInner {
-            shared: Shared {
-                incoming: Notify::new(),
-                idle: Notify::new(),
-            },
+            shared: Shared::default(),
             state: Mutex::new(State {
                 socket,
                 inner,
