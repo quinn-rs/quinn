@@ -8,11 +8,12 @@ use std::{
     pin::Pin,
     str,
     sync::{Arc, Mutex},
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
     time::Instant,
 };
 
 use crate::runtime::{default_runtime, AsyncUdpSocket, Runtime};
+use atomic_waker::AtomicWaker;
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use proto::{
@@ -319,10 +320,8 @@ impl Future for EndpointDriver {
 
     #[allow(unused_mut)] // MSRV
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.0.shared.driver.register(cx.waker());
         let mut endpoint = self.0.state.lock().unwrap();
-        if endpoint.driver.is_none() {
-            endpoint.driver = Some(cx.waker().clone());
-        }
 
         let now = Instant::now();
         let mut keep_going = false;
@@ -372,7 +371,6 @@ pub(crate) struct State {
     inner: proto::Endpoint,
     outgoing: VecDeque<udp::Transmit>,
     incoming: VecDeque<Connecting>,
-    driver: Option<Waker>,
     ipv6: bool,
     connections: ConnectionSet,
     events: mpsc::UnboundedReceiver<(ConnectionHandle, EndpointEvent)>,
@@ -391,6 +389,7 @@ pub(crate) struct State {
 pub(crate) struct Shared {
     incoming: Notify,
     idle: Notify,
+    driver: Arc<AtomicWaker>,
 }
 
 impl State {
@@ -705,7 +704,6 @@ impl EndpointRef {
                 events,
                 outgoing: VecDeque::new(),
                 incoming: VecDeque::new(),
-                driver: None,
                 connections: ConnectionSet {
                     senders: FxHashMap::default(),
                     sender,
@@ -738,9 +736,7 @@ impl Drop for EndpointRef {
             if x == 0 {
                 // If the driver is about to be on its own, ensure it can shut down if the last
                 // connection is gone.
-                if let Some(task) = endpoint.driver.take() {
-                    task.wake();
-                }
+                self.0.shared.driver.wake();
             }
         }
     }
