@@ -4,7 +4,7 @@ use std::{
     fmt, iter,
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
-    sync::Arc,
+    sync::{mpsc, Arc},
     time::{Instant, SystemTime},
 };
 
@@ -19,13 +19,12 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
-    connection::{Connection, ConnectionError},
+    connection::{Connection, ConnectionError, EndpointEvents},
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
     shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner, IssuedCid,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent, IssuedCid,
     },
     transport_parameters::TransportParameters,
     ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
@@ -45,6 +44,8 @@ pub struct Endpoint {
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
+    event_send: mpsc::Sender<(ConnectionHandle, EndpointEvent)>,
+    event_recv: mpsc::Receiver<(ConnectionHandle, EndpointEvent)>,
 }
 
 impl Endpoint {
@@ -59,6 +60,7 @@ impl Endpoint {
         allow_mtud: bool,
         rng_seed: Option<[u8; 32]>,
     ) -> Self {
+        let (event_send, event_recv) = mpsc::channel();
         Self {
             rng: rng_seed.map_or(StdRng::from_entropy(), StdRng::from_seed),
             index: ConnectionIndex::default(),
@@ -67,6 +69,8 @@ impl Endpoint {
             config,
             server_config,
             allow_mtud,
+            event_send,
+            event_recv,
         }
     }
 
@@ -75,16 +79,25 @@ impl Endpoint {
         self.server_config = server_config;
     }
 
-    /// Process `EndpointEvent`s emitted from related `Connection`s
+    /// Process events from [`Connection`]s that have returned `true` from [`Connection::poll_endpoint_events`]
     ///
-    /// In turn, processing this event may return a `ConnectionEvent` for the same `Connection`.
-    pub fn handle_event(
+    /// May return a `ConnectionEvent` for any `Connection`. Call until `None` is returned.
+    pub fn handle_events(&mut self) -> Option<(ConnectionHandle, ConnectionEvent)> {
+        while let Ok((ch, event)) = self.event_recv.try_recv() {
+            if let Some(response) = self.handle_event(ch, event) {
+                return Some((ch, response));
+            }
+        }
+        None
+    }
+
+    fn handle_event(
         &mut self,
         ch: ConnectionHandle,
         event: EndpointEvent,
     ) -> Option<ConnectionEvent> {
-        use EndpointEventInner::*;
-        match event.0 {
+        use EndpointEvent::*;
+        match event {
             NeedIdentifiers(n) => {
                 return Some(self.send_new_identifiers(ch, n));
             }
@@ -564,7 +577,7 @@ impl Endpoint {
             }
             Err(e) => {
                 debug!("handshake failed: {}", e);
-                self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
+                self.handle_event(ch, EndpointEvent::Drained);
                 match e {
                     ConnectionError::TransportError(e) => Some(DatagramEvent::Response(
                         self.initial_close(version, addresses, crypto, &src_cid, e, buf),
@@ -605,6 +618,7 @@ impl Endpoint {
             version,
             self.allow_mtud,
             rng_seed,
+            EndpointEvents::new(ch, self.event_send.clone()),
         );
 
         let id = self.connections.insert(ConnectionMeta {

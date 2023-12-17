@@ -22,29 +22,8 @@ pub(crate) enum ConnectionEventInner {
     NewIdentifiers(Vec<IssuedCid>),
 }
 
-/// Events sent from a Connection to an Endpoint
-#[derive(Debug)]
-pub struct EndpointEvent(pub(crate) EndpointEventInner);
-
-impl EndpointEvent {
-    /// Construct an event that indicating that a `Connection` will no longer emit events
-    ///
-    /// Useful for notifying an `Endpoint` that a `Connection` has been destroyed outside of the
-    /// usual state machine flow, e.g. when being dropped by the user.
-    pub fn drained() -> Self {
-        Self(EndpointEventInner::Drained)
-    }
-
-    /// Determine whether this is the last event a `Connection` will emit
-    ///
-    /// Useful for determining when connection-related event loop state can be freed.
-    pub fn is_drained(&self) -> bool {
-        self.0 == EndpointEventInner::Drained
-    }
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum EndpointEventInner {
+pub(crate) enum EndpointEvent {
     /// The connection has been drained
     Drained,
     /// The reset token and/or address eligible for generating resets has been updated

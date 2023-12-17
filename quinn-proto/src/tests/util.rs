@@ -362,8 +362,8 @@ impl TestEndpoint {
         }
 
         loop {
-            let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
-            for (ch, conn) in self.connections.iter_mut() {
+            let mut endpoint_events = false;
+            for (_, conn) in self.connections.iter_mut() {
                 if self.timeout.map_or(false, |x| x <= now) {
                     self.timeout = None;
                     conn.handle_timeout(now);
@@ -375,9 +375,7 @@ impl TestEndpoint {
                     }
                 }
 
-                while let Some(event) = conn.poll_endpoint_events() {
-                    endpoint_events.push((*ch, event));
-                }
+                endpoint_events |= conn.poll_endpoint_events();
                 while let Some(transmit) = conn.poll_transmit(now, MAX_DATAGRAMS, &mut buf) {
                     let size = transmit.size;
                     self.outbound
@@ -386,15 +384,13 @@ impl TestEndpoint {
                 self.timeout = conn.poll_timeout();
             }
 
-            if endpoint_events.is_empty() {
+            if !endpoint_events {
                 break;
             }
 
-            for (ch, event) in endpoint_events {
-                if let Some(event) = self.handle_event(ch, event) {
-                    if let Some(conn) = self.connections.get_mut(&ch) {
-                        conn.handle_event(event, now);
-                    }
+            while let Some((ch, event)) = self.handle_events() {
+                if let Some(conn) = self.connections.get_mut(&ch) {
+                    conn.handle_event(event, now);
                 }
             }
         }

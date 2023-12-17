@@ -527,24 +527,15 @@ impl State {
 
     fn handle_events(&mut self, cx: &mut Context, shared: &Shared) -> bool {
         use EndpointEvent::*;
+        let mut keep_going = true;
         for _ in 0..IO_LOOP_BOUND {
             match self.events.poll_recv(cx) {
                 Poll::Ready(Some((ch, event))) => match event {
-                    Proto(e) => {
-                        if e.is_drained() {
-                            self.connections.senders.remove(&ch);
-                            if self.connections.is_empty() {
-                                shared.idle.notify_waiters();
-                            }
-                        }
-                        if let Some(event) = self.inner.handle_event(ch, e) {
-                            // Ignoring errors from dropped connections that haven't yet been cleaned up
-                            let _ = self
-                                .connections
-                                .senders
-                                .get_mut(&ch)
-                                .unwrap()
-                                .send(ConnectionEvent::Proto(event));
+                    Proto => {}
+                    Drained => {
+                        self.connections.senders.remove(&ch);
+                        if self.connections.is_empty() {
+                            shared.idle.notify_waiters();
                         }
                     }
                     Transmit(t, buf) => {
@@ -557,12 +548,27 @@ impl State {
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
-                    return false;
+                    keep_going = false;
                 }
             }
         }
 
-        true
+        let mut n = 0;
+        while let Some((ch, event)) = self.inner.handle_events() {
+            // Ignoring errors from dropped connections that haven't yet been cleaned up
+            let _ = self
+                .connections
+                .senders
+                .get_mut(&ch)
+                .unwrap()
+                .send(ConnectionEvent::Proto(event));
+            n += 1;
+            if n > IO_LOOP_BOUND {
+                return true;
+            }
+        }
+
+        keep_going
     }
 }
 
