@@ -10,6 +10,7 @@ use std::{
 };
 
 use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime};
+use atomic_waker::AtomicWaker;
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
@@ -40,6 +41,7 @@ impl Connecting {
         handle: ConnectionHandle,
         conn: proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
+        endpoint_driver: Arc<AtomicWaker>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
@@ -50,6 +52,7 @@ impl Connecting {
             handle,
             conn,
             endpoint_events,
+            endpoint_driver,
             conn_events,
             on_handshake_data_send,
             on_connected_send,
@@ -233,7 +236,7 @@ impl Future for ConnectionDriver {
         // If a timer expires, there might be more to transmit. When we transmit something, we
         // might need to reset a timer. Hence, we must loop until neither happens.
         keep_going |= conn.drive_timer(cx);
-        conn.forward_endpoint_events();
+        conn.forward_endpoint_events(&self.0.shared);
         conn.forward_app_events(&self.0.shared);
 
         if !conn.inner.is_drained() {
@@ -759,6 +762,7 @@ impl ConnectionRef {
         handle: ConnectionHandle,
         conn: proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
+        endpoint_driver: Arc<AtomicWaker>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         on_handshake_data: oneshot::Sender<()>,
         on_connected: oneshot::Sender<bool>,
@@ -786,7 +790,13 @@ impl ConnectionRef {
                 socket,
                 runtime,
             }),
-            shared: Shared::default(),
+            shared: Shared {
+                endpoint_driver,
+                stream_budget_available: Default::default(),
+                stream_incoming: Default::default(),
+                datagrams: Default::default(),
+                closed: Default::default(),
+            },
         }))
     }
 
@@ -831,7 +841,7 @@ pub(crate) struct ConnectionInner {
     pub(crate) shared: Shared,
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub(crate) struct Shared {
     /// Notified when new streams may be locally initiated due to an increase in stream ID flow
     /// control budget
@@ -840,6 +850,7 @@ pub(crate) struct Shared {
     stream_incoming: [Notify; 2],
     datagrams: Notify,
     closed: Notify,
+    endpoint_driver: Arc<AtomicWaker>,
 }
 
 pub(crate) struct State {
@@ -898,18 +909,17 @@ impl State {
         false
     }
 
-    fn forward_endpoint_events(&mut self) {
+    fn forward_endpoint_events(&mut self, shared: &Shared) {
         if !self.inner.poll_endpoint_events() {
             return;
         }
-        // If the endpoint driver is gone, noop.
-        let _ = self.endpoint_events.send((
-            self.handle,
-            match self.inner.is_drained() {
-                false => EndpointEvent::Proto,
-                true => EndpointEvent::Drained,
-            },
-        ));
+        shared.endpoint_driver.wake();
+        if self.inner.is_drained() {
+            // If the endpoint driver is gone, noop.
+            let _ = self
+                .endpoint_events
+                .send((self.handle, EndpointEvent::Drained));
+        }
     }
 
     /// If this returns `Err`, the endpoint is dead, so the driver should exit immediately.
