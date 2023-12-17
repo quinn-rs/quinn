@@ -444,14 +444,14 @@ impl State {
                                     );
                                     self.incoming.push_back(conn);
                                 }
-                                Some(DatagramEvent::ConnectionEvent(handle, event)) => {
+                                Some(DatagramEvent::ConnectionEvent(handle)) => {
                                     // Ignoring errors from dropped connections that haven't yet been cleaned up
                                     let _ = self
                                         .connections
                                         .senders
                                         .get_mut(&handle)
                                         .unwrap()
-                                        .send(ConnectionEvent::Proto(event));
+                                        .send(ConnectionEvent::Proto);
                                 }
                                 Some(DatagramEvent::Response(transmit)) => {
                                     // Limiting the memory usage for items queued in the outgoing queue from endpoint
@@ -562,14 +562,14 @@ impl State {
         }
 
         let mut n = 0;
-        while let Some((ch, event)) = self.inner.handle_events() {
+        while let Some(ch) = self.inner.handle_events() {
             // Ignoring errors from dropped connections that haven't yet been cleaned up
             let _ = self
                 .connections
                 .senders
                 .get_mut(&ch)
                 .unwrap()
-                .send(ConnectionEvent::Proto(event));
+                .send(ConnectionEvent::Proto);
             n += 1;
             if n > IO_LOOP_BOUND {
                 return true;

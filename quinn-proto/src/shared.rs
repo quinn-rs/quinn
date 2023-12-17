@@ -4,12 +4,8 @@ use bytes::{Buf, BufMut, BytesMut};
 
 use crate::{coding::BufExt, packet::PartialDecode, ResetToken, MAX_CID_SIZE};
 
-/// Events sent from an Endpoint to a Connection
 #[derive(Debug)]
-pub struct ConnectionEvent(pub(crate) ConnectionEventInner);
-
-#[derive(Debug)]
-pub(crate) enum ConnectionEventInner {
+pub(crate) enum ConnectionEvent {
     /// A datagram has been received for the Connection
     Datagram {
         now: Instant,

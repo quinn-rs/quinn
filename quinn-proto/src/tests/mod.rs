@@ -77,7 +77,7 @@ fn version_negotiate_client() {
         .unwrap();
     let now = Instant::now();
     let mut buf = BytesMut::with_capacity(client.config().get_max_udp_payload_size() as usize);
-    let opt_event = client.handle(
+    client.handle(
         now,
         server_addr,
         None,
@@ -90,9 +90,7 @@ fn version_negotiate_client() {
             .into(),
         &mut buf,
     );
-    if let Some(DatagramEvent::ConnectionEvent(_, event)) = opt_event {
-        client_ch.handle_event(event, now);
-    }
+    client_ch.handle_events(now);
     assert_matches!(
         client_ch.poll(),
         Some(Event::ConnectionLost {

@@ -23,9 +23,7 @@ use crate::{
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
-    shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent, IssuedCid,
-    },
+    shared::{ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent, IssuedCid},
     transport_parameters::TransportParameters,
     ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
     MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
@@ -81,25 +79,23 @@ impl Endpoint {
 
     /// Process events from [`Connection`]s that have returned `true` from [`Connection::poll_endpoint_events`]
     ///
-    /// May return a `ConnectionEvent` for any `Connection`. Call until `None` is returned.
-    pub fn handle_events(&mut self) -> Option<(ConnectionHandle, ConnectionEvent)> {
+    /// May return the [`ConnectionHandle`] of a [`Connection`] for which
+    /// [`Connection::handle_events`] must be called. Call until `None` is returned.
+    pub fn handle_events(&mut self) -> Option<ConnectionHandle> {
         while let Ok((ch, event)) = self.event_recv.try_recv() {
-            if let Some(response) = self.handle_event(ch, event) {
-                return Some((ch, response));
+            if self.handle_event(ch, event) {
+                return Some(ch);
             }
         }
         None
     }
 
-    fn handle_event(
-        &mut self,
-        ch: ConnectionHandle,
-        event: EndpointEvent,
-    ) -> Option<ConnectionEvent> {
+    fn handle_event(&mut self, ch: ConnectionHandle, event: EndpointEvent) -> bool {
         use EndpointEvent::*;
         match event {
             NeedIdentifiers(n) => {
-                return Some(self.send_new_identifiers(ch, n));
+                self.send_new_identifiers(ch, n);
+                return true;
             }
             ResetToken(remote, token) => {
                 if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
@@ -114,7 +110,8 @@ impl Endpoint {
                     trace!("peer retired CID {}: {}", seq, cid);
                     self.index.retire(&cid);
                     if allow_more_cids {
-                        return Some(self.send_new_identifiers(ch, 1));
+                        self.send_new_identifiers(ch, 1);
+                        return true;
                     }
                 }
             }
@@ -129,7 +126,27 @@ impl Endpoint {
                 }
             }
         }
-        None
+        false
+    }
+
+    #[cfg(test)]
+    pub(crate) fn decode_packet(
+        &self,
+        datagram: BytesMut,
+    ) -> Result<PartialDecode, PacketDecodeError> {
+        PartialDecode::new(
+            datagram,
+            self.local_cid_generator.cid_len(),
+            &self.config.supported_versions,
+            self.config.grease_quic_bit,
+        )
+        .map(|(packet, rest)| {
+            assert!(
+                rest.is_none(),
+                "capturing decoded coalesced packets in tests is unimplemented"
+            );
+            packet
+        })
     }
 
     /// Process an incoming UDP datagram
@@ -196,16 +213,16 @@ impl Endpoint {
 
         let addresses = FourTuple { remote, local_ip };
         if let Some(ch) = self.index.get(&addresses, &first_decode) {
-            return Some(DatagramEvent::ConnectionEvent(
-                ch,
-                ConnectionEvent(ConnectionEventInner::Datagram {
+            _ = self.connections[ch.0]
+                .events
+                .send(ConnectionEvent::Datagram {
                     now,
                     remote: addresses.remote,
                     ecn,
                     first_decode,
                     remaining,
-                }),
-            ));
+                });
+            return Some(DatagramEvent::ConnectionEvent(ch));
         }
 
         //
@@ -375,7 +392,7 @@ impl Endpoint {
         Ok((ch, conn))
     }
 
-    fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: u64) -> ConnectionEvent {
+    fn send_new_identifiers(&mut self, ch: ConnectionHandle, num: u64) {
         let mut ids = vec![];
         for _ in 0..num {
             let id = self.new_cid(ch);
@@ -389,7 +406,9 @@ impl Endpoint {
                 reset_token: ResetToken::new(&*self.config.reset_key, &id),
             });
         }
-        ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids))
+        _ = self.connections[ch]
+            .events
+            .send(ConnectionEvent::NewIdentifiers(ids));
     }
 
     /// Generate a connection ID for `ch`
@@ -603,6 +622,7 @@ impl Endpoint {
     ) -> Connection {
         let mut rng_seed = [0; 32];
         self.rng.fill_bytes(&mut rng_seed);
+        let (send, recv) = mpsc::channel();
         let conn = Connection::new(
             self.config.clone(),
             server_config,
@@ -619,6 +639,7 @@ impl Endpoint {
             self.allow_mtud,
             rng_seed,
             EndpointEvents::new(ch, self.event_send.clone()),
+            recv,
         );
 
         let id = self.connections.insert(ConnectionMeta {
@@ -627,6 +648,7 @@ impl Endpoint {
             loc_cids: iter::once((0, loc_cid)).collect(),
             addresses,
             reset_token: None,
+            events: send,
         });
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
@@ -836,6 +858,7 @@ pub(crate) struct ConnectionMeta {
     /// Reset token provided by the peer for the CID we're currently sending to, and the address
     /// being sent to
     reset_token: Option<(SocketAddr, ResetToken)>,
+    events: mpsc::Sender<ConnectionEvent>,
 }
 
 /// Internal identifier for a `Connection` currently associated with an endpoint
@@ -864,8 +887,8 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
 /// Event resulting from processing a single datagram
 #[allow(clippy::large_enum_variant)] // Not passed around extensively
 pub enum DatagramEvent {
-    /// The datagram is redirected to its `Connection`
-    ConnectionEvent(ConnectionHandle, ConnectionEvent),
+    /// [`Connection::handle_events`] must be called on the associated [`Connection`]
+    ConnectionEvent(ConnectionHandle),
     /// The datagram has resulted in starting a new `Connection`
     NewConnection(ConnectionHandle, Connection),
     /// Response generated directly by the endpoint

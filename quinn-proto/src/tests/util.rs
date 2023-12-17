@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     env,
     io::{self, Write},
     mem,
@@ -289,7 +289,7 @@ pub(super) struct TestEndpoint {
     pub(super) inbound: VecDeque<(Instant, Option<EcnCodepoint>, BytesMut)>,
     accepted: Option<ConnectionHandle>,
     pub(super) connections: HashMap<ConnectionHandle, Connection>,
-    conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
+    conn_events: HashSet<ConnectionHandle>,
     pub(super) captured_packets: Vec<Vec<u8>>,
     pub(super) capture_inbound_packets: bool,
 }
@@ -315,7 +315,7 @@ impl TestEndpoint {
             inbound: VecDeque::new(),
             accepted: None,
             connections: HashMap::default(),
-            conn_events: HashMap::default(),
+            conn_events: HashSet::default(),
             captured_packets: Vec::new(),
             capture_inbound_packets: false,
         }
@@ -335,22 +335,24 @@ impl TestEndpoint {
 
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
-            if let Some(event) = self
-                .endpoint
-                .handle(recv_time, remote, None, ecn, packet, &mut buf)
+            if let Some(event) =
+                self.endpoint
+                    .handle(recv_time, remote, None, ecn, packet.clone(), &mut buf)
             {
                 match event {
                     DatagramEvent::NewConnection(ch, conn) => {
                         self.connections.insert(ch, conn);
                         self.accepted = Some(ch);
                     }
-                    DatagramEvent::ConnectionEvent(ch, event) => {
+                    DatagramEvent::ConnectionEvent(ch) => {
                         if self.capture_inbound_packets {
-                            let packet = self.connections[&ch].decode_packet(&event);
+                            let packet = self
+                                .decode_packet(packet)
+                                .ok()
+                                .and_then(|x| self.connections[&ch].decode_packet(x));
                             self.captured_packets.extend(packet);
                         }
-
-                        self.conn_events.entry(ch).or_default().push_back(event);
+                        self.conn_events.insert(ch);
                     }
                     DatagramEvent::Response(transmit) => {
                         let size = transmit.size;
@@ -363,16 +365,14 @@ impl TestEndpoint {
 
         loop {
             let mut endpoint_events = false;
-            for (_, conn) in self.connections.iter_mut() {
+            for (ch, conn) in self.connections.iter_mut() {
                 if self.timeout.map_or(false, |x| x <= now) {
                     self.timeout = None;
                     conn.handle_timeout(now);
                 }
 
-                for (_, mut events) in self.conn_events.drain() {
-                    for event in events.drain(..) {
-                        conn.handle_event(event, now);
-                    }
+                if self.conn_events.remove(ch) {
+                    conn.handle_events(now);
                 }
 
                 endpoint_events |= conn.poll_endpoint_events();
@@ -388,9 +388,9 @@ impl TestEndpoint {
                 break;
             }
 
-            while let Some((ch, event)) = self.handle_events() {
+            while let Some(ch) = self.handle_events() {
                 if let Some(conn) = self.connections.get_mut(&ch) {
-                    conn.handle_event(event, now);
+                    conn.handle_events(now);
                 }
             }
         }
