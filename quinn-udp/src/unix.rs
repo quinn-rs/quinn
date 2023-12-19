@@ -668,7 +668,7 @@ fn decode_recv(
         match (cmsg.cmsg_level, cmsg.cmsg_type) {
             // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
             (libc::IPPROTO_IP, libc::IP_TOS) | (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
-                ecn_bits = cmsg::decode::<u8>(cmsg);
+                ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
             },
             (libc::IPPROTO_IPV6, libc::IPV6_TCLASS) => unsafe {
                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
@@ -677,30 +677,30 @@ fn decode_recv(
                 if cfg!(target_os = "macos")
                     && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
                 {
-                    ecn_bits = cmsg::decode::<u8>(cmsg);
+                    ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
                 } else {
-                    ecn_bits = cmsg::decode::<libc::c_int>(cmsg) as u8;
+                    ecn_bits = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as u8;
                 }
             },
             #[cfg(target_os = "linux")]
             (libc::IPPROTO_IP, libc::IP_PKTINFO) => {
-                let pktinfo = unsafe { cmsg::decode::<libc::in_pktinfo>(cmsg) };
+                let pktinfo = unsafe { cmsg::decode::<libc::in_pktinfo, libc::cmsghdr>(cmsg) };
                 dst_ip = Some(IpAddr::V4(Ipv4Addr::from(
                     pktinfo.ipi_addr.s_addr.to_ne_bytes(),
                 )));
             }
             #[cfg(any(target_os = "freebsd", target_os = "macos"))]
             (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
-                let in_addr = unsafe { cmsg::decode::<libc::in_addr>(cmsg) };
+                let in_addr = unsafe { cmsg::decode::<libc::in_addr, libc::cmsghdr>(cmsg) };
                 dst_ip = Some(IpAddr::V4(Ipv4Addr::from(in_addr.s_addr.to_ne_bytes())));
             }
             (libc::IPPROTO_IPV6, libc::IPV6_PKTINFO) => {
-                let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo>(cmsg) };
+                let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
                 dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
             }
             #[cfg(target_os = "linux")]
             (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
-                stride = cmsg::decode::<libc::c_int>(cmsg) as usize;
+                stride = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as usize;
             },
             _ => {}
         }
@@ -770,7 +770,7 @@ mod gso {
         }
     }
 
-    pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder, segment_size: u16) {
+    pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
         encoder.push(libc::SOL_UDP, libc::UDP_SEGMENT, segment_size);
     }
 }
@@ -783,7 +783,7 @@ mod gso {
         1
     }
 
-    pub(super) fn set_segment_size(_encoder: &mut cmsg::Encoder, _segment_size: u16) {
+    pub(super) fn set_segment_size(_encoder: &mut cmsg::Encoder<libc::msghdr>, _segment_size: u16) {
         panic!("Setting a segment size is not supported on current platform");
     }
 }
