@@ -986,7 +986,8 @@ impl State {
     ) -> Result<(), ConnectionError> {
         loop {
             match self.conn_events.poll_recv(cx) {
-                Poll::Ready(Some(ConnectionEvent::LocalAddressChanged)) => {
+                Poll::Ready(Some(ConnectionEvent::Rebind(socket))) => {
+                    self.socket = socket;
                     self.inner.local_address_changed();
                 }
                 Poll::Ready(Some(ConnectionEvent::Proto(event))) => {

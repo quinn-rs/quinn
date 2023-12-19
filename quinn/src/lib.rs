@@ -41,7 +41,7 @@
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 macro_rules! ready {
     ($e:expr $(,)?) => {
@@ -96,8 +96,8 @@ enum ConnectionEvent {
         error_code: VarInt,
         reason: bytes::Bytes,
     },
-    LocalAddressChanged,
     Proto(proto::ConnectionEvent),
+    Rebind(Arc<dyn AsyncUdpSocket>),
 }
 
 #[derive(Debug)]

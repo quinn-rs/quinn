@@ -227,10 +227,10 @@ impl Endpoint {
         inner.io_poller = inner.socket.clone().create_io_poller();
         inner.ipv6 = addr.is_ipv6();
 
-        // Generate some activity so peers notice the rebind
+        // Update connection socket references
         for sender in inner.recv_state.connections.senders.values() {
             // Ignoring errors from dropped connections
-            let _ = sender.send(ConnectionEvent::LocalAddressChanged);
+            let _ = sender.send(ConnectionEvent::Rebind(inner.socket.clone()));
         }
 
         Ok(())
