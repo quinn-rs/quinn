@@ -863,6 +863,7 @@ impl ConnectionRef {
                 io_poller: socket.clone().create_io_poller(),
                 socket,
                 runtime,
+                send_buffer: BytesMut::new(),
                 buffered_transmit: None,
             }),
             shared: Shared::default(),
@@ -944,6 +945,7 @@ pub(crate) struct State {
     socket: Arc<dyn AsyncUdpSocket>,
     io_poller: Pin<Box<dyn UdpPoller>>,
     runtime: Arc<dyn Runtime>,
+    send_buffer: BytesMut,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<udp::Transmit>,
 }
@@ -954,21 +956,23 @@ impl State {
         let mut transmits = 0;
 
         let max_datagrams = self.socket.max_transmit_segments();
-        let capacity = self.inner.current_mtu();
-        let mut buffer = BytesMut::with_capacity(capacity as usize);
+        self.send_buffer.reserve(self.inner.current_mtu() as usize);
 
         loop {
             // Retry the last transmit, or get a new one.
             let t = match self.buffered_transmit.take() {
                 Some(t) => t,
-                None => match self.inner.poll_transmit(now, max_datagrams, &mut buffer) {
+                None => match self
+                    .inner
+                    .poll_transmit(now, max_datagrams, &mut self.send_buffer)
+                {
                     Some(t) => {
                         transmits += match t.segment_size {
                             None => 1,
                             Some(s) => (t.size + s - 1) / s, // round up
                         };
 
-                        let buffer = buffer.split_to(t.size).freeze();
+                        let buffer = self.send_buffer.split_to(t.size).freeze();
                         udp_transmit(t, buffer)
                     }
                     None => break,
