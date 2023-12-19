@@ -533,7 +533,6 @@ impl State {
                                 .send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t, buf) => self.transmit_state.enqueue(t, buf),
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
@@ -568,12 +567,6 @@ impl TransmitState {
             transmit,
             response_buffer.split_to(contents_len).freeze(),
         ));
-        self.contents_len = self.contents_len.saturating_add(contents_len);
-    }
-
-    fn enqueue(&mut self, t: proto::Transmit, buf: Bytes) {
-        let contents_len = buf.len();
-        self.outgoing.push_back(udp_transmit(t, buf));
         self.contents_len = self.contents_len.saturating_add(contents_len);
     }
 
