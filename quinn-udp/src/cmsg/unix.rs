@@ -1,27 +1,33 @@
-use std::{mem, ptr};
+use std::{
+    ffi::{c_int, c_uchar},
+    mem, ptr,
+};
+
+use super::{CMsgHdr, MsgHdr};
 
 #[derive(Copy, Clone)]
-#[repr(align(8))] // Conservative bound for align_of<cmsghdr>
+#[repr(align(8))] // Conservative bound for align_of<libc::cmsghdr>
 pub(crate) struct Aligned<T>(pub(crate) T);
 
-/// Helper to encode a series of control messages ("cmsgs") to a buffer for use in `sendmsg`.
+/// Helper to encode a series of control messages (native "cmsgs") to a buffer for use in `sendmsg`
+//  like API.
 ///
-/// The operation must be "finished" for the msghdr to be usable, either by calling `finish`
+/// The operation must be "finished" for the native msghdr to be usable, either by calling `finish`
 /// explicitly or by dropping the `Encoder`.
-pub(crate) struct Encoder<'a> {
-    hdr: &'a mut libc::msghdr,
-    cmsg: Option<&'a mut libc::cmsghdr>,
+pub(crate) struct Encoder<'a, M: MsgHdr> {
+    hdr: &'a mut M,
+    cmsg: Option<&'a mut M::ControlMessage>,
     len: usize,
 }
 
-impl<'a> Encoder<'a> {
+impl<'a, M: MsgHdr> Encoder<'a, M> {
     /// # Safety
-    /// - `hdr.msg_control` must be a suitably aligned pointer to `hdr.msg_controllen` bytes that
-    ///   can be safely written
+    /// - `hdr` must contain a suitably aligned pointer to a big enough buffer to hold control messages
+    ///   bytes. All bytes of this buffer can be safely written.
     /// - The `Encoder` must be dropped before `hdr` is passed to a system call, and must not be leaked.
-    pub(crate) unsafe fn new(hdr: &'a mut libc::msghdr) -> Self {
+    pub(crate) unsafe fn new(hdr: &'a mut M) -> Self {
         Self {
-            cmsg: libc::CMSG_FIRSTHDR(hdr).as_mut(),
+            cmsg: hdr.cmsg_first_hdr().as_mut(),
             hdr,
             len: 0,
         }
@@ -31,28 +37,27 @@ impl<'a> Encoder<'a> {
     ///
     /// # Panics
     /// - If insufficient buffer space remains.
-    /// - If `T` has stricter alignment requirements than `cmsghdr`
-    pub(crate) fn push<T: Copy + ?Sized>(&mut self, level: libc::c_int, ty: libc::c_int, value: T) {
-        assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
-        let space = unsafe { libc::CMSG_SPACE(mem::size_of_val(&value) as _) as usize };
-        #[allow(clippy::unnecessary_cast)] // hdr.msg_controllen defined as size_t
-        {
-            assert!(
-                self.hdr.msg_controllen as usize >= self.len + space,
-                "control message buffer too small. Required: {}, Available: {}",
-                self.len + space,
-                self.hdr.msg_controllen
-            );
-        }
+    /// - If `T` has stricter alignment requirements than `M::ControlMessage`
+    pub(crate) fn push<T: Copy + ?Sized>(&mut self, level: c_int, ty: c_int, value: T) {
+        assert!(mem::align_of::<T>() <= mem::align_of::<M::ControlMessage>());
+        let space = M::ControlMessage::cmsg_space(mem::size_of_val(&value));
+        assert!(
+            self.hdr.control_len() >= self.len + space,
+            "control message buffer too small. Required: {}, Available: {}",
+            self.len + space,
+            self.hdr.control_len()
+        );
         let cmsg = self.cmsg.take().expect("no control buffer space remaining");
-        cmsg.cmsg_level = level;
-        cmsg.cmsg_type = ty;
-        cmsg.cmsg_len = unsafe { libc::CMSG_LEN(mem::size_of_val(&value) as _) } as _;
+        cmsg.set(
+            level,
+            ty,
+            M::ControlMessage::cmsg_len(mem::size_of_val(&value)),
+        );
         unsafe {
-            ptr::write(libc::CMSG_DATA(cmsg) as *const T as *mut T, value);
+            ptr::write(cmsg.cmsg_data() as *const T as *mut T, value);
         }
         self.len += space;
-        self.cmsg = unsafe { libc::CMSG_NXTHDR(self.hdr, cmsg).as_mut() };
+        self.cmsg = unsafe { self.hdr.cmsg_nxt_hdr(cmsg).as_mut() };
     }
 
     /// Finishes appending control messages to the buffer
@@ -62,52 +67,93 @@ impl<'a> Encoder<'a> {
 }
 
 // Statically guarantees that the encoding operation is "finished" before the control buffer is read
-// by `sendmsg`.
-impl<'a> Drop for Encoder<'a> {
+// by `sendmsg` like API.
+impl<'a, M: MsgHdr> Drop for Encoder<'a, M> {
     fn drop(&mut self) {
-        self.hdr.msg_controllen = self.len as _;
+        self.hdr.set_control_len(self.len as _);
     }
 }
 
 /// # Safety
 ///
-/// `cmsg` must refer to a cmsg containing a payload of type `T`
-pub(crate) unsafe fn decode<T: Copy>(cmsg: &libc::cmsghdr) -> T {
-    assert!(mem::align_of::<T>() <= mem::align_of::<libc::cmsghdr>());
-    #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
-    {
-        debug_assert_eq!(
-            cmsg.cmsg_len as usize,
-            libc::CMSG_LEN(mem::size_of::<T>() as _) as usize
-        );
-    }
-    ptr::read(libc::CMSG_DATA(cmsg) as *const T)
+/// `cmsg` must refer to a native cmsg containing a payload of type `T`
+pub(crate) unsafe fn decode<T: Copy, C: CMsgHdr>(cmsg: &impl CMsgHdr) -> T {
+    assert!(mem::align_of::<T>() <= mem::align_of::<C>());
+    debug_assert_eq!(cmsg.len(), C::cmsg_len(mem::size_of::<T>()));
+    ptr::read(cmsg.cmsg_data() as *const T)
 }
 
-pub(crate) struct Iter<'a> {
-    hdr: &'a libc::msghdr,
-    cmsg: Option<&'a libc::cmsghdr>,
+pub(crate) struct Iter<'a, M: MsgHdr> {
+    hdr: &'a M,
+    cmsg: Option<&'a M::ControlMessage>,
 }
 
-impl<'a> Iter<'a> {
+impl<'a, M: MsgHdr> Iter<'a, M> {
     /// # Safety
     ///
-    /// `hdr.msg_control` must point to memory outliving `'a` which can be soundly read for the
-    /// lifetime of the constructed `Iter` and contains a buffer of cmsgs, i.e. is aligned for
-    /// `cmsghdr`, is fully initialized, and has correct internal links.
-    pub(crate) unsafe fn new(hdr: &'a libc::msghdr) -> Self {
+    /// `hdr` must hold a pointer to memory outliving `'a` which can be soundly read for the
+    /// lifetime of the constructed `Iter` and contains a buffer of native cmsgs, i.e. is aligned
+    //  for native `cmsghdr`, is fully initialized, and has correct internal links.
+    pub(crate) unsafe fn new(hdr: &'a M) -> Self {
         Self {
             hdr,
-            cmsg: libc::CMSG_FIRSTHDR(hdr).as_ref(),
+            cmsg: hdr.cmsg_first_hdr().as_ref(),
         }
     }
 }
 
-impl<'a> Iterator for Iter<'a> {
-    type Item = &'a libc::cmsghdr;
-    fn next(&mut self) -> Option<&'a libc::cmsghdr> {
+impl<'a, M: MsgHdr> Iterator for Iter<'a, M> {
+    type Item = &'a M::ControlMessage;
+
+    fn next(&mut self) -> Option<Self::Item> {
         let current = self.cmsg.take()?;
-        self.cmsg = unsafe { libc::CMSG_NXTHDR(self.hdr, current).as_ref() };
+        self.cmsg = unsafe { self.hdr.cmsg_nxt_hdr(current).as_ref() };
         Some(current)
+    }
+}
+
+/// Helpers for [`libc::msghdr`]
+impl MsgHdr for libc::msghdr {
+    type ControlMessage = libc::cmsghdr;
+
+    fn cmsg_first_hdr(&self) -> *mut Self::ControlMessage {
+        unsafe { libc::CMSG_FIRSTHDR(self) }
+    }
+
+    fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
+        unsafe { libc::CMSG_NXTHDR(self, cmsg) }
+    }
+
+    fn set_control_len(&mut self, len: usize) {
+        self.msg_controllen = len as _;
+    }
+
+    fn control_len(&self) -> usize {
+        self.msg_controllen as _
+    }
+}
+
+/// Helpers for [`libc::cmsghdr`]
+impl CMsgHdr for libc::cmsghdr {
+    fn cmsg_len(length: usize) -> usize {
+        unsafe { libc::CMSG_LEN(length as _) as usize }
+    }
+
+    fn cmsg_space(length: usize) -> usize {
+        unsafe { libc::CMSG_SPACE(length as _) as usize }
+    }
+
+    fn cmsg_data(&self) -> *mut c_uchar {
+        unsafe { libc::CMSG_DATA(self) }
+    }
+
+    fn set(&mut self, level: c_int, ty: c_int, len: usize) {
+        self.cmsg_level = level as _;
+        self.cmsg_type = ty as _;
+        self.cmsg_len = len as _;
+    }
+
+    fn len(&self) -> usize {
+        self.cmsg_len as _
     }
 }
