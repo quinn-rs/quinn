@@ -9,10 +9,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime};
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
-use proto::{ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent, StreamId};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tokio::sync::{futures::Notified, mpsc, oneshot, Notify};
@@ -21,10 +19,14 @@ use tracing::{debug_span, Instrument, Span};
 use crate::{
     mutex::Mutex,
     recv_stream::RecvStream,
+    runtime::{AsyncTimer, AsyncUdpSocket, Runtime},
     send_stream::{SendStream, WriteError},
     ConnectionEvent, EndpointEvent, VarInt,
 };
-use proto::congestion::Controller;
+use proto::{
+    congestion::Controller, ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent,
+    StreamId,
+};
 
 /// In-progress connection attempt future
 #[derive(Debug)]
