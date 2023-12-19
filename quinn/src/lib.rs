@@ -103,7 +103,6 @@ enum ConnectionEvent {
 #[derive(Debug)]
 enum EndpointEvent {
     Proto(proto::EndpointEvent),
-    Transmit(proto::Transmit, Bytes),
 }
 
 fn udp_transmit(t: proto::Transmit, buffer: Bytes) -> udp::Transmit {
