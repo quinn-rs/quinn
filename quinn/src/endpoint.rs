@@ -512,30 +512,31 @@ impl State {
 
     fn handle_events(&mut self, cx: &mut Context, shared: &Shared) -> bool {
         for _ in 0..IO_LOOP_BOUND {
-            match self.events.poll_recv(cx) {
-                Poll::Ready(Some((ch, e))) => {
-                    if e.is_drained() {
-                        self.recv_state.connections.senders.remove(&ch);
-                        if self.recv_state.connections.is_empty() {
-                            shared.idle.notify_waiters();
-                        }
-                    }
-                    if let Some(event) = self.inner.handle_event(ch, e) {
-                        // Ignoring errors from dropped connections that haven't yet been cleaned up
-                        let _ = self
-                            .recv_state
-                            .connections
-                            .senders
-                            .get_mut(&ch)
-                            .unwrap()
-                            .send(ConnectionEvent::Proto(event));
-                    }
-                }
+            let (ch, event) = match self.events.poll_recv(cx) {
+                Poll::Ready(Some(x)) => x,
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
                     return false;
                 }
+            };
+
+            if event.is_drained() {
+                self.recv_state.connections.senders.remove(&ch);
+                if self.recv_state.connections.is_empty() {
+                    shared.idle.notify_waiters();
+                }
             }
+            let Some(event) = self.inner.handle_event(ch, event) else {
+                continue;
+            };
+            // Ignoring errors from dropped connections that haven't yet been cleaned up
+            let _ = self
+                .recv_state
+                .connections
+                .senders
+                .get_mut(&ch)
+                .unwrap()
+                .send(ConnectionEvent::Proto(event));
         }
 
         true
