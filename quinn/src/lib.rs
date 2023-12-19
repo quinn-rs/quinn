@@ -106,6 +106,24 @@ enum EndpointEvent {
     Transmit(proto::Transmit, Bytes),
 }
 
+fn udp_transmit(t: proto::Transmit, buffer: Bytes) -> udp::Transmit {
+    udp::Transmit {
+        destination: t.destination,
+        ecn: t.ecn.map(udp_ecn),
+        contents: buffer,
+        segment_size: t.segment_size,
+        src_ip: t.src_ip,
+    }
+}
+
+fn udp_ecn(ecn: proto::EcnCodepoint) -> udp::EcnCodepoint {
+    match ecn {
+        proto::EcnCodepoint::Ect0 => udp::EcnCodepoint::Ect0,
+        proto::EcnCodepoint::Ect1 => udp::EcnCodepoint::Ect1,
+        proto::EcnCodepoint::Ce => udp::EcnCodepoint::Ce,
+    }
+}
+
 /// Maximum number of datagrams processed in send/recv calls to make before moving on to other processing
 ///
 /// This helps ensure we don't starve anything when the CPU is slower than the link.
