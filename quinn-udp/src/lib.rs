@@ -15,8 +15,9 @@ use std::{
 use bytes::Bytes;
 use tracing::warn;
 
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 mod cmsg;
+
 #[cfg(unix)]
 #[path = "unix.rs"]
 mod imp;

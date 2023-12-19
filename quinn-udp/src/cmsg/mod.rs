@@ -7,6 +7,10 @@ use std::{
 #[path = "unix.rs"]
 mod imp;
 
+#[cfg(windows)]
+#[path = "windows.rs"]
+mod imp;
+
 pub(crate) use imp::Aligned;
 
 /// Helper to encode a series of control messages (native "cmsgs") to a buffer for use in `sendmsg`

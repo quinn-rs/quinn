@@ -27,7 +27,6 @@ fn basic() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore)]
 fn ecn_v6() {
     let recv = socket2::Socket::new(
         socket2::Domain::IPV6,
@@ -70,7 +69,6 @@ fn ecn_v6() {
 }
 
 #[test]
-#[cfg_attr(windows, ignore)]
 fn ecn_v4() {
     let send = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
     let recv = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
@@ -124,14 +122,11 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
     assert_eq!(&buf[..meta.len], transmit.contents);
     assert_eq!(meta.stride, meta.len);
     assert_eq!(meta.ecn, transmit.ecn);
-    #[cfg(unix)]
-    {
-        let dst = meta.dst_ip.unwrap();
-        match (send_v6, recv_v6) {
-            (_, false) => assert_eq!(dst, Ipv4Addr::LOCALHOST),
-            (false, true) => assert_eq!(dst, Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
-            (true, true) => assert_eq!(dst, Ipv6Addr::LOCALHOST),
-        }
+    let dst = meta.dst_ip.unwrap();
+    match (send_v6, recv_v6) {
+        (_, false) => assert_eq!(dst, Ipv4Addr::LOCALHOST),
+        (false, true) => assert_eq!(dst, Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
+        (true, true) => assert_eq!(dst, Ipv6Addr::LOCALHOST),
     }
 }
 
