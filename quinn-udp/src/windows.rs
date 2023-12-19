@@ -38,36 +38,22 @@ impl UdpSocketState {
         };
         let is_ipv4 = addr.as_socket_ipv4().is_some() || !v6only;
 
-        let sock_true: u32 = 1;
-
         if is_ipv4 {
-            let rc = unsafe {
-                WinSock::setsockopt(
-                    socket.0.as_raw_socket() as _,
-                    WinSock::IPPROTO_IP as _,
-                    WinSock::IP_DONTFRAGMENT as _,
-                    &sock_true as *const _ as _,
-                    mem::size_of_val(&sock_true) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
+            set_socket_option(
+                &*socket.0,
+                WinSock::IPPROTO_IP,
+                WinSock::IP_DONTFRAGMENT,
+                OPTION_ON,
+            )?;
         }
 
         if is_ipv6 {
-            let rc = unsafe {
-                WinSock::setsockopt(
-                    socket.0.as_raw_socket() as _,
-                    WinSock::IPPROTO_IPV6 as _,
-                    WinSock::IPV6_DONTFRAG as _,
-                    &sock_true as *const _ as _,
-                    mem::size_of_val(&sock_true) as _,
-                )
-            };
-            if rc == -1 {
-                return Err(io::Error::last_os_error());
-            }
+            set_socket_option(
+                &*socket.0,
+                WinSock::IPPROTO_IPV6,
+                WinSock::IPV6_DONTFRAG,
+                OPTION_ON,
+            )?;
         }
 
         let now = Instant::now();
@@ -154,4 +140,27 @@ impl UdpSocketState {
     }
 }
 
+fn set_socket_option(
+    socket: &impl AsRawSocket,
+    level: i32,
+    name: i32,
+    value: u32,
+) -> Result<(), io::Error> {
+    let rc = unsafe {
+        WinSock::setsockopt(
+            socket.as_raw_socket() as usize,
+            level,
+            name,
+            &value as *const _ as _,
+            mem::size_of_val(&value) as _,
+        )
+    };
+
+    match rc == 0 {
+        true => Ok(()),
+        false => Err(io::Error::last_os_error()),
+    }
+}
+
 pub(crate) const BATCH_SIZE: usize = 1;
+const OPTION_ON: u32 = 1;
