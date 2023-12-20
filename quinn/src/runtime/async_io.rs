@@ -9,7 +9,7 @@ use std::{
 
 use async_io::{Async, Timer};
 
-use super::{AsyncTimer, AsyncUdpSocket, Runtime};
+use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPollHelper};
 
 #[cfg(feature = "smol")]
 pub use self::smol::SmolRuntime;
@@ -95,13 +95,15 @@ impl UdpSocket {
 }
 
 impl AsyncUdpSocket for UdpSocket {
-    fn poll_send(&self, cx: &mut Context, transmits: &[udp::Transmit]) -> Poll<io::Result<usize>> {
-        loop {
-            ready!(self.io.poll_writable(cx))?;
-            if let Ok(res) = self.inner.send((&self.io).into(), transmits) {
-                return Poll::Ready(Ok(res));
-            }
-        }
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn super::UdpPoller>> {
+        Box::pin(UdpPollHelper::new(move || {
+            let socket = self.clone();
+            async move { socket.io.writable().await }
+        }))
+    }
+
+    fn try_send(&self, transmits: &[udp::Transmit]) -> io::Result<usize> {
+        self.inner.send((&self.io).into(), transmits)
     }
 
     fn poll_recv(

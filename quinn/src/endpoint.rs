@@ -13,7 +13,7 @@ use std::{
 };
 
 use crate::{
-    runtime::{default_runtime, AsyncUdpSocket, Runtime},
+    runtime::{default_runtime, AsyncUdpSocket, Runtime, UdpPoller},
     udp_transmit,
 };
 use bytes::{Bytes, BytesMut};
@@ -224,6 +224,7 @@ impl Endpoint {
         let addr = socket.local_addr()?;
         let mut inner = self.inner.state.lock().unwrap();
         inner.prev_socket = Some(mem::replace(&mut inner.socket, socket));
+        inner.io_poller = inner.socket.clone().create_io_poller();
         inner.ipv6 = addr.is_ipv6();
 
         // Generate some activity so peers notice the rebind
@@ -420,6 +421,7 @@ pub(crate) struct State {
     /// During an active migration, abandoned_socket receives traffic
     /// until the first packet arrives on the new socket.
     prev_socket: Option<Arc<dyn AsyncUdpSocket>>,
+    io_poller: Pin<Box<dyn UdpPoller>>,
     inner: proto::Endpoint,
     transmit_state: TransmitState,
     recv_state: RecvState,
@@ -484,17 +486,21 @@ impl State {
                 break Ok(true);
             }
 
-            match self.socket.poll_send(cx, self.transmit_state.transmits()) {
-                Poll::Ready(Ok(n)) => {
+            if self.io_poller.as_mut().poll_writable(cx)?.is_pending() {
+                break Ok(false);
+            }
+
+            match self.socket.try_send(self.transmit_state.transmits()) {
+                Ok(n) => {
                     self.transmit_state.dequeue(n);
-                    // We count transmits instead of `poll_send` calls since the cost
+                    // We count transmits instead of `try_send` calls since the cost
                     // of a `sendmmsg` still linearly increases with number of packets.
                     self.send_limiter.record_work(n);
                 }
-                Poll::Pending => {
-                    break Ok(false);
+                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => {
+                    continue;
                 }
-                Poll::Ready(Err(e)) => {
+                Err(e) => {
                     break Err(e);
                 }
             }
@@ -690,6 +696,7 @@ impl EndpointRef {
                 idle: Notify::new(),
             },
             state: Mutex::new(State {
+                io_poller: socket.clone().create_io_poller(),
                 socket,
                 prev_socket: None,
                 inner,
