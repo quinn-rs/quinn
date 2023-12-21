@@ -122,7 +122,7 @@ impl UdpSocketState {
         })
     }
 
-    pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit) -> io::Result<()> {
+    pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
         // we cannot use [`socket2::sendmsg()`] and [`socket2::MsgHdr`] as we do not have access
         // to the inner field which holds the WSAMSG
         let mut ctrl_buf = cmsg::Aligned([0; CMSG_LEN]);

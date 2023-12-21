@@ -24,9 +24,9 @@ impl UdpSocketState {
         })
     }
 
-    pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit) -> io::Result<()> {
+    pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
         let Err(e) = socket.0.send_to(
-            &transmit.contents,
+            transmit.contents,
             &socket2::SockAddr::from(transmit.destination),
         ) else {
             return Ok(());

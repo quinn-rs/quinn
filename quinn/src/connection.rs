@@ -947,7 +947,7 @@ pub(crate) struct State {
     runtime: Arc<dyn Runtime>,
     send_buffer: BytesMut,
     /// We buffer a transmit when the underlying I/O would block
-    buffered_transmit: Option<udp::Transmit>,
+    buffered_transmit: Option<proto::Transmit>,
 }
 
 impl State {
@@ -956,27 +956,28 @@ impl State {
         let mut transmits = 0;
 
         let max_datagrams = self.socket.max_transmit_segments();
-        self.send_buffer.reserve(self.inner.current_mtu() as usize);
 
         loop {
             // Retry the last transmit, or get a new one.
             let t = match self.buffered_transmit.take() {
                 Some(t) => t,
-                None => match self
-                    .inner
-                    .poll_transmit(now, max_datagrams, &mut self.send_buffer)
-                {
-                    Some(t) => {
-                        transmits += match t.segment_size {
-                            None => 1,
-                            Some(s) => (t.size + s - 1) / s, // round up
-                        };
-
-                        let buffer = self.send_buffer.split_to(t.size).freeze();
-                        udp_transmit(t, buffer)
+                None => {
+                    self.send_buffer.clear();
+                    self.send_buffer.reserve(self.inner.current_mtu() as usize);
+                    match self
+                        .inner
+                        .poll_transmit(now, max_datagrams, &mut self.send_buffer)
+                    {
+                        Some(t) => {
+                            transmits += match t.segment_size {
+                                None => 1,
+                                Some(s) => (t.size + s - 1) / s, // round up
+                            };
+                            t
+                        }
+                        None => break,
                     }
-                    None => break,
-                },
+                }
             };
 
             if self.io_poller.as_mut().poll_writable(cx)?.is_pending() {
@@ -985,7 +986,11 @@ impl State {
                 return Ok(false);
             }
 
-            let retry = match self.socket.try_send(&t) {
+            let len = t.size;
+            let retry = match self
+                .socket
+                .try_send(&udp_transmit(&t, &self.send_buffer[..len]))
+            {
                 Ok(()) => false,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => true,
                 Err(e) => return Err(e),
