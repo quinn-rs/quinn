@@ -440,7 +440,7 @@ fn run_echo(args: EchoArgs) {
         let mut server_config =
             crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
 
-        server_config.transport = transport_config.clone();
+        server_config.transport_config(transport_config.clone());
         let server_sock = UdpSocket::bind(args.server_addr).unwrap();
         let server_addr = server_sock.local_addr().unwrap();
         let server = {

@@ -1,7 +1,7 @@
 #![cfg(feature = "rustls")]
 //! Commonly used code in most examples.
 
-use quinn::{ClientConfig, Endpoint, ServerConfig};
+use quinn::{ClientConfig, Endpoint, ServerConfig, TransportConfig};
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
 /// Constructs a QUIC endpoint configured for use a client only.
@@ -58,8 +58,9 @@ fn configure_server() -> Result<(ServerConfig, Vec<u8>), Box<dyn Error>> {
     let cert_chain = vec![rustls::Certificate(cert_der.clone())];
 
     let mut server_config = ServerConfig::with_single_cert(cert_chain, priv_key)?;
-    let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+    let mut transport_config = TransportConfig::default();
     transport_config.max_concurrent_uni_streams(0_u8.into());
+    server_config.transport_config(Arc::new(transport_config));
 
     Ok((server_config, cert_der))
 }

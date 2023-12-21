@@ -731,7 +731,7 @@ impl Default for EndpointConfig {
 #[derive(Clone)]
 pub struct ServerConfig {
     /// Transport configuration to use for incoming connections
-    pub transport: Arc<TransportConfig>,
+    pub(crate) transport: Arc<TransportConfig>,
 
     /// TLS configuration used for incoming connections.
     ///

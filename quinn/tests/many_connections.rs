@@ -143,8 +143,9 @@ fn configure_listener() -> (quinn::ServerConfig, rustls::Certificate) {
     let mut our_cfg =
         quinn::ServerConfig::with_single_cert(vec![our_cert.clone()], our_priv_key).unwrap();
 
-    let transport_config = Arc::get_mut(&mut our_cfg.transport).unwrap();
+    let mut transport_config = TransportConfig::default();
     transport_config.max_idle_timeout(Some(Duration::from_secs(20).try_into().unwrap()));
+    our_cfg.transport_config(Arc::new(transport_config));
 
     (our_cfg, our_cert)
 }

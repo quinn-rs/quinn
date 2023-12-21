@@ -81,8 +81,9 @@ impl Context {
 
         let mut server_config =
             quinn::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
-        let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+        let mut transport_config = quinn::TransportConfig::default();
         transport_config.max_concurrent_uni_streams(1024_u16.into());
+        server_config.transport_config(Arc::new(transport_config));
 
         let mut roots = rustls::RootCertStore::empty();
         roots.add(&cert).unwrap();

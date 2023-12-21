@@ -33,7 +33,7 @@ pub fn server_endpoint(
 ) -> (SocketAddr, quinn::Endpoint) {
     let cert_chain = vec![cert];
     let mut server_config = quinn::ServerConfig::with_single_cert(cert_chain, key).unwrap();
-    server_config.transport = Arc::new(transport_config(opt));
+    server_config.transport_config(Arc::new(transport_config(opt)));
 
     let endpoint = {
         let _guard = rt.enter();

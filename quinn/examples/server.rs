@@ -130,8 +130,9 @@ async fn run(options: Opt) -> Result<()> {
     }
 
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
-    let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
+    let mut transport_config = quinn::TransportConfig::default();
     transport_config.max_concurrent_uni_streams(0_u8.into());
+    server_config.transport_config(Arc::new(transport_config));
     if options.stateless_retry {
         server_config.use_retry(true);
     }
