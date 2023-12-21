@@ -408,8 +408,6 @@ impl State {
                     .write(IoSliceMut::<'a>::new(buf));
             });
         let mut iovs = unsafe { iovs.assume_init() };
-        let buffer_size = self.inner.config().get_max_udp_payload_size() as usize;
-        let mut buffer = BytesMut::with_capacity(buffer_size);
         loop {
             match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
@@ -418,13 +416,14 @@ impl State {
                         let mut data: BytesMut = buf[0..meta.len].into();
                         while !data.is_empty() {
                             let buf = data.split_to(meta.stride.min(data.len()));
+                            let mut response_buffer = BytesMut::new();
                             match self.inner.handle(
                                 now,
                                 meta.addr,
                                 meta.dst_ip,
                                 meta.ecn.map(proto_ecn),
                                 buf,
-                                &mut buffer,
+                                &mut response_buffer,
                             ) {
                                 Some(DatagramEvent::NewConnection(handle, conn)) => {
                                     let conn = self.connections.insert(
@@ -455,7 +454,7 @@ impl State {
                                         let contents_len = transmit.size;
                                         self.outgoing.push_back(udp_transmit(
                                             transmit,
-                                            buffer.split_to(contents_len).freeze(),
+                                            response_buffer.split_to(contents_len).freeze(),
                                         ));
                                         self.transmit_queue_contents_len = self
                                             .transmit_queue_contents_len
