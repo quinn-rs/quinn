@@ -350,7 +350,7 @@ impl TestEndpoint {
             }
         }
         let buffer_size = self.endpoint.config().get_max_udp_payload_size() as usize;
-        let mut buf = BytesMut::with_capacity(buffer_size);
+        let mut buf = Vec::with_capacity(buffer_size);
 
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
@@ -386,8 +386,8 @@ impl TestEndpoint {
                     }
                     DatagramEvent::Response(transmit) => {
                         let size = transmit.size;
-                        self.outbound
-                            .extend(split_transmit(transmit, buf.split_to(size).freeze()));
+                        self.outbound.extend(split_transmit(transmit, &buf[..size]));
+                        buf.clear();
                     }
                 }
             }
@@ -396,7 +396,7 @@ impl TestEndpoint {
 
     pub(super) fn drive_outgoing(&mut self, now: Instant) {
         let buffer_size = self.endpoint.config().get_max_udp_payload_size() as usize;
-        let mut buf = BytesMut::with_capacity(buffer_size);
+        let mut buf = Vec::with_capacity(buffer_size);
 
         loop {
             let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
@@ -417,8 +417,8 @@ impl TestEndpoint {
                 }
                 while let Some(transmit) = conn.poll_transmit(now, MAX_DATAGRAMS, &mut buf) {
                     let size = transmit.size;
-                    self.outbound
-                        .extend(split_transmit(transmit, buf.split_to(size).freeze()));
+                    self.outbound.extend(split_transmit(transmit, &buf[..size]));
+                    buf.clear();
                 }
                 self.timeout = conn.poll_timeout();
             }
@@ -460,7 +460,7 @@ impl TestEndpoint {
         incoming: Incoming,
         now: Instant,
     ) -> Result<ConnectionHandle, ConnectionError> {
-        let mut buf = BytesMut::new();
+        let mut buf = Vec::new();
         match self.endpoint.accept(incoming, now, &mut buf, None) {
             Ok((ch, conn)) => {
                 self.connections.insert(ch, conn);
@@ -470,8 +470,7 @@ impl TestEndpoint {
             Err(error) => {
                 if let Some(transmit) = error.response {
                     let size = transmit.size;
-                    self.outbound
-                        .extend(split_transmit(transmit, buf.split_to(size).freeze()));
+                    self.outbound.extend(split_transmit(transmit, &buf[..size]));
                 }
                 self.accepted = Some(Err(error.cause.clone()));
                 Err(error.cause)
@@ -480,19 +479,17 @@ impl TestEndpoint {
     }
 
     pub(super) fn retry(&mut self, incoming: Incoming) {
-        let mut buf = BytesMut::new();
+        let mut buf = Vec::new();
         let transmit = self.endpoint.retry(incoming, &mut buf).unwrap();
         let size = transmit.size;
-        self.outbound
-            .extend(split_transmit(transmit, buf.split_to(size).freeze()));
+        self.outbound.extend(split_transmit(transmit, &buf[..size]));
     }
 
     pub(super) fn reject(&mut self, incoming: Incoming) {
-        let mut buf = BytesMut::new();
+        let mut buf = Vec::new();
         let transmit = self.endpoint.refuse(incoming, &mut buf);
         let size = transmit.size;
-        self.outbound
-            .extend(split_transmit(transmit, buf.split_to(size).freeze()));
+        self.outbound.extend(split_transmit(transmit, &buf[..size]));
     }
 
     pub(super) fn assert_accept(&mut self) -> ConnectionHandle {
@@ -653,7 +650,8 @@ pub(super) fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
 /// The maximum of datagrams TestEndpoint will produce via `poll_transmit`
 const MAX_DATAGRAMS: usize = 10;
 
-fn split_transmit(transmit: Transmit, mut buffer: Bytes) -> Vec<(Transmit, Bytes)> {
+fn split_transmit(transmit: Transmit, buffer: &[u8]) -> Vec<(Transmit, Bytes)> {
+    let mut buffer = Bytes::copy_from_slice(buffer);
     let segment_size = match transmit.segment_size {
         Some(segment_size) => segment_size,
         _ => return vec![(transmit, buffer)],

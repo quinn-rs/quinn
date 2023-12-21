@@ -372,7 +372,7 @@ impl EndpointInner {
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<Connecting, ConnectionError> {
         let mut state = self.state.lock().unwrap();
-        let mut response_buffer = BytesMut::new();
+        let mut response_buffer = Vec::new();
         match state.inner.accept(
             incoming,
             Instant::now(),
@@ -389,7 +389,7 @@ impl EndpointInner {
             }
             Err(error) => {
                 if let Some(transmit) = error.response {
-                    respond(transmit, &mut response_buffer, &*state.socket);
+                    respond(transmit, &response_buffer, &*state.socket);
                 }
                 Err(error.cause)
             }
@@ -398,16 +398,16 @@ impl EndpointInner {
 
     pub(crate) fn refuse(&self, incoming: proto::Incoming) {
         let mut state = self.state.lock().unwrap();
-        let mut response_buffer = BytesMut::new();
+        let mut response_buffer = Vec::new();
         let transmit = state.inner.refuse(incoming, &mut response_buffer);
-        respond(transmit, &mut response_buffer, &*state.socket);
+        respond(transmit, &response_buffer, &*state.socket);
     }
 
     pub(crate) fn retry(&self, incoming: proto::Incoming) -> Result<(), proto::RetryError> {
         let mut state = self.state.lock().unwrap();
-        let mut response_buffer = BytesMut::new();
+        let mut response_buffer = Vec::new();
         let transmit = state.inner.retry(incoming, &mut response_buffer)?;
-        respond(transmit, &mut response_buffer, &*state.socket);
+        respond(transmit, &response_buffer, &*state.socket);
         Ok(())
     }
 }
@@ -493,7 +493,7 @@ impl State {
     }
 }
 
-fn respond(transmit: proto::Transmit, response_buffer: &mut BytesMut, socket: &dyn AsyncUdpSocket) {
+fn respond(transmit: proto::Transmit, response_buffer: &[u8], socket: &dyn AsyncUdpSocket) {
     // Send if there's kernel buffer space; otherwise, drop it
     //
     // As an endpoint-generated packet, we know this is an
@@ -515,7 +515,6 @@ fn respond(transmit: proto::Transmit, response_buffer: &mut BytesMut, socket: &d
     // lost due to congestion further along the link, which
     // similarly relies on peer retries for recovery.
     _ = socket.try_send(&udp_transmit(&transmit, &response_buffer[..transmit.size]));
-    response_buffer.clear();
 }
 
 #[inline]
@@ -732,7 +731,7 @@ impl RecvState {
                         let mut data: BytesMut = buf[0..meta.len].into();
                         while !data.is_empty() {
                             let buf = data.split_to(meta.stride.min(data.len()));
-                            let mut response_buffer = BytesMut::new();
+                            let mut response_buffer = Vec::new();
                             match endpoint.handle(
                                 now,
                                 meta.addr,
@@ -749,7 +748,7 @@ impl RecvState {
                                     } else {
                                         let transmit =
                                             endpoint.refuse(incoming, &mut response_buffer);
-                                        respond(transmit, &mut response_buffer, socket);
+                                        respond(transmit, &response_buffer, socket);
                                     }
                                 }
                                 Some(DatagramEvent::ConnectionEvent(handle, event)) => {
@@ -763,7 +762,7 @@ impl RecvState {
                                         .send(ConnectionEvent::Proto(event));
                                 }
                                 Some(DatagramEvent::Response(transmit)) => {
-                                    respond(transmit, &mut response_buffer, socket);
+                                    respond(transmit, &response_buffer, socket);
                                 }
                                 None => {}
                             }

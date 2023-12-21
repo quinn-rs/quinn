@@ -134,7 +134,7 @@ impl Endpoint {
         local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
     ) -> Option<DatagramEvent> {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(
@@ -295,7 +295,7 @@ impl Endpoint {
         inciting_dgram_len: usize,
         addresses: FourTuple,
         dst_cid: &ConnectionId,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
     ) -> Option<Transmit> {
         if self
             .last_stateless_reset
@@ -442,7 +442,7 @@ impl Endpoint {
         packet: Packet,
         rest: Option<BytesMut>,
         crypto: Keys,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
     ) -> Option<DatagramEvent> {
         if !packet.reserved_bits_valid() {
             debug!("dropping connection attempt with invalid reserved bits");
@@ -509,7 +509,7 @@ impl Endpoint {
         &mut self,
         mut incoming: Incoming,
         now: Instant,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<(ConnectionHandle, Connection), AcceptError> {
         let packet_number = incoming.packet.header.number.expand(0);
@@ -662,7 +662,7 @@ impl Endpoint {
     }
 
     /// Reject this incoming connection attempt
-    pub fn refuse(&mut self, incoming: Incoming, buf: &mut BytesMut) -> Transmit {
+    pub fn refuse(&mut self, incoming: Incoming, buf: &mut Vec<u8>) -> Transmit {
         self.initial_close(
             incoming.packet.header.version,
             incoming.addresses,
@@ -676,11 +676,7 @@ impl Endpoint {
     /// Respond with a retry packet, requiring the client to retry with address validation
     ///
     /// Errors if `incoming.remote_address_validated()` is true.
-    pub fn retry(
-        &mut self,
-        incoming: Incoming,
-        buf: &mut BytesMut,
-    ) -> Result<Transmit, RetryError> {
+    pub fn retry(&mut self, incoming: Incoming, buf: &mut Vec<u8>) -> Result<Transmit, RetryError> {
         if incoming.remote_address_validated() {
             return Err(RetryError(incoming));
         }
@@ -797,7 +793,7 @@ impl Endpoint {
         crypto: &Keys,
         remote_id: &ConnectionId,
         reason: TransportError,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
     ) -> Transmit {
         // We don't need to worry about CID collisions in initial closes because the peer
         // shouldn't respond, and if it does, and the CID collides, we'll just drop the

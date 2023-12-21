@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use rand::Rng;
 use tracing::{trace, trace_span};
 
@@ -36,7 +36,7 @@ impl PacketBuilder {
     pub(super) fn new(
         now: Instant,
         space_id: SpaceId,
-        buffer: &mut BytesMut,
+        buffer: &mut Vec<u8>,
         buffer_capacity: usize,
         datagram_start: usize,
         ack_eliciting: bool,
@@ -178,7 +178,7 @@ impl PacketBuilder {
         now: Instant,
         conn: &mut Connection,
         sent: Option<SentFrames>,
-        buffer: &mut BytesMut,
+        buffer: &mut Vec<u8>,
     ) {
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
@@ -221,7 +221,7 @@ impl PacketBuilder {
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
-    pub(super) fn finish(self, conn: &mut Connection, buffer: &mut BytesMut) -> (usize, bool) {
+    pub(super) fn finish(self, conn: &mut Connection, buffer: &mut Vec<u8>) -> (usize, bool) {
         let pad = buffer.len() < self.min_size;
         if pad {
             trace!("PADDING * {}", self.min_size - buffer.len());
