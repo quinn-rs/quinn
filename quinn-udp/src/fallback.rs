@@ -4,9 +4,7 @@ use std::{
     time::Instant,
 };
 
-use proto::Transmit;
-
-use super::{log_sendmsg_error, RecvMeta, UdpSockRef, UdpState, IO_ERROR_LOG_INTERVAL};
+use super::{log_sendmsg_error, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL};
 
 /// Fallback UDP socket interface that stubs out all special functionality
 ///
@@ -18,20 +16,15 @@ pub struct UdpSocketState {
 }
 
 impl UdpSocketState {
-    pub fn new(socket: UdpSocketRef<'_>) -> io::Result<Self> {
+    pub fn new(socket: UdpSockRef<'_>) -> io::Result<Self> {
         socket.0.set_nonblocking(true)?;
         let now = Instant::now();
-        Self {
+        Ok(Self {
             last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
-        }
+        })
     }
 
-    pub fn send(
-        &self,
-        socket: UdpSockRef<'_>,
-        _state: &UdpState,
-        transmits: &[Transmit],
-    ) -> io::Result<usize> {
+    pub fn send(&self, socket: UdpSockRef<'_>, transmits: &[Transmit]) -> io::Result<usize> {
         let mut sent = 0;
         for transmit in transmits {
             match socket.0.send_to(
@@ -97,25 +90,11 @@ impl UdpSocketState {
     pub fn gro_segments(&self) -> usize {
         1
     }
-}
 
-impl Default for UdpSocketState {
-    fn default() -> Self {
-        Self::new()
+    #[inline]
+    pub fn may_fragment(&self) -> bool {
+        true
     }
-}
-
-/// Returns the platforms UDP socket capabilities
-pub(crate) fn udp_state() -> super::UdpState {
-    super::UdpState {
-        max_gso_segments: std::sync::atomic::AtomicUsize::new(1),
-        gro_segments: 1,
-    }
-}
-
-#[inline]
-pub(crate) fn may_fragment() -> bool {
-    true
 }
 
 pub(crate) const BATCH_SIZE: usize = 1;
