@@ -985,8 +985,8 @@ impl State {
                 return Ok(false);
             }
 
-            let retry = match self.socket.try_send(std::slice::from_ref(&t)) {
-                Ok(n) => n == 0,
+            let retry = match self.socket.try_send(&t) {
+                Ok(()) => false,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => true,
                 Err(e) => return Err(e),
             };

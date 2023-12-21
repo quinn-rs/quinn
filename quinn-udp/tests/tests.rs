@@ -164,9 +164,7 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
     // Reverse non-blocking flag set by `UdpSocketState` to make the test non-racy
     recv.set_nonblocking(false).unwrap();
 
-    send_state
-        .send((&send).into(), slice::from_ref(&transmit))
-        .unwrap();
+    send_state.send(send.into(), &transmit).unwrap();
 
     let mut buf = [0; u16::MAX as usize];
     let mut meta = RecvMeta::default();
