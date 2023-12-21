@@ -463,7 +463,7 @@ impl Connection {
         &mut self,
         now: Instant,
         max_datagrams: usize,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
     ) -> Option<Transmit> {
         assert!(max_datagrams != 0);
         let max_datagrams = match self.config.enable_segmentation_offload {
@@ -2958,7 +2958,7 @@ impl Connection {
         &mut self,
         now: Instant,
         space_id: SpaceId,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
         max_size: usize,
         pn: u64,
     ) -> SentFrames {
@@ -3183,7 +3183,7 @@ impl Connection {
         receiving_ecn: bool,
         sent: &mut SentFrames,
         space: &mut PacketSpace,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());

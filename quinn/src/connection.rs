@@ -10,7 +10,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
@@ -863,7 +863,7 @@ impl ConnectionRef {
                 io_poller: socket.clone().create_io_poller(),
                 socket,
                 runtime,
-                send_buffer: BytesMut::new(),
+                send_buffer: Vec::new(),
                 buffered_transmit: None,
             }),
             shared: Shared::default(),
@@ -945,7 +945,7 @@ pub(crate) struct State {
     socket: Arc<dyn AsyncUdpSocket>,
     io_poller: Pin<Box<dyn UdpPoller>>,
     runtime: Arc<dyn Runtime>,
-    send_buffer: BytesMut,
+    send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<proto::Transmit>,
 }
