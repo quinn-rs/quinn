@@ -22,7 +22,6 @@ log = ["tracing/log"]
 maintenance = { status = "experimental" }
 
 [dependencies]
-bytes = "1"
 libc = "0.2.113"
 socket2 = "0.5"
 tracing = "0.1.10"

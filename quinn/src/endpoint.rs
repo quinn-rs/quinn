@@ -514,11 +514,8 @@ fn respond(transmit: proto::Transmit, response_buffer: &mut BytesMut, socket: &d
     // to transmit. This is morally equivalent to the packet getting
     // lost due to congestion further along the link, which
     // similarly relies on peer retries for recovery.
-    let contents_len = transmit.size;
-    _ = socket.try_send(&udp_transmit(
-        transmit,
-        response_buffer.split_to(contents_len).freeze(),
-    ));
+    _ = socket.try_send(&udp_transmit(&transmit, &response_buffer[..transmit.size]));
+    response_buffer.clear();
 }
 
 #[inline]

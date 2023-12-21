@@ -4,7 +4,6 @@ use std::{
     slice,
 };
 
-use bytes::Bytes;
 use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
 use socket2::Socket;
 
@@ -23,7 +22,7 @@ fn basic() {
         Transmit {
             destination: dst_addr,
             ecn: None,
-            contents: Bytes::from_static(b"hello"),
+            contents: b"hello",
             segment_size: None,
             src_ip: None,
         },
@@ -63,7 +62,7 @@ fn ecn_v6() {
                 Transmit {
                     destination: dst,
                     ecn: Some(codepoint),
-                    contents: Bytes::from_static(b"hello"),
+                    contents: b"hello",
                     segment_size: None,
                     src_ip: None,
                 },
@@ -83,7 +82,7 @@ fn ecn_v4() {
             Transmit {
                 destination: recv.local_addr().unwrap().as_socket().unwrap(),
                 ecn: Some(codepoint),
-                contents: Bytes::from_static(b"hello"),
+                contents: b"hello",
                 segment_size: None,
                 src_ip: None,
             },
@@ -121,7 +120,7 @@ fn ecn_v4_mapped_v6() {
             Transmit {
                 destination: recv_v4_mapped_v6,
                 ecn: Some(codepoint),
-                contents: Bytes::from_static(b"hello"),
+                contents: b"hello",
                 segment_size: None,
                 src_ip: None,
             },
@@ -150,7 +149,7 @@ fn gso() {
         Transmit {
             destination: dst_addr,
             ecn: None,
-            contents: Bytes::copy_from_slice(&msg),
+            contents: &msg,
             segment_size: Some(SEGMENT_SIZE),
             src_ip: None,
         },

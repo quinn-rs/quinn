@@ -61,7 +61,6 @@ mod runtime;
 mod send_stream;
 mod work_limiter;
 
-use bytes::Bytes;
 pub use proto::{
     congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ConfigError,
     ConnectError, ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout,
@@ -100,7 +99,7 @@ enum ConnectionEvent {
     Rebind(Arc<dyn AsyncUdpSocket>),
 }
 
-fn udp_transmit(t: proto::Transmit, buffer: Bytes) -> udp::Transmit {
+fn udp_transmit<'a>(t: &proto::Transmit, buffer: &'a [u8]) -> udp::Transmit<'a> {
     udp::Transmit {
         destination: t.destination,
         ecn: t.ecn.map(udp_ecn),
