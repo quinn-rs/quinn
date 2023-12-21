@@ -24,37 +24,25 @@ impl UdpSocketState {
         })
     }
 
-    pub fn send(&self, socket: UdpSockRef<'_>, transmits: &[Transmit]) -> io::Result<usize> {
-        let mut sent = 0;
-        for transmit in transmits {
-            match socket.0.send_to(
-                &transmit.contents,
-                &socket2::SockAddr::from(transmit.destination),
-            ) {
-                Ok(_) => {
-                    sent += 1;
-                }
-                // We need to report that some packets were sent in this case, so we rely on
-                // errors being either harmlessly transient (in the case of WouldBlock) or
-                // recurring on the next call.
-                Err(_) if sent != 0 => return Ok(sent),
-                Err(e) => {
-                    if e.kind() == io::ErrorKind::WouldBlock {
-                        return Err(e);
-                    }
-
-                    // Other errors are ignored, since they will usually be handled
-                    // by higher level retransmits and timeouts.
-                    // - PermissionDenied errors have been observed due to iptable rules.
-                    //   Those are not fatal errors, since the
-                    //   configuration can be dynamically changed.
-                    // - Destination unreachable errors have been observed for other
-                    log_sendmsg_error(&self.last_send_error, e, transmit);
-                    sent += 1;
-                }
-            }
+    pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit) -> io::Result<()> {
+        let Err(e) = socket.0.send_to(
+            &transmit.contents,
+            &socket2::SockAddr::from(transmit.destination),
+        ) else {
+            return Ok(());
+        };
+        if e.kind() == io::ErrorKind::WouldBlock {
+            return Err(e);
         }
-        Ok(sent)
+
+        // Other errors are ignored, since they will usually be handled
+        // by higher level retransmits and timeouts.
+        // - PermissionDenied errors have been observed due to iptable rules.
+        //   Those are not fatal errors, since the
+        //   configuration can be dynamically changed.
+        // - Destination unreachable errors have been observed for other
+        log_sendmsg_error(&self.last_send_error, e, transmit);
+        Ok(())
     }
 
     pub fn recv(

@@ -102,8 +102,8 @@ impl AsyncUdpSocket for UdpSocket {
         }))
     }
 
-    fn try_send(&self, transmits: &[udp::Transmit]) -> io::Result<usize> {
-        self.inner.send((&self.io).into(), transmits)
+    fn try_send(&self, transmit: &udp::Transmit) -> io::Result<()> {
+        self.inner.send((&self.io).into(), transmit)
     }
 
     fn poll_recv(

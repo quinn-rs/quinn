@@ -515,10 +515,10 @@ fn respond(transmit: proto::Transmit, response_buffer: &mut BytesMut, socket: &d
     // lost due to congestion further along the link, which
     // similarly relies on peer retries for recovery.
     let contents_len = transmit.size;
-    _ = socket.try_send(&[udp_transmit(
+    _ = socket.try_send(&udp_transmit(
         transmit,
         response_buffer.split_to(contents_len).freeze(),
-    )]);
+    ));
 }
 
 #[inline]
