@@ -98,38 +98,50 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         .send((&send).into(), slice::from_ref(&transmit))
         .unwrap();
 
-    let mut buf = [0; 1024];
+    let mut buf = [0; u16::MAX as usize];
     let mut meta = RecvMeta::default();
-    let n = recv_state
-        .recv(
-            recv.into(),
-            &mut [IoSliceMut::new(&mut buf)],
-            slice::from_mut(&mut meta),
-        )
-        .unwrap();
+    let segment_size = transmit.segment_size.unwrap_or(transmit.contents.len());
+    let expected_datagrams = transmit.contents.len() / segment_size;
+    let mut datagrams = 0;
+    while datagrams < expected_datagrams {
+        let n = recv_state
+            .recv(
+                recv.into(),
+                &mut [IoSliceMut::new(&mut buf)],
+                slice::from_mut(&mut meta),
+            )
+            .unwrap();
+        assert_eq!(n, 1);
+        let segments = meta.len / meta.stride;
+        for i in 0..segments {
+            assert_eq!(
+                &buf[(i * meta.stride)..((i + 1) * meta.stride)],
+                &transmit.contents
+                    [(datagrams + i) * segment_size..(datagrams + i + 1) * segment_size]
+            );
+        }
+        datagrams += segments;
 
-    let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
-    let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
-
-    assert_eq!(n, 1);
-    match send_v6 == recv_v6 {
-        true => assert_eq!(meta.addr, send.local_addr().unwrap().as_socket().unwrap()),
-        false => assert_eq!(
-            meta.addr,
-            to_v6_mapped(send.local_addr().unwrap().as_socket().unwrap())
-        ),
+        let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
+        let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
+        match send_v6 == recv_v6 {
+            true => assert_eq!(meta.addr, send.local_addr().unwrap().as_socket().unwrap()),
+            false => assert_eq!(
+                meta.addr,
+                to_v6_mapped(send.local_addr().unwrap().as_socket().unwrap())
+            ),
+        }
+        assert_eq!(meta.ecn, transmit.ecn);
+        let dst = meta.dst_ip.unwrap();
+        match (send_v6, recv_v6) {
+            (_, false) => assert_eq!(dst, Ipv4Addr::LOCALHOST),
+            // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
+            // addrs. Canonicalize to IPv6-mapped for robustness.
+            (false, true) => assert_eq!(ip_to_v6_mapped(dst), Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
+            (true, true) => assert_eq!(dst, Ipv6Addr::LOCALHOST),
+        }
     }
-    assert_eq!(&buf[..meta.len], transmit.contents);
-    assert_eq!(meta.stride, meta.len);
-    assert_eq!(meta.ecn, transmit.ecn);
-    let dst = meta.dst_ip.unwrap();
-    match (send_v6, recv_v6) {
-        (_, false) => assert_eq!(dst, Ipv4Addr::LOCALHOST),
-        // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
-        // addrs. Canonicalize to IPv6-mapped for robustness.
-        (false, true) => assert_eq!(ip_to_v6_mapped(dst), Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
-        (true, true) => assert_eq!(dst, Ipv6Addr::LOCALHOST),
-    }
+    assert_eq!(datagrams, expected_datagrams);
 }
 
 fn to_v6_mapped(x: SocketAddr) -> SocketAddr {
