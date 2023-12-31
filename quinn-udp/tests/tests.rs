@@ -88,7 +88,7 @@ fn ecn_v4() {
 }
 
 #[test]
-#[cfg_attr(not(target_os = "linux"), ignore)]
+#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), ignore)]
 fn gso() {
     let send = UdpSocket::bind("[::1]:0")
         .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
