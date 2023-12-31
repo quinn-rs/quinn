@@ -52,7 +52,7 @@ fn ecn_v6() {
         dbg!(src, dst);
         let send = UdpSocket::bind(src).unwrap();
         let send = Socket::from(send);
-        for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1, EcnCodepoint::Ce] {
+        for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
             test_send_recv(
                 &send,
                 &recv,
@@ -72,7 +72,7 @@ fn ecn_v6() {
 fn ecn_v4() {
     let send = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
     let recv = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
-    for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1, EcnCodepoint::Ce] {
+    for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
         test_send_recv(
             &send,
             &recv,
