@@ -105,6 +105,17 @@ impl UdpSocketState {
             )?;
         }
 
+        // Opportunistically try to enable GRO
+        _ = set_socket_option(
+            &*socket.0,
+            WinSock::IPPROTO_UDP,
+            WinSock::UDP_RECV_MAX_COALESCED_SIZE,
+            // u32 per
+            // https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-udp-socket-options.
+            // Choice of 2^16 - 1 inspired by msquic.
+            u16::MAX as u32,
+        );
+
         let now = Instant::now();
         Ok(Self {
             last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
@@ -282,9 +293,11 @@ impl UdpSocketState {
         // Decode control messages (PKTINFO and ECN)
         let mut ecn_bits = 0;
         let mut dst_ip = None;
+        let mut stride = len;
 
         let cmsg_iter = unsafe { cmsg::Iter::new(&wsa_msg) };
         for cmsg in cmsg_iter {
+            const UDP_COALESCED_INFO: i32 = WinSock::UDP_COALESCED_INFO as i32;
             // [header (len)][data][padding(len + sizeof(data))] -> [header][data][padding]
             match (cmsg.cmsg_level, cmsg.cmsg_type) {
                 (WinSock::IPPROTO_IP, WinSock::IP_PKTINFO) => {
@@ -308,13 +321,18 @@ impl UdpSocketState {
                     // ECN is a C integer https://learn.microsoft.com/en-us/windows/win32/winsock/winsock-ecn
                     ecn_bits = unsafe { cmsg::decode::<c_int, WinSock::CMSGHDR>(cmsg) };
                 }
+                (WinSock::IPPROTO_UDP, UDP_COALESCED_INFO) => {
+                    // Has type u32 (aka DWORD) per
+                    // https://learn.microsoft.com/en-us/windows/win32/winsock/ipproto-udp-socket-options
+                    stride = unsafe { cmsg::decode::<u32, WinSock::CMSGHDR>(cmsg) };
+                }
                 _ => {}
             }
         }
 
         meta[0] = RecvMeta {
             len: len as usize,
-            stride: len as usize,
+            stride: stride as usize,
             addr: addr.unwrap(),
             ecn: EcnCodepoint::from_bits(ecn_bits as u8),
             dst_ip,
@@ -338,7 +356,8 @@ impl UdpSocketState {
     /// Returns 1 if the platform doesn't support GRO.
     #[inline]
     pub fn gro_segments(&self) -> usize {
-        1
+        // Arbitrary reasonable value inspired by Linux and msquic
+        64
     }
 
     #[inline]
@@ -370,7 +389,7 @@ fn set_socket_option(
 }
 
 pub(crate) const BATCH_SIZE: usize = 1;
-// Enough to store max(IP_PKTINFO + IP_ECN, IPV6_PKTINFO + IPV6_ECN) + UDP_SEND_MSG_SIZE bytes (header + data) and some extra margin
+// Enough to store max(IP_PKTINFO + IP_ECN, IPV6_PKTINFO + IPV6_ECN) + max(UDP_SEND_MSG_SIZE, UDP_COALESCED_INFO) bytes (header + data) and some extra margin
 const CMSG_LEN: usize = 128;
 const OPTION_ON: u32 = 1;
 
