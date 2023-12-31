@@ -1,6 +1,6 @@
 use std::{
     io::IoSliceMut,
-    net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, UdpSocket},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6, UdpSocket},
     slice,
 };
 
@@ -125,7 +125,9 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
     let dst = meta.dst_ip.unwrap();
     match (send_v6, recv_v6) {
         (_, false) => assert_eq!(dst, Ipv4Addr::LOCALHOST),
-        (false, true) => assert_eq!(dst, Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
+        // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
+        // addrs. Canonicalize to IPv6-mapped for robustness.
+        (false, true) => assert_eq!(ip_to_v6_mapped(dst), Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
         (true, true) => assert_eq!(dst, Ipv6Addr::LOCALHOST),
     }
 }
@@ -134,5 +136,12 @@ fn to_v6_mapped(x: SocketAddr) -> SocketAddr {
     match x {
         SocketAddr::V4(x) => SocketAddrV6::new(x.ip().to_ipv6_mapped(), x.port(), 0, 0).into(),
         SocketAddr::V6(_) => x,
+    }
+}
+
+fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
+    match x {
+        IpAddr::V4(x) => IpAddr::V6(x.to_ipv6_mapped()),
+        IpAddr::V6(_) => x,
     }
 }
