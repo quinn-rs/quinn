@@ -87,6 +87,34 @@ fn ecn_v4() {
     }
 }
 
+#[test]
+#[cfg_attr(not(target_os = "linux"), ignore)]
+fn gso() {
+    let send = UdpSocket::bind("[::1]:0")
+        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+        .unwrap();
+    let recv = UdpSocket::bind("[::1]:0")
+        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+        .unwrap();
+    let max_segments = UdpSocketState::new((&send).into())
+        .unwrap()
+        .max_gso_segments();
+    let dst_addr = recv.local_addr().unwrap();
+    const SEGMENT_SIZE: usize = 128;
+    let msg = vec![0xAB; SEGMENT_SIZE * max_segments];
+    test_send_recv(
+        &send.into(),
+        &recv.into(),
+        Transmit {
+            destination: dst_addr,
+            ecn: None,
+            contents: Bytes::copy_from_slice(&msg),
+            segment_size: Some(SEGMENT_SIZE),
+            src_ip: None,
+        },
+    );
+}
+
 fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
     let send_state = UdpSocketState::new(send.into()).unwrap();
     let recv_state = UdpSocketState::new(recv.into()).unwrap();
