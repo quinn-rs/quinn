@@ -8,7 +8,7 @@ use std::{
     time::Instant,
 };
 
-use libc::c_int;
+use libc::{c_int, c_uint};
 use once_cell::sync::Lazy;
 use windows_sys::Win32::Networking::WinSock;
 
@@ -31,6 +31,7 @@ impl UdpSocketState {
             CMSG_LEN
                 >= WinSock::CMSGHDR::cmsg_space(mem::size_of::<WinSock::IN6_PKTINFO>())
                     + WinSock::CMSGHDR::cmsg_space(mem::size_of::<c_int>())
+                    + WinSock::CMSGHDR::cmsg_space(mem::size_of::<u32>())
         );
         assert!(
             mem::align_of::<WinSock::CMSGHDR>() <= mem::align_of::<cmsg::Aligned<[u8; 0]>>(),
@@ -176,6 +177,15 @@ impl UdpSocketState {
                 encoder.push(WinSock::IPPROTO_IPV6, WinSock::IPV6_ECN, ecn);
             }
 
+            // Segment size is a u32 https://learn.microsoft.com/en-us/windows/win32/api/ws2tcpip/nf-ws2tcpip-wsasetudpsendmessagesize
+            if let Some(segment_size) = transmit.segment_size {
+                encoder.push(
+                    WinSock::IPPROTO_UDP,
+                    WinSock::UDP_SEND_MSG_SIZE,
+                    segment_size as u32,
+                );
+            }
+
             encoder.finish();
 
             let mut len = 0;
@@ -319,7 +329,7 @@ impl UdpSocketState {
     /// while using GSO.
     #[inline]
     pub fn max_gso_segments(&self) -> usize {
-        1
+        *MAX_GSO_SEGMENTS
     }
 
     /// The number of segments to read when GRO is enabled. Used as a factor to
@@ -360,7 +370,7 @@ fn set_socket_option(
 }
 
 pub(crate) const BATCH_SIZE: usize = 1;
-// Enough to store max(IP_PKTINFO + IP_ECN, IPV6_PKTINFO + IPV6_ECN) bytes (header + data) and some extra margin
+// Enough to store max(IP_PKTINFO + IP_ECN, IPV6_PKTINFO + IPV6_ECN) + UDP_SEND_MSG_SIZE bytes (header + data) and some extra margin
 const CMSG_LEN: usize = 128;
 const OPTION_ON: u32 = 1;
 
@@ -411,4 +421,24 @@ static WSARECVMSG_PTR: Lazy<WinSock::LPFN_WSARECVMSG> = Lazy::new(|| {
     }
 
     wsa_recvmsg_ptr
+});
+
+static MAX_GSO_SEGMENTS: Lazy<usize> = Lazy::new(|| {
+    let socket = match std::net::UdpSocket::bind("[::]:0")
+        .or_else(|_| std::net::UdpSocket::bind("127.0.0.1:0"))
+    {
+        Ok(socket) => socket,
+        Err(_) => return 1,
+    };
+    const GSO_SIZE: c_uint = 1500;
+    match set_socket_option(
+        &socket,
+        WinSock::IPPROTO_UDP,
+        WinSock::UDP_SEND_MSG_SIZE,
+        GSO_SIZE,
+    ) {
+        // Empirically found on Windows 11 x64
+        Ok(()) => 512,
+        Err(_) => 1,
+    }
 });
