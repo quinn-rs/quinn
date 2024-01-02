@@ -10,8 +10,12 @@ use socket2::Socket;
 
 #[test]
 fn basic() {
-    let send = UdpSocket::bind("[::1]:0").unwrap();
-    let recv = UdpSocket::bind("[::1]:0").unwrap();
+    let send = UdpSocket::bind("[::1]:0")
+        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+        .unwrap();
+    let recv = UdpSocket::bind("[::1]:0")
+        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+        .unwrap();
     let dst_addr = recv.local_addr().unwrap();
     test_send_recv(
         &send.into(),
