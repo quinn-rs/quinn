@@ -908,23 +908,17 @@ impl ClientConfig {
 #[cfg(feature = "rustls")]
 impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
-    #[cfg(feature = "native-certs")]
-    pub fn with_native_roots() -> Self {
-        let mut roots = rustls::RootCertStore::empty();
-        match rustls_native_certs::load_native_certs() {
-            Ok(certs) => {
-                for cert in certs {
-                    if let Err(e) = roots.add(&rustls::Certificate(cert.0)) {
-                        tracing::warn!("failed to parse trust anchor: {}", e);
-                    }
-                }
-            }
-            Err(e) => {
-                tracing::warn!("couldn't load any default trust roots: {}", e);
-            }
-        };
-
-        Self::with_root_certificates(roots)
+    #[cfg(feature = "platform-verifier")]
+    pub fn with_platform_verifier() -> Self {
+        let mut cfg = rustls::ClientConfig::builder()
+            .with_safe_default_cipher_suites()
+            .with_safe_default_kx_groups()
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap()
+            .with_custom_certificate_verifier(Arc::new(rustls_platform_verifier::Verifier::new()))
+            .with_no_client_auth();
+        cfg.enable_early_data = true;
+        Self::new(Arc::new(cfg))
     }
 
     /// Create a client configuration that trusts specified trust anchors
