@@ -31,7 +31,7 @@ impl UdpSocketState {
         socket: UdpSockRef<'_>,
         _state: &UdpState,
         transmits: &[Transmit],
-    ) -> Result<usize, io::Error> {
+    ) -> io::Result<usize> {
         let mut sent = 0;
         for transmit in transmits {
             match socket.0.send_to(

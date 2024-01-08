@@ -371,7 +371,7 @@ fn set_socket_option(
     level: i32,
     name: i32,
     value: u32,
-) -> Result<(), io::Error> {
+) -> io::Result<()> {
     let rc = unsafe {
         WinSock::setsockopt(
             socket.as_raw_socket() as usize,

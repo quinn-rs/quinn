@@ -150,7 +150,7 @@ impl UdpSocketState {
         })
     }
 
-    pub fn send(&self, socket: UdpSockRef<'_>, transmits: &[Transmit]) -> Result<usize, io::Error> {
+    pub fn send(&self, socket: UdpSockRef<'_>, transmits: &[Transmit]) -> io::Result<usize> {
         send(self, socket.0, transmits)
     }
 
@@ -823,7 +823,7 @@ fn set_socket_option_supported(
     level: libc::c_int,
     name: libc::c_int,
     value: libc::c_int,
-) -> Result<bool, io::Error> {
+) -> io::Result<bool> {
     match set_socket_option(socket, level, name, value) {
         Ok(()) => Ok(true),
         Err(err) if err.raw_os_error() == Some(libc::ENOPROTOOPT) => Ok(false),
@@ -836,7 +836,7 @@ fn set_socket_option(
     level: libc::c_int,
     name: libc::c_int,
     value: libc::c_int,
-) -> Result<(), io::Error> {
+) -> io::Result<()> {
     let rc = unsafe {
         libc::setsockopt(
             socket.as_raw_fd(),
