@@ -1,5 +1,7 @@
 use std::{cmp, net::SocketAddr, time::Duration, time::Instant};
 
+use tracing::trace;
+
 use super::{mtud::MtuDiscovery, pacing::Pacer};
 use crate::{config::MtuDiscoveryConfig, congestion, packet::SpaceId, TIMER_GRANULARITY};
 
@@ -167,27 +169,67 @@ impl RttEstimator {
 
 #[derive(Default)]
 pub(crate) struct PathResponses {
-    pending: Option<PathResponse>,
+    pending: Vec<PathResponse>,
 }
 
 impl PathResponses {
-    pub(crate) fn push(&mut self, packet: u64, token: u64) {
-        if self.pending.as_ref().map_or(true, |x| x.packet <= packet) {
-            self.pending = Some(PathResponse { packet, token });
+    pub(crate) fn push(&mut self, packet: u64, token: u64, remote: SocketAddr) {
+        /// Arbitrary permissive limit to prevent abuse
+        const MAX_PATH_RESPONSES: usize = 16;
+        let response = PathResponse {
+            packet,
+            token,
+            remote,
+        };
+        let existing = self.pending.iter_mut().find(|x| x.remote == remote);
+        if let Some(existing) = existing {
+            // Update a queued response
+            if existing.packet <= packet {
+                *existing = response;
+            }
+            return;
+        }
+        if self.pending.len() < MAX_PATH_RESPONSES {
+            self.pending.push(response);
+        } else {
+            // We don't expect to ever hit this with well-behaved peers, so we don't bother dropping
+            // older challenges.
+            trace!("ignoring excessive PATH_CHALLENGE");
         }
     }
 
-    pub(crate) fn pop(&mut self) -> Option<u64> {
-        Some(self.pending.take()?.token)
+    pub(crate) fn pop_off_path(&mut self, remote: &SocketAddr) -> Option<(u64, SocketAddr)> {
+        let response = *self.pending.last()?;
+        if response.remote == *remote {
+            // We don't bother searching further because we expect that the on-path response will
+            // get drained in the immediate future by a call to `pop_on_path`
+            return None;
+        }
+        self.pending.pop();
+        Some((response.token, response.remote))
+    }
+
+    pub(crate) fn pop_on_path(&mut self, remote: &SocketAddr) -> Option<u64> {
+        let response = *self.pending.last()?;
+        if response.remote != *remote {
+            // We don't bother searching further because we expect that the off-path response will
+            // get drained in the immediate future by a call to `pop_off_path`
+            return None;
+        }
+        self.pending.pop();
+        Some(response.token)
     }
 
     pub(crate) fn is_empty(&self) -> bool {
-        self.pending.is_none()
+        self.pending.is_empty()
     }
 }
 
+#[derive(Copy, Clone)]
 struct PathResponse {
     /// The packet number the corresponding PATH_CHALLENGE was received in
     packet: u64,
     token: u64,
+    /// The address the corresponding PATH_CHALLENGE was received from
+    remote: SocketAddr,
 }

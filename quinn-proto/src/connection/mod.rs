@@ -796,6 +796,38 @@ impl Connection {
                 break;
             }
 
+            // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
+            // validation can occur while the link is saturated.
+            if space_id == SpaceId::Data && num_datagrams == 1 {
+                if let Some((token, remote)) = self.path_responses.pop_off_path(&self.path.remote) {
+                    // `unwrap` guaranteed to succeed because `builder_storage` was populated just
+                    // above.
+                    let mut builder = builder_storage.take().unwrap();
+                    trace!("PATH_RESPONSE {:08x} (off-path)", token);
+                    buf.write(frame::Type::PATH_RESPONSE);
+                    buf.write(token);
+                    self.stats.frame_tx.path_response += 1;
+                    builder.pad_to(MIN_INITIAL_SIZE);
+                    builder.finish_and_track(
+                        now,
+                        self,
+                        Some(SentFrames {
+                            non_retransmits: true,
+                            ..SentFrames::default()
+                        }),
+                        buf,
+                    );
+                    self.stats.udp_tx.on_sent(1, buf.len());
+                    return Some(Transmit {
+                        destination: remote,
+                        size: buf.len(),
+                        ecn: None,
+                        segment_size: None,
+                        src_ip: self.local_ip,
+                    });
+                }
+            }
+
             let sent = self.populate_packet(
                 now,
                 space_id,
@@ -2583,7 +2615,7 @@ impl Connection {
                     close = Some(reason);
                 }
                 Frame::PathChallenge(token) => {
-                    self.path_responses.push(number, token);
+                    self.path_responses.push(number, token, remote);
                     if remote == self.path.remote {
                         // PATH_CHALLENGE on active path, possible off-path packet forwarding
                         // attack. Send a non-probing packet to recover the active path.
@@ -3003,7 +3035,7 @@ impl Connection {
 
         // PATH_RESPONSE
         if buf.len() + 9 < max_size && space_id == SpaceId::Data {
-            if let Some(token) = self.path_responses.pop() {
+            if let Some(token) = self.path_responses.pop_on_path(&self.path.remote) {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
                 trace!("PATH_RESPONSE {:08x}", token);
