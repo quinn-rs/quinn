@@ -2718,10 +2718,22 @@ impl Connection {
                     match self.rem_cids.insert(frame) {
                         Ok(None) => {}
                         Ok(Some((retired, reset_token))) => {
-                            self.spaces[SpaceId::Data]
-                                .pending
-                                .retire_cids
-                                .extend(retired);
+                            let pending_retired =
+                                &mut self.spaces[SpaceId::Data].pending.retire_cids;
+                            /// Ensure `pending_retired` cannot grow without bound. Limit is
+                            /// somewhat arbitrary but very permissive.
+                            const MAX_PENDING_RETIRED_CIDS: u64 = CidQueue::LEN as u64 * 10;
+                            // We don't bother counting in-flight frames because those are bounded
+                            // by congestion control.
+                            if (pending_retired.len() as u64)
+                                .saturating_add(retired.end.saturating_sub(retired.start))
+                                > MAX_PENDING_RETIRED_CIDS
+                            {
+                                return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(
+                                    "queued too many retired CIDs",
+                                ));
+                            }
+                            pending_retired.extend(retired);
                             self.set_reset_token(reset_token);
                         }
                         Err(InsertError::ExceedsLimit) => {
