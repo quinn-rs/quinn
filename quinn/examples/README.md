@@ -90,3 +90,46 @@ The expected output should be something like:
 
 Notice how the server sees multiple incoming connections with different IDs coming from the same
 endpoint.
+
+## Mutual Cluster Example
+
+In most TLS connections, a client authenticates that the server is who
+they say they are. In some use cases, however, it can be useful for
+servers to authenticate the client is who they say they are too. In
+this example, we set up a 5 node cluster of communicating processes.
+Each process is equal to all the others, and just depends on a the
+order you start them and a little bit of luck as to which process takes
+the role of the server and which takes the role of the client. Once
+the connection is established, they participate completely equally in
+using a bidirectional QUIC stream.
+
+### Set up your CA
+
+Start by creating a root CA certificate, and then a certificate for each
+of the 5 nodes
+
+```
+$ mkdir certificates
+$ cargo run --example mutual_cluster -- generate-root-certificate certificates
+$ cargo run --example mutual_cluster -- generate-node-certificate certificates node0
+$ cargo run --example mutual_cluster -- generate-node-certificate certificates node1
+$ cargo run --example mutual_cluster -- generate-node-certificate certificates node2
+$ cargo run --example mutual_cluster -- generate-node-certificate certificates node3
+$ cargo run --example mutual_cluster -- generate-node-certificate certificates node4
+```
+
+The main process will use the root CA to authenticate the public key
+presented by the client.
+
+### Start your nodes
+Start your node processes; in separate shells, start each process
+using the `start-node` subcommand. It simply takes the node number
+as an argument; for example, to start node 0, run
+
+```
+$ cargo run --example mutual_cluster start-node 0
+```
+
+Once you have your nodes up, try killing a couple of them, and
+restarting them. This example demonstrates how to keep track
+of the connections and reestablish them using timeouts.
