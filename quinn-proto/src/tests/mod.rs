@@ -1596,7 +1596,9 @@ fn datagram_send_recv() {
     assert_matches!(pair.client_datagrams(client_ch).max_size(), Some(x) if x > 0);
 
     const DATA: &[u8] = b"whee";
-    pair.client_datagrams(client_ch).send(DATA.into()).unwrap();
+    pair.client_datagrams(client_ch)
+        .send(DATA.into(), true)
+        .unwrap();
     pair.drive();
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -1628,9 +1630,15 @@ fn datagram_recv_buffer_overflow() {
     const DATA1: &[u8] = &[0xAB; (WINDOW / 3) + 1];
     const DATA2: &[u8] = &[0xBC; (WINDOW / 3) + 1];
     const DATA3: &[u8] = &[0xCD; (WINDOW / 3) + 1];
-    pair.client_datagrams(client_ch).send(DATA1.into()).unwrap();
-    pair.client_datagrams(client_ch).send(DATA2.into()).unwrap();
-    pair.client_datagrams(client_ch).send(DATA3.into()).unwrap();
+    pair.client_datagrams(client_ch)
+        .send(DATA1.into(), true)
+        .unwrap();
+    pair.client_datagrams(client_ch)
+        .send(DATA2.into(), true)
+        .unwrap();
+    pair.client_datagrams(client_ch)
+        .send(DATA3.into(), true)
+        .unwrap();
     pair.drive();
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -1640,7 +1648,9 @@ fn datagram_recv_buffer_overflow() {
     assert_eq!(pair.server_datagrams(server_ch).recv().unwrap(), DATA3);
     assert_matches!(pair.server_datagrams(server_ch).recv(), None);
 
-    pair.client_datagrams(client_ch).send(DATA1.into()).unwrap();
+    pair.client_datagrams(client_ch)
+        .send(DATA1.into(), true)
+        .unwrap();
     pair.drive();
     assert_eq!(pair.server_datagrams(server_ch).recv().unwrap(), DATA1);
     assert_matches!(pair.server_datagrams(server_ch).recv(), None);
@@ -1661,7 +1671,7 @@ fn datagram_unsupported() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     assert_matches!(pair.client_datagrams(client_ch).max_size(), None);
 
-    match pair.client_datagrams(client_ch).send(Bytes::new()) {
+    match pair.client_datagrams(client_ch).send(Bytes::new(), true) {
         Err(SendDatagramError::UnsupportedByPeer) => {}
         Err(e) => panic!("unexpected error: {e}"),
         Ok(_) => panic!("unexpected success"),
