@@ -21,7 +21,24 @@ use crate::{
 /// - A variant of [`ReadError`] has been yielded by a read call
 /// - [`stop()`] was called explicitly
 ///
-/// # Closing a stream
+/// # Common issues
+///
+/// ## Data never received on a locally-opened stream
+///
+/// Peers are not notified of streams until they or a later-numbered stream are used to send
+/// data. If a bidirectional stream is locally opened but never used to send, then the peer may
+/// never see it. Application protocols should always arrange for the endpoint which will first
+/// transmit on a stream to be the endpoint responsible for opening it.
+///
+/// ## Data never received on a remotely-opened stream
+///
+/// Verify that the stream you are receiving is the same one that the server is sending on, e.g. by
+/// logging the [`id`] of each. Streams are always accepted in the same order as they are created,
+/// i.e. ascending order by [`StreamId`]. For example, even if a sender first transmits on
+/// bidirectional stream 1, the first stream yielded by [`Connection::accept_bi`] on the receiver
+/// will be bidirectional stream 0.
+///
+/// ## Unexpected [`WriteError::Stopped`] in sender
 ///
 /// When a stream is expected to be closed gracefully the sender should call
 /// [`SendStream::finish`].  However there is no guarantee the connected [`RecvStream`] will
@@ -69,6 +86,8 @@ use crate::{
 /// [`stop()`]: RecvStream::stop
 /// [`SendStream::finish`]: crate::SendStream::finish
 /// [`WriteError::Stopped`]: crate::WriteError::Stopped
+/// [`id`]: RecvStream::id
+/// [`Connection::accept_bi`]: crate::Connection::accept_bi
 #[derive(Debug)]
 pub struct RecvStream {
     conn: ConnectionRef,
