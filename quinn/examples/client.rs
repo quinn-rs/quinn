@@ -63,7 +63,8 @@ fn main() {
 #[tokio::main]
 async fn run(options: Opt) -> Result<()> {
     let url = options.url;
-    let remote = (url.host_str().unwrap(), url.port().unwrap_or(4433))
+    let url_host = strip_ipv6_brackets(url.host_str().unwrap());
+    let remote = (url_host, url.port().unwrap_or(4433))
         .to_socket_addrs()?
         .next()
         .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
@@ -102,11 +103,7 @@ async fn run(options: Opt) -> Result<()> {
     let request = format!("GET {}\r\n", url.path());
     let start = Instant::now();
     let rebind = options.rebind;
-    let host = options
-        .host
-        .as_ref()
-        .map_or_else(|| url.host_str(), |x| Some(x))
-        .ok_or_else(|| anyhow!("no hostname specified"))?;
+    let host = options.host.as_deref().unwrap_or(url_host);
 
     eprintln!("connecting to {host} at {remote}");
     let conn = endpoint
@@ -151,6 +148,16 @@ async fn run(options: Opt) -> Result<()> {
     endpoint.wait_idle().await;
 
     Ok(())
+}
+
+fn strip_ipv6_brackets(host: &str) -> &str {
+    // An ipv6 url looks like eg https://[::1]:4433/Cargo.toml, wherein the host [::1] is the
+    // ipv6 address ::1 wrapped in brackets, per RFC 2732. This strips those.
+    if host.starts_with('[') && host.ends_with(']') {
+        &host[1..host.len() - 1]
+    } else {
+        host
+    }
 }
 
 fn duration_secs(x: &Duration) -> f32 {
