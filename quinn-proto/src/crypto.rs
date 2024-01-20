@@ -127,7 +127,6 @@ pub trait ServerConfig: Send + Sync {
         &self,
         version: u32,
         dst_cid: &ConnectionId,
-        side: Side,
     ) -> Result<Keys, UnsupportedVersion>;
 
     /// Generate the integrity tag for a retry packet
