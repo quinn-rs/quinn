@@ -33,8 +33,11 @@ pub trait AsyncTimer: Send + Debug + 'static {
 pub trait AsyncUdpSocket: Send + Sync + Debug + 'static {
     /// Send UDP datagrams from `transmits`, or register to be woken if sending may succeed in the
     /// future
-    fn poll_send(&self, cx: &mut Context, transmits: &[Transmit])
-        -> Poll<Result<usize, io::Error>>;
+    fn poll_send(
+        &self,
+        cx: &mut Context,
+        transmits: &mut [Transmit],
+    ) -> Poll<Result<usize, io::Error>>;
 
     /// Receive UDP datagrams, or register to be woken if receiving may succeed in the future
     fn poll_recv(

@@ -51,7 +51,11 @@ struct UdpSocket {
 }
 
 impl AsyncUdpSocket for UdpSocket {
-    fn poll_send(&self, cx: &mut Context, transmits: &[udp::Transmit]) -> Poll<io::Result<usize>> {
+    fn poll_send(
+        &self,
+        cx: &mut Context,
+        transmits: &mut [udp::Transmit],
+    ) -> Poll<io::Result<usize>> {
         let inner = &self.inner;
         let io = &self.io;
         loop {
