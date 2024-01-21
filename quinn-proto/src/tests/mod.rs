@@ -7,7 +7,7 @@ use std::{
 };
 
 use assert_matches::assert_matches;
-use bytes::{Bytes, BytesMut};
+use bytes::Bytes;
 use hex_literal::hex;
 use rand::RngCore;
 use ring::hmac;
@@ -34,7 +34,7 @@ fn version_negotiate_server() {
         None,
     );
     let now = Instant::now();
-    let mut buf = BytesMut::with_capacity(server.config().get_max_udp_payload_size() as usize);
+    let mut buf = Vec::with_capacity(server.config().get_max_udp_payload_size() as usize);
     let event = server.handle(
         now,
         client_addr,
@@ -76,7 +76,7 @@ fn version_negotiate_client() {
         .connect(Instant::now(), client_config(), server_addr, "localhost")
         .unwrap();
     let now = Instant::now();
-    let mut buf = BytesMut::with_capacity(client.config().get_max_udp_payload_size() as usize);
+    let mut buf = Vec::with_capacity(client.config().get_max_udp_payload_size() as usize);
     let opt_event = client.handle(
         now,
         server_addr,
@@ -1941,7 +1941,7 @@ fn malformed_token_len() {
         true,
         None,
     );
-    let mut buf = BytesMut::with_capacity(server.config().get_max_udp_payload_size() as usize);
+    let mut buf = Vec::with_capacity(server.config().get_max_udp_payload_size() as usize);
     server.handle(
         Instant::now(),
         client_addr,

@@ -12,11 +12,15 @@ use std::{
     time::Instant,
 };
 
-use crate::runtime::{default_runtime, AsyncUdpSocket, Runtime};
+use crate::{
+    runtime::{default_runtime, AsyncUdpSocket, Runtime},
+    udp_transmit,
+};
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use proto::{
-    self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
+    self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, EndpointEvent,
+    ServerConfig,
 };
 use rustc_hash::FxHashMap;
 use tokio::sync::{futures::Notified, mpsc, Notify};
@@ -24,9 +28,8 @@ use tracing::{Instrument, Span};
 use udp::{RecvMeta, BATCH_SIZE};
 
 use crate::{
-    connection::Connecting, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
-    EndpointEvent, VarInt, IO_LOOP_BOUND, MAX_TRANSMIT_QUEUE_CONTENTS_LEN, RECV_TIME_BOUND,
-    SEND_TIME_BOUND,
+    connection::Connecting, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig, VarInt,
+    IO_LOOP_BOUND, RECV_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -215,10 +218,10 @@ impl Endpoint {
         inner.socket = socket;
         inner.ipv6 = addr.is_ipv6();
 
-        // Generate some activity so peers notice the rebind
+        // Update connection socket references
         for sender in inner.connections.senders.values() {
             // Ignoring errors from dropped connections
-            let _ = sender.send(ConnectionEvent::Ping);
+            let _ = sender.send(ConnectionEvent::Rebind(inner.socket.clone()));
         }
 
         Ok(())
@@ -328,7 +331,6 @@ impl Future for EndpointDriver {
         let mut keep_going = false;
         keep_going |= endpoint.drive_recv(cx, now)?;
         keep_going |= endpoint.handle_events(cx, &self.0.shared);
-        keep_going |= endpoint.drive_send(cx)?;
 
         if !endpoint.incoming.is_empty() {
             self.0.shared.incoming.notify_waiters();
@@ -370,7 +372,6 @@ pub(crate) struct EndpointInner {
 pub(crate) struct State {
     socket: Arc<dyn AsyncUdpSocket>,
     inner: proto::Endpoint,
-    outgoing: VecDeque<udp::Transmit>,
     incoming: VecDeque<Connecting>,
     driver: Option<Waker>,
     ipv6: bool,
@@ -381,10 +382,7 @@ pub(crate) struct State {
     driver_lost: bool,
     recv_limiter: WorkLimiter,
     recv_buf: Box<[u8]>,
-    send_limiter: WorkLimiter,
     runtime: Arc<dyn Runtime>,
-    /// The aggregateed contents length of the packets in the transmit queue
-    transmit_queue_contents_len: usize,
 }
 
 #[derive(Debug)]
@@ -416,7 +414,7 @@ impl State {
                         let mut data: BytesMut = buf[0..meta.len].into();
                         while !data.is_empty() {
                             let buf = data.split_to(meta.stride.min(data.len()));
-                            let mut response_buffer = BytesMut::new();
+                            let mut response_buffer = Vec::new();
                             match self.inner.handle(
                                 now,
                                 meta.addr,
@@ -444,22 +442,31 @@ impl State {
                                         .send(ConnectionEvent::Proto(event));
                                 }
                                 Some(DatagramEvent::Response(transmit)) => {
-                                    // Limiting the memory usage for items queued in the outgoing queue from endpoint
-                                    // generated packets. Otherwise, we may see a build-up of the queue under test with
-                                    // flood of initial packets against the endpoint. The sender with the sender-limiter
-                                    // may not keep up the pace of these packets queued into the queue.
-                                    if self.transmit_queue_contents_len
-                                        < MAX_TRANSMIT_QUEUE_CONTENTS_LEN
-                                    {
-                                        let contents_len = transmit.size;
-                                        self.outgoing.push_back(udp_transmit(
-                                            transmit,
-                                            response_buffer.split_to(contents_len).freeze(),
-                                        ));
-                                        self.transmit_queue_contents_len = self
-                                            .transmit_queue_contents_len
-                                            .saturating_add(contents_len);
-                                    }
+                                    // Send if there's kernel buffer space; otherwise, drop it
+                                    //
+                                    // As an endpoint-generated packet, we know this is an
+                                    // immediate, stateless response to an unconnected peer,
+                                    // one of:
+                                    //
+                                    // - A version negotiation response due to an unknown version
+                                    // - A `CLOSE` due to a malformed or unwanted connection attempt
+                                    // - A stateless reset due to an unrecognized connection
+                                    // - A `Retry` packet due to a connection attempt when
+                                    //   `use_retry` is set
+                                    //
+                                    // In each case, a well-behaved peer can be trusted to retry a
+                                    // few times, which is guaranteed to produce the same response
+                                    // from us. Repeated failures might at worst cause a peer's new
+                                    // connection attempt to time out, which is acceptable if we're
+                                    // under such heavy load that there's never room for this code
+                                    // to transmit. This is morally equivalent to the packet getting
+                                    // lost due to congestion further along the link, which
+                                    // similarly relies on peer retries for recovery.
+                                    _ = self.socket.try_send(&udp_transmit(
+                                        &transmit,
+                                        &response_buffer[..transmit.size],
+                                    ));
+                                    response_buffer.clear();
                                 }
                                 None => {}
                             }
@@ -488,100 +495,34 @@ impl State {
         Ok(false)
     }
 
-    fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
-        self.send_limiter.start_cycle();
-
-        let result = loop {
-            if self.outgoing.is_empty() {
-                break Ok(false);
-            }
-
-            if !self.send_limiter.allow_work() {
-                break Ok(true);
-            }
-
-            match self.socket.poll_send(cx, self.outgoing.as_slices().0) {
-                Poll::Ready(Ok(n)) => {
-                    let contents_len: usize =
-                        self.outgoing.drain(..n).map(|t| t.contents.len()).sum();
-                    self.transmit_queue_contents_len = self
-                        .transmit_queue_contents_len
-                        .saturating_sub(contents_len);
-                    // We count transmits instead of `poll_send` calls since the cost
-                    // of a `sendmmsg` still linearly increases with number of packets.
-                    self.send_limiter.record_work(n);
-                }
-                Poll::Pending => {
-                    break Ok(false);
-                }
-                Poll::Ready(Err(e)) => {
-                    break Err(e);
-                }
-            }
-        };
-
-        self.send_limiter.finish_cycle();
-        result
-    }
-
     fn handle_events(&mut self, cx: &mut Context, shared: &Shared) -> bool {
-        use EndpointEvent::*;
         for _ in 0..IO_LOOP_BOUND {
-            match self.events.poll_recv(cx) {
-                Poll::Ready(Some((ch, event))) => match event {
-                    Proto(e) => {
-                        if e.is_drained() {
-                            self.connections.senders.remove(&ch);
-                            if self.connections.is_empty() {
-                                shared.idle.notify_waiters();
-                            }
-                        }
-                        if let Some(event) = self.inner.handle_event(ch, e) {
-                            // Ignoring errors from dropped connections that haven't yet been cleaned up
-                            let _ = self
-                                .connections
-                                .senders
-                                .get_mut(&ch)
-                                .unwrap()
-                                .send(ConnectionEvent::Proto(event));
-                        }
-                    }
-                    Transmit(t, buf) => {
-                        let contents_len = buf.len();
-                        self.outgoing.push_back(udp_transmit(t, buf));
-                        self.transmit_queue_contents_len = self
-                            .transmit_queue_contents_len
-                            .saturating_add(contents_len);
-                    }
-                },
+            let (ch, event) = match self.events.poll_recv(cx) {
+                Poll::Ready(Some(x)) => x,
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
                     return false;
                 }
+            };
+
+            if event.is_drained() {
+                self.connections.senders.remove(&ch);
+                if self.connections.is_empty() {
+                    shared.idle.notify_waiters();
+                }
+            }
+            if let Some(event) = self.inner.handle_event(ch, event) {
+                // Ignoring errors from dropped connections that haven't yet been cleaned up
+                let _ = self
+                    .connections
+                    .senders
+                    .get_mut(&ch)
+                    .unwrap()
+                    .send(ConnectionEvent::Proto(event));
             }
         }
 
         true
-    }
-}
-
-#[inline]
-fn udp_transmit(t: proto::Transmit, buffer: Bytes) -> udp::Transmit {
-    udp::Transmit {
-        destination: t.destination,
-        ecn: t.ecn.map(udp_ecn),
-        contents: buffer,
-        segment_size: t.segment_size,
-        src_ip: t.src_ip,
-    }
-}
-
-#[inline]
-fn udp_ecn(ecn: proto::EcnCodepoint) -> udp::EcnCodepoint {
-    match ecn {
-        proto::EcnCodepoint::Ect0 => udp::EcnCodepoint::Ect0,
-        proto::EcnCodepoint::Ect1 => udp::EcnCodepoint::Ect1,
-        proto::EcnCodepoint::Ce => udp::EcnCodepoint::Ce,
     }
 }
 
@@ -699,7 +640,6 @@ impl EndpointRef {
                 inner,
                 ipv6,
                 events,
-                outgoing: VecDeque::new(),
                 incoming: VecDeque::new(),
                 driver: None,
                 connections: ConnectionSet {
@@ -711,9 +651,7 @@ impl EndpointRef {
                 driver_lost: false,
                 recv_buf: recv_buf.into(),
                 recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
-                send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
                 runtime,
-                transmit_queue_contents_len: 0,
             }),
         }))
     }

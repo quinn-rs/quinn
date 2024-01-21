@@ -41,7 +41,7 @@
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
-use std::time::Duration;
+use std::{sync::Arc, time::Duration};
 
 macro_rules! ready {
     ($e:expr $(,)?) => {
@@ -60,7 +60,6 @@ mod runtime;
 mod send_stream;
 mod work_limiter;
 
-use bytes::Bytes;
 pub use proto::{
     congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ConfigError,
     ConnectError, ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout,
@@ -80,7 +79,7 @@ pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStre
 pub use crate::runtime::AsyncStdRuntime;
 #[cfg(feature = "runtime-tokio")]
 pub use crate::runtime::TokioRuntime;
-pub use crate::runtime::{default_runtime, AsyncTimer, AsyncUdpSocket, Runtime};
+pub use crate::runtime::{default_runtime, AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller};
 pub use crate::send_stream::{SendStream, StoppedError, WriteError};
 
 #[cfg(test)]
@@ -93,13 +92,7 @@ enum ConnectionEvent {
         reason: bytes::Bytes,
     },
     Proto(proto::ConnectionEvent),
-    Ping,
-}
-
-#[derive(Debug)]
-enum EndpointEvent {
-    Proto(proto::EndpointEvent),
-    Transmit(proto::Transmit, Bytes),
+    Rebind(Arc<dyn AsyncUdpSocket>),
 }
 
 /// Maximum number of datagrams processed in send/recv calls to make before moving on to other processing
@@ -116,10 +109,20 @@ const IO_LOOP_BOUND: usize = 160;
 /// batch of size 32 was observed to take 30us on some systems.
 const RECV_TIME_BOUND: Duration = Duration::from_micros(50);
 
-/// The maximum amount of time that should be spent in `sendmsg()` calls per endpoint iteration
-const SEND_TIME_BOUND: Duration = Duration::from_micros(50);
+fn udp_transmit<'a>(t: &proto::Transmit, buffer: &'a [u8]) -> udp::Transmit<'a> {
+    udp::Transmit {
+        destination: t.destination,
+        ecn: t.ecn.map(udp_ecn),
+        contents: buffer,
+        segment_size: t.segment_size,
+        src_ip: t.src_ip,
+    }
+}
 
-/// The maximum size of content length of packets in the outgoing transmit queue. Transmit packets
-/// generated from the endpoint (retry or initial close) can be dropped when this limit is being execeeded.
-/// Chose to represent 100 MB of data.
-const MAX_TRANSMIT_QUEUE_CONTENTS_LEN: usize = 100_000_000;
+fn udp_ecn(ecn: proto::EcnCodepoint) -> udp::EcnCodepoint {
+    match ecn {
+        proto::EcnCodepoint::Ect0 => udp::EcnCodepoint::Ect0,
+        proto::EcnCodepoint::Ect1 => udp::EcnCodepoint::Ect1,
+        proto::EcnCodepoint::Ce => udp::EcnCodepoint::Ce,
+    }
+}

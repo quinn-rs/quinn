@@ -31,10 +31,15 @@ pub trait AsyncTimer: Send + Debug + 'static {
 
 /// Abstract implementation of a UDP socket for runtime independence
 pub trait AsyncUdpSocket: Send + Sync + Debug + 'static {
-    /// Send UDP datagrams from `transmits`, or register to be woken if sending may succeed in the
-    /// future
-    fn poll_send(&self, cx: &mut Context, transmits: &[Transmit])
-        -> Poll<Result<usize, io::Error>>;
+    /// Create a helper for awaiting I/O readiness
+    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn UdpPoller>>;
+
+    /// Send UDP datagrams from `transmits`, or return `WouldBlock` and clear the underlying
+    /// socket's readiness, or return an I/O error
+    ///
+    /// If this returns [`io::ErrorKind::WouldBlock`], [`UdpPoller::poll_writable`] must be called
+    /// to register the calling task to be woken when a send should be attempted again.
+    fn try_send(&self, transmit: &Transmit) -> io::Result<()>;
 
     /// Receive UDP datagrams, or register to be woken if receiving may succeed in the future
     fn poll_recv(
@@ -63,6 +68,53 @@ pub trait AsyncUdpSocket: Send + Sync + Debug + 'static {
     /// option.
     fn may_fragment(&self) -> bool {
         true
+    }
+}
+
+/// Helper to coordinate concurrently writing to an [`AsyncUdpSocket`]
+pub trait UdpPoller: Send + Sync + Debug + 'static {
+    /// Check whether the associated socket is likely to be writable
+    ///
+    /// Must be called after [`AsyncUdpSocket::try_send`] returns [`io::ErrorKind::WouldBlock`] to
+    /// register the task associated with `cx` to be woken when a send should be attempted again.
+    fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>>;
+}
+
+pin_project_lite::pin_project! {
+    struct UdpPollHelper<F, T> {
+        f: F,
+        #[pin]
+        fut: Option<T>,
+    }
+}
+
+impl<F, T> UdpPollHelper<F, T> {
+    fn new(f: F) -> Self {
+        Self { f, fut: None }
+    }
+}
+
+impl<F, T> UdpPoller for UdpPollHelper<F, T>
+where
+    F: Fn() -> T + Send + Sync + 'static,
+    T: Future<Output = io::Result<()>> + Send + Sync + 'static,
+{
+    fn poll_writable(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
+        let mut this = self.project();
+        if this.fut.is_none() {
+            this.fut.set(Some((this.f)()));
+        }
+        let result = this.fut.as_mut().as_pin_mut().unwrap().poll(cx);
+        if result.is_ready() {
+            this.fut.set(None);
+        }
+        result
+    }
+}
+
+impl<F, T> Debug for UdpPollHelper<F, T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("UdpWaitHelper").finish_non_exhaustive()
     }
 }
 

@@ -638,11 +638,14 @@ async fn rebind_recv() {
     client.set_default_client_config(client_config);
 
     let server_config = crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
-    let server = Endpoint::server(
-        server_config,
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-    )
-    .unwrap();
+    let server = {
+        let _guard = tracing::error_span!("server").entered();
+        Endpoint::server(
+            server_config,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
+        .unwrap()
+    };
     let server_addr = server.local_addr().unwrap();
 
     const MSG: &[u8; 5] = b"hello";
@@ -661,11 +664,14 @@ async fn rebind_recv() {
         stream.finish().await.unwrap();
     });
 
-    let connection = client
-        .connect(server_addr, "localhost")
-        .unwrap()
-        .await
-        .unwrap();
+    let connection = {
+        let _guard = tracing::error_span!("client").entered();
+        client
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap()
+    };
     info!("connected");
     connected_recv.notified().await;
     client

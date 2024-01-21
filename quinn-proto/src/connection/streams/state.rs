@@ -4,7 +4,7 @@ use std::{
     mem,
 };
 
-use bytes::{BufMut, BytesMut};
+use bytes::BufMut;
 use rustc_hash::FxHashMap;
 use tracing::{debug, trace};
 
@@ -365,7 +365,7 @@ impl StreamsState {
 
     pub(in crate::connection) fn write_control_frames(
         &mut self,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
         pending: &mut Retransmits,
         retransmits: &mut ThinRetransmits,
         stats: &mut FrameStats,
@@ -491,7 +491,7 @@ impl StreamsState {
 
     pub(crate) fn write_stream_frames(
         &mut self,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
         max_buf_size: usize,
     ) -> StreamMetaVec {
         let mut stream_frames = StreamMetaVec::new();
@@ -925,7 +925,7 @@ mod tests {
         connection::State as ConnState, connection::Streams, ReadableError, RecvStream, SendStream,
         TransportErrorCode, WriteError,
     };
-    use bytes::{Bytes, BytesMut};
+    use bytes::Bytes;
 
     fn make(side: Side) -> StreamsState {
         StreamsState::new(
@@ -1317,7 +1317,7 @@ mod tests {
         high.set_priority(1).unwrap();
         high.write(b"high").unwrap();
 
-        let mut buf = BytesMut::with_capacity(40);
+        let mut buf = Vec::with_capacity(40);
         let meta = server.write_stream_frames(&mut buf, 40);
         assert_eq!(meta[0].id, id_high);
         assert_eq!(meta[1].id, id_mid);
@@ -1376,7 +1376,7 @@ mod tests {
         };
         high.set_priority(-1).unwrap();
 
-        let mut buf = BytesMut::with_capacity(1000);
+        let mut buf = Vec::with_capacity(1000);
         let meta = server.write_stream_frames(&mut buf, 40);
         assert_eq!(meta.len(), 1);
         assert_eq!(meta[0].id, id_high);

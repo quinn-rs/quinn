@@ -37,7 +37,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use bytes::Bytes;
 use tracing::warn;
 
 #[cfg(any(unix, windows))]
@@ -103,13 +102,13 @@ impl Default for RecvMeta {
 
 /// An outgoing packet
 #[derive(Debug, Clone)]
-pub struct Transmit {
+pub struct Transmit<'a> {
     /// The socket this datagram should be sent to
     pub destination: SocketAddr,
     /// Explicit congestion notification bits to set on the packet
     pub ecn: Option<EcnCodepoint>,
     /// Contents of the datagram
-    pub contents: Bytes,
+    pub contents: &'a [u8],
     /// The segment size if this transmission contains multiple datagrams.
     /// This is `None` if the transmit only contains a single datagram
     pub segment_size: Option<usize>,

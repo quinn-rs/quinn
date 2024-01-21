@@ -127,7 +127,7 @@ impl Endpoint {
         local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
         data: BytesMut,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
     ) -> Option<DatagramEvent> {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(
@@ -267,7 +267,7 @@ impl Endpoint {
         inciting_dgram_len: usize,
         addresses: FourTuple,
         dst_cid: &ConnectionId,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
     ) -> Option<Transmit> {
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
         const MIN_PADDING_LEN: usize = 5;
@@ -404,7 +404,7 @@ impl Endpoint {
         mut packet: Packet,
         rest: Option<BytesMut>,
         crypto: &Keys,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
     ) -> Option<DatagramEvent> {
         let (src_cid, dst_cid, token, packet_number, version) = match packet.header {
             Header::Initial {
@@ -633,7 +633,7 @@ impl Endpoint {
         crypto: &Keys,
         remote_id: &ConnectionId,
         reason: TransportError,
-        buf: &mut BytesMut,
+        buf: &mut Vec<u8>,
     ) -> Transmit {
         // We don't need to worry about CID collisions in initial closes because the peer
         // shouldn't respond, and if it does, and the CID collides, we'll just drop the

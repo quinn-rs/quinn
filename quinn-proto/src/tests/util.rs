@@ -331,7 +331,7 @@ impl TestEndpoint {
             }
         }
         let buffer_size = self.endpoint.config().get_max_udp_payload_size() as usize;
-        let mut buf = BytesMut::with_capacity(buffer_size);
+        let mut buf = Vec::with_capacity(buffer_size);
 
         while self.inbound.front().map_or(false, |x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
@@ -354,8 +354,11 @@ impl TestEndpoint {
                     }
                     DatagramEvent::Response(transmit) => {
                         let size = transmit.size;
-                        self.outbound
-                            .extend(split_transmit(transmit, buf.split_to(size).freeze()));
+                        self.outbound.extend(split_transmit(
+                            transmit,
+                            Bytes::copy_from_slice(&buf[..size]),
+                        ));
+                        buf.clear();
                     }
                 }
             }
@@ -380,8 +383,11 @@ impl TestEndpoint {
                 }
                 while let Some(transmit) = conn.poll_transmit(now, MAX_DATAGRAMS, &mut buf) {
                     let size = transmit.size;
-                    self.outbound
-                        .extend(split_transmit(transmit, buf.split_to(size).freeze()));
+                    self.outbound.extend(split_transmit(
+                        transmit,
+                        Bytes::copy_from_slice(&buf[..size]),
+                    ));
+                    buf.clear();
                 }
                 self.timeout = conn.poll_timeout();
             }
