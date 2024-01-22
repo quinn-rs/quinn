@@ -561,7 +561,7 @@ impl Connection {
         let mut buf_capacity = 0;
 
         let mut coalesce = true;
-        let mut builder: Option<PacketBuilder> = None;
+        let mut builder_storage: Option<PacketBuilder> = None;
         let mut sent_frames = None;
         let mut pad_datagram = false;
         let mut congestion_blocked = false;
@@ -598,7 +598,7 @@ impl Connection {
             // Can we append more data into the current buffer?
             // It is not safe to assume that `buf.len()` is the end of the data,
             // since the last packet might not have been finished.
-            let buf_end = if let Some(builder) = &builder {
+            let buf_end = if let Some(builder) = &builder_storage {
                 buf.len().max(builder.min_size) + builder.tag_len
             } else {
                 buf.len()
@@ -630,7 +630,7 @@ impl Connection {
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
                 if ack_eliciting && self.spaces[space_id].loss_probes == 0 {
                     // Assume the current packet will get padded to fill the full MTU
-                    let untracked_bytes = if let Some(builder) = &builder {
+                    let untracked_bytes = if let Some(builder) = &builder_storage {
                         buf_capacity - builder.partial_encode.start
                     } else {
                         0
@@ -664,7 +664,7 @@ impl Connection {
                 }
 
                 // Finish current packet
-                if let Some(mut builder) = builder.take() {
+                if let Some(mut builder) = builder_storage.take() {
                     // Pad the packet to make it suitable for sending with GSO
                     // which will always send the maximum PDU.
                     builder.pad_to(self.path.current_mtu());
@@ -694,7 +694,7 @@ impl Connection {
                 // We can append/coalesce the next packet into the current
                 // datagram.
                 // Finish current packet without adding extra padding
-                if let Some(builder) = builder.take() {
+                if let Some(builder) = builder_storage.take() {
                     builder.finish_and_track(now, self, sent_frames.take(), buf);
                 }
             }
@@ -718,14 +718,14 @@ impl Connection {
             }
 
             debug_assert!(
-                builder.is_none() && sent_frames.is_none(),
+                builder_storage.is_none() && sent_frames.is_none(),
                 "Previous packet must have been finished"
             );
 
             // This should really be `builder.insert()`, but `Option::insert`
             // is not stable yet. Since we `debug_assert!(builder.is_none())` it
             // doesn't make any functional difference.
-            let builder = builder.get_or_insert(PacketBuilder::new(
+            let builder = builder_storage.get_or_insert(PacketBuilder::new(
                 now,
                 space_id,
                 buf,
@@ -831,7 +831,7 @@ impl Connection {
         }
 
         // Finish the last packet
-        if let Some(mut builder) = builder {
+        if let Some(mut builder) = builder_storage {
             if pad_datagram {
                 builder.pad_to(MIN_INITIAL_SIZE);
             }
