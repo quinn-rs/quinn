@@ -617,9 +617,10 @@ impl Connection {
                 // for starting another datagram. If there is any anti-amplification
                 // budget left, we always allow a full MTU to be sent
                 // (see https://github.com/quinn-rs/quinn/issues/1082)
-                if self.path.anti_amplification_blocked(
-                    self.path.current_mtu() as u64 * num_datagrams as u64 + 1,
-                ) {
+                if self
+                    .path
+                    .anti_amplification_blocked(self.path.current_mtu() as u64 * num_datagrams + 1)
+                {
                     trace!("blocked by anti-amplification");
                     break;
                 }
@@ -728,7 +729,7 @@ impl Connection {
                 space_id,
                 buf,
                 buf_capacity,
-                (num_datagrams - 1) * (self.path.current_mtu() as usize),
+                (num_datagrams as usize - 1) * (self.path.current_mtu() as usize),
                 ack_eliciting,
                 self,
                 self.version,
@@ -898,7 +899,7 @@ impl Connection {
         trace!("sending {} bytes in {} datagrams", buf.len(), num_datagrams);
         self.path.total_sent = self.path.total_sent.saturating_add(buf.len() as u64);
 
-        self.stats.udp_tx.on_sent(num_datagrams as u64, buf.len());
+        self.stats.udp_tx.on_sent(num_datagrams, buf.len());
 
         Some(Transmit {
             destination: self.path.remote,
