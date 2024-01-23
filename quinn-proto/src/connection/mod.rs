@@ -508,9 +508,7 @@ impl Connection {
                 builder.pad_to(MIN_INITIAL_SIZE);
 
                 builder.finish(self, buf);
-                self.stats.udp_tx.datagrams += 1;
-                self.stats.udp_tx.ios += 1;
-                self.stats.udp_tx.bytes += buf.len() as u64;
+                self.stats.udp_tx.on_sent(1, buf.len());
                 return Some(Transmit {
                     destination,
                     size: buf.len(),
@@ -900,9 +898,7 @@ impl Connection {
         trace!("sending {} bytes in {} datagrams", buf.len(), num_datagrams);
         self.path.total_sent = self.path.total_sent.saturating_add(buf.len() as u64);
 
-        self.stats.udp_tx.datagrams += num_datagrams as u64;
-        self.stats.udp_tx.bytes += buf.len() as u64;
-        self.stats.udp_tx.ios += 1;
+        self.stats.udp_tx.on_sent(num_datagrams as u64, buf.len());
 
         Some(Transmit {
             destination: self.path.remote,

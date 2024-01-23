@@ -17,6 +17,14 @@ pub struct UdpStats {
     pub ios: u64,
 }
 
+impl UdpStats {
+    pub(crate) fn on_sent(&mut self, datagrams: u64, bytes: usize) {
+        self.datagrams += datagrams;
+        self.bytes += bytes as u64;
+        self.ios += 1;
+    }
+}
+
 /// Number of frames transmitted of each frame type
 #[derive(Default, Copy, Clone)]
 #[non_exhaustive]
