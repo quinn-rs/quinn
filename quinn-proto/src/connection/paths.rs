@@ -165,8 +165,29 @@ impl RttEstimator {
     }
 }
 
-pub(crate) struct PathResponse {
+#[derive(Default)]
+pub(crate) struct PathResponses {
+    pending: Option<PathResponse>,
+}
+
+impl PathResponses {
+    pub(crate) fn push(&mut self, packet: u64, token: u64) {
+        if self.pending.as_ref().map_or(true, |x| x.packet <= packet) {
+            self.pending = Some(PathResponse { packet, token });
+        }
+    }
+
+    pub(crate) fn pop(&mut self) -> Option<u64> {
+        Some(self.pending.take()?.token)
+    }
+
+    pub(crate) fn is_empty(&self) -> bool {
+        self.pending.is_none()
+    }
+}
+
+struct PathResponse {
     /// The packet number the corresponding PATH_CHALLENGE was received in
-    pub(crate) packet: u64,
-    pub(crate) token: u64,
+    packet: u64,
+    token: u64,
 }

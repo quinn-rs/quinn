@@ -58,7 +58,7 @@ use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
 pub use paths::RttEstimator;
-use paths::{PathData, PathResponse};
+use paths::{PathData, PathResponses};
 
 mod send_buffer;
 
@@ -197,7 +197,8 @@ pub struct Connection {
     //
     // Queued non-retransmittable 1-RTT data
     //
-    path_response: Option<PathResponse>,
+    /// Responses to PATH_CHALLENGE frames
+    path_responses: PathResponses,
     close: bool,
 
     //
@@ -336,7 +337,7 @@ impl Connection {
             #[cfg(not(test))]
             packet_number_filter: PacketNumberFilter::new(&mut rng),
 
-            path_response: None,
+            path_responses: PathResponses::default(),
             close: false,
 
             ack_frequency: AckFrequencyState::new(get_max_ack_delay(
@@ -2582,16 +2583,7 @@ impl Connection {
                     close = Some(reason);
                 }
                 Frame::PathChallenge(token) => {
-                    if self
-                        .path_response
-                        .as_ref()
-                        .map_or(true, |x| x.packet <= number)
-                    {
-                        self.path_response = Some(PathResponse {
-                            packet: number,
-                            token,
-                        });
-                    }
+                    self.path_responses.push(number, token);
                     if remote == self.path.remote {
                         // PATH_CHALLENGE on active path, possible off-path packet forwarding
                         // attack. Send a non-probing packet to recover the active path.
@@ -3011,12 +3003,12 @@ impl Connection {
 
         // PATH_RESPONSE
         if buf.len() + 9 < max_size && space_id == SpaceId::Data {
-            if let Some(response) = self.path_response.take() {
+            if let Some(token) = self.path_responses.pop() {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
-                trace!("PATH_RESPONSE {:08x}", response.token);
+                trace!("PATH_RESPONSE {:08x}", token);
                 buf.write(frame::Type::PATH_RESPONSE);
-                buf.write(response.token);
+                buf.write(token);
                 self.stats.frame_tx.path_response += 1;
             }
         }
@@ -3414,7 +3406,7 @@ impl Connection {
                 .prev_path
                 .as_ref()
                 .map_or(false, |x| x.challenge_pending)
-            || self.path_response.is_some()
+            || !self.path_responses.is_empty()
             || !self.datagrams.outgoing.is_empty()
     }
 
