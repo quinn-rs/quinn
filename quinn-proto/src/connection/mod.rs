@@ -57,8 +57,8 @@ mod packet_crypto;
 use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
-use paths::PathData;
 pub use paths::RttEstimator;
+use paths::{PathData, PathResponse};
 
 mod send_buffer;
 
@@ -3610,12 +3610,6 @@ pub enum Event {
     Stream(StreamEvent),
     /// One or more application datagrams have been received
     DatagramReceived,
-}
-
-struct PathResponse {
-    /// The packet number the corresponding PATH_CHALLENGE was received in
-    packet: u64,
-    token: u64,
 }
 
 fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {

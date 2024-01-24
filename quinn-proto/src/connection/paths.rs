@@ -164,3 +164,9 @@ impl RttEstimator {
         }
     }
 }
+
+pub(crate) struct PathResponse {
+    /// The packet number the corresponding PATH_CHALLENGE was received in
+    pub(crate) packet: u64,
+    pub(crate) token: u64,
+}
