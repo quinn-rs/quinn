@@ -360,7 +360,7 @@ pub(crate) struct EndpointInner {
 pub(crate) struct State {
     socket: Arc<dyn AsyncUdpSocket>,
     inner: proto::Endpoint,
-    outgoing: VecDeque<udp::Transmit>,
+    transmit_state: TransmitState,
     incoming: VecDeque<Connecting>,
     driver: Option<Waker>,
     ipv6: bool,
@@ -373,8 +373,6 @@ pub(crate) struct State {
     recv_buf: Box<[u8]>,
     send_limiter: WorkLimiter,
     runtime: Arc<dyn Runtime>,
-    /// The aggregateed contents length of the packets in the transmit queue
-    transmit_queue_contents_len: usize,
 }
 
 #[derive(Debug)]
@@ -434,22 +432,7 @@ impl State {
                                         .send(ConnectionEvent::Proto(event));
                                 }
                                 Some(DatagramEvent::Response(transmit)) => {
-                                    // Limiting the memory usage for items queued in the outgoing queue from endpoint
-                                    // generated packets. Otherwise, we may see a build-up of the queue under test with
-                                    // flood of initial packets against the endpoint. The sender with the sender-limiter
-                                    // may not keep up the pace of these packets queued into the queue.
-                                    if self.transmit_queue_contents_len
-                                        < MAX_TRANSMIT_QUEUE_CONTENTS_LEN
-                                    {
-                                        let contents_len = transmit.size;
-                                        self.outgoing.push_back(udp_transmit(
-                                            transmit,
-                                            response_buffer.split_to(contents_len).freeze(),
-                                        ));
-                                        self.transmit_queue_contents_len = self
-                                            .transmit_queue_contents_len
-                                            .saturating_add(contents_len);
-                                    }
+                                    self.transmit_state.respond(transmit, response_buffer);
                                 }
                                 None => {}
                             }
@@ -482,7 +465,7 @@ impl State {
         self.send_limiter.start_cycle();
 
         let result = loop {
-            if self.outgoing.is_empty() {
+            if self.transmit_state.outgoing.is_empty() {
                 break Ok(false);
             }
 
@@ -490,13 +473,9 @@ impl State {
                 break Ok(true);
             }
 
-            match self.socket.poll_send(cx, self.outgoing.as_slices().0) {
+            match self.socket.poll_send(cx, self.transmit_state.transmits()) {
                 Poll::Ready(Ok(n)) => {
-                    let contents_len: usize =
-                        self.outgoing.drain(..n).map(|t| t.contents.len()).sum();
-                    self.transmit_queue_contents_len = self
-                        .transmit_queue_contents_len
-                        .saturating_sub(contents_len);
+                    self.transmit_state.dequeue(n);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearly increases with number of packets.
                     self.send_limiter.record_work(n);
@@ -536,13 +515,7 @@ impl State {
                                 .send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t, buf) => {
-                        let contents_len = buf.len();
-                        self.outgoing.push_back(udp_transmit(t, buf));
-                        self.transmit_queue_contents_len = self
-                            .transmit_queue_contents_len
-                            .saturating_add(contents_len);
-                    }
+                    Transmit(t, buf) => self.transmit_state.enqueue(t, buf),
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
@@ -552,6 +525,48 @@ impl State {
         }
 
         true
+    }
+}
+
+#[derive(Debug, Default)]
+struct TransmitState {
+    outgoing: VecDeque<udp::Transmit>,
+    /// The aggregateed contents length of the packets in the transmit queue
+    contents_len: usize,
+}
+
+impl TransmitState {
+    fn respond(&mut self, transmit: proto::Transmit, mut response_buffer: BytesMut) {
+        // Limiting the memory usage for items queued in the outgoing queue from endpoint
+        // generated packets. Otherwise, we may see a build-up of the queue under test with
+        // flood of initial packets against the endpoint. The sender with the sender-limiter
+        // may not keep up the pace of these packets queued into the queue.
+        if self.contents_len >= MAX_TRANSMIT_QUEUE_CONTENTS_LEN {
+            return;
+        }
+
+        let contents_len = transmit.size;
+        self.outgoing.push_back(udp_transmit(
+            transmit,
+            response_buffer.split_to(contents_len).freeze(),
+        ));
+        self.contents_len = self.contents_len.saturating_add(contents_len);
+    }
+
+    fn enqueue(&mut self, t: proto::Transmit, buf: Bytes) {
+        let contents_len = buf.len();
+        self.outgoing.push_back(udp_transmit(t, buf));
+        self.contents_len = self.contents_len.saturating_add(contents_len);
+    }
+
+    fn dequeue(&mut self, sent: usize) {
+        self.contents_len = self
+            .contents_len
+            .saturating_sub(self.outgoing.drain(..sent).map(|t| t.contents.len()).sum());
+    }
+
+    fn transmits(&self) -> &[udp::Transmit] {
+        self.outgoing.as_slices().0
     }
 }
 
@@ -689,7 +704,7 @@ impl EndpointRef {
                 inner,
                 ipv6,
                 events,
-                outgoing: VecDeque::new(),
+                transmit_state: TransmitState::default(),
                 incoming: VecDeque::new(),
                 driver: None,
                 connections: ConnectionSet {
@@ -703,7 +718,6 @@ impl EndpointRef {
                 recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
                 send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
                 runtime,
-                transmit_queue_contents_len: 0,
             }),
         }))
     }
