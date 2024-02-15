@@ -522,6 +522,16 @@ impl Connection {
         self.0.stable_id()
     }
 
+    /// The remote handshake cid
+    pub fn remote_cid(&self) -> proto::ConnectionId {
+        self.0.state.lock("remote_cid").inner.remote_cid()
+    }
+
+    /// The local handshake cid
+    pub fn local_cid(&self) -> proto::ConnectionId {
+        self.0.state.lock("local_cid").inner.local_cid()
+    }
+
     // Update traffic keys spontaneously for testing purposes.
     #[doc(hidden)]
     pub fn force_key_update(&self) {

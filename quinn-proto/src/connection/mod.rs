@@ -1228,6 +1228,16 @@ impl Connection {
         self.path.remote
     }
 
+    /// The remote handshake cid
+    pub fn remote_cid(&self) -> ConnectionId {
+        self.rem_handshake_cid
+    }
+
+    /// The local handshake cid
+    pub fn local_cid(&self) -> ConnectionId {
+        self.handshake_cid
+    }
+
     /// The local IP address which was used when the peer established
     /// the connection
     ///
