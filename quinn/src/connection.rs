@@ -523,13 +523,26 @@ impl Connection {
     }
 
     /// The remote handshake cid
-    pub fn remote_cid(&self) -> proto::ConnectionId {
-        self.0.state.lock("remote_cid").inner.remote_cid()
+    pub fn remote_handshake_cid(&self) -> proto::ConnectionId {
+        self.0
+            .state
+            .lock("remote_handshake_cid")
+            .inner
+            .remote_handshake_cid()
+    }
+
+    /// The remote original/initital cid
+    pub fn remote_original_cid(&self) -> proto::ConnectionId {
+        self.0
+            .state
+            .lock("remote_original_cid")
+            .inner
+            .remote_original_cid()
     }
 
     /// The local handshake cid
-    pub fn local_cid(&self) -> proto::ConnectionId {
-        self.0.state.lock("local_cid").inner.local_cid()
+    pub fn local_handshake_cid(&self) -> proto::ConnectionId {
+        self.0.state.lock("local_cid").inner.local_handshake_cid()
     }
 
     // Update traffic keys spontaneously for testing purposes.
