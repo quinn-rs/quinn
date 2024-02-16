@@ -16,7 +16,8 @@ use crate::runtime::{default_runtime, AsyncUdpSocket, Runtime};
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use proto::{
-    self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
+    self as proto, ClientConfig, ConnectError, ConnectionError, ConnectionHandle, DatagramEvent,
+    ServerConfig,
 };
 use rustc_hash::FxHashMap;
 use tokio::sync::{futures::Notified, mpsc, Notify};
@@ -24,9 +25,9 @@ use tracing::{Instrument, Span};
 use udp::{RecvMeta, BATCH_SIZE};
 
 use crate::{
-    connection::Connecting, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
-    EndpointEvent, VarInt, IO_LOOP_BOUND, MAX_TRANSMIT_QUEUE_CONTENTS_LEN, RECV_TIME_BOUND,
-    SEND_TIME_BOUND,
+    connection::Connecting, incoming::Incoming, work_limiter::WorkLimiter, ConnectionEvent,
+    EndpointConfig, EndpointEvent, VarInt, IO_LOOP_BOUND, MAX_INCOMING_CONNECTIONS,
+    MAX_TRANSMIT_QUEUE_CONTENTS_LEN, RECV_TIME_BOUND, SEND_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -137,8 +138,10 @@ impl Endpoint {
 
     /// Get the next incoming connection attempt from a client
     ///
-    /// Yields [`Connecting`] futures that must be `await`ed to obtain the final `Connection`, or
-    /// `None` if the endpoint is [`close`](Self::close)d.
+    /// Yields [`Incoming`]s, or `None` if the endpoint is [`close`](Self::close)d. [`Incoming`]
+    /// can be `await`ed to obtain the final [`Connection`](crate::Connection), or used to e.g.
+    /// filter connection attempts or force address validation, or converted into an intermediate
+    /// `Connecting` future which can be used to e.g. send 0.5-RTT data.
     pub fn accept(&self) -> Accept<'_> {
         Accept {
             endpoint: self,
@@ -366,12 +369,57 @@ pub(crate) struct EndpointInner {
     pub(crate) shared: Shared,
 }
 
+impl EndpointInner {
+    pub(crate) fn accept(
+        &self,
+        incoming: proto::Incoming,
+        mut response_buffer: BytesMut,
+    ) -> Result<Connecting, ConnectionError> {
+        let mut state = self.state.lock().unwrap();
+        state
+            .inner
+            .accept(incoming, Instant::now(), &mut response_buffer)
+            .map(|(handle, conn)| {
+                let socket = state.socket.clone();
+                let runtime = state.runtime.clone();
+                state.connections.insert(handle, conn, socket, runtime)
+            })
+            .map_err(|(e, response)| {
+                if let Some(transmit) = response {
+                    state.transmit_state.respond(transmit, response_buffer);
+                }
+                e
+            })
+    }
+
+    pub(crate) fn reject(&self, incoming: proto::Incoming, mut response_buffer: BytesMut) {
+        let mut state = self.state.lock().unwrap();
+        let transmit = state.inner.reject(incoming, &mut response_buffer);
+        state.transmit_state.respond(transmit, response_buffer);
+    }
+
+    pub(crate) fn retry(
+        &self,
+        incoming: proto::Incoming,
+        mut response_buffer: BytesMut,
+    ) -> Result<(), (proto::RetryError, BytesMut)> {
+        let mut state = self.state.lock().unwrap();
+        match state.inner.retry(incoming, &mut response_buffer) {
+            Ok(transmit) => {
+                state.transmit_state.respond(transmit, response_buffer);
+                Ok(())
+            }
+            Err(e) => Err((e, response_buffer)),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct State {
     socket: Arc<dyn AsyncUdpSocket>,
     inner: proto::Endpoint,
     transmit_state: TransmitState,
-    incoming: VecDeque<Connecting>,
+    incoming: VecDeque<(proto::Incoming, BytesMut)>,
     driver: Option<Waker>,
     ipv6: bool,
     connections: ConnectionSet,
@@ -423,14 +471,14 @@ impl State {
                                 buf,
                                 &mut response_buffer,
                             ) {
-                                Some(DatagramEvent::NewConnection(handle, conn)) => {
-                                    let conn = self.connections.insert(
-                                        handle,
-                                        conn,
-                                        self.socket.clone(),
-                                        self.runtime.clone(),
-                                    );
-                                    self.incoming.push_back(conn);
+                                Some(DatagramEvent::NewConnection(incoming)) => {
+                                    if self.incoming.len() < MAX_INCOMING_CONNECTIONS {
+                                        self.incoming.push_back((incoming, response_buffer));
+                                    } else {
+                                        let transmit =
+                                            self.inner.reject(incoming, &mut response_buffer);
+                                        self.transmit_state.respond(transmit, response_buffer);
+                                    }
                                 }
                                 Some(DatagramEvent::ConnectionEvent(handle, event)) => {
                                     // Ignoring errors from dropped connections that haven't yet been cleaned up
@@ -661,15 +709,18 @@ pin_project! {
 }
 
 impl<'a> Future for Accept<'a> {
-    type Output = Option<Connecting>;
+    type Output = Option<Incoming>;
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
-        let endpoint = &mut *this.endpoint.inner.state.lock().unwrap();
+        let mut endpoint = this.endpoint.inner.state.lock().unwrap();
         if endpoint.driver_lost {
             return Poll::Ready(None);
         }
-        if let Some(conn) = endpoint.incoming.pop_front() {
-            return Poll::Ready(Some(conn));
+        if let Some((incoming, response_buffer)) = endpoint.incoming.pop_front() {
+            // Release the mutex lock on endpoint so cloning it doesn't deadlock
+            drop(endpoint);
+            let incoming = Incoming::new(incoming, this.endpoint.inner.clone(), response_buffer);
+            return Poll::Ready(Some(incoming));
         }
         if endpoint.connections.close.is_some() {
             return Poll::Ready(None);
