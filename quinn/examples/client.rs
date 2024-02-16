@@ -5,7 +5,7 @@
 use std::{
     fs,
     io::{self, Write},
-    net::ToSocketAddrs,
+    net::{SocketAddr, ToSocketAddrs},
     path::PathBuf,
     sync::Arc,
     time::{Duration, Instant},
@@ -39,6 +39,10 @@ struct Opt {
     /// Simulate NAT rebinding after connecting
     #[clap(long = "rebind")]
     rebind: bool,
+
+    /// Address to bind on
+    #[clap(long = "bind", default_value = "[::]:0")]
+    bind: SocketAddr,
 }
 
 fn main() {
@@ -97,7 +101,7 @@ async fn run(options: Opt) -> Result<()> {
     }
 
     let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
-    let mut endpoint = quinn::Endpoint::client("[::]:0".parse().unwrap())?;
+    let mut endpoint = quinn::Endpoint::client(options.bind)?;
     endpoint.set_default_client_config(client_config);
 
     let request = format!("GET {}\r\n", url.path());
