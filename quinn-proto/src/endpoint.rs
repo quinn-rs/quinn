@@ -249,7 +249,7 @@ impl Endpoint {
 
             return match first_decode.finish(Some(&*crypto.header.remote)) {
                 Ok(packet) => {
-                    self.handle_first_packet(now, addresses, ecn, packet, remaining, crypto, buf)
+                    self.handle_first_packet(addresses, ecn, packet, remaining, crypto, buf)
                 }
                 Err(e) => {
                     trace!("unable to decode initial packet: {}", e);
@@ -425,7 +425,6 @@ impl Endpoint {
 
     fn handle_first_packet(
         &mut self,
-        now: Instant,
         addresses: FourTuple,
         ecn: Option<EcnCodepoint>,
         mut packet: Packet,
@@ -491,7 +490,7 @@ impl Endpoint {
             }
         };
 
-        let incoming = Incoming {
+        Some(DatagramEvent::NewConnection(Incoming {
             addresses,
             ecn,
             packet,
@@ -503,24 +502,31 @@ impl Endpoint {
             version,
             retry_src_cid,
             orig_dst_cid,
-        };
-        if server_config.use_retry && !incoming.remote_address_validated() {
-            Some(DatagramEvent::Response(self.retry(incoming, buf)))
-        } else {
-            match self.accept(incoming, now, buf) {
-                Ok((ch, conn)) => Some(DatagramEvent::NewConnection(ch, conn)),
-                Err((_, response)) => response.map(DatagramEvent::Response),
-            }
-        }
+        }))
     }
 
     /// Attempt to accept this incoming connection (an error may still occur)
-    fn accept(
+    pub fn accept(
         &mut self,
         incoming: Incoming,
         now: Instant,
         buf: &mut BytesMut,
-    ) -> Result<(ConnectionHandle, Connection), (ConnectionError, Option<Transmit>)> {
+    ) -> Result<(ConnectionHandle, Connection), AcceptError> {
+        if self.cids_exhausted() {
+            debug!("refusing connection");
+            return Err(AcceptError {
+                cause: ConnectionError::CidsExhausted,
+                response: Some(self.initial_close(
+                    incoming.version,
+                    incoming.addresses,
+                    &incoming.crypto,
+                    &incoming.src_cid,
+                    TransportError::CONNECTION_REFUSED(""),
+                    buf,
+                )),
+            });
+        }
+
         let server_config = self.server_config.as_ref().unwrap().clone();
 
         let ch = ConnectionHandle(self.connections.vacant_key());
@@ -583,7 +589,7 @@ impl Endpoint {
                     )),
                     _ => None,
                 };
-                Err((e, response))
+                Err(AcceptError { cause: e, response })
             }
         }
     }
@@ -617,8 +623,29 @@ impl Endpoint {
         Ok(())
     }
 
+    /// Reject this incoming connection attempt
+    pub fn refuse(&mut self, incoming: Incoming, buf: &mut BytesMut) -> Transmit {
+        self.initial_close(
+            incoming.version,
+            incoming.addresses,
+            &incoming.crypto,
+            &incoming.src_cid,
+            TransportError::CONNECTION_REFUSED(""),
+            buf,
+        )
+    }
+
     /// Respond with a retry packet, requiring the client to retry with address validation
-    fn retry(&mut self, incoming: Incoming, buf: &mut BytesMut) -> Transmit {
+    ///
+    /// Errors if `incoming.remote_address_validated()` is true.
+    pub fn retry(
+        &mut self,
+        incoming: Incoming,
+        buf: &mut BytesMut,
+    ) -> Result<Transmit, RetryError> {
+        if incoming.remote_address_validated() {
+            return Err(RetryError(incoming));
+        }
         let server_config = self.server_config.as_ref().unwrap();
 
         // First Initial
@@ -657,13 +684,13 @@ impl Endpoint {
         ));
         encode.finish(buf, &*incoming.crypto.header.local, None);
 
-        Transmit {
+        Ok(Transmit {
             destination: incoming.addresses.remote,
             ecn: None,
             size: buf.len(),
             segment_size: None,
             src_ip: incoming.addresses.local_ip,
-        }
+        })
     }
 
     fn add_connection(
@@ -938,14 +965,14 @@ impl IndexMut<ConnectionHandle> for Slab<ConnectionMeta> {
 pub enum DatagramEvent {
     /// The datagram is redirected to its `Connection`
     ConnectionEvent(ConnectionHandle, ConnectionEvent),
-    /// The datagram has resulted in starting a new `Connection`
-    NewConnection(ConnectionHandle, Connection),
+    /// The datagram may result in starting a new `Connection`
+    NewConnection(Incoming),
     /// Response generated directly by the endpoint
     Response(Transmit),
 }
 
 /// An incoming connection for which the server has not yet begun its part of the handshake.
-struct Incoming {
+pub struct Incoming {
     addresses: FourTuple,
     ecn: Option<EcnCodepoint>,
     packet: Packet,
@@ -960,11 +987,24 @@ struct Incoming {
 }
 
 impl Incoming {
+    /// The local IP address which was used when the peer established
+    /// the connection
+    ///
+    /// This has the same behavior as [`Connection::local_ip`]
+    pub fn local_ip(&self) -> Option<IpAddr> {
+        self.addresses.local_ip
+    }
+
+    /// The peer's UDP address.
+    pub fn remote_address(&self) -> SocketAddr {
+        self.addresses.remote
+    }
+
     /// Whether the socket address that is initiating this connection has been validated.
     ///
     /// This means that the sender of the initial packet has proved that they can receive traffic
     /// sent to `self.remote_address()`.
-    fn remote_address_validated(&self) -> bool {
+    pub fn remote_address_validated(&self) -> bool {
         self.retry_src_cid.is_some()
     }
 }
@@ -1017,6 +1057,28 @@ pub enum ConnectError {
     /// The local endpoint does not support the QUIC version specified in the client configuration
     #[error("unsupported QUIC version")]
     UnsupportedVersion,
+}
+
+/// Error type for attempting to accept an [`Incoming`]
+#[derive(Debug)]
+pub struct AcceptError {
+    /// Underlying error describing reason for failure
+    pub cause: ConnectionError,
+    /// Optional response to transmit back
+    pub response: Option<Transmit>,
+}
+
+/// Error for attempting to retry an [`Incoming`] which already bears an address
+/// validation token from a previous retry
+#[derive(Debug, Error)]
+#[error("retry() with validated Incoming")]
+pub struct RetryError(Incoming);
+
+impl RetryError {
+    /// Get the [`Incoming`]
+    pub fn into_incoming(self) -> Incoming {
+        self.0
+    }
 }
 
 /// Reset Tokens which are associated with peer socket addresses
