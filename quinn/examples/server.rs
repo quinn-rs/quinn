@@ -37,6 +37,9 @@ struct Opt {
     /// Address to listen on
     #[clap(long = "listen", default_value = "[::1]:4433")]
     listen: SocketAddr,
+    /// Client address to block
+    #[clap(long = "block")]
+    block: Option<SocketAddr>,
 }
 
 fn main() {
@@ -142,7 +145,10 @@ async fn run(options: Opt) -> Result<()> {
     eprintln!("listening on {}", endpoint.local_addr()?);
 
     while let Some(conn) = endpoint.accept().await {
-        if options.stateless_retry && !conn.remote_address_validated() {
+        if Some(conn.remote_address()) == options.block {
+            info!("rejecting blocked client IP address");
+            conn.reject();
+        } else if options.stateless_retry && !conn.remote_address_validated() {
             info!("requiring connection to validate its address");
             conn.retry().unwrap();
         } else {
