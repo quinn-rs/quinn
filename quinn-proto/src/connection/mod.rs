@@ -1343,7 +1343,7 @@ impl Connection {
                 // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame
                 self.ack_frequency.on_acked(packet);
 
-                self.on_packet_acked(now, space, info);
+                self.on_packet_acked(now, info);
             }
         }
 
@@ -1429,8 +1429,8 @@ impl Connection {
 
     // Not timing-aware, so it's safe to call this for inferred acks, such as arise from
     // high-latency handshakes
-    fn on_packet_acked(&mut self, now: Instant, space: SpaceId, info: SentPacket) {
-        self.remove_in_flight(space, &info);
+    fn on_packet_acked(&mut self, now: Instant, info: SentPacket) {
+        self.remove_in_flight(&info);
         if info.ack_eliciting && self.path.challenge.is_none() {
             // Only pass ACKs to the congestion controller if we are not validating the current
             // path, so as to ignore any ACKs from older paths still coming in.
@@ -1595,7 +1595,7 @@ impl Connection {
 
             for &packet in &lost_packets {
                 let info = self.spaces[pn_space].take(packet).unwrap(); // safe: lost_packets is populated just above
-                self.remove_in_flight(pn_space, &info);
+                self.remove_in_flight(&info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
                 }
@@ -1624,7 +1624,7 @@ impl Connection {
         // Handle a lost MTU probe
         if let Some(packet) = lost_mtu_probe {
             let info = self.spaces[SpaceId::Data].take(packet).unwrap(); // safe: lost_mtu_probe is omitted from lost_packets, and therefore must not have been removed yet
-            self.remove_in_flight(SpaceId::Data, &info);
+            self.remove_in_flight(&info);
             self.path.mtud.on_probe_lost();
             self.stats.path.lost_plpmtud_probes += 1;
         }
@@ -2020,9 +2020,10 @@ impl Connection {
         space.crypto = None;
         space.time_of_last_ack_eliciting_packet = None;
         space.loss_time = None;
+        space.in_flight = 0;
         let sent_packets = mem::take(&mut space.sent_packets);
         for (_, packet) in sent_packets.into_iter() {
-            self.remove_in_flight(space_id, &packet);
+            self.remove_in_flight(&packet);
         }
         self.set_loss_detection_timer(now)
     }
@@ -2299,7 +2300,7 @@ impl Connection {
 
                 let space = &mut self.spaces[SpaceId::Initial];
                 if let Some(info) = space.take(0) {
-                    self.on_packet_acked(now, SpaceId::Initial, info);
+                    self.on_packet_acked(now, info);
                 };
 
                 self.discard_space(now, SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
@@ -2320,7 +2321,7 @@ impl Connection {
                 // Retransmit all 0-RTT data
                 let zero_rtt = mem::take(&mut self.spaces[SpaceId::Data].sent_packets);
                 for (_, info) in zero_rtt {
-                    self.remove_in_flight(SpaceId::Data, &info);
+                    self.remove_in_flight(&info);
                     self.spaces[SpaceId::Data].pending |= info.retransmits;
                 }
                 self.streams.retransmit_all_for_0rtt();
@@ -2383,7 +2384,7 @@ impl Connection {
                             let sent_packets =
                                 mem::take(&mut self.spaces[SpaceId::Data].sent_packets);
                             for (_, packet) in sent_packets {
-                                self.remove_in_flight(SpaceId::Data, &packet);
+                                self.remove_in_flight(&packet);
                             }
                         } else {
                             self.accepted_0rtt = true;
@@ -3437,10 +3438,9 @@ impl Connection {
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
-    fn remove_in_flight(&mut self, space: SpaceId, packet: &SentPacket) {
+    fn remove_in_flight(&mut self, packet: &SentPacket) {
         self.in_flight.bytes -= u64::from(packet.size);
         self.in_flight.ack_eliciting -= u64::from(packet.ack_eliciting);
-        self.spaces[space].in_flight -= u64::from(packet.size);
     }
 
     /// Terminate the connection instantly, without sending a close packet
