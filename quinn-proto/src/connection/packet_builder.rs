@@ -204,7 +204,7 @@ impl PacketBuilder {
         };
 
         conn.in_flight.insert(&packet);
-        conn.spaces[space_id].sent(exact_number, packet);
+        conn.in_flight.bytes -= conn.spaces[space_id].sent(exact_number, packet);
         conn.stats.path.sent_packets += 1;
         conn.reset_keep_alive(now);
         if size != 0 {
