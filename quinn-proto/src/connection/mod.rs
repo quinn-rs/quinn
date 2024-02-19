@@ -1321,7 +1321,7 @@ impl Connection {
 
         let mut ack_eliciting_acked = false;
         for packet in newly_acked.elts() {
-            if let Some(info) = self.spaces[space].sent_packets.remove(&packet) {
+            if let Some(info) = self.spaces[space].take(packet) {
                 if let Some(acked) = info.largest_acked {
                     // Assume ACKs for all packets below the largest acknowledged in `packet` have
                     // been received. This can cause the peer to spuriously retransmit if some of
@@ -1593,14 +1593,14 @@ impl Connection {
                 size_of_lost_packets
             );
 
-            for packet in &lost_packets {
-                let info = self.spaces[pn_space].sent_packets.remove(packet).unwrap(); // safe: lost_packets is populated just above
+            for &packet in &lost_packets {
+                let info = self.spaces[pn_space].take(packet).unwrap(); // safe: lost_packets is populated just above
                 self.remove_in_flight(pn_space, &info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
                 }
                 self.spaces[pn_space].pending |= info.retransmits;
-                self.path.mtud.on_non_probe_lost(*packet, info.size);
+                self.path.mtud.on_non_probe_lost(packet, info.size);
             }
 
             if self.path.mtud.black_hole_detected(now) {
@@ -1623,10 +1623,7 @@ impl Connection {
 
         // Handle a lost MTU probe
         if let Some(packet) = lost_mtu_probe {
-            let info = self.spaces[SpaceId::Data]
-                .sent_packets
-                .remove(&packet)
-                .unwrap(); // safe: lost_mtu_probe is omitted from lost_packets, and therefore must not have been removed yet
+            let info = self.spaces[SpaceId::Data].take(packet).unwrap(); // safe: lost_mtu_probe is omitted from lost_packets, and therefore must not have been removed yet
             self.remove_in_flight(SpaceId::Data, &info);
             self.path.mtud.on_probe_lost();
             self.stats.path.lost_plpmtud_probes += 1;
@@ -2301,7 +2298,7 @@ impl Connection {
                 self.rem_handshake_cid = rem_cid;
 
                 let space = &mut self.spaces[SpaceId::Initial];
-                if let Some(info) = space.sent_packets.remove(&0) {
+                if let Some(info) = space.take(0) {
                     self.on_packet_acked(now, SpaceId::Initial, info);
                 };
 

@@ -199,6 +199,11 @@ impl PacketSpace {
         Ok(ce_increase != 0)
     }
 
+    /// Stop tracking sent packet `number`, and return what we knew about it
+    pub(super) fn take(&mut self, number: u64) -> Option<SentPacket> {
+        self.sent_packets.remove(&number)
+    }
+
     pub(super) fn sent(&mut self, number: u64, packet: SentPacket) {
         self.in_flight += u64::from(packet.size);
         self.sent_packets.insert(number, packet);
