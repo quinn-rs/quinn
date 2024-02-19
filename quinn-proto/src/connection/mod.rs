@@ -2974,7 +2974,6 @@ impl Connection {
 
         // ACK
         if space.pending_acks.can_send() {
-            debug_assert!(!space.pending_acks.ranges().is_empty());
             Self::populate_acks(
                 now,
                 self.receiving_ecn,
