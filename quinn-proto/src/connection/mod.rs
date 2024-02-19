@@ -2946,6 +2946,7 @@ impl Connection {
         let mut sent = SentFrames::default();
         let space = &mut self.spaces[space_id];
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
+        space.pending_acks.maybe_ack_non_eliciting();
 
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
