@@ -509,6 +509,7 @@ pub(super) struct PendingAcks {
     ///
     /// Once the count _exceeds_ `ack_eliciting_threshold`, an immediate ACK is required
     ack_eliciting_since_last_ack_sent: u64,
+    non_ack_eliciting_since_last_ack_sent: u64,
     ack_eliciting_threshold: u64,
     /// The reordering threshold, controlling how we respond to out-of-order ack-eliciting packets
     ///
@@ -538,6 +539,7 @@ impl PendingAcks {
         Self {
             immediate_ack_required: false,
             ack_eliciting_since_last_ack_sent: 0,
+            non_ack_eliciting_since_last_ack_sent: 0,
             ack_eliciting_threshold: 1,
             reordering_threshold: 1,
             earliest_ack_eliciting_since_last_ack_sent: None,
@@ -588,6 +590,7 @@ impl PendingAcks {
         dedup: &Dedup,
     ) -> bool {
         if !ack_eliciting {
+            self.non_ack_eliciting_since_last_ack_sent += 1;
             return false;
         }
 
@@ -669,6 +672,7 @@ impl PendingAcks {
         // occasional redundant retransmits.
         self.immediate_ack_required = false;
         self.ack_eliciting_since_last_ack_sent = 0;
+        self.non_ack_eliciting_since_last_ack_sent = 0;
         self.earliest_ack_eliciting_since_last_ack_sent = None;
         self.largest_acked = self.largest_ack_eliciting_packet;
     }
@@ -694,6 +698,22 @@ impl PendingAcks {
     /// Returns the set of currently pending ACK ranges
     pub(super) fn ranges(&self) -> &ArrayRangeSet {
         &self.ranges
+    }
+
+    /// Queue an ACK if a significant number of non-ACK-eliciting packets have not yet been
+    /// acknowledged
+    ///
+    /// Should be called immediately before a non-probing packet is composed, when we've already
+    /// committed to sending a packet regardless.
+    pub(super) fn maybe_ack_non_eliciting(&mut self) {
+        // If we're going to send a packet anyway, and we've received a significant number of
+        // non-ACK-eliciting packets, then include an ACK to help the peer perform timely loss
+        // detection even if they're not sending any ACK-eliciting packets themselves. Exact
+        // threshold chosen somewhat arbitrarily.
+        const LAZY_ACK_THRESHOLD: u64 = 10;
+        if self.non_ack_eliciting_since_last_ack_sent > LAZY_ACK_THRESHOLD {
+            self.immediate_ack_required = true;
+        }
     }
 }
 
