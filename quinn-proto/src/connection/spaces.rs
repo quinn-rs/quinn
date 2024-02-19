@@ -201,7 +201,9 @@ impl PacketSpace {
 
     /// Stop tracking sent packet `number`, and return what we knew about it
     pub(super) fn take(&mut self, number: u64) -> Option<SentPacket> {
-        self.sent_packets.remove(&number)
+        let packet = self.sent_packets.remove(&number)?;
+        self.in_flight -= u64::from(packet.size);
+        Some(packet)
     }
 
     pub(super) fn sent(&mut self, number: u64, packet: SentPacket) {
