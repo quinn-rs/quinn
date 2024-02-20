@@ -21,6 +21,13 @@ use crate::{
 /// - A variant of [`ReadError`] has been yielded by a read call
 /// - [`stop()`] was called explicitly
 ///
+/// # Cancellation
+///
+/// A `read` method is said to be *cancel-safe* when dropping its future before the future becomes
+/// ready cannot lead to loss of stream data. This is true of methods which succeed immediately when
+/// any progress is made, and is not true of methods which might need to perform multiple reads
+/// internally before succeeding. Each `read` method documents whether it is cancel-safe.
+///
 /// # Common issues
 ///
 /// ## Data never received on a locally-opened stream
@@ -111,6 +118,8 @@ impl RecvStream {
     /// Read data contiguously from the stream.
     ///
     /// Yields the number of bytes read into `buf` on success, or `None` if the stream was finished.
+    ///
+    /// This operation is cancel-safe.
     pub async fn read(&mut self, buf: &mut [u8]) -> Result<Option<usize>, ReadError> {
         Read {
             stream: self,
@@ -121,7 +130,7 @@ impl RecvStream {
 
     /// Read an exact number of bytes contiguously from the stream.
     ///
-    /// See [`read()`] for details.
+    /// See [`read()`] for details. This operation is *not* cancel-safe.
     ///
     /// [`read()`]: RecvStream::read
     pub async fn read_exact(&mut self, buf: &mut [u8]) -> Result<(), ReadExactError> {
@@ -172,6 +181,8 @@ impl RecvStream {
     ///
     /// Slightly more efficient than `read` due to not copying. Chunk boundaries do not correspond
     /// to peer writes, and hence cannot be used as framing.
+    ///
+    /// This operation is cancel-safe.
     pub async fn read_chunk(
         &mut self,
         max_length: usize,
@@ -206,6 +217,8 @@ impl RecvStream {
     ///
     /// Slightly more efficient than `read` due to not copying. Chunk boundaries
     /// do not correspond to peer writes, and hence cannot be used as framing.
+    ///
+    /// This operation is cancel-safe.
     pub async fn read_chunks(&mut self, bufs: &mut [Bytes]) -> Result<Option<usize>, ReadError> {
         ReadChunks { stream: self, bufs }.await
     }
@@ -247,6 +260,8 @@ impl RecvStream {
     ///
     /// If unordered reads have already been made, the resulting buffer may have gaps containing
     /// arbitrary data.
+    ///
+    /// This operation is *not* cancel-safe.
     ///
     /// [`ReadToEndError::TooLong`]: crate::ReadToEndError::TooLong
     pub async fn read_to_end(&mut self, size_limit: usize) -> Result<Vec<u8>, ReadToEndError> {
