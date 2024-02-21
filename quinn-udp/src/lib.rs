@@ -192,3 +192,59 @@ impl EcnCodepoint {
         })
     }
 }
+
+#[cfg(test)]
+mod test {
+    use std::{io::IoSliceMut, net::Ipv4Addr};
+
+    use super::*;
+
+    fn send_recv(sender_address: IpAddr, receiver_address: IpAddr) -> Result<(), std::io::Error> {
+        let sender_socket = std::net::UdpSocket::bind((sender_address, 0))?;
+        let sender_state = UdpSocketState::new((&sender_socket).into())?;
+        sender_socket.set_nonblocking(false)?;
+
+        let receiver_socket = std::net::UdpSocket::bind((receiver_address, 0))?;
+        let receiver_state = UdpSocketState::new((&receiver_socket).into())?;
+        receiver_socket.set_nonblocking(false)?;
+
+        let transmit = Transmit {
+            destination: receiver_socket.local_addr()?,
+            ecn: Some(EcnCodepoint::Ect0),
+            contents: vec![42].into(),
+            segment_size: None,
+            src_ip: None,
+        };
+        let n = sender_state.send((&sender_socket).into(), std::slice::from_ref(&transmit))?;
+        assert_eq!(n, 1, "only passed one slice");
+
+        let mut buf = [0; u16::MAX as usize];
+        let mut meta = RecvMeta::default();
+        let n = receiver_state.recv(
+            (&receiver_socket).into(),
+            &mut [IoSliceMut::new(&mut buf)],
+            std::slice::from_mut(&mut meta),
+        )?;
+        assert_eq!(n, 1, "only passed one slice");
+
+        assert_eq!(buf[..meta.len], [42]);
+        assert_eq!(meta.ecn, Some(EcnCodepoint::Ect0));
+
+        Ok(())
+    }
+
+    #[test]
+    fn send_recv_addr_families() -> Result<(), std::io::Error> {
+        let addresses = [
+            Ipv4Addr::LOCALHOST.into(),
+            Ipv6Addr::LOCALHOST.into(),
+            Ipv4Addr::LOCALHOST.to_ipv6_mapped().into(),
+        ];
+
+        for address in addresses {
+            send_recv(address, address)?;
+        }
+
+        Ok(())
+    }
+}
