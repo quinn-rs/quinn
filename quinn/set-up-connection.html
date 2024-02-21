@@ -175,26 +175,26 @@
                     <main>
                         <h1 id="connection-setup"><a class="header" href="#connection-setup">Connection Setup</a></h1>
 <p>In the <a href="certificate.html">previous chapter</a> we looked at how to configure a certificate.
-This aspect is omitted in this chapter to prevent duplication. 
-But <strong>remember</strong> that this is required to get your <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> up and running. 
-This chapter explains how to set up a connection and prepare it for data transfer. </p>
-<p>It all starts with the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> struct, this is the entry point of the library. </p>
+This aspect is omitted in this chapter to prevent duplication.
+But <strong>remember</strong> that this is required to get your <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> up and running.
+This chapter explains how to set up a connection and prepare it for data transfer.</p>
+<p>It all starts with the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> struct, this is the entry point of the library.</p>
 <h2 id="example"><a class="header" href="#example">Example</a></h2>
-<p>Let's start by defining some constants. </p>
+<p>Let's start by defining some constants.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>static SERVER_NAME: &amp;str = &quot;localhost&quot;;
+</span>static SERVER_NAME: &amp;str = "localhost";
 
 fn client_addr() -&gt; SocketAddr {
-    &quot;127.0.0.1:5000&quot;.parse::&lt;SocketAddr&gt;().unwrap()
+    "127.0.0.1:5000".parse::&lt;SocketAddr&gt;().unwrap()
 }
 
 fn server_addr() -&gt; SocketAddr {
-    &quot;127.0.0.1:5001&quot;.parse::&lt;SocketAddr&gt;().unwrap()
+    "127.0.0.1:5001".parse::&lt;SocketAddr&gt;().unwrap()
 }
 <span class="boring">}</span></code></pre></pre>
 <p><strong>Server</strong></p>
-<p>First, the server endpoint should be bound to a socket. 
+<p>First, the server endpoint should be bound to a socket.
 The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.server">server()</a> method, which can be used for this, returns the <code>Endpoint</code> type.
 <code>Endpoint</code> is used to start outgoing connections and accept incoming connections.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]

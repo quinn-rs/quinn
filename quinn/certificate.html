@@ -180,8 +180,8 @@
 <p>For our example use case, the easiest way to allow the client to trust our server is to disable certificate verification (don't do this in production!).
 When the <a href="https://github.com/ctz/rustls">rustls</a> <code>dangerous_configuration</code> feature flag is enabled, a client can be configured to trust any server.</p>
 <p>Start by adding a <a href="https://github.com/ctz/rustls">rustls</a> dependency with the <code>dangerous_configuration</code> feature flag to your <code>Cargo.toml</code> file.</p>
-<pre><code class="language-toml">quinn = &quot;*&quot;
-rustls = { version = &quot;*&quot;, features = [&quot;dangerous_configuration&quot;, &quot;quic&quot;] }
+<pre><code class="language-toml">quinn = "*"
+rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 </code></pre>
 <p>Then, allow the client to skip the certificate validation by implementing <a href="https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html">ServerCertVerifier</a> and letting it assert verification for any server.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
@@ -235,7 +235,7 @@ This example uses <a href="https://github.com/est31/rcgen">rcgen</a> to generate
 </span><span class="boring">fn main() {
 </span>fn generate_self_signed_cert() -&gt; Result&lt;(rustls::Certificate, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt;
 {
-    let cert = rcgen::generate_simple_self_signed(vec![&quot;localhost&quot;.to_string()])?;
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let key = rustls::PrivateKey(cert.serialize_private_key_der());
     Ok((rustls::Certificate(cert.serialize_der()?), key))
 }
@@ -258,16 +258,16 @@ These files can then be referenced in code.</p>
 
 pub fn read_certs_from_file(
 ) -&gt; Result&lt;(Vec&lt;rustls::Certificate&gt;, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt; {
-    let mut cert_chain_reader = BufReader::new(File::open(&quot;./fullchain.pem&quot;)?);
+    let mut cert_chain_reader = BufReader::new(File::open("./fullchain.pem")?);
     let certs = rustls_pemfile::certs(&amp;mut cert_chain_reader)?
         .into_iter()
         .map(rustls::Certificate)
         .collect();
 
-    let mut key_reader = BufReader::new(File::open(&quot;./privkey.pem&quot;)?);
-    // if the file starts with &quot;BEGIN RSA PRIVATE KEY&quot;
+    let mut key_reader = BufReader::new(File::open("./privkey.pem")?);
+    // if the file starts with "BEGIN RSA PRIVATE KEY"
     // let mut keys = rustls_pemfile::rsa_private_keys(&amp;mut key_reader)?;
-    // if the file starts with &quot;BEGIN PRIVATE KEY&quot;
+    // if the file starts with "BEGIN PRIVATE KEY"
     let mut keys = rustls_pemfile::pkcs8_private_keys(&amp;mut key_reader)?;
 
     assert_eq!(keys.len(), 1);

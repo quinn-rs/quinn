@@ -175,12 +175,12 @@
                 <div id="content" class="content">
                     <main>
                         <h1 id="networking-introduction"><a class="header" href="#networking-introduction">Networking Introduction</a></h1>
-<p>In this chapter, you will find a very short introduction to various networking concepts. 
+<p>In this chapter, you will find a very short introduction to various networking concepts.
 These concepts are important to understanding when to use QUIC.</p>
 <h2 id="1-tcpip-and-udp-comparison"><a class="header" href="#1-tcpip-and-udp-comparison">1. TCP/IP and UDP Comparison</a></h2>
 <p>Let's compare TCP, UDP, and QUIC.</p>
 <ul>
-<li><strong>unreliable</strong>: Transport packets are not assured of arrival and ordering. </li>
+<li><strong>unreliable</strong>: Transport packets are not assured of arrival and ordering.</li>
 <li><strong>reliable</strong>: Transport packets are assured of arrival and ordering.</li>
 </ul>
 <div class="table-wrapper"><table><thead><tr><th style="text-align: center">Feature</th><th style="text-align: center">TCP</th><th style="text-align: center">UDP</th><th style="text-align: center">QUIC</th></tr></thead><tbody>
@@ -193,44 +193,44 @@ These concepts are important to understanding when to use QUIC.</p>
 </tbody></table>
 </div>
 <p>'a. Unreliable is supported as an extension.<br />
-'b. QUIC control flow/congestion implementations will run in userspace whereas in TCP it's running in kernel space, 
+'b. QUIC control flow/congestion implementations will run in userspace whereas in TCP it's running in kernel space,
 however, there might be a kernel implementation for QUIC in the future.</p>
 <h2 id="2-issues-with-tcp"><a class="header" href="#2-issues-with-tcp">2. Issues with TCP</a></h2>
-<p>TCP has been around for a long time and was not designed with the modern internet in mind. 
-It has several difficulties that QUIC tries to resolve. </p>
+<p>TCP has been around for a long time and was not designed with the modern internet in mind.
+It has several difficulties that QUIC tries to resolve.</p>
 <h3 id="head-of-line-blocking"><a class="header" href="#head-of-line-blocking">Head-of-line Blocking</a></h3>
-<p>One of the biggest issues with TCP is that of Head-of-line blocking. 
-It is a convenient feature because it ensures that all packages are sent and arrive in order. 
+<p>One of the biggest issues with TCP is that of Head-of-line blocking.
+It is a convenient feature because it ensures that all packages are sent and arrive in order.
 However, in cases of high throughput (multiplayer game networking) and big load in a short time (web page load), this can severely impact latency.</p>
 <p>The issue is demonstrated in the following animation:</p>
-<p><img src="./images/hol.gif" alt="Head of line blocking" /> </p>
+<p><img src="./images/hol.gif" alt="Head of line blocking" /></p>
 <p>This animation shows that if a certain packet drops in transmission, all packets have to wait at the transport layer until it is resent by the other end. Once the delayed packet arrives at its destination, all later packets are passed on to the destination application together.</p>
-<p>Let's look at two areas where head-of-line blocking causes problems. </p>
+<p>Let's look at two areas where head-of-line blocking causes problems.</p>
 <p><strong>Web Networking</strong></p>
-<p>As websites increasingly need a larger number of HTTP requests (HTML, CSS, JavaScript, images) to display all content, the impact of head-of-line blocking has also increased. 
-To improve on this, HTTP 2 introduced request multiplexing within a TCP data stream, which allows servers to stream multiple responses at the same time. 
+<p>As websites increasingly need a larger number of HTTP requests (HTML, CSS, JavaScript, images) to display all content, the impact of head-of-line blocking has also increased.
+To improve on this, HTTP 2 introduced request multiplexing within a TCP data stream, which allows servers to stream multiple responses at the same time.
 However, data loss of a single packet will still block all response streams because they exist within the context of a single TCP stream.</p>
 <h3 id="connection-setup-duration"><a class="header" href="#connection-setup-duration">Connection Setup Duration</a></h3>
 <p>In the usual TCP + TLS + HTTP stack, TCP needs 6 handshake messages to set up a session between server and client. TLS performs its own, sending 4 messages for setting up an initial connection over TLS 1.3. By integrating the transport protocol and TLS handshakes, QUIC can make connection setup more efficient.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="the-quic-protocol"><a class="header" href="#the-quic-protocol">The QUIC protocol</a></h1>
 <p><a href="https://en.wikipedia.org/wiki/QUIC">QUIC</a> is a general-purpose network protocol built on top of UDP,
-and <a href="https://www.rfc-editor.org/rfc/rfc9000.html">standardized</a> by the <a href="https://www.ietf.org/">IETF</a>. Although QUIC is still relatively new, 
-the protocol is used for all connections from Chrome web browsers to the Google servers. </p>
-<p>QUIC solves a number of transport-layer and application-layer problems experienced by modern web applications. 
-It is very similar to TCP+TLS+HTTP2, but implemented on top of UDP. 
-Having QUIC as a self-contained protocol allows innovations which aren’t 
+and <a href="https://www.rfc-editor.org/rfc/rfc9000.html">standardized</a> by the <a href="https://www.ietf.org/">IETF</a>. Although QUIC is still relatively new,
+the protocol is used for all connections from Chrome web browsers to the Google servers.</p>
+<p>QUIC solves a number of transport-layer and application-layer problems experienced by modern web applications.
+It is very similar to TCP+TLS+HTTP2, but implemented on top of UDP.
+Having QUIC as a self-contained protocol allows innovations which aren’t
 possible with existing protocols as they are hampered by legacy clients and middleboxes.</p>
 <p>Key advantages of QUIC over TCP+TLS+HTTP2 include:</p>
 <ul>
 <li>Improved connection establishment speed (0-rtt).</li>
 <li>Improved congestion control by moving congestion control algorithms into the user space at both endpoints.</li>
-<li>Improved bandwidth estimation in each direction to avoid congestion. </li>
+<li>Improved bandwidth estimation in each direction to avoid congestion.</li>
 <li>Improved multiplexing without head-of-line blocking.</li>
-<li>Contains forward error correction (FEC). </li>
+<li>Contains forward error correction (FEC).</li>
 </ul>
 <p>While QUIC's intentions are originally web-oriented, it offers interesting opportunities in other areas like game networking.
-One thing is for sure, QUIC has many great potentials and will serve us in the future with HTTP/3. </p>
-<p>In the upcoming chapter we will be discussing various aspects of QUIC also in relation to Quinn. </p>
+One thing is for sure, QUIC has many great potentials and will serve us in the future with HTTP/3.</p>
+<p>In the upcoming chapter we will be discussing various aspects of QUIC also in relation to Quinn.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 align="center"><img width="500" src="https://raw.githubusercontent.com/quinn-rs/quinn/51a3cea225670757cb844a342428e4e1341d9f13/docs/thumbnail.svg" /></h1>
 <p><a href="https://docs.rs/quinn/"><img src="https://docs.rs/quinn/badge.svg" alt="Documentation" /></a>
 <a href="https://crates.io/crates/quinn"><img src="https://img.shields.io/crates/v/quinn.svg" alt="Crates.io" /></a>
@@ -333,8 +333,8 @@ crates will always be at least 6 months old at the time of release.</p>
 <p>For our example use case, the easiest way to allow the client to trust our server is to disable certificate verification (don't do this in production!).
 When the <a href="https://github.com/ctz/rustls">rustls</a> <code>dangerous_configuration</code> feature flag is enabled, a client can be configured to trust any server.</p>
 <p>Start by adding a <a href="https://github.com/ctz/rustls">rustls</a> dependency with the <code>dangerous_configuration</code> feature flag to your <code>Cargo.toml</code> file.</p>
-<pre><code class="language-toml">quinn = &quot;*&quot;
-rustls = { version = &quot;*&quot;, features = [&quot;dangerous_configuration&quot;, &quot;quic&quot;] }
+<pre><code class="language-toml">quinn = "*"
+rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 </code></pre>
 <p>Then, allow the client to skip the certificate validation by implementing <a href="https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html">ServerCertVerifier</a> and letting it assert verification for any server.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
@@ -388,7 +388,7 @@ This example uses <a href="https://github.com/est31/rcgen">rcgen</a> to generate
 </span><span class="boring">fn main() {
 </span>fn generate_self_signed_cert() -&gt; Result&lt;(rustls::Certificate, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt;
 {
-    let cert = rcgen::generate_simple_self_signed(vec![&quot;localhost&quot;.to_string()])?;
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let key = rustls::PrivateKey(cert.serialize_private_key_der());
     Ok((rustls::Certificate(cert.serialize_der()?), key))
 }
@@ -411,16 +411,16 @@ These files can then be referenced in code.</p>
 
 pub fn read_certs_from_file(
 ) -&gt; Result&lt;(Vec&lt;rustls::Certificate&gt;, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt; {
-    let mut cert_chain_reader = BufReader::new(File::open(&quot;./fullchain.pem&quot;)?);
+    let mut cert_chain_reader = BufReader::new(File::open("./fullchain.pem")?);
     let certs = rustls_pemfile::certs(&amp;mut cert_chain_reader)?
         .into_iter()
         .map(rustls::Certificate)
         .collect();
 
-    let mut key_reader = BufReader::new(File::open(&quot;./privkey.pem&quot;)?);
-    // if the file starts with &quot;BEGIN RSA PRIVATE KEY&quot;
+    let mut key_reader = BufReader::new(File::open("./privkey.pem")?);
+    // if the file starts with "BEGIN RSA PRIVATE KEY"
     // let mut keys = rustls_pemfile::rsa_private_keys(&amp;mut key_reader)?;
-    // if the file starts with &quot;BEGIN PRIVATE KEY&quot;
+    // if the file starts with "BEGIN PRIVATE KEY"
     let mut keys = rustls_pemfile::pkcs8_private_keys(&amp;mut key_reader)?;
 
     assert_eq!(keys.len(), 1);
@@ -448,26 +448,26 @@ After configuring plug the configuration into the <code>Endpoint</code>.</p>
 <p><a href="quinn/set-up-connection.html">Next</a>, let's have a look at how to set up a connection.</p>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="connection-setup"><a class="header" href="#connection-setup">Connection Setup</a></h1>
 <p>In the <a href="quinn/certificate.html">previous chapter</a> we looked at how to configure a certificate.
-This aspect is omitted in this chapter to prevent duplication. 
-But <strong>remember</strong> that this is required to get your <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> up and running. 
-This chapter explains how to set up a connection and prepare it for data transfer. </p>
-<p>It all starts with the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> struct, this is the entry point of the library. </p>
+This aspect is omitted in this chapter to prevent duplication.
+But <strong>remember</strong> that this is required to get your <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> up and running.
+This chapter explains how to set up a connection and prepare it for data transfer.</p>
+<p>It all starts with the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html">Endpoint</a> struct, this is the entry point of the library.</p>
 <h2 id="example"><a class="header" href="#example">Example</a></h2>
-<p>Let's start by defining some constants. </p>
+<p>Let's start by defining some constants.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>static SERVER_NAME: &amp;str = &quot;localhost&quot;;
+</span>static SERVER_NAME: &amp;str = "localhost";
 
 fn client_addr() -&gt; SocketAddr {
-    &quot;127.0.0.1:5000&quot;.parse::&lt;SocketAddr&gt;().unwrap()
+    "127.0.0.1:5000".parse::&lt;SocketAddr&gt;().unwrap()
 }
 
 fn server_addr() -&gt; SocketAddr {
-    &quot;127.0.0.1:5001&quot;.parse::&lt;SocketAddr&gt;().unwrap()
+    "127.0.0.1:5001".parse::&lt;SocketAddr&gt;().unwrap()
 }
 <span class="boring">}</span></code></pre></pre>
 <p><strong>Server</strong></p>
-<p>First, the server endpoint should be bound to a socket. 
+<p>First, the server endpoint should be bound to a socket.
 The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.server">server()</a> method, which can be used for this, returns the <code>Endpoint</code> type.
 <code>Endpoint</code> is used to start outgoing connections and accept incoming connections.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
@@ -511,8 +511,8 @@ The <code>SERVER_NAME</code> argument is the DNS name, matching the certificate 
 and then get access to a <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html">Connection</a>.
 This chapter continues with the subject of sending data over this connection.</p>
 <h2 id="multiplexing"><a class="header" href="#multiplexing">Multiplexing</a></h2>
-<p>Multiplexing is the act of combining data from multiple streams into a single stream. 
-This can have a significant positive effect on the performance of the application. 
+<p>Multiplexing is the act of combining data from multiple streams into a single stream.
+This can have a significant positive effect on the performance of the application.
 With QUIC, the programmer is in full control over the stream allocation.</p>
 <h2 id="stream-types"><a class="header" href="#stream-types">Stream Types</a></h2>
 <p>QUIC provides support for both stream and message-based communication.
@@ -527,7 +527,7 @@ Streams and messages can be initiated both on the client and server.</p>
 <p>New streams can be created with <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html">Connection</a>'s <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_bi">open_bi()</a> and
 <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_uni">open_uni()</a> methods.</p>
 <h2 id="bidirectional-streams"><a class="header" href="#bidirectional-streams">Bidirectional Streams</a></h2>
-<p>With bidirectional streams, data can be sent in both directions. 
+<p>With bidirectional streams, data can be sent in both directions.
 For example, from the connection initiator to the peer and the other way around.</p>
 <p><em>open bidirectional stream</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
@@ -537,7 +537,7 @@ For example, from the connection initiator to the peer and the other way around.
         .open_bi()
         .await?;
 
-    send.write_all(b&quot;test&quot;).await?;
+    send.write_all(b"test").await?;
     send.finish().await?;
     
     let received = recv.read_to_end(10).await?;
@@ -551,9 +551,9 @@ For example, from the connection initiator to the peer and the other way around.
 </span>async fn receive_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
     while let Ok((mut send, recv)) = connection.accept_bi().await {
         // Because it is a bidirectional stream, we can both send and receive.
-        println!(&quot;request: {:?}&quot;, recv.read_to_end(50).await?);
+        println!("request: {:?}", recv.read_to_end(50).await?);
 
-        send.write_all(b&quot;response&quot;).await?;
+        send.write_all(b"response").await?;
         send.finish().await?;
     }
 
@@ -571,7 +571,7 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
         .open_uni()
         .await?;
 
-    send.write_all(b&quot;test&quot;).await?;
+    send.write_all(b"test").await?;
     send.finish().await?;
 
     Ok(())
@@ -583,21 +583,21 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 </span>async fn receive_unidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
     while let Ok(recv) = connection.accept_uni().await {
         // Because it is a unidirectional stream, we can only receive not send back.
-        println!(&quot;{:?}&quot;, recv.read_to_end(50).await?);
+        println!("{:?}", recv.read_to_end(50).await?);
     }
 
     Ok(())
 }
 <span class="boring">}</span></code></pre></pre>
 <h2 id="unreliable-messaging"><a class="header" href="#unreliable-messaging">Unreliable Messaging</a></h2>
-<p>With unreliable messaging, you can transfer data without reliability. 
+<p>With unreliable messaging, you can transfer data without reliability.
 This could be useful if data arrival isn't essential or when high throughput is important.</p>
 <p><em>send datagram</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn send_unreliable(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
     connection
-        .send_datagram(b&quot;test&quot;.into())
+        .send_datagram(b"test".into())
         .await?;
 
     Ok(())
@@ -609,7 +609,7 @@ This could be useful if data arrival isn't essential or when high throughput is 
 </span>async fn receive_datagram(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
     while let Ok(received_bytes) = connection.read_datagram().await {
         // Because it is a unidirectional stream, we can only receive not send back.
-        println!(&quot;request: {:?}&quot;, received);
+        println!("request: {:?}", received);
     }
 
     Ok(())

@@ -175,23 +175,23 @@
                     <main>
                         <h1 id="the-quic-protocol"><a class="header" href="#the-quic-protocol">The QUIC protocol</a></h1>
 <p><a href="https://en.wikipedia.org/wiki/QUIC">QUIC</a> is a general-purpose network protocol built on top of UDP,
-and <a href="https://www.rfc-editor.org/rfc/rfc9000.html">standardized</a> by the <a href="https://www.ietf.org/">IETF</a>. Although QUIC is still relatively new, 
-the protocol is used for all connections from Chrome web browsers to the Google servers. </p>
-<p>QUIC solves a number of transport-layer and application-layer problems experienced by modern web applications. 
-It is very similar to TCP+TLS+HTTP2, but implemented on top of UDP. 
-Having QUIC as a self-contained protocol allows innovations which aren’t 
+and <a href="https://www.rfc-editor.org/rfc/rfc9000.html">standardized</a> by the <a href="https://www.ietf.org/">IETF</a>. Although QUIC is still relatively new,
+the protocol is used for all connections from Chrome web browsers to the Google servers.</p>
+<p>QUIC solves a number of transport-layer and application-layer problems experienced by modern web applications.
+It is very similar to TCP+TLS+HTTP2, but implemented on top of UDP.
+Having QUIC as a self-contained protocol allows innovations which aren’t
 possible with existing protocols as they are hampered by legacy clients and middleboxes.</p>
 <p>Key advantages of QUIC over TCP+TLS+HTTP2 include:</p>
 <ul>
 <li>Improved connection establishment speed (0-rtt).</li>
 <li>Improved congestion control by moving congestion control algorithms into the user space at both endpoints.</li>
-<li>Improved bandwidth estimation in each direction to avoid congestion. </li>
+<li>Improved bandwidth estimation in each direction to avoid congestion.</li>
 <li>Improved multiplexing without head-of-line blocking.</li>
-<li>Contains forward error correction (FEC). </li>
+<li>Contains forward error correction (FEC).</li>
 </ul>
 <p>While QUIC's intentions are originally web-oriented, it offers interesting opportunities in other areas like game networking.
-One thing is for sure, QUIC has many great potentials and will serve us in the future with HTTP/3. </p>
-<p>In the upcoming chapter we will be discussing various aspects of QUIC also in relation to Quinn. </p>
+One thing is for sure, QUIC has many great potentials and will serve us in the future with HTTP/3.</p>
+<p>In the upcoming chapter we will be discussing various aspects of QUIC also in relation to Quinn.</p>
 
                     </main>
 

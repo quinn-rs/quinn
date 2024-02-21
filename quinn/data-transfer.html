@@ -178,8 +178,8 @@
 and then get access to a <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html">Connection</a>.
 This chapter continues with the subject of sending data over this connection.</p>
 <h2 id="multiplexing"><a class="header" href="#multiplexing">Multiplexing</a></h2>
-<p>Multiplexing is the act of combining data from multiple streams into a single stream. 
-This can have a significant positive effect on the performance of the application. 
+<p>Multiplexing is the act of combining data from multiple streams into a single stream.
+This can have a significant positive effect on the performance of the application.
 With QUIC, the programmer is in full control over the stream allocation.</p>
 <h2 id="stream-types"><a class="header" href="#stream-types">Stream Types</a></h2>
 <p>QUIC provides support for both stream and message-based communication.
@@ -194,7 +194,7 @@ Streams and messages can be initiated both on the client and server.</p>
 <p>New streams can be created with <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html">Connection</a>'s <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_bi">open_bi()</a> and
 <a href="https://docs.rs/quinn/latest/quinn/struct.Connection.html#method.open_uni">open_uni()</a> methods.</p>
 <h2 id="bidirectional-streams"><a class="header" href="#bidirectional-streams">Bidirectional Streams</a></h2>
-<p>With bidirectional streams, data can be sent in both directions. 
+<p>With bidirectional streams, data can be sent in both directions.
 For example, from the connection initiator to the peer and the other way around.</p>
 <p><em>open bidirectional stream</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
@@ -204,7 +204,7 @@ For example, from the connection initiator to the peer and the other way around.
         .open_bi()
         .await?;
 
-    send.write_all(b&quot;test&quot;).await?;
+    send.write_all(b"test").await?;
     send.finish().await?;
     
     let received = recv.read_to_end(10).await?;
@@ -218,9 +218,9 @@ For example, from the connection initiator to the peer and the other way around.
 </span>async fn receive_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
     while let Ok((mut send, recv)) = connection.accept_bi().await {
         // Because it is a bidirectional stream, we can both send and receive.
-        println!(&quot;request: {:?}&quot;, recv.read_to_end(50).await?);
+        println!("request: {:?}", recv.read_to_end(50).await?);
 
-        send.write_all(b&quot;response&quot;).await?;
+        send.write_all(b"response").await?;
         send.finish().await?;
     }
 
@@ -238,7 +238,7 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
         .open_uni()
         .await?;
 
-    send.write_all(b&quot;test&quot;).await?;
+    send.write_all(b"test").await?;
     send.finish().await?;
 
     Ok(())
@@ -250,21 +250,21 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 </span>async fn receive_unidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
     while let Ok(recv) = connection.accept_uni().await {
         // Because it is a unidirectional stream, we can only receive not send back.
-        println!(&quot;{:?}&quot;, recv.read_to_end(50).await?);
+        println!("{:?}", recv.read_to_end(50).await?);
     }
 
     Ok(())
 }
 <span class="boring">}</span></code></pre></pre>
 <h2 id="unreliable-messaging"><a class="header" href="#unreliable-messaging">Unreliable Messaging</a></h2>
-<p>With unreliable messaging, you can transfer data without reliability. 
+<p>With unreliable messaging, you can transfer data without reliability.
 This could be useful if data arrival isn't essential or when high throughput is important.</p>
 <p><em>send datagram</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn send_unreliable(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
     connection
-        .send_datagram(b&quot;test&quot;.into())
+        .send_datagram(b"test".into())
         .await?;
 
     Ok(())
@@ -276,7 +276,7 @@ This could be useful if data arrival isn't essential or when high throughput is 
 </span>async fn receive_datagram(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
     while let Ok(received_bytes) = connection.read_datagram().await {
         // Because it is a unidirectional stream, we can only receive not send back.
-        println!(&quot;request: {:?}&quot;, received);
+        println!("request: {:?}", received);
     }
 
     Ok(())
