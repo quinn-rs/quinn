@@ -586,7 +586,10 @@ fn prepare_msg(
     hdr.msg_controllen = CMSG_LEN as _;
     let mut encoder = unsafe { cmsg::Encoder::new(hdr) };
     let ecn = transmit.ecn.map_or(0, |x| x as libc::c_int);
-    if transmit.destination.is_ipv4() {
+    // True for IPv4 or IPv4-Mapped IPv6
+    let is_ipv4 = transmit.destination.is_ipv4()
+        || matches!(transmit.destination.ip(), IpAddr::V6(addr) if addr.to_ipv4_mapped().is_some());
+    if is_ipv4 {
         if !sendmsg_einval {
             encoder.push(libc::IPPROTO_IP, libc::IP_TOS, ecn as IpTosTy);
         }

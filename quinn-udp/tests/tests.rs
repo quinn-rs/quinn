@@ -92,6 +92,44 @@ fn ecn_v4() {
 }
 
 #[test]
+fn ecn_v4_mapped_v6() {
+    let send = socket2::Socket::new(
+        socket2::Domain::IPV6,
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )
+    .unwrap();
+    send.set_only_v6(false).unwrap();
+    send.bind(&socket2::SockAddr::from(
+        "[::]:0".parse::<SocketAddr>().unwrap(),
+    ))
+    .unwrap();
+
+    let recv = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let recv = Socket::from(recv);
+    let recv_v4_mapped_v6 = SocketAddr::V6(SocketAddrV6::new(
+        Ipv4Addr::LOCALHOST.to_ipv6_mapped(),
+        recv.local_addr().unwrap().as_socket().unwrap().port(),
+        0,
+        0,
+    ));
+
+    for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
+        test_send_recv(
+            &send,
+            &recv,
+            Transmit {
+                destination: recv_v4_mapped_v6,
+                ecn: Some(codepoint),
+                contents: Bytes::from_static(b"hello"),
+                segment_size: None,
+                src_ip: None,
+            },
+        );
+    }
+}
+
+#[test]
 #[cfg_attr(not(any(target_os = "linux", target_os = "windows")), ignore)]
 fn gso() {
     let send = UdpSocket::bind("[::1]:0")
@@ -154,33 +192,30 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         }
         datagrams += segments;
 
+        assert_eq!(
+            meta.addr.port(),
+            send.local_addr().unwrap().as_socket().unwrap().port()
+        );
         let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
         let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
-        match send_v6 == recv_v6 {
-            true => assert_eq!(meta.addr, send.local_addr().unwrap().as_socket().unwrap()),
-            false => assert_eq!(
-                meta.addr,
-                to_v6_mapped(send.local_addr().unwrap().as_socket().unwrap())
-            ),
+        let src = meta.addr.ip();
+        let dst = meta.dst_ip.unwrap();
+        for addr in [src, dst] {
+            match (send_v6, recv_v6) {
+                (_, false) => assert_eq!(addr, Ipv4Addr::LOCALHOST),
+                // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
+                // addrs. Canonicalize to IPv6-mapped for robustness.
+                (false, true) => {
+                    assert_eq!(ip_to_v6_mapped(addr), Ipv4Addr::LOCALHOST.to_ipv6_mapped())
+                }
+                (true, true) => assert!(
+                    addr == Ipv6Addr::LOCALHOST || addr == Ipv4Addr::LOCALHOST.to_ipv6_mapped()
+                ),
+            }
         }
         assert_eq!(meta.ecn, transmit.ecn);
-        let dst = meta.dst_ip.unwrap();
-        match (send_v6, recv_v6) {
-            (_, false) => assert_eq!(dst, Ipv4Addr::LOCALHOST),
-            // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
-            // addrs. Canonicalize to IPv6-mapped for robustness.
-            (false, true) => assert_eq!(ip_to_v6_mapped(dst), Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
-            (true, true) => assert_eq!(dst, Ipv6Addr::LOCALHOST),
-        }
     }
     assert_eq!(datagrams, expected_datagrams);
-}
-
-fn to_v6_mapped(x: SocketAddr) -> SocketAddr {
-    match x {
-        SocketAddr::V4(x) => SocketAddrV6::new(x.ip().to_ipv6_mapped(), x.port(), 0, 0).into(),
-        SocketAddr::V6(_) => x,
-    }
 }
 
 fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
