@@ -92,6 +92,26 @@ fn ecn_v4() {
 }
 
 #[test]
+fn ecn_v4_mapped_v6() {
+    let ipv4_mapped_ipv6: IpAddr = Ipv4Addr::LOCALHOST.to_ipv6_mapped().into();
+    let send = Socket::from(UdpSocket::bind((ipv4_mapped_ipv6, 0)).unwrap());
+    let recv = Socket::from(UdpSocket::bind((ipv4_mapped_ipv6, 0)).unwrap());
+    for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
+        test_send_recv(
+            &send,
+            &recv,
+            Transmit {
+                destination: recv.local_addr().unwrap().as_socket().unwrap(),
+                ecn: Some(codepoint),
+                contents: Bytes::from_static(b"hello"),
+                segment_size: None,
+                src_ip: None,
+            },
+        );
+    }
+}
+
+#[test]
 #[cfg_attr(not(any(target_os = "linux", target_os = "windows")), ignore)]
 fn gso() {
     let send = UdpSocket::bind("[::1]:0")
@@ -170,7 +190,11 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
             // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
             // addrs. Canonicalize to IPv6-mapped for robustness.
             (false, true) => assert_eq!(ip_to_v6_mapped(dst), Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
-            (true, true) => assert_eq!(dst, Ipv6Addr::LOCALHOST),
+            (true, true) => {
+                if dst != Ipv6Addr::LOCALHOST && dst != Ipv4Addr::LOCALHOST.to_ipv6_mapped() {
+                    panic!()
+                }
+            }
         }
     }
     assert_eq!(datagrams, expected_datagrams);
