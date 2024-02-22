@@ -103,7 +103,7 @@ fn ecn_v4_mapped_v6() {
     // We must use the unspecified address here, rather than a local address, to support dual-stack
     // mode
     send.bind(&socket2::SockAddr::from(
-        "[::]:0".parse::<SocketAddr>().unwrap(),
+        "[::1]:0".parse::<SocketAddr>().unwrap(),
     ))
     .unwrap();
 
