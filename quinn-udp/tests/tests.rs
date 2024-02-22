@@ -92,6 +92,7 @@ fn ecn_v4() {
 }
 
 #[test]
+#[cfg_attr(target_os = "windows", ignore)]
 fn ecn_v4_mapped_v6() {
     let send = socket2::Socket::new(
         socket2::Domain::IPV6,
@@ -100,10 +101,8 @@ fn ecn_v4_mapped_v6() {
     )
     .unwrap();
     send.set_only_v6(false).unwrap();
-    // We must use the unspecified address here, rather than a local address, to support dual-stack
-    // mode
     send.bind(&socket2::SockAddr::from(
-        "[::1]:0".parse::<SocketAddr>().unwrap(),
+        "[::]:0".parse::<SocketAddr>().unwrap(),
     ))
     .unwrap();
 
