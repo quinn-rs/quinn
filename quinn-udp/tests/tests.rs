@@ -197,21 +197,18 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
         let src = meta.addr.ip();
         let dst = meta.dst_ip.unwrap();
-        match (send_v6, recv_v6) {
-            (_, false) => {
-                assert_eq!(src, Ipv4Addr::LOCALHOST);
-                assert_eq!(dst, Ipv4Addr::LOCALHOST);
-            }
-            (false, true) => {
-                assert_eq!(ip_to_v6_mapped(src), Ipv4Addr::LOCALHOST.to_ipv6_mapped());
-                assert_eq!(ip_to_v6_mapped(dst), Ipv4Addr::LOCALHOST.to_ipv6_mapped());
-            }
-            (true, true) => {
-                if src != Ipv6Addr::LOCALHOST && src != Ipv4Addr::LOCALHOST.to_ipv6_mapped() {
-                    panic!()
+        for addr in [src, dst] {
+            match (send_v6, recv_v6) {
+                (_, false) => {
+                    assert_eq!(addr, Ipv4Addr::LOCALHOST);
                 }
-                if dst != Ipv6Addr::LOCALHOST && dst != Ipv4Addr::LOCALHOST.to_ipv6_mapped() {
-                    panic!()
+                (false, true) => {
+                    assert_eq!(ip_to_v6_mapped(addr), Ipv4Addr::LOCALHOST.to_ipv6_mapped());
+                }
+                (true, true) => {
+                    if addr != Ipv6Addr::LOCALHOST && addr != Ipv4Addr::LOCALHOST.to_ipv6_mapped() {
+                        panic!()
+                    }
                 }
             }
         }
