@@ -114,6 +114,7 @@ fn ecn_v4_mapped_v6() {
         0,
         0,
     ));
+
     for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
         test_send_recv(
             &send,
