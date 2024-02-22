@@ -174,16 +174,13 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         }
         datagrams += segments;
 
+        assert_eq!(
+            to_v6_mapped(meta.addr),
+            to_v6_mapped(send.local_addr().unwrap().as_socket().unwrap())
+        );
+        assert_eq!(meta.ecn, transmit.ecn);
         let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
         let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
-        match send_v6 == recv_v6 {
-            true => assert_eq!(meta.addr, send.local_addr().unwrap().as_socket().unwrap()),
-            false => assert_eq!(
-                meta.addr,
-                to_v6_mapped(send.local_addr().unwrap().as_socket().unwrap())
-            ),
-        }
-        assert_eq!(meta.ecn, transmit.ecn);
         let dst = meta.dst_ip.unwrap();
         match (send_v6, recv_v6) {
             (_, false) => assert_eq!(dst, Ipv4Addr::LOCALHOST),
