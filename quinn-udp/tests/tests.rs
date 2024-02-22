@@ -93,15 +93,34 @@ fn ecn_v4() {
 
 #[test]
 fn ecn_v4_mapped_v6() {
-    let ipv4_mapped_ipv6: IpAddr = Ipv4Addr::LOCALHOST.to_ipv6_mapped().into();
-    let send = Socket::from(UdpSocket::bind((ipv4_mapped_ipv6, 0)).unwrap());
-    let recv = Socket::from(UdpSocket::bind((ipv4_mapped_ipv6, 0)).unwrap());
+    let send = socket2::Socket::new(
+        socket2::Domain::IPV6,
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )
+    .unwrap();
+    send.set_only_v6(false).unwrap();
+    // We must use the unspecified address here, rather than a local address, to support dual-stack
+    // mode
+    send.bind(&socket2::SockAddr::from(
+        "[::]:0".parse::<SocketAddr>().unwrap(),
+    ))
+    .unwrap();
+
+    let recv = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let recv = Socket::from(recv);
+    let recv_v4_mapped_v6 = SocketAddr::V6(SocketAddrV6::new(
+        Ipv4Addr::LOCALHOST.to_ipv6_mapped(),
+        recv.local_addr().unwrap().as_socket().unwrap().port(),
+        0,
+        0,
+    ));
     for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
         test_send_recv(
             &send,
             &recv,
             Transmit {
-                destination: recv.local_addr().unwrap().as_socket().unwrap(),
+                destination: recv_v4_mapped_v6,
                 ecn: Some(codepoint),
                 contents: Bytes::from_static(b"hello"),
                 segment_size: None,
@@ -174,13 +193,19 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         }
         datagrams += segments;
 
-        assert_eq!(
-            to_v6_mapped(meta.addr),
-            to_v6_mapped(send.local_addr().unwrap().as_socket().unwrap())
-        );
-        assert_eq!(meta.ecn, transmit.ecn);
         let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
         let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
+        let src = meta.addr.ip();
+        match (send_v6, recv_v6) {
+            (_, false) => assert_eq!(src, Ipv4Addr::LOCALHOST),
+            (false, true) => assert_eq!(ip_to_v6_mapped(src), Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
+            (true, true) => {
+                if src != Ipv6Addr::LOCALHOST && src != Ipv4Addr::LOCALHOST.to_ipv6_mapped() {
+                    panic!()
+                }
+            }
+        }
+        assert_eq!(meta.ecn, transmit.ecn);
         let dst = meta.dst_ip.unwrap();
         match (send_v6, recv_v6) {
             (_, false) => assert_eq!(dst, Ipv4Addr::LOCALHOST),
