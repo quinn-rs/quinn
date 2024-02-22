@@ -203,11 +203,11 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         let dst = meta.dst_ip.unwrap();
         for addr in [src, dst] {
             match (send_v6, recv_v6) {
-                (_, false) => {
-                    assert_eq!(addr, Ipv4Addr::LOCALHOST);
-                }
+                (_, false) => assert_eq!(addr, Ipv4Addr::LOCALHOST),
+                // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
+                // addrs. Canonicalize to IPv6-mapped for robustness.
                 (false, true) => {
-                    assert_eq!(ip_to_v6_mapped(addr), Ipv4Addr::LOCALHOST.to_ipv6_mapped());
+                    assert_eq!(ip_to_v6_mapped(addr), Ipv4Addr::LOCALHOST.to_ipv6_mapped())
                 }
                 (true, true) => {
                     if addr != Ipv6Addr::LOCALHOST && addr != Ipv4Addr::LOCALHOST.to_ipv6_mapped() {
