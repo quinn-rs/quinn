@@ -92,7 +92,6 @@ fn ecn_v4() {
 }
 
 #[test]
-#[cfg_attr(target_os = "windows", ignore)]
 fn ecn_v4_mapped_v6() {
     let send = socket2::Socket::new(
         socket2::Domain::IPV6,
@@ -103,13 +102,11 @@ fn ecn_v4_mapped_v6() {
     send.set_only_v6(false).unwrap();
 
     #[cfg(windows)]
-    send.bind(&socket2::SockAddr::from(
-        "[::1]:0".parse::<SocketAddr>().unwrap(),
-    ))
-    .unwrap();
+    let bind_addr = "[::1]:0";
     #[cfg(not(windows))]
+    let bind_addr = "[::]:0";
     send.bind(&socket2::SockAddr::from(
-        "[::]:0".parse::<SocketAddr>().unwrap(),
+        bind_addr.parse::<SocketAddr>().unwrap(),
     ))
     .unwrap();
 
