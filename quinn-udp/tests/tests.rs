@@ -101,6 +101,13 @@ fn ecn_v4_mapped_v6() {
     )
     .unwrap();
     send.set_only_v6(false).unwrap();
+
+    #[cfg(windows)]
+    send.bind(&socket2::SockAddr::from(
+        "[::1]:0".parse::<SocketAddr>().unwrap(),
+    ))
+    .unwrap();
+    #[cfg(not(windows))]
     send.bind(&socket2::SockAddr::from(
         "[::]:0".parse::<SocketAddr>().unwrap(),
     ))
