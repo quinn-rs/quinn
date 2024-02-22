@@ -192,6 +192,10 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         }
         datagrams += segments;
 
+        assert_eq!(
+            meta.addr.port(),
+            send.local_addr().unwrap().as_socket().unwrap().port()
+        );
         let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
         let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
         let src = meta.addr.ip();
