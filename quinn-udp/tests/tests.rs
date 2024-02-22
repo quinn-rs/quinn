@@ -196,37 +196,28 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
         let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
         let src = meta.addr.ip();
+        let dst = meta.dst_ip.unwrap();
         match (send_v6, recv_v6) {
-            (_, false) => assert_eq!(src, Ipv4Addr::LOCALHOST),
-            (false, true) => assert_eq!(ip_to_v6_mapped(src), Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
+            (_, false) => {
+                assert_eq!(src, Ipv4Addr::LOCALHOST);
+                assert_eq!(dst, Ipv4Addr::LOCALHOST);
+            }
+            (false, true) => {
+                assert_eq!(ip_to_v6_mapped(src), Ipv4Addr::LOCALHOST.to_ipv6_mapped());
+                assert_eq!(ip_to_v6_mapped(dst), Ipv4Addr::LOCALHOST.to_ipv6_mapped());
+            }
             (true, true) => {
                 if src != Ipv6Addr::LOCALHOST && src != Ipv4Addr::LOCALHOST.to_ipv6_mapped() {
                     panic!()
                 }
-            }
-        }
-        assert_eq!(meta.ecn, transmit.ecn);
-        let dst = meta.dst_ip.unwrap();
-        match (send_v6, recv_v6) {
-            (_, false) => assert_eq!(dst, Ipv4Addr::LOCALHOST),
-            // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
-            // addrs. Canonicalize to IPv6-mapped for robustness.
-            (false, true) => assert_eq!(ip_to_v6_mapped(dst), Ipv4Addr::LOCALHOST.to_ipv6_mapped()),
-            (true, true) => {
                 if dst != Ipv6Addr::LOCALHOST && dst != Ipv4Addr::LOCALHOST.to_ipv6_mapped() {
                     panic!()
                 }
             }
         }
+        assert_eq!(meta.ecn, transmit.ecn);
     }
     assert_eq!(datagrams, expected_datagrams);
-}
-
-fn to_v6_mapped(x: SocketAddr) -> SocketAddr {
-    match x {
-        SocketAddr::V4(x) => SocketAddrV6::new(x.ip().to_ipv6_mapped(), x.port(), 0, 0).into(),
-        SocketAddr::V6(_) => x,
-    }
 }
 
 fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
