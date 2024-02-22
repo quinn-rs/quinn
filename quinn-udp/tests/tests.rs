@@ -208,11 +208,9 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
                 (false, true) => {
                     assert_eq!(ip_to_v6_mapped(addr), Ipv4Addr::LOCALHOST.to_ipv6_mapped())
                 }
-                (true, true) => {
-                    if addr != Ipv6Addr::LOCALHOST && addr != Ipv4Addr::LOCALHOST.to_ipv6_mapped() {
-                        panic!()
-                    }
-                }
+                (true, true) => assert!(
+                    addr == Ipv6Addr::LOCALHOST || addr == Ipv4Addr::LOCALHOST.to_ipv6_mapped()
+                ),
             }
         }
         assert_eq!(meta.ecn, transmit.ecn);
