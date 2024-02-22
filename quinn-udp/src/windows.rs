@@ -182,7 +182,10 @@ impl UdpSocketState {
 
             // ECN is a C integer https://learn.microsoft.com/en-us/windows/win32/winsock/winsock-ecn
             let ecn = transmit.ecn.map_or(0, |x| x as c_int);
-            if transmit.destination.is_ipv4() {
+            // True for IPv4 or IPv4-Mapped IPv6
+            let is_ipv4 = transmit.destination.is_ipv4()
+                || matches!(transmit.destination.ip(), IpAddr::V6(addr) if addr.to_ipv4_mapped().is_some());
+            if is_ipv4 {
                 encoder.push(WinSock::IPPROTO_IP, WinSock::IP_ECN, ecn);
             } else {
                 encoder.push(WinSock::IPPROTO_IPV6, WinSock::IPV6_ECN, ecn);

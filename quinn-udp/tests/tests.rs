@@ -92,7 +92,6 @@ fn ecn_v4() {
 }
 
 #[test]
-#[cfg_attr(target_os = "windows", ignore)]
 fn ecn_v4_mapped_v6() {
     let send = socket2::Socket::new(
         socket2::Domain::IPV6,
