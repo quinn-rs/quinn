@@ -761,7 +761,7 @@ impl Connection {
                 if buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size {
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
-                            if space_id == SpaceId::Data {
+                            if space_id == SpaceId::Data || reason.is_transport_layer() {
                                 reason.encode(buf, builder.max_size)
                             } else {
                                 frame::ConnectionClose {
