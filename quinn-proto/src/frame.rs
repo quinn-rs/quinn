@@ -225,6 +225,10 @@ impl Close {
             Self::Application(ref x) => x.encode(out, max_len),
         }
     }
+
+    pub(crate) fn is_transport_layer(&self) -> bool {
+        matches!(*self, Self::Connection(_))
+    }
 }
 
 impl From<TransportError> for Close {
