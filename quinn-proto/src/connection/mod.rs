@@ -573,16 +573,9 @@ impl Connection {
         while space_idx < spaces.len() {
             let space_id = spaces[space_idx];
 
-            if close && space_id != self.highest_space {
-                // We ignore data in this space, since the close message
-                // has higher priority
-                space_idx += 1;
-                continue;
-            }
-
             // Is there data or a close message to send in this space?
             let can_send = self.space_can_send(space_id);
-            if can_send.is_empty() && !close {
+            if can_send.is_empty() && (!close || self.spaces[space_id].crypto.is_none()) {
                 space_idx += 1;
                 continue;
             }
@@ -790,10 +783,18 @@ impl Connection {
                         ),
                     }
                 }
-                // Don't send another close packet
-                self.close = false;
-                // `CONNECTION_CLOSE` is the final packet
-                break;
+                if space_id == self.highest_space {
+                    // Don't send another close packet
+                    self.close = false;
+                    // `CONNECTION_CLOSE` is the final packet
+                    break;
+                } else {
+                    // Send a close frame in every possible space for robustness, per RFC9000
+                    // "Immediate Close during the Handshake". Don't bother trying to send anything
+                    // else.
+                    space_idx += 1;
+                    continue;
+                }
             }
 
             // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
