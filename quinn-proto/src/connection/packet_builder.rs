@@ -18,7 +18,11 @@ pub(super) struct PacketBuilder {
     pub(super) ack_eliciting: bool,
     pub(super) exact_number: u64,
     pub(super) short_header: bool,
+    /// Smallest absolute position in the associated buffer that must be occupied by this packet's
+    /// frames
     pub(super) min_size: usize,
+    /// Largest absolute position in the associated buffer that may be occupied by this packet's
+    /// frames
     pub(super) max_size: usize,
     pub(super) tag_len: usize,
     pub(super) span: tracing::Span,
@@ -147,7 +151,7 @@ impl PacketBuilder {
             buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
             partial_encode.start + conn.rem_cids.active().len() + 6,
         );
-        let max_size = buffer_capacity - partial_encode.start - partial_encode.header_len - tag_len;
+        let max_size = buffer_capacity - tag_len;
 
         Some(Self {
             datagram_start,
