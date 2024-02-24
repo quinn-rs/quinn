@@ -759,17 +759,18 @@ impl Connection {
                     "ACKs should leave space for ConnectionClose"
                 );
                 if buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size {
+                    let max_frame_size = builder.max_size - buf.len();
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
                             if space_id == SpaceId::Data || reason.is_transport_layer() {
-                                reason.encode(buf, builder.max_size)
+                                reason.encode(buf, max_frame_size)
                             } else {
                                 frame::ConnectionClose {
                                     error_code: TransportErrorCode::APPLICATION_ERROR,
                                     frame_type: None,
                                     reason: Bytes::new(),
                                 }
-                                .encode(buf, builder.max_size)
+                                .encode(buf, max_frame_size)
                             }
                         }
                         State::Draining => frame::ConnectionClose {
@@ -777,7 +778,7 @@ impl Connection {
                             frame_type: None,
                             reason: Bytes::new(),
                         }
-                        .encode(buf, builder.max_size),
+                        .encode(buf, max_frame_size),
                         _ => unreachable!(
                             "tried to make a close packet when the connection wasn't closed"
                         ),
@@ -829,13 +830,8 @@ impl Connection {
                 }
             }
 
-            let sent = self.populate_packet(
-                now,
-                space_id,
-                buf,
-                buf_capacity - builder.tag_len,
-                builder.exact_number,
-            );
+            let sent =
+                self.populate_packet(now, space_id, buf, builder.max_size, builder.exact_number);
 
             // ACK-only packets should only be sent when explicitly allowed. If we write them due
             // to any other reason, there is a bug which leads to one component announcing write
