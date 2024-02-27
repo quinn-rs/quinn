@@ -346,7 +346,7 @@ impl StreamsState {
     pub(crate) fn can_send_stream_data(&self) -> bool {
         // Reset streams may linger in the pending stream list, but will never produce stream frames
         self.pending.iter().any(|level| {
-            level.queue.borrow().iter().any(|id| {
+            level.queue.read().unwrap().iter().any(|id| {
                 self.send
                     .get(id)
                     .and_then(|s| s.as_ref())
@@ -513,7 +513,7 @@ impl StreamsState {
             // remaining data at the end of the queue helps with fairness.
             // Other streams will have a chance to write data before we touch
             // this stream again.
-            let id = match level.queue.get_mut().pop_front() {
+            let id = match level.queue.get_mut().unwrap().pop_front() {
                 Some(x) => x,
                 None => {
                     debug_assert!(
@@ -549,10 +549,10 @@ impl StreamsState {
             if stream.is_pending() {
                 if level.priority == stream.priority {
                     // Enqueue for the same level
-                    level.queue.get_mut().push_back(id);
+                    level.queue.get_mut().unwrap().push_back(id);
                 } else {
                     // Enqueue for a different level. If the current level is empty, drop it
-                    if level.queue.borrow().is_empty() && num_levels != 1 {
+                    if level.queue.read().unwrap().is_empty() && num_levels != 1 {
                         // We keep the last level around even in empty form so that
                         // the next insert doesn't have to reallocate the queue
                         PeekMut::pop(level);
@@ -561,7 +561,7 @@ impl StreamsState {
                     }
                     push_pending(&mut self.pending, id, stream.priority);
                 }
-            } else if level.queue.borrow().is_empty() && num_levels != 1 {
+            } else if level.queue.read().unwrap().is_empty() && num_levels != 1 {
                 // We keep the last level around even in empty form so that
                 // the next insert doesn't have to reallocate the queue
                 PeekMut::pop(level);

@@ -1,6 +1,6 @@
 use std::{
-    cell::RefCell,
     collections::{hash_map, BinaryHeap, VecDeque},
+    sync::RwLock,
 };
 
 use bytes::Bytes;
@@ -338,7 +338,7 @@ impl<'a> SendStream<'a> {
 fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: i32) {
     for level in pending.iter() {
         if priority == level.priority {
-            level.queue.borrow_mut().push_back(id);
+            level.queue.write().unwrap().push_back(id);
             return;
         }
     }
@@ -347,10 +347,9 @@ fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: 
     // required priority
     if pending.len() == 1 {
         if let Some(mut first) = pending.peek_mut() {
-            let mut queue = first.queue.borrow_mut();
+            let queue = first.queue.get_mut().unwrap();
             if queue.is_empty() {
                 queue.push_back(id);
-                drop(queue);
                 first.priority = priority;
                 return;
             }
@@ -360,14 +359,14 @@ fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: 
     let mut queue = VecDeque::new();
     queue.push_back(id);
     pending.push(PendingLevel {
-        queue: RefCell::new(queue),
+        queue: RwLock::new(queue),
         priority,
     });
 }
 
 struct PendingLevel {
-    // RefCell is needed because BinaryHeap doesn't have an iter_mut()
-    queue: RefCell<VecDeque<StreamId>>,
+    // RwLock is needed because BinaryHeap doesn't have an iter_mut() or find()
+    queue: RwLock<VecDeque<StreamId>>,
     priority: i32,
 }
 
