@@ -1,7 +1,4 @@
-use std::{
-    cell::RefCell,
-    collections::{hash_map, BinaryHeap, VecDeque},
-};
+use std::collections::{hash_map, BinaryHeap};
 
 use bytes::Bytes;
 use thiserror::Error;
@@ -237,7 +234,7 @@ impl<'a> SendStream<'a> {
         self.state.unacked_data += written.bytes as u64;
         trace!(stream = %self.id, "wrote {} bytes", written.bytes);
         if !was_pending {
-            push_pending(&mut self.state.pending, self.id, stream.priority);
+            self.state.pending.push_pending(self.id, stream.priority);
         }
         Ok(written)
     }
@@ -268,7 +265,7 @@ impl<'a> SendStream<'a> {
         let was_pending = stream.is_pending();
         stream.finish()?;
         if !was_pending {
-            push_pending(&mut self.state.pending, self.id, stream.priority);
+            self.state.pending.push_pending(self.id, stream.priority);
         }
 
         Ok(())
@@ -335,60 +332,54 @@ impl<'a> SendStream<'a> {
     }
 }
 
-fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: i32) {
-    for level in pending.iter() {
-        if priority == level.priority {
-            level.queue.borrow_mut().push_back(id);
-            return;
-        }
-    }
-
-    // If there is only a single level and it's empty, repurpose it for the
-    // required priority
-    if pending.len() == 1 {
-        if let Some(mut first) = pending.peek_mut() {
-            let mut queue = first.queue.borrow_mut();
-            if queue.is_empty() {
-                queue.push_back(id);
-                drop(queue);
-                first.priority = priority;
-                return;
-            }
-        }
-    }
-
-    let mut queue = VecDeque::new();
-    queue.push_back(id);
-    pending.push(PendingLevel {
-        queue: RefCell::new(queue),
-        priority,
-    });
+/// A queue of streams with pending outgoing data, sorted by priority
+struct PendingStreamsQueue {
+    streams: BinaryHeap<PendingStream>,
+    /// A monotonically decreasing counter, used to implement round-robin scheduling for streams of the same priority.
+    /// Underflowing is not a practical concern, as it is initialized to u64::MAX and only decremented by 1 in `push_pending`
+    recency: u64,
 }
 
-struct PendingLevel {
-    // RefCell is needed because BinaryHeap doesn't have an iter_mut()
-    queue: RefCell<VecDeque<StreamId>>,
+impl PendingStreamsQueue {
+    fn new() -> Self {
+        Self {
+            streams: BinaryHeap::new(),
+            recency: u64::MAX,
+        }
+    }
+
+    /// Push a pending stream ID with the given priority, queued after any already-queued streams for the priority
+    fn push_pending(&mut self, id: StreamId, priority: i32) {
+        // As the recency counter is monotonically decreasing, we know that using its value to sort this stream will queue it
+        // after all other queued streams of the same priority.
+        // This is enough to implement round-robin scheduling for streams that are still pending even after being handled,
+        // as in that case they are removed from the `BinaryHeap`, handled, and then immediately reinserted.
+        self.recency -= 1;
+        self.streams.push(PendingStream {
+            priority,
+            recency: self.recency,
+            id,
+        });
+    }
+}
+
+/// The [`StreamId`] of a stream with pending data queued, ordered by its priority and recency
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct PendingStream {
+    /// The priority of the stream
+    // Note that this field should be kept above the `recency` field, in order for the `Ord` derive to be correct
+    // (See https://doc.rust-lang.org/stable/std/cmp/trait.Ord.html#derivable)
     priority: i32,
-}
-
-impl PartialEq for PendingLevel {
-    fn eq(&self, other: &Self) -> bool {
-        self.priority.eq(&other.priority)
-    }
-}
-
-impl PartialOrd for PendingLevel {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Eq for PendingLevel {}
-
-impl Ord for PendingLevel {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.priority.cmp(&other.priority)
-    }
+    /// A tie-breaker for streams of the same priority, used to improve fairness by implementing round-robin scheduling:
+    /// Larger values are prioritized, so it is initialised to `u64::MAX`, and when a stream writes data, we know
+    /// that it currently has the highest recency value, so it is deprioritized by setting its recency to 1 less than the
+    /// previous lowest recency value, such that all other streams of this priority will get processed once before we get back
+    /// round to this one
+    recency: u64,
+    /// The ID of the stream
+    // The way this type is used ensures that every instance has a unique `recency` value, so this field should be kept below
+    // the `priority` and `recency` fields, so that it does not interfere with the behaviour of the `Ord` derive
+    id: StreamId,
 }
 
 /// Application events about streams
