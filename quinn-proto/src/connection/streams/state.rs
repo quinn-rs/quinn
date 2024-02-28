@@ -1307,7 +1307,7 @@ mod tests {
         assert_eq!(meta[2].id, id_low);
 
         assert!(!server.can_send_stream_data());
-        assert_eq!(server.pending.heap.len(), 1);
+        assert_eq!(server.pending.heap.len(), 0);
     }
 
     #[test]
@@ -1374,7 +1374,7 @@ mod tests {
         assert_eq!(meta[1].id, id_high);
 
         assert!(!server.can_send_stream_data());
-        assert_eq!(server.pending.heap.len(), 1);
+        assert_eq!(server.pending.heap.len(), 0);
     }
 
     #[test]
