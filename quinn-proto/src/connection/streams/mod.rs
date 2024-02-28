@@ -386,11 +386,15 @@ impl PendingPeekMut<'_> {
             .recency
             .checked_sub(1)
             .expect("Recency underflowed");
+        // Store the new recency value so that new streams on this priority don't use a bad recency value that could cause unfairness
         self.recencies.insert(self.peek.priority, self.peek.recency);
     }
 
     fn update_priority(&mut self, new_priority: i32) {
         self.peek.priority = new_priority;
+        // Set the recency value close to the recency values of preexisting streams on this priority. This is needed for fairness,
+        // as otherwise our recency value could be much larger or smaller than the preexisting streams' recency values,
+        // causing us to either always or never be processed until the recency values converged
         self.peek.recency = *self.recencies.entry(new_priority).or_insert(u64::MAX);
     }
 
