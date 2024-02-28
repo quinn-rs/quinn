@@ -1,9 +1,10 @@
 use std::{
-    collections::{hash_map, BinaryHeap, VecDeque},
-    sync::RwLock,
+    collections::{binary_heap::PeekMut, hash_map, BinaryHeap},
+    ops::Deref,
 };
 
 use bytes::Bytes;
+use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tracing::trace;
 
@@ -237,7 +238,7 @@ impl<'a> SendStream<'a> {
         self.state.unacked_data += written.bytes as u64;
         trace!(stream = %self.id, "wrote {} bytes", written.bytes);
         if !was_pending {
-            push_pending(&mut self.state.pending, self.id, stream.priority);
+            self.state.pending.push(self.id, stream.priority);
         }
         Ok(written)
     }
@@ -268,7 +269,7 @@ impl<'a> SendStream<'a> {
         let was_pending = stream.is_pending();
         stream.finish()?;
         if !was_pending {
-            push_pending(&mut self.state.pending, self.id, stream.priority);
+            self.state.pending.push(self.id, stream.priority);
         }
 
         Ok(())
@@ -335,58 +336,105 @@ impl<'a> SendStream<'a> {
     }
 }
 
-fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: i32) {
-    for level in pending.iter() {
-        if priority == level.priority {
-            level.queue.write().unwrap().push_back(id);
-            return;
-        }
-    }
-
-    // If there is only a single level and it's empty, repurpose it for the
-    // required priority
-    if pending.len() == 1 {
-        if let Some(mut first) = pending.peek_mut() {
-            let queue = first.queue.get_mut().unwrap();
-            if queue.is_empty() {
-                queue.push_back(id);
-                first.priority = priority;
-                return;
-            }
-        }
-    }
-
-    let mut queue = VecDeque::new();
-    queue.push_back(id);
-    pending.push(PendingLevel {
-        queue: RwLock::new(queue),
-        priority,
-    });
+#[derive(Default)]
+struct PendingStreams {
+    /// IDs of streams with outgoing data queued, sorted by their priority
+    heap: BinaryHeap<PendingId>,
+    /// Used so new streams for a given priority have their recency set to a value
+    /// close to the recency of other streams of the same priority, to prevent unfairness
+    latest_recencies: FxHashMap<i32, u64>,
 }
 
-struct PendingLevel {
-    // RwLock is needed because BinaryHeap doesn't have an iter_mut() or find()
-    queue: RwLock<VecDeque<StreamId>>,
+impl PendingStreams {
+    fn clear(&mut self) {
+        self.heap.clear();
+        self.latest_recencies.clear();
+    }
+
+    fn push(&mut self, id: StreamId, priority: i32) {
+        let &mut recency = self.latest_recencies.entry(priority).or_insert(u64::MAX);
+        self.heap.push(PendingId {
+            id,
+            priority,
+            recency,
+        })
+    }
+
+    fn iter(&self) -> impl Iterator<Item = StreamId> + '_ {
+        self.heap.iter().map(|id| id.id)
+    }
+
+    fn peek_mut(&mut self) -> Option<PendingPeekMut> {
+        self.heap.peek_mut().map(|peek| PendingPeekMut {
+            peek,
+            recencies: &mut self.latest_recencies,
+        })
+    }
+}
+
+struct PendingPeekMut<'a> {
+    peek: PeekMut<'a, PendingId>,
+    recencies: &'a mut FxHashMap<i32, u64>,
+}
+
+impl PendingPeekMut<'_> {
+    fn update_recency(&mut self) {
+        // Decrementing the recency moves this stream below all others of the same priority level in the heap, for fairness
+        // See commit c004ef0 for details
+        self.peek.recency = self
+            .peek
+            .recency
+            .checked_sub(1)
+            .expect("Recency underflowed");
+        self.recencies.insert(self.peek.priority, self.peek.recency);
+    }
+
+    fn update_priority(&mut self, new_priority: i32) {
+        self.peek.priority = new_priority;
+        self.peek.recency = *self.recencies.entry(new_priority).or_insert(u64::MAX);
+    }
+
+    fn pop(self) -> PendingId {
+        PeekMut::pop(self.peek)
+    }
+}
+
+impl Deref for PendingPeekMut<'_> {
+    type Target = PendingId;
+
+    fn deref(&self) -> &Self::Target {
+        &self.peek
+    }
+}
+
+struct PendingId {
+    /// The ID of the stream with pending data
+    id: StreamId,
+    /// The priority of the stream
     priority: i32,
+    /// A tie-breaker for streams of the same priority, used to improve fairness
+    recency: u64,
 }
 
-impl PartialEq for PendingLevel {
+impl PartialEq for PendingId {
     fn eq(&self, other: &Self) -> bool {
-        self.priority.eq(&other.priority)
+        self.priority.eq(&other.priority) && self.recency.eq(&other.recency)
     }
 }
 
-impl PartialOrd for PendingLevel {
+impl PartialOrd for PendingId {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         Some(self.cmp(other))
     }
 }
 
-impl Eq for PendingLevel {}
+impl Eq for PendingId {}
 
-impl Ord for PendingLevel {
+impl Ord for PendingId {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.priority.cmp(&other.priority)
+        self.priority
+            .cmp(&other.priority)
+            .then_with(|| self.recency.cmp(&other.recency))
     }
 }
 

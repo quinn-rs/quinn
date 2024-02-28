@@ -1,5 +1,5 @@
 use std::{
-    collections::{binary_heap::PeekMut, hash_map, BinaryHeap, VecDeque},
+    collections::{hash_map, VecDeque},
     convert::TryFrom,
     mem,
 };
@@ -9,8 +9,8 @@ use rustc_hash::FxHashMap;
 use tracing::{debug, trace};
 
 use super::{
-    push_pending, PendingLevel, Recv, Retransmits, Send, SendState, ShouldTransmit, StreamEvent,
-    StreamHalf, ThinRetransmits,
+    PendingStreams, Recv, Retransmits, Send, SendState, ShouldTransmit, StreamEvent, StreamHalf,
+    ThinRetransmits,
 };
 use crate::{
     coding::BufMutExt,
@@ -53,7 +53,7 @@ pub struct StreamsState {
     /// permitted to open but which have not yet been opened.
     pub(super) send_streams: usize,
     /// Streams with outgoing data queued
-    pub(super) pending: BinaryHeap<PendingLevel>,
+    pub(super) pending: PendingStreams,
 
     events: VecDeque<StreamEvent>,
     /// Streams blocked on connection-level flow control or stream window space
@@ -115,7 +115,7 @@ impl StreamsState {
             opened: [false, false],
             next_reported_remote: [0, 0],
             send_streams: 0,
-            pending: BinaryHeap::new(),
+            pending: PendingStreams::default(),
             events: VecDeque::new(),
             connection_blocked: Vec::new(),
             max_data: 0,
@@ -345,13 +345,11 @@ impl StreamsState {
     /// Whether any stream data is queued, regardless of control frames
     pub(crate) fn can_send_stream_data(&self) -> bool {
         // Reset streams may linger in the pending stream list, but will never produce stream frames
-        self.pending.iter().any(|level| {
-            level.queue.read().unwrap().iter().any(|id| {
-                self.send
-                    .get(id)
-                    .and_then(|s| s.as_ref())
-                    .map_or(false, |s| !s.is_reset())
-            })
+        self.pending.iter().any(|id| {
+            self.send
+                .get(&id)
+                .and_then(|s| s.as_ref())
+                .map_or(false, |s| !s.is_reset())
         })
     }
 
@@ -503,36 +501,27 @@ impl StreamsState {
                 break;
             }
 
-            let num_levels = self.pending.len();
-            let mut level = match self.pending.peek_mut() {
+            let mut peek = match self.pending.peek_mut() {
                 Some(x) => x,
                 None => break,
             };
-            // Poppping data from the front of the queue, storing as much data
-            // as possible in a single frame, and enqueing sending further
-            // remaining data at the end of the queue helps with fairness.
-            // Other streams will have a chance to write data before we touch
-            // this stream again.
-            let id = match level.queue.get_mut().unwrap().pop_front() {
-                Some(x) => x,
-                None => {
-                    debug_assert!(
-                        num_levels == 1,
-                        "An empty queue is only allowed for a single level"
-                    );
-                    break;
-                }
-            };
+
+            let id = peek.id;
+
             let stream = match self.send.get_mut(&id).and_then(|s| s.as_mut()) {
                 Some(s) => s,
-                // Stream was reset with pending data and the reset was acknowledged
-                None => continue,
+                None => {
+                    // Stream was reset with pending data and the reset was acknowledged
+                    peek.pop();
+                    continue;
+                }
             };
 
             // Reset streams aren't removed from the pending list and still exist while the peer
             // hasn't acknowledged the reset, but should not generate STREAM frames, so we need to
             // check for them explicitly.
             if stream.is_reset() {
+                peek.pop();
                 continue;
             }
 
@@ -547,24 +536,18 @@ impl StreamsState {
             }
 
             if stream.is_pending() {
-                if level.priority == stream.priority {
-                    // Enqueue for the same level
-                    level.queue.get_mut().unwrap().push_back(id);
+                if peek.priority == stream.priority {
+                    // Update recency, so that other streams of the same priority will have a chance to write data before we
+                    // touch this stream again
+                    peek.update_recency();
                 } else {
-                    // Enqueue for a different level. If the current level is empty, drop it
-                    if level.queue.read().unwrap().is_empty() && num_levels != 1 {
-                        // We keep the last level around even in empty form so that
-                        // the next insert doesn't have to reallocate the queue
-                        PeekMut::pop(level);
-                    } else {
-                        drop(level);
-                    }
-                    push_pending(&mut self.pending, id, stream.priority);
+                    // Update priority, recency will be set close to the recency of other streams of the new priority.
+                    // This prevents unfairness that would happen if the recency was much larger or smaller,
+                    // where this stream would always or never be processed until the recency values converged
+                    peek.update_priority(stream.priority);
                 }
-            } else if level.queue.read().unwrap().is_empty() && num_levels != 1 {
-                // We keep the last level around even in empty form so that
-                // the next insert doesn't have to reallocate the queue
-                PeekMut::pop(level);
+            } else {
+                peek.pop();
             }
 
             let meta = frame::StreamMeta { id, offsets, fin };
@@ -644,7 +627,7 @@ impl StreamsState {
             Some(x) => x,
         };
         if !stream.is_pending() {
-            push_pending(&mut self.pending, frame.id, stream.priority);
+            self.pending.push(frame.id, stream.priority);
         }
         stream.fin_pending |= frame.fin;
         stream.pending.retransmit(frame.offsets);
@@ -664,7 +647,7 @@ impl StreamsState {
                     continue;
                 }
                 if !stream.is_pending() {
-                    push_pending(&mut self.pending, id, stream.priority);
+                    self.pending.push(id, stream.priority);
                 }
                 stream.pending.retransmit_all_for_0rtt();
             }
@@ -1324,7 +1307,7 @@ mod tests {
         assert_eq!(meta[2].id, id_low);
 
         assert!(!server.can_send_stream_data());
-        assert_eq!(server.pending.len(), 1);
+        assert_eq!(server.pending.heap.len(), 1);
     }
 
     #[test]
@@ -1353,7 +1336,7 @@ mod tests {
             conn_state: &state,
         };
         assert_eq!(mid.write(b"mid").unwrap(), 3);
-        assert_eq!(server.pending.len(), 1);
+        assert_eq!(server.pending.heap.len(), 1);
 
         let mut high = SendStream {
             id: id_high,
@@ -1363,7 +1346,7 @@ mod tests {
         };
         high.set_priority(1).unwrap();
         assert_eq!(high.write(&[0; 200]).unwrap(), 200);
-        assert_eq!(server.pending.len(), 2);
+        assert_eq!(server.pending.heap.len(), 2);
 
         // Requeue the high priority stream to lowest priority. The initial send
         // still uses high priority since it's queued that way. After that it will
@@ -1382,7 +1365,7 @@ mod tests {
         assert_eq!(meta[0].id, id_high);
 
         // After requeuing we should end up with 2 priorities - not 3
-        assert_eq!(server.pending.len(), 2);
+        assert_eq!(server.pending.heap.len(), 2);
 
         // Send the remaining data. The initial mid priority one should go first now
         let meta = server.write_stream_frames(&mut buf, 1000);
@@ -1391,7 +1374,7 @@ mod tests {
         assert_eq!(meta[1].id, id_high);
 
         assert!(!server.can_send_stream_data());
-        assert_eq!(server.pending.len(), 1);
+        assert_eq!(server.pending.heap.len(), 1);
     }
 
     #[test]
