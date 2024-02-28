@@ -2787,3 +2787,10 @@ fn reject_new_connections() {
     pair.server.assert_no_accept();
     assert!(pair.client.connections.get(&client_ch).unwrap().is_closed());
 }
+
+#[test]
+fn endpoint_and_connection_impl_send_sync() {
+    const fn is_send_sync<T: Send + Sync>() {}
+    is_send_sync::<Endpoint>();
+    is_send_sync::<Connection>();
+}
