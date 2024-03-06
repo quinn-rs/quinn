@@ -131,7 +131,7 @@ frame_types! {
     HANDSHAKE_DONE = 0x1e,
     // ACK Frequency
     ACK_FREQUENCY = 0xaf,
-    IMMEDIATE_ACK = 0xac,
+    IMMEDIATE_ACK = 0x1f,
     // DATAGRAM
 }
 
