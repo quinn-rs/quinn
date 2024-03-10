@@ -203,8 +203,11 @@ impl PacketBuilder {
             stream_frames: sent.stream_frames,
         };
 
-        conn.in_flight.insert(&packet);
-        conn.in_flight.bytes -= conn.spaces[space_id].sent(exact_number, packet);
+        conn.path.in_flight.insert(&packet);
+        if conn.path.first_packet.is_none() {
+            conn.path.first_packet = Some(exact_number);
+        }
+        conn.path.in_flight.bytes -= conn.spaces[space_id].sent(exact_number, packet);
         conn.stats.path.sent_packets += 1;
         conn.reset_keep_alive(now);
         if size != 0 {
