@@ -46,7 +46,11 @@ impl UdpSocketState {
     pub fn new(sock: UdpSockRef<'_>) -> io::Result<Self> {
         let io = sock.0;
         let mut cmsg_platform_space = 0;
-        if cfg!(target_os = "linux") || cfg!(target_os = "freebsd") || cfg!(target_os = "macos") {
+        if cfg!(target_os = "linux")
+            || cfg!(target_os = "freebsd")
+            || cfg!(target_os = "macos")
+            || cfg!(target_os = "android")
+        {
             cmsg_platform_space +=
                 unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
         }
