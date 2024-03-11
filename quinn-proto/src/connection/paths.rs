@@ -2,7 +2,11 @@ use std::{cmp, net::SocketAddr, time::Duration, time::Instant};
 
 use tracing::trace;
 
-use super::{mtud::MtuDiscovery, pacing::Pacer, spaces::SentPacket};
+use super::{
+    mtud::MtuDiscovery,
+    pacing::Pacer,
+    spaces::{PacketSpace, SentPacket},
+};
 use crate::{config::MtuDiscoveryConfig, congestion, packet::SpaceId, TIMER_GRANULARITY};
 
 /// Description of a particular network path
@@ -37,7 +41,7 @@ pub(super) struct PathData {
     ///
     /// Used to determine whether a packet was sent on an earlier path. Insufficient to determine if
     /// a packet was sent on a later path.
-    pub(super) first_packet: Option<u64>,
+    first_packet: Option<u64>,
 }
 
 impl PathData {
@@ -102,6 +106,25 @@ impl PathData {
     /// Returns the path's current MTU
     pub(super) fn current_mtu(&self) -> u16 {
         self.mtud.current_mtu()
+    }
+
+    /// Account for transmission of `packet` with number `pn` in `space`
+    pub(super) fn sent(&mut self, pn: u64, packet: SentPacket, space: &mut PacketSpace) {
+        self.in_flight.insert(&packet);
+        if self.first_packet.is_none() {
+            self.first_packet = Some(pn);
+        }
+        self.in_flight.bytes -= space.sent(pn, packet);
+    }
+
+    /// Remove `packet` with number `pn` from this path's congestion control counters, or return
+    /// `false` if `pn` was sent before this path was established.
+    pub(super) fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) -> bool {
+        if self.first_packet.map_or(true, |first| first > pn) {
+            return false;
+        }
+        self.in_flight.remove(packet);
+        true
     }
 }
 
@@ -261,20 +284,20 @@ pub(super) struct InFlight {
 }
 
 impl InFlight {
-    pub(super) fn new() -> Self {
+    fn new() -> Self {
         Self {
             bytes: 0,
             ack_eliciting: 0,
         }
     }
 
-    pub(super) fn insert(&mut self, packet: &SentPacket) {
+    fn insert(&mut self, packet: &SentPacket) {
         self.bytes += u64::from(packet.size);
         self.ack_eliciting += u64::from(packet.ack_eliciting);
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
-    pub(super) fn remove(&mut self, packet: &SentPacket) {
+    fn remove(&mut self, packet: &SentPacket) {
         self.bytes -= u64::from(packet.size);
         self.ack_eliciting -= u64::from(packet.ack_eliciting);
     }

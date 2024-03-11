@@ -3438,8 +3438,7 @@ impl Connection {
     fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) {
         // Visit known paths from newest to oldest to find the one `pn` was sent on
         for path in [&mut self.path].into_iter().chain(self.prev_path.as_mut()) {
-            if path.first_packet.map_or(false, |first| first <= pn) {
-                path.in_flight.remove(packet);
+            if path.remove_in_flight(pn, packet) {
                 return;
             }
         }
