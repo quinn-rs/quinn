@@ -31,6 +31,7 @@ pub struct TransportConfig {
     pub(crate) stream_receive_window: VarInt,
     pub(crate) receive_window: VarInt,
     pub(crate) send_window: u64,
+    pub(crate) max_backoff_exponent: u32,
 
     pub(crate) packet_threshold: u32,
     pub(crate) time_threshold: f32,
@@ -131,6 +132,16 @@ impl TransportConfig {
     /// every connection uses the entire window.
     pub fn send_window(&mut self, value: u64) -> &mut Self {
         self.send_window = value;
+        self
+    }
+
+    /// Maximum value of the exponent used to increase the PTO period.
+    ///
+    /// If there is no Ack response, the PTO period increases exponentially.
+    /// To prevent overflow, values greater than 16 are ignored.
+    /// `pto = pto_base * 2^min(max_backoff_exponent, 16)`
+    pub fn max_backoff_exponent(&mut self, value: u32) -> &mut Self {
+        self.max_backoff_exponent = value;
         self
     }
 
@@ -323,6 +334,7 @@ impl Default for TransportConfig {
             stream_receive_window: STREAM_RWND.into(),
             receive_window: VarInt::MAX,
             send_window: (8 * STREAM_RWND).into(),
+            max_backoff_exponent: 16,
 
             packet_threshold: 3,
             time_threshold: 9.0 / 8.0,
@@ -357,6 +369,7 @@ impl fmt::Debug for TransportConfig {
             stream_receive_window,
             receive_window,
             send_window,
+            max_backoff_exponent,
             packet_threshold,
             time_threshold,
             initial_rtt,
@@ -382,6 +395,7 @@ impl fmt::Debug for TransportConfig {
             .field("stream_receive_window", stream_receive_window)
             .field("receive_window", receive_window)
             .field("send_window", send_window)
+            .field("max_backoff_exponent", max_backoff_exponent)
             .field("packet_threshold", packet_threshold)
             .field("time_threshold", time_threshold)
             .field("initial_rtt", initial_rtt)

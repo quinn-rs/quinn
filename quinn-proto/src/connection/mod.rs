@@ -211,6 +211,8 @@ pub struct Connection {
     //
     /// The number of times a PTO has been sent without receiving an ack.
     pto_count: u32,
+    /// TODO:
+    max_backoff_exponent: u32,
 
     //
     // Congestion Control
@@ -343,6 +345,7 @@ impl Connection {
             )),
 
             pto_count: 0,
+            max_backoff_exponent: config.max_backoff_exponent,
 
             app_limited: false,
             receiving_ecn: false,
@@ -1634,7 +1637,10 @@ impl Connection {
     }
 
     fn pto_time_and_space(&self, now: Instant) -> Option<(Instant, SpaceId)> {
-        let backoff = 2u32.pow(self.pto_count.min(MAX_BACKOFF_EXPONENT));
+        let backoff = 2u32.pow(
+            self.pto_count
+                .min(cmp::min(self.max_backoff_exponent, MAX_BACKOFF_EXPONENT)),
+        );
         let mut duration = self.path.rtt.pto_base() * backoff;
 
         if self.path.in_flight.ack_eliciting == 0 {
