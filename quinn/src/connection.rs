@@ -582,6 +582,15 @@ impl Connection {
         // May need to send MAX_STREAMS to make progress
         conn.wake();
     }
+
+    /// Whether the connection is closed
+    ///
+    /// Closed connections cannot transport any further data. A connection becomes closed when
+    /// either peer application intentionally closes it, or when either transport layer detects an
+    /// error such as a time-out or certificate validation failure.
+    pub fn is_closed(&self) -> bool {
+        self.0.state.lock("is_closed").inner.is_closed()
+    }
 }
 
 pin_project! {
