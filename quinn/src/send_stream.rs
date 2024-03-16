@@ -138,7 +138,16 @@ impl SendStream {
         Finish { stream: self }.await
     }
 
-    #[doc(hidden)]
+    /// Attempt to shut down the send stream gracefully.
+    ///
+    /// No new data may be written after calling this method. Completes when the peer has
+    /// acknowledged all sent data, retransmitting data as needed.
+    ///
+    /// On success, return Poll::Ready(Ok(())).
+    ///
+    /// If the stream is not ready for writing, the method returns Poll::Pending and arranges
+    /// for the current task (via cx.waker().wake_by_ref()) to receive a notification when the
+    /// stream becomes writable or is closed.
     pub fn poll_finish(&mut self, cx: &mut Context) -> Poll<Result<(), WriteError>> {
         let mut conn = self.conn.state.lock("poll_finish");
         if self.is_0rtt {
@@ -241,6 +250,21 @@ impl SendStream {
     /// Get the identity of this stream
     pub fn id(&self) -> StreamId {
         self.stream
+    }
+
+    /// Attempt to write bytes from buf into the stream.
+    ///
+    /// On success, returns Poll::Ready(Ok(num_bytes_written)).
+    ///
+    /// If the stream is not ready for writing, the method returns Poll::Pending and arranges
+    /// for the current task (via cx.waker().wake_by_ref()) to receive a notification when the
+    /// stream becomes writable or is closed.
+    pub fn poll_write(
+        self: Pin<&mut Self>,
+        cx: &mut Context,
+        buf: &[u8],
+    ) -> Poll<Result<usize, WriteError>> {
+        self.get_mut().execute_poll(cx, |stream| stream.write(buf))
     }
 }
 
