@@ -2,7 +2,7 @@ use std::{
     cmp,
     collections::{BTreeMap, VecDeque},
     mem,
-    ops::{Index, IndexMut},
+    ops::{Bound, Index, IndexMut},
     time::{Duration, Instant},
 };
 
@@ -33,6 +33,10 @@ pub(super) struct PacketSpace {
     /// The largest packet number the remote peer acknowledged in an ACK frame.
     pub(super) largest_acked_packet: Option<u64>,
     pub(super) largest_acked_packet_sent: Instant,
+    /// The highest-numbered ACK-eliciting packet we've sent
+    pub(super) largest_ack_eliciting_sent: u64,
+    /// Number of packets in `sent_packets` with numbers above `largest_ack_eliciting_sent`
+    pub(super) unacked_non_ack_eliciting_tail: u64,
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
     pub(super) sent_packets: BTreeMap<u64, SentPacket>,
@@ -80,6 +84,8 @@ impl PacketSpace {
             next_packet_number: 0,
             largest_acked_packet: None,
             largest_acked_packet_sent: now,
+            largest_ack_eliciting_sent: 0,
+            unacked_non_ack_eliciting_tail: 0,
             sent_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
@@ -199,9 +205,58 @@ impl PacketSpace {
         Ok(ce_increase != 0)
     }
 
-    pub(super) fn sent(&mut self, number: u64, packet: SentPacket) {
+    /// Stop tracking sent packet `number`, and return what we knew about it
+    pub(super) fn take(&mut self, number: u64) -> Option<SentPacket> {
+        let packet = self.sent_packets.remove(&number)?;
+        self.in_flight -= u64::from(packet.size);
+        if !packet.ack_eliciting && number > self.largest_ack_eliciting_sent {
+            self.unacked_non_ack_eliciting_tail =
+                self.unacked_non_ack_eliciting_tail.checked_sub(1).unwrap();
+        }
+        Some(packet)
+    }
+
+    /// Returns the number of bytes to *remove* from the connection's in-flight count
+    pub(super) fn sent(&mut self, number: u64, packet: SentPacket) -> u64 {
+        // Retain state for at most this many non-ACK-eliciting packets sent after the most recently
+        // sent ACK-eliciting packet. We're never guaranteed to receive an ACK for those, and we
+        // can't judge them as lost without an ACK, so to limit memory in applications which receive
+        // packets but don't send ACK-eliciting data for long periods use we must eventually start
+        // forgetting about them, although it might also be reasonable to just kill the connection
+        // due to weird peer behavior.
+        const MAX_UNACKED_NON_ACK_ELICTING_TAIL: u64 = 1_000;
+
+        let mut forgotten_bytes = 0;
+        if packet.ack_eliciting {
+            self.unacked_non_ack_eliciting_tail = 0;
+            self.largest_ack_eliciting_sent = number;
+        } else if self.unacked_non_ack_eliciting_tail > MAX_UNACKED_NON_ACK_ELICTING_TAIL {
+            let oldest_after_ack_eliciting = *self
+                .sent_packets
+                .range((
+                    Bound::Excluded(self.largest_ack_eliciting_sent),
+                    Bound::Unbounded,
+                ))
+                .next()
+                .unwrap()
+                .0;
+            // Per https://www.rfc-editor.org/rfc/rfc9000.html#name-frames-and-frame-types,
+            // non-ACK-eliciting packets must only contain PADDING, ACK, and CONNECTION_CLOSE
+            // frames, which require no special handling on ACK or loss beyond removal from
+            // in-flight counters if padded.
+            let packet = self
+                .sent_packets
+                .remove(&oldest_after_ack_eliciting)
+                .unwrap();
+            forgotten_bytes = u64::from(packet.size);
+            self.in_flight -= forgotten_bytes;
+        } else {
+            self.unacked_non_ack_eliciting_tail += 1;
+        }
+
         self.in_flight += u64::from(packet.size);
         self.sent_packets.insert(number, packet);
+        forgotten_bytes
     }
 }
 
@@ -509,6 +564,7 @@ pub(super) struct PendingAcks {
     ///
     /// Once the count _exceeds_ `ack_eliciting_threshold`, an immediate ACK is required
     ack_eliciting_since_last_ack_sent: u64,
+    non_ack_eliciting_since_last_ack_sent: u64,
     ack_eliciting_threshold: u64,
     /// The reordering threshold, controlling how we respond to out-of-order ack-eliciting packets
     ///
@@ -538,6 +594,7 @@ impl PendingAcks {
         Self {
             immediate_ack_required: false,
             ack_eliciting_since_last_ack_sent: 0,
+            non_ack_eliciting_since_last_ack_sent: 0,
             ack_eliciting_threshold: 1,
             reordering_threshold: 1,
             earliest_ack_eliciting_since_last_ack_sent: None,
@@ -588,6 +645,7 @@ impl PendingAcks {
         dedup: &Dedup,
     ) -> bool {
         if !ack_eliciting {
+            self.non_ack_eliciting_since_last_ack_sent += 1;
             return false;
         }
 
@@ -669,6 +727,7 @@ impl PendingAcks {
         // occasional redundant retransmits.
         self.immediate_ack_required = false;
         self.ack_eliciting_since_last_ack_sent = 0;
+        self.non_ack_eliciting_since_last_ack_sent = 0;
         self.earliest_ack_eliciting_since_last_ack_sent = None;
         self.largest_acked = self.largest_ack_eliciting_packet;
     }
@@ -694,6 +753,22 @@ impl PendingAcks {
     /// Returns the set of currently pending ACK ranges
     pub(super) fn ranges(&self) -> &ArrayRangeSet {
         &self.ranges
+    }
+
+    /// Queue an ACK if a significant number of non-ACK-eliciting packets have not yet been
+    /// acknowledged
+    ///
+    /// Should be called immediately before a non-probing packet is composed, when we've already
+    /// committed to sending a packet regardless.
+    pub(super) fn maybe_ack_non_eliciting(&mut self) {
+        // If we're going to send a packet anyway, and we've received a significant number of
+        // non-ACK-eliciting packets, then include an ACK to help the peer perform timely loss
+        // detection even if they're not sending any ACK-eliciting packets themselves. Exact
+        // threshold chosen somewhat arbitrarily.
+        const LAZY_ACK_THRESHOLD: u64 = 10;
+        if self.non_ack_eliciting_since_last_ack_sent > LAZY_ACK_THRESHOLD {
+            self.immediate_ack_required = true;
+        }
     }
 }
 

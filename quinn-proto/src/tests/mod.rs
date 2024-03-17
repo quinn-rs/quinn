@@ -2794,3 +2794,27 @@ fn endpoint_and_connection_impl_send_sync() {
     is_send_sync::<Endpoint>();
     is_send_sync::<Connection>();
 }
+
+/// Verify that an endpoint which receives but does not send ACK-eliciting data still receives ACKs
+/// occasionally. This is not required for conformance, but makes loss detection more responsive and
+/// reduces receiver memory use.
+#[test]
+fn pure_sender_voluntarily_acks() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    let receiver_acks_initial = pair.server_conn_mut(server_ch).stats().frame_rx.acks;
+
+    for _ in 0..100 {
+        const MSG: &[u8] = b"hello";
+        pair.client_datagrams(client_ch)
+            .send(Bytes::from_static(MSG))
+            .unwrap();
+        pair.drive();
+        assert_eq!(pair.server_datagrams(server_ch).recv().unwrap(), MSG);
+    }
+
+    let receiver_acks_final = pair.server_conn_mut(server_ch).stats().frame_rx.acks;
+    assert!(receiver_acks_final > receiver_acks_initial);
+}

@@ -2,7 +2,11 @@ use std::{cmp, net::SocketAddr, time::Duration, time::Instant};
 
 use tracing::trace;
 
-use super::{mtud::MtuDiscovery, pacing::Pacer};
+use super::{
+    mtud::MtuDiscovery,
+    pacing::Pacer,
+    spaces::{PacketSpace, SentPacket},
+};
 use crate::{config::MtuDiscoveryConfig, congestion, packet::SpaceId, TIMER_GRANULARITY};
 
 /// Description of a particular network path
@@ -32,6 +36,12 @@ pub(super) struct PathData {
     ///
     /// Used in persistent congestion determination.
     pub(super) first_packet_after_rtt_sample: Option<(SpaceId, u64)>,
+    pub(super) in_flight: InFlight,
+    /// Number of the first packet sent on this path
+    ///
+    /// Used to determine whether a packet was sent on an earlier path. Insufficient to determine if
+    /// a packet was sent on a later path.
+    first_packet: Option<u64>,
 }
 
 impl PathData {
@@ -61,6 +71,8 @@ impl PathData {
                 MtuDiscovery::new(initial_mtu, min_mtu, peer_max_udp_payload_size, config)
             }),
             first_packet_after_rtt_sample: None,
+            in_flight: InFlight::new(),
+            first_packet: None,
         }
     }
 
@@ -80,6 +92,8 @@ impl PathData {
             total_recvd: 0,
             mtud: prev.mtud.clone(),
             first_packet_after_rtt_sample: prev.first_packet_after_rtt_sample,
+            in_flight: InFlight::new(),
+            first_packet: None,
         }
     }
 
@@ -92,6 +106,25 @@ impl PathData {
     /// Returns the path's current MTU
     pub(super) fn current_mtu(&self) -> u16 {
         self.mtud.current_mtu()
+    }
+
+    /// Account for transmission of `packet` with number `pn` in `space`
+    pub(super) fn sent(&mut self, pn: u64, packet: SentPacket, space: &mut PacketSpace) {
+        self.in_flight.insert(&packet);
+        if self.first_packet.is_none() {
+            self.first_packet = Some(pn);
+        }
+        self.in_flight.bytes -= space.sent(pn, packet);
+    }
+
+    /// Remove `packet` with number `pn` from this path's congestion control counters, or return
+    /// `false` if `pn` was sent before this path was established.
+    pub(super) fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) -> bool {
+        if self.first_packet.map_or(true, |first| first > pn) {
+            return false;
+        }
+        self.in_flight.remove(packet);
+        true
     }
 }
 
@@ -232,4 +265,40 @@ struct PathResponse {
     token: u64,
     /// The address the corresponding PATH_CHALLENGE was received from
     remote: SocketAddr,
+}
+
+/// Summary statistics of packets that have been sent on a particular path, but which have not yet
+/// been acked or deemed lost
+pub(super) struct InFlight {
+    /// Sum of the sizes of all sent packets considered "in flight" by congestion control
+    ///
+    /// The size does not include IP or UDP overhead. Packets only containing ACK frames do not
+    /// count towards this to ensure congestion control does not impede congestion feedback.
+    pub(super) bytes: u64,
+    /// Number of packets in flight containing frames other than ACK and PADDING
+    ///
+    /// This can be 0 even when bytes is not 0 because PADDING frames cause a packet to be
+    /// considered "in flight" by congestion control. However, if this is nonzero, bytes will always
+    /// also be nonzero.
+    pub(super) ack_eliciting: u64,
+}
+
+impl InFlight {
+    fn new() -> Self {
+        Self {
+            bytes: 0,
+            ack_eliciting: 0,
+        }
+    }
+
+    fn insert(&mut self, packet: &SentPacket) {
+        self.bytes += u64::from(packet.size);
+        self.ack_eliciting += u64::from(packet.ack_eliciting);
+    }
+
+    /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
+    fn remove(&mut self, packet: &SentPacket) {
+        self.bytes -= u64::from(packet.size);
+        self.ack_eliciting -= u64::from(packet.ack_eliciting);
+    }
 }
