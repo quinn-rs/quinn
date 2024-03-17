@@ -1,10 +1,9 @@
 use std::{
-    collections::{binary_heap::PeekMut, hash_map, BinaryHeap},
-    ops::Deref,
+    collections::{hash_map, BTreeMap},
+    ops::Bound,
 };
 
 use bytes::Bytes;
-use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tracing::trace;
 
@@ -238,7 +237,7 @@ impl<'a> SendStream<'a> {
         self.state.unacked_data += written.bytes as u64;
         trace!(stream = %self.id, "wrote {} bytes", written.bytes);
         if !was_pending {
-            self.state.pending.push(self.id, stream.priority);
+            push_pending(&mut self.state.pending, self.id, stream.priority);
         }
         Ok(written)
     }
@@ -269,7 +268,7 @@ impl<'a> SendStream<'a> {
         let was_pending = stream.is_pending();
         stream.finish()?;
         if !was_pending {
-            self.state.pending.push(self.id, stream.priority);
+            push_pending(&mut self.state.pending, self.id, stream.priority);
         }
 
         Ok(())
@@ -336,110 +335,43 @@ impl<'a> SendStream<'a> {
     }
 }
 
-#[derive(Default)]
-struct PendingStreams {
-    /// IDs of streams with outgoing data queued, sorted by their priority
-    heap: BinaryHeap<PendingId>,
-    /// Used so new streams for a given priority have their recency set to a value
-    /// close to the recency of other streams of the same priority, to prevent unfairness
-    latest_recencies: FxHashMap<i32, u64>,
-}
-
-impl PendingStreams {
-    fn clear(&mut self) {
-        self.heap.clear();
-        self.latest_recencies.clear();
-    }
-
-    fn push(&mut self, id: StreamId, priority: i32) {
-        let &mut recency = self.latest_recencies.entry(priority).or_insert(u64::MAX);
-        self.heap.push(PendingId {
-            id,
+/// Push a pending stream ID with the given priority, queued after all preexisting streams for the priority
+fn push_pending(pending: &mut BTreeMap<PendingPriority, StreamId>, id: StreamId, priority: i32) {
+    // Get all preexisting streams of this priority
+    // We only actually need the lowest recency value, so this could be implemented more tersely with
+    // `BTreeMap::lower_bound`, but as of writing that API is unfortunately still nightly only
+    let mut range = pending.range((
+        Bound::Included(PendingPriority {
             priority,
-            recency,
-        })
-    }
+            recency: 0,
+        }),
+        Bound::Included(PendingPriority {
+            priority,
+            recency: u64::MAX,
+        }),
+    ));
 
-    fn iter(&self) -> impl Iterator<Item = StreamId> + '_ {
-        self.heap.iter().map(|id| id.id)
-    }
-
-    fn peek_mut(&mut self) -> Option<PendingPeekMut> {
-        self.heap.peek_mut().map(|peek| PendingPeekMut {
-            peek,
-            recencies: &mut self.latest_recencies,
-        })
-    }
+    pending.insert(
+        PendingPriority {
+            priority,
+            recency: range.next().map(|(p, _)| p.recency - 1).unwrap_or(u64::MAX),
+        },
+        id,
+    );
 }
 
-struct PendingPeekMut<'a> {
-    peek: PeekMut<'a, PendingId>,
-    recencies: &'a mut FxHashMap<i32, u64>,
-}
-
-impl PendingPeekMut<'_> {
-    fn update_recency(&mut self) {
-        // Decrementing the recency moves this stream below all others of the same priority level in the heap, for fairness
-        // See commit c004ef0 for details
-        self.peek.recency = self
-            .peek
-            .recency
-            .checked_sub(1)
-            .expect("Recency underflowed");
-        // Store the new recency value so that new streams on this priority don't use a bad recency value that could cause unfairness
-        self.recencies.insert(self.peek.priority, self.peek.recency);
-    }
-
-    fn update_priority(&mut self, new_priority: i32) {
-        self.peek.priority = new_priority;
-        // Set the recency value close to the recency values of preexisting streams on this priority. This is needed for fairness,
-        // as otherwise our recency value could be much larger or smaller than the preexisting streams' recency values,
-        // causing us to either always or never be processed until the recency values converged
-        self.peek.recency = *self.recencies.entry(new_priority).or_insert(u64::MAX);
-    }
-
-    fn pop(self) -> PendingId {
-        PeekMut::pop(self.peek)
-    }
-}
-
-impl Deref for PendingPeekMut<'_> {
-    type Target = PendingId;
-
-    fn deref(&self) -> &Self::Target {
-        &self.peek
-    }
-}
-
-struct PendingId {
-    /// The ID of the stream with pending data
-    id: StreamId,
+/// Key type for a [`BTreeMap`] for streams with pending data, to sort them by priority and recency
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct PendingPriority {
     /// The priority of the stream
+    // Note that this field should be kept above the `recency` field, in order for the `Ord` derive to be correct
+    // (See https://doc.rust-lang.org/stable/std/cmp/trait.Ord.html#derivable)
     priority: i32,
-    /// A tie-breaker for streams of the same priority, used to improve fairness
+    /// A tie-breaker for streams of the same priority, used to improve fairness by implementing round-robin scheduling:
+    /// Larger values are prioritized, so it is initialised to `u64::MAX`, and when a stream writes data, we know
+    /// that it currently has the highest recency value, so it is deprioritized by 'leapfrogging' its recency past
+    /// the recency values of the other streams, down to 1 less than the previous lowest recency value for that priority
     recency: u64,
-}
-
-impl PartialEq for PendingId {
-    fn eq(&self, other: &Self) -> bool {
-        self.priority.eq(&other.priority) && self.recency.eq(&other.recency)
-    }
-}
-
-impl PartialOrd for PendingId {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Eq for PendingId {}
-
-impl Ord for PendingId {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.priority
-            .cmp(&other.priority)
-            .then_with(|| self.recency.cmp(&other.recency))
-    }
 }
 
 /// Application events about streams
