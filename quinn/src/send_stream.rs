@@ -142,12 +142,6 @@ impl SendStream {
     ///
     /// No new data may be written after calling this method. Completes when the peer has
     /// acknowledged all sent data, retransmitting data as needed.
-    ///
-    /// On success, return Poll::Ready(Ok(())).
-    ///
-    /// If the stream is not ready for writing, the method returns Poll::Pending and arranges
-    /// for the current task (via cx.waker().wake_by_ref()) to receive a notification when the
-    /// stream becomes writable or is closed.
     pub fn poll_finish(&mut self, cx: &mut Context) -> Poll<Result<(), WriteError>> {
         let mut conn = self.conn.state.lock("poll_finish");
         if self.is_0rtt {
