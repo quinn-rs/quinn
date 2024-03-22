@@ -110,7 +110,7 @@ mod tracking {
 }
 
 #[cfg(feature = "lock_tracking")]
-pub(crate) use tracking::Mutex;
+pub(crate) use tracking::{Mutex, MutexGuard};
 
 #[cfg(not(feature = "lock_tracking"))]
 mod non_tracking {
@@ -160,4 +160,4 @@ mod non_tracking {
 }
 
 #[cfg(not(feature = "lock_tracking"))]
-pub(crate) use non_tracking::Mutex;
+pub(crate) use non_tracking::{Mutex, MutexGuard};

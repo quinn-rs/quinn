@@ -19,7 +19,7 @@ use tokio::sync::{futures::Notified, mpsc, oneshot, Notify};
 use tracing::{debug_span, Instrument, Span};
 
 use crate::{
-    mutex::Mutex,
+    mutex::{Mutex, MutexGuard},
     recv_stream::RecvStream,
     send_stream::{SendStream, WriteError},
     ConnectionEvent, EndpointEvent, VarInt,
@@ -278,6 +278,21 @@ impl Connection {
         }
     }
 
+    /// Attempt to initiate a new outgoing unidirectional stream without waiting.
+    ///
+    /// See [`open_uni`] for more information.
+    pub fn try_open_uni(&self) -> Result<SendStream, TryOpenError> {
+        let mut state = self.0.state.lock("try_open_uni");
+        match try_open(&mut state, Dir::Uni) {
+            Some(Ok(open)) => {
+                drop(state); // Release the lock so clone can take it
+                Ok(SendStream::new(self.0.clone(), open.id, open.is_0rtt))
+            }
+            Some(Err(e)) => Err(TryOpenError::Connection(e)),
+            None => Err(TryOpenError::RateLimited),
+        }
+    }
+
     /// Initiate a new outgoing bidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
@@ -292,6 +307,24 @@ impl Connection {
         OpenBi {
             conn: &self.0,
             notify: self.0.shared.stream_budget_available[Dir::Bi as usize].notified(),
+        }
+    }
+
+    /// Attempt to initiate a new outgoing bidirectional stream without waiting.
+    ///
+    /// See [`open_bi`] for more information.
+    pub fn try_open_bi(&self) -> Result<(SendStream, RecvStream), TryOpenError> {
+        let mut state = self.0.state.lock("try_open_bi");
+        match try_open(&mut state, Dir::Bi) {
+            Some(Ok(open)) => {
+                drop(state); // Release the lock so clone can take it
+                Ok((
+                    SendStream::new(self.0.clone(), open.id, open.is_0rtt),
+                    RecvStream::new(self.0.clone(), open.id, open.is_0rtt),
+                ))
+            }
+            Some(Err(e)) => Err(TryOpenError::Connection(e)),
+            None => Err(TryOpenError::RateLimited),
         }
     }
 
@@ -624,6 +657,25 @@ impl Future for OpenBi<'_> {
     }
 }
 
+struct TryOpen {
+    is_0rtt: bool,
+    id: StreamId,
+}
+
+fn try_open(
+    state: &mut MutexGuard<'_, State>,
+    dir: Dir,
+) -> Option<Result<TryOpen, ConnectionError>> {
+    if let Some(ref e) = state.error {
+        Some(Err(e.clone()))
+    } else if let Some(id) = state.inner.streams().open(dir) {
+        let is_0rtt = state.inner.side().is_client() && state.inner.is_handshaking();
+        Some(Ok(TryOpen { id, is_0rtt }))
+    } else {
+        None
+    }
+}
+
 fn poll_open<'a>(
     ctx: &mut Context<'_>,
     conn: &'a ConnectionRef,
@@ -631,12 +683,14 @@ fn poll_open<'a>(
     dir: Dir,
 ) -> Poll<Result<(ConnectionRef, StreamId, bool), ConnectionError>> {
     let mut state = conn.state.lock("poll_open");
-    if let Some(ref e) = state.error {
-        return Poll::Ready(Err(e.clone()));
-    } else if let Some(id) = state.inner.streams().open(dir) {
-        let is_0rtt = state.inner.side().is_client() && state.inner.is_handshaking();
-        drop(state); // Release the lock so clone can take it
-        return Poll::Ready(Ok((conn.clone(), id, is_0rtt)));
+    if let Some(res) = try_open(&mut state, dir) {
+        match res {
+            Ok(open) => {
+                drop(state); // Release the lock so clone can take it
+                return Poll::Ready(Ok((conn.clone(), open.id, open.is_0rtt)));
+            }
+            Err(e) => return Poll::Ready(Err(e)),
+        }
     }
     loop {
         match notify.as_mut().poll(ctx) {
@@ -1168,4 +1222,16 @@ impl From<proto::UnknownStream> for UnknownStream {
     fn from(_: proto::UnknownStream) -> Self {
         Self { _private: () }
     }
+}
+
+/// An error while trying to open a stream without waiting.
+#[derive(Debug, Error, Clone, Eq, PartialEq)]
+pub enum TryOpenError {
+    /// The stream could not be opened due to the rate-limiter.
+    #[error("the operation is rate-limited")]
+    RateLimited,
+
+    /// Opening the stream failed due to a connection error.
+    #[error("failed to open connection")]
+    Connection(#[from] ConnectionError),
 }
