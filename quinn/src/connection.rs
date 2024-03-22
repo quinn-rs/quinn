@@ -280,7 +280,9 @@ impl Connection {
 
     /// Attempt to initiate a new outgoing unidirectional stream without waiting.
     ///
-    /// See [`open_uni`] for more information.
+    /// See [`open_uni()`] for more information.
+    ///
+    /// [`open_uni()`]: crate::Connection::open_uni
     pub fn try_open_uni(&self) -> Result<SendStream, TryOpenError> {
         let mut state = self.0.state.lock("try_open_uni");
         match try_open(&mut state, Dir::Uni) {
@@ -312,7 +314,9 @@ impl Connection {
 
     /// Attempt to initiate a new outgoing bidirectional stream without waiting.
     ///
-    /// See [`open_bi`] for more information.
+    /// See [`open_bi()`] for more information.
+    ///
+    /// [`open_bi()`]: crate::Connection::open_bi
     pub fn try_open_bi(&self) -> Result<(SendStream, RecvStream), TryOpenError> {
         let mut state = self.0.state.lock("try_open_bi");
         match try_open(&mut state, Dir::Bi) {
