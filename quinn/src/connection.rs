@@ -666,6 +666,7 @@ struct TryOpen {
     id: StreamId,
 }
 
+#[inline]
 fn try_open(
     state: &mut MutexGuard<'_, State>,
     dir: Dir,
