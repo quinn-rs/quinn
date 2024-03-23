@@ -4,7 +4,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use bytes::BufMut;
+use bytes::{Buf, BufMut};
 
 use crate::{
     coding::{BufExt, BufMutExt},
@@ -30,6 +30,7 @@ impl RetryToken {
         let aead_key = key.aead_from_hkdf(retry_src_cid);
 
         let mut buf = Vec::new();
+        encode_addr(&mut buf, address);
         self.orig_dst_cid.encode_long(&mut buf);
         buf.write::<u64>(
             self.issued
@@ -38,9 +39,7 @@ impl RetryToken {
                 .unwrap_or(0),
         );
 
-        let mut additional_data = [0u8; Self::MAX_ADDITIONAL_DATA_SIZE];
-        let additional_data = Self::put_additional_data(address, &mut additional_data);
-        aead_key.seal(&mut buf, additional_data).unwrap();
+        aead_key.seal(&mut buf, &[]).unwrap();
 
         buf
     }
@@ -54,11 +53,12 @@ impl RetryToken {
         let aead_key = key.aead_from_hkdf(retry_src_cid);
         let mut sealed_token = raw_token_bytes.to_vec();
 
-        let mut additional_data = [0u8; Self::MAX_ADDITIONAL_DATA_SIZE];
-        let additional_data = Self::put_additional_data(address, &mut additional_data);
-        let data = aead_key.open(&mut sealed_token, additional_data)?;
-
+        let data = aead_key.open(&mut sealed_token, &[])?;
         let mut reader = io::Cursor::new(data);
+        let token_addr = decode_addr(&mut reader).ok_or(CryptoError)?;
+        if token_addr != *address {
+            return Err(CryptoError);
+        }
         let orig_dst_cid = ConnectionId::decode_long(&mut reader).ok_or(CryptoError)?;
         let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().map_err(|_| CryptoError)?, 0);
 
@@ -67,20 +67,30 @@ impl RetryToken {
             issued,
         })
     }
+}
 
-    fn put_additional_data<'b>(address: &SocketAddr, additional_data: &'b mut [u8]) -> &'b [u8] {
-        let mut cursor = &mut *additional_data;
-        match address.ip() {
-            IpAddr::V4(x) => cursor.put_slice(&x.octets()),
-            IpAddr::V6(x) => cursor.put_slice(&x.octets()),
+fn encode_addr(buf: &mut Vec<u8>, address: &SocketAddr) {
+    match address.ip() {
+        IpAddr::V4(x) => {
+            buf.put_u8(0);
+            buf.put_slice(&x.octets());
         }
-        cursor.write(address.port());
-
-        let size = Self::MAX_ADDITIONAL_DATA_SIZE - cursor.len();
-        &additional_data[..size]
+        IpAddr::V6(x) => {
+            buf.put_u8(1);
+            buf.put_slice(&x.octets());
+        }
     }
+    buf.put_u16(address.port());
+}
 
-    const MAX_ADDITIONAL_DATA_SIZE: usize = 39; // max(ipv4, ipv6) + port + retry_src_cid
+fn decode_addr<B: Buf>(buf: &mut B) -> Option<SocketAddr> {
+    let ip = match buf.get_u8() {
+        0 => IpAddr::V4(buf.get().ok()?),
+        1 => IpAddr::V6(buf.get().ok()?),
+        _ => return None,
+    };
+    let port = buf.get_u16();
+    Some(SocketAddr::new(ip, port))
 }
 
 /// Stateless reset token
