@@ -49,18 +49,25 @@ impl RetryToken {
         address: &SocketAddr,
         retry_src_cid: &ConnectionId,
         raw_token_bytes: &[u8],
-    ) -> Result<Self, CryptoError> {
+    ) -> Result<Self, TokenDecodeError> {
         let aead_key = key.aead_from_hkdf(retry_src_cid);
         let mut sealed_token = raw_token_bytes.to_vec();
 
         let data = aead_key.open(&mut sealed_token, &[])?;
         let mut reader = io::Cursor::new(data);
-        let token_addr = decode_addr(&mut reader).ok_or(CryptoError)?;
+        let token_addr = decode_addr(&mut reader).ok_or(TokenDecodeError::UnknownToken)?;
         if token_addr != *address {
-            return Err(CryptoError);
+            return Err(TokenDecodeError::WrongAddress);
         }
-        let orig_dst_cid = ConnectionId::decode_long(&mut reader).ok_or(CryptoError)?;
-        let issued = UNIX_EPOCH + Duration::new(reader.get::<u64>().map_err(|_| CryptoError)?, 0);
+        let orig_dst_cid =
+            ConnectionId::decode_long(&mut reader).ok_or(TokenDecodeError::UnknownToken)?;
+        let issued = UNIX_EPOCH
+            + Duration::new(
+                reader
+                    .get::<u64>()
+                    .map_err(|_| TokenDecodeError::UnknownToken)?,
+                0,
+            );
 
         Ok(Self {
             orig_dst_cid,
@@ -91,6 +98,22 @@ fn decode_addr<B: Buf>(buf: &mut B) -> Option<SocketAddr> {
     };
     let port = buf.get_u16();
     Some(SocketAddr::new(ip, port))
+}
+
+/// Reasons why a retry token might fail to validate a client's address
+#[derive(Debug, Copy, Clone)]
+pub(crate) enum TokenDecodeError {
+    /// Token was not recognized. It should be silently ignored.
+    UnknownToken,
+    /// Token was well-formed but associated with an incorrect address. The connection cannot be
+    /// established.
+    WrongAddress,
+}
+
+impl From<CryptoError> for TokenDecodeError {
+    fn from(CryptoError: CryptoError) -> Self {
+        Self::UnknownToken
+    }
 }
 
 /// Stateless reset token
