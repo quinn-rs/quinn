@@ -436,34 +436,10 @@ impl Endpoint {
 
         let server_config = self.server_config.as_ref().unwrap().clone();
 
-        if self.connections.len() >= server_config.concurrent_connections as usize || self.is_full()
-        {
-            debug!("refusing connection");
-            return Some(DatagramEvent::Response(self.initial_close(
-                version,
-                addresses,
-                crypto,
-                &src_cid,
-                TransportError::CONNECTION_REFUSED(""),
-                buf,
-            )));
-        }
-
-        if dst_cid.len() < 8
-            && (!server_config.use_retry || dst_cid.len() != self.local_cid_generator.cid_len())
-        {
-            debug!(
-                "rejecting connection due to invalid DCID length {}",
-                dst_cid.len()
-            );
-            return Some(DatagramEvent::Response(self.initial_close(
-                version,
-                addresses,
-                crypto,
-                &src_cid,
-                TransportError::PROTOCOL_VIOLATION("invalid destination CID length"),
-                buf,
-            )));
+        if let Err(err) = self.early_validate_first_packet(&dst_cid) {
+            return Some(DatagramEvent::Response(
+                self.initial_close(version, addresses, crypto, &src_cid, err, buf),
+            ));
         }
 
         let (retry_src_cid, orig_dst_cid) = if server_config.use_retry {
@@ -578,6 +554,33 @@ impl Endpoint {
                 }
             }
         }
+    }
+
+    /// Check if we should refuse a connection attempt regardless of the packet's contents
+    fn early_validate_first_packet(
+        &mut self,
+        dst_cid: &ConnectionId,
+    ) -> Result<(), TransportError> {
+        let server_config = self.server_config.as_ref().unwrap();
+        if self.connections.len() >= server_config.concurrent_connections as usize || self.is_full()
+        {
+            debug!("refusing connection");
+            return Err(TransportError::CONNECTION_REFUSED(""));
+        }
+
+        if dst_cid.len() < 8
+            && (!server_config.use_retry || dst_cid.len() != self.local_cid_generator.cid_len())
+        {
+            debug!(
+                "rejecting connection due to invalid DCID length {}",
+                dst_cid.len()
+            );
+            return Err(TransportError::PROTOCOL_VIOLATION(
+                "invalid destination CID length",
+            ));
+        }
+
+        Ok(())
     }
 
     fn add_connection(
