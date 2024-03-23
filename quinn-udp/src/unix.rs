@@ -683,10 +683,8 @@ fn decode_recv(
                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
                 // https://bugreport.apple.com/web/?problemID=48761855
                 #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
-                if cfg!(target_os = "macos")
-                    || cfg!(target_os = "ios")
-                        && cmsg.cmsg_len as usize
-                            == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
+                if (cfg!(target_os = "macos") || cfg!(target_os = "ios"))
+                    && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
                 {
                     ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
                 } else {
