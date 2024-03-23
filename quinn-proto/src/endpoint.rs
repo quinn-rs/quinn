@@ -22,7 +22,7 @@ use crate::{
     connection::{Connection, ConnectionError},
     crypto::{self, Keys, UnsupportedVersion},
     frame,
-    packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode},
+    packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode, PlainInitialHeader},
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
         EndpointEventInner, IssuedCid,
@@ -233,7 +233,7 @@ impl Endpoint {
                     }
                 };
 
-            if let Err(reason) = self.early_validate_first_packet(dst_cid) {
+            if let Err(reason) = self.early_validate_first_packet(header) {
                 return Some(DatagramEvent::Response(self.initial_close(
                     header.version,
                     addresses,
@@ -566,7 +566,7 @@ impl Endpoint {
     /// Check if we should refuse a connection attempt regardless of the packet's contents
     fn early_validate_first_packet(
         &mut self,
-        dst_cid: &ConnectionId,
+        header: &PlainInitialHeader,
     ) -> Result<(), TransportError> {
         let server_config = self.server_config.as_ref().unwrap();
         if self.connections.len() >= server_config.concurrent_connections as usize || self.is_full()
@@ -575,12 +575,18 @@ impl Endpoint {
             return Err(TransportError::CONNECTION_REFUSED(""));
         }
 
-        if dst_cid.len() < 8
-            && (!server_config.use_retry || dst_cid.len() != self.local_cid_generator.cid_len())
+        // RFC9000 §7.2 dictates that initial (client-chosen) destination CIDs must be at least 8
+        // bytes. If this is a Retry packet, then the length must instead match our usual CID
+        // length. If we ever issue non-Retry address validation tokens via `NEW_TOKEN`, then we'll
+        // also need to validate CID length for those after decoding the token.
+        if header.dst_cid.len() < 8
+            && (!server_config.use_retry
+                || (!header.token_pos.is_empty()
+                    && header.dst_cid.len() != self.local_cid_generator.cid_len()))
         {
             debug!(
                 "rejecting connection due to invalid DCID length {}",
-                dst_cid.len()
+                header.dst_cid.len()
             );
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "invalid destination CID length",
