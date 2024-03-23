@@ -49,6 +49,7 @@ impl UdpSocketState {
         if cfg!(target_os = "linux")
             || cfg!(target_os = "freebsd")
             || cfg!(target_os = "macos")
+            || cfg!(target_os = "ios")
             || cfg!(target_os = "android")
         {
             cmsg_platform_space +=
@@ -119,7 +120,7 @@ impl UdpSocketState {
                 )?;
             }
         }
-        #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+        #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
         // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
         // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS
         // macOS also supports IP_PKTINFO
@@ -330,8 +331,8 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmits: &[Transmit]) -> io::
             &mut hdr,
             &mut iov,
             &mut ctrl,
-            // Only tested on macOS
-            cfg!(target_os = "macos"),
+            // Only tested on macOS and iOS
+            cfg!(target_os = "macos") || cfg!(target_os = "ios"),
             state.sendmsg_einval(),
         );
         let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
@@ -620,7 +621,7 @@ fn prepare_msg(
                     };
                     encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
                 }
-                #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+                #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
                 {
                     if encode_src_ip {
                         let addr = libc::in_addr {
@@ -682,7 +683,7 @@ fn decode_recv(
                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
                 // https://bugreport.apple.com/web/?problemID=48761855
                 #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
-                if cfg!(target_os = "macos")
+                if (cfg!(target_os = "macos") || cfg!(target_os = "ios"))
                     && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
                 {
                     ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
@@ -697,7 +698,7 @@ fn decode_recv(
                     pktinfo.ipi_addr.s_addr.to_ne_bytes(),
                 )));
             }
-            #[cfg(any(target_os = "freebsd", target_os = "macos"))]
+            #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
             (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
                 let in_addr = unsafe { cmsg::decode::<libc::in_addr, libc::cmsghdr>(cmsg) };
                 dst_ip = Some(IpAddr::V4(Ipv4Addr::from(in_addr.s_addr.to_ne_bytes())));
