@@ -232,6 +232,18 @@ impl Endpoint {
                         return None;
                     }
                 };
+
+            if let Err(reason) = self.early_validate_first_packet(dst_cid) {
+                return Some(DatagramEvent::Response(self.initial_close(
+                    header.version,
+                    addresses,
+                    &crypto,
+                    &header.src_cid,
+                    reason,
+                    buf,
+                )));
+            }
+
             return match first_decode.finish(Some(&*crypto.header.remote)) {
                 Ok(packet) => {
                     self.handle_first_packet(now, addresses, ecn, packet, remaining, &crypto, buf)
@@ -436,12 +448,6 @@ impl Endpoint {
         }
 
         let server_config = self.server_config.as_ref().unwrap().clone();
-
-        if let Err(err) = self.early_validate_first_packet(&dst_cid) {
-            return Some(DatagramEvent::Response(
-                self.initial_close(version, addresses, crypto, &src_cid, err, buf),
-            ));
-        }
 
         let (retry_src_cid, orig_dst_cid) = if server_config.use_retry {
             if token.is_empty() {
