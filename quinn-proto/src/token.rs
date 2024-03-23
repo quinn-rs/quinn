@@ -13,23 +13,21 @@ use crate::{
     RESET_TOKEN_SIZE,
 };
 
-pub(crate) struct RetryToken<'a> {
+pub(crate) struct RetryToken {
     /// The destination connection ID set in the very first packet from the client
     pub(crate) orig_dst_cid: ConnectionId,
     /// The time at which this token was issued
     pub(crate) issued: SystemTime,
-    /// Random bytes for deriving AEAD key
-    pub(crate) random_bytes: &'a [u8],
 }
 
-impl<'a> RetryToken<'a> {
+impl RetryToken {
     pub(crate) fn encode(
         &self,
         key: &dyn HandshakeTokenKey,
         address: &SocketAddr,
         retry_src_cid: &ConnectionId,
     ) -> Vec<u8> {
-        let aead_key = key.aead_from_hkdf(self.random_bytes);
+        let aead_key = key.aead_from_hkdf(retry_src_cid);
 
         let mut buf = Vec::new();
         self.orig_dst_cid.encode_long(&mut buf);
@@ -41,34 +39,23 @@ impl<'a> RetryToken<'a> {
         );
 
         let mut additional_data = [0u8; Self::MAX_ADDITIONAL_DATA_SIZE];
-        let additional_data =
-            Self::put_additional_data(address, retry_src_cid, &mut additional_data);
+        let additional_data = Self::put_additional_data(address, &mut additional_data);
         aead_key.seal(&mut buf, additional_data).unwrap();
 
-        let mut token = Vec::new();
-        token.put_slice(self.random_bytes);
-        token.put_slice(&buf);
-        token
+        buf
     }
 
     pub(crate) fn from_bytes(
         key: &dyn HandshakeTokenKey,
         address: &SocketAddr,
         retry_src_cid: &ConnectionId,
-        raw_token_bytes: &'a [u8],
+        raw_token_bytes: &[u8],
     ) -> Result<Self, CryptoError> {
-        if raw_token_bytes.len() < Self::RANDOM_BYTES_LEN {
-            // Invalid length
-            return Err(CryptoError);
-        }
-
-        let random_bytes = &raw_token_bytes[..Self::RANDOM_BYTES_LEN];
-        let aead_key = key.aead_from_hkdf(random_bytes);
-        let mut sealed_token = raw_token_bytes[Self::RANDOM_BYTES_LEN..].to_vec();
+        let aead_key = key.aead_from_hkdf(retry_src_cid);
+        let mut sealed_token = raw_token_bytes.to_vec();
 
         let mut additional_data = [0u8; Self::MAX_ADDITIONAL_DATA_SIZE];
-        let additional_data =
-            Self::put_additional_data(address, retry_src_cid, &mut additional_data);
+        let additional_data = Self::put_additional_data(address, &mut additional_data);
         let data = aead_key.open(&mut sealed_token, additional_data)?;
 
         let mut reader = io::Cursor::new(data);
@@ -78,29 +65,22 @@ impl<'a> RetryToken<'a> {
         Ok(Self {
             orig_dst_cid,
             issued,
-            random_bytes,
         })
     }
 
-    fn put_additional_data<'b>(
-        address: &SocketAddr,
-        retry_src_cid: &ConnectionId,
-        additional_data: &'b mut [u8],
-    ) -> &'b [u8] {
+    fn put_additional_data<'b>(address: &SocketAddr, additional_data: &'b mut [u8]) -> &'b [u8] {
         let mut cursor = &mut *additional_data;
         match address.ip() {
             IpAddr::V4(x) => cursor.put_slice(&x.octets()),
             IpAddr::V6(x) => cursor.put_slice(&x.octets()),
         }
         cursor.write(address.port());
-        retry_src_cid.encode_long(&mut cursor);
 
         let size = Self::MAX_ADDITIONAL_DATA_SIZE - cursor.len();
         &additional_data[..size]
     }
 
     const MAX_ADDITIONAL_DATA_SIZE: usize = 39; // max(ipv4, ipv6) + port + retry_src_cid
-    pub(crate) const RANDOM_BYTES_LEN: usize = 32;
 }
 
 /// Stateless reset token
@@ -171,12 +151,6 @@ mod test {
         let mut master_key = [0; 64];
         rng.fill_bytes(&mut master_key);
 
-        let mut random_bytes = [0; 32];
-        rng.fill_bytes(&mut random_bytes);
-
-        let mut master_key = vec![0u8; 64];
-        rng.fill_bytes(&mut master_key);
-
         let prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
@@ -184,7 +158,6 @@ mod test {
         let token = RetryToken {
             orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
             issued: UNIX_EPOCH + Duration::new(42, 0), // Fractional seconds would be lost
-            random_bytes: &random_bytes,
         };
         let encoded = token.encode(&prk, &addr, &retry_src_cid);
 
@@ -208,28 +181,18 @@ mod test {
         let mut master_key = [0; 64];
         rng.fill_bytes(&mut master_key);
 
-        let mut random_bytes = [0; 32];
-        rng.fill_bytes(&mut random_bytes);
-
         let prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
 
         let mut invalid_token = Vec::new();
-        invalid_token.put_slice(&random_bytes);
 
         let mut random_data = [0; 32];
         rand::thread_rng().fill_bytes(&mut random_data);
         invalid_token.put_slice(&random_data);
 
-        // Assert: garbage sealed data with valid random bytes returns err
-        assert!(RetryToken::from_bytes(&prk, &addr, &retry_src_cid, &invalid_token).is_err());
-
-        let invalid_token = [0; 31];
-        rand::thread_rng().fill_bytes(&mut random_bytes);
-
-        // Assert: completely invalid retry token returns error
+        // Assert: garbage sealed data returns err
         assert!(RetryToken::from_bytes(&prk, &addr, &retry_src_cid, &invalid_token).is_err());
     }
 }
