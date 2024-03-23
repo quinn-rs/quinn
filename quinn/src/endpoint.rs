@@ -8,11 +8,12 @@ use std::{
     pin::Pin,
     str,
     sync::{Arc, Mutex},
-    task::{Context, Poll, Waker},
+    task::{Context, Poll},
     time::Instant,
 };
 
 use crate::runtime::{default_runtime, AsyncUdpSocket, Runtime};
+use atomic_waker::AtomicWaker;
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use proto::{
@@ -197,9 +198,13 @@ impl Endpoint {
             .connect(Instant::now(), config, addr, server_name)?;
 
         let socket = endpoint.socket.clone();
-        Ok(endpoint
-            .connections
-            .insert(ch, conn, socket, self.runtime.clone()))
+        Ok(endpoint.connections.insert(
+            ch,
+            conn,
+            socket,
+            self.runtime.clone(),
+            self.inner.shared.driver.clone(),
+        ))
     }
 
     /// Switch to a new UDP socket
@@ -319,14 +324,12 @@ impl Future for EndpointDriver {
 
     #[allow(unused_mut)] // MSRV
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+        self.0.shared.driver.register(cx.waker());
         let mut endpoint = self.0.state.lock().unwrap();
-        if endpoint.driver.is_none() {
-            endpoint.driver = Some(cx.waker().clone());
-        }
 
         let now = Instant::now();
         let mut keep_going = false;
-        keep_going |= endpoint.drive_recv(cx, now)?;
+        keep_going |= endpoint.drive_recv(cx, now, &self.0.shared)?;
         keep_going |= endpoint.handle_events(cx, &self.0.shared);
         keep_going |= endpoint.drive_send(cx)?;
 
@@ -372,7 +375,6 @@ pub(crate) struct State {
     inner: proto::Endpoint,
     outgoing: VecDeque<udp::Transmit>,
     incoming: VecDeque<Connecting>,
-    driver: Option<Waker>,
     ipv6: bool,
     connections: ConnectionSet,
     events: mpsc::UnboundedReceiver<(ConnectionHandle, EndpointEvent)>,
@@ -387,14 +389,20 @@ pub(crate) struct State {
     transmit_queue_contents_len: usize,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Default)]
 pub(crate) struct Shared {
     incoming: Notify,
     idle: Notify,
+    driver: Arc<AtomicWaker>,
 }
 
 impl State {
-    fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv<'a>(
+        &'a mut self,
+        cx: &mut Context,
+        now: Instant,
+        shared: &Shared,
+    ) -> Result<bool, io::Error> {
         self.recv_limiter.start_cycle();
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
         let mut iovs = MaybeUninit::<[IoSliceMut<'a>; BATCH_SIZE]>::uninit();
@@ -431,17 +439,18 @@ impl State {
                                         conn,
                                         self.socket.clone(),
                                         self.runtime.clone(),
+                                        shared.driver.clone(),
                                     );
                                     self.incoming.push_back(conn);
                                 }
-                                Some(DatagramEvent::ConnectionEvent(handle, event)) => {
+                                Some(DatagramEvent::ConnectionEvent(handle)) => {
                                     // Ignoring errors from dropped connections that haven't yet been cleaned up
                                     let _ = self
                                         .connections
                                         .senders
                                         .get_mut(&handle)
                                         .unwrap()
-                                        .send(ConnectionEvent::Proto(event));
+                                        .send(ConnectionEvent::Proto);
                                 }
                                 Some(DatagramEvent::Response(transmit)) => {
                                     // Limiting the memory usage for items queued in the outgoing queue from endpoint
@@ -526,24 +535,14 @@ impl State {
 
     fn handle_events(&mut self, cx: &mut Context, shared: &Shared) -> bool {
         use EndpointEvent::*;
+        let mut keep_going = true;
         for _ in 0..IO_LOOP_BOUND {
             match self.events.poll_recv(cx) {
                 Poll::Ready(Some((ch, event))) => match event {
-                    Proto(e) => {
-                        if e.is_drained() {
-                            self.connections.senders.remove(&ch);
-                            if self.connections.is_empty() {
-                                shared.idle.notify_waiters();
-                            }
-                        }
-                        if let Some(event) = self.inner.handle_event(ch, e) {
-                            // Ignoring errors from dropped connections that haven't yet been cleaned up
-                            let _ = self
-                                .connections
-                                .senders
-                                .get_mut(&ch)
-                                .unwrap()
-                                .send(ConnectionEvent::Proto(event));
+                    Drained => {
+                        self.connections.senders.remove(&ch);
+                        if self.connections.is_empty() {
+                            shared.idle.notify_waiters();
                         }
                     }
                     Transmit(t, buf) => {
@@ -556,12 +555,27 @@ impl State {
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
-                    return false;
+                    keep_going = false;
                 }
             }
         }
 
-        true
+        let mut n = 0;
+        while let Some(ch) = self.inner.handle_events() {
+            // Ignoring errors from dropped connections that haven't yet been cleaned up
+            let _ = self
+                .connections
+                .senders
+                .get_mut(&ch)
+                .unwrap()
+                .send(ConnectionEvent::Proto);
+            n += 1;
+            if n > IO_LOOP_BOUND {
+                return true;
+            }
+        }
+
+        keep_going
     }
 }
 
@@ -611,6 +625,7 @@ impl ConnectionSet {
         conn: proto::Connection,
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
+        driver: Arc<AtomicWaker>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
         if let Some((error_code, ref reason)) = self.close {
@@ -621,7 +636,15 @@ impl ConnectionSet {
             .unwrap();
         }
         self.senders.insert(handle, send);
-        Connecting::new(handle, conn, self.sender.clone(), recv, socket, runtime)
+        Connecting::new(
+            handle,
+            conn,
+            self.sender.clone(),
+            driver,
+            recv,
+            socket,
+            runtime,
+        )
     }
 
     fn is_empty(&self) -> bool {
@@ -690,10 +713,7 @@ impl EndpointRef {
         ];
         let (sender, events) = mpsc::unbounded_channel();
         Self(Arc::new(EndpointInner {
-            shared: Shared {
-                incoming: Notify::new(),
-                idle: Notify::new(),
-            },
+            shared: Shared::default(),
             state: Mutex::new(State {
                 socket,
                 inner,
@@ -701,7 +721,6 @@ impl EndpointRef {
                 events,
                 outgoing: VecDeque::new(),
                 incoming: VecDeque::new(),
-                driver: None,
                 connections: ConnectionSet {
                     senders: FxHashMap::default(),
                     sender,
@@ -734,9 +753,7 @@ impl Drop for EndpointRef {
             if x == 0 {
                 // If the driver is about to be on its own, ensure it can shut down if the last
                 // connection is gone.
-                if let Some(task) = endpoint.driver.take() {
-                    task.wake();
-                }
+                self.0.shared.driver.wake();
             }
         }
     }

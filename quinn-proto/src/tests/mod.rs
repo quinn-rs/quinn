@@ -77,7 +77,7 @@ fn version_negotiate_client() {
         .unwrap();
     let now = Instant::now();
     let mut buf = BytesMut::with_capacity(client.config().get_max_udp_payload_size() as usize);
-    let opt_event = client.handle(
+    client.handle(
         now,
         server_addr,
         None,
@@ -90,9 +90,7 @@ fn version_negotiate_client() {
             .into(),
         &mut buf,
     );
-    if let Some(DatagramEvent::ConnectionEvent(_, event)) = opt_event {
-        client_ch.handle_event(event);
-    }
+    client_ch.handle_events(now);
     assert_matches!(
         client_ch.poll(),
         Some(Event::ConnectionLost {
@@ -1433,8 +1431,7 @@ fn cid_retirement() {
     let (client_ch, server_ch) = pair.connect();
 
     // Server retires current active remote CIDs
-    pair.server_conn_mut(server_ch)
-        .rotate_local_cid(1, Instant::now());
+    pair.server_conn_mut(server_ch).rotate_local_cid(1);
     pair.drive();
     // Any unexpected behavior may trigger TransportError::CONNECTION_ID_LIMIT_ERROR
     assert!(!pair.client_conn_mut(client_ch).is_closed());
@@ -1450,7 +1447,7 @@ fn cid_retirement() {
     pair.client_conn_mut(client_ch).ping();
     // Server retires all valid remote CIDs
     pair.server_conn_mut(server_ch)
-        .rotate_local_cid(next_retire_prior_to, Instant::now());
+        .rotate_local_cid(next_retire_prior_to);
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(server_ch).is_closed());
