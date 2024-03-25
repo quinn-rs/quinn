@@ -210,27 +210,28 @@ impl Endpoint {
             }
         };
 
-        if let Some(version) = first_decode.initial_version() {
+        if let Some(header) = first_decode.initial_header() {
             if datagram_len < MIN_INITIAL_SIZE as usize {
                 debug!("ignoring short initial for connection {}", dst_cid);
                 return None;
             }
 
-            let crypto = match server_config
-                .crypto
-                .initial_keys(version, dst_cid, Side::Server)
-            {
-                Ok(keys) => keys,
-                Err(UnsupportedVersion) => {
-                    // This probably indicates that the user set supported_versions incorrectly in
-                    // `EndpointConfig`.
-                    debug!(
+            let crypto =
+                match server_config
+                    .crypto
+                    .initial_keys(header.version, dst_cid, Side::Server)
+                {
+                    Ok(keys) => keys,
+                    Err(UnsupportedVersion) => {
+                        // This probably indicates that the user set supported_versions incorrectly in
+                        // `EndpointConfig`.
+                        debug!(
                         "ignoring initial packet version {:#x} unsupported by cryptographic layer",
-                        version
+                        header.version
                     );
-                    return None;
-                }
-            };
+                        return None;
+                    }
+                };
             return match first_decode.finish(Some(&*crypto.header.remote)) {
                 Ok(packet) => {
                     self.handle_first_packet(now, addresses, ecn, packet, remaining, &crypto, buf)
