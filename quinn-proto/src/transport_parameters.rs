@@ -433,18 +433,33 @@ impl TransportParameters {
         }
 
         // Semantic validation
+
+        // https://www.rfc-editor.org/rfc/rfc9000.html#section-18.2-4.26.1
         if params.ack_delay_exponent.0 > 20
+        // https://www.rfc-editor.org/rfc/rfc9000.html#section-18.2-4.28.1
             || params.max_ack_delay.0 >= 1 << 14
+        // https://www.rfc-editor.org/rfc/rfc9000.html#section-18.2-6.2.1
             || params.active_connection_id_limit.0 < 2
+        // https://www.rfc-editor.org/rfc/rfc9000.html#section-18.2-4.10.1
             || params.max_udp_payload_size.0 < 1200
+        // https://www.rfc-editor.org/rfc/rfc9000.html#section-4.6-2
             || params.initial_max_streams_bidi.0 > MAX_STREAM_COUNT
             || params.initial_max_streams_uni.0 > MAX_STREAM_COUNT
+        // https://www.ietf.org/archive/id/draft-ietf-quic-ack-frequency-08.html#section-3-4
             || params.min_ack_delay.map_or(false, |min_ack_delay| {
                 // min_ack_delay uses microseconds, whereas max_ack_delay uses milliseconds
                 min_ack_delay.0 > params.max_ack_delay.0 * 1_000
             })
+        // https://www.rfc-editor.org/rfc/rfc9000.html#section-18.2-8
             || (side.is_server()
-                && (params.stateless_reset_token.is_some() || params.preferred_address.is_some()))
+                && (params.original_dst_cid.is_some()
+                    || params.preferred_address.is_some()
+                    || params.retry_src_cid.is_some()
+                    || params.stateless_reset_token.is_some()))
+        // https://www.rfc-editor.org/rfc/rfc9000.html#section-18.2-4.38.1
+            || params
+                .preferred_address
+                .map_or(false, |x| x.connection_id.is_empty())
         {
             return Err(Error::IllegalValue);
         }
@@ -479,7 +494,7 @@ mod test {
             preferred_address: Some(PreferredAddress {
                 address_v4: Some(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 42)),
                 address_v6: None,
-                connection_id: ConnectionId::new(&[]),
+                connection_id: ConnectionId::new(&[0x42]),
                 stateless_reset_token: [0xab; RESET_TOKEN_SIZE].into(),
             }),
             grease_quic_bit: true,
