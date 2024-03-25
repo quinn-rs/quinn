@@ -60,11 +60,8 @@ impl PartialDecode {
         self.buf.get_ref()
     }
 
-    pub(crate) fn initial_version(&self) -> Option<u32> {
-        match self.plain_header {
-            PlainHeader::Initial { version, .. } => Some(version),
-            _ => None,
-        }
+    pub(crate) fn initial_header(&self) -> Option<&PlainInitialHeader> {
+        self.plain_header.as_initial()
     }
 
     pub(crate) fn has_long_header(&self) -> bool {
@@ -119,13 +116,13 @@ impl PartialDecode {
             mut buf,
         } = self;
 
-        if let Initial {
+        if let Initial(PlainInitialHeader {
             dst_cid,
             src_cid,
             token_pos,
             version,
             ..
-        } = plain_header
+        }) = plain_header
         {
             let number = Self::decrypt_header(&mut buf, header_crypto.unwrap())?;
             let header_len = buf.position() as usize;
@@ -481,13 +478,7 @@ impl PartialEncode {
 
 #[derive(Clone, Debug)]
 pub(crate) enum PlainHeader {
-    Initial {
-        dst_cid: ConnectionId,
-        src_cid: ConnectionId,
-        token_pos: Range<usize>,
-        len: u64,
-        version: u32,
-    },
+    Initial(PlainInitialHeader),
     Long {
         ty: LongType,
         dst_cid: ConnectionId,
@@ -512,10 +503,17 @@ pub(crate) enum PlainHeader {
 }
 
 impl PlainHeader {
+    pub(crate) fn as_initial(&self) -> Option<&PlainInitialHeader> {
+        match self {
+            Self::Initial(x) => Some(x),
+            _ => None,
+        }
+    }
+
     fn dst_cid(&self) -> &ConnectionId {
         use self::PlainHeader::*;
         match self {
-            Initial { dst_cid, .. } => dst_cid,
+            Initial(header) => &header.dst_cid,
             Long { dst_cid, .. } => dst_cid,
             Retry { dst_cid, .. } => dst_cid,
             Short { dst_cid, .. } => dst_cid,
@@ -526,7 +524,7 @@ impl PlainHeader {
     fn payload_len(&self) -> Option<u64> {
         use self::PlainHeader::*;
         match self {
-            Initial { len, .. } | Long { len, .. } => Some(*len),
+            Initial(PlainInitialHeader { len, .. }) | Long { len, .. } => Some(*len),
             _ => None,
         }
     }
@@ -587,13 +585,13 @@ impl PlainHeader {
                     buf.advance(token_len);
 
                     let len = buf.get_var()?;
-                    Ok(Self::Initial {
+                    Ok(Self::Initial(PlainInitialHeader {
                         dst_cid,
                         src_cid,
                         token_pos: token_start..token_start + token_len,
                         len,
                         version,
-                    })
+                    }))
                 }
                 LongHeaderType::Retry => Ok(Self::Retry {
                     dst_cid,
@@ -610,6 +608,15 @@ impl PlainHeader {
             }
         }
     }
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct PlainInitialHeader {
+    pub(crate) dst_cid: ConnectionId,
+    pub(crate) src_cid: ConnectionId,
+    pub(crate) token_pos: Range<usize>,
+    pub(crate) len: u64,
+    pub(crate) version: u32,
 }
 
 // An encoded packet number
