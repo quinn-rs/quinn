@@ -849,7 +849,7 @@ mod tests {
     #[cfg(feature = "rustls")]
     #[test]
     fn header_encoding() {
-        use crate::crypto::rustls::{initial_keys, suite_from_provider};
+        use crate::crypto::rustls::{initial_keys, initial_suite_from_provider};
         use crate::Side;
         use rustls::crypto::ring::default_provider;
         use rustls::quic::Version;
@@ -857,7 +857,7 @@ mod tests {
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
         let provider = default_provider();
 
-        let suite = suite_from_provider(&std::sync::Arc::new(provider)).unwrap();
+        let suite = initial_suite_from_provider(&std::sync::Arc::new(provider)).unwrap();
         let client = initial_keys(Version::V1, &dcid, Side::Client, &suite);
         let mut buf = BytesMut::new();
         let header = Header::Initial {

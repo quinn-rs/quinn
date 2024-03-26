@@ -572,8 +572,8 @@ fn zero_rtt_rejection() {
     server_crypto.alpn_protocols = vec!["foo".into(), "bar".into()];
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
-    let mut client_crypto = client_crypto_with_alpn(vec!["foo".into()]);
-    let client_config = ClientConfig::new(Arc::new(client_crypto.clone()));
+    let mut client_crypto = Arc::new(client_crypto_with_alpn(vec!["foo".into()]));
+    let client_config = ClientConfig::new(client_crypto.clone());
 
     // Establish normal connection
     let client_ch = pair.begin_connect(client_config);
@@ -602,9 +602,13 @@ fn zero_rtt_rejection() {
     pair.client.connections.clear();
     pair.server.connections.clear();
 
+    // Need to modify ALPN protocols in the existing client crypto config to enable resumption
+    let this = Arc::get_mut(&mut client_crypto).expect("QuicClientConfig is shared");
+    let inner = Arc::get_mut(&mut this.inner).expect("QuicClientConfig.inner is shared");
+    inner.alpn_protocols = vec!["bar".into()];
+
     // Changing protocols invalidates 0-RTT
-    client_crypto.alpn_protocols = vec!["bar".into()];
-    let client_config = ClientConfig::new(Arc::new(client_crypto));
+    let client_config = ClientConfig::new(client_crypto);
     info!("resuming session");
     let client_ch = pair.begin_connect(client_config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());

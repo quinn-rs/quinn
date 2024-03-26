@@ -10,6 +10,7 @@ use std::{
 
 use crate::runtime::TokioRuntime;
 use bytes::Bytes;
+use proto::crypto::rustls::QuicClientConfig;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tokio::{
@@ -503,7 +504,8 @@ fn run_echo(args: EchoArgs) {
             let _guard = error_span!("client").entered();
             Endpoint::client(args.client_addr).unwrap()
         };
-        let mut client_config = ClientConfig::new(Arc::new(client_crypto));
+        let mut client_config =
+            ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto).unwrap()));
         client_config.transport_config(transport_config);
         client.set_default_client_config(client_config);
 

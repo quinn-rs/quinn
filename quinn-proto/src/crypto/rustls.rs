@@ -249,7 +249,83 @@ pub struct HandshakeData {
     pub server_name: Option<String>,
 }
 
-impl crypto::ClientConfig for rustls::ClientConfig {
+/// A QUIC-compatible TLS client configuration
+pub struct QuicClientConfig {
+    pub(crate) inner: Arc<rustls::ClientConfig>,
+    initial: Suite,
+}
+
+impl QuicClientConfig {
+    /// Initialize a sane QUIC-compatible TLS client configuration
+    ///
+    /// QUIC requires that TLS 1.3 be enabled. Advanced users can use any [`rustls::ClientConfig`] that
+    /// satisfies this requirement.
+    pub(crate) fn new(verifier: ServerVerifier) -> Self {
+        let inner = Self::inner(verifier);
+        Self {
+            // We're confident that the *ring* default provider contains TLS13_AES_128_GCM_SHA256
+            initial: initial_suite_from_provider(inner.crypto_provider())
+                .expect("no initial cipher suite found"),
+            inner: Arc::new(inner),
+        }
+    }
+
+    pub(crate) fn inner(verifier: ServerVerifier) -> rustls::ClientConfig {
+        let builder = rustls::ClientConfig::builder_with_provider(
+            rustls::crypto::ring::default_provider().into(),
+        )
+        .with_protocol_versions(&[&rustls::version::TLS13])
+        .unwrap();
+
+        let mut inner = match verifier {
+            #[cfg(feature = "platform-verifier")]
+            ServerVerifier::Platform => {
+                builder
+                    .dangerous()
+                    .with_custom_certificate_verifier(Arc::new(
+                        rustls_platform_verifier::Verifier::new(),
+                    ))
+            }
+            ServerVerifier::Roots(roots) => builder.with_root_certificates(roots),
+        }
+        .with_no_client_auth();
+
+        inner.enable_early_data = true;
+        inner
+    }
+}
+
+impl TryFrom<rustls::ClientConfig> for QuicClientConfig {
+    type Error = NoInitialCipherSuite;
+
+    fn try_from(inner: rustls::ClientConfig) -> Result<Self, Self::Error> {
+        Ok(Self {
+            initial: initial_suite_from_provider(inner.crypto_provider())
+                .ok_or(NoInitialCipherSuite(()))?,
+            inner: Arc::new(inner),
+        })
+    }
+}
+
+pub(crate) enum ServerVerifier {
+    #[cfg(feature = "platform-verifier")]
+    Platform,
+    Roots(RootCertStore),
+}
+
+/// The configured crypto provider does not support the QUIC initial cipher suite
+#[derive(Debug)]
+pub struct NoInitialCipherSuite(());
+
+impl std::fmt::Display for NoInitialCipherSuite {
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        f.write_str("no initial cipher suite found")
+    }
+}
+
+impl std::error::Error for NoInitialCipherSuite {}
+
+impl crypto::ClientConfig for QuicClientConfig {
     fn start_session(
         self: Arc<Self>,
         version: u32,
@@ -257,15 +333,13 @@ impl crypto::ClientConfig for rustls::ClientConfig {
         params: &TransportParameters,
     ) -> Result<Box<dyn crypto::Session>, ConnectError> {
         let version = interpret_version(version)?;
-        // TODO: validate the configuration before this point
-        let suite = suite_from_provider(self.crypto_provider()).unwrap();
         Ok(Box::new(TlsSession {
             version,
             got_handshake_data: false,
             next_secrets: None,
             inner: rustls::quic::Connection::Client(
                 rustls::quic::ClientConnection::new(
-                    self,
+                    self.inner.clone(),
                     version,
                     ServerName::try_from(server_name)
                         .map_err(|_| ConnectError::InvalidServerName(server_name.into()))?
@@ -274,7 +348,10 @@ impl crypto::ClientConfig for rustls::ClientConfig {
                 )
                 .unwrap(),
             ),
-            suite,
+            suite: Suite {
+                suite: self.initial.suite,
+                quic: self.initial.quic,
+            },
         }))
     }
 }
@@ -288,7 +365,7 @@ impl crypto::ServerConfig for rustls::ServerConfig {
         // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
         let version = interpret_version(version).unwrap();
         // TODO: validate the configuration before this point
-        let suite = suite_from_provider(self.crypto_provider()).unwrap();
+        let suite = initial_suite_from_provider(self.crypto_provider()).unwrap();
         Box::new(TlsSession {
             version,
             got_handshake_data: false,
@@ -307,7 +384,7 @@ impl crypto::ServerConfig for rustls::ServerConfig {
     ) -> Result<Keys, UnsupportedVersion> {
         let version = interpret_version(version)?;
         // TODO: validate the configuration before this point
-        let suite = suite_from_provider(self.crypto_provider()).unwrap();
+        let suite = initial_suite_from_provider(self.crypto_provider()).unwrap();
         Ok(initial_keys(version, dst_cid, Side::Server, &suite))
     }
 
@@ -337,7 +414,9 @@ impl crypto::ServerConfig for rustls::ServerConfig {
     }
 }
 
-pub(crate) fn suite_from_provider(provider: &Arc<rustls::crypto::CryptoProvider>) -> Option<Suite> {
+pub(crate) fn initial_suite_from_provider(
+    provider: &Arc<rustls::crypto::CryptoProvider>,
+) -> Option<Suite> {
     provider
         .cipher_suites
         .iter()
@@ -408,36 +487,6 @@ impl crypto::PacketKey for Box<dyn PacketKey> {
     fn integrity_limit(&self) -> u64 {
         (**self).integrity_limit()
     }
-}
-
-/// Initialize a sane QUIC-compatible TLS client configuration
-///
-/// QUIC requires that TLS 1.3 be enabled. Advanced users can use any [`rustls::ClientConfig`] that
-/// satisfies this requirement.
-pub(crate) fn client_config(verifier: ServerVerifier) -> rustls::ClientConfig {
-    let builder = rustls::ClientConfig::builder_with_provider(
-        rustls::crypto::ring::default_provider().into(),
-    )
-    .with_protocol_versions(&[&rustls::version::TLS13])
-    .unwrap();
-
-    let mut config = match verifier {
-        #[cfg(feature = "platform-verifier")]
-        ServerVerifier::Platform => builder
-            .dangerous()
-            .with_custom_certificate_verifier(Arc::new(rustls_platform_verifier::Verifier::new())),
-        ServerVerifier::Roots(roots) => builder.with_root_certificates(roots),
-    }
-    .with_no_client_auth();
-
-    config.enable_early_data = true;
-    config
-}
-
-pub(crate) enum ServerVerifier {
-    #[cfg(feature = "platform-verifier")]
-    Platform,
-    Roots(RootCertStore),
 }
 
 /// Initialize a sane QUIC-compatible TLS server configuration

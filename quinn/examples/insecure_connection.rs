@@ -4,6 +4,7 @@
 
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
+use proto::crypto::rustls::QuicClientConfig;
 use quinn::{ClientConfig, Endpoint};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
@@ -35,12 +36,12 @@ async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error>> {
     let provider = rustls::crypto::CryptoProvider::get_default().unwrap();
     let mut endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap())?;
 
-    endpoint.set_default_client_config(ClientConfig::new(Arc::new(
+    endpoint.set_default_client_config(ClientConfig::new(Arc::new(QuicClientConfig::try_from(
         rustls::ClientConfig::builder()
             .dangerous()
             .with_custom_certificate_verifier(SkipServerVerification::new(provider.clone()))
             .with_no_client_auth(),
-    )));
+    )?)));
 
     // connect to server
     let connection = endpoint

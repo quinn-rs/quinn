@@ -20,7 +20,7 @@ use rustls::{
 };
 use tracing::{info_span, trace};
 
-use super::crypto::rustls::ServerVerifier;
+use super::crypto::rustls::{QuicClientConfig, ServerVerifier};
 use super::*;
 
 pub(super) const DEFAULT_MTU: usize = 1452;
@@ -589,30 +589,30 @@ pub(super) fn client_config_with_certs(certs: Vec<CertificateDer<'static>>) -> C
     ClientConfig::new(Arc::new(client_crypto_inner(Some(certs), None)))
 }
 
-pub(super) fn client_crypto() -> rustls::ClientConfig {
+pub(super) fn client_crypto() -> QuicClientConfig {
     client_crypto_inner(None, None)
 }
 
-pub(super) fn client_crypto_with_alpn(protocols: Vec<Vec<u8>>) -> rustls::ClientConfig {
+pub(super) fn client_crypto_with_alpn(protocols: Vec<Vec<u8>>) -> QuicClientConfig {
     client_crypto_inner(None, Some(protocols))
 }
 
 fn client_crypto_inner(
     certs: Option<Vec<CertificateDer<'static>>>,
     alpn: Option<Vec<Vec<u8>>>,
-) -> rustls::ClientConfig {
+) -> QuicClientConfig {
     let mut roots = rustls::RootCertStore::empty();
     for cert in certs.unwrap_or_else(|| vec![CERTIFIED_KEY.cert.der().clone()]) {
         roots.add(cert).unwrap();
     }
 
-    let mut config = crate::crypto::rustls::client_config(ServerVerifier::Roots(roots));
-    config.key_log = Arc::new(KeyLogFile::new());
+    let mut inner = QuicClientConfig::inner(ServerVerifier::Roots(roots));
+    inner.key_log = Arc::new(KeyLogFile::new());
     if let Some(alpn) = alpn {
-        config.alpn_protocols = alpn;
+        inner.alpn_protocols = alpn;
     }
 
-    config
+    inner.try_into().unwrap()
 }
 
 pub(super) fn min_opt<T: Ord>(x: Option<T>, y: Option<T>) -> Option<T> {
