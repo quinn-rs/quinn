@@ -911,14 +911,14 @@ impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
     #[cfg(feature = "platform-verifier")]
     pub fn with_platform_verifier() -> Self {
-        Self::new(Arc::new(crypto::rustls::client_config(
+        Self::new(Arc::new(crypto::rustls::QuicClientConfig::new(
             ServerVerifier::Platform,
         )))
     }
 
     /// Create a client configuration that trusts specified trust anchors
     pub fn with_root_certificates(roots: rustls::RootCertStore) -> Self {
-        Self::new(Arc::new(crypto::rustls::client_config(
+        Self::new(Arc::new(crypto::rustls::QuicClientConfig::new(
             ServerVerifier::Roots(roots),
         )))
     }
