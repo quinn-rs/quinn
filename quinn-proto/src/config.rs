@@ -927,7 +927,7 @@ impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
     #[cfg(feature = "platform-verifier")]
     pub fn with_platform_verifier() -> Self {
-        Self::new(Arc::new(crypto::rustls::client_config(Arc::new(
+        Self::new(Arc::new(crypto::rustls::QuicClientConfig::new(Arc::new(
             rustls_platform_verifier::Verifier::new(),
         ))))
     }
@@ -936,7 +936,7 @@ impl ClientConfig {
     pub fn with_root_certificates(
         roots: Arc<rustls::RootCertStore>,
     ) -> Result<Self, rustls::client::VerifierBuilderError> {
-        Ok(Self::new(Arc::new(crypto::rustls::client_config(
+        Ok(Self::new(Arc::new(crypto::rustls::QuicClientConfig::new(
             WebPkiServerVerifier::builder(roots).build()?,
         ))))
     }

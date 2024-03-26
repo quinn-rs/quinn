@@ -9,6 +9,7 @@ use std::{
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
+use quinn::crypto::rustls::QuicClientConfig;
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer},
     RootCertStore,
@@ -74,7 +75,7 @@ pub async fn connect_client(
         .with_root_certificates(roots)
         .with_no_client_auth();
 
-    let mut client_config = quinn::ClientConfig::new(Arc::new(crypto));
+    let mut client_config = quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(crypto)?));
     client_config.transport_config(Arc::new(transport_config(&opt)));
 
     let connection = endpoint

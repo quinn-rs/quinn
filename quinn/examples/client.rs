@@ -13,6 +13,7 @@ use std::{
 
 use anyhow::{anyhow, Result};
 use clap::Parser;
+use proto::crypto::rustls::QuicClientConfig;
 use rustls::pki_types::CertificateDer;
 use tracing::{error, info};
 use url::Url;
@@ -100,7 +101,8 @@ async fn run(options: Opt) -> Result<()> {
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
-    let client_config = quinn::ClientConfig::new(Arc::new(client_crypto));
+    let client_config =
+        quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto)?));
     let mut endpoint = quinn::Endpoint::client(options.bind)?;
     endpoint.set_default_client_config(client_config);
 

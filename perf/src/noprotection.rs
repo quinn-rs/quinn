@@ -3,7 +3,7 @@ use std::sync::Arc;
 use bytes::BytesMut;
 
 use quinn_proto::{
-    crypto::{self, CryptoError},
+    crypto::{self, rustls::QuicClientConfig, CryptoError},
     transport_parameters, ConnectionId, Side, TransportError,
 };
 
@@ -39,11 +39,11 @@ impl NoProtectionPacketKey {
 }
 
 pub struct NoProtectionClientConfig {
-    inner: Arc<rustls::ClientConfig>,
+    inner: Arc<QuicClientConfig>,
 }
 
 impl NoProtectionClientConfig {
-    pub fn new(config: Arc<rustls::ClientConfig>) -> Self {
+    pub fn new(config: Arc<QuicClientConfig>) -> Self {
         Self { inner: config }
     }
 }
