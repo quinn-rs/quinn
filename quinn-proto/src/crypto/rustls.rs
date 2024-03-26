@@ -256,6 +256,7 @@ impl crypto::ClientConfig for rustls::ClientConfig {
         params: &TransportParameters,
     ) -> Result<Box<dyn crypto::Session>, ConnectError> {
         let version = interpret_version(version)?;
+        // TODO: why is this unwrap safe?
         let suite = suite_from_provider(self.crypto_provider()).unwrap();
         Ok(Box::new(TlsSession {
             version,
@@ -283,7 +284,9 @@ impl crypto::ServerConfig for rustls::ServerConfig {
         version: u32,
         params: &TransportParameters,
     ) -> Box<dyn crypto::Session> {
+        // TODO: why is this unwrap safe?
         let version = interpret_version(version).unwrap();
+        // TODO: why is this unwrap safe?
         let suite = suite_from_provider(self.crypto_provider()).unwrap();
         Box::new(TlsSession {
             version,
@@ -302,11 +305,13 @@ impl crypto::ServerConfig for rustls::ServerConfig {
         dst_cid: &ConnectionId,
     ) -> Result<Keys, UnsupportedVersion> {
         let version = interpret_version(version)?;
+        // TODO: why is this unwrap safe?
         let suite = suite_from_provider(self.crypto_provider()).unwrap();
         Ok(initial_keys(version, dst_cid, Side::Server, &suite))
     }
 
     fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
+        // TODO: why is this unwrap safe?
         let version = interpret_version(version).unwrap();
         let (nonce, key) = match version {
             Version::V1 => (RETRY_INTEGRITY_NONCE_V1, RETRY_INTEGRITY_KEY_V1),
