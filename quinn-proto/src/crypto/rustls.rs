@@ -264,7 +264,7 @@ impl crypto::ClientConfig for rustls::ClientConfig {
                     version,
                     server_name
                         .try_into()
-                        .map_err(|_| ConnectError::InvalidDnsName(server_name.into()))?,
+                        .map_err(|_| ConnectError::InvalidServerName(server_name.into()))?,
                     to_vec(params),
                 )
                 .unwrap(),
