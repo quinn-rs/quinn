@@ -20,6 +20,7 @@ use rustls::{
 };
 use tracing::{info_span, trace};
 
+use super::crypto::rustls::QuicClientConfig;
 use super::crypto::rustls::ServerVerifier;
 use super::*;
 
@@ -589,13 +590,11 @@ pub(super) fn client_config_with_certs(certs: Vec<CertificateDer<'static>>) -> C
     ClientConfig::new(Arc::new(client_crypto_with_certs(certs)))
 }
 
-pub(super) fn client_crypto() -> rustls::ClientConfig {
+pub(super) fn client_crypto() -> QuicClientConfig {
     client_crypto_with_certs(vec![CERTIFIED_KEY.cert.der().clone()])
 }
 
-pub(super) fn client_crypto_with_certs(
-    certs: Vec<CertificateDer<'static>>,
-) -> rustls::ClientConfig {
+pub(super) fn client_crypto_with_certs(certs: Vec<CertificateDer<'static>>) -> QuicClientConfig {
     let mut roots = rustls::RootCertStore::empty();
     for cert in certs {
         roots.add(cert).unwrap();
