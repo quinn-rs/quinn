@@ -94,7 +94,7 @@ async fn run(options: Opt) -> Result<()> {
         let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
             Ok((cert, key)) => (
                 CertificateDer::from(cert),
-                PrivateKeyDer::try_from(key).map_err(|err| anyhow::Error::msg(err))?,
+                PrivateKeyDer::try_from(key).map_err(anyhow::Error::msg)?,
             ),
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
                 info!("generating self-signed certificate");

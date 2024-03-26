@@ -597,8 +597,8 @@ fn zero_rtt_rejection() {
         "bar".into(),
     ])));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
-    let mut client_crypto = client_crypto_with_alpn(vec!["foo".into()]);
-    let client_config = ClientConfig::new(Arc::new(client_crypto.clone()));
+    let mut client_crypto = Arc::new(client_crypto_with_alpn(vec!["foo".into()]));
+    let client_config = ClientConfig::new(client_crypto.clone());
 
     // Establish normal connection
     let client_ch = pair.begin_connect(client_config);
@@ -627,9 +627,15 @@ fn zero_rtt_rejection() {
     pair.client.connections.clear();
     pair.server.connections.clear();
 
+    // We want to have a TLS client config with the existing session cache (so resumption could
+    // happen), but with different ALPN protocols (so that the server must reject it). Reuse
+    // the existing `ClientConfig` and change the ALPN protocols to make that happen.
+    let this = Arc::get_mut(&mut client_crypto).expect("QuicClientConfig is shared");
+    let inner = Arc::get_mut(&mut this.inner).expect("QuicClientConfig.inner is shared");
+    inner.alpn_protocols = vec!["bar".into()];
+
     // Changing protocols invalidates 0-RTT
-    client_crypto.alpn_protocols = vec!["bar".into()];
-    let client_config = ClientConfig::new(Arc::new(client_crypto));
+    let client_config = ClientConfig::new(client_crypto);
     info!("resuming session");
     let client_ch = pair.begin_connect(client_config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
