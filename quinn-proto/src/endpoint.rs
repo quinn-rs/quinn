@@ -1048,9 +1048,9 @@ pub enum ConnectError {
     /// Try using longer connection IDs
     #[error("CIDs exhausted")]
     CidsExhausted,
-    /// The domain name supplied was malformed
-    #[error("invalid DNS name: {0}")]
-    InvalidDnsName(String),
+    /// The given server name was malformed
+    #[error("invalid server name: {0}")]
+    InvalidServerName(String),
     /// The remote [`SocketAddr`] supplied was malformed
     ///
     /// Examples include attempting to connect to port 0, or using an inappropriate address family.
