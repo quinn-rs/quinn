@@ -480,7 +480,7 @@ impl Connection {
                     SpaceId::Data,
                     "PATH_CHALLENGE queued without 1-RTT keys"
                 );
-                buf.reserve(self.path.current_mtu() as usize);
+                buf.reserve(prev_path.current_mtu() as usize);
 
                 let buf_capacity = buf.capacity();
 
