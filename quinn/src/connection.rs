@@ -324,7 +324,7 @@ impl Connection {
     pub fn read_datagram(&self) -> ReadDatagram<'_> {
         ReadDatagram {
             conn: &self.0,
-            notify: self.0.shared.datagrams.notified(),
+            notify: self.0.shared.datagram_received.notified(),
         }
     }
 
@@ -392,16 +392,33 @@ impl Connection {
             return Err(SendDatagramError::ConnectionLost(x.clone()));
         }
         use proto::SendDatagramError::*;
-        match conn.inner.datagrams().send(data) {
+        match conn.inner.datagrams().send(data, true) {
             Ok(()) => {
                 conn.wake();
                 Ok(())
             }
             Err(e) => Err(match e {
+                Blocked(..) => unreachable!(),
                 UnsupportedByPeer => SendDatagramError::UnsupportedByPeer,
                 Disabled => SendDatagramError::Disabled,
                 TooLarge => SendDatagramError::TooLarge,
             }),
+        }
+    }
+
+    /// Transmit `data` as an unreliable, unordered application datagram
+    ///
+    /// Unlike [`send_datagram()`], this method will wait for buffer space during congestion
+    /// conditions, which effectively prioritizes old datagrams over new datagrams.
+    ///
+    /// See [`send_datagram()`] for details.
+    ///
+    /// [`send_datagram()`]: Connection::send_datagram
+    pub fn send_datagram_wait(&self, data: Bytes) -> SendDatagram<'_> {
+        SendDatagram {
+            conn: &self.0,
+            data: Some(data),
+            notify: self.0.shared.datagrams_unblocked.notified(),
         }
     }
 
@@ -744,8 +761,59 @@ impl Future for ReadDatagram<'_> {
                 // `state` lock ensures we didn't race with readiness
                 Poll::Pending => return Poll::Pending,
                 // Spurious wakeup, get a new future
-                Poll::Ready(()) => this.notify.set(this.conn.shared.datagrams.notified()),
+                Poll::Ready(()) => this
+                    .notify
+                    .set(this.conn.shared.datagram_received.notified()),
             }
+        }
+    }
+}
+
+pin_project! {
+    /// Future produced by [`Connection::send_datagram_wait`]
+    pub struct SendDatagram<'a> {
+        conn: &'a ConnectionRef,
+        data: Option<Bytes>,
+        #[pin]
+        notify: Notified<'a>,
+    }
+}
+
+impl Future for SendDatagram<'_> {
+    type Output = Result<(), SendDatagramError>;
+    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+        let mut this = self.project();
+        let mut state = this.conn.state.lock("SendDatagram::poll");
+        if let Some(ref e) = state.error {
+            return Poll::Ready(Err(SendDatagramError::ConnectionLost(e.clone())));
+        }
+        use proto::SendDatagramError::*;
+        match state
+            .inner
+            .datagrams()
+            .send(this.data.take().unwrap(), false)
+        {
+            Ok(()) => {
+                state.wake();
+                Poll::Ready(Ok(()))
+            }
+            Err(e) => Poll::Ready(Err(match e {
+                Blocked(data) => {
+                    this.data.replace(data);
+                    loop {
+                        match this.notify.as_mut().poll(ctx) {
+                            Poll::Pending => return Poll::Pending,
+                            // Spurious wakeup, get a new future
+                            Poll::Ready(()) => this
+                                .notify
+                                .set(this.conn.shared.datagrams_unblocked.notified()),
+                        }
+                    }
+                }
+                UnsupportedByPeer => SendDatagramError::UnsupportedByPeer,
+                Disabled => SendDatagramError::Disabled,
+                TooLarge => SendDatagramError::TooLarge,
+            })),
         }
     }
 }
@@ -838,7 +906,8 @@ pub(crate) struct Shared {
     stream_budget_available: [Notify; 2],
     /// Notified when the peer has initiated a new stream
     stream_incoming: [Notify; 2],
-    datagrams: Notify,
+    datagrams_unblocked: Notify,
+    datagram_received: Notify,
     closed: Notify,
 }
 
@@ -968,8 +1037,11 @@ impl State {
                 Stream(StreamEvent::Opened { dir: Dir::Bi }) => {
                     shared.stream_incoming[Dir::Bi as usize].notify_waiters();
                 }
+                DatagramsUnblocked => {
+                    shared.datagrams_unblocked.notify_waiters();
+                }
                 DatagramReceived => {
-                    shared.datagrams.notify_waiters();
+                    shared.datagram_received.notify_waiters();
                 }
                 Stream(StreamEvent::Readable { id }) => {
                     if let Some(reader) = self.blocked_readers.remove(&id) {
@@ -1077,7 +1149,8 @@ impl State {
         shared.stream_budget_available[Dir::Bi as usize].notify_waiters();
         shared.stream_incoming[Dir::Uni as usize].notify_waiters();
         shared.stream_incoming[Dir::Bi as usize].notify_waiters();
-        shared.datagrams.notify_waiters();
+        shared.datagrams_unblocked.notify_waiters();
+        shared.datagram_received.notify_waiters();
         for (_, x) in self.finishing.drain() {
             let _ = x.send(Some(WriteError::ConnectionLost(reason.clone())));
         }
