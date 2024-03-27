@@ -12,7 +12,8 @@ pub trait ConnectionIdGenerator: Send {
     /// Connection IDs MUST NOT contain any information that can be used by
     /// an external observer (that is, one that does not cooperate with the
     /// issuer) to correlate them with other connection IDs for the same
-    /// connection.
+    /// connection. They MUST have high entropy, e.g. due to encrypted data
+    /// or cryptographic-grade random data.
     fn generate_cid(&mut self) -> ConnectionId;
     /// Returns the length of a CID for connections created by this generator
     fn cid_len(&self) -> usize;
