@@ -16,7 +16,8 @@ use crate::runtime::{default_runtime, AsyncUdpSocket, Runtime};
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use proto::{
-    self as proto, ClientConfig, ConnectError, ConnectionHandle, DatagramEvent, ServerConfig,
+    self as proto, ClientConfig, ConnectError, ConnectionError, ConnectionHandle, DatagramEvent,
+    ServerConfig,
 };
 use rustc_hash::FxHashMap;
 use tokio::sync::{futures::Notified, mpsc, Notify};
@@ -24,9 +25,9 @@ use tracing::{Instrument, Span};
 use udp::{RecvMeta, BATCH_SIZE};
 
 use crate::{
-    connection::Connecting, work_limiter::WorkLimiter, ConnectionEvent, EndpointConfig,
-    EndpointEvent, VarInt, IO_LOOP_BOUND, MAX_TRANSMIT_QUEUE_CONTENTS_LEN, RECV_TIME_BOUND,
-    SEND_TIME_BOUND,
+    connection::Connecting, incoming::Incoming, work_limiter::WorkLimiter, ConnectionEvent,
+    EndpointConfig, EndpointEvent, VarInt, IO_LOOP_BOUND, MAX_INCOMING_CONNECTIONS,
+    MAX_TRANSMIT_QUEUE_CONTENTS_LEN, RECV_TIME_BOUND, SEND_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -137,8 +138,10 @@ impl Endpoint {
 
     /// Get the next incoming connection attempt from a client
     ///
-    /// Yields [`Connecting`] futures that must be `await`ed to obtain the final `Connection`, or
-    /// `None` if the endpoint is [`close`](Self::close)d.
+    /// Yields [`Incoming`]s, or `None` if the endpoint is [`close`](Self::close)d. [`Incoming`]
+    /// can be `await`ed to obtain the final [`Connection`](crate::Connection), or used to e.g.
+    /// filter connection attempts or force address validation, or converted into an intermediate
+    /// `Connecting` future which can be used to e.g. send 0.5-RTT data.
     pub fn accept(&self) -> Accept<'_> {
         Accept {
             endpoint: self,
@@ -366,12 +369,57 @@ pub(crate) struct EndpointInner {
     pub(crate) shared: Shared,
 }
 
+impl EndpointInner {
+    pub(crate) fn accept(
+        &self,
+        incoming: proto::Incoming,
+        mut response_buffer: BytesMut,
+    ) -> Result<Connecting, ConnectionError> {
+        let mut state = self.state.lock().unwrap();
+        state
+            .inner
+            .accept(incoming, Instant::now(), &mut response_buffer)
+            .map(|(handle, conn)| {
+                let socket = state.socket.clone();
+                let runtime = state.runtime.clone();
+                state.connections.insert(handle, conn, socket, runtime)
+            })
+            .map_err(|(e, response)| {
+                if let Some(transmit) = response {
+                    state.transmit_state.respond(transmit, response_buffer);
+                }
+                e
+            })
+    }
+
+    pub(crate) fn reject(&self, incoming: proto::Incoming, mut response_buffer: BytesMut) {
+        let mut state = self.state.lock().unwrap();
+        let transmit = state.inner.reject(incoming, &mut response_buffer);
+        state.transmit_state.respond(transmit, response_buffer);
+    }
+
+    pub(crate) fn retry(
+        &self,
+        incoming: proto::Incoming,
+        mut response_buffer: BytesMut,
+    ) -> Result<(), (proto::RetryError, BytesMut)> {
+        let mut state = self.state.lock().unwrap();
+        match state.inner.retry(incoming, &mut response_buffer) {
+            Ok(transmit) => {
+                state.transmit_state.respond(transmit, response_buffer);
+                Ok(())
+            }
+            Err(e) => Err((e, response_buffer)),
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct State {
     socket: Arc<dyn AsyncUdpSocket>,
     inner: proto::Endpoint,
-    outgoing: VecDeque<udp::Transmit>,
-    incoming: VecDeque<Connecting>,
+    transmit_state: TransmitState,
+    incoming: VecDeque<(proto::Incoming, BytesMut)>,
     driver: Option<Waker>,
     ipv6: bool,
     connections: ConnectionSet,
@@ -383,8 +431,6 @@ pub(crate) struct State {
     recv_buf: Box<[u8]>,
     send_limiter: WorkLimiter,
     runtime: Arc<dyn Runtime>,
-    /// The aggregateed contents length of the packets in the transmit queue
-    transmit_queue_contents_len: usize,
 }
 
 #[derive(Debug)]
@@ -425,14 +471,14 @@ impl State {
                                 buf,
                                 &mut response_buffer,
                             ) {
-                                Some(DatagramEvent::NewConnection(handle, conn)) => {
-                                    let conn = self.connections.insert(
-                                        handle,
-                                        conn,
-                                        self.socket.clone(),
-                                        self.runtime.clone(),
-                                    );
-                                    self.incoming.push_back(conn);
+                                Some(DatagramEvent::NewConnection(incoming)) => {
+                                    if self.incoming.len() < MAX_INCOMING_CONNECTIONS {
+                                        self.incoming.push_back((incoming, response_buffer));
+                                    } else {
+                                        let transmit =
+                                            self.inner.reject(incoming, &mut response_buffer);
+                                        self.transmit_state.respond(transmit, response_buffer);
+                                    }
                                 }
                                 Some(DatagramEvent::ConnectionEvent(handle, event)) => {
                                     // Ignoring errors from dropped connections that haven't yet been cleaned up
@@ -444,22 +490,7 @@ impl State {
                                         .send(ConnectionEvent::Proto(event));
                                 }
                                 Some(DatagramEvent::Response(transmit)) => {
-                                    // Limiting the memory usage for items queued in the outgoing queue from endpoint
-                                    // generated packets. Otherwise, we may see a build-up of the queue under test with
-                                    // flood of initial packets against the endpoint. The sender with the sender-limiter
-                                    // may not keep up the pace of these packets queued into the queue.
-                                    if self.transmit_queue_contents_len
-                                        < MAX_TRANSMIT_QUEUE_CONTENTS_LEN
-                                    {
-                                        let contents_len = transmit.size;
-                                        self.outgoing.push_back(udp_transmit(
-                                            transmit,
-                                            response_buffer.split_to(contents_len).freeze(),
-                                        ));
-                                        self.transmit_queue_contents_len = self
-                                            .transmit_queue_contents_len
-                                            .saturating_add(contents_len);
-                                    }
+                                    self.transmit_state.respond(transmit, response_buffer);
                                 }
                                 None => {}
                             }
@@ -492,7 +523,7 @@ impl State {
         self.send_limiter.start_cycle();
 
         let result = loop {
-            if self.outgoing.is_empty() {
+            if self.transmit_state.outgoing.is_empty() {
                 break Ok(false);
             }
 
@@ -500,13 +531,9 @@ impl State {
                 break Ok(true);
             }
 
-            match self.socket.poll_send(cx, self.outgoing.as_slices().0) {
+            match self.socket.poll_send(cx, self.transmit_state.transmits()) {
                 Poll::Ready(Ok(n)) => {
-                    let contents_len: usize =
-                        self.outgoing.drain(..n).map(|t| t.contents.len()).sum();
-                    self.transmit_queue_contents_len = self
-                        .transmit_queue_contents_len
-                        .saturating_sub(contents_len);
+                    self.transmit_state.dequeue(n);
                     // We count transmits instead of `poll_send` calls since the cost
                     // of a `sendmmsg` still linearly increases with number of packets.
                     self.send_limiter.record_work(n);
@@ -546,13 +573,7 @@ impl State {
                                 .send(ConnectionEvent::Proto(event));
                         }
                     }
-                    Transmit(t, buf) => {
-                        let contents_len = buf.len();
-                        self.outgoing.push_back(udp_transmit(t, buf));
-                        self.transmit_queue_contents_len = self
-                            .transmit_queue_contents_len
-                            .saturating_add(contents_len);
-                    }
+                    Transmit(t, buf) => self.transmit_state.enqueue(t, buf),
                 },
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
@@ -562,6 +583,48 @@ impl State {
         }
 
         true
+    }
+}
+
+#[derive(Debug, Default)]
+struct TransmitState {
+    outgoing: VecDeque<udp::Transmit>,
+    /// The aggregateed contents length of the packets in the transmit queue
+    contents_len: usize,
+}
+
+impl TransmitState {
+    fn respond(&mut self, transmit: proto::Transmit, mut response_buffer: BytesMut) {
+        // Limiting the memory usage for items queued in the outgoing queue from endpoint
+        // generated packets. Otherwise, we may see a build-up of the queue under test with
+        // flood of initial packets against the endpoint. The sender with the sender-limiter
+        // may not keep up the pace of these packets queued into the queue.
+        if self.contents_len >= MAX_TRANSMIT_QUEUE_CONTENTS_LEN {
+            return;
+        }
+
+        let contents_len = transmit.size;
+        self.outgoing.push_back(udp_transmit(
+            transmit,
+            response_buffer.split_to(contents_len).freeze(),
+        ));
+        self.contents_len = self.contents_len.saturating_add(contents_len);
+    }
+
+    fn enqueue(&mut self, t: proto::Transmit, buf: Bytes) {
+        let contents_len = buf.len();
+        self.outgoing.push_back(udp_transmit(t, buf));
+        self.contents_len = self.contents_len.saturating_add(contents_len);
+    }
+
+    fn dequeue(&mut self, sent: usize) {
+        self.contents_len = self
+            .contents_len
+            .saturating_sub(self.outgoing.drain(..sent).map(|t| t.contents.len()).sum());
+    }
+
+    fn transmits(&self) -> &[udp::Transmit] {
+        self.outgoing.as_slices().0
     }
 }
 
@@ -646,15 +709,18 @@ pin_project! {
 }
 
 impl<'a> Future for Accept<'a> {
-    type Output = Option<Connecting>;
+    type Output = Option<Incoming>;
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
-        let endpoint = &mut *this.endpoint.inner.state.lock().unwrap();
+        let mut endpoint = this.endpoint.inner.state.lock().unwrap();
         if endpoint.driver_lost {
             return Poll::Ready(None);
         }
-        if let Some(conn) = endpoint.incoming.pop_front() {
-            return Poll::Ready(Some(conn));
+        if let Some((incoming, response_buffer)) = endpoint.incoming.pop_front() {
+            // Release the mutex lock on endpoint so cloning it doesn't deadlock
+            drop(endpoint);
+            let incoming = Incoming::new(incoming, this.endpoint.inner.clone(), response_buffer);
+            return Poll::Ready(Some(incoming));
         }
         if endpoint.connections.close.is_some() {
             return Poll::Ready(None);
@@ -699,7 +765,7 @@ impl EndpointRef {
                 inner,
                 ipv6,
                 events,
-                outgoing: VecDeque::new(),
+                transmit_state: TransmitState::default(),
                 incoming: VecDeque::new(),
                 driver: None,
                 connections: ConnectionSet {
@@ -713,7 +779,6 @@ impl EndpointRef {
                 recv_limiter: WorkLimiter::new(RECV_TIME_BOUND),
                 send_limiter: WorkLimiter::new(SEND_TIME_BOUND),
                 runtime,
-                transmit_queue_contents_len: 0,
             }),
         }))
     }

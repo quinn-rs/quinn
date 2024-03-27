@@ -165,13 +165,8 @@ fn draft_version_compat() {
 #[test]
 fn stateless_retry() {
     let _guard = subscribe();
-    let mut pair = Pair::new(
-        Default::default(),
-        ServerConfig {
-            use_retry: true,
-            ..server_config()
-        },
-    );
+    let mut pair = Pair::default();
+    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
     pair.connect();
 }
 
@@ -459,13 +454,8 @@ fn high_latency_handshake() {
 #[test]
 fn zero_rtt_happypath() {
     let _guard = subscribe();
-    let mut pair = Pair::new(
-        Default::default(),
-        ServerConfig {
-            use_retry: true,
-            ..server_config()
-        },
-    );
+    let mut pair = Pair::default();
+    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
     let config = client_config();
 
     // Establish normal connection
@@ -2017,7 +2007,7 @@ fn connect_too_low_mtu() {
 
     pair.begin_connect(client_config());
     pair.drive();
-    pair.server.assert_no_accept()
+    pair.server.assert_no_accept();
 }
 
 #[test]
@@ -2810,4 +2800,24 @@ fn pure_sender_voluntarily_acks() {
 
     let receiver_acks_final = pair.server_conn_mut(server_ch).stats().frame_rx.acks;
     assert!(receiver_acks_final > receiver_acks_initial);
+}
+
+#[test]
+fn reject_manually() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::RejectAll;
+
+    // The server should now reject incoming connections.
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive();
+    pair.server.assert_no_accept();
+    let client = pair.client.connections.get_mut(&client_ch).unwrap();
+    assert!(client.is_closed());
+    assert!(matches!(
+        client.poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::ConnectionClosed(close)
+        }) if close.error_code == TransportErrorCode::CONNECTION_REFUSED
+    ));
 }

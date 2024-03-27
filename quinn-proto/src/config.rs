@@ -741,10 +741,6 @@ pub struct ServerConfig {
     /// Used to generate one-time AEAD keys to protect handshake tokens
     pub(crate) token_key: Arc<dyn HandshakeTokenKey>,
 
-    /// Whether to require clients to prove ownership of an address before committing resources.
-    ///
-    /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
-    pub(crate) use_retry: bool,
     /// Microseconds after a stateless retry token was issued for which it's considered valid.
     pub(crate) retry_token_lifetime: Duration,
 
@@ -769,7 +765,6 @@ impl ServerConfig {
             crypto,
 
             token_key,
-            use_retry: false,
             retry_token_lifetime: Duration::from_secs(15),
 
             concurrent_connections: 100_000,
@@ -787,14 +782,6 @@ impl ServerConfig {
     /// Private key used to authenticate data included in handshake tokens.
     pub fn token_key(&mut self, value: Arc<dyn HandshakeTokenKey>) -> &mut Self {
         self.token_key = value;
-        self
-    }
-
-    /// Whether to require clients to prove ownership of an address before committing resources.
-    ///
-    /// Introduces an additional round-trip to the handshake to make denial of service attacks more difficult.
-    pub fn use_retry(&mut self, value: bool) -> &mut Self {
-        self.use_retry = value;
         self
     }
 
@@ -858,7 +845,6 @@ impl fmt::Debug for ServerConfig {
             .field("transport", &self.transport)
             .field("crypto", &"ServerConfig { elided }")
             .field("token_key", &"[ elided ]")
-            .field("use_retry", &self.use_retry)
             .field("retry_token_lifetime", &self.retry_token_lifetime)
             .field("concurrent_connections", &self.concurrent_connections)
             .field("migration", &self.migration)

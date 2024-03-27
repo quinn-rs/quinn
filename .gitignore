@@ -6,3 +6,6 @@ Cargo.lock
 .idea
 .DS_Store
 .vscode
+
+cargo-test-*
+tarpaulin-report.html

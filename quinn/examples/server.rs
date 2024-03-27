@@ -37,6 +37,9 @@ struct Opt {
     /// Address to listen on
     #[clap(long = "listen", default_value = "[::1]:4433")]
     listen: SocketAddr,
+    /// Client address to block
+    #[clap(long = "block")]
+    block: Option<SocketAddr>,
 }
 
 fn main() {
@@ -132,9 +135,6 @@ async fn run(options: Opt) -> Result<()> {
     let mut server_config = quinn::ServerConfig::with_crypto(Arc::new(server_crypto));
     let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
     transport_config.max_concurrent_uni_streams(0_u8.into());
-    if options.stateless_retry {
-        server_config.use_retry(true);
-    }
 
     let root = Arc::<Path>::from(options.root.clone());
     if !root.exists() {
@@ -145,19 +145,27 @@ async fn run(options: Opt) -> Result<()> {
     eprintln!("listening on {}", endpoint.local_addr()?);
 
     while let Some(conn) = endpoint.accept().await {
-        info!("connection incoming");
-        let fut = handle_connection(root.clone(), conn);
-        tokio::spawn(async move {
-            if let Err(e) = fut.await {
-                error!("connection failed: {reason}", reason = e.to_string())
-            }
-        });
+        if Some(conn.remote_address()) == options.block {
+            info!("rejecting blocked client IP address");
+            conn.reject();
+        } else if options.stateless_retry && !conn.remote_address_validated() {
+            info!("requiring connection to validate its address");
+            conn.retry().unwrap();
+        } else {
+            info!("accepting connection");
+            let fut = handle_connection(root.clone(), conn);
+            tokio::spawn(async move {
+                if let Err(e) = fut.await {
+                    error!("connection failed: {reason}", reason = e.to_string())
+                }
+            });
+        }
     }
 
     Ok(())
 }
 
-async fn handle_connection(root: Arc<Path>, conn: quinn::Connecting) -> Result<()> {
+async fn handle_connection(root: Arc<Path>, conn: quinn::Incoming) -> Result<()> {
     let connection = conn.await?;
     let span = info_span!(
         "connection",

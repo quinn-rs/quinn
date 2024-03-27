@@ -54,6 +54,7 @@ macro_rules! ready {
 
 mod connection;
 mod endpoint;
+mod incoming;
 mod mutex;
 mod recv_stream;
 mod runtime;
@@ -75,6 +76,7 @@ pub use crate::connection::{
     UnknownStream, ZeroRttAccepted,
 };
 pub use crate::endpoint::{Accept, Endpoint};
+pub use crate::incoming::{Incoming, IncomingFuture, RetryError};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream};
 #[cfg(feature = "runtime-async-std")]
 pub use crate::runtime::AsyncStdRuntime;
@@ -125,3 +127,10 @@ const SEND_TIME_BOUND: Duration = Duration::from_micros(50);
 /// generated from the endpoint (retry or initial close) can be dropped when this limit is being execeeded.
 /// Chose to represent 100 MB of data.
 const MAX_TRANSMIT_QUEUE_CONTENTS_LEN: usize = 100_000_000;
+
+/// The maximum number of `IncomingConnection`s we allow to be enqueued at a time before we start
+/// rejecting new `IncomingConnection`s automatically. Assuming each `IncomingConnection` accounts
+/// for little over 1200 bytes of memory maximum, this should limit an endpoint's incoming
+/// connection queue memory consumption to under 100 MiB, a generous amount that still prevents
+/// memory exhaustion.
+const MAX_INCOMING_CONNECTIONS: usize = 1 << 16;

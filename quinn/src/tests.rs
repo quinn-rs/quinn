@@ -159,17 +159,29 @@ fn export_keying_material() {
     };
 
     runtime.block_on(async move {
-        let outgoing_conn = endpoint
-            .connect(endpoint.local_addr().unwrap(), "localhost")
-            .unwrap()
-            .await
-            .expect("connect");
-        let incoming_conn = endpoint
-            .accept()
-            .await
-            .expect("endpoint")
-            .await
-            .expect("connection");
+        let outgoing_conn_fut = tokio::spawn({
+            let endpoint = endpoint.clone();
+            async move {
+                endpoint
+                    .connect(endpoint.local_addr().unwrap(), "localhost")
+                    .unwrap()
+                    .await
+                    .expect("connect")
+            }
+        });
+        let incoming_conn_fut = tokio::spawn({
+            let endpoint = endpoint.clone();
+            async move {
+                endpoint
+                    .accept()
+                    .await
+                    .expect("endpoint")
+                    .await
+                    .expect("connection")
+            }
+        });
+        let outgoing_conn = outgoing_conn_fut.await.unwrap();
+        let incoming_conn = incoming_conn_fut.await.unwrap();
         let mut i_buf = [0u8; 64];
         incoming_conn
             .export_keying_material(&mut i_buf, b"asdf", b"qwer")
@@ -183,70 +195,92 @@ fn export_keying_material() {
 }
 
 #[tokio::test]
-async fn accept_after_close() {
+async fn ip_blocking() {
     let _guard = subscribe();
-    let endpoint = endpoint();
-
-    const MSG: &[u8] = b"goodbye!";
-
-    let sender = endpoint
-        .connect(endpoint.local_addr().unwrap(), "localhost")
-        .unwrap()
-        .await
-        .expect("connect");
-    let mut s = sender.open_uni().await.unwrap();
-    s.write_all(MSG).await.unwrap();
-    s.finish().await.unwrap();
-    sender.close(0u32.into(), b"");
-
-    // Allow some time for the close to be sent and processed
-    tokio::time::sleep(Duration::from_millis(100)).await;
-
-    // Despite the connection having closed, we should be able to accept it...
-    let receiver = endpoint
-        .accept()
-        .await
-        .expect("endpoint")
-        .await
-        .expect("connection");
-
-    // ...and read what was sent.
-    let mut stream = receiver.accept_uni().await.expect("incoming streams");
-    let msg = stream
-        .read_to_end(usize::max_value())
-        .await
-        .expect("read_to_end");
-    assert_eq!(msg, MSG);
-
-    // But it's still definitely closed.
-    assert!(receiver.open_uni().await.is_err());
+    let endpoint_factory = EndpointFactory::new();
+    let client_1 = endpoint_factory.endpoint();
+    let client_1_addr = client_1.local_addr().unwrap();
+    let client_2 = endpoint_factory.endpoint();
+    let server = endpoint_factory.endpoint();
+    let server_addr = server.local_addr().unwrap();
+    let server_task = tokio::spawn(async move {
+        loop {
+            let accepting = server.accept().await.unwrap();
+            if accepting.remote_address() == client_1_addr {
+                accepting.reject();
+            } else if accepting.remote_address_validated() {
+                accepting.await.expect("connection");
+            } else {
+                accepting.retry().unwrap();
+            }
+        }
+    });
+    tokio::join!(
+        async move {
+            let e = client_1
+                .connect(server_addr, "localhost")
+                .unwrap()
+                .await
+                .expect_err("server should have blocked this");
+            assert!(
+                matches!(e, crate::ConnectionError::ConnectionClosed(_)),
+                "wrong error"
+            );
+        },
+        async move {
+            client_2
+                .connect(server_addr, "localhost")
+                .unwrap()
+                .await
+                .expect("connect");
+        }
+    );
+    server_task.abort();
 }
 
 /// Construct an endpoint suitable for connecting to itself
 fn endpoint() -> Endpoint {
-    endpoint_with_config(TransportConfig::default())
+    EndpointFactory::new().endpoint()
 }
 
 fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key = rustls::PrivateKey(cert.serialize_private_key_der());
-    let cert = rustls::Certificate(cert.serialize_der().unwrap());
-    let transport_config = Arc::new(transport_config);
-    let mut server_config = crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
-    server_config.transport_config(transport_config.clone());
+    EndpointFactory::new().endpoint_with_config(transport_config)
+}
 
-    let mut roots = rustls::RootCertStore::empty();
-    roots.add(&cert).unwrap();
-    let mut endpoint = Endpoint::server(
-        server_config,
-        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
-    )
-    .unwrap();
-    let mut client_config = ClientConfig::with_root_certificates(roots);
-    client_config.transport_config(transport_config);
-    endpoint.set_default_client_config(client_config);
+/// Constructs endpoints suitable for connecting to themselves and each other
+struct EndpointFactory(rcgen::Certificate);
 
-    endpoint
+impl EndpointFactory {
+    fn new() -> Self {
+        Self(rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap())
+    }
+
+    fn endpoint(&self) -> Endpoint {
+        self.endpoint_with_config(TransportConfig::default())
+    }
+
+    fn endpoint_with_config(&self, transport_config: TransportConfig) -> Endpoint {
+        let cert = &self.0;
+        let key = rustls::PrivateKey(cert.serialize_private_key_der());
+        let cert = rustls::Certificate(cert.serialize_der().unwrap());
+        let transport_config = Arc::new(transport_config);
+        let mut server_config =
+            crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
+        server_config.transport_config(transport_config.clone());
+
+        let mut roots = rustls::RootCertStore::empty();
+        roots.add(&cert).unwrap();
+        let mut endpoint = Endpoint::server(
+            server_config,
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        )
+        .unwrap();
+        let mut client_config = ClientConfig::with_root_certificates(roots);
+        client_config.transport_config(transport_config);
+        endpoint.set_default_client_config(client_config);
+
+        endpoint
+    }
 }
 
 #[tokio::test]
@@ -259,7 +293,7 @@ async fn zero_rtt() {
     let endpoint2 = endpoint.clone();
     tokio::spawn(async move {
         for _ in 0..2 {
-            let incoming = endpoint2.accept().await.unwrap();
+            let incoming = endpoint2.accept().await.unwrap().accept().unwrap();
             let (connection, established) = incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
             let c = connection.clone();
             tokio::spawn(async move {

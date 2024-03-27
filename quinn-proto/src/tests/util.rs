@@ -287,11 +287,19 @@ pub(super) struct TestEndpoint {
     pub(super) outbound: VecDeque<(Transmit, Bytes)>,
     delayed: VecDeque<(Transmit, Bytes)>,
     pub(super) inbound: VecDeque<(Instant, Option<EcnCodepoint>, BytesMut)>,
-    accepted: Option<ConnectionHandle>,
+    accepted: Option<Result<ConnectionHandle, ConnectionError>>,
     pub(super) connections: HashMap<ConnectionHandle, Connection>,
     conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
     pub(super) captured_packets: Vec<Vec<u8>>,
     pub(super) capture_inbound_packets: bool,
+    pub(super) incoming_connection_behavior: IncomingConnectionBehavior,
+}
+
+#[derive(Debug, Copy, Clone)]
+pub(super) enum IncomingConnectionBehavior {
+    AcceptAll,
+    RejectAll,
+    Validate,
 }
 
 impl TestEndpoint {
@@ -318,6 +326,7 @@ impl TestEndpoint {
             conn_events: HashMap::default(),
             captured_packets: Vec::new(),
             capture_inbound_packets: false,
+            incoming_connection_behavior: IncomingConnectionBehavior::AcceptAll,
         }
     }
 
@@ -345,9 +354,22 @@ impl TestEndpoint {
                 .handle(recv_time, remote, None, ecn, packet, &mut buf)
             {
                 match event {
-                    DatagramEvent::NewConnection(ch, conn) => {
-                        self.connections.insert(ch, conn);
-                        self.accepted = Some(ch);
+                    DatagramEvent::NewConnection(incoming) => {
+                        match self.incoming_connection_behavior {
+                            IncomingConnectionBehavior::AcceptAll => {
+                                let _ = self.try_accept(incoming, now);
+                            }
+                            IncomingConnectionBehavior::RejectAll => {
+                                self.reject(incoming);
+                            }
+                            IncomingConnectionBehavior::Validate => {
+                                if incoming.remote_address_validated() {
+                                    let _ = self.try_accept(incoming, now);
+                                } else {
+                                    self.retry(incoming);
+                                }
+                            }
+                        }
                     }
                     DatagramEvent::ConnectionEvent(ch, event) => {
                         if self.capture_inbound_packets {
@@ -428,8 +450,58 @@ impl TestEndpoint {
         self.outbound.extend(self.delayed.drain(..));
     }
 
+    pub(super) fn try_accept(
+        &mut self,
+        incoming: Incoming,
+        now: Instant,
+    ) -> Result<ConnectionHandle, ConnectionError> {
+        let mut buf = BytesMut::new();
+        self.endpoint
+            .accept(incoming, now, &mut buf)
+            .map(|(ch, conn)| {
+                self.connections.insert(ch, conn);
+                self.accepted = Some(Ok(ch));
+                ch
+            })
+            .map_err(|(e, transmit)| {
+                if let Some(transmit) = transmit {
+                    let size = transmit.size;
+                    self.outbound
+                        .extend(split_transmit(transmit, buf.split_to(size).freeze()));
+                }
+                self.accepted = Some(Err(e.clone()));
+                e
+            })
+    }
+
+    pub(super) fn retry(&mut self, incoming: Incoming) {
+        let mut buf = BytesMut::new();
+        let transmit = self.endpoint.retry(incoming, &mut buf).unwrap();
+        let size = transmit.size;
+        self.outbound
+            .extend(split_transmit(transmit, buf.split_to(size).freeze()));
+    }
+
+    pub(super) fn reject(&mut self, incoming: Incoming) {
+        let mut buf = BytesMut::new();
+        let transmit = self.endpoint.reject(incoming, &mut buf);
+        let size = transmit.size;
+        self.outbound
+            .extend(split_transmit(transmit, buf.split_to(size).freeze()));
+    }
+
     pub(super) fn assert_accept(&mut self) -> ConnectionHandle {
-        self.accepted.take().expect("server didn't connect")
+        self.accepted
+            .take()
+            .expect("server didn't try connecting")
+            .expect("server experienced error connecting")
+    }
+
+    pub(super) fn assert_accept_error(&mut self) -> ConnectionError {
+        self.accepted
+            .take()
+            .expect("server didn't try connecting")
+            .expect_err("server did unexpectedly connect without error")
     }
 
     pub(super) fn assert_no_accept(&self) {
