@@ -28,8 +28,8 @@ use crate::{
         EndpointEventInner, IssuedCid,
     },
     transport_parameters::TransportParameters,
-    ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
-    MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    ResetToken, RetryToken, Transmit, TransportConfig, TransportError, INITIAL_MTU, MAX_CID_SIZE,
+    MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -216,22 +216,18 @@ impl Endpoint {
                 return None;
             }
 
-            let crypto =
-                match server_config
-                    .crypto
-                    .initial_keys(header.version, dst_cid, Side::Server)
-                {
-                    Ok(keys) => keys,
-                    Err(UnsupportedVersion) => {
-                        // This probably indicates that the user set supported_versions incorrectly in
-                        // `EndpointConfig`.
-                        debug!(
+            let crypto = match server_config.crypto.initial_keys(header.version, dst_cid) {
+                Ok(keys) => keys,
+                Err(UnsupportedVersion) => {
+                    // This probably indicates that the user set supported_versions incorrectly in
+                    // `EndpointConfig`.
+                    debug!(
                         "ignoring initial packet version {:#x} unsupported by cryptographic layer",
                         header.version
                     );
-                        return None;
-                    }
-                };
+                    return None;
+                }
+            };
 
             if let Err(reason) = self.early_validate_first_packet(header) {
                 return Some(DatagramEvent::Response(self.initial_close(
@@ -894,9 +890,9 @@ pub enum ConnectError {
     /// Try using longer connection IDs.
     #[error("too many connections")]
     TooManyConnections,
-    /// The domain name supplied was malformed
-    #[error("invalid DNS name: {0}")]
-    InvalidDnsName(String),
+    /// The given server name was malformed
+    #[error("invalid server name: {0}")]
+    InvalidServerName(String),
     /// The remote [`SocketAddr`] supplied was malformed
     ///
     /// Examples include attempting to connect to port 0, or using an inappropriate address family.

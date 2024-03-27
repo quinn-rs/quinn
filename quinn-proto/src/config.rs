@@ -1,9 +1,10 @@
 use std::{fmt, num::TryFromIntError, sync::Arc, time::Duration};
 
-use thiserror::Error;
-
 #[cfg(feature = "ring")]
 use rand::RngCore;
+#[cfg(feature = "rustls")]
+use rustls::pki_types::{CertificateDer, PrivateKeyDer};
+use thiserror::Error;
 
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
@@ -829,8 +830,8 @@ impl ServerConfig {
     ///
     /// Uses a randomized handshake token key.
     pub fn with_single_cert(
-        cert_chain: Vec<rustls::Certificate>,
-        key: rustls::PrivateKey,
+        cert_chain: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
     ) -> Result<Self, rustls::Error> {
         let crypto = crypto::rustls::server_config(cert_chain, key)?;
         Ok(Self::with_crypto(Arc::new(crypto)))
@@ -911,10 +912,7 @@ impl ClientConfig {
     #[cfg(feature = "platform-verifier")]
     pub fn with_platform_verifier() -> Self {
         let mut cfg = rustls::ClientConfig::builder()
-            .with_safe_default_cipher_suites()
-            .with_safe_default_kx_groups()
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
+            .dangerous()
             .with_custom_certificate_verifier(Arc::new(rustls_platform_verifier::Verifier::new()))
             .with_no_client_auth();
         cfg.enable_early_data = true;

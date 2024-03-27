@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
+use rustls::crypto::ring::cipher_suite;
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::warn;
 
@@ -51,7 +52,7 @@ pub fn bind_socket(
 }
 
 pub static PERF_CIPHER_SUITES: &[rustls::SupportedCipherSuite] = &[
-    rustls::cipher_suite::TLS13_AES_128_GCM_SHA256,
-    rustls::cipher_suite::TLS13_AES_256_GCM_SHA384,
-    rustls::cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
+    cipher_suite::TLS13_AES_128_GCM_SHA256,
+    cipher_suite::TLS13_AES_256_GCM_SHA384,
+    cipher_suite::TLS13_CHACHA20_POLY1305_SHA256,
 ];
