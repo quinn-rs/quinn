@@ -35,18 +35,36 @@ impl Send {
         matches!(self.state, SendState::ResetSent { .. })
     }
 
+    /// Initiate a graceful close of the stream, ensuring all sent data has been acknowledged by the remote.
     pub(super) fn finish(&mut self) -> Result<(), FinishError> {
         if let Some(error_code) = self.stop_reason {
-            Err(FinishError::Stopped(error_code))
-        } else if self.state == SendState::Ready {
+            tracing::debug!(%error_code, "Stream is already stopped");
+
+            if !self.pending.is_fully_acked() {
+                // Remote stopped the stream before ack-ing all sent data.
+                // Return error to indicate that a graceful close failed.
+                return Err(FinishError::Stopped(error_code));
+            }
+
+            // Remote stopped the stream but acked all sent data before doing so.
+            // We pretend that the remote acked our `FIN`.
+            // Actually trying to send it would fail because the remote has stopped the stream already.
+
+            self.state = SendState::DataSent { finish_acked: true };
+
+            return Ok(());
+        }
+
+        if self.state == SendState::Ready {
             self.state = SendState::DataSent {
                 finish_acked: false,
             };
             self.fin_pending = true;
-            Ok(())
-        } else {
-            Err(FinishError::UnknownStream)
+
+            return Ok(());
         }
+
+        Err(FinishError::UnknownStream)
     }
 
     pub(super) fn write<S: BytesSource>(

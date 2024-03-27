@@ -550,7 +550,7 @@ async fn echo((mut send, mut recv): (SendStream, RecvStream)) {
     loop {
         // These are 32 buffers, for reading approximately 32kB at once
         #[rustfmt::skip]
-        let mut bufs = [
+            let mut bufs = [
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
             Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
@@ -746,4 +746,49 @@ async fn two_datagram_readers() {
     );
     assert!(*a == *b"one" || *b == *b"one");
     assert!(*a == *b"two" || *b == *b"two");
+}
+
+#[tokio::test]
+async fn finish_finished_stream_no_error() {
+    let _guard = subscribe();
+    let endpoint = endpoint();
+
+    let (client, server) = tokio::join!(
+        async {
+            endpoint
+                .connect(endpoint.local_addr().unwrap(), "localhost")
+                .unwrap()
+                .await
+                .unwrap()
+        },
+        async { endpoint.accept().await.unwrap().await.unwrap() }
+    );
+
+    let client = async {
+        let (mut send_stream, mut recv_stream) = client.open_bi().await.unwrap();
+        send_stream.write_all(b"request").await.unwrap();
+
+        let mut buf = [0u8; 8];
+        recv_stream.read_exact(&mut buf).await.unwrap();
+
+        assert_eq!(&buf, b"response");
+
+        tokio::time::sleep(Duration::from_millis(100)).await; // Simulate some more processing of the response.
+
+        send_stream.finish().await.unwrap(); // Be a good citizen and close stream instead of dropping.
+    };
+
+    let server = async {
+        let (mut send_stream, mut recv_stream) = server.accept_bi().await.unwrap();
+
+        let mut buf = [0u8; 7];
+        recv_stream.read_exact(&mut buf).await.unwrap();
+
+        assert_eq!(&buf, b"request");
+
+        send_stream.write_all(b"response").await.unwrap();
+        send_stream.finish().await.unwrap();
+    };
+
+    tokio::join!(client, server);
 }
