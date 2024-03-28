@@ -6,7 +6,7 @@ use crate::shared::ConnectionId;
 use crate::MAX_CID_SIZE;
 
 /// Generates connection IDs for incoming connections
-pub trait ConnectionIdGenerator: Send {
+pub trait ConnectionIdGenerator: Send + Sync {
     /// Generates a new CID
     ///
     /// Connection IDs MUST NOT contain any information that can be used by

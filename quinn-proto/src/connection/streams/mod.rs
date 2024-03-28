@@ -1,6 +1,6 @@
 use std::{
-    cell::RefCell,
-    collections::{hash_map, BinaryHeap, VecDeque},
+    collections::{hash_map, BTreeMap},
+    ops::Bound,
 };
 
 use bytes::Bytes;
@@ -335,60 +335,43 @@ impl<'a> SendStream<'a> {
     }
 }
 
-fn push_pending(pending: &mut BinaryHeap<PendingLevel>, id: StreamId, priority: i32) {
-    for level in pending.iter() {
-        if priority == level.priority {
-            level.queue.borrow_mut().push_back(id);
-            return;
-        }
-    }
+/// Push a pending stream ID with the given priority, queued after all preexisting streams for the priority
+fn push_pending(pending: &mut BTreeMap<PendingPriority, StreamId>, id: StreamId, priority: i32) {
+    // Get all preexisting streams of this priority
+    // We only actually need the lowest recency value, so this could be implemented more tersely with
+    // `BTreeMap::lower_bound`, but as of writing that API is unfortunately still nightly only
+    let mut range = pending.range((
+        Bound::Included(PendingPriority {
+            priority,
+            recency: 0,
+        }),
+        Bound::Included(PendingPriority {
+            priority,
+            recency: u64::MAX,
+        }),
+    ));
 
-    // If there is only a single level and it's empty, repurpose it for the
-    // required priority
-    if pending.len() == 1 {
-        if let Some(mut first) = pending.peek_mut() {
-            let mut queue = first.queue.borrow_mut();
-            if queue.is_empty() {
-                queue.push_back(id);
-                drop(queue);
-                first.priority = priority;
-                return;
-            }
-        }
-    }
-
-    let mut queue = VecDeque::new();
-    queue.push_back(id);
-    pending.push(PendingLevel {
-        queue: RefCell::new(queue),
-        priority,
-    });
+    pending.insert(
+        PendingPriority {
+            priority,
+            recency: range.next().map(|(p, _)| p.recency - 1).unwrap_or(u64::MAX),
+        },
+        id,
+    );
 }
 
-struct PendingLevel {
-    // RefCell is needed because BinaryHeap doesn't have an iter_mut()
-    queue: RefCell<VecDeque<StreamId>>,
+/// Key type for a [`BTreeMap`] for streams with pending data, to sort them by priority and recency
+#[derive(PartialEq, Eq, PartialOrd, Ord)]
+struct PendingPriority {
+    /// The priority of the stream
+    // Note that this field should be kept above the `recency` field, in order for the `Ord` derive to be correct
+    // (See https://doc.rust-lang.org/stable/std/cmp/trait.Ord.html#derivable)
     priority: i32,
-}
-
-impl PartialEq for PendingLevel {
-    fn eq(&self, other: &Self) -> bool {
-        self.priority.eq(&other.priority)
-    }
-}
-
-impl PartialOrd for PendingLevel {
-    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Eq for PendingLevel {}
-
-impl Ord for PendingLevel {
-    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
-        self.priority.cmp(&other.priority)
-    }
+    /// A tie-breaker for streams of the same priority, used to improve fairness by implementing round-robin scheduling:
+    /// Larger values are prioritized, so it is initialised to `u64::MAX`, and when a stream writes data, we know
+    /// that it currently has the highest recency value, so it is deprioritized by 'leapfrogging' its recency past
+    /// the recency values of the other streams, down to 1 less than the previous lowest recency value for that priority
+    recency: u64,
 }
 
 /// Application events about streams

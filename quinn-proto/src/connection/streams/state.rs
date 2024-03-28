@@ -1,5 +1,5 @@
 use std::{
-    collections::{binary_heap::PeekMut, hash_map, BinaryHeap, VecDeque},
+    collections::{hash_map, BTreeMap, VecDeque},
     convert::TryFrom,
     mem,
 };
@@ -9,12 +9,12 @@ use rustc_hash::FxHashMap;
 use tracing::{debug, trace};
 
 use super::{
-    push_pending, PendingLevel, Recv, Retransmits, Send, SendState, ShouldTransmit, StreamEvent,
-    StreamHalf, ThinRetransmits,
+    PendingPriority, Recv, Retransmits, Send, SendState, ShouldTransmit, StreamEvent, StreamHalf,
+    ThinRetransmits,
 };
 use crate::{
     coding::BufMutExt,
-    connection::stats::FrameStats,
+    connection::{stats::FrameStats, streams::push_pending},
     frame::{self, FrameStruct, StreamMetaVec},
     transport_parameters::TransportParameters,
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
@@ -52,8 +52,8 @@ pub struct StreamsState {
     /// This differs from `self.send.len()` in that it does not include streams that the peer is
     /// permitted to open but which have not yet been opened.
     pub(super) send_streams: usize,
-    /// Streams with outgoing data queued
-    pub(super) pending: BinaryHeap<PendingLevel>,
+    /// Streams with outgoing data queued, sorted by priority
+    pub(super) pending: BTreeMap<PendingPriority, StreamId>,
 
     events: VecDeque<StreamEvent>,
     /// Streams blocked on connection-level flow control or stream window space
@@ -115,7 +115,7 @@ impl StreamsState {
             opened: [false, false],
             next_reported_remote: [0, 0],
             send_streams: 0,
-            pending: BinaryHeap::new(),
+            pending: BTreeMap::new(),
             events: VecDeque::new(),
             connection_blocked: Vec::new(),
             max_data: 0,
@@ -345,13 +345,11 @@ impl StreamsState {
     /// Whether any stream data is queued, regardless of control frames
     pub(crate) fn can_send_stream_data(&self) -> bool {
         // Reset streams may linger in the pending stream list, but will never produce stream frames
-        self.pending.iter().any(|level| {
-            level.queue.borrow().iter().any(|id| {
-                self.send
-                    .get(id)
-                    .and_then(|s| s.as_ref())
-                    .map_or(false, |s| !s.is_reset())
-            })
+        self.pending.values().any(|id| {
+            self.send
+                .get(id)
+                .and_then(|s| s.as_ref())
+                .map_or(false, |s| !s.is_reset())
         })
     }
 
@@ -503,26 +501,12 @@ impl StreamsState {
                 break;
             }
 
-            let num_levels = self.pending.len();
-            let mut level = match self.pending.peek_mut() {
-                Some(x) => x,
-                None => break,
+            // Pop the stream of the highest priority that currently has pending data
+            // If the stream still has some pending data left after writing, it will be reinserted, otherwise not
+            let Some((_, id)) = self.pending.pop_last() else {
+                break;
             };
-            // Poppping data from the front of the queue, storing as much data
-            // as possible in a single frame, and enqueing sending further
-            // remaining data at the end of the queue helps with fairness.
-            // Other streams will have a chance to write data before we touch
-            // this stream again.
-            let id = match level.queue.get_mut().pop_front() {
-                Some(x) => x,
-                None => {
-                    debug_assert!(
-                        num_levels == 1,
-                        "An empty queue is only allowed for a single level"
-                    );
-                    break;
-                }
-            };
+
             let stream = match self.send.get_mut(&id).and_then(|s| s.as_mut()) {
                 Some(s) => s,
                 // Stream was reset with pending data and the reset was acknowledged
@@ -547,24 +531,10 @@ impl StreamsState {
             }
 
             if stream.is_pending() {
-                if level.priority == stream.priority {
-                    // Enqueue for the same level
-                    level.queue.get_mut().push_back(id);
-                } else {
-                    // Enqueue for a different level. If the current level is empty, drop it
-                    if level.queue.borrow().is_empty() && num_levels != 1 {
-                        // We keep the last level around even in empty form so that
-                        // the next insert doesn't have to reallocate the queue
-                        PeekMut::pop(level);
-                    } else {
-                        drop(level);
-                    }
-                    push_pending(&mut self.pending, id, stream.priority);
-                }
-            } else if level.queue.borrow().is_empty() && num_levels != 1 {
-                // We keep the last level around even in empty form so that
-                // the next insert doesn't have to reallocate the queue
-                PeekMut::pop(level);
+                // If the stream still has pending data, reinsert it, possibly with an updated priority value
+                // Fairness with other streams is achieved by implementing round-robin scheduling,
+                // so that the other streams will have a chance to write data before we touch this stream again.
+                push_pending(&mut self.pending, id, stream.priority);
             }
 
             let meta = frame::StreamMeta { id, offsets, fin };
@@ -1324,7 +1294,7 @@ mod tests {
         assert_eq!(meta[2].id, id_low);
 
         assert!(!server.can_send_stream_data());
-        assert_eq!(server.pending.len(), 1);
+        assert_eq!(server.pending.len(), 0);
     }
 
     #[test]
@@ -1391,7 +1361,7 @@ mod tests {
         assert_eq!(meta[1].id, id_high);
 
         assert!(!server.can_send_stream_data());
-        assert_eq!(server.pending.len(), 1);
+        assert_eq!(server.pending.len(), 0);
     }
 
     #[test]

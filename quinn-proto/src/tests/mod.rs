@@ -2788,6 +2788,13 @@ fn reject_new_connections() {
     assert!(pair.client.connections.get(&client_ch).unwrap().is_closed());
 }
 
+#[test]
+fn endpoint_and_connection_impl_send_sync() {
+    const fn is_send_sync<T: Send + Sync>() {}
+    is_send_sync::<Endpoint>();
+    is_send_sync::<Connection>();
+}
+
 /// Verify that an endpoint which receives but does not send ACK-eliciting data still receives ACKs
 /// occasionally. This is not required for conformance, but makes loss detection more responsive and
 /// reduces receiver memory use.
