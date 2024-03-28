@@ -6,6 +6,7 @@ pub use rustls::Error;
 use rustls::{
     self,
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Version},
+    RootCertStore,
 };
 
 use crate::{
@@ -383,16 +384,29 @@ impl crypto::PacketKey for PacketKey {
 ///
 /// QUIC requires that TLS 1.3 be enabled. Advanced users can use any [`rustls::ClientConfig`] that
 /// satisfies this requirement.
-pub(crate) fn client_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
-    let mut cfg = rustls::ClientConfig::builder()
+pub(crate) fn client_config(verifier: ServerVerifier) -> rustls::ClientConfig {
+    let builder = rustls::ClientConfig::builder()
         .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()
         .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_root_certificates(roots)
-        .with_no_client_auth();
-    cfg.enable_early_data = true;
-    cfg
+        .unwrap();
+
+    let mut config = match verifier {
+        #[cfg(feature = "platform-verifier")]
+        ServerVerifier::Platform => builder
+            .with_custom_certificate_verifier(Arc::new(rustls_platform_verifier::Verifier::new()))
+            .with_no_client_auth(),
+        ServerVerifier::Roots(roots) => builder.with_root_certificates(roots).with_no_client_auth(),
+    };
+
+    config.enable_early_data = true;
+    config
+}
+
+pub(crate) enum ServerVerifier {
+    #[cfg(feature = "platform-verifier")]
+    Platform,
+    Roots(RootCertStore),
 }
 
 /// Initialize a sane QUIC-compatible TLS server configuration
