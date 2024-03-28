@@ -49,8 +49,7 @@ fn configure_client(
         certs.add(&rustls::Certificate(cert.to_vec()))?;
     }
 
-    let client_config = ClientConfig::with_root_certificates(certs);
-    Ok(client_config)
+    Ok(ClientConfig::with_root_certificates(certs)?)
 }
 
 /// Returns default server configuration along with its certificate.

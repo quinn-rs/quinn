@@ -5,6 +5,7 @@ use ring::aead;
 pub use rustls::Error;
 use rustls::{
     self,
+    client::ServerCertVerifier,
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Version},
 };
 
@@ -383,16 +384,18 @@ impl crypto::PacketKey for PacketKey {
 ///
 /// QUIC requires that TLS 1.3 be enabled. Advanced users can use any [`rustls::ClientConfig`] that
 /// satisfies this requirement.
-pub(crate) fn client_config(roots: rustls::RootCertStore) -> rustls::ClientConfig {
-    let mut cfg = rustls::ClientConfig::builder()
+pub(crate) fn client_config(
+    verifier: impl ServerCertVerifier + 'static,
+) -> Result<rustls::ClientConfig, rustls::Error> {
+    let mut config = rustls::ClientConfig::builder()
         .with_safe_default_cipher_suites()
         .with_safe_default_kx_groups()
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap()
-        .with_root_certificates(roots)
+        .with_protocol_versions(&[&rustls::version::TLS13])?
+        .with_custom_certificate_verifier(Arc::new(verifier))
         .with_no_client_auth();
-    cfg.enable_early_data = true;
-    cfg
+
+    config.enable_early_data = true;
+    Ok(config)
 }
 
 /// Initialize a sane QUIC-compatible TLS server configuration
