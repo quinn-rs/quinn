@@ -17,6 +17,7 @@ use lazy_static::lazy_static;
 use rustls::{Certificate, KeyLogFile, PrivateKey};
 use tracing::{info_span, trace};
 
+use super::crypto::rustls::ServerVerifier;
 use super::*;
 
 pub(super) const DEFAULT_MTU: usize = 1452;
@@ -589,7 +590,7 @@ pub(super) fn client_crypto_with_certs(certs: Vec<rustls::Certificate>) -> rustl
     for cert in certs {
         roots.add(&cert).unwrap();
     }
-    let mut config = crate::crypto::rustls::client_config(roots);
+    let mut config = crate::crypto::rustls::client_config(ServerVerifier::Roots(roots));
     config.key_log = Arc::new(KeyLogFile::new());
     config
 }

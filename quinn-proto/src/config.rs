@@ -8,7 +8,7 @@ use rand::RngCore;
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     congestion,
-    crypto::{self, HandshakeTokenKey, HmacKey},
+    crypto::{self, rustls::ServerVerifier, HandshakeTokenKey, HmacKey},
     VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MTU, MAX_UDP_PAYLOAD,
 };
 
@@ -897,20 +897,16 @@ impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
     #[cfg(feature = "platform-verifier")]
     pub fn with_platform_verifier() -> Self {
-        let mut cfg = rustls::ClientConfig::builder()
-            .with_safe_default_cipher_suites()
-            .with_safe_default_kx_groups()
-            .with_protocol_versions(&[&rustls::version::TLS13])
-            .unwrap()
-            .with_custom_certificate_verifier(Arc::new(rustls_platform_verifier::Verifier::new()))
-            .with_no_client_auth();
-        cfg.enable_early_data = true;
-        Self::new(Arc::new(cfg))
+        Self::new(Arc::new(crypto::rustls::client_config(
+            ServerVerifier::Platform,
+        )))
     }
 
     /// Create a client configuration that trusts specified trust anchors
     pub fn with_root_certificates(roots: rustls::RootCertStore) -> Self {
-        Self::new(Arc::new(crypto::rustls::client_config(roots)))
+        Self::new(Arc::new(crypto::rustls::client_config(
+            ServerVerifier::Roots(roots),
+        )))
     }
 }
 
