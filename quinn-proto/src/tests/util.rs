@@ -14,7 +14,7 @@ use std::{
 use assert_matches::assert_matches;
 use bytes::BytesMut;
 use lazy_static::lazy_static;
-use rustls::{Certificate, KeyLogFile, PrivateKey};
+use rustls::{client::WebPkiVerifier, Certificate, KeyLogFile, PrivateKey};
 use tracing::{info_span, trace};
 
 use super::*;
@@ -589,7 +589,8 @@ pub(super) fn client_crypto_with_certs(certs: Vec<rustls::Certificate>) -> rustl
     for cert in certs {
         roots.add(&cert).unwrap();
     }
-    let mut config = crate::crypto::rustls::client_config(roots);
+
+    let mut config = crate::crypto::rustls::client_config(WebPkiVerifier::new(roots, None)).unwrap();
     config.key_log = Arc::new(KeyLogFile::new());
     config
 }

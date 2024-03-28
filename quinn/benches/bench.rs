@@ -87,10 +87,9 @@ impl Context {
         let mut roots = rustls::RootCertStore::empty();
         roots.add(&cert).unwrap();
 
-        let client_config = quinn::ClientConfig::with_root_certificates(roots);
         Self {
             server_config,
-            client_config,
+            client_config: quinn::ClientConfig::with_root_certificates(roots).unwrap(),
         }
     }
 

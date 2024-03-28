@@ -31,7 +31,7 @@ fn handshake_timeout() {
     };
 
     let mut client_config =
-        crate::ClientConfig::with_root_certificates(rustls::RootCertStore::empty());
+        crate::ClientConfig::with_root_certificates(rustls::RootCertStore::empty()).unwrap();
     const IDLE_TIMEOUT: Duration = Duration::from_millis(500);
     let mut transport_config = crate::TransportConfig::default();
     transport_config
@@ -64,9 +64,9 @@ async fn close_endpoint() {
     let _guard = subscribe();
     let mut endpoint =
         Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
-    endpoint.set_default_client_config(ClientConfig::with_root_certificates(
-        rustls::RootCertStore::empty(),
-    ));
+    endpoint.set_default_client_config(
+        ClientConfig::with_root_certificates(rustls::RootCertStore::empty()).unwrap(),
+    );
 
     let conn = endpoint
         .connect(
@@ -275,7 +275,7 @@ impl EndpointFactory {
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         )
         .unwrap();
-        let mut client_config = ClientConfig::with_root_certificates(roots);
+        let mut client_config = ClientConfig::with_root_certificates(roots).unwrap();
         client_config.transport_config(transport_config);
         endpoint.set_default_client_config(client_config);
 
