@@ -40,6 +40,9 @@ struct Opt {
     /// Client address to block
     #[clap(long = "block")]
     block: Option<SocketAddr>,
+    /// Maximum number of concurrent connections to allow
+    #[clap(long = "connection-limit")]
+    connection_limit: Option<usize>,
 }
 
 fn main() {
@@ -145,7 +148,13 @@ async fn run(options: Opt) -> Result<()> {
     eprintln!("listening on {}", endpoint.local_addr()?);
 
     while let Some(conn) = endpoint.accept().await {
-        if Some(conn.remote_address()) == options.block {
+        if options
+            .connection_limit
+            .map_or(false, |n| endpoint.open_connections() >= n)
+        {
+            info!("refusing due to open connection limit");
+            conn.refuse();
+        } else if Some(conn.remote_address()) == options.block {
             info!("refusing blocked client IP address");
             conn.refuse();
         } else if options.stateless_retry && !conn.remote_address_validated() {
