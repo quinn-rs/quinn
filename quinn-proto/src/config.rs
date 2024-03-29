@@ -764,9 +764,6 @@ pub struct ServerConfig {
     /// Microseconds after a stateless retry token was issued for which it's considered valid.
     pub(crate) retry_token_lifetime: Duration,
 
-    /// Maximum number of concurrent connections
-    pub(crate) concurrent_connections: u32,
-
     /// Whether to allow clients to migrate to new addresses
     ///
     /// Improves behavior for clients that move between different internet connections or suffer NAT
@@ -787,8 +784,6 @@ impl ServerConfig {
             token_key,
             use_retry: false,
             retry_token_lifetime: Duration::from_secs(15),
-
-            concurrent_connections: 100_000,
 
             migration: true,
         }
@@ -817,15 +812,6 @@ impl ServerConfig {
     /// Duration after a stateless retry token was issued for which it's considered valid.
     pub fn retry_token_lifetime(&mut self, value: Duration) -> &mut Self {
         self.retry_token_lifetime = value;
-        self
-    }
-
-    /// Maximum number of simultaneous connections to accept.
-    ///
-    /// New incoming connections are only accepted if the total number of incoming or outgoing
-    /// connections is less than this. Outgoing connections are unaffected.
-    pub fn concurrent_connections(&mut self, value: u32) -> &mut Self {
-        self.concurrent_connections = value;
         self
     }
 
@@ -876,7 +862,6 @@ impl fmt::Debug for ServerConfig {
             .field("token_key", &"[ elided ]")
             .field("use_retry", &self.use_retry)
             .field("retry_token_lifetime", &self.retry_token_lifetime)
-            .field("concurrent_connections", &self.concurrent_connections)
             .field("migration", &self.migration)
             .finish()
     }

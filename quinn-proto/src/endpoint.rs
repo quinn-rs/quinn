@@ -344,8 +344,8 @@ impl Endpoint {
         remote: SocketAddr,
         server_name: &str,
     ) -> Result<(ConnectionHandle, Connection), ConnectError> {
-        if self.is_full() {
-            return Err(ConnectError::TooManyConnections);
+        if self.cids_exhausted() {
+            return Err(ConnectError::CidsExhausted);
         }
         if remote.port() == 0 || remote.ip().is_unspecified() {
             return Err(ConnectError::InvalidRemoteAddress(remote));
@@ -582,9 +582,7 @@ impl Endpoint {
         header: &PlainInitialHeader,
     ) -> Result<(), TransportError> {
         let server_config = self.server_config.as_ref().unwrap();
-        if self.connections.len() >= server_config.concurrent_connections as usize || self.is_full()
-        {
-            debug!("refusing connection");
+        if self.cids_exhausted() {
             return Err(TransportError::CONNECTION_REFUSED(""));
         }
 
@@ -692,21 +690,14 @@ impl Endpoint {
         }
     }
 
-    /// Reject new incoming connections without affecting existing connections
-    ///
-    /// Convenience short-hand for using
-    /// [`set_server_config`](Self::set_server_config) to update
-    /// [`concurrent_connections`](ServerConfig::concurrent_connections) to
-    /// zero.
-    pub fn reject_new_connections(&mut self) {
-        if let Some(config) = self.server_config.as_mut() {
-            Arc::make_mut(config).concurrent_connections(0);
-        }
-    }
-
     /// Access the configuration used by this endpoint
     pub fn config(&self) -> &EndpointConfig {
         &self.config
+    }
+
+    /// Number of connections that are currently open
+    pub fn open_connections(&self) -> usize {
+        self.connections.len()
     }
 
     #[cfg(test)]
@@ -729,7 +720,7 @@ impl Endpoint {
     ///
     /// We leave some space unused so that `new_cid` can be relied upon to finish quickly. We don't
     /// bother to check when CID longer than 4 bytes are used because 2^40 connections is a lot.
-    fn is_full(&self) -> bool {
+    fn cids_exhausted(&self) -> bool {
         self.local_cid_generator.cid_len() <= 4
             && self.local_cid_generator.cid_len() != 0
             && (2usize.pow(self.local_cid_generator.cid_len() as u32 * 8)
@@ -902,11 +893,11 @@ pub enum ConnectError {
     /// Indicates that a necessary component of the endpoint has been dropped or otherwise disabled.
     #[error("endpoint stopping")]
     EndpointStopping,
-    /// The number of active connections on the local endpoint is at the limit
+    /// The connection could not be created because not enough of the CID space is available
     ///
-    /// Try using longer connection IDs.
-    #[error("too many connections")]
-    TooManyConnections,
+    /// Try using longer connection IDs
+    #[error("CIDs exhausted")]
+    CidsExhausted,
     /// The domain name supplied was malformed
     #[error("invalid DNS name: {0}")]
     InvalidDnsName(String),
