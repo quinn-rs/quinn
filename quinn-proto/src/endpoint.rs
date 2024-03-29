@@ -45,6 +45,8 @@ pub struct Endpoint {
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
     allow_mtud: bool,
+    /// Time at which a stateless reset was most recently sent
+    last_stateless_reset: Option<Instant>,
 }
 
 impl Endpoint {
@@ -67,6 +69,7 @@ impl Endpoint {
             config,
             server_config,
             allow_mtud,
+            last_stateless_reset: None,
         }
     }
 
@@ -205,7 +208,7 @@ impl Endpoint {
             None => {
                 debug!("packet for unrecognized connection {}", dst_cid);
                 return self
-                    .stateless_reset(datagram_len, addresses, dst_cid, buf)
+                    .stateless_reset(now, datagram_len, addresses, dst_cid, buf)
                     .map(DatagramEvent::Response);
             }
         };
@@ -267,7 +270,7 @@ impl Endpoint {
         //
         if !dst_cid.is_empty() {
             return self
-                .stateless_reset(datagram_len, addresses, dst_cid, buf)
+                .stateless_reset(now, datagram_len, addresses, dst_cid, buf)
                 .map(DatagramEvent::Response);
         }
 
@@ -277,11 +280,20 @@ impl Endpoint {
 
     fn stateless_reset(
         &mut self,
+        now: Instant,
         inciting_dgram_len: usize,
         addresses: FourTuple,
         dst_cid: &ConnectionId,
         buf: &mut BytesMut,
     ) -> Option<Transmit> {
+        if self
+            .last_stateless_reset
+            .map_or(false, |last| last + self.config.min_reset_interval > now)
+        {
+            debug!("ignoring unexpected packet within minimum stateless reset interval");
+            return None;
+        }
+
         /// Minimum amount of padding for the stateless reset to look like a short-header packet
         const MIN_PADDING_LEN: usize = 5;
 
@@ -299,6 +311,7 @@ impl Endpoint {
             "sending stateless reset for {} to {}",
             dst_cid, addresses.remote
         );
+        self.last_stateless_reset = Some(now);
         // Resets with at least this much padding can't possibly be distinguished from real packets
         const IDEAL_MIN_PADDING_LEN: usize = MIN_PADDING_LEN + MAX_CID_SIZE;
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {

@@ -612,6 +612,8 @@ pub struct EndpointConfig {
         Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
     pub(crate) supported_versions: Vec<u32>,
     pub(crate) grease_quic_bit: bool,
+    /// Minimum interval between outgoing stateless reset packets
+    pub(crate) min_reset_interval: Duration,
 }
 
 impl EndpointConfig {
@@ -625,6 +627,7 @@ impl EndpointConfig {
             connection_id_generator_factory: Arc::new(cid_factory),
             supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
             grease_quic_bit: true,
+            min_reset_interval: Duration::from_millis(20),
         }
     }
 
@@ -696,6 +699,19 @@ impl EndpointConfig {
     /// desired.
     pub fn grease_quic_bit(&mut self, value: bool) -> &mut Self {
         self.grease_quic_bit = value;
+        self
+    }
+
+    /// Minimum interval between outgoing stateless reset packets
+    ///
+    /// Defaults to 20ms. Limits the impact of attacks which flood an endpoint with garbage packets,
+    /// e.g. [ISAKMP/IKE amplification]. Larger values provide a stronger defense, but may delay
+    /// detection of some error conditions by clients.
+    ///
+    /// [ISAKMP/IKE
+    /// amplification]: https://bughunters.google.com/blog/5960150648750080/preventing-cross-service-udp-loops-in-quic#isakmp-ike-amplification-vs-quic
+    pub fn min_reset_interval(&mut self, value: Duration) -> &mut Self {
+        self.min_reset_interval = value;
         self
     }
 }
