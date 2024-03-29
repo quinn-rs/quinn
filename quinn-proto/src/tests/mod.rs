@@ -1078,32 +1078,6 @@ fn connection_close_sends_acks() {
 }
 
 #[test]
-fn concurrent_connections_full() {
-    let _guard = subscribe();
-    let mut pair = Pair::new(
-        Default::default(),
-        ServerConfig {
-            concurrent_connections: 0,
-            ..server_config()
-        },
-    );
-    let client_ch = pair.begin_connect(client_config());
-    pair.drive();
-    assert_matches!(
-        pair.client_conn_mut(client_ch).poll(),
-        Some(Event::ConnectionLost {
-            reason: ConnectionError::ConnectionClosed(frame::ConnectionClose {
-                error_code: TransportErrorCode::CONNECTION_REFUSED,
-                ..
-            }),
-        })
-    );
-    assert_eq!(pair.server.connections.len(), 0);
-    assert_eq!(pair.server.known_connections(), 0);
-    assert_eq!(pair.server.known_cids(), 0);
-}
-
-#[test]
 fn server_hs_retransmit() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -2811,19 +2785,6 @@ fn stream_chunks(mut recv: RecvStream) -> Vec<u8> {
     let _ = chunks.finalize();
 
     buf
-}
-
-#[test]
-fn reject_new_connections() {
-    let _guard = subscribe();
-    let mut pair = Pair::default();
-    pair.server.reject_new_connections();
-
-    // The server should now reject incoming connections.
-    let client_ch = pair.begin_connect(client_config());
-    pair.drive();
-    pair.server.assert_no_accept();
-    assert!(pair.client.connections.get(&client_ch).unwrap().is_closed());
 }
 
 /// Verify that an endpoint which receives but does not send ACK-eliciting data still receives ACKs
