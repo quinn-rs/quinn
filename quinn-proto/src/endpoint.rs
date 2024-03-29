@@ -464,41 +464,15 @@ impl Endpoint {
 
         let (retry_src_cid, orig_dst_cid) = if server_config.use_retry {
             if token.is_empty() {
-                // First Initial
-                let mut random_bytes = vec![0u8; RetryToken::RANDOM_BYTES_LEN];
-                self.rng.fill_bytes(&mut random_bytes);
-                // The peer will use this as the DCID of its following Initials. Initial DCIDs are
-                // looked up separately from Handshake/Data DCIDs, so there is no risk of collision
-                // with established connections. In the unlikely event that a collision occurs
-                // between two connections in the initial phase, both will fail fast and may be
-                // retried by the application layer.
-                let loc_cid = self.local_cid_generator.generate_cid();
-
-                let token = RetryToken {
-                    orig_dst_cid: dst_cid,
-                    issued: SystemTime::now(),
-                    random_bytes: &random_bytes,
-                }
-                .encode(&*server_config.token_key, &addresses.remote, &loc_cid);
-
-                let header = Header::Retry {
-                    src_cid: loc_cid,
-                    dst_cid: src_cid,
+                return Some(DatagramEvent::Response(self.retry(
+                    dst_cid,
+                    src_cid,
                     version,
-                };
-
-                let encode = header.encode(buf);
-                buf.put_slice(&token);
-                buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, buf));
-                encode.finish(buf, &*crypto.header.local, None);
-
-                return Some(DatagramEvent::Response(Transmit {
-                    destination: addresses.remote,
-                    ecn: None,
-                    size: buf.len(),
-                    segment_size: None,
-                    src_ip: addresses.local_ip,
-                }));
+                    addresses,
+                    buf,
+                    crypto,
+                    &server_config,
+                )));
             }
 
             match RetryToken::from_bytes(
@@ -605,6 +579,53 @@ impl Endpoint {
         }
 
         Ok(())
+    }
+
+    fn retry(
+        &mut self,
+        dst_cid: ConnectionId,
+        src_cid: ConnectionId,
+        version: u32,
+        addresses: FourTuple,
+        buf: &mut BytesMut,
+        crypto: &Keys,
+        server_config: &ServerConfig,
+    ) -> Transmit {
+        // First Initial
+        let mut random_bytes = vec![0u8; RetryToken::RANDOM_BYTES_LEN];
+        self.rng.fill_bytes(&mut random_bytes);
+        // The peer will use this as the DCID of its following Initials. Initial DCIDs are
+        // looked up separately from Handshake/Data DCIDs, so there is no risk of collision
+        // with established connections. In the unlikely event that a collision occurs
+        // between two connections in the initial phase, both will fail fast and may be
+        // retried by the application layer.
+        let loc_cid = self.local_cid_generator.generate_cid();
+
+        let token = RetryToken {
+            orig_dst_cid: dst_cid,
+            issued: SystemTime::now(),
+            random_bytes: &random_bytes,
+        }
+        .encode(&*server_config.token_key, &addresses.remote, &loc_cid);
+
+        let header = Header::Retry {
+            src_cid: loc_cid,
+            dst_cid: src_cid,
+            version,
+        };
+
+        let encode = header.encode(buf);
+        buf.put_slice(&token);
+        buf.extend_from_slice(&server_config.crypto.retry_tag(version, &dst_cid, buf));
+        encode.finish(buf, &*crypto.header.local, None);
+
+        Transmit {
+            destination: addresses.remote,
+            ecn: None,
+            size: buf.len(),
+            segment_size: None,
+            src_ip: addresses.local_ip,
+        }
     }
 
     fn add_connection(
