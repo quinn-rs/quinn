@@ -1,6 +1,6 @@
-use std::time::Duration;
+use std::{hash::Hasher, time::Duration};
 
-use rand::RngCore;
+use rand::{Rng, RngCore};
 
 use crate::shared::ConnectionId;
 use crate::MAX_CID_SIZE;
@@ -34,7 +34,10 @@ pub trait ConnectionIdGenerator: Send {
 #[derive(Debug, Copy, Clone)]
 pub struct InvalidCid;
 
-/// Generates purely random connection IDs of a certain length
+/// Generates purely random connection IDs of a specified length
+///
+/// Random CIDs can be smaller than those produced by [`HashedConnectionIdGenerator`], but cannot be
+/// usefully [`validate`](ConnectionIdGenerator::validate)d.
 #[derive(Debug, Clone, Copy)]
 pub struct RandomConnectionIdGenerator {
     cid_len: usize,
@@ -84,5 +87,94 @@ impl ConnectionIdGenerator for RandomConnectionIdGenerator {
 
     fn cid_lifetime(&self) -> Option<Duration> {
         self.lifetime
+    }
+}
+
+/// Generates 8-byte connection IDs that can be efficiently
+/// [`validate`](ConnectionIdGenerator::validate)d
+///
+/// This generator uses a non-cryptographic hash and can therefore still be spoofed, but nonetheless
+/// helps prevents Quinn from responding to non-QUIC packets at very low cost.
+pub struct HashedConnectionIdGenerator {
+    key: u64,
+    lifetime: Option<Duration>,
+}
+
+impl HashedConnectionIdGenerator {
+    /// Create a generator with a random key
+    pub fn new() -> Self {
+        Self::from_key(rand::thread_rng().gen())
+    }
+
+    /// Create a generator with a specific key
+    ///
+    /// Allows [`validate`](ConnectionIdGenerator::validate) to recognize a consistent set of
+    /// connection IDs across restarts
+    pub fn from_key(key: u64) -> Self {
+        Self {
+            key,
+            lifetime: None,
+        }
+    }
+
+    /// Set the lifetime of CIDs created by this generator
+    pub fn set_lifetime(&mut self, d: Duration) -> &mut Self {
+        self.lifetime = Some(d);
+        self
+    }
+}
+
+#[cfg(feature = "ring")]
+impl Default for HashedConnectionIdGenerator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ConnectionIdGenerator for HashedConnectionIdGenerator {
+    fn generate_cid(&mut self) -> ConnectionId {
+        let mut bytes_arr = [0; NONCE_LEN + SIGNATURE_LEN];
+        rand::thread_rng().fill_bytes(&mut bytes_arr[..NONCE_LEN]);
+        let mut hasher = rustc_hash::FxHasher::default();
+        hasher.write_u64(self.key);
+        hasher.write(&bytes_arr[..NONCE_LEN]);
+        bytes_arr[NONCE_LEN..].copy_from_slice(&hasher.finish().to_le_bytes()[..SIGNATURE_LEN]);
+        ConnectionId::new(&bytes_arr)
+    }
+
+    fn validate(&self, cid: &ConnectionId) -> Result<(), InvalidCid> {
+        let (nonce, signature) = cid.split_at(NONCE_LEN);
+        let mut hasher = rustc_hash::FxHasher::default();
+        hasher.write_u64(self.key);
+        hasher.write(nonce);
+        let expected = hasher.finish().to_le_bytes();
+        match expected[..SIGNATURE_LEN] == signature[..] {
+            true => Ok(()),
+            false => Err(InvalidCid),
+        }
+    }
+
+    fn cid_len(&self) -> usize {
+        NONCE_LEN + SIGNATURE_LEN
+    }
+
+    fn cid_lifetime(&self) -> Option<Duration> {
+        self.lifetime
+    }
+}
+
+const NONCE_LEN: usize = 3; // Good for more than 16 million connections
+const SIGNATURE_LEN: usize = 8 - NONCE_LEN; // 8-byte total CID length
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    #[cfg(feature = "ring")]
+    fn validate_keyed_cid() {
+        let mut generator = HashedConnectionIdGenerator::new();
+        let cid = generator.generate_cid();
+        generator.validate(&cid).unwrap();
     }
 }
