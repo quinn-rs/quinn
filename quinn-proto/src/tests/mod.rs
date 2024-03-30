@@ -173,12 +173,15 @@ fn stateless_retry() {
 #[test]
 fn server_stateless_reset() {
     let _guard = subscribe();
-    let mut reset_key = vec![0; 64];
+    let mut key_material = vec![0; 64];
     let mut rng = rand::thread_rng();
-    rng.fill_bytes(&mut reset_key);
-    let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &reset_key);
+    rng.fill_bytes(&mut key_material);
+    let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &key_material);
+    rng.fill_bytes(&mut key_material);
 
-    let endpoint_config = Arc::new(EndpointConfig::new(Arc::new(reset_key)));
+    let mut endpoint_config = EndpointConfig::new(Arc::new(reset_key));
+    endpoint_config.cid_generator(move || Box::new(HashedConnectionIdGenerator::from_key(0)));
+    let endpoint_config = Arc::new(endpoint_config);
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (client_ch, _) = pair.connect();
@@ -200,12 +203,15 @@ fn server_stateless_reset() {
 #[test]
 fn client_stateless_reset() {
     let _guard = subscribe();
-    let mut reset_key = vec![0; 64];
+    let mut key_material = vec![0; 64];
     let mut rng = rand::thread_rng();
-    rng.fill_bytes(&mut reset_key);
-    let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &reset_key);
+    rng.fill_bytes(&mut key_material);
+    let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &key_material);
+    rng.fill_bytes(&mut key_material);
 
-    let endpoint_config = Arc::new(EndpointConfig::new(Arc::new(reset_key)));
+    let mut endpoint_config = EndpointConfig::new(Arc::new(reset_key));
+    endpoint_config.cid_generator(move || Box::new(HashedConnectionIdGenerator::from_key(0)));
+    let endpoint_config = Arc::new(endpoint_config);
 
     let mut pair = Pair::new(endpoint_config.clone(), server_config());
     let (_, server_ch) = pair.connect();
@@ -232,7 +238,9 @@ fn client_stateless_reset() {
 fn stateless_reset_limit() {
     let _guard = subscribe();
     let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 42);
-    let endpoint_config = Arc::new(EndpointConfig::default());
+    let mut endpoint_config = EndpointConfig::default();
+    endpoint_config.cid_generator(move || Box::new(RandomConnectionIdGenerator::new(8)));
+    let endpoint_config = Arc::new(endpoint_config);
     let mut endpoint = Endpoint::new(
         endpoint_config.clone(),
         Some(Arc::new(server_config())),
