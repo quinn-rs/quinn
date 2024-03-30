@@ -706,7 +706,9 @@ impl EndpointConfig {
     ///
     /// Defaults to 20ms. Limits the impact of attacks which flood an endpoint with garbage packets,
     /// e.g. [ISAKMP/IKE amplification]. Larger values provide a stronger defense, but may delay
-    /// detection of some error conditions by clients.
+    /// detection of some error conditions by clients. Using a [`ConnectionIdGenerator`] with a low
+    /// rate of false positives in [`validate`](ConnectionIdGenerator::validate) reduces the risk
+    /// incurred by a small minimum reset interval.
     ///
     /// [ISAKMP/IKE
     /// amplification]: https://bughunters.google.com/blog/5960150648750080/preventing-cross-service-udp-loops-in-quic#isakmp-ike-amplification-vs-quic
