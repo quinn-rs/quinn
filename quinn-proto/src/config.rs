@@ -6,7 +6,7 @@ use thiserror::Error;
 use rand::RngCore;
 
 use crate::{
-    cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
+    cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     congestion,
     crypto::{self, HandshakeTokenKey, HmacKey},
     VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MTU, MAX_UDP_PAYLOAD,
@@ -620,7 +620,7 @@ impl EndpointConfig {
     /// Create a default config with a particular `reset_key`
     pub fn new(reset_key: Arc<dyn HmacKey>) -> Self {
         let cid_factory: fn() -> Box<dyn ConnectionIdGenerator> =
-            || Box::<RandomConnectionIdGenerator>::default();
+            || Box::<HashedConnectionIdGenerator>::default();
         Self {
             reset_key,
             max_udp_payload_size: (1500u32 - 28).into(), // Ethernet MTU minus IP + UDP headers
@@ -638,9 +638,7 @@ impl EndpointConfig {
     /// connections involving that  `Endpoint`. A custom CID generator allows applications to embed
     /// information in local connection IDs, e.g. to support stateless packet-level load balancers.
     ///
-    /// `EndpointConfig::new()` applies a default random CID generator factory. This functions
-    /// accepts any customized CID generator to reset CID generator factory that implements
-    /// the `ConnectionIdGenerator` trait.
+    /// Defaults to [`HashedConnectionIdGenerator`].
     pub fn cid_generator<F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static>(
         &mut self,
         factory: F,
