@@ -422,7 +422,8 @@ pub(crate) fn client_config(verifier: ServerVerifier) -> rustls::ClientConfig {
             .dangerous()
             .with_custom_certificate_verifier(Arc::new(rustls_platform_verifier::Verifier::new())),
         ServerVerifier::Roots(roots) => builder.with_root_certificates(roots),
-    }.with_no_client_auth();
+    }
+    .with_no_client_auth();
 
     config.enable_early_data = true;
     config

@@ -382,12 +382,10 @@ fn reject_missing_client_cert() {
     let mut store = RootCertStore::empty();
     // `WebPkiClientVerifier` requires a non-empty store, so we stick our own certificate into it
     // because it's convenient.
-    store
-        .add(CERTIFICATE.serialize_der().unwrap().into())
-        .unwrap();
+    store.add(CERTIFIED_KEY.cert.der().clone()).unwrap();
 
-    let key = PrivatePkcs8KeyDer::from(CERTIFICATE.serialize_private_key_der());
-    let cert = CertificateDer::from(util::CERTIFICATE.serialize_der().unwrap());
+    let key = PrivatePkcs8KeyDer::from(CERTIFIED_KEY.key_pair.serialize_der());
+    let cert = CERTIFIED_KEY.cert.der().clone();
 
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = rustls::ServerConfig::builder_with_provider(provider.clone())
@@ -1967,8 +1965,8 @@ fn big_cert_and_key() -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
     .unwrap();
 
     (
-        CertificateDer::from(cert.serialize_der().unwrap()),
-        PrivateKeyDer::Pkcs8(cert.serialize_private_key_der().into()),
+        cert.cert.into(),
+        PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into()),
     )
 }
 

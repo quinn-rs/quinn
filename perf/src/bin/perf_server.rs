@@ -67,8 +67,8 @@ async fn run(opt: Opt) -> Result<()> {
         _ => {
             let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
             (
-                PrivatePkcs8KeyDer::from(cert.serialize_private_key_der()),
-                vec![CertificateDer::from(cert.serialize_der().unwrap())],
+                PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
+                vec![CertificateDer::from(cert.cert)],
             )
         }
     };

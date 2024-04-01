@@ -86,24 +86,26 @@ async fn run(options: Opt) -> Result<()> {
         let cert_path = path.join("cert.der");
         let key_path = path.join("key.der");
         let (cert, key) = match fs::read(&cert_path).and_then(|x| Ok((x, fs::read(&key_path)?))) {
-            Ok(x) => x,
+            Ok((cert, key)) => (
+                CertificateDer::from(cert),
+                PrivateKeyDer::try_from(key).map_err(|err| anyhow::Error::msg(err))?,
+            ),
             Err(ref e) if e.kind() == io::ErrorKind::NotFound => {
                 info!("generating self-signed certificate");
                 let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-                let key = cert.serialize_private_key_der();
-                let cert = cert.serialize_der().unwrap();
+                let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+                let cert = cert.cert.into();
                 fs::create_dir_all(path).context("failed to create certificate directory")?;
                 fs::write(&cert_path, &cert).context("failed to write certificate")?;
-                fs::write(&key_path, &key).context("failed to write private key")?;
-                (cert, key)
+                fs::write(&key_path, key.secret_pkcs8_der())
+                    .context("failed to write private key")?;
+                (cert, key.into())
             }
             Err(e) => {
                 bail!("failed to read certificate: {}", e);
             }
         };
 
-        let key = PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key));
-        let cert = CertificateDer::from(cert);
         (vec![cert], key)
     };
 
