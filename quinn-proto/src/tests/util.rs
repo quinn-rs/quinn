@@ -581,8 +581,8 @@ fn server_crypto_inner(
 ) -> rustls::ServerConfig {
     let (cert, key) = identity.unwrap_or_else(|| {
         (
-            CertificateDer::from(CERTIFICATE.serialize_der().unwrap()),
-            PrivateKeyDer::Pkcs8(CERTIFICATE.serialize_private_key_der().into()),
+            CERTIFIED_KEY.cert.der().clone(),
+            PrivateKeyDer::Pkcs8(CERTIFIED_KEY.key_pair.serialize_der().into()),
         )
     });
 
@@ -622,11 +622,8 @@ fn client_crypto_inner(
     certs: Option<Vec<CertificateDer<'static>>>,
     alpn: Option<Vec<Vec<u8>>>,
 ) -> rustls::ClientConfig {
-    let certs =
-        certs.unwrap_or_else(|| vec![CertificateDer::from(CERTIFICATE.serialize_der().unwrap())]);
-
     let mut roots = rustls::RootCertStore::empty();
-    for cert in certs {
+    for cert in certs.unwrap_or_else(|| vec![CERTIFIED_KEY.cert.der().clone()]) {
         roots.add(cert).unwrap();
     }
 
@@ -702,6 +699,6 @@ fn set_congestion_experienced(
 lazy_static! {
     pub static ref SERVER_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(4433..);
     pub static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
-    pub(crate) static ref CERTIFICATE: rcgen::Certificate =
+    pub(crate) static ref CERTIFIED_KEY: rcgen::CertifiedKey =
         rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
 }

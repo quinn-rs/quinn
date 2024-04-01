@@ -8,6 +8,7 @@ use quinn::Endpoint;
 
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};
+use rustls::pki_types::CertificateDer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
@@ -37,7 +38,9 @@ async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
 }
 
 /// Runs a QUIC server bound to given address and returns server certificate.
-fn run_server(addr: SocketAddr) -> Result<Vec<u8>, Box<dyn Error + Send + Sync + 'static>> {
+fn run_server(
+    addr: SocketAddr,
+) -> Result<CertificateDer<'static>, Box<dyn Error + Send + Sync + 'static>> {
     let (endpoint, server_cert) = make_server_endpoint(addr)?;
     // accept a single connection
     tokio::spawn(async move {
