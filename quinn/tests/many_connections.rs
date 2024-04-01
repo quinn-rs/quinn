@@ -153,8 +153,8 @@ fn configure_listener() -> (quinn::ServerConfig, CertificateDer<'static>) {
 fn gen_cert() -> (CertificateDer<'static>, PrivatePkcs8KeyDer<'static>) {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
     (
-        CertificateDer::from(cert.serialize_der().unwrap()),
-        PrivatePkcs8KeyDer::from(cert.serialize_private_key_der()),
+        cert.cert.into(),
+        PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der()),
     )
 }
 

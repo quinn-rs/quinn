@@ -413,20 +413,17 @@ fn reject_self_signed_server_cert() {
     // Create a self-signed certificate with a different distinguished name than the default one,
     // such that path building cannot confuse the default root the server is using and the one
     // the client is trusting (in which case we'd get a different error).
-    let mut cert = rcgen::CertificateParams::new(["localhost".into()]);
+    let mut cert = rcgen::CertificateParams::new(["localhost".into()]).unwrap();
     let mut issuer = rcgen::DistinguishedName::new();
     issuer.push(
         rcgen::DnType::OrganizationName,
         "Crazy Quinn's House of Certificates",
     );
     cert.distinguished_name = issuer;
-    let cert = CertificateDer::from(
-        rcgen::Certificate::from_params(cert)
-            .unwrap()
-            .serialize_der()
-            .unwrap(),
-    );
-    let client_ch = pair.begin_connect(client_config_with_certs(vec![cert]));
+    let cert = cert
+        .self_signed(&rcgen::KeyPair::generate().unwrap())
+        .unwrap();
+    let client_ch = pair.begin_connect(client_config_with_certs(vec![cert.into()]));
 
     pair.drive();
 
@@ -442,12 +439,10 @@ fn reject_missing_client_cert() {
     let mut store = RootCertStore::empty();
     // `WebPkiClientVerifier` requires a non-empty store, so we stick our own certificate into it
     // because it's convenient.
-    store
-        .add(CERTIFICATE.serialize_der().unwrap().into())
-        .unwrap();
+    store.add(CERTIFIED_KEY.cert.der().clone()).unwrap();
 
-    let key = PrivatePkcs8KeyDer::from(CERTIFICATE.serialize_private_key_der());
-    let cert = CertificateDer::from(util::CERTIFICATE.serialize_der().unwrap());
+    let key = PrivatePkcs8KeyDer::from(CERTIFIED_KEY.key_pair.serialize_der());
+    let cert = CERTIFIED_KEY.cert.der().clone();
 
     let provider = Arc::new(rustls::crypto::ring::default_provider());
     let config = rustls::ServerConfig::builder_with_provider(provider.clone())
@@ -2008,8 +2003,8 @@ fn big_cert_and_key() -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
     .unwrap();
 
     (
-        CertificateDer::from(cert.serialize_der().unwrap()),
-        PrivateKeyDer::Pkcs8(cert.serialize_private_key_der().into()),
+        cert.cert.into(),
+        PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into()),
     )
 }
 

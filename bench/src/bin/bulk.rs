@@ -22,8 +22,8 @@ fn main() {
     configure_tracing_subscriber();
 
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key = PrivatePkcs8KeyDer::from(cert.serialize_private_key_der());
-    let cert = CertificateDer::from(cert.serialize_der().unwrap());
+    let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    let cert = CertificateDer::from(cert.cert);
 
     let server_span = tracing::error_span!("server");
     let runtime = rt();

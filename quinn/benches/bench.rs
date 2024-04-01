@@ -77,8 +77,8 @@ struct Context {
 impl Context {
     fn new() -> Self {
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-        let key = PrivatePkcs8KeyDer::from(cert.serialize_private_key_der());
-        let cert = CertificateDer::from(cert.serialize_der().unwrap());
+        let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let cert = CertificateDer::from(cert.cert);
 
         let mut server_config =
             quinn::ServerConfig::with_single_cert(vec![cert.clone()], key.into()).unwrap();
