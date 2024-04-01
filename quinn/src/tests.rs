@@ -249,7 +249,7 @@ fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
 }
 
 /// Constructs endpoints suitable for connecting to themselves and each other
-struct EndpointFactory(rcgen::Certificate);
+struct EndpointFactory(rcgen::CertifiedKey);
 
 impl EndpointFactory {
     fn new() -> Self {
@@ -261,15 +261,14 @@ impl EndpointFactory {
     }
 
     fn endpoint_with_config(&self, transport_config: TransportConfig) -> Endpoint {
-        let cert = CertificateDer::from(self.0.serialize_der().unwrap());
-        let key = PrivateKeyDer::Pkcs8(self.0.serialize_private_key_der().into());
+        let key = PrivateKeyDer::Pkcs8(self.0.key_pair.serialize_der().into());
         let transport_config = Arc::new(transport_config);
         let mut server_config =
-            crate::ServerConfig::with_single_cert(vec![cert.clone()], key).unwrap();
+            crate::ServerConfig::with_single_cert(vec![self.0.cert.der().clone()], key).unwrap();
         server_config.transport_config(transport_config.clone());
 
         let mut roots = rustls::RootCertStore::empty();
-        roots.add(cert).unwrap();
+        roots.add(self.0.cert.der().clone()).unwrap();
         let mut endpoint = Endpoint::server(
             server_config,
             SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
@@ -468,9 +467,8 @@ fn run_echo(args: EchoArgs) {
         // We don't use the `endpoint` helper here because we want two different endpoints with
         // different addresses.
         let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-        let key = PrivatePkcs8KeyDer::from(cert.serialize_private_key_der());
-        let cert_der = cert.serialize_der().unwrap();
-        let cert = CertificateDer::from(cert_der);
+        let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+        let cert = CertificateDer::from(cert.cert);
         let mut server_config =
             crate::ServerConfig::with_single_cert(vec![cert.clone()], key.into()).unwrap();
 
@@ -654,8 +652,8 @@ async fn rebind_recv() {
     let _guard = subscribe();
 
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
-    let key = PrivatePkcs8KeyDer::from(cert.serialize_private_key_der());
-    let cert = CertificateDer::from(cert.serialize_der().unwrap());
+    let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    let cert = CertificateDer::from(cert.cert);
 
     let mut roots = rustls::RootCertStore::empty();
     roots.add(cert.clone()).unwrap();
