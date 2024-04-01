@@ -56,7 +56,7 @@ crc = "3"
 bencher = "0.1.5"
 directories-next = "2"
 rand = "0.8"
-rcgen = "0.12.0"
+rcgen = "0.13.0"
 rustls-pemfile = "1.0.0"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.28.1", features = ["rt", "rt-multi-thread", "time", "macros", "sync"] }
