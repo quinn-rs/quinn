@@ -221,7 +221,7 @@ impl Endpoint {
         // Generate some activity so peers notice the rebind
         for sender in inner.connections.senders.values() {
             // Ignoring errors from dropped connections
-            let _ = sender.send(ConnectionEvent::Ping);
+            let _ = sender.send(ConnectionEvent::LocalAddressChanged);
         }
 
         Ok(())

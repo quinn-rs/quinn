@@ -96,8 +96,8 @@ enum ConnectionEvent {
         error_code: VarInt,
         reason: bytes::Bytes,
     },
+    LocalAddressChanged,
     Proto(proto::ConnectionEvent),
-    Ping,
 }
 
 #[derive(Debug)]
