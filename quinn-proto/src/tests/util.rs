@@ -575,11 +575,11 @@ pub(super) fn server_crypto_with_cert(
 }
 
 pub(super) fn client_config() -> ClientConfig {
-    ClientConfig::new(Arc::new(client_crypto()))
+    ClientConfig::new(Arc::new(get_client_crypto()))
 }
 
 pub(super) fn client_config_with_deterministic_pns() -> ClientConfig {
-    let mut cfg = ClientConfig::new(Arc::new(client_crypto()));
+    let mut cfg = ClientConfig::new(Arc::new(get_client_crypto()));
     let mut transport = TransportConfig::default();
     transport.deterministic_packet_numbers(true);
     cfg.transport = Arc::new(transport);
@@ -590,7 +590,7 @@ pub(super) fn client_config_with_certs(certs: Vec<CertificateDer<'static>>) -> C
     ClientConfig::new(Arc::new(client_crypto_with_certs(certs)))
 }
 
-pub(super) fn client_crypto() -> QuicClientConfig {
+pub(super) fn get_client_crypto() -> QuicClientConfig {
     client_crypto_with_certs(vec![CERTIFIED_KEY.cert.der().clone()])
 }
 
@@ -599,8 +599,8 @@ pub(super) fn client_crypto_with_certs(certs: Vec<CertificateDer<'static>>) -> Q
     for cert in certs {
         roots.add(cert).unwrap();
     }
-    let mut config = crate::crypto::rustls::client_config(ServerVerifier::Roots(roots));
-    config.key_log = Arc::new(KeyLogFile::new());
+    let mut config = QuicClientConfig::new(ServerVerifier::Roots(roots));
+    Arc::get_mut(config.deref_mut()).unwrap().key_log = Arc::new(KeyLogFile::new());
     config
 }
 

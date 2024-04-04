@@ -1,4 +1,10 @@
-use std::{any::Any, io, str, sync::Arc};
+use std::{
+    any::Any,
+    io,
+    ops::{Deref, DerefMut},
+    str,
+    sync::Arc,
+};
 
 use bytes::BytesMut;
 use ring::aead;
@@ -255,6 +261,20 @@ pub struct QuicClientConfig {
     initial: Suite,
 }
 
+impl Deref for QuicClientConfig {
+    type Target = Arc<rustls::ClientConfig>;
+
+    fn deref(&self) -> &Self::Target {
+        &self.inner
+    }
+}
+
+impl DerefMut for QuicClientConfig {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        &mut self.inner
+    }
+}
+
 impl QuicClientConfig {
     /// Initialize a sane QUIC-compatible TLS client configuration
     ///
@@ -347,6 +367,39 @@ impl crypto::ClientConfig for QuicClientConfig {
                 suite: self.initial.suite,
                 quic: self.initial.quic,
             },
+        }))
+    }
+}
+
+impl crypto::ClientConfig for rustls::ClientConfig {
+    fn start_session(
+        self: Arc<Self>,
+        version: u32,
+        server_name: &str,
+        params: &TransportParameters,
+    ) -> Result<Box<dyn crypto::Session>, ConnectError> {
+        let version = interpret_version(version)?;
+        Ok(Box::new(TlsSession {
+            version,
+            got_handshake_data: false,
+            next_secrets: None,
+            inner: rustls::quic::Connection::Client(
+                rustls::quic::ClientConnection::new(
+                    self.clone(),
+                    version,
+                    ServerName::try_from(server_name)
+                        .map_err(|_| {
+                            ConnectError::InvalidRemoteAddress(
+                                server_name.parse().expect("cannot parse address"),
+                            )
+                        })?
+                        .to_owned(),
+                    to_vec(params),
+                )
+                .map_err(|_| ConnectError::NoDefaultClientConfig)?,
+            ),
+            suite: initial_suite_from_provider(self.crypto_provider())
+                .ok_or(ConnectError::NoDefaultClientConfig)?,
         }))
     }
 }

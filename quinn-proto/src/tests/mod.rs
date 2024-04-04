@@ -2,6 +2,7 @@ use std::{
     convert::TryInto,
     mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    ops::DerefMut,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -572,9 +573,12 @@ fn zero_rtt_rejection() {
     server_crypto.alpn_protocols = vec!["foo".into(), "bar".into()];
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
-    let mut client_crypto = client_crypto();
-    client_crypto.alpn_protocols = vec!["foo".into()];
-    let client_config = ClientConfig::new(Arc::new(client_crypto.clone()));
+    let mut client_crypto = get_client_crypto();
+    Arc::get_mut(client_crypto.deref_mut())
+        .unwrap()
+        .alpn_protocols = vec!["foo".into()];
+    let mut inner = client_crypto.clone();
+    let client_config = ClientConfig::new(Arc::new(client_crypto));
 
     // Establish normal connection
     let client_ch = pair.begin_connect(client_config);
@@ -604,8 +608,8 @@ fn zero_rtt_rejection() {
     pair.server.connections.clear();
 
     // Changing protocols invalidates 0-RTT
-    client_crypto.alpn_protocols = vec!["bar".into()];
-    let client_config = ClientConfig::new(Arc::new(client_crypto));
+    Arc::get_mut(&mut inner).unwrap().alpn_protocols = vec!["bar".into()];
+    let client_config = ClientConfig::new(inner);
     info!("resuming session");
     let client_ch = pair.begin_connect(client_config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
@@ -641,8 +645,10 @@ fn alpn_success() {
     server_crypto.alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
-    let mut client_crypto = client_crypto();
-    client_crypto.alpn_protocols = vec!["bar".into(), "quux".into(), "corge".into()];
+    let mut client_crypto = get_client_crypto();
+    Arc::get_mut(client_crypto.deref_mut())
+        .unwrap()
+        .alpn_protocols = vec!["bar".into(), "quux".into(), "corge".into()];
     let client_config = ClientConfig::new(Arc::new(client_crypto));
 
     // Establish normal connection
@@ -673,8 +679,10 @@ fn server_alpn_unset() {
     let _guard = subscribe();
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config());
 
-    let mut client_crypto = client_crypto();
-    client_crypto.alpn_protocols = vec!["foo".into()];
+    let mut client_crypto = get_client_crypto();
+    Arc::get_mut(client_crypto.deref_mut())
+        .unwrap()
+        .alpn_protocols = vec!["foo".into()];
     let client_config = ClientConfig::new(Arc::new(client_crypto));
 
     let client_ch = pair.begin_connect(client_config);
@@ -709,8 +717,10 @@ fn alpn_mismatch() {
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
 
-    let mut client_crypto = client_crypto();
-    client_crypto.alpn_protocols = vec!["quux".into(), "corge".into()];
+    let mut client_crypto = get_client_crypto();
+    Arc::get_mut(client_crypto.deref_mut())
+        .unwrap()
+        .alpn_protocols = vec!["quux".into(), "corge".into()];
     let client_config = ClientConfig::new(Arc::new(client_crypto));
 
     let client_ch = pair.begin_connect(client_config);
@@ -1715,11 +1725,13 @@ fn large_initial() {
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
 
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
-    let mut client_crypto = client_crypto();
+    let mut client_crypto = get_client_crypto();
     let protocols = (0..1000u32)
         .map(|x| x.to_be_bytes().to_vec())
         .collect::<Vec<_>>();
-    client_crypto.alpn_protocols = protocols;
+    Arc::get_mut(client_crypto.deref_mut())
+        .unwrap()
+        .alpn_protocols = protocols;
     let cfg = ClientConfig::new(Arc::new(client_crypto));
     let client_ch = pair.begin_connect(cfg);
     pair.drive();
