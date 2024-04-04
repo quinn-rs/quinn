@@ -3,7 +3,6 @@ use std::{
     future::Future,
     io,
     io::IoSliceMut,
-    mem::MaybeUninit,
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
@@ -432,20 +431,20 @@ pub(crate) struct Shared {
 }
 
 impl State {
-    fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
         self.recv_limiter.start_cycle();
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
-        let mut iovs = MaybeUninit::<[IoSliceMut<'a>; BATCH_SIZE]>::uninit();
-        self.recv_buf
-            .chunks_mut(self.recv_buf.len() / BATCH_SIZE)
-            .enumerate()
-            .for_each(|(i, buf)| unsafe {
-                iovs.as_mut_ptr()
-                    .cast::<IoSliceMut>()
-                    .add(i)
-                    .write(IoSliceMut::<'a>::new(buf));
-            });
-        let mut iovs = unsafe { iovs.assume_init() };
+        let mut iovs: [IoSliceMut; BATCH_SIZE] = {
+            let mut bufs = self
+                .recv_buf
+                .chunks_mut(self.recv_buf.len() / BATCH_SIZE)
+                .map(IoSliceMut::new);
+
+            // expect() safe as self.recv_buf is chunked into BATCH_SIZE items
+            // and iovs will be of size BATCH_SIZE, thus from_fn is called
+            // exactly BATCH_SIZE times.
+            std::array::from_fn(|_| bufs.next().expect("BATCH_SIZE elements"))
+        };
         loop {
             match self.socket.poll_recv(cx, &mut iovs, &mut metas) {
                 Poll::Ready(Ok(msgs)) => {
