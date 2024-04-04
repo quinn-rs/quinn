@@ -952,7 +952,7 @@ pub(crate) struct State {
 
 impl State {
     fn drive_transmit(&mut self, cx: &mut Context) -> io::Result<bool> {
-        let now = Instant::now();
+        let now = self.runtime.now();
         let mut transmits = 0;
 
         let max_datagrams = self.socket.max_transmit_segments();
@@ -1170,7 +1170,7 @@ impl State {
 
         // A timer expired, so the caller needs to check for
         // new transmits, which might cause new timers to be set.
-        self.inner.handle_timeout(Instant::now());
+        self.inner.handle_timeout(self.runtime.now());
         self.timer_deadline = None;
         true
     }
@@ -1213,7 +1213,7 @@ impl State {
     }
 
     fn close(&mut self, error_code: VarInt, reason: Bytes, shared: &Shared) {
-        self.inner.close(Instant::now(), error_code, reason);
+        self.inner.close(self.runtime.now(), error_code, reason);
         self.terminate(ConnectionError::LocallyClosed, shared);
         self.wake();
     }

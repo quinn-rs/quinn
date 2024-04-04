@@ -44,6 +44,8 @@ mod tracking {
         ///
         /// The purpose will be recorded in the list of last lock owners
         pub(crate) fn lock(&self, purpose: &'static str) -> MutexGuard<T> {
+            // We don't bother dispatching through Runtime::now because they're pure performance
+            // diagnostics.
             let now = Instant::now();
             let guard = self.inner.lock().unwrap();
 

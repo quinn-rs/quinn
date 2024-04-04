@@ -19,6 +19,12 @@ pub trait Runtime: Send + Sync + Debug + 'static {
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
     /// Convert `t` into the socket type used by this runtime
     fn wrap_udp_socket(&self, t: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>>;
+    /// Look up the current time
+    ///
+    /// Allows simulating the flow of time for testing.
+    fn now(&self) -> Instant {
+        Instant::now()
+    }
 }
 
 /// Abstract implementation of an async timer for runtime independence
