@@ -22,7 +22,7 @@ use crate::{
     crypto::{self, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
-    packet::{Header, InitialHeader, LongType, Packet, PartialDecode, SpaceId},
+    packet::{Header, InitialHeader, InitialPacket, LongType, Packet, PartialDecode, SpaceId},
     range_set::ArrayRangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
@@ -1807,7 +1807,7 @@ impl Connection {
         remote: SocketAddr,
         ecn: Option<EcnCodepoint>,
         packet_number: u64,
-        packet: Packet,
+        packet: InitialPacket,
         remaining: Option<BytesMut>,
     ) -> Result<(), ConnectionError> {
         let span = trace_span!("first recv");
@@ -1817,12 +1817,9 @@ impl Connection {
         self.path.total_recvd = len as u64;
 
         match self.state {
-            State::Handshake(ref mut state) => match packet.header {
-                Header::Initial(InitialHeader { ref token, .. }) => {
-                    state.expected_token = token.clone();
-                }
-                _ => unreachable!("first packet must be an Initial packet"),
-            },
+            State::Handshake(ref mut state) => {
+                state.expected_token = packet.header.token.clone();
+            }
             _ => unreachable!("first packet must be delivered in Handshake state"),
         }
 
@@ -1835,7 +1832,7 @@ impl Connection {
             false,
         );
 
-        self.process_decrypted_packet(now, remote, Some(packet_number), packet)?;
+        self.process_decrypted_packet(now, remote, Some(packet_number), packet.into())?;
         if let Some(data) = remaining {
             self.handle_coalesced(now, remote, ecn, data);
         }
