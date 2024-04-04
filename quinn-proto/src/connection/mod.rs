@@ -2909,6 +2909,12 @@ impl Connection {
         );
     }
 
+    /// Handle a change in the local address, i.e. an active migration
+    pub fn local_address_changed(&mut self) {
+        self.update_rem_cid();
+        self.ping();
+    }
+
     /// Switch to a previously unused remote connection ID, if possible
     fn update_rem_cid(&mut self) {
         let (reset_token, retired) = match self.rem_cids.next() {
