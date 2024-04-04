@@ -431,7 +431,7 @@ pub(crate) struct Shared {
 }
 
 impl State {
-    fn drive_recv<'a>(&'a mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
         self.recv_limiter.start_cycle();
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
         let mut iovs: [IoSliceMut; BATCH_SIZE] = {
