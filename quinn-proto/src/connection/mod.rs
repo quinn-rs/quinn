@@ -22,7 +22,7 @@ use crate::{
     crypto::{self, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
-    packet::{Header, LongType, Packet, PartialDecode, SpaceId},
+    packet::{Header, InitialHeader, LongType, Packet, PartialDecode, SpaceId},
     range_set::ArrayRangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
@@ -1818,7 +1818,7 @@ impl Connection {
 
         match self.state {
             State::Handshake(ref mut state) => match packet.header {
-                Header::Initial { ref token, .. } => {
+                Header::Initial(InitialHeader { ref token, .. }) => {
                     state.expected_token = token.clone();
                 }
                 _ => unreachable!("first packet must be an Initial packet"),
@@ -2144,7 +2144,7 @@ impl Connection {
                     trace!("dropping short packet during handshake");
                     return;
                 } else {
-                    if let Header::Initial { ref token, .. } = packet.header {
+                    if let Header::Initial(InitialHeader { ref token, .. }) = packet.header {
                         if let State::Handshake(ref hs) = self.state {
                             if self.side.is_server() && token != &hs.expected_token {
                                 // Clients must send the same retry token in every Initial. Initial
@@ -2408,9 +2408,9 @@ impl Connection {
                 trace!("established");
                 Ok(())
             }
-            Header::Initial {
+            Header::Initial(InitialHeader {
                 src_cid: rem_cid, ..
-            } => {
+            }) => {
                 if !state.rem_cid_set {
                     trace!("switching remote CID to {}", rem_cid);
                     let mut state = state.clone();

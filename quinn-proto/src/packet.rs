@@ -131,13 +131,13 @@ impl PartialDecode {
             let header_data = bytes.split_to(header_len).freeze();
             let token = header_data.slice(token_pos.start..token_pos.end);
             return Ok(Packet {
-                header: Header::Initial {
+                header: Header::Initial(InitialHeader {
                     dst_cid,
                     src_cid,
                     token,
                     number,
                     version,
-                },
+                }),
                 header_data,
                 payload: bytes,
             });
@@ -235,13 +235,7 @@ impl Packet {
 #[cfg_attr(test, derive(Clone))]
 #[derive(Debug)]
 pub(crate) enum Header {
-    Initial {
-        dst_cid: ConnectionId,
-        src_cid: ConnectionId,
-        token: Bytes,
-        number: PacketNumber,
-        version: u32,
-    },
+    Initial(InitialHeader),
     Long {
         ty: LongType,
         dst_cid: ConnectionId,
@@ -272,13 +266,13 @@ impl Header {
         use self::Header::*;
         let start = w.len();
         match *self {
-            Initial {
+            Initial(InitialHeader {
                 ref dst_cid,
                 ref src_cid,
                 ref token,
                 number,
                 version,
-            } => {
+            }) => {
                 w.write(u8::from(LongHeaderType::Initial) | number.tag());
                 w.write(version);
                 dst_cid.encode_long(w);
@@ -373,7 +367,7 @@ impl Header {
     pub(crate) fn number(&self) -> Option<PacketNumber> {
         use self::Header::*;
         Some(match *self {
-            Initial { number, .. } => number,
+            Initial(InitialHeader { number, .. }) => number,
             Long { number, .. } => number,
             Short { number, .. } => number,
             _ => {
@@ -426,7 +420,7 @@ impl Header {
     pub(crate) fn dst_cid(&self) -> &ConnectionId {
         use self::Header::*;
         match *self {
-            Initial { ref dst_cid, .. } => dst_cid,
+            Initial(InitialHeader { ref dst_cid, .. }) => dst_cid,
             Long { ref dst_cid, .. } => dst_cid,
             Retry { ref dst_cid, .. } => dst_cid,
             Short { ref dst_cid, .. } => dst_cid,
@@ -616,6 +610,15 @@ pub(crate) struct PlainInitialHeader {
     pub(crate) src_cid: ConnectionId,
     pub(crate) token_pos: Range<usize>,
     pub(crate) len: u64,
+    pub(crate) version: u32,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct InitialHeader {
+    pub(crate) dst_cid: ConnectionId,
+    pub(crate) src_cid: ConnectionId,
+    pub(crate) token: Bytes,
+    pub(crate) number: PacketNumber,
     pub(crate) version: u32,
 }
 
@@ -854,13 +857,13 @@ mod tests {
         let dcid = ConnectionId::new(&hex!("06b858ec6f80452b"));
         let client = initial_keys(Version::V1, &dcid, Side::Client);
         let mut buf = BytesMut::new();
-        let header = Header::Initial {
+        let header = Header::Initial(InitialHeader {
             number: PacketNumber::U8(0),
             src_cid: ConnectionId::new(&[]),
             dst_cid: dcid,
             token: Bytes::new(),
             version: DEFAULT_SUPPORTED_VERSIONS[0],
-        };
+        });
         let encode = header.encode(&mut buf);
         let header_len = buf.len();
         buf.resize(header_len + 16 + client.packet.local.tag_len(), 0);
@@ -899,10 +902,10 @@ mod tests {
             .unwrap();
         assert_eq!(packet.payload[..], [0; 16]);
         match packet.header {
-            Header::Initial {
+            Header::Initial(InitialHeader {
                 number: PacketNumber::U8(0),
                 ..
-            } => {}
+            }) => {}
             _ => {
                 panic!("unexpected header {:?}", packet.header);
             }

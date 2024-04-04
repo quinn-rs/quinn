@@ -6,6 +6,7 @@ use tracing::{trace, trace_span};
 
 use super::{spaces::SentPacket, Connection, SentFrames};
 use crate::{
+    connection::InitialHeader,
     frame::{self, Close},
     packet::{Header, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
     TransportError, TransportErrorCode,
@@ -114,13 +115,13 @@ impl PacketBuilder {
                 number,
                 version,
             },
-            SpaceId::Initial => Header::Initial {
+            SpaceId::Initial => Header::Initial(InitialHeader {
                 src_cid: conn.handshake_cid,
                 dst_cid: conn.rem_cids.active(),
                 token: conn.retry_token.clone(),
                 number,
                 version,
-            },
+            }),
         };
         let partial_encode = header.encode(buffer);
         if conn.peer_params.grease_quic_bit && conn.rng.gen() {

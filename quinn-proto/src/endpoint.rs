@@ -22,7 +22,10 @@ use crate::{
     connection::{Connection, ConnectionError},
     crypto::{self, Keys, UnsupportedVersion},
     frame,
-    packet::{Header, Packet, PacketDecodeError, PacketNumber, PartialDecode, PlainInitialHeader},
+    packet::{
+        Header, InitialHeader, Packet, PacketDecodeError, PacketNumber, PartialDecode,
+        PlainInitialHeader,
+    },
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
         EndpointEventInner, IssuedCid,
@@ -433,14 +436,14 @@ impl Endpoint {
         buf: &mut BytesMut,
     ) -> Option<DatagramEvent> {
         let (src_cid, dst_cid, token, packet_number, version) = match packet.header {
-            Header::Initial {
+            Header::Initial(InitialHeader {
                 src_cid,
                 dst_cid,
                 ref token,
                 number,
                 version,
                 ..
-            } => (src_cid, dst_cid, token.clone(), number, version),
+            }) => (src_cid, dst_cid, token.clone(), number, version),
             _ => panic!("non-initial packet in handle_first_packet()"),
         };
         let packet_number = packet_number.expand(0);
@@ -766,13 +769,13 @@ impl Endpoint {
         // unexpected response.
         let local_id = self.local_cid_generator.generate_cid();
         let number = PacketNumber::U8(0);
-        let header = Header::Initial {
+        let header = Header::Initial(InitialHeader {
             dst_cid: *remote_id,
             src_cid: local_id,
             number,
             token: Bytes::new(),
             version,
-        };
+        });
 
         let partial_encode = header.encode(buf);
         let max_len =
