@@ -440,6 +440,9 @@ impl State {
                 .chunks_mut(self.recv_buf.len() / BATCH_SIZE)
                 .map(IoSliceMut::new);
 
+            // expect() safe as self.recv_buf is chunked into BATCH_SIZE items
+            // and iovs will be of size BATCH_SIZE, thus from_fn is called
+            // exactly BATCH_SIZE times.
             std::array::from_fn(|_| bufs.next().expect("BATCH_SIZE elements"))
         };
         loop {
