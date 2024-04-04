@@ -232,6 +232,22 @@ impl Packet {
     }
 }
 
+pub(crate) struct InitialPacket {
+    pub(crate) header: InitialHeader,
+    pub(crate) header_data: Bytes,
+    pub(crate) payload: BytesMut,
+}
+
+impl From<InitialPacket> for Packet {
+    fn from(x: InitialPacket) -> Self {
+        Self {
+            header: Header::Initial(x.header),
+            header_data: x.header_data,
+            payload: x.payload,
+        }
+    }
+}
+
 #[cfg_attr(test, derive(Clone))]
 #[derive(Debug)]
 pub(crate) enum Header {

@@ -23,8 +23,8 @@ use crate::{
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{
-        Header, InitialHeader, Packet, PacketDecodeError, PacketNumber, PartialDecode,
-        PlainInitialHeader,
+        Header, InitialHeader, InitialPacket, Packet, PacketDecodeError, PacketNumber,
+        PartialDecode, PlainInitialHeader,
     },
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
@@ -477,9 +477,11 @@ impl Endpoint {
         Some(DatagramEvent::NewConnection(Incoming {
             addresses,
             ecn,
-            header,
-            header_data: packet.header_data,
-            payload: packet.payload,
+            packet: InitialPacket {
+                header,
+                header_data: packet.header_data,
+                payload: packet.payload,
+            },
             rest,
             crypto,
             retry_src_cid,
@@ -494,13 +496,13 @@ impl Endpoint {
         now: Instant,
         buf: &mut BytesMut,
     ) -> Result<(ConnectionHandle, Connection), AcceptError> {
-        let packet_number = incoming.header.number.expand(0);
+        let packet_number = incoming.packet.header.number.expand(0);
         let InitialHeader {
             src_cid,
             dst_cid,
             version,
             ..
-        } = incoming.header;
+        } = incoming.packet.header;
 
         if self.cids_exhausted() {
             debug!("refusing connection");
@@ -523,7 +525,11 @@ impl Endpoint {
             .crypto
             .packet
             .remote
-            .decrypt(packet_number, &incoming.header_data, &mut incoming.payload)
+            .decrypt(
+                packet_number,
+                &incoming.packet.header_data,
+                &mut incoming.packet.payload,
+            )
             .is_err()
         {
             debug!(packet_number, "failed to authenticate initial packet");
@@ -569,11 +575,7 @@ impl Endpoint {
             incoming.addresses.remote,
             incoming.ecn,
             packet_number,
-            Packet {
-                header: Header::Initial(incoming.header),
-                header_data: incoming.header_data,
-                payload: incoming.payload,
-            },
+            incoming.packet,
             incoming.rest,
         ) {
             Ok(()) => {
@@ -631,10 +633,10 @@ impl Endpoint {
     /// Reject this incoming connection attempt
     pub fn refuse(&mut self, incoming: Incoming, buf: &mut BytesMut) -> Transmit {
         self.initial_close(
-            incoming.header.version,
+            incoming.packet.header.version,
             incoming.addresses,
             &incoming.crypto,
-            &incoming.header.src_cid,
+            &incoming.packet.header.src_cid,
             TransportError::CONNECTION_REFUSED(""),
             buf,
         )
@@ -664,7 +666,7 @@ impl Endpoint {
         let loc_cid = self.local_cid_generator.generate_cid();
 
         let token = RetryToken {
-            orig_dst_cid: incoming.header.dst_cid,
+            orig_dst_cid: incoming.packet.header.dst_cid,
             issued: SystemTime::now(),
             random_bytes: &random_bytes,
         }
@@ -676,15 +678,15 @@ impl Endpoint {
 
         let header = Header::Retry {
             src_cid: loc_cid,
-            dst_cid: incoming.header.src_cid,
-            version: incoming.header.version,
+            dst_cid: incoming.packet.header.src_cid,
+            version: incoming.packet.header.version,
         };
 
         let encode = header.encode(buf);
         buf.put_slice(&token);
         buf.extend_from_slice(&server_config.crypto.retry_tag(
-            incoming.header.version,
-            &incoming.header.dst_cid,
+            incoming.packet.header.version,
+            &incoming.packet.header.dst_cid,
             buf,
         ));
         encode.finish(buf, &*incoming.crypto.header.local, None);
@@ -980,9 +982,7 @@ pub enum DatagramEvent {
 pub struct Incoming {
     addresses: FourTuple,
     ecn: Option<EcnCodepoint>,
-    header: InitialHeader,
-    header_data: Bytes,
-    payload: BytesMut,
+    packet: InitialPacket,
     rest: Option<BytesMut>,
     crypto: Keys,
     retry_src_cid: Option<ConnectionId>,
