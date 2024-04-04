@@ -33,6 +33,10 @@ impl Runtime for TokioRuntime {
             io: tokio::net::UdpSocket::from_std(sock)?,
         }))
     }
+
+    fn now(&self) -> Instant {
+        tokio::time::Instant::now().into_std()
+    }
 }
 
 impl AsyncTimer for Sleep {

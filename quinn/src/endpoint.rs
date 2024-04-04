@@ -197,7 +197,7 @@ impl Endpoint {
 
         let (ch, conn) = endpoint
             .inner
-            .connect(Instant::now(), config, addr, server_name)?;
+            .connect(self.runtime.now(), config, addr, server_name)?;
 
         let socket = endpoint.socket.clone();
         Ok(endpoint
@@ -324,7 +324,7 @@ impl Future for EndpointDriver {
             endpoint.driver = Some(cx.waker().clone());
         }
 
-        let now = Instant::now();
+        let now = endpoint.runtime.now();
         let mut keep_going = false;
         keep_going |= endpoint.drive_recv(cx, now)?;
         keep_going |= endpoint.handle_events(cx, &self.0.shared);
@@ -373,12 +373,11 @@ impl EndpointInner {
     ) -> Result<Connecting, ConnectionError> {
         let mut state = self.state.lock().unwrap();
         let mut response_buffer = Vec::new();
-        match state.inner.accept(
-            incoming,
-            Instant::now(),
-            &mut response_buffer,
-            server_config,
-        ) {
+        let now = state.runtime.now();
+        match state
+            .inner
+            .accept(incoming, now, &mut response_buffer, server_config)
+        {
             Ok((handle, conn)) => {
                 let socket = state.socket.clone();
                 let runtime = state.runtime.clone();
@@ -437,20 +436,21 @@ pub(crate) struct Shared {
 
 impl State {
     fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
-        self.recv_state.recv_limiter.start_cycle(Instant::now);
+        let get_time = || self.runtime.now();
+        self.recv_state.recv_limiter.start_cycle(get_time);
         if let Some(socket) = &self.prev_socket {
             // We don't care about the `PollProgress` from old sockets.
-            let poll_res = self
-                .recv_state
-                .poll_socket(cx, &mut self.inner, &**socket, now);
+            let poll_res =
+                self.recv_state
+                    .poll_socket(cx, &mut self.inner, &**socket, &*self.runtime, now);
             if poll_res.is_err() {
                 self.prev_socket = None;
             }
         };
-        let poll_res = self
-            .recv_state
-            .poll_socket(cx, &mut self.inner, &*self.socket, now);
-        self.recv_state.recv_limiter.finish_cycle(Instant::now);
+        let poll_res =
+            self.recv_state
+                .poll_socket(cx, &mut self.inner, &*self.socket, &*self.runtime, now);
+        self.recv_state.recv_limiter.finish_cycle(get_time);
         let poll_res = poll_res?;
         if poll_res.received_connection_packet {
             // Traffic has arrived on self.socket, therefore there is no need for the abandoned
@@ -708,6 +708,7 @@ impl RecvState {
         cx: &mut Context,
         endpoint: &mut proto::Endpoint,
         socket: &dyn AsyncUdpSocket,
+        runtime: &dyn Runtime,
         now: Instant,
     ) -> Result<PollProgress, io::Error> {
         let mut received_connection_packet = false;
@@ -784,7 +785,7 @@ impl RecvState {
                     return Err(e);
                 }
             }
-            if !self.recv_limiter.allow_work(Instant::now) {
+            if !self.recv_limiter.allow_work(|| runtime.now()) {
                 return Ok(PollProgress {
                     received_connection_packet,
                     keep_going: true,
