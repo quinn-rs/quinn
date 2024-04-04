@@ -427,7 +427,7 @@ impl Endpoint {
         &mut self,
         addresses: FourTuple,
         ecn: Option<EcnCodepoint>,
-        mut packet: Packet,
+        packet: Packet,
         rest: Option<BytesMut>,
         crypto: Keys,
         buf: &mut BytesMut,
@@ -444,16 +444,6 @@ impl Endpoint {
             _ => panic!("non-initial packet in handle_first_packet()"),
         };
         let packet_number = packet_number.expand(0);
-
-        if crypto
-            .packet
-            .remote
-            .decrypt(packet_number, &packet.header_data, &mut packet.payload)
-            .is_err()
-        {
-            debug!(packet_number, "failed to authenticate initial packet");
-            return None;
-        };
 
         if !packet.reserved_bits_valid() {
             debug!("dropping connection attempt with invalid reserved bits");
@@ -508,7 +498,7 @@ impl Endpoint {
     /// Attempt to accept this incoming connection (an error may still occur)
     pub fn accept(
         &mut self,
-        incoming: Incoming,
+        mut incoming: Incoming,
         now: Instant,
         buf: &mut BytesMut,
     ) -> Result<(ConnectionHandle, Connection), AcceptError> {
@@ -528,6 +518,27 @@ impl Endpoint {
         }
 
         let server_config = self.server_config.as_ref().unwrap().clone();
+
+        if incoming
+            .crypto
+            .packet
+            .remote
+            .decrypt(
+                incoming.packet_number,
+                &incoming.packet.header_data,
+                &mut incoming.packet.payload,
+            )
+            .is_err()
+        {
+            debug!(
+                packet_number = incoming.packet_number,
+                "failed to authenticate initial packet"
+            );
+            return Err(AcceptError {
+                cause: TransportError::PROTOCOL_VIOLATION("authentication failed").into(),
+                response: None,
+            });
+        };
 
         let ch = ConnectionHandle(self.connections.vacant_key());
         let loc_cid = self.new_cid(ch);
