@@ -435,47 +435,38 @@ impl Endpoint {
         crypto: Keys,
         buf: &mut BytesMut,
     ) -> Option<DatagramEvent> {
-        let (src_cid, dst_cid, token, packet_number, version) = match packet.header {
-            Header::Initial(InitialHeader {
-                src_cid,
-                dst_cid,
-                ref token,
-                number,
-                version,
-                ..
-            }) => (src_cid, dst_cid, token.clone(), number, version),
-            _ => panic!("non-initial packet in handle_first_packet()"),
-        };
-        let packet_number = packet_number.expand(0);
-
         if !packet.reserved_bits_valid() {
             debug!("dropping connection attempt with invalid reserved bits");
             return None;
         }
 
+        let Header::Initial(header) = packet.header else {
+            panic!("non-initial packet in handle_first_packet()");
+        };
+
         let server_config = self.server_config.as_ref().unwrap().clone();
 
-        let (retry_src_cid, orig_dst_cid) = if token.is_empty() {
-            (None, dst_cid)
+        let (retry_src_cid, orig_dst_cid) = if header.token.is_empty() {
+            (None, header.dst_cid)
         } else {
             match RetryToken::from_bytes(
                 &*server_config.token_key,
                 &addresses.remote,
-                &dst_cid,
-                &token,
+                &header.dst_cid,
+                &header.token,
             ) {
                 Ok(token)
                     if token.issued + server_config.retry_token_lifetime > SystemTime::now() =>
                 {
-                    (Some(dst_cid), token.orig_dst_cid)
+                    (Some(header.dst_cid), token.orig_dst_cid)
                 }
                 _ => {
                     debug!("rejecting invalid stateless retry token");
                     return Some(DatagramEvent::Response(self.initial_close(
-                        version,
+                        header.version,
                         addresses,
                         &crypto,
-                        &src_cid,
+                        &header.src_cid,
                         TransportError::INVALID_TOKEN(""),
                         buf,
                     )));
@@ -486,13 +477,11 @@ impl Endpoint {
         Some(DatagramEvent::NewConnection(Incoming {
             addresses,
             ecn,
-            packet,
+            header,
+            header_data: packet.header_data,
+            payload: packet.payload,
             rest,
             crypto,
-            src_cid,
-            dst_cid,
-            packet_number,
-            version,
             retry_src_cid,
             orig_dst_cid,
         }))
@@ -505,15 +494,23 @@ impl Endpoint {
         now: Instant,
         buf: &mut BytesMut,
     ) -> Result<(ConnectionHandle, Connection), AcceptError> {
+        let packet_number = incoming.header.number.expand(0);
+        let InitialHeader {
+            src_cid,
+            dst_cid,
+            version,
+            ..
+        } = incoming.header;
+
         if self.cids_exhausted() {
             debug!("refusing connection");
             return Err(AcceptError {
                 cause: ConnectionError::CidsExhausted,
                 response: Some(self.initial_close(
-                    incoming.version,
+                    version,
                     incoming.addresses,
                     &incoming.crypto,
-                    &incoming.src_cid,
+                    &src_cid,
                     TransportError::CONNECTION_REFUSED(""),
                     buf,
                 )),
@@ -526,17 +523,10 @@ impl Endpoint {
             .crypto
             .packet
             .remote
-            .decrypt(
-                incoming.packet_number,
-                &incoming.packet.header_data,
-                &mut incoming.packet.payload,
-            )
+            .decrypt(packet_number, &incoming.header_data, &mut incoming.payload)
             .is_err()
         {
-            debug!(
-                packet_number = incoming.packet_number,
-                "failed to authenticate initial packet"
-            );
+            debug!(packet_number, "failed to authenticate initial packet");
             return Err(AcceptError {
                 cause: TransportError::PROTOCOL_VIOLATION("authentication failed").into(),
                 response: None,
@@ -556,17 +546,14 @@ impl Endpoint {
         params.original_dst_cid = Some(incoming.orig_dst_cid);
         params.retry_src_cid = incoming.retry_src_cid;
 
-        let tls = server_config
-            .crypto
-            .clone()
-            .start_session(incoming.version, &params);
+        let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
         let mut conn = self.add_connection(
             ch,
-            incoming.version,
-            incoming.dst_cid,
+            version,
+            dst_cid,
             loc_cid,
-            incoming.src_cid,
+            src_cid,
             incoming.addresses,
             now,
             tls,
@@ -574,19 +561,23 @@ impl Endpoint {
             transport_config,
             incoming.remote_address_validated(),
         );
-        if incoming.dst_cid.len() != 0 {
-            self.index.insert_initial(incoming.dst_cid, ch);
+        if dst_cid.len() != 0 {
+            self.index.insert_initial(dst_cid, ch);
         }
         match conn.handle_first_packet(
             now,
             incoming.addresses.remote,
             incoming.ecn,
-            incoming.packet_number,
-            incoming.packet,
+            packet_number,
+            Packet {
+                header: Header::Initial(incoming.header),
+                header_data: incoming.header_data,
+                payload: incoming.payload,
+            },
             incoming.rest,
         ) {
             Ok(()) => {
-                trace!(id = ch.0, icid = %incoming.dst_cid, "new connection");
+                trace!(id = ch.0, icid = %dst_cid, "new connection");
                 Ok((ch, conn))
             }
             Err(e) => {
@@ -594,10 +585,10 @@ impl Endpoint {
                 self.handle_event(ch, EndpointEvent(EndpointEventInner::Drained));
                 let response = match e {
                     ConnectionError::TransportError(ref e) => Some(self.initial_close(
-                        incoming.version,
+                        version,
                         incoming.addresses,
                         &incoming.crypto,
-                        &incoming.src_cid,
+                        &src_cid,
                         e.clone(),
                         buf,
                     )),
@@ -640,10 +631,10 @@ impl Endpoint {
     /// Reject this incoming connection attempt
     pub fn refuse(&mut self, incoming: Incoming, buf: &mut BytesMut) -> Transmit {
         self.initial_close(
-            incoming.version,
+            incoming.header.version,
             incoming.addresses,
             &incoming.crypto,
-            &incoming.src_cid,
+            &incoming.header.src_cid,
             TransportError::CONNECTION_REFUSED(""),
             buf,
         )
@@ -673,7 +664,7 @@ impl Endpoint {
         let loc_cid = self.local_cid_generator.generate_cid();
 
         let token = RetryToken {
-            orig_dst_cid: incoming.dst_cid,
+            orig_dst_cid: incoming.header.dst_cid,
             issued: SystemTime::now(),
             random_bytes: &random_bytes,
         }
@@ -685,15 +676,15 @@ impl Endpoint {
 
         let header = Header::Retry {
             src_cid: loc_cid,
-            dst_cid: incoming.src_cid,
-            version: incoming.version,
+            dst_cid: incoming.header.src_cid,
+            version: incoming.header.version,
         };
 
         let encode = header.encode(buf);
         buf.put_slice(&token);
         buf.extend_from_slice(&server_config.crypto.retry_tag(
-            incoming.version,
-            &incoming.dst_cid,
+            incoming.header.version,
+            &incoming.header.dst_cid,
             buf,
         ));
         encode.finish(buf, &*incoming.crypto.header.local, None);
@@ -989,13 +980,11 @@ pub enum DatagramEvent {
 pub struct Incoming {
     addresses: FourTuple,
     ecn: Option<EcnCodepoint>,
-    packet: Packet,
+    header: InitialHeader,
+    header_data: Bytes,
+    payload: BytesMut,
     rest: Option<BytesMut>,
     crypto: Keys,
-    src_cid: ConnectionId,
-    dst_cid: ConnectionId,
-    packet_number: u64,
-    version: u32,
     retry_src_cid: Option<ConnectionId>,
     orig_dst_cid: ConnectionId,
 }
@@ -1030,10 +1019,6 @@ impl fmt::Debug for Incoming {
             .field("ecn", &self.ecn)
             // packet doesn't implement debug
             // rest is too big and not meaningful enough
-            .field("src_cid", &self.src_cid)
-            .field("dst_cid", &self.dst_cid)
-            .field("packet_number", &self.packet_number)
-            .field("version", &self.version)
             .field("retry_src_cid", &self.retry_src_cid)
             .field("orig_dst_cid", &self.orig_dst_cid)
             .finish_non_exhaustive()

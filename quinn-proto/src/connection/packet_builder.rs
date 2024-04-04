@@ -6,9 +6,8 @@ use tracing::{trace, trace_span};
 
 use super::{spaces::SentPacket, Connection, SentFrames};
 use crate::{
-    connection::InitialHeader,
     frame::{self, Close},
-    packet::{Header, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
+    packet::{Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
     TransportError, TransportErrorCode,
 };
 
