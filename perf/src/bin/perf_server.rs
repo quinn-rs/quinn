@@ -3,7 +3,7 @@ use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
-use quinn::TokioRuntime;
+use quinn::{crypto::rustls::QuicServerConfig, TokioRuntime};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tracing::{debug, error, info};
 
@@ -94,7 +94,7 @@ async fn run(opt: Opt) -> Result<()> {
     let mut transport = quinn::TransportConfig::default();
     transport.initial_mtu(opt.initial_mtu);
 
-    let crypto = Arc::new(crypto);
+    let crypto = Arc::new(QuicServerConfig::try_from(crypto)?);
     let mut config = quinn::ServerConfig::with_crypto(match opt.no_protection {
         true => Arc::new(NoProtectionServerConfig::new(crypto)),
         false => crypto,

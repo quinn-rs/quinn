@@ -21,7 +21,7 @@ use rustls::{
 };
 use tracing::{info_span, trace};
 
-use super::crypto::rustls::QuicClientConfig;
+use super::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use super::*;
 
 pub(super) const DEFAULT_MTU: usize = 1452;
@@ -561,25 +561,25 @@ pub(super) fn server_config_with_cert(
     ServerConfig::with_crypto(Arc::new(server_crypto_with_cert(cert, key)))
 }
 
-pub(super) fn server_crypto() -> rustls::ServerConfig {
+pub(super) fn server_crypto() -> QuicServerConfig {
     server_crypto_inner(None, None)
 }
 
-pub(super) fn server_crypto_with_alpn(alpn: Vec<Vec<u8>>) -> rustls::ServerConfig {
+pub(super) fn server_crypto_with_alpn(alpn: Vec<Vec<u8>>) -> QuicServerConfig {
     server_crypto_inner(None, Some(alpn))
 }
 
 pub(super) fn server_crypto_with_cert(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
-) -> rustls::ServerConfig {
+) -> QuicServerConfig {
     server_crypto_inner(Some((cert, key)), None)
 }
 
 fn server_crypto_inner(
     identity: Option<(CertificateDer<'static>, PrivateKeyDer<'static>)>,
     alpn: Option<Vec<Vec<u8>>>,
-) -> rustls::ServerConfig {
+) -> QuicServerConfig {
     let (cert, key) = identity.unwrap_or_else(|| {
         (
             CERTIFIED_KEY.cert.der().clone(),
@@ -587,12 +587,12 @@ fn server_crypto_inner(
         )
     });
 
-    let mut config = crate::crypto::rustls::server_config(vec![cert], key).unwrap();
+    let mut config = QuicServerConfig::inner(vec![cert], key);
     if let Some(alpn) = alpn {
         config.alpn_protocols = alpn;
     }
 
-    config
+    config.try_into().unwrap()
 }
 
 pub(super) fn client_config() -> ClientConfig {
