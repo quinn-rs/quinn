@@ -658,12 +658,7 @@ async fn rebind_recv() {
     roots.add(&cert).unwrap();
 
     let mut client = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap();
-    let mut client_config = ClientConfig::new(Arc::new(
-        rustls::ClientConfig::builder()
-            .with_safe_defaults()
-            .with_root_certificates(roots)
-            .with_no_client_auth(),
-    ));
+    let mut client_config = ClientConfig::with_root_certificates(roots).unwrap();
     client_config.transport_config(Arc::new({
         let mut cfg = TransportConfig::default();
         cfg.max_concurrent_uni_streams(1u32.into());
