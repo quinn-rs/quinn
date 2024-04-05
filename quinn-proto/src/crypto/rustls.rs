@@ -312,7 +312,6 @@ pub(crate) enum ServerVerifier {
     Platform,
     Roots(RootCertStore),
 }
-
 /// The configured crypto provider does not support the QUIC initial cipher suite
 #[derive(Debug)]
 pub struct NoInitialCipherSuite(());
@@ -356,22 +355,99 @@ impl crypto::ClientConfig for QuicClientConfig {
     }
 }
 
-impl crypto::ServerConfig for rustls::ServerConfig {
+impl crypto::ClientConfig for rustls::ClientConfig {
+    fn start_session(
+        self: Arc<Self>,
+        version: u32,
+        server_name: &str,
+        params: &TransportParameters,
+    ) -> Result<Box<dyn crypto::Session>, ConnectError> {
+        let version = interpret_version(version)?;
+        Ok(Box::new(TlsSession {
+            version,
+            got_handshake_data: false,
+            next_secrets: None,
+            inner: rustls::quic::Connection::Client(
+                rustls::quic::ClientConnection::new(
+                    self.clone(),
+                    version,
+                    ServerName::try_from(server_name)
+                        .map_err(|_| {
+                            ConnectError::InvalidRemoteAddress(
+                                server_name.parse().expect("cannot parse address"),
+                            )
+                        })?
+                        .to_owned(),
+                    to_vec(params),
+                )
+                .map_err(|_| ConnectError::NoDefaultClientConfig)?,
+            ),
+            suite: initial_suite_from_provider(self.crypto_provider())
+                .ok_or(ConnectError::NoDefaultClientConfig)?,
+        }))
+    }
+}
+
+/// A QUIC-compatible TLS server configuration
+pub struct QuicServerConfig {
+    inner: Arc<rustls::ServerConfig>,
+}
+
+impl QuicServerConfig {
+    /// Initialize a sane QUIC-compatible TLS server configuration
+    ///
+    /// QUIC requires that TLS 1.3 be enabled, and that the maximum early data size is either 0 or
+    /// `u32::MAX`. Advanced users can use any [`rustls::ServerConfig`] that satisfies these
+    /// requirements.
+    pub(crate) fn new(
+        cert_chain: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
+    ) -> Self {
+        let mut inner = rustls::ServerConfig::builder_with_provider(
+            rustls::crypto::ring::default_provider().into(),
+        )
+        .with_safe_default_protocol_versions()
+        .unwrap()
+        .with_no_client_auth()
+        .with_single_cert(cert_chain, key)
+        .unwrap();
+
+        inner.max_early_data_size = u32::MAX;
+
+        Self {
+            inner: Arc::new(inner),
+        }
+    }
+}
+
+impl TryFrom<rustls::ServerConfig> for QuicServerConfig {
+    type Error = NoInitialCipherSuite;
+
+    fn try_from(inner: rustls::ServerConfig) -> Result<Self, Self::Error> {
+        Ok(Self {
+            inner: Arc::new(inner),
+        })
+    }
+}
+
+
+impl crypto::ServerConfig for QuicServerConfig {
     fn start_session(
         self: Arc<Self>,
         version: u32,
         params: &TransportParameters,
     ) -> Box<dyn crypto::Session> {
-        // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
+        // TODO: why is this unwrap safe?
         let version = interpret_version(version).unwrap();
-        // TODO: validate the configuration before this point
-        let suite = initial_suite_from_provider(self.crypto_provider()).unwrap();
+        // TODO: why is this unwrap safe?
+        let suite = initial_suite_from_provider(self.inner.crypto_provider()).unwrap();
         Box::new(TlsSession {
             version,
             got_handshake_data: false,
             next_secrets: None,
             inner: rustls::quic::Connection::Server(
-                rustls::quic::ServerConnection::new(self, version, to_vec(params)).unwrap(),
+                rustls::quic::ServerConnection::new(self.inner.clone(), version, to_vec(params))
+                    .unwrap(),
             ),
             suite,
         })
@@ -384,7 +460,7 @@ impl crypto::ServerConfig for rustls::ServerConfig {
     ) -> Result<Keys, UnsupportedVersion> {
         let version = interpret_version(version)?;
         // TODO: validate the configuration before this point
-        let suite = initial_suite_from_provider(self.crypto_provider()).unwrap();
+        let suite = initial_suite_from_provider(self.inner.crypto_provider()).unwrap();
         Ok(initial_keys(version, dst_cid, Side::Server, &suite))
     }
 
@@ -497,16 +573,8 @@ impl crypto::PacketKey for Box<dyn PacketKey> {
 pub(crate) fn server_config(
     cert_chain: Vec<CertificateDer<'static>>,
     key: PrivateKeyDer<'static>,
-) -> Result<rustls::ServerConfig, Error> {
-    let mut cfg = rustls::ServerConfig::builder_with_provider(
-        rustls::crypto::ring::default_provider().into(),
-    )
-    .with_safe_default_protocol_versions()
-    .unwrap()
-    .with_no_client_auth()
-    .with_single_cert(cert_chain, key)?;
-    cfg.max_early_data_size = u32::MAX;
-    Ok(cfg)
+) -> Result<QuicServerConfig, Error> {
+    Ok(QuicServerConfig::new(cert_chain, key))
 }
 
 fn interpret_version(version: u32) -> Result<Version, UnsupportedVersion> {

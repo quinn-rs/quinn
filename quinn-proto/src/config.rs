@@ -1,17 +1,17 @@
 use std::{fmt, num::TryFromIntError, sync::Arc, time::Duration};
 
+use crate::crypto::rustls::ServerVerifier;
+use crate::{
+    cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
+    congestion,
+    crypto::{self, HandshakeTokenKey, HmacKey},
+    VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MTU, MAX_UDP_PAYLOAD,
+};
 #[cfg(feature = "ring")]
 use rand::RngCore;
 #[cfg(feature = "rustls")]
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
-
-use crate::{
-    cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
-    congestion,
-    crypto::{self, rustls::ServerVerifier, HandshakeTokenKey, HmacKey},
-    VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MTU, MAX_UDP_PAYLOAD,
-};
 
 /// Parameters governing the core QUIC state machine
 ///

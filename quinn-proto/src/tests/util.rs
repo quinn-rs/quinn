@@ -20,6 +20,8 @@ use rustls::{
 };
 use tracing::{info_span, trace};
 
+use self::crypto::rustls::QuicServerConfig;
+
 use super::crypto::rustls::{QuicClientConfig, ServerVerifier};
 use super::*;
 
@@ -560,7 +562,7 @@ pub(super) fn server_config_with_cert(
     ServerConfig::with_crypto(Arc::new(server_crypto_with_cert(cert, key)))
 }
 
-pub(super) fn server_crypto() -> rustls::ServerConfig {
+pub(super) fn server_crypto() -> QuicServerConfig {
     let cert = CERTIFIED_KEY.cert.der().clone();
     let key = CERTIFIED_KEY.key_pair.serialize_der();
     server_crypto_with_cert(cert, key.try_into().unwrap())
@@ -569,8 +571,8 @@ pub(super) fn server_crypto() -> rustls::ServerConfig {
 pub(super) fn server_crypto_with_cert(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
-) -> rustls::ServerConfig {
-    crate::crypto::rustls::server_config(vec![cert], key).unwrap()
+) -> QuicServerConfig {
+    QuicServerConfig::new(vec![cert], key)
 }
 
 pub(super) fn client_config() -> ClientConfig {

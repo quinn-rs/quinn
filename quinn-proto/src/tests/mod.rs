@@ -21,6 +21,7 @@ use tracing::info;
 use super::*;
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
+    crypto::rustls::QuicServerConfig,
     frame::FrameStruct,
     transport_parameters::TransportParameters,
 };
@@ -431,6 +432,7 @@ fn reject_missing_client_cert() {
         )
         .with_single_cert(vec![cert], PrivateKeyDer::from(key))
         .unwrap();
+    let config = QuicServerConfig::try_from(config).unwrap();
 
     let mut pair = Pair::new(
         Default::default(),
@@ -568,8 +570,7 @@ fn zero_rtt_happypath() {
 #[test]
 fn zero_rtt_rejection() {
     let _guard = subscribe();
-    let mut server_crypto = server_crypto();
-    server_crypto.alpn_protocols = vec!["foo".into(), "bar".into()];
+    let server_crypto = server_crypto();
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
     let mut client_crypto = Arc::new(client_crypto_with_alpn(vec!["foo".into()]));
@@ -640,8 +641,7 @@ fn zero_rtt_rejection() {
 #[test]
 fn alpn_success() {
     let _guard = subscribe();
-    let mut server_crypto = server_crypto();
-    server_crypto.alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
+    let server_crypto = server_crypto();
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
     let client_config = ClientConfig::new(Arc::new(client_crypto_with_alpn(vec![
@@ -690,8 +690,7 @@ fn server_alpn_unset() {
 #[test]
 fn client_alpn_unset() {
     let _guard = subscribe();
-    let mut server_crypto = server_crypto();
-    server_crypto.alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
+    let server_crypto = server_crypto();
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
 
@@ -706,8 +705,7 @@ fn client_alpn_unset() {
 #[test]
 fn alpn_mismatch() {
     let _guard = subscribe();
-    let mut server_crypto = server_crypto();
-    server_crypto.alpn_protocols = vec!["foo".into(), "bar".into(), "baz".into()];
+    let server_crypto = server_crypto();
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
 
@@ -1712,8 +1710,7 @@ fn datagram_unsupported() {
 #[test]
 fn large_initial() {
     let _guard = subscribe();
-    let mut server_crypto = server_crypto();
-    server_crypto.alpn_protocols = vec![vec![0, 0, 0, 42]];
+    let server_crypto = server_crypto();
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
 
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
