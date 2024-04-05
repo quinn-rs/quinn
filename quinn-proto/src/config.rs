@@ -16,7 +16,7 @@ use thiserror::Error;
 use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     congestion,
-    crypto::{self, HandshakeTokenKey, HmacKey},
+    crypto::{self, rustls::QuicServerConfig, HandshakeTokenKey, HmacKey},
     VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MTU, MAX_UDP_PAYLOAD,
 };
 
@@ -849,8 +849,9 @@ impl ServerConfig {
         cert_chain: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
     ) -> Result<Self, rustls::Error> {
-        let crypto = crypto::rustls::server_config(cert_chain, key)?;
-        Ok(Self::with_crypto(Arc::new(crypto)))
+        Ok(Self::with_crypto(Arc::new(QuicServerConfig::new(
+            cert_chain, key,
+        ))))
     }
 }
 

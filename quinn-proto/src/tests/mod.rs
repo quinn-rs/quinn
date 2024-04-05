@@ -21,6 +21,7 @@ use tracing::info;
 use super::*;
 use crate::{
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
+    crypto::rustls::QuicServerConfig,
     frame::FrameStruct,
     transport_parameters::TransportParameters,
 };
@@ -455,6 +456,7 @@ fn reject_missing_client_cert() {
         )
         .with_single_cert(vec![cert], PrivateKeyDer::from(key))
         .unwrap();
+    let config = QuicServerConfig::try_from(config).unwrap();
 
     let mut pair = Pair::new(
         Default::default(),
