@@ -430,7 +430,6 @@ impl TryFrom<rustls::ServerConfig> for QuicServerConfig {
     }
 }
 
-
 impl crypto::ServerConfig for QuicServerConfig {
     fn start_session(
         self: Arc<Self>,
