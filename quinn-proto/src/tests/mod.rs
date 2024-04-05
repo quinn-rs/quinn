@@ -570,7 +570,7 @@ fn zero_rtt_happypath() {
 #[test]
 fn zero_rtt_rejection() {
     let _guard = subscribe();
-    let server_crypto = server_crypto();
+    let server_crypto = server_crypto_with_alpn(vec!["foo".into(), "bar".into()]);
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
     let mut client_crypto = Arc::new(client_crypto_with_alpn(vec!["foo".into()]));
@@ -641,7 +641,7 @@ fn zero_rtt_rejection() {
 #[test]
 fn alpn_success() {
     let _guard = subscribe();
-    let server_crypto = server_crypto();
+    let server_crypto = server_crypto_with_alpn(vec!["foo".into(), "bar".into(), "baz".into()]);
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
     let client_config = ClientConfig::new(Arc::new(client_crypto_with_alpn(vec![
@@ -690,7 +690,7 @@ fn server_alpn_unset() {
 #[test]
 fn client_alpn_unset() {
     let _guard = subscribe();
-    let server_crypto = server_crypto();
+    let server_crypto = server_crypto_with_alpn(vec!["foo".into(), "bar".into(), "baz".into()]);
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
 
@@ -705,7 +705,7 @@ fn client_alpn_unset() {
 #[test]
 fn alpn_mismatch() {
     let _guard = subscribe();
-    let server_crypto = server_crypto();
+    let server_crypto = server_crypto_with_alpn(vec!["foo".into(), "bar".into(), "baz".into()]);
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
 
@@ -1710,7 +1710,7 @@ fn datagram_unsupported() {
 #[test]
 fn large_initial() {
     let _guard = subscribe();
-    let server_crypto = server_crypto();
+    let server_crypto = server_crypto_with_alpn(vec![vec![0, 0, 0, 42]]);
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
 
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);

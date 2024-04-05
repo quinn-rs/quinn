@@ -403,6 +403,15 @@ impl QuicServerConfig {
         cert_chain: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
     ) -> Self {
+        Self {
+            inner: Arc::new(Self::inner(cert_chain, key)),
+        }
+    }
+
+    pub(crate) fn inner(
+        cert_chain: Vec<CertificateDer<'static>>,
+        key: PrivateKeyDer<'static>,
+    ) -> rustls::ServerConfig {
         let mut inner = rustls::ServerConfig::builder_with_provider(
             rustls::crypto::ring::default_provider().into(),
         )
@@ -413,10 +422,7 @@ impl QuicServerConfig {
         .unwrap();
 
         inner.max_early_data_size = u32::MAX;
-
-        Self {
-            inner: Arc::new(inner),
-        }
+        inner
     }
 }
 

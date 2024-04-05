@@ -575,6 +575,28 @@ pub(super) fn server_crypto_with_cert(
     QuicServerConfig::new(vec![cert], key)
 }
 
+pub(super) fn server_crypto_with_alpn(protocols: Vec<Vec<u8>>) -> QuicServerConfig {
+    server_crypto_inner(None, None, Some(protocols))
+}
+
+fn server_crypto_inner(
+    certs: Option<Vec<CertificateDer<'static>>>,
+    key: Option<PrivateKeyDer<'static>>,
+    alpn: Option<Vec<Vec<u8>>>,
+) -> QuicServerConfig {
+    let certs = certs.unwrap_or(vec![CERTIFIED_KEY.cert.der().clone()]);
+
+    let key = key.unwrap_or_else(|| CERTIFIED_KEY.key_pair.serialize_der().try_into().unwrap());
+
+    let mut inner = QuicServerConfig::inner(certs, key);
+    inner.key_log = Arc::new(KeyLogFile::new());
+    if let Some(alpn) = alpn {
+        inner.alpn_protocols = alpn;
+    }
+
+    inner.try_into().unwrap()
+}
+
 pub(super) fn client_config() -> ClientConfig {
     ClientConfig::new(Arc::new(client_crypto()))
 }
