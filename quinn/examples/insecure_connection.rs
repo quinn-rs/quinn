@@ -32,7 +32,13 @@ async fn run_server(addr: SocketAddr) {
 
 async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let mut endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap())?;
-    endpoint.set_default_client_config(configure_client());
+
+    endpoint.set_default_client_config(ClientConfig::new(Arc::new(
+        rustls::ClientConfig::builder()
+            .with_safe_defaults()
+            .with_custom_certificate_verifier(SkipServerVerification::new())
+            .with_no_client_auth(),
+    )));
 
     // connect to server
     let connection = endpoint
@@ -71,13 +77,4 @@ impl rustls::client::ServerCertVerifier for SkipServerVerification {
     ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
         Ok(rustls::client::ServerCertVerified::assertion())
     }
-}
-
-fn configure_client() -> ClientConfig {
-    let crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
-        .with_no_client_auth();
-
-    ClientConfig::new(Arc::new(crypto))
 }
