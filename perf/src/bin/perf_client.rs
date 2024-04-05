@@ -131,17 +131,17 @@ async fn run(opt: Opt) -> Result<()> {
     let mut transport = quinn::TransportConfig::default();
     transport.initial_mtu(opt.initial_mtu);
 
-    let mut cfg = if opt.no_protection {
-        quinn::ClientConfig::new(Arc::new(NoProtectionClientConfig::new(Arc::new(crypto))))
-    } else {
-        quinn::ClientConfig::new(Arc::new(crypto))
-    };
-    cfg.transport_config(Arc::new(transport));
+    let crypto = Arc::new(crypto);
+    let mut config = quinn::ClientConfig::new(match opt.no_protection {
+        true => Arc::new(NoProtectionClientConfig::new(crypto)),
+        false => crypto,
+    });
+    config.transport_config(Arc::new(transport));
 
     let stream_stats = OpenStreamStats::default();
 
     let connection = endpoint
-        .connect_with(cfg, addr, host_name)?
+        .connect_with(config, addr, host_name)?
         .await
         .context("connecting")?;
 

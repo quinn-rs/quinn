@@ -90,18 +90,18 @@ async fn run(opt: Opt) -> Result<()> {
     let mut transport = quinn::TransportConfig::default();
     transport.initial_mtu(opt.initial_mtu);
 
-    let mut server_config = if opt.no_protection {
-        quinn::ServerConfig::with_crypto(Arc::new(NoProtectionServerConfig::new(Arc::new(crypto))))
-    } else {
-        quinn::ServerConfig::with_crypto(Arc::new(crypto))
-    };
-    server_config.transport_config(Arc::new(transport));
+    let crypto = Arc::new(crypto);
+    let mut config = quinn::ServerConfig::with_crypto(match opt.no_protection {
+        true => Arc::new(NoProtectionServerConfig::new(crypto)),
+        false => crypto,
+    });
+    config.transport_config(Arc::new(transport));
 
     let socket = bind_socket(opt.listen, opt.send_buffer_size, opt.recv_buffer_size)?;
 
     let endpoint = quinn::Endpoint::new(
         Default::default(),
-        Some(server_config),
+        Some(config),
         socket,
         Arc::new(TokioRuntime),
     )
