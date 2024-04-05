@@ -554,13 +554,34 @@ pub(super) fn server_config_with_cert(cert: Certificate, key: PrivateKey) -> Ser
 }
 
 pub(super) fn server_crypto() -> rustls::ServerConfig {
-    let cert = Certificate(CERTIFICATE.serialize_der().unwrap());
-    let key = PrivateKey(CERTIFICATE.serialize_private_key_der());
-    server_crypto_with_cert(cert, key)
+    server_crypto_inner(None, None)
+}
+
+pub(super) fn server_crypto_with_alpn(alpn: Vec<Vec<u8>>) -> rustls::ServerConfig {
+    server_crypto_inner(None, Some(alpn))
 }
 
 pub(super) fn server_crypto_with_cert(cert: Certificate, key: PrivateKey) -> rustls::ServerConfig {
-    crate::crypto::rustls::server_config(vec![cert], key).unwrap()
+    server_crypto_inner(Some((cert, key)), None)
+}
+
+fn server_crypto_inner(
+    identity: Option<(Certificate, PrivateKey)>,
+    alpn: Option<Vec<Vec<u8>>>,
+) -> rustls::ServerConfig {
+    let (cert, key) = identity.unwrap_or_else(|| {
+        (
+            Certificate(CERTIFICATE.serialize_der().unwrap()),
+            PrivateKey(CERTIFICATE.serialize_private_key_der()),
+        )
+    });
+
+    let mut config = crate::crypto::rustls::server_config(vec![cert], key).unwrap();
+    if let Some(alpn) = alpn {
+        config.alpn_protocols = alpn;
+    }
+
+    config
 }
 
 pub(super) fn client_config() -> ClientConfig {
@@ -576,22 +597,36 @@ pub(super) fn client_config_with_deterministic_pns() -> ClientConfig {
 }
 
 pub(super) fn client_config_with_certs(certs: Vec<rustls::Certificate>) -> ClientConfig {
-    ClientConfig::new(Arc::new(client_crypto_with_certs(certs)))
+    ClientConfig::new(Arc::new(client_crypto_inner(Some(certs), None)))
 }
 
 pub(super) fn client_crypto() -> rustls::ClientConfig {
-    let cert = rustls::Certificate(CERTIFICATE.serialize_der().unwrap());
-    client_crypto_with_certs(vec![cert])
+    client_crypto_inner(None, None)
 }
 
-pub(super) fn client_crypto_with_certs(certs: Vec<rustls::Certificate>) -> rustls::ClientConfig {
+pub(super) fn client_crypto_with_alpn(protocols: Vec<Vec<u8>>) -> rustls::ClientConfig {
+    client_crypto_inner(None, Some(protocols))
+}
+
+fn client_crypto_inner(
+    certs: Option<Vec<rustls::Certificate>>,
+    alpn: Option<Vec<Vec<u8>>>,
+) -> rustls::ClientConfig {
+    let certs =
+        certs.unwrap_or_else(|| vec![rustls::Certificate(CERTIFICATE.serialize_der().unwrap())]);
+
     let mut roots = rustls::RootCertStore::empty();
     for cert in certs {
         roots.add(&cert).unwrap();
     }
 
-    let mut config = crate::crypto::rustls::client_config(WebPkiVerifier::new(roots, None)).unwrap();
+    let mut config =
+        crate::crypto::rustls::client_config(WebPkiVerifier::new(roots, None)).unwrap();
     config.key_log = Arc::new(KeyLogFile::new());
+    if let Some(alpn) = alpn {
+        config.alpn_protocols = alpn;
+    }
+
     config
 }
 
