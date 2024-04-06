@@ -177,10 +177,11 @@ impl RangeSet {
     }
 
     pub fn min(&self) -> Option<u64> {
-        self.iter().next().map(|x| x.start)
+        self.0.first_key_value().map(|(&start, _)| start)
     }
+
     pub fn max(&self) -> Option<u64> {
-        self.iter().next_back().map(|x| x.end - 1)
+        self.0.last_key_value().map(|(_, &end)| end - 1)
     }
 
     pub fn len(&self) -> usize {

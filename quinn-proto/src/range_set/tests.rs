@@ -149,6 +149,16 @@ macro_rules! common_set_tests {
                 }
             }
 
+            #[test]
+            fn min_max() {
+                let mut set = $set_type::new();
+                set.insert(1..3);
+                set.insert(4..5);
+                set.insert(6..10);
+                assert_eq!(set.min(), Some(1));
+                assert_eq!(set.max(), Some(9));
+            }
+
             fn create_initial_sets(max_range: u64) -> ($set_type, RefRangeSet) {
                 let mut set = $set_type::new();
                 let mut reference = RefRangeSet::new(max_range as usize);
