@@ -25,7 +25,7 @@ pub(crate) mod ring;
 pub mod rustls;
 
 /// A cryptographic session (commonly TLS)
-pub trait Session: Send + 'static {
+pub trait Session: Send + Sync + 'static {
     /// Create the initial set of keys given the client's initial destination ConnectionId
     fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys;
 
@@ -146,7 +146,7 @@ pub trait ServerConfig: Send + Sync {
 }
 
 /// Keys used to protect packet payloads
-pub trait PacketKey: Send {
+pub trait PacketKey: Send + Sync {
     /// Encrypt the packet payload with the given packet number
     fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
     /// Decrypt the packet payload with the given packet number
@@ -166,7 +166,7 @@ pub trait PacketKey: Send {
 }
 
 /// Keys used to protect packet headers
-pub trait HeaderKey: Send {
+pub trait HeaderKey: Send + Sync {
     /// Decrypt the given packet's header
     fn decrypt(&self, pn_offset: usize, packet: &mut [u8]);
     /// Encrypt the given packet's header
