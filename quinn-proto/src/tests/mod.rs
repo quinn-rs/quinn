@@ -2828,3 +2828,10 @@ fn reject_manually() {
         }) if close.error_code == TransportErrorCode::CONNECTION_REFUSED
     ));
 }
+
+#[test]
+fn endpoint_and_connection_impl_send_sync() {
+    const fn is_send_sync<T: Send + Sync>() {}
+    is_send_sync::<Endpoint>();
+    is_send_sync::<Connection>();
+}
