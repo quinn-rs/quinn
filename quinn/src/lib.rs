@@ -100,11 +100,6 @@ enum ConnectionEvent {
     Rebind(Arc<dyn AsyncUdpSocket>),
 }
 
-#[derive(Debug)]
-enum EndpointEvent {
-    Proto(proto::EndpointEvent),
-}
-
 fn udp_transmit(t: proto::Transmit, buffer: Bytes) -> udp::Transmit {
     udp::Transmit {
         destination: t.destination,

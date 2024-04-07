@@ -22,11 +22,11 @@ use crate::{
     recv_stream::RecvStream,
     runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller},
     send_stream::{SendStream, WriteError},
-    udp_transmit, ConnectionEvent, EndpointEvent, VarInt,
+    udp_transmit, ConnectionEvent, VarInt,
 };
 use proto::{
-    congestion::Controller, ConnectionError, ConnectionHandle, ConnectionStats, Dir, StreamEvent,
-    StreamId,
+    congestion::Controller, ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent,
+    StreamEvent, StreamId,
 };
 
 /// In-progress connection attempt future
@@ -1010,9 +1010,7 @@ impl State {
     fn forward_endpoint_events(&mut self) {
         while let Some(event) = self.inner.poll_endpoint_events() {
             // If the endpoint driver is gone, noop.
-            let _ = self
-                .endpoint_events
-                .send((self.handle, EndpointEvent::Proto(event)));
+            let _ = self.endpoint_events.send((self.handle, event));
         }
     }
 
@@ -1232,10 +1230,9 @@ impl Drop for State {
     fn drop(&mut self) {
         if !self.inner.is_drained() {
             // Ensure the endpoint can tidy up
-            let _ = self.endpoint_events.send((
-                self.handle,
-                EndpointEvent::Proto(proto::EndpointEvent::drained()),
-            ));
+            let _ = self
+                .endpoint_events
+                .send((self.handle, proto::EndpointEvent::drained()));
         }
     }
 }
