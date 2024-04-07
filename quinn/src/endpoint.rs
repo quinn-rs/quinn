@@ -20,7 +20,7 @@ use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
 use proto::{
     self as proto, ClientConfig, ConnectError, ConnectionError, ConnectionHandle, DatagramEvent,
-    ServerConfig,
+    EndpointEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
 use tokio::sync::{futures::Notified, mpsc, Notify};
@@ -29,7 +29,7 @@ use udp::{RecvMeta, BATCH_SIZE};
 
 use crate::{
     connection::Connecting, incoming::Incoming, work_limiter::WorkLimiter, ConnectionEvent,
-    EndpointConfig, EndpointEvent, VarInt, IO_LOOP_BOUND, MAX_INCOMING_CONNECTIONS,
+    EndpointConfig, VarInt, IO_LOOP_BOUND, MAX_INCOMING_CONNECTIONS,
     MAX_TRANSMIT_QUEUE_CONTENTS_LEN, RECV_TIME_BOUND, SEND_TIME_BOUND,
 };
 
@@ -511,29 +511,26 @@ impl State {
     }
 
     fn handle_events(&mut self, cx: &mut Context, shared: &Shared) -> bool {
-        use EndpointEvent::*;
         for _ in 0..IO_LOOP_BOUND {
             match self.events.poll_recv(cx) {
-                Poll::Ready(Some((ch, event))) => match event {
-                    Proto(e) => {
-                        if e.is_drained() {
-                            self.recv_state.connections.senders.remove(&ch);
-                            if self.recv_state.connections.is_empty() {
-                                shared.idle.notify_waiters();
-                            }
-                        }
-                        if let Some(event) = self.inner.handle_event(ch, e) {
-                            // Ignoring errors from dropped connections that haven't yet been cleaned up
-                            let _ = self
-                                .recv_state
-                                .connections
-                                .senders
-                                .get_mut(&ch)
-                                .unwrap()
-                                .send(ConnectionEvent::Proto(event));
+                Poll::Ready(Some((ch, e))) => {
+                    if e.is_drained() {
+                        self.recv_state.connections.senders.remove(&ch);
+                        if self.recv_state.connections.is_empty() {
+                            shared.idle.notify_waiters();
                         }
                     }
-                },
+                    if let Some(event) = self.inner.handle_event(ch, e) {
+                        // Ignoring errors from dropped connections that haven't yet been cleaned up
+                        let _ = self
+                            .recv_state
+                            .connections
+                            .senders
+                            .get_mut(&ch)
+                            .unwrap()
+                            .send(ConnectionEvent::Proto(event));
+                    }
+                }
                 Poll::Ready(None) => unreachable!("EndpointInner owns one sender"),
                 Poll::Pending => {
                     return false;
