@@ -667,7 +667,7 @@ fn split_transmit(transmit: Transmit, mut buffer: Bytes) -> Vec<(Transmit, Bytes
         transmits.push((
             Transmit {
                 destination: transmit.destination,
-                size: buffer.len(),
+                size: contents.len(),
                 ecn: transmit.ecn,
                 segment_size: None,
                 src_ip: transmit.src_ip,
