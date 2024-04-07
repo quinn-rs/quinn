@@ -1,12 +1,10 @@
 use std::{
-    fmt,
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr},
     pin::Pin,
     task::{Context, Poll},
 };
 
-use bytes::BytesMut;
 use proto::ConnectionError;
 use thiserror::Error;
 
@@ -16,31 +14,24 @@ use crate::{
 };
 
 /// An incoming connection for which the server has not yet begun its part of the handshake
+#[derive(Debug)]
 pub struct Incoming(Option<State>);
 
 impl Incoming {
-    pub(crate) fn new(
-        inner: proto::Incoming,
-        endpoint: EndpointRef,
-        response_buffer: BytesMut,
-    ) -> Self {
-        Self(Some(State {
-            inner,
-            endpoint,
-            response_buffer,
-        }))
+    pub(crate) fn new(inner: proto::Incoming, endpoint: EndpointRef) -> Self {
+        Self(Some(State { inner, endpoint }))
     }
 
     /// Attempt to accept this incoming connection (an error may still occur)
     pub fn accept(mut self) -> Result<Connecting, ConnectionError> {
         let state = self.0.take().unwrap();
-        state.endpoint.accept(state.inner, state.response_buffer)
+        state.endpoint.accept(state.inner)
     }
 
     /// Reject this incoming connection attempt
     pub fn refuse(mut self) {
         let state = self.0.take().unwrap();
-        state.endpoint.refuse(state.inner, state.response_buffer);
+        state.endpoint.refuse(state.inner);
     }
 
     /// Respond with a retry packet, requiring the client to retry with address validation
@@ -48,16 +39,12 @@ impl Incoming {
     /// Errors if `remote_address_validated()` is true.
     pub fn retry(mut self) -> Result<(), RetryError> {
         let state = self.0.take().unwrap();
-        state
-            .endpoint
-            .retry(state.inner, state.response_buffer)
-            .map_err(|(e, response_buffer)| {
-                RetryError(Self(Some(State {
-                    inner: e.into_incoming(),
-                    endpoint: state.endpoint,
-                    response_buffer,
-                })))
-            })
+        state.endpoint.retry(state.inner).map_err(|e| {
+            RetryError(Self(Some(State {
+                inner: e.into_incoming(),
+                endpoint: state.endpoint,
+            })))
+        })
     }
 
     /// Ignore this incoming connection attempt, not sending any packet in response
@@ -89,26 +76,15 @@ impl Drop for Incoming {
     fn drop(&mut self) {
         // Implicit reject, similar to Connection's implicit close
         if let Some(state) = self.0.take() {
-            state.endpoint.refuse(state.inner, state.response_buffer);
+            state.endpoint.refuse(state.inner);
         }
     }
 }
 
-impl fmt::Debug for Incoming {
-    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        let state = self.0.as_ref().unwrap();
-        f.debug_struct("Incoming")
-            .field("inner", &state.inner)
-            .field("endpoint", &state.endpoint)
-            // response_buffer is too big and not meaningful enough
-            .finish_non_exhaustive()
-    }
-}
-
+#[derive(Debug)]
 struct State {
     inner: proto::Incoming,
     endpoint: EndpointRef,
-    response_buffer: BytesMut,
 }
 
 /// Error for attempting to retry an [`Incoming`] which already bears an address

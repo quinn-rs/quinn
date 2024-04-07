@@ -359,12 +359,9 @@ pub(crate) struct EndpointInner {
 }
 
 impl EndpointInner {
-    pub(crate) fn accept(
-        &self,
-        incoming: proto::Incoming,
-        mut response_buffer: BytesMut,
-    ) -> Result<Connecting, ConnectionError> {
+    pub(crate) fn accept(&self, incoming: proto::Incoming) -> Result<Connecting, ConnectionError> {
         let mut state = self.state.lock().unwrap();
+        let mut response_buffer = BytesMut::new();
         match state
             .inner
             .accept(incoming, Instant::now(), &mut response_buffer)
@@ -383,25 +380,19 @@ impl EndpointInner {
         }
     }
 
-    pub(crate) fn refuse(&self, incoming: proto::Incoming, mut response_buffer: BytesMut) {
+    pub(crate) fn refuse(&self, incoming: proto::Incoming) {
         let mut state = self.state.lock().unwrap();
+        let mut response_buffer = BytesMut::new();
         let transmit = state.inner.refuse(incoming, &mut response_buffer);
         state.transmit_state.respond(transmit, response_buffer);
     }
 
-    pub(crate) fn retry(
-        &self,
-        incoming: proto::Incoming,
-        mut response_buffer: BytesMut,
-    ) -> Result<(), (proto::RetryError, BytesMut)> {
+    pub(crate) fn retry(&self, incoming: proto::Incoming) -> Result<(), proto::RetryError> {
         let mut state = self.state.lock().unwrap();
-        match state.inner.retry(incoming, &mut response_buffer) {
-            Ok(transmit) => {
-                state.transmit_state.respond(transmit, response_buffer);
-                Ok(())
-            }
-            Err(e) => Err((e, response_buffer)),
-        }
+        let mut response_buffer = BytesMut::new();
+        let transmit = state.inner.retry(incoming, &mut response_buffer)?;
+        state.transmit_state.respond(transmit, response_buffer);
+        Ok(())
     }
 }
 
@@ -410,7 +401,7 @@ pub(crate) struct State {
     socket: Arc<dyn AsyncUdpSocket>,
     inner: proto::Endpoint,
     transmit_state: TransmitState,
-    incoming: VecDeque<(proto::Incoming, BytesMut)>,
+    incoming: VecDeque<proto::Incoming>,
     driver: Option<Waker>,
     ipv6: bool,
     connections: ConnectionSet,
@@ -464,7 +455,7 @@ impl State {
                             ) {
                                 Some(DatagramEvent::NewConnection(incoming)) => {
                                     if self.incoming.len() < MAX_INCOMING_CONNECTIONS {
-                                        self.incoming.push_back((incoming, response_buffer));
+                                        self.incoming.push_back(incoming);
                                     } else {
                                         let transmit =
                                             self.inner.refuse(incoming, &mut response_buffer);
@@ -707,10 +698,10 @@ impl<'a> Future for Accept<'a> {
         if endpoint.driver_lost {
             return Poll::Ready(None);
         }
-        if let Some((incoming, response_buffer)) = endpoint.incoming.pop_front() {
+        if let Some(incoming) = endpoint.incoming.pop_front() {
             // Release the mutex lock on endpoint so cloning it doesn't deadlock
             drop(endpoint);
-            let incoming = Incoming::new(incoming, this.endpoint.inner.clone(), response_buffer);
+            let incoming = Incoming::new(incoming, this.endpoint.inner.clone());
             return Poll::Ready(Some(incoming));
         }
         if endpoint.connections.close.is_some() {
