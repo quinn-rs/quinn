@@ -775,7 +775,7 @@ async fn two_datagram_readers() {
         async {
             server.send_datagram(b"one"[..].into()).unwrap();
             done.notified().await;
-            server.send_datagram(b"two"[..].into()).unwrap();
+            server.send_datagram_wait(b"two"[..].into()).await.unwrap();
         }
     );
     assert!(*a == *b"one" || *b == *b"one");
