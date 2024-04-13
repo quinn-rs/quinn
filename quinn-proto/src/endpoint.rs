@@ -507,6 +507,7 @@ impl Endpoint {
         mut incoming: Incoming,
         now: Instant,
         buf: &mut BytesMut,
+        server_config: Option<Arc<ServerConfig>>,
     ) -> Result<(ConnectionHandle, Connection), AcceptError> {
         let packet_number = incoming.packet.header.number.expand(0);
         let InitialHeader {
@@ -531,7 +532,8 @@ impl Endpoint {
             });
         }
 
-        let server_config = self.server_config.as_ref().unwrap().clone();
+        let server_config =
+            server_config.unwrap_or_else(|| self.server_config.as_ref().unwrap().clone());
 
         if incoming
             .crypto

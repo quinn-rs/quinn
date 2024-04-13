@@ -2,10 +2,11 @@ use std::{
     future::{Future, IntoFuture},
     net::{IpAddr, SocketAddr},
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll},
 };
 
-use proto::ConnectionError;
+use proto::{ConnectionError, ServerConfig};
 use thiserror::Error;
 
 use crate::{
@@ -25,7 +26,20 @@ impl Incoming {
     /// Attempt to accept this incoming connection (an error may still occur)
     pub fn accept(mut self) -> Result<Connecting, ConnectionError> {
         let state = self.0.take().unwrap();
-        state.endpoint.accept(state.inner)
+        state.endpoint.accept(state.inner, None)
+    }
+
+    /// Accept this incoming connection using a custom configuration.
+    ///
+    /// See [`accept()`] for more details.
+    ///
+    /// [`accept()`]: Incoming::accept
+    pub fn accept_with(
+        mut self,
+        server_config: Arc<ServerConfig>,
+    ) -> Result<Connecting, ConnectionError> {
+        let state = self.0.take().unwrap();
+        state.endpoint.accept(state.inner, Some(server_config))
     }
 
     /// Reject this incoming connection attempt

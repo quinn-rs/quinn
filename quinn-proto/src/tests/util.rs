@@ -456,7 +456,7 @@ impl TestEndpoint {
         now: Instant,
     ) -> Result<ConnectionHandle, ConnectionError> {
         let mut buf = BytesMut::new();
-        match self.endpoint.accept(incoming, now, &mut buf) {
+        match self.endpoint.accept(incoming, now, &mut buf, None) {
             Ok((ch, conn)) => {
                 self.connections.insert(ch, conn);
                 self.accepted = Some(Ok(ch));
