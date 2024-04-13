@@ -1,7 +1,7 @@
 use std::{
     collections::{hash_map, HashMap},
     convert::TryFrom,
-    fmt, iter,
+    fmt,
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
     sync::Arc,
@@ -30,7 +30,7 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
         EndpointEventInner, IssuedCid,
     },
-    transport_parameters::TransportParameters,
+    transport_parameters::{PreferredAddress, TransportParameters},
     ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
     MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
@@ -390,6 +390,7 @@ impl Endpoint {
             remote_id,
             loc_cid,
             remote_id,
+            None,
             FourTuple {
                 remote,
                 local_ip: None,
@@ -413,8 +414,8 @@ impl Endpoint {
         for _ in 0..num {
             let id = self.new_cid(ch);
             let meta = &mut self.connections[ch];
-            meta.cids_issued += 1;
             let sequence = meta.cids_issued;
+            meta.cids_issued += 1;
             meta.loc_cids.insert(sequence, id);
             ids.push(IssuedCid {
                 sequence,
@@ -562,6 +563,19 @@ impl Endpoint {
         params.stateless_reset_token = Some(ResetToken::new(&*self.config.reset_key, &loc_cid));
         params.original_dst_cid = Some(incoming.orig_dst_cid);
         params.retry_src_cid = incoming.retry_src_cid;
+        let mut pref_addr_cid = None;
+        if server_config.preferred_address_v4.is_some()
+            || server_config.preferred_address_v6.is_some()
+        {
+            let cid = self.new_cid(ch);
+            pref_addr_cid = Some(cid);
+            params.preferred_address = Some(PreferredAddress {
+                address_v4: server_config.preferred_address_v4,
+                address_v6: server_config.preferred_address_v6,
+                connection_id: cid,
+                stateless_reset_token: ResetToken::new(&*self.config.reset_key, &cid),
+            });
+        }
 
         let tls = server_config.crypto.clone().start_session(version, &params);
         let transport_config = server_config.transport.clone();
@@ -571,6 +585,7 @@ impl Endpoint {
             dst_cid,
             loc_cid,
             src_cid,
+            pref_addr_cid,
             incoming.addresses,
             now,
             tls,
@@ -718,6 +733,7 @@ impl Endpoint {
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
+        pref_addr_cid: Option<ConnectionId>,
         addresses: FourTuple,
         now: Instant,
         tls: Box<dyn crypto::Session>,
@@ -734,6 +750,7 @@ impl Endpoint {
             init_cid,
             loc_cid,
             rem_cid,
+            pref_addr_cid,
             addresses.remote,
             addresses.local_ip,
             tls,
@@ -745,10 +762,22 @@ impl Endpoint {
             path_validated,
         );
 
+        let mut cids_issued = 0;
+        let mut loc_cids = FxHashMap::default();
+
+        loc_cids.insert(cids_issued, loc_cid);
+        cids_issued += 1;
+
+        if let Some(cid) = pref_addr_cid {
+            debug_assert_eq!(cids_issued, 1, "preferred address cid seq must be 1");
+            loc_cids.insert(cids_issued, cid);
+            cids_issued += 1;
+        }
+
         let id = self.connections.insert(ConnectionMeta {
             init_cid,
-            cids_issued: 0,
-            loc_cids: iter::once((0, loc_cid)).collect(),
+            cids_issued,
+            loc_cids,
             addresses,
             reset_token: None,
         });

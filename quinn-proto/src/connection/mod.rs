@@ -244,6 +244,7 @@ impl Connection {
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
+        pref_addr_cid: Option<ConnectionId>,
         remote: SocketAddr,
         local_ip: Option<IpAddr>,
         crypto: Box<dyn crypto::Session>,
@@ -275,7 +276,12 @@ impl Connection {
             crypto,
             handshake_cid: loc_cid,
             rem_handshake_cid: rem_cid,
-            local_cid_state: CidState::new(cid_gen.cid_len(), cid_gen.cid_lifetime(), now),
+            local_cid_state: CidState::new(
+                cid_gen.cid_len(),
+                cid_gen.cid_lifetime(),
+                now,
+                if pref_addr_cid.is_some() { 2 } else { 1 },
+            ),
             path: PathData::new(
                 remote,
                 config.initial_rtt,

@@ -1,4 +1,10 @@
-use std::{fmt, num::TryFromIntError, sync::Arc, time::Duration};
+use std::{
+    fmt,
+    net::{SocketAddrV4, SocketAddrV6},
+    num::TryFromIntError,
+    sync::Arc,
+    time::Duration,
+};
 
 use thiserror::Error;
 
@@ -765,6 +771,9 @@ pub struct ServerConfig {
     /// Improves behavior for clients that move between different internet connections or suffer NAT
     /// rebinding. Enabled by default.
     pub(crate) migration: bool,
+
+    pub(crate) preferred_address_v4: Option<SocketAddrV4>,
+    pub(crate) preferred_address_v6: Option<SocketAddrV6>,
 }
 
 impl ServerConfig {
@@ -781,6 +790,9 @@ impl ServerConfig {
             retry_token_lifetime: Duration::from_secs(15),
 
             migration: true,
+
+            preferred_address_v4: None,
+            preferred_address_v6: None,
         }
     }
 
@@ -808,6 +820,20 @@ impl ServerConfig {
     /// rebinding. Enabled by default.
     pub fn migration(&mut self, value: bool) -> &mut Self {
         self.migration = value;
+        self
+    }
+
+    /// The preferred IPv4 address that will be communicated to clients during handshaking.
+    /// If the client is able to reach this address, it will switch to it.
+    pub fn preferred_address_v4(&mut self, address: Option<SocketAddrV4>) -> &mut Self {
+        self.preferred_address_v4 = address;
+        self
+    }
+
+    /// The preferred IPv6 address that will be communicated to clients during handshaking.
+    /// If the client is able to reach this address, it will switch to it.
+    pub fn preferred_address_v6(&mut self, address: Option<SocketAddrV6>) -> &mut Self {
+        self.preferred_address_v6 = address;
         self
     }
 }
@@ -849,6 +875,8 @@ impl fmt::Debug for ServerConfig {
             .field("token_key", &"[ elided ]")
             .field("retry_token_lifetime", &self.retry_token_lifetime)
             .field("migration", &self.migration)
+            .field("preferred_address_v4", &self.preferred_address_v4)
+            .field("preferred_address_v6", &self.preferred_address_v6)
             .finish()
     }
 }
