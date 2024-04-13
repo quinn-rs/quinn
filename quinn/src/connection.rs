@@ -392,12 +392,13 @@ impl Connection {
             return Err(SendDatagramError::ConnectionLost(x.clone()));
         }
         use proto::SendDatagramError::*;
-        match conn.inner.datagrams().send(data) {
+        match conn.inner.datagrams().send(data, true) {
             Ok(()) => {
                 conn.wake();
                 Ok(())
             }
             Err(e) => Err(match e {
+                Blocked(..) => unreachable!(),
                 UnsupportedByPeer => SendDatagramError::UnsupportedByPeer,
                 Disabled => SendDatagramError::Disabled,
                 TooLarge => SendDatagramError::TooLarge,
@@ -971,6 +972,7 @@ impl State {
                 DatagramReceived => {
                     shared.datagrams.notify_waiters();
                 }
+                DatagramsUnblocked => {}
                 Stream(StreamEvent::Readable { id }) => {
                     if let Some(reader) = self.blocked_readers.remove(&id) {
                         reader.wake();

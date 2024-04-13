@@ -19,26 +19,39 @@ pub struct Datagrams<'a> {
 impl<'a> Datagrams<'a> {
     /// Queue an unreliable, unordered datagram for immediate transmission
     ///
-    /// Returns `Err` iff a `len`-byte datagram cannot currently be sent
-    pub fn send(&mut self, data: Bytes) -> Result<(), SendDatagramError> {
+    /// If `drop` is true, previously queued datagrams which are still unsent may be discarded to
+    /// make space for this datagram, in order of oldest to newest. If `drop` is false, and there
+    /// isn't enough space due to previously queued datagrams, this function will return
+    /// `SendDatagramError::Blocked`. `Event::DatagramsUnblocked` will be emitted once datagrams
+    /// have been sent.
+    ///
+    /// Returns `Err` iff a `len`-byte datagram cannot currently be sent.
+    pub fn send(&mut self, data: Bytes, drop: bool) -> Result<(), SendDatagramError> {
         if self.conn.config.datagram_receive_buffer_size.is_none() {
             return Err(SendDatagramError::Disabled);
         }
         let max = self
             .max_size()
             .ok_or(SendDatagramError::UnsupportedByPeer)?;
-        while self.conn.datagrams.outgoing_total > self.conn.config.datagram_send_buffer_size {
-            let prev = self
-                .conn
-                .datagrams
-                .outgoing
-                .pop_front()
-                .expect("datagrams.outgoing_total desynchronized");
-            trace!(len = prev.data.len(), "dropping outgoing datagram");
-            self.conn.datagrams.outgoing_total -= prev.data.len();
-        }
         if data.len() > max {
             return Err(SendDatagramError::TooLarge);
+        }
+        if drop {
+            while self.conn.datagrams.outgoing_total > self.conn.config.datagram_send_buffer_size {
+                let prev = self
+                    .conn
+                    .datagrams
+                    .outgoing
+                    .pop_front()
+                    .expect("datagrams.outgoing_total desynchronized");
+                trace!(len = prev.data.len(), "dropping outgoing datagram");
+                self.conn.datagrams.outgoing_total -= prev.data.len();
+            }
+        } else if self.conn.datagrams.outgoing_total + data.len()
+            > self.conn.config.datagram_send_buffer_size
+        {
+            self.conn.datagrams.send_blocked = true;
+            return Err(SendDatagramError::Blocked(data));
         }
         self.conn.datagrams.outgoing_total += data.len();
         self.conn.datagrams.outgoing.push_back(Datagram { data });
@@ -95,6 +108,7 @@ pub(super) struct DatagramState {
     pub(super) incoming: VecDeque<Datagram>,
     pub(super) outgoing: VecDeque<Datagram>,
     pub(super) outgoing_total: usize,
+    pub(super) send_blocked: bool,
 }
 
 impl DatagramState {
@@ -167,4 +181,7 @@ pub enum SendDatagramError {
     /// exceeded.
     #[error("datagram too large")]
     TooLarge,
+    /// Send would block
+    #[error("datagram send blocked")]
+    Blocked(Bytes),
 }
