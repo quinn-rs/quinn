@@ -359,13 +359,19 @@ pub(crate) struct EndpointInner {
 }
 
 impl EndpointInner {
-    pub(crate) fn accept(&self, incoming: proto::Incoming) -> Result<Connecting, ConnectionError> {
+    pub(crate) fn accept(
+        &self,
+        incoming: proto::Incoming,
+        server_config: Option<Arc<ServerConfig>>,
+    ) -> Result<Connecting, ConnectionError> {
         let mut state = self.state.lock().unwrap();
         let mut response_buffer = BytesMut::new();
-        match state
-            .inner
-            .accept(incoming, Instant::now(), &mut response_buffer)
-        {
+        match state.inner.accept(
+            incoming,
+            Instant::now(),
+            &mut response_buffer,
+            server_config,
+        ) {
             Ok((handle, conn)) => {
                 let socket = state.socket.clone();
                 let runtime = state.runtime.clone();
