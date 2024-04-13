@@ -3149,14 +3149,20 @@ impl Connection {
         }
 
         // DATAGRAM
+        let mut sent_datagrams = false;
         while buf.len() + Datagram::SIZE_BOUND < max_size && space_id == SpaceId::Data {
             match self.datagrams.write(buf, max_size) {
                 true => {
+                    sent_datagrams = true;
                     sent.non_retransmits = true;
                     self.stats.frame_tx.datagram += 1;
                 }
                 false => break,
             }
+        }
+        if self.datagrams.send_blocked && sent_datagrams {
+            self.events.push_back(Event::DatagramsUnblocked);
+            self.datagrams.send_blocked = false;
         }
 
         // STREAM
@@ -3632,6 +3638,8 @@ pub enum Event {
     Stream(StreamEvent),
     /// One or more application datagrams have been received
     DatagramReceived,
+    /// One or more application datagrams have been sent after blocking
+    DatagramsUnblocked,
 }
 
 fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
