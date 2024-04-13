@@ -28,21 +28,30 @@ pub(super) struct CidState {
 }
 
 impl CidState {
-    pub(crate) fn new(cid_len: usize, cid_lifetime: Option<Duration>, now: Instant) -> Self {
+    pub(crate) fn new(
+        cid_len: usize,
+        cid_lifetime: Option<Duration>,
+        now: Instant,
+        issued: u64,
+    ) -> Self {
         let mut active_seq = FxHashSet::default();
-        // Add sequence number of CID used in handshaking into tracking set
-        active_seq.insert(0);
+        // Add sequence number of CIDs used in handshaking into tracking set
+        for seq in 0..issued {
+            active_seq.insert(seq);
+        }
         let mut this = Self {
             retire_timestamp: VecDeque::new(),
-            issued: 1, // One CID is already supplied during handshaking
+            issued,
             active_seq,
             prev_retire_seq: 0,
             retire_seq: 0,
             cid_len,
             cid_lifetime,
         };
-        // Track lifetime of cid used in handshaking
-        this.track_lifetime(0, now);
+        // Track lifetime of CIDs used in handshaking
+        for seq in 0..issued {
+            this.track_lifetime(seq, now);
+        }
         this
     }
 

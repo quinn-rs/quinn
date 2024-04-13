@@ -493,7 +493,7 @@ mod test {
             max_udp_payload_size: 1200u32.into(),
             preferred_address: Some(PreferredAddress {
                 address_v4: Some(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 42)),
-                address_v6: None,
+                address_v6: Some(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 24, 0, 0)),
                 connection_id: ConnectionId::new(&[0x42]),
                 stateless_reset_token: [0xab; RESET_TOKEN_SIZE].into(),
             }),
