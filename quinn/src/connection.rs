@@ -324,7 +324,7 @@ impl Connection {
     pub fn read_datagram(&self) -> ReadDatagram<'_> {
         ReadDatagram {
             conn: &self.0,
-            notify: self.0.shared.datagrams.notified(),
+            notify: self.0.shared.datagram_received.notified(),
         }
     }
 
@@ -745,7 +745,9 @@ impl Future for ReadDatagram<'_> {
                 // `state` lock ensures we didn't race with readiness
                 Poll::Pending => return Poll::Pending,
                 // Spurious wakeup, get a new future
-                Poll::Ready(()) => this.notify.set(this.conn.shared.datagrams.notified()),
+                Poll::Ready(()) => this
+                    .notify
+                    .set(this.conn.shared.datagram_received.notified()),
             }
         }
     }
@@ -839,7 +841,7 @@ pub(crate) struct Shared {
     stream_budget_available: [Notify; 2],
     /// Notified when the peer has initiated a new stream
     stream_incoming: [Notify; 2],
-    datagrams: Notify,
+    datagram_received: Notify,
     closed: Notify,
 }
 
@@ -970,7 +972,7 @@ impl State {
                     shared.stream_incoming[Dir::Bi as usize].notify_waiters();
                 }
                 DatagramReceived => {
-                    shared.datagrams.notify_waiters();
+                    shared.datagram_received.notify_waiters();
                 }
                 DatagramsUnblocked => {}
                 Stream(StreamEvent::Readable { id }) => {
@@ -1079,7 +1081,7 @@ impl State {
         shared.stream_budget_available[Dir::Bi as usize].notify_waiters();
         shared.stream_incoming[Dir::Uni as usize].notify_waiters();
         shared.stream_incoming[Dir::Bi as usize].notify_waiters();
-        shared.datagrams.notify_waiters();
+        shared.datagram_received.notify_waiters();
         for (_, x) in self.finishing.drain() {
             let _ = x.send(Some(WriteError::ConnectionLost(reason.clone())));
         }
