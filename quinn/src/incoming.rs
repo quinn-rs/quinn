@@ -63,7 +63,8 @@ impl Incoming {
 
     /// Ignore this incoming connection attempt, not sending any packet in response
     pub fn ignore(mut self) {
-        self.0.take().unwrap();
+        let state = self.0.take().unwrap();
+        state.endpoint.ignore(state.inner);
     }
 
     /// The local IP address which was used when the peer established

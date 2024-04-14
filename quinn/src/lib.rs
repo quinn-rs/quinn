@@ -130,10 +130,3 @@ const IO_LOOP_BOUND: usize = 160;
 /// Going much lower does not yield any noticeable difference, since a single `recvmmsg`
 /// batch of size 32 was observed to take 30us on some systems.
 const RECV_TIME_BOUND: Duration = Duration::from_micros(50);
-
-/// The maximum number of `IncomingConnection`s we allow to be enqueued at a time before we start
-/// rejecting new `IncomingConnection`s automatically. Assuming each `IncomingConnection` accounts
-/// for little over 1200 bytes of memory maximum, this should limit an endpoint's incoming
-/// connection queue memory consumption to under 100 MiB, a generous amount that still prevents
-/// memory exhaustion.
-const MAX_INCOMING_CONNECTIONS: usize = 1 << 16;

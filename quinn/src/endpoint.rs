@@ -29,7 +29,7 @@ use udp::{RecvMeta, BATCH_SIZE};
 
 use crate::{
     connection::Connecting, incoming::Incoming, work_limiter::WorkLimiter, ConnectionEvent,
-    EndpointConfig, VarInt, IO_LOOP_BOUND, MAX_INCOMING_CONNECTIONS, RECV_TIME_BOUND,
+    EndpointConfig, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND,
 };
 
 /// A QUIC endpoint.
@@ -410,6 +410,10 @@ impl EndpointInner {
         respond(transmit, &response_buffer, &*state.socket);
         Ok(())
     }
+
+    pub(crate) fn ignore(&self, incoming: proto::Incoming) {
+        self.state.lock().unwrap().inner.ignore(incoming);
+    }
 }
 
 #[derive(Debug)]
@@ -741,9 +745,7 @@ impl RecvState {
                                 &mut response_buffer,
                             ) {
                                 Some(DatagramEvent::NewConnection(incoming)) => {
-                                    if self.incoming.len() < MAX_INCOMING_CONNECTIONS
-                                        && self.connections.close.is_none()
-                                    {
+                                    if self.connections.close.is_none() {
                                         self.incoming.push_back(incoming);
                                     } else {
                                         let transmit =
