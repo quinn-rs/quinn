@@ -666,6 +666,113 @@ fn zero_rtt_rejection() {
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
 }
 
+fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: F) {
+    // caller sets the server limit to 4000 bytes
+    // the client writes 8000 bytes
+    const CLIENT_WRITES: usize = 8000;
+    // this gets split across 8 packets
+    // the first packet is stored in the Incoming
+    // the next three are incoming-buffered, bringing the incoming buffer size to 3600 bytes
+    // the last four are dropped due to the buffering limit and must be retransmitted
+    const EXPECTED_DROPPED: u64 = 4;
+
+    let _guard = subscribe();
+    let mut server_config = server_config();
+    configure_server(&mut server_config);
+    let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config);
+    let config = client_config();
+
+    // Establish normal connection
+    let client_ch = pair.begin_connect(config.clone());
+    pair.drive();
+    pair.server.assert_accept();
+    pair.client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .close(pair.time, VarInt(0), [][..].into());
+    pair.drive();
+
+    pair.client.addr = SocketAddr::new(
+        Ipv6Addr::LOCALHOST.into(),
+        CLIENT_PORTS.lock().unwrap().next().unwrap(),
+    );
+    info!("resuming session");
+    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Wait;
+    let client_ch = pair.begin_connect(config);
+    assert!(pair.client_conn_mut(client_ch).has_0rtt());
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, s)
+        .write(&vec![0; CLIENT_WRITES])
+        .unwrap();
+    pair.drive();
+    let incoming = pair.server.waiting_incoming.pop().unwrap();
+    assert!(pair.server.waiting_incoming.is_empty());
+    let _ = pair.server.try_accept(incoming, pair.time);
+    pair.drive();
+
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    assert_matches!(
+        pair.client_conn_mut(client_ch).poll(),
+        Some(Event::Connected)
+    );
+
+    assert!(pair.client_conn_mut(client_ch).accepted_0rtt());
+    let server_ch = pair.server.assert_accept();
+
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeDataReady)
+    );
+    // We don't currently preserve stream event order wrt. connection events
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Connected)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
+    );
+
+    let mut recv = pair.server_recv(server_ch, s);
+    let mut chunks = recv.read(false).unwrap();
+    let mut offset = 0;
+    loop {
+        match chunks.next(usize::MAX) {
+            Ok(Some(chunk)) => {
+                assert_eq!(chunk.offset as usize, offset);
+                offset += chunk.bytes.len();
+            }
+            Err(ReadError::Blocked) => break,
+            Ok(None) => panic!("unexpected stream end"),
+            Err(e) => panic!("{}", e),
+        }
+    }
+    assert_eq!(offset, CLIENT_WRITES);
+    let _ = chunks.finalize();
+    assert_eq!(
+        pair.client_conn_mut(client_ch).lost_packets(),
+        EXPECTED_DROPPED
+    );
+}
+
+#[test]
+fn zero_rtt_incoming_buffer_size() {
+    test_zero_rtt_incoming_limit(|config| {
+        config.incoming_buffer_size(4000);
+    });
+}
+
+#[test]
+fn zero_rtt_incoming_buffer_size_total() {
+    test_zero_rtt_incoming_limit(|config| {
+        config.incoming_buffer_size_total(4000);
+    });
+}
+
 #[test]
 fn alpn_success() {
     let _guard = subscribe();
