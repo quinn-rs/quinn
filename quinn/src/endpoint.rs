@@ -310,21 +310,14 @@ impl Future for EndpointDriver {
 
     #[allow(unused_mut)] // MSRV
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let mut endpoint_guard = self.0.state.lock().unwrap();
-        let endpoint = &mut *endpoint_guard;
+        let mut endpoint = self.0.state.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());
         }
 
         let now = Instant::now();
         let mut keep_going = false;
-        keep_going |= endpoint.recv_state.drive_recv(
-            cx,
-            &mut endpoint.inner,
-            &mut endpoint.transmit_state,
-            &*endpoint.socket,
-            now,
-        )?;
+        keep_going |= endpoint.drive_recv(cx, now)?;
         keep_going |= endpoint.handle_events(cx, &self.0.shared);
         keep_going |= endpoint.drive_send(cx)?;
 
@@ -335,7 +328,7 @@ impl Future for EndpointDriver {
         if endpoint.ref_count == 0 && endpoint.recv_state.connections.is_empty() {
             Poll::Ready(Ok(()))
         } else {
-            drop(endpoint_guard);
+            drop(endpoint);
             // If there is more work to do schedule the endpoint task again.
             // `wake_by_ref()` is called outside the lock to minimize
             // lock contention on a multithreaded runtime.
@@ -434,6 +427,19 @@ pub(crate) struct Shared {
 }
 
 impl State {
+    fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
+        self.recv_state.recv_limiter.start_cycle();
+        let poll_res = self.recv_state.poll_socket(
+            cx,
+            &mut self.inner,
+            &mut self.transmit_state,
+            &*self.socket,
+            now,
+        );
+        self.recv_state.recv_limiter.finish_cycle();
+        poll_res
+    }
+
     fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
         self.send_limiter.start_cycle();
 
@@ -751,7 +757,7 @@ impl RecvState {
         }
     }
 
-    fn drive_recv(
+    fn poll_socket(
         &mut self,
         cx: &mut Context,
         endpoint: &mut proto::Endpoint,
@@ -759,7 +765,6 @@ impl RecvState {
         socket: &dyn AsyncUdpSocket,
         now: Instant,
     ) -> Result<bool, io::Error> {
-        self.recv_limiter.start_cycle();
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
         let mut iovs: [IoSliceMut; BATCH_SIZE] = {
             let mut bufs = self
@@ -830,12 +835,10 @@ impl RecvState {
                 }
             }
             if !self.recv_limiter.allow_work() {
-                self.recv_limiter.finish_cycle();
                 return Ok(true);
             }
         }
 
-        self.recv_limiter.finish_cycle();
         Ok(false)
     }
 }
