@@ -326,7 +326,8 @@ impl Future for EndpointDriver {
             self.0.shared.incoming.notify_waiters();
         }
 
-        if endpoint.ref_count == 0 && endpoint.connections.is_empty() {
+        let manually_closed = endpoint.connections.close.is_some();
+        if (manually_closed || endpoint.ref_count == 0) && endpoint.connections.is_empty() {
             Poll::Ready(Ok(()))
         } else {
             drop(endpoint);
