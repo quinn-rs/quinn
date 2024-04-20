@@ -458,7 +458,9 @@ impl State {
                                 &mut response_buffer,
                             ) {
                                 Some(DatagramEvent::NewConnection(incoming)) => {
-                                    if self.incoming.len() < MAX_INCOMING_CONNECTIONS {
+                                    if self.incoming.len() < MAX_INCOMING_CONNECTIONS
+                                        && self.connections.close.is_none()
+                                    {
                                         self.incoming.push_back(incoming);
                                     } else {
                                         let transmit =
