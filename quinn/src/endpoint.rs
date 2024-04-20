@@ -180,7 +180,7 @@ impl Endpoint {
         server_name: &str,
     ) -> Result<Connecting, ConnectError> {
         let mut endpoint = self.inner.state.lock().unwrap();
-        if endpoint.driver_lost {
+        if endpoint.driver_lost || endpoint.connections.close.is_some() {
             return Err(ConnectError::EndpointStopping);
         }
         if addr.is_ipv6() && !endpoint.ipv6 {
