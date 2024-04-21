@@ -2,11 +2,13 @@
 //!
 //! Checkout the `README.md` for guidance.
 
+use std::error::Error;
+
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};
 
 #[tokio::main]
-async fn main() -> Result<(), Box<dyn std::error::Error>> {
+async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     let server_addr = "127.0.0.1:5000".parse().unwrap();
     let (endpoint, server_cert) = make_server_endpoint(server_addr)?;
     // accept a single connection
