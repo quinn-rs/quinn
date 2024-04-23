@@ -437,7 +437,7 @@ impl State {
             now,
         );
         self.recv_state.recv_limiter.finish_cycle();
-        poll_res
+        poll_res.map(|x| x.keep_going)
     }
 
     fn drive_send(&mut self, cx: &mut Context) -> Result<bool, io::Error> {
@@ -764,7 +764,7 @@ impl RecvState {
         transmit_state: &mut TransmitState,
         socket: &dyn AsyncUdpSocket,
         now: Instant,
-    ) -> Result<bool, io::Error> {
+    ) -> Result<PollProgress, io::Error> {
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
         let mut iovs: [IoSliceMut; BATCH_SIZE] = {
             let mut bufs = self
@@ -823,7 +823,7 @@ impl RecvState {
                     }
                 }
                 Poll::Pending => {
-                    break;
+                    return Ok(PollProgress { keep_going: false });
                 }
                 // Ignore ECONNRESET as it's undefined in QUIC and may be injected by an
                 // attacker
@@ -835,10 +835,14 @@ impl RecvState {
                 }
             }
             if !self.recv_limiter.allow_work() {
-                return Ok(true);
+                return Ok(PollProgress { keep_going: true });
             }
         }
-
-        Ok(false)
     }
+}
+
+#[derive(Default)]
+struct PollProgress {
+    /// Whether datagram handling was interrupted early by the work limiter for fairness
+    keep_going: bool,
 }
