@@ -206,13 +206,19 @@ impl Endpoint {
 
     /// Switch to a new UDP socket
     ///
+    /// See [`Endpoint::rebind_abstract()`] for details.
+    pub fn rebind(&self, socket: std::net::UdpSocket) -> io::Result<()> {
+        self.rebind_abstract(self.runtime.wrap_udp_socket(socket)?)
+    }
+
+    /// Switch to a new UDP socket
+    ///
     /// Allows the endpoint's address to be updated live, affecting all active connections. Incoming
     /// connections and connections to servers unreachable from the new address will be lost.
     ///
     /// On error, the old UDP socket is retained.
-    pub fn rebind(&self, socket: std::net::UdpSocket) -> io::Result<()> {
+    pub fn rebind_abstract(&self, socket: Arc<dyn AsyncUdpSocket>) -> io::Result<()> {
         let addr = socket.local_addr()?;
-        let socket = self.runtime.wrap_udp_socket(socket)?;
         let mut inner = self.inner.state.lock().unwrap();
         inner.prev_socket = Some(mem::replace(&mut inner.socket, socket));
         inner.ipv6 = addr.is_ipv6();
