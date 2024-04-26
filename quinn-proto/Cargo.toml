@@ -13,9 +13,6 @@ workspace = ".."
 [package.metadata.docs.rs]
 all-features = true
 
-[badges]
-maintenance = { status = "experimental" }
-
 [features]
 default = ["rustls", "log"]
 rustls = ["dep:rustls", "ring"]
