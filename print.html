@@ -240,7 +240,11 @@ One thing is for sure, QUIC has many great potentials and will serve us in the f
 <a href="https://discord.gg/SGPEcDfVzh"><img src="https://img.shields.io/discord/976380008299917365?logo=discord" alt="Chat" /></a>
 <a href="LICENSE-MIT"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT" /></a>
 <a href="LICENSE-APACHE"><img src="https://img.shields.io/badge/License-Apache%202.0-blue.svg" alt="License: Apache 2.0" /></a></p>
-<p>Quinn is a pure-rust, async-compatible implementation of the IETF <a href="https://quicwg.github.io/">QUIC</a> transport protocol.</p>
+<p>Quinn is a pure-Rust, async-compatible implementation of the IETF <a href="https://quicwg.github.io/">QUIC</a> transport protocol.
+The project was founded by <a href="https://github.com/djc">Dirkjan Ochtman</a> and
+<a href="https://github.com/Ralith">Benjamin Saunders</a> as a side project in 2018, and has seen more than
+30 releases since then. If you're using Quinn in a commercial setting, please consider
+<a href="https://opencollective.com/quinn-rs">sponsoring</a> the project.</p>
 <h2 id="features"><a class="header" href="#features">Features</a></h2>
 <ul>
 <li>Simultaneous client/server operation</li>
@@ -320,12 +324,6 @@ for the client side of each connection will be written to the path specified in
 the variable.</p>
 <p>The minimum supported Rust version for published releases of our
 crates will always be at least 6 months old at the time of release.</p>
-<h2 id="authors"><a class="header" href="#authors">Authors</a></h2>
-<ul>
-<li><strong>Dirkjan Ochtman</strong> - <em>Project owner &amp; founder</em></li>
-<li><strong>Benjamin Saunders</strong> - <em>Project owner &amp; founder</em></li>
-<li><strong>Jean-Christophe Begue</strong> - <em>Project collaborator, author of the HTTP/3 Implementation</em></li>
-</ul>
 <div style="break-before: page; page-break-before: always;"></div><h1 id="certificates-1"><a class="header" href="#certificates-1">Certificates</a></h1>
 <p>In this chapter, we discuss the configuration of the certificates that are <strong>required</strong> for a working Quinn connection.</p>
 <p>As QUIC uses TLS 1.3 for authentication of connections, the server needs to provide the client with a certificate confirming its identity, and the client must be configured to trust the certificates it receives from the server.</p>
