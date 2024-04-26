@@ -25,8 +25,8 @@ use crate::{
     packet::{Header, InitialHeader, InitialPacket, LongType, Packet, PartialDecode, SpaceId},
     range_set::ArrayRangeSet,
     shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
+        EndpointEvent, EndpointEventInner,
     },
     token::ResetToken,
     transport_parameters::TransportParameters,
@@ -989,13 +989,13 @@ impl Connection {
     pub fn handle_event(&mut self, event: ConnectionEvent) {
         use self::ConnectionEventInner::*;
         match event.0 {
-            Datagram {
+            Datagram(DatagramConnectionEvent {
                 now,
                 remote,
                 ecn,
                 first_decode,
                 remaining,
-            } => {
+            }) => {
                 // If this packet could initiate a migration and we're a client or a server that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
@@ -3346,11 +3346,11 @@ impl Connection {
     #[cfg(test)]
     pub(crate) fn decode_packet(&self, event: &ConnectionEvent) -> Option<Vec<u8>> {
         let (first_decode, remaining) = match &event.0 {
-            ConnectionEventInner::Datagram {
+            ConnectionEventInner::Datagram(DatagramConnectionEvent {
                 first_decode,
                 remaining,
                 ..
-            } => (first_decode, remaining),
+            }) => (first_decode, remaining),
             _ => return None,
         };
 
