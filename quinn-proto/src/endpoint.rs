@@ -27,8 +27,8 @@ use crate::{
         PartialDecode, PlainInitialHeader,
     },
     shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, EcnCodepoint, EndpointEvent,
-        EndpointEventInner, IssuedCid,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
+        EndpointEvent, EndpointEventInner, IssuedCid,
     },
     token::TokenDecodeError,
     transport_parameters::{PreferredAddress, TransportParameters},
@@ -192,13 +192,13 @@ impl Endpoint {
         if let Some(ch) = self.index.get(&addresses, &first_decode) {
             return Some(DatagramEvent::ConnectionEvent(
                 ch,
-                ConnectionEvent(ConnectionEventInner::Datagram {
+                ConnectionEvent(ConnectionEventInner::Datagram(DatagramConnectionEvent {
                     now,
                     remote: addresses.remote,
                     ecn,
                     first_decode,
                     remaining,
-                }),
+                })),
             ));
         }
 
