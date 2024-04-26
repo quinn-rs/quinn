@@ -471,6 +471,9 @@ impl Connection {
         };
 
         let mut num_datagrams = 0;
+        // Position in `buf` of the first byte of the current UDP datagram. When coalescing QUIC
+        // packets, this can be earlier than the start of the current QUIC packet.
+        let mut datagram_start = 0;
 
         // Send PATH_CHALLENGE for a previous path if necessary
         if let Some(ref mut prev_path) = self.prev_path {
@@ -687,6 +690,7 @@ impl Connection {
                 num_datagrams += 1;
                 coalesce = true;
                 pad_datagram = false;
+                datagram_start = buf.len();
             } else {
                 // We can append/coalesce the next packet into the current
                 // datagram.
@@ -727,7 +731,7 @@ impl Connection {
                 space_id,
                 buf,
                 buf_capacity,
-                (num_datagrams as usize - 1) * (self.path.current_mtu() as usize),
+                datagram_start,
                 ack_eliciting,
                 self,
                 self.version,
