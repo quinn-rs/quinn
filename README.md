@@ -9,7 +9,11 @@
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
 
-Quinn is a pure-rust, async-compatible implementation of the IETF [QUIC][quic] transport protocol.
+Quinn is a pure-Rust, async-compatible implementation of the IETF [QUIC][quic] transport protocol.
+The project was founded by [Dirkjan Ochtman](https://github.com/djc) and
+[Benjamin Saunders](https://github.com/Ralith) as a side project in 2018, and has seen more than
+30 releases since then. If you're using Quinn in a commercial setting, please consider
+[sponsoring](https://opencollective.com/quinn-rs) the project.
 
 ## Features
 
@@ -107,12 +111,6 @@ the variable.
 
 The minimum supported Rust version for published releases of our
 crates will always be at least 6 months old at the time of release.
-
-## Authors
-
-* **Dirkjan Ochtman** - *Project owner & founder*
-* **Benjamin Saunders** - *Project owner & founder*
-* **Jean-Christophe Begue** - *Project collaborator, author of the HTTP/3 Implementation*
 
 [quic]: https://quicwg.github.io/
 [issues]: https://github.com/djc/quinn/issues
