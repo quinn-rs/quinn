@@ -18,9 +18,6 @@ default = ["log"]
 # Write logs via the `log` crate when no `tracing` subscriber exists
 log = ["tracing/log"]
 
-[badges]
-maintenance = { status = "experimental" }
-
 [dependencies]
 libc = "0.2.113"
 socket2 = "0.5"

@@ -30,10 +30,6 @@ runtime-smol = ["async-io", "smol"]
 # Write logs via the `log` crate when no `tracing` subscriber exists
 log = ["tracing/log", "proto/log", "udp/log"]
 
-[badges]
-codecov = { repository = "djc/quinn" }
-maintenance = { status = "experimental" }
-
 [dependencies]
 async-io = { version = "2.0", optional = true }
 async-std = { version = "1.11", optional = true }
