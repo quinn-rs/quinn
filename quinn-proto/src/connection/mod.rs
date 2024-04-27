@@ -1611,6 +1611,9 @@ impl Connection {
                 self.path
                     .congestion
                     .on_mtu_update(self.path.mtud.current_mtu());
+                if let Some(max_datagram_size) = self.datagrams().max_size() {
+                    self.datagrams.drop_oversized(max_datagram_size);
+                }
             }
 
             // Don't apply congestion penalty for lost ack-only packets
