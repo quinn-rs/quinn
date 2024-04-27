@@ -72,7 +72,10 @@ impl<'a> Datagrams<'a> {
             Some(crypto) => Some(&*crypto.packet.local),
             None => self.conn.zero_rtt_crypto.as_ref().map(|x| &*x.packet),
         };
-        let tag_len = key.unwrap().tag_len();
+        // If neither Data nor 0-RTT keys are available, make a reasonable tag length guess. As of
+        // this writing, all QUIC cipher suites use 16-byte tags. We could return `None` instead,
+        // but that would needlessly prevent sending datagrams during 0-RTT.
+        let tag_len = key.map_or(16, |x| x.tag_len());
         let max_size = self.conn.path.current_mtu() as usize
             - 1                 // flags byte
             - self.conn.rem_cids.active().len()
