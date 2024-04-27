@@ -25,7 +25,7 @@ pub(super) struct PacketBuilder {
     /// frames
     pub(super) max_size: usize,
     pub(super) tag_len: usize,
-    pub(super) span: tracing::Span,
+    pub(super) _span: tracing::span::EnteredSpan,
 }
 
 impl PacketBuilder {
@@ -85,8 +85,7 @@ impl PacketBuilder {
             _ => space.get_tx_number(),
         };
 
-        let span = trace_span!("send", space = ?space_id, pn = exact_number);
-        span.with_subscriber(|(id, dispatch)| dispatch.enter(id));
+        let span = trace_span!("send", space = ?space_id, pn = exact_number).entered();
 
         let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
         let header = match space_id {
@@ -161,9 +160,9 @@ impl PacketBuilder {
             short_header: header.is_short(),
             min_size,
             max_size,
-            span,
             tag_len,
             ack_eliciting,
+            _span: span,
         })
     }
 
@@ -252,8 +251,6 @@ impl PacketBuilder {
             header_crypto,
             Some((self.exact_number, packet_crypto)),
         );
-        self.span
-            .with_subscriber(|(id, dispatch)| dispatch.exit(id));
 
         (buffer.len() - encode_start, pad)
     }
