@@ -1699,6 +1699,13 @@ impl Connection {
     }
 
     fn set_loss_detection_timer(&mut self, now: Instant) {
+        if self.state.is_closed() {
+            // No loss detection takes place on closed connections, and `close_common` already
+            // stopped time timer. Ensure we don't restart it inadvertently, e.g. in response to a
+            // reordered packet being handled by state-insensitive code.
+            return;
+        }
+
         if let Some((loss_time, _)) = self.loss_time_and_space() {
             // Time threshold loss detection.
             self.timers.set(Timer::LossDetection, loss_time);
