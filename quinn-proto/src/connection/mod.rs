@@ -474,7 +474,7 @@ impl Connection {
         // Position in `buf` of the first byte of the current UDP datagram. When coalescing QUIC
         // packets, this can be earlier than the start of the current QUIC packet.
         let mut datagram_start = 0;
-        let segment_size = usize::from(self.path.current_mtu());
+        let mut segment_size = usize::from(self.path.current_mtu());
 
         // Send PATH_CHALLENGE for a previous path if necessary
         if let Some(ref mut prev_path) = self.prev_path {
@@ -666,13 +666,30 @@ impl Connection {
 
                 // Finish current packet
                 if let Some(mut builder) = builder_storage.take() {
-                    // Pad the packet to make it suitable for sending with GSO
-                    // which will always send the maximum PDU.
-                    builder.pad_to(self.path.current_mtu());
+                    if pad_datagram {
+                        builder.pad_to(MIN_INITIAL_SIZE);
+                    }
+
+                    if num_datagrams > 1 {
+                        // Pad the current packet to GSO segment size so it can be included in the
+                        // GSO batch.
+                        builder.pad_to(segment_size as u16);
+                    }
 
                     builder.finish_and_track(now, self, sent_frames.take(), buf);
 
-                    debug_assert_eq!(buf.len(), buf_capacity, "Packet must be padded");
+                    if num_datagrams == 1 {
+                        // Set the segment size for this GSO batch to the size of the first UDP
+                        // datagram in the batch. Larger data that cannot be fragmented
+                        // (e.g. application datagrams) will be included in a future batch. When
+                        // sending large enough volumes of data for GSO to be useful, we expect
+                        // packet sizes to usually be consistent, e.g. populated by max-size STREAM
+                        // frames or uniformly sized datagrams.
+                        segment_size = buf.len();
+                        // Clip the unused capacity out of the buffer so future packets don't
+                        // overrun
+                        buf_capacity = buf.len();
+                    }
                 }
 
                 // Allocate space for another datagram
