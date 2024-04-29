@@ -683,6 +683,24 @@ impl Connection {
                     }
 
                     if num_datagrams > 1 {
+                        // If too many padding bytes would be required to continue the GSO batch
+                        // after this packet, end the GSO batch here. Ensures that fixed-size frames
+                        // with heterogeneous sizes (e.g. application datagrams) won't inadvertently
+                        // waste large amounts of bandwidth. The exact threshold is a bit arbitrary
+                        // and might benefit from further tuning, though there's no universally
+                        // optimal value.
+                        const MAX_PADDING: usize = 16;
+                        let packet_len_unpadded = cmp::max(builder.min_size, buf.len())
+                            - datagram_start
+                            + builder.tag_len;
+                        if packet_len_unpadded + MAX_PADDING < segment_size {
+                            trace!(
+                                "GSO truncated by demand for {} padding bytes",
+                                segment_size - packet_len_unpadded
+                            );
+                            break;
+                        }
+
                         // Pad the current packet to GSO segment size so it can be included in the
                         // GSO batch.
                         builder.pad_to(segment_size as u16);
