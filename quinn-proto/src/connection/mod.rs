@@ -22,7 +22,10 @@ use crate::{
     crypto::{self, KeyPair, Keys, PacketKey},
     frame,
     frame::{Close, Datagram, FrameStruct},
-    packet::{Header, InitialHeader, InitialPacket, LongType, Packet, PartialDecode, SpaceId},
+    packet::{
+        Header, InitialHeader, InitialPacket, LongType, Packet, PacketNumber, PartialDecode,
+        SpaceId,
+    },
     range_set::ArrayRangeSet,
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
@@ -578,9 +581,18 @@ impl Connection {
         // so we cannot trivially rewrite it to take advantage of `SpaceId::iter()`.
         while space_idx < spaces.len() {
             let space_id = spaces[space_idx];
+            // Number of bytes available for frames if this is a 1-RTT packet. We're guaranteed to
+            // be able to send an individual frame at least this large in the next 1-RTT
+            // packet. This could be generalized to support every space, but it's only needed to
+            // handle large fixed-size frames, which only exist in 1-RTT (application datagrams). We
+            // don't account for coalesced packets potentially occupying space because frames can
+            // always spill into the next datagram.
+            let pn = self.packet_number_filter.peek(&self.spaces[SpaceId::Data]);
+            let frame_space_1rtt =
+                segment_size.saturating_sub(self.predict_1rtt_overhead(Some(pn)));
 
             // Is there data or a close message to send in this space?
-            let can_send = self.space_can_send(space_id);
+            let can_send = self.space_can_send(space_id, frame_space_1rtt);
             if can_send.is_empty() && (!close || self.spaces[space_id].crypto.is_none()) {
                 space_idx += 1;
                 continue;
@@ -590,7 +602,7 @@ impl Connection {
                 || self.spaces[space_id].ping_pending
                 || self.spaces[space_id].immediate_ack_pending;
             if space_id == SpaceId::Data {
-                ack_eliciting |= self.can_send_1rtt();
+                ack_eliciting |= self.can_send_1rtt(frame_space_1rtt);
             }
 
             // Can we append more data into the current buffer?
@@ -980,7 +992,7 @@ impl Connection {
     }
 
     /// Indicate what types of frames are ready to send for the given space
-    fn space_can_send(&self, space_id: SpaceId) -> SendableFrames {
+    fn space_can_send(&self, space_id: SpaceId, frame_space_1rtt: usize) -> SendableFrames {
         if self.spaces[space_id].crypto.is_some() {
             let can_send = self.spaces[space_id].can_send(&self.streams);
             if !can_send.is_empty() {
@@ -992,7 +1004,7 @@ impl Connection {
             return SendableFrames::empty();
         }
 
-        if self.spaces[space_id].crypto.is_some() && self.can_send_1rtt() {
+        if self.spaces[space_id].crypto.is_some() && self.can_send_1rtt(frame_space_1rtt) {
             return SendableFrames {
                 other: true,
                 acks: false,
@@ -1001,7 +1013,7 @@ impl Connection {
 
         if self.zero_rtt_crypto.is_some() && self.side.is_client() {
             let mut can_send = self.spaces[space_id].can_send(&self.streams);
-            can_send.other |= self.can_send_1rtt();
+            can_send.other |= self.can_send_1rtt(frame_space_1rtt);
             if !can_send.is_empty() {
                 return can_send;
             }
@@ -3495,7 +3507,7 @@ impl Connection {
     /// Whether we have 1-RTT data to send
     ///
     /// See also `self.space(SpaceId::Data).can_send()`
-    fn can_send_1rtt(&self) -> bool {
+    fn can_send_1rtt(&self, max_size: usize) -> bool {
         self.streams.can_send_stream_data()
             || self.path.challenge_pending
             || self
@@ -3503,7 +3515,11 @@ impl Connection {
                 .as_ref()
                 .map_or(false, |x| x.challenge_pending)
             || !self.path_responses.is_empty()
-            || !self.datagrams.outgoing.is_empty()
+            || self
+                .datagrams
+                .outgoing
+                .front()
+                .map_or(false, |x| x.size(true) <= max_size)
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
@@ -3531,12 +3547,28 @@ impl Connection {
         self.path.current_mtu()
     }
 
-    /// Upper bound for number of bytes of overhead in the next 1-RTT packet
+    /// Size of non-frame data for a 1-RTT packet
     ///
     /// Quantifies space consumed by the QUIC header and AEAD tag. All other bytes in a packet are
-    /// frames. Only changes if the length of the remote connection ID changes, which is expected to
-    /// be rare.
-    fn max_1rtt_overhead(&self) -> usize {
+    /// frames. Changes if the length of the remote connection ID changes, which is expected to be
+    /// rare. If `pn` is specified, may additionally change unpredictably due to variations in
+    /// latency and packet loss.
+    fn predict_1rtt_overhead(&self, pn: Option<u64>) -> usize {
+        let pn_len = match pn {
+            Some(pn) => PacketNumber::new(
+                pn,
+                self.spaces[SpaceId::Data].largest_acked_packet.unwrap_or(0),
+            )
+            .len(),
+            // Upper bound
+            None => 4,
+        };
+
+        // 1 byte for flags
+        1 + self.rem_cids.active().len() + pn_len + self.tag_len_1rtt()
+    }
+
+    fn tag_len_1rtt(&self) -> usize {
         let key = match self.spaces[SpaceId::Data].crypto.as_ref() {
             Some(crypto) => Some(&*crypto.packet.local),
             None => self.zero_rtt_crypto.as_ref().map(|x| &*x.packet),
@@ -3544,14 +3576,7 @@ impl Connection {
         // If neither Data nor 0-RTT keys are available, make a reasonable tag length guess. As of
         // this writing, all QUIC cipher suites use 16-byte tags. We could return `None` instead,
         // but that would needlessly prevent sending datagrams during 0-RTT.
-        let tag_len = key.map_or(16, |x| x.tag_len());
-
-        // flags byte
-        1
-            + self.rem_cids.active().len()
-        // worst-case packet number size. TODO: Consider using actual size.
-            + 4
-            + tag_len
+        key.map_or(16, |x| x.tag_len())
     }
 }
 
