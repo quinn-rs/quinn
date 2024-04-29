@@ -2990,3 +2990,25 @@ fn endpoint_and_connection_impl_send_sync() {
     is_send_sync::<Endpoint>();
     is_send_sync::<Connection>();
 }
+
+#[test]
+fn stream_gso() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+
+    let initial_ios = pair.client_conn_mut(client_ch).stats().udp_tx.ios;
+
+    // Send 20KiB of stream data, which comfortably fits inside two `tests::util::MAX_DATAGRAMS`
+    // datagram batches
+    info!("sending");
+    for _ in 0..20 {
+        pair.client_send(client_ch, s).write(&[0; 1024]).unwrap();
+    }
+    pair.client_send(client_ch, s).finish().unwrap();
+    pair.drive();
+    let final_ios = pair.client_conn_mut(client_ch).stats().udp_tx.ios;
+    assert_eq!(final_ios - initial_ios, 2);
+}
