@@ -7,7 +7,6 @@ use tracing::{debug, trace};
 use super::Connection;
 use crate::{
     frame::{Datagram, FrameStruct},
-    packet::SpaceId,
     TransportError,
 };
 
@@ -68,19 +67,8 @@ impl<'a> Datagrams<'a> {
     ///
     /// Not necessarily the maximum size of received datagrams.
     pub fn max_size(&self) -> Option<usize> {
-        let key = match self.conn.spaces[SpaceId::Data].crypto.as_ref() {
-            Some(crypto) => Some(&*crypto.packet.local),
-            None => self.conn.zero_rtt_crypto.as_ref().map(|x| &*x.packet),
-        };
-        // If neither Data nor 0-RTT keys are available, make a reasonable tag length guess. As of
-        // this writing, all QUIC cipher suites use 16-byte tags. We could return `None` instead,
-        // but that would needlessly prevent sending datagrams during 0-RTT.
-        let tag_len = key.map_or(16, |x| x.tag_len());
         let max_size = self.conn.path.current_mtu() as usize
-            - 1                 // flags byte
-            - self.conn.rem_cids.active().len()
-            - 4                 // worst-case packet number size
-            - tag_len
+            - self.conn.max_1rtt_overhead()
             - Datagram::SIZE_BOUND;
         let limit = self
             .conn
