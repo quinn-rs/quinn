@@ -77,7 +77,6 @@ mod streams;
 pub use streams::StreamsState;
 #[cfg(not(fuzzing))]
 use streams::StreamsState;
-//pub(crate) use streams::{ByteSlice, BytesArray};
 pub use streams::{
     BytesSource, Chunks, FinishError, ReadError, ReadableError, RecvStream, SendStream,
     StreamEvent, Streams, UnknownStream, WriteError, Written,
