@@ -1608,6 +1608,9 @@ impl Connection {
 
             if self.path.mtud.black_hole_detected(now) {
                 self.stats.path.black_holes_detected += 1;
+                self.path
+                    .congestion
+                    .on_mtu_update(self.path.mtud.current_mtu());
             }
 
             // Don't apply congestion penalty for lost ack-only packets
