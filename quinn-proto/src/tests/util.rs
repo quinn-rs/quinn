@@ -212,7 +212,7 @@ impl Pair {
         let _guard = span.enter();
         let (client_ch, client_conn) = self
             .client
-            .connect(Instant::now(), config, self.server.addr, "localhost")
+            .connect(self.time, config, self.server.addr, "localhost")
             .unwrap();
         self.client.connections.insert(client_ch, client_conn);
         client_ch
