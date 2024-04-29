@@ -3042,3 +3042,25 @@ fn datagram_gso() {
         ((29 + DATAGRAM_LEN) * DATAGRAMS) as u64
     );
 }
+
+#[test]
+fn gso_truncation() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect();
+
+    let initial_ios = pair.client_conn_mut(client_ch).stats().udp_tx.ios;
+
+    // Send three application datagrams such that each is large to be combined with another in a
+    // single MTU, and the second datagram would require an unreasonably large amount of padding to
+    // produce a QUIC packet of the same length as the first.
+    info!("sending");
+    for len in [1024, 768, 768] {
+        pair.client_datagrams(client_ch)
+            .send(vec![0; len].into(), false)
+            .unwrap();
+    }
+    pair.drive();
+    let final_ios = pair.client_conn_mut(client_ch).stats().udp_tx.ios;
+    assert_eq!(final_ios - initial_ios, 2);
+}
