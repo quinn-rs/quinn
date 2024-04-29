@@ -68,11 +68,16 @@ impl<'a> Datagrams<'a> {
     ///
     /// Not necessarily the maximum size of received datagrams.
     pub fn max_size(&self) -> Option<usize> {
+        let key = match self.conn.spaces[SpaceId::Data].crypto.as_ref() {
+            Some(crypto) => Some(&*crypto.packet.local),
+            None => self.conn.zero_rtt_crypto.as_ref().map(|x| &*x.packet),
+        };
+        let tag_len = key.unwrap().tag_len();
         let max_size = self.conn.path.current_mtu() as usize
             - 1                 // flags byte
             - self.conn.rem_cids.active().len()
             - 4                 // worst-case packet number size
-            - self.conn.spaces[SpaceId::Data].crypto.as_ref().map_or_else(|| &self.conn.zero_rtt_crypto.as_ref().unwrap().packet, |x| &x.packet.local).tag_len()
+            - tag_len
             - Datagram::SIZE_BOUND;
         let limit = self
             .conn
