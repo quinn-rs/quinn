@@ -474,6 +474,7 @@ impl Connection {
         // Position in `buf` of the first byte of the current UDP datagram. When coalescing QUIC
         // packets, this can be earlier than the start of the current QUIC packet.
         let mut datagram_start = 0;
+        let segment_size = usize::from(self.path.current_mtu());
 
         // Send PATH_CHALLENGE for a previous path if necessary
         if let Some(ref mut prev_path) = self.prev_path {
@@ -559,9 +560,9 @@ impl Connection {
                 && self.peer_supports_ack_frequency();
         }
 
-        // Reserving capacity can provide more capacity than we asked for.
-        // However we are not allowed to write more than MTU size. Therefore
-        // the maximum capacity is tracked separately.
+        // Reserving capacity can provide more capacity than we asked for. However, we are not
+        // allowed to write more than `segment_size`. Therefore the maximum capacity is tracked
+        // separately.
         let mut buf_capacity = 0;
 
         let mut coalesce = true;
@@ -605,7 +606,7 @@ impl Connection {
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
-                if buf_capacity >= self.path.current_mtu() as usize * max_datagrams {
+                if buf_capacity >= segment_size * max_datagrams {
                     // No more datagrams allowed
                     break;
                 }
@@ -618,7 +619,7 @@ impl Connection {
                 // (see https://github.com/quinn-rs/quinn/issues/1082)
                 if self
                     .path
-                    .anti_amplification_blocked(self.path.current_mtu() as u64 * num_datagrams + 1)
+                    .anti_amplification_blocked(segment_size as u64 * num_datagrams + 1)
                 {
                     trace!("blocked by anti-amplification");
                     break;
@@ -627,15 +628,15 @@ impl Connection {
                 // Congestion control and pacing checks
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
                 if ack_eliciting && self.spaces[space_id].loss_probes == 0 {
-                    // Assume the current packet will get padded to fill the full MTU
+                    // Assume the current packet will get padded to fill the segment
                     let untracked_bytes = if let Some(builder) = &builder_storage {
                         buf_capacity - builder.partial_encode.start
                     } else {
                         0
                     } as u64;
-                    debug_assert!(untracked_bytes <= self.path.current_mtu() as u64);
+                    debug_assert!(untracked_bytes <= segment_size as u64);
 
-                    let bytes_to_send = u64::from(self.path.current_mtu()) + untracked_bytes;
+                    let bytes_to_send = segment_size as u64 + untracked_bytes;
                     if self.path.in_flight.bytes + bytes_to_send >= self.path.congestion.window() {
                         space_idx += 1;
                         congestion_blocked = true;
@@ -675,7 +676,7 @@ impl Connection {
                 }
 
                 // Allocate space for another datagram
-                buf_capacity += self.path.current_mtu() as usize;
+                buf_capacity += segment_size;
                 if buf.capacity() < buf_capacity {
                     // We reserve the maximum space for sending `max_datagrams` upfront
                     // to avoid any reallocations if more datagrams have to be appended later on.
@@ -685,12 +686,18 @@ impl Connection {
                     // (e.g. purely containing ACKs), modern memory allocators
                     // (e.g. mimalloc and jemalloc) will pool certain allocation sizes
                     // and therefore this is still rather efficient.
-                    buf.reserve(max_datagrams * self.path.current_mtu() as usize);
+                    buf.reserve(max_datagrams * segment_size);
                 }
                 num_datagrams += 1;
                 coalesce = true;
                 pad_datagram = false;
                 datagram_start = buf.len();
+
+                debug_assert_eq!(
+                    datagram_start % segment_size,
+                    0,
+                    "datagrams in a GSO batch must be aligned to the segment size"
+                );
             } else {
                 // We can append/coalesce the next packet into the current
                 // datagram.
@@ -949,7 +956,7 @@ impl Connection {
             },
             segment_size: match num_datagrams {
                 1 => None,
-                _ => Some(self.path.current_mtu() as usize),
+                _ => Some(segment_size),
             },
             src_ip: self.local_ip,
         })
