@@ -3530,6 +3530,29 @@ impl Connection {
     pub fn current_mtu(&self) -> u16 {
         self.path.current_mtu()
     }
+
+    /// Upper bound for number of bytes of overhead in the next 1-RTT packet
+    ///
+    /// Quantifies space consumed by the QUIC header and AEAD tag. All other bytes in a packet are
+    /// frames. Only changes if the length of the remote connection ID changes, which is expected to
+    /// be rare.
+    fn max_1rtt_overhead(&self) -> usize {
+        let key = match self.spaces[SpaceId::Data].crypto.as_ref() {
+            Some(crypto) => Some(&*crypto.packet.local),
+            None => self.zero_rtt_crypto.as_ref().map(|x| &*x.packet),
+        };
+        // If neither Data nor 0-RTT keys are available, make a reasonable tag length guess. As of
+        // this writing, all QUIC cipher suites use 16-byte tags. We could return `None` instead,
+        // but that would needlessly prevent sending datagrams during 0-RTT.
+        let tag_len = key.map_or(16, |x| x.tag_len());
+
+        // flags byte
+        1
+            + self.rem_cids.active().len()
+        // worst-case packet number size. TODO: Consider using actual size.
+            + 4
+            + tag_len
+    }
 }
 
 impl fmt::Debug for Connection {
