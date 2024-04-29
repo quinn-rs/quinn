@@ -184,6 +184,8 @@ impl DatagramState {
             return false;
         }
 
+        trace!(len = datagram.data.len(), "DATAGRAM");
+
         self.outgoing_total -= datagram.data.len();
         datagram.encode(true, buf);
         true

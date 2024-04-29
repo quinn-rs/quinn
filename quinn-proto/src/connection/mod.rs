@@ -639,6 +639,7 @@ impl Connection {
                         congestion_blocked = true;
                         // We continue instead of breaking here in order to avoid
                         // blocking loss probes queued for higher spaces.
+                        trace!("blocked by congestion control");
                         continue;
                     }
 
@@ -655,6 +656,7 @@ impl Connection {
                         congestion_blocked = true;
                         // Loss probes should be subject to pacing, even though
                         // they are not congestion controlled.
+                        trace!("blocked by pacing");
                         break;
                     }
                 }
