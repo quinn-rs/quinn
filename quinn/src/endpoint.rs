@@ -441,7 +441,7 @@ pub(crate) struct Shared {
 
 impl State {
     fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
-        self.recv_state.recv_limiter.start_cycle();
+        self.recv_state.recv_limiter.start_cycle(Instant::now);
         if let Some(socket) = &self.prev_socket {
             // We don't care about the `PollProgress` from old sockets.
             let poll_res = self
@@ -454,7 +454,7 @@ impl State {
         let poll_res = self
             .recv_state
             .poll_socket(cx, &mut self.inner, &*self.socket, now);
-        self.recv_state.recv_limiter.finish_cycle();
+        self.recv_state.recv_limiter.finish_cycle(Instant::now);
         let poll_res = poll_res?;
         if poll_res.received_connection_packet {
             // Traffic has arrived on self.socket, therefore there is no need for the abandoned
@@ -786,7 +786,7 @@ impl RecvState {
                     return Err(e);
                 }
             }
-            if !self.recv_limiter.allow_work() {
+            if !self.recv_limiter.allow_work(Instant::now) {
                 return Ok(PollProgress {
                     received_connection_packet,
                     keep_going: true,

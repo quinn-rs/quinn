@@ -22,7 +22,7 @@ pub(crate) struct WorkLimiter {
     /// The current cycle number
     cycle: u16,
     /// The time the cycle started - only used in measurement mode
-    start_time: Instant,
+    start_time: Option<Instant>,
     /// How many work items have been completed in the cycle
     completed: usize,
     /// The amount of work items which are allowed for a cycle
@@ -31,9 +31,6 @@ pub(crate) struct WorkLimiter {
     desired_cycle_time: Duration,
     /// The estimated and smoothed time per work item in nanoseconds
     smoothed_time_per_work_item_nanos: f64,
-    /// Retrieves the current time for unit-test purposes
-    #[cfg(test)]
-    get_time: fn() -> Instant,
 }
 
 impl WorkLimiter {
@@ -41,30 +38,28 @@ impl WorkLimiter {
         Self {
             mode: Mode::Measure,
             cycle: 0,
-            start_time: Instant::now(),
+            start_time: None,
             completed: 0,
             allowed: 0,
             desired_cycle_time,
             smoothed_time_per_work_item_nanos: 0.0,
-            #[cfg(test)]
-            get_time: std::time::Instant::now,
         }
     }
 
     /// Starts one work cycle
-    pub(crate) fn start_cycle(&mut self) {
+    pub(crate) fn start_cycle(&mut self, now: impl Fn() -> Instant) {
         self.completed = 0;
         if let Mode::Measure = self.mode {
-            self.start_time = self.now();
+            self.start_time = Some(now());
         }
     }
 
     /// Returns whether more work can be performed inside the `desired_cycle_time`
     ///
     /// Requires that previous work was tracked using `record_work`.
-    pub(crate) fn allow_work(&mut self) -> bool {
+    pub(crate) fn allow_work(&mut self, now: impl Fn() -> Instant) -> bool {
         match self.mode {
-            Mode::Measure => (self.now() - self.start_time) < self.desired_cycle_time,
+            Mode::Measure => (now() - self.start_time.unwrap()) < self.desired_cycle_time,
             Mode::HistoricData => self.completed < self.allowed,
         }
     }
@@ -83,14 +78,14 @@ impl WorkLimiter {
     /// The estimate is updated using the same exponential averaging (smoothing)
     /// mechanism which is used for determining QUIC path rtts: The last value is
     /// weighted by 1/8, and the previous average by 7/8.
-    pub(crate) fn finish_cycle(&mut self) {
+    pub(crate) fn finish_cycle(&mut self, now: impl Fn() -> Instant) {
         // If no work was done in the cycle drop the measurement, it won't be useful
         if self.completed == 0 {
             return;
         }
 
         if let Mode::Measure = self.mode {
-            let elapsed = self.now() - self.start_time;
+            let elapsed = now() - self.start_time.unwrap();
 
             let time_per_work_item_nanos = (elapsed.as_nanos()) as f64 / self.completed as f64;
 
@@ -109,6 +104,7 @@ impl WorkLimiter {
             self.allowed = (((self.desired_cycle_time.as_nanos()) as f64
                 / self.smoothed_time_per_work_item_nanos) as usize)
                 .max(1);
+            self.start_time = None;
         }
 
         self.cycle = self.cycle.wrapping_add(1);
@@ -116,16 +112,6 @@ impl WorkLimiter {
             0 => Mode::Measure,
             _ => Mode::HistoricData,
         };
-    }
-
-    #[cfg(not(test))]
-    fn now(&self) -> Instant {
-        Instant::now()
-    }
-
-    #[cfg(test)]
-    fn now(&self) -> Instant {
-        (self.get_time)()
     }
 }
 
@@ -154,18 +140,17 @@ mod tests {
         const EXPECTED_ALLOWED_WORK_ITEMS: usize = EXPECTED_INITIAL_BATCHES * BATCH_WORK_ITEMS;
 
         let mut limiter = WorkLimiter::new(CYCLE_TIME);
-        limiter.get_time = get_time;
         reset_time();
 
         // The initial cycle is measuring
-        limiter.start_cycle();
+        limiter.start_cycle(get_time);
         let mut initial_batches = 0;
-        while limiter.allow_work() {
+        while limiter.allow_work(get_time) {
             limiter.record_work(BATCH_WORK_ITEMS);
             advance_time(BATCH_TIME);
             initial_batches += 1;
         }
-        limiter.finish_cycle();
+        limiter.finish_cycle(get_time);
 
         assert_eq!(initial_batches, EXPECTED_INITIAL_BATCHES);
         assert_eq!(limiter.allowed, EXPECTED_ALLOWED_WORK_ITEMS);
@@ -174,22 +159,22 @@ mod tests {
         // The next cycles are using historic data
         const BATCH_SIZES: [usize; 4] = [1, 2, 3, 5];
         for &batch_size in &BATCH_SIZES {
-            limiter.start_cycle();
+            limiter.start_cycle(get_time);
             let mut allowed_work = 0;
-            while limiter.allow_work() {
+            while limiter.allow_work(get_time) {
                 limiter.record_work(batch_size);
                 allowed_work += batch_size;
             }
-            limiter.finish_cycle();
+            limiter.finish_cycle(get_time);
 
             assert_eq!(allowed_work, EXPECTED_ALLOWED_WORK_ITEMS);
         }
 
         // After `SAMPLING_INTERVAL`, we get into measurement mode again
         for _ in 0..(SAMPLING_INTERVAL as usize - BATCH_SIZES.len() - 1) {
-            limiter.start_cycle();
+            limiter.start_cycle(get_time);
             limiter.record_work(1);
-            limiter.finish_cycle();
+            limiter.finish_cycle(get_time);
         }
 
         // We now do more work per cycle, and expect the estimate of allowed
@@ -203,14 +188,14 @@ mod tests {
         let expected_updated_allowed_work_items =
             (CYCLE_TIME.as_nanos() as f64 / expected_updated_time_per_work_item) as usize;
 
-        limiter.start_cycle();
+        limiter.start_cycle(get_time);
         let mut initial_batches = 0;
-        while limiter.allow_work() {
+        while limiter.allow_work(get_time) {
             limiter.record_work(BATCH_WORK_ITEMS_2);
             advance_time(BATCH_TIME);
             initial_batches += 1;
         }
-        limiter.finish_cycle();
+        limiter.finish_cycle(get_time);
 
         assert_eq!(initial_batches, EXPECTED_INITIAL_BATCHES);
         assert_eq!(limiter.allowed, expected_updated_allowed_work_items);
