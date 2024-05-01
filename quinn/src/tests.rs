@@ -145,7 +145,9 @@ fn read_after_close() {
             .expect("connection");
         let mut s = new_conn.open_uni().await.unwrap();
         s.write_all(MSG).await.unwrap();
-        s.finish().await.unwrap();
+        s.finish().unwrap();
+        // Wait for the stream to be closed, one way or another.
+        _ = s.stopped().await;
     });
     runtime.block_on(async move {
         let new_conn = endpoint
@@ -317,13 +319,13 @@ async fn zero_rtt() {
             info!("sending 0.5-RTT");
             let mut s = connection.open_uni().await.expect("open_uni");
             s.write_all(MSG0).await.expect("write");
-            s.finish().await.expect("finish");
+            s.finish().unwrap();
             established.await;
             info!("sending 1-RTT");
             let mut s = connection.open_uni().await.expect("open_uni");
             s.write_all(MSG1).await.expect("write");
             // The peer might close the connection before ACKing
-            let _ = s.finish().await;
+            let _ = s.finish();
         }
     });
 
@@ -367,7 +369,7 @@ async fn zero_rtt() {
         let mut s = c.open_uni().await.expect("0-RTT open uni");
         info!("sending 0-RTT");
         s.write_all(MSG0).await.expect("0-RTT write");
-        s.finish().await.expect("0-RTT finish");
+        s.finish().unwrap();
     });
 
     let mut stream = connection.accept_uni().await.expect("incoming streams");
@@ -567,7 +569,7 @@ fn run_echo(args: EchoArgs) {
 
                     let send_task = async {
                         send.write_all(&msg).await.expect("write");
-                        send.finish().await.expect("finish");
+                        send.finish().unwrap();
                     };
                     let recv_task =
                         async { recv.read_to_end(usize::max_value()).await.expect("read") };
@@ -620,7 +622,7 @@ async fn echo((mut send, mut recv): (SendStream, RecvStream)) {
         }
     }
 
-    let _ = send.finish().await;
+    let _ = send.finish();
 }
 
 fn gen_data(size: usize, seed: u64) -> Vec<u8> {
@@ -706,7 +708,9 @@ async fn rebind_recv() {
         write_recv.notified().await;
         let mut stream = connection.open_uni().await.unwrap();
         stream.write_all(MSG).await.unwrap();
-        stream.finish().await.unwrap();
+        stream.finish().unwrap();
+        // Wait for the stream to be closed, one way or another.
+        _ = stream.stopped().await;
     });
 
     let connection = {

@@ -54,7 +54,9 @@ fn send_data(bench: &mut Bencher, data: &'static [u8], concurrent_streams: usize
             handles.push(runtime.spawn(async move {
                 let mut stream = client.open_uni().await.unwrap();
                 stream.write_all(data).await.unwrap();
-                stream.finish().await.unwrap();
+                stream.finish().unwrap();
+                // Wait for stream to close
+                _ = stream.stopped().await;
             }));
         }
 
