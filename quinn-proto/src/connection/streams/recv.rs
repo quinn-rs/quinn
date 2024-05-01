@@ -5,7 +5,7 @@ use thiserror::Error;
 use tracing::debug;
 
 use super::state::get_or_insert_recv;
-use super::{Retransmits, ShouldTransmit, StreamHalf, StreamId, StreamsState, UnknownStream};
+use super::{ClosedStream, Retransmits, ShouldTransmit, StreamHalf, StreamId, StreamsState};
 use crate::connection::assembler::{Assembler, Chunk, IllegalOrderedRead};
 use crate::{frame, TransportError, VarInt};
 
@@ -73,9 +73,9 @@ impl Recv {
         Ok((new_bytes, frame.fin && self.stopped))
     }
 
-    pub(super) fn stop(&mut self) -> Result<(u64, ShouldTransmit), UnknownStream> {
+    pub(super) fn stop(&mut self) -> Result<(u64, ShouldTransmit), ClosedStream> {
         if self.stopped {
-            return Err(UnknownStream { _private: () });
+            return Err(ClosedStream { _private: () });
         }
 
         self.stopped = true;
@@ -218,12 +218,12 @@ impl<'a> Chunks<'a> {
     ) -> Result<Self, ReadableError> {
         let mut entry = match streams.recv.entry(id) {
             Entry::Occupied(entry) => entry,
-            Entry::Vacant(_) => return Err(ReadableError::UnknownStream),
+            Entry::Vacant(_) => return Err(ReadableError::ClosedStream),
         };
 
         let mut recv =
             match get_or_insert_recv(streams.stream_receive_window)(entry.get_mut()).stopped {
-                true => return Err(ReadableError::UnknownStream),
+                true => return Err(ReadableError::ClosedStream),
                 false => entry.remove().unwrap(), // this can't fail due to the previous get_or_insert_with
             };
 
@@ -359,8 +359,8 @@ pub enum ReadError {
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum ReadableError {
     /// The stream has not been opened or was already stopped, finished, or reset
-    #[error("unknown stream")]
-    UnknownStream,
+    #[error("closed stream")]
+    ClosedStream,
     /// Attempted an ordered read following an unordered read
     ///
     /// Performing an unordered read allows discontinuities to arise in the receive buffer of a

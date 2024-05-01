@@ -1268,25 +1268,25 @@ const MAX_TRANSMIT_DATAGRAMS: usize = 20;
 
 /// Error indicating that a stream has already been finished or reset
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
-#[error("unknown stream")]
-pub struct UnknownStream {
+#[error("closed stream")]
+pub struct ClosedStream {
     _private: (),
 }
 
-impl UnknownStream {
+impl ClosedStream {
     pub(crate) fn new() -> Self {
         Self { _private: () }
     }
 }
 
-impl From<proto::UnknownStream> for UnknownStream {
-    fn from(_: proto::UnknownStream) -> Self {
+impl From<proto::ClosedStream> for ClosedStream {
+    fn from(_: proto::ClosedStream) -> Self {
         Self { _private: () }
     }
 }
 
-impl From<UnknownStream> for io::Error {
-    fn from(x: UnknownStream) -> Self {
+impl From<ClosedStream> for io::Error {
+    fn from(x: ClosedStream) -> Self {
         Self::new(io::ErrorKind::NotConnected, x)
     }
 }

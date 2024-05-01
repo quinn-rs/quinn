@@ -10,7 +10,7 @@ use proto::{ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
 
 use crate::{
-    connection::{ConnectionRef, UnknownStream},
+    connection::{ClosedStream, ConnectionRef},
     VarInt,
 };
 
@@ -120,8 +120,8 @@ impl SendStream {
             Err(Stopped(error_code)) => {
                 return Poll::Ready(Err(WriteError::Stopped(error_code)));
             }
-            Err(UnknownStream) => {
-                return Poll::Ready(Err(WriteError::UnknownStream));
+            Err(ClosedStream) => {
+                return Poll::Ready(Err(WriteError::ClosedStream));
             }
         };
 
@@ -140,14 +140,14 @@ impl SendStream {
     /// May fail if [`finish()`](Self::finish) or [`reset()`](Self::reset) was previously
     /// called. This error is harmless and serves only to indicate that the caller may have
     /// incorrect assumptions about the stream's state.
-    pub fn finish(&mut self) -> Result<(), UnknownStream> {
+    pub fn finish(&mut self) -> Result<(), ClosedStream> {
         let mut conn = self.conn.state.lock("finish");
         match conn.inner.send_stream(self.stream).finish() {
             Ok(()) => {
                 conn.wake();
                 Ok(())
             }
-            Err(FinishError::UnknownStream) => Err(UnknownStream::new()),
+            Err(FinishError::ClosedStream) => Err(ClosedStream::new()),
             // Harmless. If the application needs to know about stopped streams at this point, it
             // should call `stopped`.
             Err(FinishError::Stopped(_)) => Ok(()),
@@ -163,7 +163,7 @@ impl SendStream {
     /// May fail if [`finish()`](Self::finish) or [`reset()`](Self::reset) was previously
     /// called. This error is harmless and serves only to indicate that the caller may have
     /// incorrect assumptions about the stream's state.
-    pub fn reset(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
+    pub fn reset(&mut self, error_code: VarInt) -> Result<(), ClosedStream> {
         let mut conn = self.conn.state.lock("SendStream::reset");
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return Ok(());
@@ -180,14 +180,14 @@ impl SendStream {
     /// the priority of a stream with pending data may only take effect after that data has been
     /// transmitted. Using many different priority levels per connection may have a negative
     /// impact on performance.
-    pub fn set_priority(&self, priority: i32) -> Result<(), UnknownStream> {
+    pub fn set_priority(&self, priority: i32) -> Result<(), ClosedStream> {
         let mut conn = self.conn.state.lock("SendStream::set_priority");
         conn.inner.send_stream(self.stream).set_priority(priority)?;
         Ok(())
     }
 
     /// Get the priority of the send stream
-    pub fn priority(&self) -> Result<i32, UnknownStream> {
+    pub fn priority(&self) -> Result<i32, ClosedStream> {
         let mut conn = self.conn.state.lock("SendStream::priority");
         Ok(conn.inner.send_stream(self.stream).priority()?)
     }
@@ -295,7 +295,7 @@ impl Drop for SendStream {
                 }
             }
             // Already finished or reset, which is fine.
-            Err(FinishError::UnknownStream) => {}
+            Err(FinishError::ClosedStream) => {}
         }
     }
 }
@@ -434,8 +434,8 @@ pub enum WriteError {
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),
     /// The stream has already been finished or reset
-    #[error("unknown stream")]
-    UnknownStream,
+    #[error("closed stream")]
+    ClosedStream,
     /// This was a 0-RTT stream and the server rejected it
     ///
     /// Can only occur on clients for 0-RTT streams, which can be opened using
@@ -446,10 +446,10 @@ pub enum WriteError {
     ZeroRttRejected,
 }
 
-impl From<UnknownStream> for WriteError {
+impl From<ClosedStream> for WriteError {
     #[inline]
-    fn from(_: UnknownStream) -> Self {
-        Self::UnknownStream
+    fn from(_: ClosedStream) -> Self {
+        Self::ClosedStream
     }
 }
 
@@ -483,7 +483,7 @@ impl From<WriteError> for io::Error {
         use self::WriteError::*;
         let kind = match x {
             Stopped(_) | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            ConnectionLost(_) | UnknownStream => io::ErrorKind::NotConnected,
+            ConnectionLost(_) | ClosedStream => io::ErrorKind::NotConnected,
         };
         Self::new(kind, x)
     }
