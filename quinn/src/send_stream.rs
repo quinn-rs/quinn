@@ -192,13 +192,18 @@ impl SendStream {
         Ok(conn.inner.send_stream(self.stream).priority()?)
     }
 
-    /// Completes if/when the peer stops the stream, yielding the error code
-    pub async fn stopped(&mut self) -> Result<VarInt, StoppedError> {
+    /// Completes when the stream is stopped or read to completion by the peer
+    ///
+    /// Yields `Some` with the stop error code when the stream is stopped by the peer. Yields `None`
+    /// when the stream is [`finish()`](Self::finish)ed locally and all stream data has been
+    /// received (but not necessarily processed) by the peer, after which it is no longer meaningful
+    /// for the stream to be stopped.
+    pub async fn stopped(&mut self) -> Result<Option<VarInt>, StoppedError> {
         Stopped { stream: self }.await
     }
 
     #[doc(hidden)]
-    pub fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<VarInt, StoppedError>> {
+    pub fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<Option<VarInt>, StoppedError>> {
         let mut conn = self.conn.state.lock("SendStream::poll_stopped");
 
         if self.is_0rtt {
@@ -207,8 +212,8 @@ impl SendStream {
         }
 
         match conn.inner.send_stream(self.stream).stopped() {
-            Err(_) => Poll::Ready(Err(StoppedError::UnknownStream)),
-            Ok(Some(error_code)) => Poll::Ready(Ok(error_code)),
+            Err(_) => Poll::Ready(Ok(None)),
+            Ok(Some(error_code)) => Poll::Ready(Ok(Some(error_code))),
             Ok(None) => {
                 conn.stopped.insert(self.stream, cx.waker().clone());
                 Poll::Pending
@@ -302,7 +307,7 @@ struct Stopped<'a> {
 }
 
 impl Future for Stopped<'_> {
-    type Output = Result<VarInt, StoppedError>;
+    type Output = Result<Option<VarInt>, StoppedError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         self.get_mut().stream.poll_stopped(cx)
@@ -463,9 +468,6 @@ pub enum StoppedError {
     /// The connection was lost
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),
-    /// The stream has already been finished or reset
-    #[error("unknown stream")]
-    UnknownStream,
     /// This was a 0-RTT stream and the server rejected it
     ///
     /// Can only occur on clients for 0-RTT streams, which can be opened using
