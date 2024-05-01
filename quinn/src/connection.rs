@@ -21,7 +21,7 @@ use crate::{
     mutex::Mutex,
     recv_stream::RecvStream,
     runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller},
-    send_stream::{SendStream, WriteError},
+    send_stream::SendStream,
     udp_transmit, ConnectionEvent, VarInt,
 };
 use proto::{
@@ -856,7 +856,6 @@ impl ConnectionRef {
                 endpoint_events,
                 blocked_writers: FxHashMap::default(),
                 blocked_readers: FxHashMap::default(),
-                finishing: FxHashMap::default(),
                 stopped: FxHashMap::default(),
                 error: None,
                 ref_count: 0,
@@ -936,7 +935,6 @@ pub(crate) struct State {
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
     pub(crate) blocked_readers: FxHashMap<StreamId, Waker>,
-    pub(crate) finishing: FxHashMap<StreamId, oneshot::Sender<Option<WriteError>>>,
     pub(crate) stopped: FxHashMap<StreamId, Waker>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
@@ -1102,20 +1100,13 @@ impl State {
                     shared.stream_budget_available[dir as usize].notify_waiters();
                 }
                 Stream(StreamEvent::Finished { id }) => {
-                    if let Some(finishing) = self.finishing.remove(&id) {
-                        // If the finishing stream was already dropped, there's nothing more to do.
-                        let _ = finishing.send(None);
-                    }
                     if let Some(stopped) = self.stopped.remove(&id) {
                         stopped.wake();
                     }
                 }
-                Stream(StreamEvent::Stopped { id, error_code }) => {
+                Stream(StreamEvent::Stopped { id, .. }) => {
                     if let Some(stopped) = self.stopped.remove(&id) {
                         stopped.wake();
-                    }
-                    if let Some(finishing) = self.finishing.remove(&id) {
-                        let _ = finishing.send(Some(WriteError::Stopped(error_code)));
                     }
                     if let Some(writer) = self.blocked_writers.remove(&id) {
                         writer.wake();
@@ -1200,9 +1191,6 @@ impl State {
         shared.stream_incoming[Dir::Bi as usize].notify_waiters();
         shared.datagram_received.notify_waiters();
         shared.datagrams_unblocked.notify_waiters();
-        for (_, x) in self.finishing.drain() {
-            let _ = x.send(Some(WriteError::ConnectionLost(reason.clone())));
-        }
         if let Some(x) = self.on_connected.take() {
             let _ = x.send(false);
         }
@@ -1285,8 +1273,20 @@ pub struct UnknownStream {
     _private: (),
 }
 
+impl UnknownStream {
+    pub(crate) fn new() -> Self {
+        Self { _private: () }
+    }
+}
+
 impl From<proto::UnknownStream> for UnknownStream {
     fn from(_: proto::UnknownStream) -> Self {
         Self { _private: () }
+    }
+}
+
+impl From<UnknownStream> for io::Error {
+    fn from(x: UnknownStream) -> Self {
+        Self::new(io::ErrorKind::NotConnected, x)
     }
 }

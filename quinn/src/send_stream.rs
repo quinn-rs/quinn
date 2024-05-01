@@ -8,7 +8,6 @@ use std::{
 use bytes::Bytes;
 use proto::{ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
-use tokio::sync::oneshot;
 
 use crate::{
     connection::{ConnectionRef, UnknownStream},
@@ -17,8 +16,9 @@ use crate::{
 
 /// A stream that can only be used to send data
 ///
-/// If dropped, streams that haven't been explicitly [`reset()`] will continue to (re)transmit
-/// previously written data until it has been fully acknowledged or the connection is closed.
+/// If dropped, streams that haven't been explicitly [`reset()`] will be implicitly [`finish()`]ed,
+/// continuing to (re)transmit previously written data until it has been fully acknowledged or the
+/// connection is closed.
 ///
 /// # Cancellation
 ///
@@ -29,12 +29,12 @@ use crate::{
 /// cancel-safe.
 ///
 /// [`reset()`]: SendStream::reset
+/// [`finish()`]: SendStream::finish
 #[derive(Debug)]
 pub struct SendStream {
     conn: ConnectionRef,
     stream: StreamId,
     is_0rtt: bool,
-    finishing: Option<oneshot::Receiver<Option<WriteError>>>,
 }
 
 impl SendStream {
@@ -43,7 +43,6 @@ impl SendStream {
             conn,
             stream,
             is_0rtt,
-            finishing: None,
         }
     }
 
@@ -130,56 +129,28 @@ impl SendStream {
         Poll::Ready(Ok(result))
     }
 
-    /// Shut down the send stream gracefully.
+    /// Notify the peer that no more data will ever be written to this stream
     ///
-    /// No new data may be written after calling this method. Completes when the peer has
-    /// acknowledged all sent data, retransmitting data as needed.
-    pub async fn finish(&mut self) -> Result<(), WriteError> {
-        Finish { stream: self }.await
-    }
-
-    /// Attempt to shut down the send stream gracefully.
+    /// It is an error to write to a [`SendStream`] after `finish()`ing it. [`reset()`](Self::reset)
+    /// may still be called after `finish` to abandon transmission of any stream data that might
+    /// still be buffered.
     ///
-    /// No new data may be written after calling this method. Completes when the peer has
-    /// acknowledged all sent data, retransmitting data as needed.
-    pub fn poll_finish(&mut self, cx: &mut Context) -> Poll<Result<(), WriteError>> {
-        let mut conn = self.conn.state.lock("poll_finish");
-        if self.is_0rtt {
-            conn.check_0rtt()
-                .map_err(|()| WriteError::ZeroRttRejected)?;
-        }
-        if self.finishing.is_none() {
-            conn.inner
-                .send_stream(self.stream)
-                .finish()
-                .map_err(|e| match e {
-                    FinishError::UnknownStream => WriteError::UnknownStream,
-                    FinishError::Stopped(error_code) => WriteError::Stopped(error_code),
-                })?;
-            let (send, recv) = oneshot::channel();
-            self.finishing = Some(recv);
-            conn.finishing.insert(self.stream, send);
-            conn.wake();
-        }
-        match Pin::new(self.finishing.as_mut().unwrap())
-            .poll(cx)
-            .map(|x| x.unwrap())
-        {
-            Poll::Ready(x) => {
-                self.finishing = None;
-                Poll::Ready(x.map_or(Ok(()), Err))
+    /// To wait for the peer to receive all buffered stream data, see [`stopped()`](Self::stopped).
+    ///
+    /// May fail if [`finish()`](Self::finish) or [`reset()`](Self::reset) was previously
+    /// called. This error is harmless and serves only to indicate that the caller may have
+    /// incorrect assumptions about the stream's state.
+    pub fn finish(&mut self) -> Result<(), UnknownStream> {
+        let mut conn = self.conn.state.lock("finish");
+        match conn.inner.send_stream(self.stream).finish() {
+            Ok(()) => {
+                conn.wake();
+                Ok(())
             }
-            Poll::Pending => {
-                // To ensure that finished streams can be detected even after the connection is
-                // closed, we must only check for connection errors after determining that the
-                // stream has not yet been finished. Note that this relies on holding the connection
-                // lock so that it is impossible for the stream to become finished between the above
-                // poll call and this check.
-                if let Some(ref x) = conn.error {
-                    return Poll::Ready(Err(WriteError::ConnectionLost(x.clone())));
-                }
-                Poll::Pending
-            }
+            Err(FinishError::UnknownStream) => Err(UnknownStream::new()),
+            // Harmless. If the application needs to know about stopped streams at this point, it
+            // should call `stopped`.
+            Err(FinishError::Stopped(_)) => Ok(()),
         }
     }
 
@@ -188,6 +159,10 @@ impl SendStream {
     /// No new data can be written after calling this method. Locally buffered data is dropped, and
     /// previously transmitted data will no longer be retransmitted if lost. If an attempt has
     /// already been made to finish the stream, the peer may still receive all written data.
+    ///
+    /// May fail if [`finish()`](Self::finish) or [`reset()`](Self::reset) was previously
+    /// called. This error is harmless and serves only to indicate that the caller may have
+    /// incorrect assumptions about the stream's state.
     pub fn reset(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
         let mut conn = self.conn.state.lock("SendStream::reset");
         if self.is_0rtt && conn.check_0rtt().is_err() {
@@ -272,8 +247,8 @@ impl futures_io::AsyncWrite for SendStream {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_close(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        self.get_mut().poll_finish(cx).map_err(Into::into)
+    fn poll_close(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
+        Poll::Ready(self.get_mut().finish().map_err(Into::into))
     }
 }
 
@@ -291,8 +266,8 @@ impl tokio::io::AsyncWrite for SendStream {
         Poll::Ready(Ok(()))
     }
 
-    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context) -> Poll<io::Result<()>> {
-        self.get_mut().poll_finish(cx).map_err(Into::into)
+    fn poll_shutdown(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
+        Poll::Ready(self.get_mut().finish().map_err(Into::into))
     }
 }
 
@@ -301,39 +276,22 @@ impl Drop for SendStream {
         let mut conn = self.conn.state.lock("SendStream::drop");
 
         // clean up any previously registered wakers
-        conn.finishing.remove(&self.stream);
         conn.stopped.remove(&self.stream);
         conn.blocked_writers.remove(&self.stream);
 
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
-        if self.finishing.is_none() {
-            match conn.inner.send_stream(self.stream).finish() {
-                Ok(()) => conn.wake(),
-                Err(FinishError::Stopped(reason)) => {
-                    if conn.inner.send_stream(self.stream).reset(reason).is_ok() {
-                        conn.wake();
-                    }
+        match conn.inner.send_stream(self.stream).finish() {
+            Ok(()) => conn.wake(),
+            Err(FinishError::Stopped(reason)) => {
+                if conn.inner.send_stream(self.stream).reset(reason).is_ok() {
+                    conn.wake();
                 }
-                // Already finished or reset, which is fine.
-                Err(FinishError::UnknownStream) => {}
             }
+            // Already finished or reset, which is fine.
+            Err(FinishError::UnknownStream) => {}
         }
-    }
-}
-
-/// Future produced by `SendStream::finish`
-#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
-struct Finish<'a> {
-    stream: &'a mut SendStream,
-}
-
-impl Future for Finish<'_> {
-    type Output = Result<(), WriteError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.get_mut().stream.poll_finish(cx)
     }
 }
 
@@ -481,6 +439,22 @@ pub enum WriteError {
     /// [`Connecting::into_0rtt()`]: crate::Connecting::into_0rtt()
     #[error("0-RTT rejected")]
     ZeroRttRejected,
+}
+
+impl From<UnknownStream> for WriteError {
+    #[inline]
+    fn from(_: UnknownStream) -> Self {
+        Self::UnknownStream
+    }
+}
+
+impl From<StoppedError> for WriteError {
+    fn from(x: StoppedError) -> Self {
+        match x {
+            StoppedError::ConnectionLost(e) => Self::ConnectionLost(e),
+            StoppedError::ZeroRttRejected => Self::ZeroRttRejected,
+        }
+    }
 }
 
 /// Errors that arise while monitoring for a send stream stop from the peer

@@ -302,7 +302,7 @@ async fn request(
     let upload_start = Instant::now();
     send.write_all(&download.to_be_bytes()).await?;
     if upload == 0 {
-        send.finish().await?;
+        send.finish().unwrap();
         return Ok(());
     }
 
@@ -317,7 +317,9 @@ async fn request(
         send_stream_stats.on_bytes(chunk_len as usize);
         upload -= chunk_len;
     }
-    send.finish().await?;
+    send.finish().unwrap();
+    // Wait for stream to close
+    _ = send.stopped().await;
     send_stream_stats.finish(upload_start.elapsed());
 
     debug!("upload finished on {}", send.id());

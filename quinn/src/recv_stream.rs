@@ -45,50 +45,6 @@ use crate::{
 /// bidirectional stream 1, the first stream yielded by [`Connection::accept_bi`] on the receiver
 /// will be bidirectional stream 0.
 ///
-/// ## Unexpected [`WriteError::Stopped`] in sender
-///
-/// When a stream is expected to be closed gracefully the sender should call
-/// [`SendStream::finish`].  However there is no guarantee the connected [`RecvStream`] will
-/// receive the "finished" notification in the same QUIC frame as the last frame which
-/// carried data.
-///
-/// Even if the application layer logic already knows it read all the data because it does
-/// its own framing, it should still read until it reaches the end of the [`RecvStream`].
-/// Otherwise it risks inadvertently calling [`RecvStream::stop`] if it drops the stream.
-/// And calling [`RecvStream::stop`] could result in the connected [`SendStream::finish`]
-/// call failing with a [`WriteError::Stopped`] error.
-///
-/// For example if exactly 10 bytes are to be read, you still need to explicitly read the
-/// end of the stream:
-///
-/// ```no_run
-/// # use quinn::{SendStream, RecvStream};
-/// # async fn func(
-/// #     mut send_stream: SendStream,
-/// #     mut recv_stream: RecvStream,
-/// # ) -> anyhow::Result<()>
-/// # {
-/// // In the sending task
-/// send_stream.write(&b"0123456789"[..]).await?;
-/// send_stream.finish().await?;
-///
-/// // In the receiving task
-/// let mut buf = [0u8; 10];
-/// let data = recv_stream.read_exact(&mut buf).await?;
-/// if recv_stream.read_to_end(0).await.is_err() {
-///     // Discard unexpected data and notify the peer to stop sending it
-///     let _ = recv_stream.stop(0u8.into());
-/// }
-/// # Ok(())
-/// # }
-/// ```
-///
-/// An alternative approach, used in HTTP/3, is to specify a particular error code used with `stop`
-/// that indicates graceful receiver-initiated stream shutdown, rather than a true error condition.
-///
-/// [`RecvStream::read_chunk`] could be used instead which does not take ownership and
-/// allows using an explicit call to [`RecvStream::stop`] with a custom error code.
-///
 /// [`ReadError`]: crate::ReadError
 /// [`stop()`]: RecvStream::stop
 /// [`SendStream::finish`]: crate::SendStream::finish

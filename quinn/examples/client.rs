@@ -131,9 +131,7 @@ async fn run(options: Opt) -> Result<()> {
     send.write_all(request.as_bytes())
         .await
         .map_err(|e| anyhow!("failed to send request: {}", e))?;
-    send.finish()
-        .await
-        .map_err(|e| anyhow!("failed to shutdown stream: {}", e))?;
+    send.finish().unwrap();
     let response_start = Instant::now();
     eprintln!("request sent at {:?}", response_start - start);
     let resp = recv

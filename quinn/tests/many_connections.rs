@@ -6,7 +6,7 @@ use std::{
 };
 
 use crc::Crc;
-use quinn::{ConnectionError, ReadError, TransportConfig, WriteError};
+use quinn::{ConnectionError, ReadError, StoppedError, TransportConfig, WriteError};
 use rand::{self, RngCore};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tokio::runtime::Builder;
@@ -117,11 +117,12 @@ async fn read_from_peer(mut stream: quinn::RecvStream) -> Result<(), quinn::Conn
 async fn write_to_peer(conn: quinn::Connection, data: Vec<u8>) -> Result<(), WriteError> {
     let mut s = conn.open_uni().await.map_err(WriteError::ConnectionLost)?;
     s.write_all(&data).await?;
-    // Suppress finish errors, since the peer may close before ACKing
-    match s.finish().await {
-        Ok(()) => Ok(()),
-        Err(WriteError::ConnectionLost(ConnectionError::ApplicationClosed { .. })) => Ok(()),
-        Err(e) => Err(e),
+    s.finish().unwrap();
+    // Wait for the stream to be fully received
+    match s.stopped().await {
+        Ok(_) => Ok(()),
+        Err(StoppedError::ConnectionLost(ConnectionError::ApplicationClosed { .. })) => Ok(()),
+        Err(e) => Err(e.into()),
     }
 }
 
