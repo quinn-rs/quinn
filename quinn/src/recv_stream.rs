@@ -11,7 +11,7 @@ use thiserror::Error;
 use tokio::io::ReadBuf;
 
 use crate::{
-    connection::{ConnectionRef, UnknownStream},
+    connection::{ClosedStream, ConnectionRef},
     VarInt,
 };
 
@@ -259,8 +259,8 @@ impl RecvStream {
     /// Stop accepting data
     ///
     /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
-    /// attempts to operate on a stream will yield `UnknownStream` errors.
-    pub fn stop(&mut self, error_code: VarInt) -> Result<(), UnknownStream> {
+    /// attempts to operate on a stream will yield `ClosedStream` errors.
+    pub fn stop(&mut self, error_code: VarInt) -> Result<(), ClosedStream> {
         let mut conn = self.conn.state.lock("RecvStream::stop");
         if self.is_0rtt && conn.check_0rtt().is_err() {
             return Ok(());
@@ -459,7 +459,7 @@ impl Drop for RecvStream {
             return;
         }
         if !self.all_data_read {
-            // Ignore UnknownStream errors
+            // Ignore ClosedStream errors
             let _ = conn.inner.recv_stream(self.stream).stop(0u32.into());
             conn.wake();
         }
@@ -478,8 +478,8 @@ pub enum ReadError {
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),
     /// The stream has already been stopped, finished, or reset
-    #[error("unknown stream")]
-    UnknownStream,
+    #[error("closed stream")]
+    ClosedStream,
     /// Attempted an ordered read following an unordered read
     ///
     /// Performing an unordered read allows discontinuities to arise in the receive buffer of a
@@ -499,7 +499,7 @@ pub enum ReadError {
 impl From<ReadableError> for ReadError {
     fn from(e: ReadableError) -> Self {
         match e {
-            ReadableError::UnknownStream => Self::UnknownStream,
+            ReadableError::ClosedStream => Self::ClosedStream,
             ReadableError::IllegalOrderedRead => Self::IllegalOrderedRead,
         }
     }
@@ -510,7 +510,7 @@ impl From<ReadError> for io::Error {
         use self::ReadError::*;
         let kind = match x {
             Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            ConnectionLost(_) | UnknownStream => io::ErrorKind::NotConnected,
+            ConnectionLost(_) | ClosedStream => io::ErrorKind::NotConnected,
             IllegalOrderedRead => io::ErrorKind::InvalidInput,
         };
         Self::new(kind, x)

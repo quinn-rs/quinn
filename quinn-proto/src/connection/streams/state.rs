@@ -1111,8 +1111,8 @@ mod tests {
         assert!(!recv.pending.max_data);
 
         assert!(recv.stop(0u32.into()).is_err());
-        assert_eq!(recv.read(true).err(), Some(ReadableError::UnknownStream));
-        assert_eq!(recv.read(false).err(), Some(ReadableError::UnknownStream));
+        assert_eq!(recv.read(true).err(), Some(ReadableError::ClosedStream));
+        assert_eq!(recv.read(false).err(), Some(ReadableError::ClosedStream));
 
         assert_eq!(client.local_max_data - initial_max, 32);
         assert_eq!(
@@ -1220,7 +1220,7 @@ mod tests {
         assert_eq!(stream.write(&[]), Err(WriteError::Stopped(error_code)));
 
         stream.reset(0u32.into()).unwrap();
-        assert_eq!(stream.write(&[]), Err(WriteError::UnknownStream));
+        assert_eq!(stream.write(&[]), Err(WriteError::ClosedStream));
 
         // A duplicate frame is a no-op
         stream.state.received_stop_sending(id, error_code);

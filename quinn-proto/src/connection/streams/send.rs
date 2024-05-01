@@ -45,7 +45,7 @@ impl Send {
             self.fin_pending = true;
             Ok(())
         } else {
-            Err(FinishError::UnknownStream)
+            Err(FinishError::ClosedStream)
         }
     }
 
@@ -55,7 +55,7 @@ impl Send {
         limit: u64,
     ) -> Result<Written, WriteError> {
         if !self.is_writable() {
-            return Err(WriteError::UnknownStream);
+            return Err(WriteError::ClosedStream);
         }
         if let Some(error_code) = self.stop_reason {
             return Err(WriteError::Stopped(error_code));
@@ -274,8 +274,8 @@ pub enum WriteError {
     #[error("stopped by peer: code {0}")]
     Stopped(VarInt),
     /// The stream has not been opened or has already been finished or reset
-    #[error("unknown stream")]
-    UnknownStream,
+    #[error("closed stream")]
+    ClosedStream,
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
@@ -300,8 +300,8 @@ pub enum FinishError {
     #[error("stopped by peer: code {0}")]
     Stopped(VarInt),
     /// The stream has not been opened or was already finished or reset
-    #[error("unknown stream")]
-    UnknownStream,
+    #[error("closed stream")]
+    ClosedStream,
 }
 
 #[cfg(test)]
