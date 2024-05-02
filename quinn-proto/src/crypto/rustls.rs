@@ -321,10 +321,7 @@ impl crypto::ClientConfig for QuicClientConfig {
                 )
                 .unwrap(),
             ),
-            suite: Suite {
-                suite: self.initial.suite,
-                quic: self.initial.quic,
-            },
+            suite: self.initial,
         }))
     }
 }
@@ -431,10 +428,7 @@ impl crypto::ServerConfig for QuicServerConfig {
                 rustls::quic::ServerConnection::new(self.inner.clone(), version, to_vec(params))
                     .unwrap(),
             ),
-            suite: Suite {
-                suite: self.initial.suite,
-                quic: self.initial.quic,
-            },
+            suite: self.initial,
         })
     }
 
