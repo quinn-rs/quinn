@@ -476,7 +476,7 @@ impl futures_io::AsyncRead for RecvStream {
         buf: &mut [u8],
     ) -> Poll<io::Result<usize>> {
         let mut buf = ReadBuf::new(buf);
-        ready!(RecvStream::poll_read_buf(self.get_mut(), cx, &mut buf))?;
+        ready!(Self::poll_read_buf(self.get_mut(), cx, &mut buf))?;
         Poll::Ready(Ok(buf.filled().len()))
     }
 }
