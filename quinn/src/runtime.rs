@@ -157,6 +157,7 @@ impl<MakeFut, Fut> Debug for UdpPollHelper<MakeFut, Fut> {
 /// then `TokioRuntime` is returned. Otherwise, if `runtime-async-std` is enabled, `AsyncStdRuntime`
 /// is returned. Otherwise, if `runtime-smol` is enabled, `SmolRuntime` is returned.
 /// Otherwise, `None` is returned.
+#[allow(clippy::needless_return)] // Be sure we return the right thing
 pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
     #[cfg(feature = "runtime-tokio")]
     {

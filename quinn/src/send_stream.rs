@@ -265,7 +265,7 @@ impl SendStream {
 #[cfg(feature = "futures-io")]
 impl futures_io::AsyncWrite for SendStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        SendStream::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
+        Self::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
