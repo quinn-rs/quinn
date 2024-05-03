@@ -8,15 +8,18 @@ use std::{
 
 #[cfg(feature = "ring")]
 use rand::RngCore;
+#[cfg(feature = "rustls")]
 use rustls::client::WebPkiServerVerifier;
 #[cfg(feature = "rustls")]
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
+#[cfg(feature = "rustls")]
+use crate::crypto::rustls::QuicServerConfig;
 use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     congestion,
-    crypto::{self, rustls::QuicServerConfig, HandshakeTokenKey, HmacKey},
+    crypto::{self, HandshakeTokenKey, HmacKey},
     VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MTU, MAX_UDP_PAYLOAD,
 };
 
