@@ -496,16 +496,8 @@ impl Connection {
 
                 let buf_capacity = buf.capacity();
 
-                let mut builder = PacketBuilder::new(
-                    now,
-                    SpaceId::Data,
-                    buf,
-                    buf_capacity,
-                    0,
-                    false,
-                    self,
-                    self.version,
-                )?;
+                let mut builder =
+                    PacketBuilder::new(now, SpaceId::Data, buf, buf_capacity, 0, false, self)?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::Type::PATH_CHALLENGE);
                 buf.write(token);
@@ -803,7 +795,6 @@ impl Connection {
                 datagram_start,
                 ack_eliciting,
                 self,
-                self.version,
             )?);
             coalesce = coalesce && !builder.short_header;
 
@@ -967,16 +958,7 @@ impl Connection {
             let buf_capacity = probe_size as usize;
             buf.reserve(buf_capacity);
 
-            let mut builder = PacketBuilder::new(
-                now,
-                space_id,
-                buf,
-                buf_capacity,
-                0,
-                true,
-                self,
-                self.version,
-            )?;
+            let mut builder = PacketBuilder::new(now, space_id, buf, buf_capacity, 0, true, self)?;
 
             // We implement MTU probes as ping packets padded up to the probe size
             buf.write(frame::Type::PING);
