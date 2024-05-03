@@ -113,6 +113,11 @@ impl<MakeFut, Fut> UdpPollHelper<MakeFut, Fut> {
     /// Construct a [`UdpPoller`] that calls `make_fut` to get the future to poll, storing it until
     /// it yields [`Poll::Ready`], then creating a new one on the next
     /// [`poll_writable`](UdpPoller::poll_writable)
+    #[cfg(any(
+        feature = "runtime-async-std",
+        feature = "runtime-smol",
+        feature = "runtime-tokio"
+    ))]
     fn new(make_fut: MakeFut) -> Self {
         Self {
             make_fut,
