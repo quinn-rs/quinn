@@ -8,7 +8,7 @@ use super::{spaces::SentPacket, Connection, SentFrames};
 use crate::{
     frame::{self, Close},
     packet::{Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
-    TransportError, TransportErrorCode,
+    ConnectionId, TransportError, TransportErrorCode,
 };
 
 pub(super) struct PacketBuilder {
@@ -36,6 +36,7 @@ impl PacketBuilder {
     pub(super) fn new(
         now: Instant,
         space_id: SpaceId,
+        dst_cid: ConnectionId,
         buffer: &mut Vec<u8>,
         buffer_capacity: usize,
         datagram_start: usize,
@@ -90,7 +91,7 @@ impl PacketBuilder {
         let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
         let header = match space_id {
             SpaceId::Data if space.crypto.is_some() => Header::Short {
-                dst_cid: conn.rem_cids.active(),
+                dst_cid,
                 number,
                 spin: if conn.spin_enabled {
                     conn.spin
@@ -102,20 +103,20 @@ impl PacketBuilder {
             SpaceId::Data => Header::Long {
                 ty: LongType::ZeroRtt,
                 src_cid: conn.handshake_cid,
-                dst_cid: conn.rem_cids.active(),
+                dst_cid,
                 number,
                 version,
             },
             SpaceId::Handshake => Header::Long {
                 ty: LongType::Handshake,
                 src_cid: conn.handshake_cid,
-                dst_cid: conn.rem_cids.active(),
+                dst_cid,
                 number,
                 version,
             },
             SpaceId::Initial => Header::Initial(InitialHeader {
                 src_cid: conn.handshake_cid,
-                dst_cid: conn.rem_cids.active(),
+                dst_cid,
                 token: conn.retry_token.clone(),
                 number,
                 version,
@@ -148,7 +149,7 @@ impl PacketBuilder {
         // payload_len >= sample_size + 4 - pn_len - tag_len
         let min_size = Ord::max(
             buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
-            partial_encode.start + conn.rem_cids.active().len() + 6,
+            partial_encode.start + dst_cid.len() + 6,
         );
         let max_size = buffer_capacity - tag_len;
 
