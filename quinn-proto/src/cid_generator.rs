@@ -125,7 +125,6 @@ impl HashedConnectionIdGenerator {
     }
 }
 
-#[cfg(feature = "ring")]
 impl Default for HashedConnectionIdGenerator {
     fn default() -> Self {
         Self::new()
