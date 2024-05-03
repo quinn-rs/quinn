@@ -70,6 +70,7 @@ required-features = ["rustls"]
 
 [[example]]
 name = "insecure_connection"
+required-features = ["rustls"]
 
 [[example]]
 name = "single_socket"
