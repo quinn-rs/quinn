@@ -71,6 +71,7 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
+      - run: cargo check --manifest-path quinn/Cargo.toml --all-targets --no-default-features
       - run: cargo clippy --all-targets -- -D warnings
       - uses: dtolnay/rust-toolchain@stable
         with:
