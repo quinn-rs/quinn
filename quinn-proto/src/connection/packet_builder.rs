@@ -41,8 +41,8 @@ impl PacketBuilder {
         datagram_start: usize,
         ack_eliciting: bool,
         conn: &mut Connection,
-        version: u32,
     ) -> Option<Self> {
+        let version = conn.version;
         // Initiate key update if we're approaching the confidentiality limit
         let sent_with_keys = conn.spaces[space_id].sent_with_keys;
         if space_id == SpaceId::Data {
