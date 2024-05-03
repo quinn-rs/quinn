@@ -9,7 +9,7 @@ publish = false
 anyhow = "1.0.22"
 bytes = "1"
 hdrhistogram = { version = "7.2", default-features = false }
-quinn = { path = "../quinn" }
+quinn = { path = "../quinn", features = ["ring"] }
 rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 clap = { version = "4", features = ["derive"] }
