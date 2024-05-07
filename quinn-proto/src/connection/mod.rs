@@ -698,6 +698,7 @@ impl Connection {
                                 "GSO truncated by demand for {} padding bytes",
                                 segment_size - packet_len_unpadded
                             );
+                            pad_datagram = false;
                             break;
                         }
 
@@ -927,7 +928,7 @@ impl Connection {
                 builder.pad_to(MIN_INITIAL_SIZE);
             }
             let last_packet_number = builder.exact_number;
-            builder.finish_and_track(now, self, sent_frames.take(), buf);
+            builder.finish_and_track(now, self, sent_frames, buf);
             self.path
                 .congestion
                 .on_sent(now, buf.len() as u64, last_packet_number);
