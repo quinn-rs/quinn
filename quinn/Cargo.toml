@@ -15,7 +15,7 @@ rust-version = "1.66"
 all-features = true
 
 [features]
-default = ["platform-verifier", "rustls", "ring", "runtime-tokio", "log"]
+default = ["log", "platform-verifier", "ring", "runtime-tokio", "rustls"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Provides `ClientConfig::with_platform_verifier()` convenience method
