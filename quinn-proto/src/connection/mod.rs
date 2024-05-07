@@ -693,18 +693,15 @@ impl Connection {
                         let packet_len_unpadded = cmp::max(builder.min_size, buf.len())
                             - datagram_start
                             + builder.tag_len;
-                        if packet_len_unpadded + MAX_PADDING < segment_size {
+                        if packet_len_unpadded + MAX_PADDING >= segment_size {
                             trace!(
                                 "GSO truncated by demand for {} padding bytes",
                                 segment_size - packet_len_unpadded
                             );
-                            pad_datagram = false;
-                            break;
+                            // Pad the current packet to GSO segment size so it can be included in the
+                            // GSO batch.
+                            builder.pad_to(segment_size as u16);
                         }
-
-                        // Pad the current packet to GSO segment size so it can be included in the
-                        // GSO batch.
-                        builder.pad_to(segment_size as u16);
                     }
 
                     builder.finish_and_track(now, self, sent_frames.take(), buf);
