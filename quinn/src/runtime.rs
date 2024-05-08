@@ -102,7 +102,7 @@ pub trait UdpPoller: Send + Sync + Debug + 'static {
 pin_project_lite::pin_project! {
     /// Helper adapting a function `MakeFut` that constructs a single-use future `Fut` into a
     /// [`UdpPoller`] that may be reused indefinitely
-    struct UdpPollHelper<MakeFut, Fut> {
+    pub struct UdpPollHelper<MakeFut, Fut> {
         make_fut: MakeFut,
         #[pin]
         fut: Option<Fut>,
@@ -113,12 +113,7 @@ impl<MakeFut, Fut> UdpPollHelper<MakeFut, Fut> {
     /// Construct a [`UdpPoller`] that calls `make_fut` to get the future to poll, storing it until
     /// it yields [`Poll::Ready`], then creating a new one on the next
     /// [`poll_writable`](UdpPoller::poll_writable)
-    #[cfg(any(
-        feature = "runtime-async-std",
-        feature = "runtime-smol",
-        feature = "runtime-tokio"
-    ))]
-    fn new(make_fut: MakeFut) -> Self {
+    pub fn new(make_fut: MakeFut) -> Self {
         Self {
             make_fut,
             fut: None,
