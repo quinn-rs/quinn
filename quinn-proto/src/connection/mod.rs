@@ -698,6 +698,7 @@ impl Connection {
                                 "GSO truncated by demand for {} padding bytes",
                                 segment_size - packet_len_unpadded
                             );
+                            builder_storage = Some(builder);
                             break;
                         }
 
