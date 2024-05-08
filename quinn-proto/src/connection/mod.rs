@@ -720,6 +720,20 @@ impl Connection {
                         // Clip the unused capacity out of the buffer so future packets don't
                         // overrun
                         buf_capacity = buf.len();
+
+                        // Check whether the data we planned to send will fit in the reduced segment
+                        // size. If not, bail out and leave it for the next GSO batch so we don't
+                        // end up trying to send an empty packet. We can't easily compute the right
+                        // segment size before the original call to `space_can_send`, because at
+                        // that time we haven't determined whether we're going to coalesce with the
+                        // first datagram or potentially pad it to `MIN_INITIAL_SIZE`.
+                        if space_id == SpaceId::Data {
+                            let frame_space_1rtt =
+                                segment_size.saturating_sub(self.predict_1rtt_overhead(Some(pn)));
+                            if self.space_can_send(space_id, frame_space_1rtt).is_empty() {
+                                break;
+                            }
+                        }
                     }
                 }
 
