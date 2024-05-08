@@ -896,16 +896,18 @@ impl Connection {
             let sent =
                 self.populate_packet(now, space_id, buf, builder.max_size, builder.exact_number);
 
-            // ACK-only packets should only be sent when explicitly allowed. If we write them due
-            // to any other reason, there is a bug which leads to one component announcing write
+            // ACK-only packets should only be sent when explicitly allowed. If we write them due to
+            // any other reason, there is a bug which leads to one component announcing write
             // readiness while not writing any data. This degrades performance. The condition is
-            // only checked if the full MTU is available, so that lack of space in the datagram isn't
-            // the reason for just writing ACKs.
+            // only checked if the full MTU is available and when potentially large fixed-size
+            // frames aren't queued, so that lack of space in the datagram isn't the reason for just
+            // writing ACKs.
             debug_assert!(
                 !(sent.is_ack_only(&self.streams)
                     && !can_send.acks
                     && can_send.other
-                    && (buf_capacity - builder.datagram_start) == self.path.current_mtu() as usize),
+                    && (buf_capacity - builder.datagram_start) == self.path.current_mtu() as usize
+                    && self.datagrams.outgoing.is_empty()),
                 "SendableFrames was {can_send:?}, but only ACKs have been written"
             );
             pad_datagram |= sent.requires_padding;
