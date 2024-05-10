@@ -1028,7 +1028,11 @@ impl Connection {
 
     /// Indicate what types of frames are ready to send for the given space
     fn space_can_send(&self, space_id: SpaceId, frame_space_1rtt: usize) -> SendableFrames {
-        if self.spaces[space_id].crypto.is_some() {
+        if self.spaces[space_id].crypto.is_some()
+            || (space_id == SpaceId::Data
+                && self.zero_rtt_crypto.is_some()
+                && self.side.is_client())
+        {
             let mut can_send = self.spaces[space_id].can_send(&self.streams);
             if space_id == SpaceId::Data {
                 can_send.other |= self.can_send_1rtt(frame_space_1rtt);
@@ -1036,16 +1040,6 @@ impl Connection {
             if !can_send.is_empty() {
                 return can_send;
             }
-        }
-
-        if space_id != SpaceId::Data {
-            return SendableFrames::empty();
-        }
-
-        if self.zero_rtt_crypto.is_some() && self.side.is_client() {
-            let mut can_send = self.spaces[space_id].can_send(&self.streams);
-            can_send.other |= self.can_send_1rtt(frame_space_1rtt);
-            return can_send;
         }
 
         SendableFrames::empty()
