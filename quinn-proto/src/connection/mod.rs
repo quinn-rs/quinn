@@ -286,23 +286,7 @@ impl Connection {
                 now,
                 if pref_addr_cid.is_some() { 2 } else { 1 },
             ),
-            path: PathData::new(
-                remote,
-                config.initial_rtt,
-                config
-                    .congestion_controller_factory
-                    .clone()
-                    .build(now, config.get_initial_mtu()),
-                config.get_initial_mtu(),
-                config.min_mtu,
-                None,
-                match allow_mtud {
-                    true => config.mtu_discovery_config.clone(),
-                    false => None,
-                },
-                now,
-                path_validated,
-            ),
+            path: PathData::new(remote, allow_mtud, None, now, path_validated, &config),
             allow_mtud,
             local_ip,
             prev_path: None,
@@ -2964,20 +2948,11 @@ impl Connection {
                     .unwrap_or(u16::MAX);
             PathData::new(
                 remote,
-                self.config.initial_rtt,
-                self.config
-                    .congestion_controller_factory
-                    .clone()
-                    .build(now, self.config.get_initial_mtu()),
-                self.config.get_initial_mtu(),
-                self.config.min_mtu,
+                self.allow_mtud,
                 Some(peer_max_udp_payload_size),
-                match self.allow_mtud {
-                    true => self.config.mtu_discovery_config.clone(),
-                    false => None,
-                },
                 now,
                 false,
+                &self.config,
             )
         };
         new_path.challenge = Some(self.rng.gen());

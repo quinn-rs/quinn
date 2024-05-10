@@ -7,7 +7,7 @@ use super::{
     pacing::Pacer,
     spaces::{PacketSpace, SentPacket},
 };
-use crate::{config::MtuDiscoveryConfig, congestion, packet::SpaceId, TIMER_GRANULARITY};
+use crate::{congestion, packet::SpaceId, TransportConfig, TIMER_GRANULARITY};
 
 /// Description of a particular network path
 pub(super) struct PathData {
@@ -47,29 +47,47 @@ pub(super) struct PathData {
 impl PathData {
     pub(super) fn new(
         remote: SocketAddr,
-        initial_rtt: Duration,
-        congestion: Box<dyn congestion::Controller>,
-        initial_mtu: u16,
-        min_mtu: u16,
+        allow_mtud: bool,
         peer_max_udp_payload_size: Option<u16>,
-        mtud_config: Option<MtuDiscoveryConfig>,
         now: Instant,
         validated: bool,
+        config: &TransportConfig,
     ) -> Self {
+        let congestion = config
+            .congestion_controller_factory
+            .clone()
+            .build(now, config.get_initial_mtu());
         Self {
             remote,
-            rtt: RttEstimator::new(initial_rtt),
+            rtt: RttEstimator::new(config.initial_rtt),
             sending_ecn: true,
-            pacing: Pacer::new(initial_rtt, congestion.initial_window(), initial_mtu, now),
+            pacing: Pacer::new(
+                config.initial_rtt,
+                congestion.initial_window(),
+                config.get_initial_mtu(),
+                now,
+            ),
             congestion,
             challenge: None,
             challenge_pending: false,
             validated,
             total_sent: 0,
             total_recvd: 0,
-            mtud: mtud_config.map_or(MtuDiscovery::disabled(initial_mtu, min_mtu), |config| {
-                MtuDiscovery::new(initial_mtu, min_mtu, peer_max_udp_payload_size, config)
-            }),
+            mtud: config
+                .mtu_discovery_config
+                .as_ref()
+                .filter(|_| allow_mtud)
+                .map_or(
+                    MtuDiscovery::disabled(config.get_initial_mtu(), config.min_mtu),
+                    |mtud_config| {
+                        MtuDiscovery::new(
+                            config.get_initial_mtu(),
+                            config.min_mtu,
+                            peer_max_udp_payload_size,
+                            mtud_config.clone(),
+                        )
+                    },
+                ),
             first_packet_after_rtt_sample: None,
             in_flight: InFlight::new(),
             first_packet: None,
