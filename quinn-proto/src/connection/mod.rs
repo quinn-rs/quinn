@@ -1049,9 +1049,7 @@ impl Connection {
         if self.zero_rtt_crypto.is_some() && self.side.is_client() {
             let mut can_send = self.spaces[space_id].can_send(&self.streams);
             can_send.other |= self.can_send_1rtt(frame_space_1rtt);
-            if !can_send.is_empty() {
-                return can_send;
-            }
+            return can_send;
         }
 
         SendableFrames::empty()
