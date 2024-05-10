@@ -142,6 +142,8 @@ pub struct Connection {
     /// This is only populated for the server case, and if known
     local_ip: Option<IpAddr>,
     path: PathData,
+    /// Whether MTU detection is supported in this environment
+    allow_mtud: bool,
     prev_path: Option<(ConnectionId, PathData)>,
     state: State,
     side: Side,
@@ -301,6 +303,7 @@ impl Connection {
                 now,
                 path_validated,
             ),
+            allow_mtud,
             local_ip,
             prev_path: None,
             side,
@@ -2969,7 +2972,10 @@ impl Connection {
                 self.config.get_initial_mtu(),
                 self.config.min_mtu,
                 Some(peer_max_udp_payload_size),
-                self.config.mtu_discovery_config.clone(),
+                match self.allow_mtud {
+                    true => self.config.mtu_discovery_config.clone(),
+                    false => None,
+                },
                 now,
                 false,
             )
