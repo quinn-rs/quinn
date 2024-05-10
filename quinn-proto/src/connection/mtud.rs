@@ -464,6 +464,16 @@ impl BlackHoleDetector {
 
         true
     }
+
+    #[cfg(test)]
+    fn suspicious_loss_burst_count(&self) -> usize {
+        self.suspicious_loss_bursts as usize
+    }
+
+    #[cfg(test)]
+    fn largest_non_probe_lost(&self) -> Option<u64> {
+        self.largest_non_probe_lost
+    }
 }
 
 // Corresponds to the RFC's `MAX_PROBES` constant (see
@@ -521,13 +531,13 @@ mod tests {
         let mut mtud = default_mtud();
         mtud.on_non_probe_lost(2, 1300);
         mtud.on_non_probe_lost(3, 1300);
-        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost, Some(3));
-        assert_eq!(mtud.black_hole_detector.suspicious_loss_bursts, 0);
+        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost(), Some(3));
+        assert_eq!(mtud.black_hole_detector.suspicious_loss_burst_count(), 0);
 
         mtud.on_non_probe_lost(4, 800);
         assert!(!mtud.black_hole_detected(Instant::now()));
-        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost, None);
-        assert_eq!(mtud.black_hole_detector.suspicious_loss_bursts, 0);
+        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost(), None);
+        assert_eq!(mtud.black_hole_detector.suspicious_loss_burst_count(), 0);
     }
 
     #[test]
@@ -535,19 +545,19 @@ mod tests {
         let mut mtud = default_mtud();
         mtud.on_non_probe_lost(2, 1300);
         mtud.on_non_probe_lost(3, 1300);
-        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost, Some(3));
-        assert_eq!(mtud.black_hole_detector.suspicious_loss_bursts, 0);
+        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost(), Some(3));
+        assert_eq!(mtud.black_hole_detector.suspicious_loss_burst_count(), 0);
 
         assert!(!mtud.black_hole_detected(Instant::now()));
-        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost, None);
-        assert_eq!(mtud.black_hole_detector.suspicious_loss_bursts, 1);
+        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost(), None);
+        assert_eq!(mtud.black_hole_detector.suspicious_loss_burst_count(), 1);
     }
 
     #[test]
     fn black_hole_detector_ignores_empty_burst() {
         let mut mtud = default_mtud();
         assert!(!mtud.black_hole_detected(Instant::now()));
-        assert_eq!(mtud.black_hole_detector.suspicious_loss_bursts, 0);
+        assert_eq!(mtud.black_hole_detector.suspicious_loss_burst_count(), 0);
     }
 
     #[test]
