@@ -366,10 +366,6 @@ struct BlackHoleDetector {
     ///
     /// Non-suspicious packets are non-probe packets of size <= `min_mtu`
     loss_burst_has_non_suspicious_packets: bool,
-    /// The largest suspicious packet that was lost in the current burst
-    ///
-    /// Suspicious packets are non-probe packets of size > `min_mtu`
-    largest_suspicious_packet_lost: Option<u64>,
     /// The largest non-probe packet that was lost (used to keep track of loss bursts)
     largest_non_probe_lost: Option<u64>,
     /// The largest acked packet of size `current_mtu`
@@ -384,7 +380,6 @@ impl BlackHoleDetector {
             suspicious_loss_bursts: 0,
             largest_non_probe_lost: None,
             loss_burst_has_non_suspicious_packets: false,
-            largest_suspicious_packet_lost: None,
             largest_acked_mtu_sized_packet: None,
             min_mtu,
         }
@@ -421,8 +416,6 @@ impl BlackHoleDetector {
 
         if packet_bytes <= self.min_mtu {
             self.loss_burst_has_non_suspicious_packets = true;
-        } else {
-            self.largest_suspicious_packet_lost = Some(packet_number);
         }
 
         self.largest_non_probe_lost = Some(packet_number);
@@ -448,7 +441,6 @@ impl BlackHoleDetector {
         }
 
         self.loss_burst_has_non_suspicious_packets = false;
-        self.largest_suspicious_packet_lost = None;
         self.largest_non_probe_lost = None;
     }
 
@@ -464,7 +456,7 @@ impl BlackHoleDetector {
         // proves the network still supports the current MTU
         let largest_acked = self.largest_acked_mtu_sized_packet.unwrap_or(0);
         if self
-            .largest_suspicious_packet_lost
+            .largest_non_probe_lost
             .map_or(true, |largest_lost| largest_lost < largest_acked)
         {
             return false;
@@ -529,18 +521,12 @@ mod tests {
         let mut mtud = default_mtud();
         mtud.on_non_probe_lost(2, 1300);
         mtud.on_non_probe_lost(3, 1300);
-        assert_eq!(
-            mtud.black_hole_detector.largest_suspicious_packet_lost,
-            Some(3)
-        );
+        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost, Some(3));
         assert_eq!(mtud.black_hole_detector.suspicious_loss_bursts, 0);
 
         mtud.on_non_probe_lost(4, 800);
         assert!(!mtud.black_hole_detected(Instant::now()));
-        assert_eq!(
-            mtud.black_hole_detector.largest_suspicious_packet_lost,
-            None
-        );
+        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost, None);
         assert_eq!(mtud.black_hole_detector.suspicious_loss_bursts, 0);
     }
 
@@ -549,17 +535,11 @@ mod tests {
         let mut mtud = default_mtud();
         mtud.on_non_probe_lost(2, 1300);
         mtud.on_non_probe_lost(3, 1300);
-        assert_eq!(
-            mtud.black_hole_detector.largest_suspicious_packet_lost,
-            Some(3)
-        );
+        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost, Some(3));
         assert_eq!(mtud.black_hole_detector.suspicious_loss_bursts, 0);
 
         assert!(!mtud.black_hole_detected(Instant::now()));
-        assert_eq!(
-            mtud.black_hole_detector.largest_suspicious_packet_lost,
-            None
-        );
+        assert_eq!(mtud.black_hole_detector.largest_non_probe_lost, None);
         assert_eq!(mtud.black_hole_detector.suspicious_loss_bursts, 1);
     }
 
