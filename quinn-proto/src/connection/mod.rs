@@ -1037,9 +1037,7 @@ impl Connection {
             if space_id == SpaceId::Data {
                 can_send.other |= self.can_send_1rtt(frame_space_1rtt);
             }
-            if !can_send.is_empty() {
-                return can_send;
-            }
+            return can_send;
         }
 
         SendableFrames::empty()
