@@ -142,7 +142,7 @@ pub struct Connection {
     /// This is only populated for the server case, and if known
     local_ip: Option<IpAddr>,
     path: PathData,
-    prev_path: Option<PathData>,
+    prev_path: Option<(ConnectionId, PathData)>,
     state: State,
     side: Side,
     /// Whether or not 0-RTT was enabled during the handshake. Does not imply acceptance.
@@ -480,7 +480,7 @@ impl Connection {
         let mut segment_size = usize::from(self.path.current_mtu());
 
         // Send PATH_CHALLENGE for a previous path if necessary
-        if let Some(ref mut prev_path) = self.prev_path {
+        if let Some((_, ref mut prev_path)) = self.prev_path {
             if prev_path.challenge_pending {
                 prev_path.challenge_pending = false;
                 let token = prev_path
@@ -1161,7 +1161,7 @@ impl Connection {
                 }
                 Timer::PathValidation => {
                     debug!("path validation failed");
-                    if let Some(prev) = self.prev_path.take() {
+                    if let Some((_, prev)) = self.prev_path.take() {
                         self.path = prev;
                     }
                     self.path.challenge = None;
@@ -2718,7 +2718,7 @@ impl Connection {
                         self.timers.stop(Timer::PathValidation);
                         self.path.challenge = None;
                         self.path.validated = true;
-                        if let Some(ref mut prev_path) = self.prev_path {
+                        if let Some((_, ref mut prev_path)) = self.prev_path {
                             prev_path.challenge = None;
                             prev_path.challenge_pending = false;
                         }
@@ -2992,7 +2992,9 @@ impl Connection {
         if prev.challenge.is_none() {
             prev.challenge = Some(self.rng.gen());
             prev.challenge_pending = true;
-            self.prev_path = Some(prev);
+            // We haven't updated the remote CID yet, this captures the remote CID we were using on
+            // the previous path.
+            self.prev_path = Some((self.rem_cids.active(), prev));
         }
 
         self.timers.set(
@@ -3548,7 +3550,7 @@ impl Connection {
             || self
                 .prev_path
                 .as_ref()
-                .map_or(false, |x| x.challenge_pending)
+                .map_or(false, |(_, x)| x.challenge_pending)
             || !self.path_responses.is_empty()
             || self
                 .datagrams
@@ -3560,7 +3562,10 @@ impl Connection {
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
     fn remove_in_flight(&mut self, pn: u64, packet: &SentPacket) {
         // Visit known paths from newest to oldest to find the one `pn` was sent on
-        for path in [&mut self.path].into_iter().chain(self.prev_path.as_mut()) {
+        for path in [&mut self.path]
+            .into_iter()
+            .chain(self.prev_path.as_mut().map(|(_, data)| data))
+        {
             if path.remove_in_flight(pn, packet) {
                 return;
             }
