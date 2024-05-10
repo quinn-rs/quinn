@@ -480,7 +480,7 @@ impl Connection {
         let mut segment_size = usize::from(self.path.current_mtu());
 
         // Send PATH_CHALLENGE for a previous path if necessary
-        if let Some((_, ref mut prev_path)) = self.prev_path {
+        if let Some((prev_cid, ref mut prev_path)) = self.prev_path {
             if prev_path.challenge_pending {
                 prev_path.challenge_pending = false;
                 let token = prev_path
@@ -496,10 +496,15 @@ impl Connection {
 
                 let buf_capacity = buf.capacity();
 
+                // Use the previous CID to avoid linking the new path with the previous path. We
+                // don't bother accounting for possible retirement of that prev_cid because this is
+                // sent once, immediately after migration, when the CID is known to be valid. Even
+                // if a post-migration packet caused the CID to be retired, it's fair to pretend
+                // this is sent first.
                 let mut builder = PacketBuilder::new(
                     now,
                     SpaceId::Data,
-                    self.rem_cids.active(),
+                    prev_cid,
                     buf,
                     buf_capacity,
                     0,
