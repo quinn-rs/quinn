@@ -8,6 +8,7 @@ use rustls::{
     client::danger::ServerCertVerifier,
     pki_types::{CertificateDer, PrivateKeyDer, ServerName},
     quic::{Connection, HeaderProtectionKey, KeyChange, PacketKey, Secrets, Suite, Version},
+    CipherSuite,
 };
 
 use crate::{
@@ -283,6 +284,19 @@ impl QuicClientConfig {
         }
     }
 
+    /// Initialize a QUIC-compatible TLS client configuration with a separate initial cipher suite
+    ///
+    /// This is useful if you want to avoid the initial cipher suite for traffic encryption.
+    pub fn with_initial(
+        inner: Arc<rustls::ClientConfig>,
+        initial: Suite,
+    ) -> Result<Self, NoInitialCipherSuite> {
+        match initial.suite.common.suite {
+            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial }),
+            _ => Err(NoInitialCipherSuite { specific: true }),
+        }
+    }
+
     pub(crate) fn inner(verifier: Arc<dyn ServerCertVerifier>) -> rustls::ClientConfig {
         let mut config = rustls::ClientConfig::builder_with_provider(
             rustls::crypto::ring::default_provider().into(),
@@ -332,19 +346,31 @@ impl TryFrom<rustls::ClientConfig> for QuicClientConfig {
     fn try_from(inner: rustls::ClientConfig) -> Result<Self, Self::Error> {
         Ok(Self {
             initial: initial_suite_from_provider(inner.crypto_provider())
-                .ok_or(NoInitialCipherSuite(()))?,
+                .ok_or(NoInitialCipherSuite { specific: false })?,
             inner: Arc::new(inner),
         })
     }
 }
 
-/// The configured crypto provider does not support the QUIC initial cipher suite
+/// The initial cipher suite (AES-128-GCM-SHA256) is not available
+///
+/// When the cipher suite is supplied `with_initial()`, it must be
+/// [`CipherSuite::TLS13_AES_128_GCM_SHA256`]. When the cipher suite is derived from a config's
+/// [`CryptoProvider`][provider], that provider must reference a cipher suite with the same ID.
+///
+/// [provider]: rustls::crypto::CryptoProvider
 #[derive(Debug)]
-pub struct NoInitialCipherSuite(());
+pub struct NoInitialCipherSuite {
+    /// Whether the initial cipher suite was supplied by the caller
+    specific: bool,
+}
 
 impl std::fmt::Display for NoInitialCipherSuite {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
-        f.write_str("no initial cipher suite found")
+        f.write_str(match self.specific {
+            true => "invalid cipher suite specified",
+            false => "no initial cipher suite found",
+        })
     }
 }
 
@@ -377,6 +403,19 @@ impl QuicServerConfig {
         }
     }
 
+    /// Initialize a QUIC-compatible TLS client configuration with a separate initial cipher suite
+    ///
+    /// This is useful if you want to avoid the initial cipher suite for traffic encryption.
+    pub fn with_initial(
+        inner: Arc<rustls::ServerConfig>,
+        initial: Suite,
+    ) -> Result<Self, NoInitialCipherSuite> {
+        match initial.suite.common.suite {
+            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial }),
+            _ => Err(NoInitialCipherSuite { specific: true }),
+        }
+    }
+
     /// Initialize a sane QUIC-compatible TLS server configuration
     ///
     /// QUIC requires that TLS 1.3 be enabled, and that the maximum early data size is either 0 or
@@ -406,7 +445,7 @@ impl TryFrom<rustls::ServerConfig> for QuicServerConfig {
     fn try_from(inner: rustls::ServerConfig) -> Result<Self, Self::Error> {
         Ok(Self {
             initial: initial_suite_from_provider(inner.crypto_provider())
-                .ok_or(NoInitialCipherSuite(()))?,
+                .ok_or(NoInitialCipherSuite { specific: false })?,
             inner: Arc::new(inner),
         })
     }
