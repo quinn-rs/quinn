@@ -62,10 +62,10 @@ impl MtuDiscovery {
     }
 
     /// Returns the amount of bytes that should be sent as an MTU probe, if any
-    pub(crate) fn poll_transmit(&mut self, now: Instant, next_packet_number: u64) -> Option<u16> {
+    pub(crate) fn poll_transmit(&mut self, now: Instant, next_pn: u64) -> Option<u16> {
         self.state
             .as_mut()
-            .and_then(|state| state.poll_transmit(now, self.current_mtu, next_packet_number))
+            .and_then(|state| state.poll_transmit(now, self.current_mtu, next_pn))
     }
 
     /// Notifies the [`MtuDiscovery`] that the peer's `max_udp_payload_size` transport parameter has
@@ -84,12 +84,7 @@ impl MtuDiscovery {
     /// Notifies the [`MtuDiscovery`] that a packet has been ACKed
     ///
     /// Returns true if the packet was an MTU probe
-    pub(crate) fn on_acked(
-        &mut self,
-        space: SpaceId,
-        packet_number: u64,
-        packet_bytes: u16,
-    ) -> bool {
+    pub(crate) fn on_acked(&mut self, space: SpaceId, pn: u64, len: u16) -> bool {
         // MTU probes are only sent in application data space
         if space != SpaceId::Data {
             return false;
@@ -99,7 +94,7 @@ impl MtuDiscovery {
         if let Some(new_mtu) = self
             .state
             .as_mut()
-            .and_then(|state| state.on_probe_acked(packet_number))
+            .and_then(|state| state.on_probe_acked(pn))
         {
             self.current_mtu = new_mtu;
             trace!(current_mtu = self.current_mtu, "new MTU detected");
@@ -107,11 +102,8 @@ impl MtuDiscovery {
             self.black_hole_detector.on_probe_acked();
             true
         } else {
-            self.black_hole_detector.on_non_probe_acked(
-                self.current_mtu,
-                packet_number,
-                packet_bytes,
-            );
+            self.black_hole_detector
+                .on_non_probe_acked(self.current_mtu, pn, len);
             false
         }
     }
@@ -139,9 +131,8 @@ impl MtuDiscovery {
     /// When done notifying of lost packets, [`MtuDiscovery::black_hole_detected`] must be called, to
     /// ensure the last loss burst is properly processed and to trigger black hole recovery logic if
     /// necessary.
-    pub(crate) fn on_non_probe_lost(&mut self, packet_number: u64, packet_bytes: u16) {
-        self.black_hole_detector
-            .on_non_probe_lost(packet_number, packet_bytes);
+    pub(crate) fn on_non_probe_lost(&mut self, pn: u64, len: u16) {
+        self.black_hole_detector.on_non_probe_lost(pn, len);
     }
 
     /// Returns true if a black hole was detected
@@ -181,12 +172,7 @@ impl EnabledMtuDiscovery {
     }
 
     /// Returns the amount of bytes that should be sent as an MTU probe, if any
-    fn poll_transmit(
-        &mut self,
-        now: Instant,
-        current_mtu: u16,
-        next_packet_number: u64,
-    ) -> Option<u16> {
+    fn poll_transmit(&mut self, now: Instant, current_mtu: u16, next_pn: u64) -> Option<u16> {
         if let Phase::Initial = &self.phase {
             // Start the first search
             self.phase = Phase::Searching(SearchState::new(
@@ -215,7 +201,7 @@ impl EnabledMtuDiscovery {
 
             // Retransmit lost probes, if any
             if 0 < state.lost_probe_count && state.lost_probe_count < MAX_PROBE_RETRANSMITS {
-                state.in_flight_probe = Some(next_packet_number);
+                state.in_flight_probe = Some(next_pn);
                 return Some(state.last_probed_mtu);
             }
 
@@ -228,7 +214,7 @@ impl EnabledMtuDiscovery {
             }
 
             if let Some(probe_udp_payload_size) = state.next_mtu_to_probe(last_probe_succeeded) {
-                state.in_flight_probe = Some(next_packet_number);
+                state.in_flight_probe = Some(next_pn);
                 state.last_probed_mtu = probe_udp_payload_size;
                 return Some(probe_udp_payload_size);
             } else {
@@ -244,9 +230,9 @@ impl EnabledMtuDiscovery {
     /// Called when a packet is acknowledged in [`SpaceId::Data`]
     ///
     /// Returns the new `current_mtu` if the packet number corresponds to the in-flight MTU probe
-    fn on_probe_acked(&mut self, packet_number: u64) -> Option<u16> {
+    fn on_probe_acked(&mut self, pn: u64) -> Option<u16> {
         match &mut self.phase {
-            Phase::Searching(state) if state.in_flight_probe == Some(packet_number) => {
+            Phase::Searching(state) if state.in_flight_probe == Some(pn) => {
                 state.in_flight_probe = None;
                 state.lost_probe_count = 0;
                 Some(state.last_probed_mtu)
@@ -390,35 +376,31 @@ impl BlackHoleDetector {
         self.suspicious_loss_bursts = 0;
     }
 
-    fn on_non_probe_acked(&mut self, current_mtu: u16, packet_number: u64, packet_bytes: u16) {
+    fn on_non_probe_acked(&mut self, current_mtu: u16, pn: u64, len: u16) {
         // Reset the black hole counter if a packet the size of the current MTU or larger
         // has been acknowledged
-        if packet_bytes >= current_mtu
-            && self
-                .largest_acked_mtu_sized_packet
-                .map_or(true, |pn| packet_number > pn)
-        {
+        if len >= current_mtu && self.largest_acked_mtu_sized_packet.map_or(true, |x| pn > x) {
             self.suspicious_loss_bursts = 0;
-            self.largest_acked_mtu_sized_packet = Some(packet_number);
+            self.largest_acked_mtu_sized_packet = Some(pn);
         }
     }
 
-    fn on_non_probe_lost(&mut self, packet_number: u64, packet_bytes: u16) {
+    fn on_non_probe_lost(&mut self, pn: u64, len: u16) {
         // A loss burst is a group of consecutive packets that are declared lost, so a distance
         // greater than 1 indicates a new burst
         let new_loss_burst = self
             .largest_non_probe_lost
-            .map_or(true, |prev| packet_number - prev != 1);
+            .map_or(true, |prev| pn - prev != 1);
 
         if new_loss_burst {
             self.finish_loss_burst();
         }
 
-        if packet_bytes <= self.min_mtu {
+        if len <= self.min_mtu {
             self.loss_burst_has_non_suspicious_packets = true;
         }
 
-        self.largest_non_probe_lost = Some(packet_number);
+        self.largest_non_probe_lost = Some(pn);
     }
 
     fn black_hole_detected(&mut self) -> bool {
@@ -505,8 +487,8 @@ mod tests {
         link_payload_size_limit: u16,
     ) -> Vec<u16> {
         let mut probed_sizes = Vec::new();
-        for probe_packet_number in 1..100 {
-            let result = mtud.poll_transmit(now, probe_packet_number);
+        for probe_pn in 1..100 {
+            let result = mtud.poll_transmit(now, probe_pn);
 
             if completed(mtud) {
                 break;
@@ -518,7 +500,7 @@ mod tests {
             probed_sizes.push(probe_size);
 
             if probe_size <= link_payload_size_limit {
-                mtud.on_acked(SpaceId::Data, probe_packet_number, probe_size);
+                mtud.on_acked(SpaceId::Data, probe_pn, probe_size);
             } else {
                 mtud.on_probe_lost();
             }
@@ -757,10 +739,10 @@ mod tests {
         for i in 1..100 {
             iterations += 1;
 
-            let probe_packet_number = i * 2 - 1;
-            let other_packet_number = i * 2;
+            let probe_pn = i * 2 - 1;
+            let other_pn = i * 2;
 
-            let result = mtud.poll_transmit(Instant::now(), probe_packet_number);
+            let result = mtud.poll_transmit(Instant::now(), probe_pn);
 
             if completed(&mtud) {
                 break;
@@ -771,12 +753,12 @@ mod tests {
             assert!(mtud.in_flight_mtu_probe().is_some());
 
             // Nothing else to send while the probe is in-flight
-            assert_matches!(mtud.poll_transmit(now, other_packet_number), None);
+            assert_matches!(mtud.poll_transmit(now, other_pn), None);
 
             if i % 2 == 0 {
                 // ACK probe and ensure it results in an increase of current_mtu
                 let previous_max_size = mtud.current_mtu;
-                mtud.on_acked(SpaceId::Data, probe_packet_number, result.unwrap());
+                mtud.on_acked(SpaceId::Data, probe_pn, result.unwrap());
                 println!(
                     "ACK packet {}. Previous MTU = {previous_max_size}. New MTU = {}",
                     result.unwrap(),
