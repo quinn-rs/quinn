@@ -344,10 +344,18 @@ impl TryFrom<rustls::ClientConfig> for QuicClientConfig {
     type Error = NoInitialCipherSuite;
 
     fn try_from(inner: rustls::ClientConfig) -> Result<Self, Self::Error> {
+        Arc::new(inner).try_into()
+    }
+}
+
+impl TryFrom<Arc<rustls::ClientConfig>> for QuicClientConfig {
+    type Error = NoInitialCipherSuite;
+
+    fn try_from(inner: Arc<rustls::ClientConfig>) -> Result<Self, Self::Error> {
         Ok(Self {
             initial: initial_suite_from_provider(inner.crypto_provider())
                 .ok_or(NoInitialCipherSuite { specific: false })?,
-            inner: Arc::new(inner),
+            inner,
         })
     }
 }
@@ -443,10 +451,18 @@ impl TryFrom<rustls::ServerConfig> for QuicServerConfig {
     type Error = NoInitialCipherSuite;
 
     fn try_from(inner: rustls::ServerConfig) -> Result<Self, Self::Error> {
+        Arc::new(inner).try_into()
+    }
+}
+
+impl TryFrom<Arc<rustls::ServerConfig>> for QuicServerConfig {
+    type Error = NoInitialCipherSuite;
+
+    fn try_from(inner: Arc<rustls::ServerConfig>) -> Result<Self, Self::Error> {
         Ok(Self {
             initial: initial_suite_from_provider(inner.crypto_provider())
                 .ok_or(NoInitialCipherSuite { specific: false })?,
-            inner: Arc::new(inner),
+            inner,
         })
     }
 }
