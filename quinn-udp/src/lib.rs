@@ -85,7 +85,7 @@ pub struct RecvMeta {
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address which was encoded in this datagram
     ///
-    /// Populated on platforms: Windows, Linux, Android, FreeBSD, macOS, and iOS.
+    /// Populated on platforms: Windows, Linux, Android, FreeBSD, OpenBSD, macOS, and iOS.
     pub dst_ip: Option<IpAddr>,
 }
 
