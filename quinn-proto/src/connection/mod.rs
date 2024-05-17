@@ -1288,15 +1288,9 @@ impl Connection {
     /// This can be different from the address the endpoint is bound to, in case
     /// the endpoint is bound to a wildcard address like `0.0.0.0` or `::`.
     ///
-    /// This will return `None` for clients.
-    ///
-    /// Retrieving the local IP address is currently supported on the following
-    /// platforms:
-    /// - Linux
-    /// - Windows
-    ///
-    /// On all non-supported platforms the local IP address will not be available,
-    /// and the method will return `None`.
+    /// This will return `None` for clients, or when no `local_ip` was passed to
+    /// [`Endpoint::handle()`](crate::Endpoint::handle) for the datagrams establishing this
+    /// connection.
     pub fn local_ip(&self) -> Option<IpAddr> {
         self.local_ip
     }

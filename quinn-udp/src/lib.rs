@@ -84,6 +84,8 @@ pub struct RecvMeta {
     /// The Explicit Congestion Notification bits for the datagram(s) in the buffer
     pub ecn: Option<EcnCodepoint>,
     /// The destination IP address which was encoded in this datagram
+    ///
+    /// Populated on platforms: Windows, Linux, Android, FreeBSD, macOS, and iOS.
     pub dst_ip: Option<IpAddr>,
 }
 
