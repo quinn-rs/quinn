@@ -14,7 +14,7 @@ use crate::{
 /// (which includes a variable-length packet number) without crypto context.
 /// The crypto context (represented by the `Crypto` type in Quinn) is usually
 /// part of the `Connection`, or can be derived from the destination CID for
-// Initial packets.
+/// Initial packets.
 ///
 /// To cope with this, we decode the invariant header (which should be stable
 /// across QUIC versions), which gives us the destination CID and allows us
@@ -32,13 +32,13 @@ impl PartialDecode {
     /// Begin decoding a QUIC packet from `bytes`, returning any trailing data not part of that packet
     pub fn new(
         bytes: BytesMut,
-        local_cid_len: usize,
+        cid_parser: &impl ConnectionIdParser,
         supported_versions: &[u32],
         grease_quic_bit: bool,
     ) -> Result<(Self, Option<BytesMut>), PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
         let plain_header =
-            PlainHeader::decode(&mut buf, local_cid_len, supported_versions, grease_quic_bit)?;
+            PlainHeader::decode(&mut buf, cid_parser, supported_versions, grease_quic_bit)?;
         let dgram_len = buf.get_ref().len();
         let packet_len = plain_header
             .payload_len()
@@ -564,7 +564,7 @@ impl PlainHeader {
     /// Decode a plain header from given buffer, with given [`ConnectionIdParser`].
     pub fn decode(
         buf: &mut io::Cursor<BytesMut>,
-        local_cid_len: usize,
+        cid_parser: &impl ConnectionIdParser,
         supported_versions: &[u32],
         grease_quic_bit: bool,
     ) -> Result<Self, PacketDecodeError> {
@@ -574,13 +574,10 @@ impl PlainHeader {
         }
         if first & LONG_HEADER_FORM == 0 {
             let spin = first & SPIN_BIT != 0;
-            if buf.remaining() < local_cid_len {
-                return Err(PacketDecodeError::InvalidHeader("cid out of bounds"));
-            }
 
             Ok(Self::Short {
                 spin,
-                dst_cid: ConnectionId::from_buf(buf, local_cid_len),
+                dst_cid: cid_parser.parse(buf)?,
             })
         } else {
             let version = buf.get::<u32>()?;
@@ -770,6 +767,32 @@ impl PacketNumber {
     }
 }
 
+/// A [`ConnectionIdParser`] implementation that assumes the connection ID is of fixed length
+pub struct FixedLengthConnectionIdParser {
+    expected_len: usize,
+}
+
+impl FixedLengthConnectionIdParser {
+    /// Create a new instance of `FixedLengthConnectionIdParser`
+    pub fn new(expected_len: usize) -> Self {
+        Self { expected_len }
+    }
+}
+
+impl ConnectionIdParser for FixedLengthConnectionIdParser {
+    fn parse(&self, buffer: &mut impl Buf) -> Result<ConnectionId, PacketDecodeError> {
+        (buffer.remaining() >= self.expected_len)
+            .then(|| ConnectionId::from_buf(buffer, self.expected_len))
+            .ok_or(PacketDecodeError::InvalidHeader("packet too small"))
+    }
+}
+
+/// Parse connection id in short header packet
+pub trait ConnectionIdParser {
+    /// Parse a connection id from given buffer
+    fn parse(&self, buf: &mut impl Buf) -> Result<ConnectionId, PacketDecodeError>;
+}
+
 /// Long packet type including non-uniform cases
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LongHeaderType {
@@ -945,9 +968,14 @@ mod tests {
 
         let server = initial_keys(Version::V1, &dcid, Side::Server, &suite);
         let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
-        let decode = PartialDecode::new(buf.as_slice().into(), 0, &supported_versions, false)
-            .unwrap()
-            .0;
+        let decode = PartialDecode::new(
+            buf.as_slice().into(),
+            &FixedLengthConnectionIdParser::new(0),
+            &supported_versions,
+            false,
+        )
+        .unwrap()
+        .0;
         let mut packet = decode.finish(Some(&*server.header.remote)).unwrap();
         assert_eq!(
             packet.header_data[..],

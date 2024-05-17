@@ -23,8 +23,8 @@ use crate::{
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{
-        Header, InitialHeader, InitialPacket, Packet, PacketDecodeError, PacketNumber,
-        PartialDecode, PlainInitialHeader,
+        FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, Packet,
+        PacketDecodeError, PacketNumber, PartialDecode, PlainInitialHeader,
     },
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
@@ -144,7 +144,7 @@ impl Endpoint {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(
             data,
-            self.local_cid_generator.cid_len(),
+            &FixedLengthConnectionIdParser::new(self.local_cid_generator.cid_len()),
             &self.config.supported_versions,
             self.config.grease_quic_bit,
         ) {

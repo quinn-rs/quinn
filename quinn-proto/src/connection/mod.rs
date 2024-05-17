@@ -23,8 +23,8 @@ use crate::{
     frame,
     frame::{Close, Datagram, FrameStruct},
     packet::{
-        Header, InitialHeader, InitialPacket, LongType, Packet, PacketNumber, PartialDecode,
-        SpaceId,
+        FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
+        PacketNumber, PartialDecode, SpaceId,
     },
     range_set::ArrayRangeSet,
     shared::{
@@ -2101,7 +2101,7 @@ impl Connection {
         while let Some(data) = remaining {
             match PartialDecode::new(
                 data,
-                self.local_cid_state.cid_len(),
+                &FixedLengthConnectionIdParser::new(self.local_cid_state.cid_len()),
                 &[self.version],
                 self.endpoint_config.grease_quic_bit,
             ) {

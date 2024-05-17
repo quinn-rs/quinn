@@ -65,7 +65,10 @@ pub use crate::endpoint::{
 };
 
 mod packet;
-pub use packet::{LongType, PacketDecodeError, PartialDecode, PlainHeader, PlainInitialHeader};
+pub use packet::{
+    ConnectionIdParser, FixedLengthConnectionIdParser, LongType, PacketDecodeError, PartialDecode,
+    PlainHeader, PlainInitialHeader,
+};
 
 mod shared;
 pub use crate::shared::{ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent};
