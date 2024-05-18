@@ -358,7 +358,7 @@ impl StreamsState {
         self.recv
             .get(&id)
             .and_then(|s| s.as_ref())
-            .map_or(false, |s| s.receiving_unknown_size())
+            .map_or(false, |s| s.receiving_unknown_size() && !s.stopped)
     }
 
     pub(in crate::connection) fn write_control_frames(
@@ -446,7 +446,7 @@ impl StreamsState {
                 Some(x) => x,
                 None => continue,
             };
-            if !rs.receiving_unknown_size() {
+            if !rs.receiving_unknown_size() || rs.stopped {
                 continue;
             }
             retransmits.get_or_create().max_stream_data.insert(id);
