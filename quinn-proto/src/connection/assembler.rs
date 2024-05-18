@@ -200,10 +200,6 @@ impl Assembler {
         }
     }
 
-    pub(super) fn set_bytes_read(&mut self, new: u64) {
-        self.bytes_read = new;
-    }
-
     /// Number of bytes consumed by the application
     pub(super) fn bytes_read(&self) -> u64 {
         self.bytes_read

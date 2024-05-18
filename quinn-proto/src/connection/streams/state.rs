@@ -298,7 +298,7 @@ impl StreamsState {
         }
         self.on_stream_frame(!stopped, id);
 
-        // Update flow control
+        // Update connection-level flow control
         Ok(if bytes_read != final_offset.into_inner() {
             // bytes_read is always <= end, so this won't underflow.
             self.data_recvd = self
