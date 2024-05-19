@@ -187,6 +187,13 @@ impl Recv {
         Ok(true)
     }
 
+    pub(super) fn reset_code(&self) -> Option<VarInt> {
+        match self.state {
+            RecvState::ResetRecvd { error_code, .. } => Some(error_code),
+            _ => None,
+        }
+    }
+
     /// Compute the amount of flow control credit consumed, or return an error if more was consumed
     /// than issued
     fn credit_consumed_by(

@@ -159,6 +159,33 @@ impl<'a> RecvStream<'a> {
 
         Ok(())
     }
+
+    /// Check whether this stream has been reset by the peer, returning the reset error code if so
+    ///
+    /// After returning `Ok(Some(_))` once, stream state will be discarded and all future calls will
+    /// return `Err(ClosedStream)`.
+    pub fn received_reset(&mut self) -> Result<Option<VarInt>, ClosedStream> {
+        let hash_map::Entry::Occupied(entry) = self.state.recv.entry(self.id) else {
+            return Err(ClosedStream { _private: () });
+        };
+        let Some(s) = entry.get().as_ref() else {
+            return Ok(None);
+        };
+        if s.stopped {
+            return Err(ClosedStream { _private: () });
+        }
+        let Some(code) = s.reset_code() else {
+            return Ok(None);
+        };
+
+        // Clean up state after application observes the reset, since there's no reason for the
+        // application to attempt to read or stop the stream once it knows it's reset
+        entry.remove_entry();
+        self.state.stream_freed(self.id, StreamHalf::Recv);
+        self.state.queue_max_stream_id(self.pending);
+
+        Ok(Some(code))
+    }
 }
 
 /// Access to streams
