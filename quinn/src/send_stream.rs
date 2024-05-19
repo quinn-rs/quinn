@@ -459,6 +459,17 @@ impl From<StoppedError> for WriteError {
     }
 }
 
+impl From<WriteError> for io::Error {
+    fn from(x: WriteError) -> Self {
+        use self::WriteError::*;
+        let kind = match x {
+            Stopped(_) | ZeroRttRejected => io::ErrorKind::ConnectionReset,
+            ConnectionLost(_) | ClosedStream => io::ErrorKind::NotConnected,
+        };
+        Self::new(kind, x)
+    }
+}
+
 /// Errors that arise while monitoring for a send stream stop from the peer
 #[derive(Debug, Error, Clone, PartialEq, Eq)]
 pub enum StoppedError {
@@ -473,15 +484,4 @@ pub enum StoppedError {
     /// [`Connecting::into_0rtt()`]: crate::Connecting::into_0rtt()
     #[error("0-RTT rejected")]
     ZeroRttRejected,
-}
-
-impl From<WriteError> for io::Error {
-    fn from(x: WriteError) -> Self {
-        use self::WriteError::*;
-        let kind = match x {
-            Stopped(_) | ZeroRttRejected => io::ErrorKind::ConnectionReset,
-            ConnectionLost(_) | ClosedStream => io::ErrorKind::NotConnected,
-        };
-        Self::new(kind, x)
-    }
 }
