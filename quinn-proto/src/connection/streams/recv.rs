@@ -313,10 +313,9 @@ impl<'a> Chunks<'a> {
 
         let mut should_transmit = false;
         // We issue additional stream ID credit after the application is notified that a previously
-        // open stream has finished or been reset and we've therefore disposed of its state.
-        if matches!(state, ChunksState::Finished | ChunksState::Reset(_))
-            && self.streams.side != self.id.initiator()
-        {
+        // open stream has finished or been reset and we've therefore disposed of its state, as
+        // recorded by `stream_freed` calls in `next`.
+        if self.streams.take_max_streams_dirty(self.id.dir()) {
             self.pending.max_stream_id[self.id.dir() as usize] = true;
             should_transmit = true;
         }
