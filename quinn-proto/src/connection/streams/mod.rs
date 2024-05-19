@@ -240,7 +240,7 @@ impl<'a> SendStream<'a> {
     }
 
     /// Check if this stream was stopped, get the reason if it was
-    pub fn stopped(&mut self) -> Result<Option<VarInt>, ClosedStream> {
+    pub fn stopped(&self) -> Result<Option<VarInt>, ClosedStream> {
         match self.state.send.get(&self.id).as_ref() {
             Some(Some(s)) => Ok(s.stop_reason),
             Some(None) => Ok(None),
