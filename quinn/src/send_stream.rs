@@ -488,3 +488,14 @@ pub enum StoppedError {
     #[error("0-RTT rejected")]
     ZeroRttRejected,
 }
+
+impl From<StoppedError> for io::Error {
+    fn from(x: StoppedError) -> Self {
+        use StoppedError::*;
+        let kind = match x {
+            ZeroRttRejected => io::ErrorKind::ConnectionReset,
+            ConnectionLost(_) => io::ErrorKind::NotConnected,
+        };
+        Self::new(kind, x)
+    }
+}
