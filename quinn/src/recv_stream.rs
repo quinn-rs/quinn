@@ -1,5 +1,5 @@
 use std::{
-    future::Future,
+    future::{poll_fn, Future},
     io,
     pin::Pin,
     task::{Context, Poll},
@@ -281,6 +281,46 @@ impl RecvStream {
         self.stream
     }
 
+    /// Completes when the stream has been reset by the peer or otherwise closed
+    ///
+    /// Yields `Some` with the reset error code when the stream is reset by the peer. Yields `None`
+    /// when the stream was previously [`stop()`](Self::stop)ed, or when the stream was
+    /// [`finish()`](crate::SendStream::finish)ed by the peer and all data has been received, after
+    /// which it is no longer meaningful for the stream to be reset.
+    ///
+    /// This operation is cancel-safe.
+    pub async fn received_reset(&mut self) -> Result<Option<VarInt>, ResetError> {
+        poll_fn(|cx| {
+            let mut conn = self.conn.state.lock("RecvStream::reset");
+            if self.is_0rtt && conn.check_0rtt().is_err() {
+                return Poll::Ready(Err(ResetError::ZeroRttRejected));
+            }
+
+            if let Some(code) = self.reset {
+                return Poll::Ready(Ok(Some(code)));
+            }
+
+            match conn.inner.recv_stream(self.stream).received_reset() {
+                Err(_) => Poll::Ready(Ok(None)),
+                Ok(Some(error_code)) => {
+                    // Stream state has just now been freed, so the connection may need to issue new
+                    // stream ID flow control credit
+                    conn.wake();
+                    Poll::Ready(Ok(Some(error_code)))
+                }
+                Ok(None) => {
+                    // Resets always notify readers, since a reset is an immediate read error. We
+                    // could introduce a dedicated channel to reduce the risk of spurious wakeups,
+                    // but that increased complexity is probably not justified, as an application
+                    // that is expecting a reset is not likely to receive large amounts of data.
+                    conn.blocked_readers.insert(self.stream, cx.waker().clone());
+                    Poll::Pending
+                }
+            }
+        })
+        .await
+    }
+
     /// Handle common logic related to reading out of a receive stream
     ///
     /// This takes an `FnMut` closure that takes care of the actual reading process, matching
@@ -503,6 +543,15 @@ impl From<ReadableError> for ReadError {
     }
 }
 
+impl From<ResetError> for ReadError {
+    fn from(e: ResetError) -> Self {
+        match e {
+            ResetError::ConnectionLost(e) => Self::ConnectionLost(e),
+            ResetError::ZeroRttRejected => Self::ZeroRttRejected,
+        }
+    }
+}
+
 impl From<ReadError> for io::Error {
     fn from(x: ReadError) -> Self {
         use self::ReadError::*;
@@ -510,6 +559,33 @@ impl From<ReadError> for io::Error {
             Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
             ConnectionLost(_) | ClosedStream => io::ErrorKind::NotConnected,
             IllegalOrderedRead => io::ErrorKind::InvalidInput,
+        };
+        Self::new(kind, x)
+    }
+}
+
+/// Errors that arise while waiting for a stream to be reset
+#[derive(Debug, Error, Clone, PartialEq, Eq)]
+pub enum ResetError {
+    /// The connection was lost
+    #[error("connection lost")]
+    ConnectionLost(#[from] ConnectionError),
+    /// This was a 0-RTT stream and the server rejected it
+    ///
+    /// Can only occur on clients for 0-RTT streams, which can be opened using
+    /// [`Connecting::into_0rtt()`].
+    ///
+    /// [`Connecting::into_0rtt()`]: crate::Connecting::into_0rtt()
+    #[error("0-RTT rejected")]
+    ZeroRttRejected,
+}
+
+impl From<ResetError> for io::Error {
+    fn from(x: ResetError) -> Self {
+        use ResetError::*;
+        let kind = match x {
+            ZeroRttRejected => io::ErrorKind::ConnectionReset,
+            ConnectionLost(_) => io::ErrorKind::NotConnected,
         };
         Self::new(kind, x)
     }
