@@ -308,7 +308,7 @@ impl RecvStream {
 
         // If we stored an error during a previous call, return it now. This can happen if a
         // `read_fn` both wants to return data and also returns an error in its final stream status.
-        let status = match self.reset.take() {
+        let status = match self.reset {
             Some(code) => ReadStatus::Failed(None, Reset(code)),
             None => {
                 let mut recv = conn.inner.recv_stream(self.stream);
@@ -340,6 +340,7 @@ impl RecvStream {
             ReadStatus::Failed(read, Reset(error_code)) => match read {
                 None => {
                     self.all_data_read = true;
+                    self.reset = Some(error_code);
                     Poll::Ready(Err(ReadError::Reset(error_code)))
                 }
                 done => {
