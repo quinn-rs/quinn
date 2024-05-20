@@ -552,14 +552,12 @@ impl<'a> Future for ReadExact<'a> {
     type Output = Result<(), ReadExactError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
-        let total = this.buf.remaining();
-        let mut remaining = total;
+        let mut remaining = this.buf.remaining();
         while remaining > 0 {
             ready!(this.stream.poll_read_buf(cx, &mut this.buf))?;
             let new = this.buf.remaining();
             if new == remaining {
-                let read = total - remaining;
-                return Poll::Ready(Err(ReadExactError::FinishedEarly(read)));
+                return Poll::Ready(Err(ReadExactError::FinishedEarly(this.buf.filled().len())));
             }
             remaining = new;
         }
