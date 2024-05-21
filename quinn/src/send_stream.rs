@@ -6,13 +6,10 @@ use std::{
 };
 
 use bytes::Bytes;
-use proto::{ConnectionError, FinishError, StreamId, Written};
+use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
 
-use crate::{
-    connection::{ClosedStream, ConnectionRef},
-    VarInt,
-};
+use crate::{connection::ConnectionRef, VarInt};
 
 /// A stream that can only be used to send data
 ///
@@ -189,7 +186,7 @@ impl SendStream {
     /// Get the priority of the send stream
     pub fn priority(&self) -> Result<i32, ClosedStream> {
         let mut conn = self.conn.state.lock("SendStream::priority");
-        Ok(conn.inner.send_stream(self.stream).priority()?)
+        conn.inner.send_stream(self.stream).priority()
     }
 
     /// Completes when the stream is stopped or read to completion by the peer

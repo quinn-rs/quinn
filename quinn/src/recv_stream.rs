@@ -6,14 +6,11 @@ use std::{
 };
 
 use bytes::Bytes;
-use proto::{Chunk, Chunks, ConnectionError, ReadableError, StreamId};
+use proto::{Chunk, Chunks, ClosedStream, ConnectionError, ReadableError, StreamId};
 use thiserror::Error;
 use tokio::io::ReadBuf;
 
-use crate::{
-    connection::{ClosedStream, ConnectionRef},
-    VarInt,
-};
+use crate::{connection::ConnectionRef, VarInt};
 
 /// A stream that can only be used to receive data
 ///

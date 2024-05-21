@@ -1253,28 +1253,3 @@ pub enum SendDatagramError {
 /// This limits the amount of CPU resources consumed by datagram generation,
 /// and allows other tasks (like receiving ACKs) to run in between.
 const MAX_TRANSMIT_DATAGRAMS: usize = 20;
-
-/// Error indicating that a stream has already been finished or reset
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
-#[error("closed stream")]
-pub struct ClosedStream {
-    _private: (),
-}
-
-impl ClosedStream {
-    pub(crate) fn new() -> Self {
-        Self { _private: () }
-    }
-}
-
-impl From<proto::ClosedStream> for ClosedStream {
-    fn from(_: proto::ClosedStream) -> Self {
-        Self { _private: () }
-    }
-}
-
-impl From<ClosedStream> for io::Error {
-    fn from(x: ClosedStream) -> Self {
-        Self::new(io::ErrorKind::NotConnected, x)
-    }
-}
