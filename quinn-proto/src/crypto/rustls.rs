@@ -367,7 +367,7 @@ impl TryFrom<Arc<rustls::ClientConfig>> for QuicClientConfig {
 /// [`CryptoProvider`][provider], that provider must reference a cipher suite with the same ID.
 ///
 /// [provider]: rustls::crypto::CryptoProvider
-#[derive(Debug)]
+#[derive(Clone, Debug)]
 pub struct NoInitialCipherSuite {
     /// Whether the initial cipher suite was supplied by the caller
     specific: bool,
