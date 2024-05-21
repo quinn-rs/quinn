@@ -1,4 +1,7 @@
-use std::collections::{hash_map, BinaryHeap};
+use std::{
+    collections::{hash_map, BinaryHeap},
+    io,
+};
 
 use bytes::Bytes;
 use thiserror::Error;
@@ -441,6 +444,19 @@ impl ShouldTransmit {
 #[error("closed stream")]
 pub struct ClosedStream {
     _private: (),
+}
+
+impl ClosedStream {
+    #[doc(hidden)] // For use in quinn only
+    pub fn new() -> Self {
+        Self { _private: () }
+    }
+}
+
+impl From<ClosedStream> for io::Error {
+    fn from(x: ClosedStream) -> Self {
+        Self::new(io::ErrorKind::NotConnected, x)
+    }
 }
 
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]

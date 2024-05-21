@@ -62,8 +62,8 @@ mod send_stream;
 mod work_limiter;
 
 pub use proto::{
-    congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ConfigError,
-    ConnectError, ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout,
+    congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream,
+    ConfigError, ConnectError, ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout,
     MtuDiscoveryConfig, ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
 };
 #[cfg(feature = "rustls")]
@@ -71,8 +71,8 @@ pub use rustls;
 pub use udp;
 
 pub use crate::connection::{
-    AcceptBi, AcceptUni, ClosedStream, Connecting, Connection, OpenBi, OpenUni, ReadDatagram,
-    SendDatagramError, ZeroRttAccepted,
+    AcceptBi, AcceptUni, Connecting, Connection, OpenBi, OpenUni, ReadDatagram, SendDatagramError,
+    ZeroRttAccepted,
 };
 pub use crate::endpoint::{Accept, Endpoint};
 pub use crate::incoming::{Incoming, IncomingFuture, RetryError};
