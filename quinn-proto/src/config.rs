@@ -630,8 +630,8 @@ pub struct EndpointConfig {
 impl EndpointConfig {
     /// Create a default config with a particular `reset_key`
     pub fn new(reset_key: Arc<dyn HmacKey>) -> Self {
-        let cid_factory: fn() -> Box<dyn ConnectionIdGenerator> =
-            || Box::<HashedConnectionIdGenerator>::default();
+        let cid_factory =
+            || -> Box<dyn ConnectionIdGenerator> { Box::<HashedConnectionIdGenerator>::default() };
         Self {
             reset_key,
             max_udp_payload_size: (1500u32 - 28).into(), // Ethernet MTU minus IP + UDP headers
