@@ -1,12 +1,13 @@
 use std::{hash::Hasher, time::Duration};
 
+use bytes::Buf;
 use rand::{Rng, RngCore};
 
 use crate::shared::ConnectionId;
-use crate::MAX_CID_SIZE;
+use crate::{ConnectionIdParser, PacketDecodeError, MAX_CID_SIZE};
 
 /// Generates connection IDs for incoming connections
-pub trait ConnectionIdGenerator: Send + Sync {
+pub trait ConnectionIdGenerator: Send + Sync + ConnectionIdParser {
     /// Generates a new CID
     ///
     /// Connection IDs MUST NOT contain any information that can be used by
@@ -73,6 +74,14 @@ impl RandomConnectionIdGenerator {
     }
 }
 
+impl ConnectionIdParser for RandomConnectionIdGenerator {
+    fn parse(&self, buffer: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError> {
+        (buffer.remaining() >= self.cid_len)
+            .then(|| ConnectionId::from_buf(buffer, self.cid_len))
+            .ok_or(PacketDecodeError::InvalidHeader("packet too small"))
+    }
+}
+
 impl ConnectionIdGenerator for RandomConnectionIdGenerator {
     fn generate_cid(&mut self) -> ConnectionId {
         let mut bytes_arr = [0; MAX_CID_SIZE];
@@ -131,9 +140,17 @@ impl Default for HashedConnectionIdGenerator {
     }
 }
 
+impl ConnectionIdParser for HashedConnectionIdGenerator {
+    fn parse(&self, buffer: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError> {
+        (buffer.remaining() >= HASHED_CID_LEN)
+            .then(|| ConnectionId::from_buf(buffer, HASHED_CID_LEN))
+            .ok_or(PacketDecodeError::InvalidHeader("packet too small"))
+    }
+}
+
 impl ConnectionIdGenerator for HashedConnectionIdGenerator {
     fn generate_cid(&mut self) -> ConnectionId {
-        let mut bytes_arr = [0; NONCE_LEN + SIGNATURE_LEN];
+        let mut bytes_arr = [0; HASHED_CID_LEN];
         rand::thread_rng().fill_bytes(&mut bytes_arr[..NONCE_LEN]);
         let mut hasher = rustc_hash::FxHasher::default();
         hasher.write_u64(self.key);
@@ -155,7 +172,7 @@ impl ConnectionIdGenerator for HashedConnectionIdGenerator {
     }
 
     fn cid_len(&self) -> usize {
-        NONCE_LEN + SIGNATURE_LEN
+        HASHED_CID_LEN
     }
 
     fn cid_lifetime(&self) -> Option<Duration> {
@@ -165,6 +182,7 @@ impl ConnectionIdGenerator for HashedConnectionIdGenerator {
 
 const NONCE_LEN: usize = 3; // Good for more than 16 million connections
 const SIGNATURE_LEN: usize = 8 - NONCE_LEN; // 8-byte total CID length
+const HASHED_CID_LEN: usize = NONCE_LEN + SIGNATURE_LEN;
 
 #[cfg(test)]
 mod tests {
