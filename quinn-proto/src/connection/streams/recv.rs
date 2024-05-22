@@ -108,7 +108,7 @@ impl Recv {
         // does not get stuck.
         let diff = max_stream_data - self.sent_max_stream_data;
         let transmit =
-            self.receiving_unknown_size() && !self.stopped && diff >= (stream_receive_window / 8);
+            self.final_offset_unknown() && !self.stopped && diff >= (stream_receive_window / 8);
         (max_stream_data, ShouldTransmit(transmit))
     }
 
@@ -123,7 +123,14 @@ impl Recv {
         }
     }
 
-    pub(super) fn receiving_unknown_size(&self) -> bool {
+    /// Whether the total amount of data that the peer will send on this stream is unknown
+    ///
+    /// True until we've received either a reset or the final frame.
+    ///
+    /// Implies that the sender might benefit from stream-level flow control updates, and we might
+    /// need to issue connection-level flow control updates due to flow control budget use by this
+    /// stream in the future, even if it's been stopped.
+    pub(super) fn final_offset_unknown(&self) -> bool {
         matches!(self.state, RecvState::Recv { size: None })
     }
 
