@@ -767,26 +767,6 @@ impl PacketNumber {
     }
 }
 
-/// A [`ConnectionIdParser`] implementation that assumes the connection ID is of fixed length
-pub struct FixedLengthConnectionIdParser {
-    expected_len: usize,
-}
-
-impl FixedLengthConnectionIdParser {
-    /// Create a new instance of `FixedLengthConnectionIdParser`
-    pub fn new(expected_len: usize) -> Self {
-        Self { expected_len }
-    }
-}
-
-impl ConnectionIdParser for FixedLengthConnectionIdParser {
-    fn parse(&self, buffer: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError> {
-        (buffer.remaining() >= self.expected_len)
-            .then(|| ConnectionId::from_buf(buffer, self.expected_len))
-            .ok_or(PacketDecodeError::InvalidHeader("packet too small"))
-    }
-}
-
 /// Parse connection id in short header packet
 pub trait ConnectionIdParser {
     /// Parse a connection id from given buffer
@@ -928,7 +908,7 @@ mod tests {
     #[test]
     fn header_encoding() {
         use crate::crypto::rustls::{initial_keys, initial_suite_from_provider};
-        use crate::Side;
+        use crate::{RandomConnectionIdGenerator, Side};
         use rustls::crypto::ring::default_provider;
         use rustls::quic::Version;
 
@@ -970,7 +950,7 @@ mod tests {
         let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
         let decode = PartialDecode::new(
             buf.as_slice().into(),
-            &FixedLengthConnectionIdParser::new(0),
+            &RandomConnectionIdGenerator::new(0),
             &supported_versions,
             false,
         )
