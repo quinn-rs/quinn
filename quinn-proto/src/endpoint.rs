@@ -24,7 +24,7 @@ use crate::{
     frame,
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, Packet,
-        PacketDecodeError, PacketNumber, PartialDecode, PlainInitialHeader,
+        PacketDecodeError, PacketNumber, PartialDecode, ProtectedInitialHeader,
     },
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
@@ -684,7 +684,7 @@ impl Endpoint {
     /// Check if we should refuse a connection attempt regardless of the packet's contents
     fn early_validate_first_packet(
         &mut self,
-        header: &PlainInitialHeader,
+        header: &ProtectedInitialHeader,
     ) -> Result<(), TransportError> {
         let config = &self.server_config.as_ref().unwrap();
         if self.cids_exhausted() || self.incoming_buffers.len() >= config.max_incoming {

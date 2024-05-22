@@ -23,7 +23,7 @@ use crate::{
 #[cfg_attr(test, derive(Clone))]
 #[derive(Debug)]
 pub struct PartialDecode {
-    plain_header: PlainHeader,
+    plain_header: ProtectedHeader,
     buf: io::Cursor<BytesMut>,
 }
 
@@ -38,7 +38,7 @@ impl PartialDecode {
     ) -> Result<(Self, Option<BytesMut>), PacketDecodeError> {
         let mut buf = io::Cursor::new(bytes);
         let plain_header =
-            PlainHeader::decode(&mut buf, cid_parser, supported_versions, grease_quic_bit)?;
+            ProtectedHeader::decode(&mut buf, cid_parser, supported_versions, grease_quic_bit)?;
         let dgram_len = buf.get_ref().len();
         let packet_len = plain_header
             .payload_len()
@@ -61,12 +61,12 @@ impl PartialDecode {
         self.buf.get_ref()
     }
 
-    pub(crate) fn initial_header(&self) -> Option<&PlainInitialHeader> {
+    pub(crate) fn initial_header(&self) -> Option<&ProtectedInitialHeader> {
         self.plain_header.as_initial()
     }
 
     pub(crate) fn has_long_header(&self) -> bool {
-        !matches!(self.plain_header, PlainHeader::Short { .. })
+        !matches!(self.plain_header, ProtectedHeader::Short { .. })
     }
 
     pub(crate) fn is_initial(&self) -> bool {
@@ -74,7 +74,7 @@ impl PartialDecode {
     }
 
     pub(crate) fn space(&self) -> Option<SpaceId> {
-        use self::PlainHeader::*;
+        use self::ProtectedHeader::*;
         match self.plain_header {
             Initial { .. } => Some(SpaceId::Initial),
             Long {
@@ -92,7 +92,7 @@ impl PartialDecode {
 
     pub(crate) fn is_0rtt(&self) -> bool {
         match self.plain_header {
-            PlainHeader::Long { ty, .. } => ty == LongType::ZeroRtt,
+            ProtectedHeader::Long { ty, .. } => ty == LongType::ZeroRtt,
             _ => false,
         }
     }
@@ -112,13 +112,13 @@ impl PartialDecode {
         self,
         header_crypto: Option<&dyn crypto::HeaderKey>,
     ) -> Result<Packet, PacketDecodeError> {
-        use self::PlainHeader::*;
+        use self::ProtectedHeader::*;
         let Self {
             plain_header,
             mut buf,
         } = self;
 
-        if let Initial(PlainInitialHeader {
+        if let Initial(ProtectedInitialHeader {
             dst_cid,
             src_cid,
             token_pos,
@@ -490,9 +490,9 @@ impl PartialEncode {
 
 /// Plain packet header
 #[derive(Clone, Debug)]
-pub enum PlainHeader {
+pub enum ProtectedHeader {
     /// An Initial packet header
-    Initial(PlainInitialHeader),
+    Initial(ProtectedInitialHeader),
     /// A Long packet header, as used during the handshake
     Long {
         /// Type of the Long header packet
@@ -533,8 +533,8 @@ pub enum PlainHeader {
     },
 }
 
-impl PlainHeader {
-    fn as_initial(&self) -> Option<&PlainInitialHeader> {
+impl ProtectedHeader {
+    fn as_initial(&self) -> Option<&ProtectedInitialHeader> {
         match self {
             Self::Initial(x) => Some(x),
             _ => None,
@@ -543,7 +543,7 @@ impl PlainHeader {
 
     /// The destination Connection ID of the packet
     pub fn dst_cid(&self) -> &ConnectionId {
-        use self::PlainHeader::*;
+        use self::ProtectedHeader::*;
         match self {
             Initial(header) => &header.dst_cid,
             Long { dst_cid, .. } => dst_cid,
@@ -554,9 +554,9 @@ impl PlainHeader {
     }
 
     fn payload_len(&self) -> Option<u64> {
-        use self::PlainHeader::*;
+        use self::ProtectedHeader::*;
         match self {
-            Initial(PlainInitialHeader { len, .. }) | Long { len, .. } => Some(*len),
+            Initial(ProtectedInitialHeader { len, .. }) | Long { len, .. } => Some(*len),
             _ => None,
         }
     }
@@ -615,7 +615,7 @@ impl PlainHeader {
                     buf.advance(token_len);
 
                     let len = buf.get_var()?;
-                    Ok(Self::Initial(PlainInitialHeader {
+                    Ok(Self::Initial(ProtectedInitialHeader {
                         dst_cid,
                         src_cid,
                         token_pos: token_start..token_start + token_len,
@@ -642,7 +642,7 @@ impl PlainHeader {
 
 /// Header of an Initial packet, before decryption
 #[derive(Clone, Debug)]
-pub struct PlainInitialHeader {
+pub struct ProtectedInitialHeader {
     /// Destination Connection ID
     pub dst_cid: ConnectionId,
     /// Source Connection ID
