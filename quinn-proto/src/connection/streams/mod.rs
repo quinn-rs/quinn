@@ -148,7 +148,7 @@ impl<'a> RecvStream<'a> {
         // We need to keep stopped streams around until they're finished or reset so we can update
         // connection-level flow control to account for discarded data. Otherwise, we can discard
         // state immediately.
-        if !stream.receiving_unknown_size() {
+        if !stream.final_offset_unknown() {
             entry.remove();
             self.state.stream_freed(self.id, StreamHalf::Recv);
         }
