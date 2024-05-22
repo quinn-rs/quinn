@@ -32,7 +32,7 @@ impl PartialDecode {
     /// Begin decoding a QUIC packet from `bytes`, returning any trailing data not part of that packet
     pub fn new(
         bytes: BytesMut,
-        cid_parser: &impl ConnectionIdParser,
+        cid_parser: &(impl ConnectionIdParser + ?Sized),
         supported_versions: &[u32],
         grease_quic_bit: bool,
     ) -> Result<(Self, Option<BytesMut>), PacketDecodeError> {
@@ -564,7 +564,7 @@ impl ProtectedHeader {
     /// Decode a plain header from given buffer, with given [`ConnectionIdParser`].
     pub fn decode(
         buf: &mut io::Cursor<BytesMut>,
-        cid_parser: &impl ConnectionIdParser,
+        cid_parser: &(impl ConnectionIdParser + ?Sized),
         supported_versions: &[u32],
         grease_quic_bit: bool,
     ) -> Result<Self, PacketDecodeError> {
@@ -780,7 +780,7 @@ impl FixedLengthConnectionIdParser {
 }
 
 impl ConnectionIdParser for FixedLengthConnectionIdParser {
-    fn parse(&self, buffer: &mut impl Buf) -> Result<ConnectionId, PacketDecodeError> {
+    fn parse(&self, buffer: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError> {
         (buffer.remaining() >= self.expected_len)
             .then(|| ConnectionId::from_buf(buffer, self.expected_len))
             .ok_or(PacketDecodeError::InvalidHeader("packet too small"))
@@ -790,7 +790,7 @@ impl ConnectionIdParser for FixedLengthConnectionIdParser {
 /// Parse connection id in short header packet
 pub trait ConnectionIdParser {
     /// Parse a connection id from given buffer
-    fn parse(&self, buf: &mut impl Buf) -> Result<ConnectionId, PacketDecodeError>;
+    fn parse(&self, buf: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError>;
 }
 
 /// Long packet type including non-uniform cases
