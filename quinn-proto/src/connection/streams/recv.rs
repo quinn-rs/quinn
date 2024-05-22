@@ -311,14 +311,10 @@ impl<'a> Chunks<'a> {
             return ShouldTransmit(false);
         }
 
-        let mut should_transmit = false;
         // We issue additional stream ID credit after the application is notified that a previously
         // open stream has finished or been reset and we've therefore disposed of its state, as
         // recorded by `stream_freed` calls in `next`.
-        if self.streams.take_max_streams_dirty(self.id.dir()) {
-            self.pending.max_stream_id[self.id.dir() as usize] = true;
-            should_transmit = true;
-        }
+        let mut should_transmit = self.streams.queue_max_stream_id(self.pending);
 
         // If the stream hasn't finished, we may need to issue stream-level flow control credit
         if let ChunksState::Readable(mut rs) = state {

@@ -742,8 +742,17 @@ impl StreamsState {
         self.events.pop_front()
     }
 
-    pub(crate) fn take_max_streams_dirty(&mut self, dir: Dir) -> bool {
-        mem::replace(&mut self.max_streams_dirty[dir as usize], false)
+    /// Queues MAX_STREAM_ID frames in `pending` if needed
+    ///
+    /// Returns whether any frames were queued.
+    pub(crate) fn queue_max_stream_id(&mut self, pending: &mut Retransmits) -> bool {
+        let mut queued = false;
+        for dir in Dir::iter() {
+            let dirty = mem::replace(&mut self.max_streams_dirty[dir as usize], false);
+            pending.max_stream_id[dir as usize] |= dirty;
+            queued |= dirty;
+        }
+        queued
     }
 
     /// Check for errors entailed by the peer's use of `id` as a send stream

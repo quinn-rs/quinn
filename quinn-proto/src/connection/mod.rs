@@ -2897,11 +2897,7 @@ impl Connection {
         // are only freed, and hence only issue credit, once the application has been notified
         // during a read on the stream.
         let pending = &mut self.spaces[SpaceId::Data].pending;
-        for dir in Dir::iter() {
-            if self.streams.take_max_streams_dirty(dir) {
-                pending.max_stream_id[dir as usize] = true;
-            }
-        }
+        self.streams.queue_max_stream_id(pending);
 
         if let Some(reason) = close {
             self.error = Some(reason.into());
