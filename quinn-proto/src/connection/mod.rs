@@ -23,8 +23,8 @@ use crate::{
     frame,
     frame::{Close, Datagram, FrameStruct},
     packet::{
-        FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
-        PacketNumber, PartialDecode, SpaceId,
+        Header, InitialHeader, InitialPacket, LongType, Packet, PacketNumber, PartialDecode,
+        SpaceId,
     },
     range_set::ArrayRangeSet,
     shared::{
@@ -197,6 +197,7 @@ pub struct Connection {
     retry_token: Bytes,
     /// Identifies Data-space packet numbers to skip. Not used in earlier spaces.
     packet_number_filter: PacketNumberFilter,
+    cid_gen: Arc<dyn ConnectionIdGenerator>,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -252,7 +253,7 @@ impl Connection {
         remote: SocketAddr,
         local_ip: Option<IpAddr>,
         crypto: Box<dyn crypto::Session>,
-        cid_gen: &dyn ConnectionIdGenerator,
+        cid_gen: Arc<dyn ConnectionIdGenerator>,
         now: Instant,
         version: u32,
         allow_mtud: bool,
@@ -329,6 +330,7 @@ impl Connection {
             },
             #[cfg(not(test))]
             packet_number_filter: PacketNumberFilter::new(&mut rng),
+            cid_gen,
 
             path_responses: PathResponses::default(),
             close: false,
@@ -2101,7 +2103,7 @@ impl Connection {
         while let Some(data) = remaining {
             match PartialDecode::new(
                 data,
-                &FixedLengthConnectionIdParser::new(self.local_cid_state.cid_len()),
+                &*self.cid_gen,
                 &[self.version],
                 self.endpoint_config.grease_quic_bit,
             ) {

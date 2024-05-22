@@ -44,7 +44,7 @@ pub struct Endpoint {
     rng: StdRng,
     index: ConnectionIndex,
     connections: Slab<ConnectionMeta>,
-    local_cid_generator: Box<dyn ConnectionIdGenerator>,
+    local_cid_generator: Arc<dyn ConnectionIdGenerator>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
@@ -833,7 +833,7 @@ impl Endpoint {
             addresses.remote,
             addresses.local_ip,
             tls,
-            self.local_cid_generator.as_ref(),
+            self.local_cid_generator.clone(),
             now,
             version,
             self.allow_mtud,

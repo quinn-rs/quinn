@@ -620,7 +620,7 @@ pub struct EndpointConfig {
     ///
     /// Create a cid generator for local cid in Endpoint struct
     pub(crate) connection_id_generator_factory:
-        Arc<dyn Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync>,
+        Arc<dyn Fn() -> Arc<dyn ConnectionIdGenerator> + Send + Sync>,
     pub(crate) supported_versions: Vec<u32>,
     pub(crate) grease_quic_bit: bool,
     /// Minimum interval between outgoing stateless reset packets
@@ -631,7 +631,7 @@ impl EndpointConfig {
     /// Create a default config with a particular `reset_key`
     pub fn new(reset_key: Arc<dyn HmacKey>) -> Self {
         let cid_factory =
-            || -> Box<dyn ConnectionIdGenerator> { Box::<HashedConnectionIdGenerator>::default() };
+            || -> Arc<dyn ConnectionIdGenerator> { Arc::<HashedConnectionIdGenerator>::default() };
         Self {
             reset_key,
             max_udp_payload_size: (1500u32 - 28).into(), // Ethernet MTU minus IP + UDP headers
@@ -650,7 +650,7 @@ impl EndpointConfig {
     /// information in local connection IDs, e.g. to support stateless packet-level load balancers.
     ///
     /// Defaults to [`HashedConnectionIdGenerator`].
-    pub fn cid_generator<F: Fn() -> Box<dyn ConnectionIdGenerator> + Send + Sync + 'static>(
+    pub fn cid_generator<F: Fn() -> Arc<dyn ConnectionIdGenerator> + Send + Sync + 'static>(
         &mut self,
         factory: F,
     ) -> &mut Self {
