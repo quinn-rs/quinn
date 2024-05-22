@@ -107,8 +107,7 @@ impl Recv {
         // smaller than `stream_receive_window` in order to make sure the stream
         // does not get stuck.
         let diff = max_stream_data - self.sent_max_stream_data;
-        let transmit =
-            self.final_offset_unknown() && !self.stopped && diff >= (stream_receive_window / 8);
+        let transmit = self.can_send_flow_control() && diff >= (stream_receive_window / 8);
         (max_stream_data, ShouldTransmit(transmit))
     }
 
@@ -132,6 +131,13 @@ impl Recv {
     /// stream in the future, even if it's been stopped.
     pub(super) fn final_offset_unknown(&self) -> bool {
         matches!(self.state, RecvState::Recv { size: None })
+    }
+
+    /// Whether stream-level flow control updates should be sent for this stream
+    pub(super) fn can_send_flow_control(&self) -> bool {
+        // Stream-level flow control is redundant if the sender has already sent the whole stream,
+        // and moot if we no longer want data on this stream.
+        self.final_offset_unknown() && !self.stopped
     }
 
     /// Whether data is still being accepted from the peer
