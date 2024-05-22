@@ -8,17 +8,18 @@ use crate::{
     crypto, ConnectionId,
 };
 
-// Due to packet number encryption, it is impossible to fully decode a header
-// (which includes a variable-length packet number) without crypto context.
-// The crypto context (represented by the `Crypto` type in Quinn) is usually
-// part of the `Connection`, or can be derived from the destination CID for
+/// Decodes a QUIC packet's invariant header
+///
+/// Due to packet number encryption, it is impossible to fully decode a header
+/// (which includes a variable-length packet number) without crypto context.
+/// The crypto context (represented by the `Crypto` type in Quinn) is usually
+/// part of the `Connection`, or can be derived from the destination CID for
 // Initial packets.
-//
-// To cope with this, we decode the invariant header (which should be stable
-// across QUIC versions), which gives us the destination CID and allows us
-// to inspect the version and packet type (which depends on the version).
-// This information allows us to fully decode and decrypt the packet.
-#[allow(unreachable_pub)] // fuzzing only
+///
+/// To cope with this, we decode the invariant header (which should be stable
+/// across QUIC versions), which gives us the destination CID and allows us
+/// to inspect the version and packet type (which depends on the version).
+/// This information allows us to fully decode and decrypt the packet.
 #[cfg_attr(test, derive(Clone))]
 #[derive(Debug)]
 pub struct PartialDecode {
@@ -28,7 +29,7 @@ pub struct PartialDecode {
 
 #[allow(clippy::len_without_is_empty)]
 impl PartialDecode {
-    #[allow(unreachable_pub)] // fuzzing only
+    /// Begin decoding a QUIC packet from `bytes`, returning any trailing data not part of that packet
     pub fn new(
         bytes: BytesMut,
         local_cid_len: usize,
@@ -96,7 +97,8 @@ impl PartialDecode {
         }
     }
 
-    pub(crate) fn dst_cid(&self) -> &ConnectionId {
+    /// The destination connection ID of the packet
+    pub fn dst_cid(&self) -> &ConnectionId {
         self.plain_header.dst_cid()
     }
 
@@ -486,41 +488,61 @@ impl PartialEncode {
     }
 }
 
+/// Plain packet header
 #[derive(Clone, Debug)]
-pub(crate) enum PlainHeader {
+pub enum PlainHeader {
+    /// An Initial packet header
     Initial(PlainInitialHeader),
+    /// A Long packet header, as used during the handshake
     Long {
+        /// Type of the Long header packet
         ty: LongType,
+        /// Destination Connection ID
         dst_cid: ConnectionId,
+        /// Source Connection ID
         src_cid: ConnectionId,
+        /// Length of the packet payload
         len: u64,
+        /// QUIC version
         version: u32,
     },
+    /// A Retry packet header
     Retry {
+        /// Destination Connection ID
         dst_cid: ConnectionId,
+        /// Source Connection ID
         src_cid: ConnectionId,
+        /// QUIC version
         version: u32,
     },
+    /// A short packet header, as used during the data phase
     Short {
+        /// Spin bit
         spin: bool,
+        /// Destination Connection ID
         dst_cid: ConnectionId,
     },
+    /// A Version Negotiation packet header
     VersionNegotiate {
+        /// Random value
         random: u8,
+        /// Destination Connection ID
         dst_cid: ConnectionId,
+        /// Source Connection ID
         src_cid: ConnectionId,
     },
 }
 
 impl PlainHeader {
-    pub(crate) fn as_initial(&self) -> Option<&PlainInitialHeader> {
+    fn as_initial(&self) -> Option<&PlainInitialHeader> {
         match self {
             Self::Initial(x) => Some(x),
             _ => None,
         }
     }
 
-    fn dst_cid(&self) -> &ConnectionId {
+    /// The destination Connection ID of the packet
+    pub fn dst_cid(&self) -> &ConnectionId {
         use self::PlainHeader::*;
         match self {
             Initial(header) => &header.dst_cid,
@@ -539,7 +561,8 @@ impl PlainHeader {
         }
     }
 
-    fn decode(
+    /// Decode a plain header from given buffer, with given [`ConnectionIdParser`].
+    pub fn decode(
         buf: &mut io::Cursor<BytesMut>,
         local_cid_len: usize,
         supported_versions: &[u32],
@@ -620,13 +643,19 @@ impl PlainHeader {
     }
 }
 
+/// Header of an Initial packet, before decryption
 #[derive(Clone, Debug)]
-pub(crate) struct PlainInitialHeader {
-    pub(crate) dst_cid: ConnectionId,
-    pub(crate) src_cid: ConnectionId,
-    pub(crate) token_pos: Range<usize>,
-    pub(crate) len: u64,
-    pub(crate) version: u32,
+pub struct PlainInitialHeader {
+    /// Destination Connection ID
+    pub dst_cid: ConnectionId,
+    /// Source Connection ID
+    pub src_cid: ConnectionId,
+    /// The position of a token in the packet buffer
+    pub token_pos: Range<usize>,
+    /// Length of the packet payload
+    pub len: u64,
+    /// QUIC version
+    pub version: u32,
 }
 
 #[derive(Clone, Debug)]
@@ -777,20 +806,27 @@ impl From<LongHeaderType> for u8 {
 
 /// Long packet types with uniform header structure
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(crate) enum LongType {
+pub enum LongType {
+    /// Handshake packet
     Handshake,
+    /// 0-RTT packet
     ZeroRtt,
 }
 
-#[allow(unreachable_pub)] // fuzzing only
+/// Packet decode error
 #[derive(Debug, Error, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum PacketDecodeError {
+    /// Packet uses a QUIC version that is not supported
     #[error("unsupported version {version:x}")]
     UnsupportedVersion {
+        /// Source Connection ID
         src_cid: ConnectionId,
+        /// Destination Connection ID
         dst_cid: ConnectionId,
+        /// The version that was unsupported
         version: u32,
     },
+    /// The packet header is invalid
     #[error("invalid header: {0}")]
     InvalidHeader(&'static str),
 }

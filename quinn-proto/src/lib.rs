@@ -31,7 +31,6 @@ mod cid_queue;
 #[doc(hidden)]
 pub mod coding;
 mod constant_time;
-mod packet;
 mod range_set;
 #[cfg(all(test, feature = "rustls"))]
 mod tests;
@@ -64,6 +63,9 @@ mod endpoint;
 pub use crate::endpoint::{
     AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, Incoming, RetryError,
 };
+
+mod packet;
+pub use packet::{LongType, PacketDecodeError, PartialDecode, PlainHeader, PlainInitialHeader};
 
 mod shared;
 pub use crate::shared::{ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent};

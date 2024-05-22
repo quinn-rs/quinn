@@ -86,7 +86,7 @@ impl ConnectionId {
     /// Constructs cid by reading `len` bytes from a `Buf`
     ///
     /// Callers need to assure that `buf.remaining() >= len`
-    pub(crate) fn from_buf(buf: &mut impl Buf, len: usize) -> Self {
+    pub fn from_buf(buf: &mut impl Buf, len: usize) -> Self {
         debug_assert!(len <= MAX_CID_SIZE);
         let mut res = Self {
             len: len as u8,
