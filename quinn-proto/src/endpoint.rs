@@ -385,9 +385,6 @@ impl Endpoint {
         remote: SocketAddr,
         server_name: &str,
     ) -> Result<(ConnectionHandle, Connection), ConnectError> {
-        if self.cids_exhausted() {
-            return Err(ConnectError::CidsExhausted);
-        }
         if remote.port() == 0 || remote.ip().is_unspecified() {
             return Err(ConnectError::InvalidRemoteAddress(remote));
         }
@@ -565,22 +562,6 @@ impl Endpoint {
             ..
         } = incoming.packet.header;
 
-        if self.cids_exhausted() {
-            debug!("refusing connection");
-            self.index.remove_initial(incoming.orig_dst_cid);
-            return Err(AcceptError {
-                cause: ConnectionError::CidsExhausted,
-                response: Some(self.initial_close(
-                    version,
-                    incoming.addresses,
-                    &incoming.crypto,
-                    &src_cid,
-                    TransportError::CONNECTION_REFUSED(""),
-                    buf,
-                )),
-            });
-        }
-
         let server_config =
             server_config.unwrap_or_else(|| self.server_config.as_ref().unwrap().clone());
 
@@ -691,7 +672,7 @@ impl Endpoint {
         header: &ProtectedInitialHeader,
     ) -> Result<(), TransportError> {
         let config = &self.server_config.as_ref().unwrap();
-        if self.cids_exhausted() || self.incoming_buffers.len() >= config.max_incoming {
+        if self.incoming_buffers.len() >= config.max_incoming {
             return Err(TransportError::CONNECTION_REFUSED(""));
         }
 
@@ -929,18 +910,6 @@ impl Endpoint {
     #[cfg(test)]
     pub(crate) fn known_cids(&self) -> usize {
         self.index.connection_ids.len()
-    }
-
-    /// Whether we've used up 3/4 of the available CID space
-    ///
-    /// We leave some space unused so that `new_cid` can be relied upon to finish quickly. We don't
-    /// bother to check when CID longer than 4 bytes are used because 2^40 connections is a lot.
-    fn cids_exhausted(&self) -> bool {
-        self.local_cid_generator.cid_len() <= 4
-            && self.local_cid_generator.cid_len() != 0
-            && (2usize.pow(self.local_cid_generator.cid_len() as u32 * 8)
-                - self.index.connection_ids.len())
-                < 2usize.pow(self.local_cid_generator.cid_len() as u32 * 8 - 2)
     }
 }
 
@@ -1229,11 +1198,6 @@ pub enum ConnectError {
     /// Indicates that a necessary component of the endpoint has been dropped or otherwise disabled.
     #[error("endpoint stopping")]
     EndpointStopping,
-    /// The connection could not be created because not enough of the CID space is available
-    ///
-    /// Try using longer connection IDs
-    #[error("CIDs exhausted")]
-    CidsExhausted,
     /// The given server name was malformed
     #[error("invalid server name: {0}")]
     InvalidServerName(String),
