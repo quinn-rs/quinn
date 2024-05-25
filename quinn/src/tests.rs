@@ -10,7 +10,7 @@ use std::{
 
 use crate::runtime::TokioRuntime;
 use bytes::Bytes;
-use proto::crypto::rustls::QuicClientConfig;
+use proto::{crypto::rustls::QuicClientConfig, RandomConnectionIdGenerator};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
@@ -266,12 +266,14 @@ fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
 /// Constructs endpoints suitable for connecting to themselves and each other
 struct EndpointFactory {
     cert: rcgen::CertifiedKey,
+    endpoint_config: EndpointConfig,
 }
 
 impl EndpointFactory {
     fn new() -> Self {
         Self {
             cert: rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap(),
+            endpoint_config: EndpointConfig::default(),
         }
     }
 
@@ -289,7 +291,7 @@ impl EndpointFactory {
         let mut roots = rustls::RootCertStore::empty();
         roots.add(self.cert.cert.der().clone()).unwrap();
         let mut endpoint = Endpoint::new(
-            EndpointConfig::default(),
+            self.endpoint_config.clone(),
             Some(server_config),
             UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
             Arc::new(TokioRuntime),
@@ -808,4 +810,55 @@ async fn two_datagram_readers() {
     );
     assert!(*a == *b"one" || *b == *b"one");
     assert!(*a == *b"two" || *b == *b"two");
+}
+
+#[tokio::test]
+async fn multiple_conns_with_zero_length_cids() {
+    let _guard = subscribe();
+    let mut factory = EndpointFactory::new();
+    factory
+        .endpoint_config
+        .cid_generator(|| Box::new(RandomConnectionIdGenerator::new(0)));
+    let server = {
+        let _guard = error_span!("server").entered();
+        factory.endpoint()
+    };
+    let server_addr = server.local_addr().unwrap();
+
+    let client1 = {
+        let _guard = error_span!("client1").entered();
+        factory.endpoint()
+    };
+    let client2 = {
+        let _guard = error_span!("client2").entered();
+        factory.endpoint()
+    };
+
+    let client1 = async move {
+        let conn = client1
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+        conn.closed().await;
+    }
+    .instrument(error_span!("client1"));
+    let client2 = async move {
+        let conn = client2
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+        conn.closed().await;
+    }
+    .instrument(error_span!("client2"));
+    let server = async move {
+        let client1 = server.accept().await.unwrap().await.unwrap();
+        let client2 = server.accept().await.unwrap().await.unwrap();
+        // Both connections are now concurrently live.
+        client1.close(42u32.into(), &[]);
+        client2.close(42u32.into(), &[]);
+    }
+    .instrument(error_span!("server"));
+    tokio::join!(client1, client2, server);
 }
