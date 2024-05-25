@@ -72,7 +72,7 @@ impl Endpoint {
             rng: rng_seed.map_or(StdRng::from_entropy(), StdRng::from_seed),
             index: ConnectionIndex::default(),
             connections: Slab::new(),
-            local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
+            local_cid_generator: config.connection_id_generator.clone(),
             config,
             server_config,
             allow_mtud,
