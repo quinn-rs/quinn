@@ -26,8 +26,6 @@ pub trait ConnectionIdGenerator: Send + Sync + ConnectionIdParser {
         Ok(())
     }
 
-    /// Returns the length of a CID for connections created by this generator
-    fn cid_len(&self) -> usize;
     /// Returns the lifetime of generated Connection IDs
     ///
     /// Connection IDs will be retired after the returned `Duration`, if any. Assumed to be constant.
@@ -63,6 +61,10 @@ impl RandomConnectionIdGenerator {
     /// The given length must be less than or equal to MAX_CID_SIZE.
     pub fn new(cid_len: usize) -> Self {
         debug_assert!(cid_len <= MAX_CID_SIZE);
+        assert!(
+            cid_len > 0,
+            "connection ID generators must produce non-empty IDs"
+        );
         Self {
             cid_len,
             ..Self::default()
@@ -90,11 +92,6 @@ impl ConnectionIdGenerator for RandomConnectionIdGenerator {
         rand::thread_rng().fill_bytes(&mut bytes_arr[..self.cid_len]);
 
         ConnectionId::new(&bytes_arr[..self.cid_len])
-    }
-
-    /// Provide the length of dst_cid in short header packet
-    fn cid_len(&self) -> usize {
-        self.cid_len
     }
 
     fn cid_lifetime(&self) -> Option<Duration> {
@@ -173,10 +170,6 @@ impl ConnectionIdGenerator for HashedConnectionIdGenerator {
         }
     }
 
-    fn cid_len(&self) -> usize {
-        HASHED_CID_LEN
-    }
-
     fn cid_lifetime(&self) -> Option<Duration> {
         self.lifetime
     }
@@ -185,6 +178,31 @@ impl ConnectionIdGenerator for HashedConnectionIdGenerator {
 const NONCE_LEN: usize = 3; // Good for more than 16 million connections
 const SIGNATURE_LEN: usize = 8 - NONCE_LEN; // 8-byte total CID length
 const HASHED_CID_LEN: usize = NONCE_LEN + SIGNATURE_LEN;
+
+/// HACK: Replace uses with `ZeroLengthConnectionIdParser` once [trait upcasting] is stable
+///
+/// CID generators should produce nonempty CIDs. We should be able to use
+/// `ZeroLengthConnectionIdParser` everywhere this would be needed, but that will require
+/// construction of `&dyn ConnectionIdParser` from `&dyn ConnectionIdGenerator`.
+///
+/// [trait upcasting]: https://github.com/rust-lang/rust/issues/65991
+pub(crate) struct ZeroLengthConnectionIdGenerator;
+
+impl ConnectionIdParser for ZeroLengthConnectionIdGenerator {
+    fn parse(&self, _: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError> {
+        Ok(ConnectionId::new(&[]))
+    }
+}
+
+impl ConnectionIdGenerator for ZeroLengthConnectionIdGenerator {
+    fn generate_cid(&self) -> ConnectionId {
+        unreachable!()
+    }
+
+    fn cid_lifetime(&self) -> Option<Duration> {
+        None
+    }
+}
 
 #[cfg(test)]
 mod tests {

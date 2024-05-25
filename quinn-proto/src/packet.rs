@@ -773,6 +773,16 @@ pub trait ConnectionIdParser {
     fn parse(&self, buf: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError>;
 }
 
+/// Trivial parser for zero-length connection IDs
+pub struct ZeroLengthConnectionIdParser;
+
+impl ConnectionIdParser for ZeroLengthConnectionIdParser {
+    #[inline]
+    fn parse(&self, _: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError> {
+        Ok(ConnectionId::new(&[]))
+    }
+}
+
 /// Long packet type including non-uniform cases
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum LongHeaderType {
@@ -908,7 +918,7 @@ mod tests {
     #[test]
     fn header_encoding() {
         use crate::crypto::rustls::{initial_keys, initial_suite_from_provider};
-        use crate::{RandomConnectionIdGenerator, Side};
+        use crate::Side;
         use rustls::crypto::ring::default_provider;
         use rustls::quic::Version;
 
@@ -950,7 +960,7 @@ mod tests {
         let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
         let decode = PartialDecode::new(
             buf.as_slice().into(),
-            &RandomConnectionIdGenerator::new(0),
+            &ZeroLengthConnectionIdParser,
             &supported_versions,
             false,
         )

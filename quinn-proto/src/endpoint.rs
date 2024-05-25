@@ -16,7 +16,9 @@ use thiserror::Error;
 use tracing::{debug, error, trace, warn};
 
 use crate::{
-    cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
+    cid_generator::{
+        ConnectionIdGenerator, RandomConnectionIdGenerator, ZeroLengthConnectionIdGenerator,
+    },
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionError},
@@ -44,7 +46,7 @@ pub struct Endpoint {
     rng: StdRng,
     index: ConnectionIndex,
     connections: Slab<ConnectionMeta>,
-    local_cid_generator: Arc<dyn ConnectionIdGenerator>,
+    local_cid_generator: Option<Arc<dyn ConnectionIdGenerator>>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
@@ -144,7 +146,10 @@ impl Endpoint {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(
             data,
-            &*self.local_cid_generator,
+            self.local_cid_generator.as_ref().map_or(
+                &ZeroLengthConnectionIdGenerator as &dyn ConnectionIdGenerator,
+                |x| &**x,
+            ),
             &self.config.supported_versions,
             self.config.grease_quic_bit,
         ) {
@@ -302,8 +307,8 @@ impl Endpoint {
         if !first_decode.is_initial()
             && self
                 .local_cid_generator
-                .validate(first_decode.dst_cid())
-                .is_err()
+                .as_ref()
+                .map_or(false, |gen| gen.validate(first_decode.dst_cid()).is_err())
         {
             debug!("dropping packet with invalid CID");
             return None;
@@ -400,7 +405,7 @@ impl Endpoint {
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
-            self.local_cid_generator.as_ref(),
+            self.local_cid_generator.is_some(),
             loc_cid,
             None,
         );
@@ -453,12 +458,11 @@ impl Endpoint {
     /// Generate a connection ID for `ch`
     fn new_cid(&mut self, ch: ConnectionHandle) -> ConnectionId {
         loop {
-            let cid = self.local_cid_generator.generate_cid();
-            if cid.len() == 0 {
+            let Some(cid_generator) = self.local_cid_generator.as_ref() else {
                 // Zero-length CID; nothing to track
-                debug_assert_eq!(self.local_cid_generator.cid_len(), 0);
-                return cid;
-            }
+                return ConnectionId::EMPTY;
+            };
+            let cid = cid_generator.generate_cid();
             if let hash_map::Entry::Vacant(e) = self.index.connection_ids.entry(cid) {
                 e.insert(ch);
                 break cid;
@@ -589,7 +593,7 @@ impl Endpoint {
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
-            self.local_cid_generator.as_ref(),
+            self.local_cid_generator.is_some(),
             loc_cid,
             Some(&server_config),
         );
@@ -680,10 +684,7 @@ impl Endpoint {
         // bytes. If this is a Retry packet, then the length must instead match our usual CID
         // length. If we ever issue non-Retry address validation tokens via `NEW_TOKEN`, then we'll
         // also need to validate CID length for those after decoding the token.
-        if header.dst_cid.len() < 8
-            && (!header.token_pos.is_empty()
-                && header.dst_cid.len() != self.local_cid_generator.cid_len())
-        {
+        if header.dst_cid.len() < 8 && !header.token_pos.is_empty() {
             debug!(
                 "rejecting connection due to invalid DCID length {}",
                 header.dst_cid.len()
@@ -730,7 +731,10 @@ impl Endpoint {
         // with established connections. In the unlikely event that a collision occurs
         // between two connections in the initial phase, both will fail fast and may be
         // retried by the application layer.
-        let loc_cid = self.local_cid_generator.generate_cid();
+        let loc_cid = self
+            .local_cid_generator
+            .as_ref()
+            .map_or(ConnectionId::EMPTY, |gen| gen.generate_cid());
 
         let token = RetryToken {
             orig_dst_cid: incoming.packet.header.dst_cid,
@@ -860,7 +864,10 @@ impl Endpoint {
         // We don't need to worry about CID collisions in initial closes because the peer
         // shouldn't respond, and if it does, and the CID collides, we'll just drop the
         // unexpected response.
-        let local_id = self.local_cid_generator.generate_cid();
+        let local_id = self
+            .local_cid_generator
+            .as_ref()
+            .map_or(ConnectionId::EMPTY, |gen| gen.generate_cid());
         let number = PacketNumber::U8(0);
         let header = Header::Initial(InitialHeader {
             dst_cid: *remote_id,

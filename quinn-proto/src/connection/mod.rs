@@ -15,13 +15,12 @@ use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
-    cid_generator::ConnectionIdGenerator,
+    cid_generator::{ConnectionIdGenerator, ZeroLengthConnectionIdGenerator},
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     crypto::{self, KeyPair, Keys, PacketKey},
-    frame,
-    frame::{Close, Datagram, FrameStruct},
+    frame::{self, Close, Datagram, FrameStruct},
     packet::{
         Header, InitialHeader, InitialPacket, LongType, Packet, PacketNumber, PartialDecode,
         SpaceId,
@@ -197,7 +196,7 @@ pub struct Connection {
     retry_token: Bytes,
     /// Identifies Data-space packet numbers to skip. Not used in earlier spaces.
     packet_number_filter: PacketNumberFilter,
-    cid_gen: Arc<dyn ConnectionIdGenerator>,
+    cid_gen: Option<Arc<dyn ConnectionIdGenerator>>,
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -253,7 +252,7 @@ impl Connection {
         remote: SocketAddr,
         local_ip: Option<IpAddr>,
         crypto: Box<dyn crypto::Session>,
-        cid_gen: Arc<dyn ConnectionIdGenerator>,
+        cid_gen: Option<Arc<dyn ConnectionIdGenerator>>,
         now: Instant,
         version: u32,
         allow_mtud: bool,
@@ -281,14 +280,13 @@ impl Connection {
             crypto,
             handshake_cid: loc_cid,
             rem_handshake_cid: rem_cid,
-            local_cid_state: match cid_gen.cid_len() {
-                0 => None,
-                _ => Some(CidState::new(
-                    cid_gen.cid_lifetime(),
+            local_cid_state: cid_gen.as_ref().map(|gen| {
+                CidState::new(
+                    gen.cid_lifetime(),
                     now,
                     if pref_addr_cid.is_some() { 2 } else { 1 },
-                )),
-            },
+                )
+            }),
             path: PathData::new(remote, allow_mtud, None, now, path_validated, &config),
             allow_mtud,
             local_ip,
@@ -2103,7 +2101,10 @@ impl Connection {
         while let Some(data) = remaining {
             match PartialDecode::new(
                 data,
-                &*self.cid_gen,
+                self.cid_gen.as_ref().map_or(
+                    &ZeroLengthConnectionIdGenerator as &dyn ConnectionIdGenerator,
+                    |x| &**x,
+                ),
                 &[self.version],
                 self.endpoint_config.grease_quic_bit,
             ) {

@@ -67,7 +67,7 @@ pub use crate::endpoint::{
 mod packet;
 pub use packet::{
     ConnectionIdParser, LongType, PacketDecodeError, PartialDecode, ProtectedHeader,
-    ProtectedInitialHeader,
+    ProtectedInitialHeader, ZeroLengthConnectionIdParser,
 };
 
 mod shared;

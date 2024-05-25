@@ -616,7 +616,7 @@ impl Default for MtuDiscoveryConfig {
 pub struct EndpointConfig {
     pub(crate) reset_key: Arc<dyn HmacKey>,
     pub(crate) max_udp_payload_size: VarInt,
-    pub(crate) connection_id_generator: Arc<dyn ConnectionIdGenerator>,
+    pub(crate) connection_id_generator: Option<Arc<dyn ConnectionIdGenerator>>,
     pub(crate) supported_versions: Vec<u32>,
     pub(crate) grease_quic_bit: bool,
     /// Minimum interval between outgoing stateless reset packets
@@ -629,7 +629,7 @@ impl EndpointConfig {
         Self {
             reset_key,
             max_udp_payload_size: (1500u32 - 28).into(), // Ethernet MTU minus IP + UDP headers
-            connection_id_generator: Arc::<HashedConnectionIdGenerator>::default(),
+            connection_id_generator: Some(Arc::<HashedConnectionIdGenerator>::default()),
             supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
             grease_quic_bit: true,
             min_reset_interval: Duration::from_millis(20),
@@ -644,7 +644,10 @@ impl EndpointConfig {
     /// information in local connection IDs, e.g. to support stateless packet-level load balancers.
     ///
     /// Defaults to [`HashedConnectionIdGenerator`].
-    pub fn cid_generator(&mut self, generator: Arc<dyn ConnectionIdGenerator>) -> &mut Self {
+    pub fn cid_generator(
+        &mut self,
+        generator: Option<Arc<dyn ConnectionIdGenerator>>,
+    ) -> &mut Self {
         self.connection_id_generator = generator;
         self
     }
