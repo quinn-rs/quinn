@@ -541,6 +541,7 @@ fn run_echo(args: EchoArgs) {
             if cfg!(target_os = "linux")
                 || cfg!(target_os = "freebsd")
                 || cfg!(target_os = "openbsd")
+                || cfg!(target_os = "netbsd")
                 || cfg!(target_os = "macos")
                 || cfg!(target_os = "windows")
             {
