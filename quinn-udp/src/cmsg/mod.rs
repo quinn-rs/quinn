@@ -124,6 +124,10 @@ pub(crate) trait MsgHdr {
 
     fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage;
 
+    /// Sets the number of control messages added to this `struct msghdr`.
+    ///
+    /// Note that this is a destructive operation and should only be done as a finalisation
+    /// step.
     fn set_control_len(&mut self, len: usize);
 
     fn control_len(&self) -> usize;
