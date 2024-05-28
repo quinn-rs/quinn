@@ -119,12 +119,7 @@ impl UdpSocketState {
                 )?;
             }
         }
-        #[cfg(any(
-            target_os = "freebsd",
-            target_os = "openbsd",
-            target_os = "macos",
-            target_os = "ios"
-        ))]
+        #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
         {
             if is_ipv4 {
                 // Set `may_fragment` to `true` if this option is not supported on the platform.
