@@ -24,7 +24,7 @@ use tracing::{error_span, info};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
-use super::{ClientConfig, Endpoint, RecvStream, SendStream, TransportConfig};
+use super::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, TransportConfig};
 
 #[test]
 fn handshake_timeout() {
@@ -264,11 +264,15 @@ fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
 }
 
 /// Constructs endpoints suitable for connecting to themselves and each other
-struct EndpointFactory(rcgen::CertifiedKey);
+struct EndpointFactory {
+    cert: rcgen::CertifiedKey,
+}
 
 impl EndpointFactory {
     fn new() -> Self {
-        Self(rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap())
+        Self {
+            cert: rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap(),
+        }
     }
 
     fn endpoint(&self) -> Endpoint {
@@ -276,17 +280,19 @@ impl EndpointFactory {
     }
 
     fn endpoint_with_config(&self, transport_config: TransportConfig) -> Endpoint {
-        let key = PrivateKeyDer::Pkcs8(self.0.key_pair.serialize_der().into());
+        let key = PrivateKeyDer::Pkcs8(self.cert.key_pair.serialize_der().into());
         let transport_config = Arc::new(transport_config);
         let mut server_config =
-            crate::ServerConfig::with_single_cert(vec![self.0.cert.der().clone()], key).unwrap();
+            crate::ServerConfig::with_single_cert(vec![self.cert.cert.der().clone()], key).unwrap();
         server_config.transport_config(transport_config.clone());
 
         let mut roots = rustls::RootCertStore::empty();
-        roots.add(self.0.cert.der().clone()).unwrap();
-        let mut endpoint = Endpoint::server(
-            server_config,
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        roots.add(self.cert.cert.der().clone()).unwrap();
+        let mut endpoint = Endpoint::new(
+            EndpointConfig::default(),
+            Some(server_config),
+            UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+            Arc::new(TokioRuntime),
         )
         .unwrap();
         let mut client_config = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
