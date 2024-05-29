@@ -32,8 +32,8 @@ use crate::{
     },
     token::TokenDecodeError,
     transport_parameters::{PreferredAddress, TransportParameters},
-    ResetToken, RetryToken, Transmit, TransportConfig, TransportError, INITIAL_MTU, MAX_CID_SIZE,
-    MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
+    MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -814,6 +814,10 @@ impl Endpoint {
     ) -> Connection {
         let mut rng_seed = [0; 32];
         self.rng.fill_bytes(&mut rng_seed);
+        let side = match server_config.is_some() {
+            true => Side::Server,
+            false => Side::Client,
+        };
         let conn = Connection::new(
             self.config.clone(),
             server_config,
@@ -854,7 +858,7 @@ impl Endpoint {
         });
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
-        self.index.insert_conn(addresses, loc_cid, ch);
+        self.index.insert_conn(addresses, loc_cid, ch, side);
 
         conn
     }
@@ -913,7 +917,8 @@ impl Endpoint {
         // Not all connections have known reset tokens
         debug_assert!(x >= self.index.connection_reset_tokens.0.len());
         // Not all connections have unique remotes, and 0-length CIDs might not be in use.
-        debug_assert!(x >= self.index.connection_remotes.len());
+        debug_assert!(x >= self.index.incoming_connection_remotes.len());
+        debug_assert!(x >= self.index.outgoing_connection_remotes.len());
         x
     }
 
@@ -978,10 +983,19 @@ struct ConnectionIndex {
     ///
     /// Uses a cheaper hash function since keys are locally created
     connection_ids: FxHashMap<ConnectionId, ConnectionHandle>,
-    /// Identifies connections with zero-length CIDs
+    /// Identifies incoming connections with zero-length CIDs
     ///
     /// Uses a standard `HashMap` to protect against hash collision attacks.
-    connection_remotes: HashMap<FourTuple, ConnectionHandle>,
+    incoming_connection_remotes: HashMap<FourTuple, ConnectionHandle>,
+    /// Identifies outgoing connections with zero-length CIDs
+    ///
+    /// We don't yet support explicit source addresses for client connections, and zero-length CIDs
+    /// require a unique four-tuple, so at most one client connection with zero-length local CIDs
+    /// may be established per remote. We must omit the local address from the key because we don't
+    /// necessarily know what address we're sending from, and hence receiving at.
+    ///
+    /// Uses a standard `HashMap` to protect against hash collision attacks.
+    outgoing_connection_remotes: HashMap<SocketAddr, ConnectionHandle>,
     /// Reset tokens provided by the peer for the CID each connection is currently sending to
     ///
     /// Incoming stateless resets do not have correct CIDs, so we need this to identify the correct
@@ -1014,11 +1028,19 @@ impl ConnectionIndex {
         addresses: FourTuple,
         dst_cid: ConnectionId,
         connection: ConnectionHandle,
+        side: Side,
     ) {
         match dst_cid.len() {
-            0 => {
-                self.connection_remotes.insert(addresses, connection);
-            }
+            0 => match side {
+                Side::Server => {
+                    self.incoming_connection_remotes
+                        .insert(addresses, connection);
+                }
+                Side::Client => {
+                    self.outgoing_connection_remotes
+                        .insert(addresses.remote, connection);
+                }
+            },
             _ => {
                 self.connection_ids.insert(dst_cid, connection);
             }
@@ -1038,7 +1060,9 @@ impl ConnectionIndex {
         for cid in conn.loc_cids.values() {
             self.connection_ids.remove(cid);
         }
-        self.connection_remotes.remove(&conn.addresses);
+        self.incoming_connection_remotes.remove(&conn.addresses);
+        self.outgoing_connection_remotes
+            .remove(&conn.addresses.remote);
         if let Some((remote, token)) = conn.reset_token {
             self.connection_reset_tokens.remove(remote, token);
         }
@@ -1057,7 +1081,10 @@ impl ConnectionIndex {
             }
         }
         if datagram.dst_cid().len() == 0 {
-            if let Some(&ch) = self.connection_remotes.get(addresses) {
+            if let Some(&ch) = self.incoming_connection_remotes.get(addresses) {
+                return Some(RouteDatagramTo::Connection(ch));
+            }
+            if let Some(&ch) = self.outgoing_connection_remotes.get(&addresses.remote) {
                 return Some(RouteDatagramTo::Connection(ch));
             }
         }
