@@ -212,6 +212,9 @@ impl SendStream {
             Err(_) => Poll::Ready(Ok(None)),
             Ok(Some(error_code)) => Poll::Ready(Ok(Some(error_code))),
             Ok(None) => {
+                if let Some(e) = &conn.error {
+                    return Poll::Ready(Err(e.clone().into()));
+                }
                 conn.stopped.insert(self.stream, cx.waker().clone());
                 Poll::Pending
             }
