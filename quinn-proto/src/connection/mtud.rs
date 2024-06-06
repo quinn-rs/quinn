@@ -389,10 +389,6 @@ impl BlackHoleDetector {
     }
 
     fn on_non_probe_acked(&mut self, pn: u64, len: u16) {
-        debug_assert!(
-            pn >= self.largest_post_loss_packet,
-            "ACKs are delivered in order"
-        );
         if len <= self.acked_mtu {
             // We've already seen a larger packet since the most recent suspicious loss burst;
             // nothing to do.
