@@ -6,9 +6,14 @@ use std::{
 };
 
 use crc::Crc;
+use proto::crypto::rustls::{QuicClientConfig, QuicServerConfig};
 use quinn::{ConnectionError, ReadError, StoppedError, TransportConfig, WriteError};
 use rand::{self, RngCore};
-use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
+use rustls::{
+    pki_types::{CertificateDer, PrivatePkcs8KeyDer},
+    server::WebPkiClientVerifier,
+    RootCertStore,
+};
 use tokio::runtime::Builder;
 
 struct Shared {
@@ -90,6 +95,83 @@ fn connect_n_nodes_to_1_and_send_1mb_data() {
     if !shared.errors.is_empty() {
         panic!("some connections failed: {:?}", shared.errors);
     }
+}
+
+#[tokio::test]
+async fn test_mismatch_tls_configuration() {
+    tracing::subscriber::set_global_default(
+        tracing_subscriber::FmtSubscriber::builder()
+            .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
+            .finish(),
+    )
+    .unwrap();
+
+    let (server_cert, server_key) = gen_cert();
+
+    let client_cert_verifier = {
+        let mut client_auth_roots = RootCertStore::empty();
+        client_auth_roots.add(server_cert.clone()).unwrap();
+        WebPkiClientVerifier::builder(Arc::new(client_auth_roots))
+            .build()
+            .unwrap()
+    };
+
+    let server_tls_config = rustls::ServerConfig::builder()
+        .with_client_cert_verifier(client_cert_verifier)
+        .with_single_cert(vec![server_cert.clone()], server_key.into())
+        .unwrap();
+
+    let mut transport_config = TransportConfig::default();
+    transport_config.max_idle_timeout(Some(Duration::from_secs(20).try_into().unwrap()));
+
+    let server_cfg = quinn::ServerConfig::with_crypto(Arc::new(
+        QuicServerConfig::try_from(server_tls_config).unwrap(),
+    ));
+
+    let server_endpoint =
+        quinn::Endpoint::server(server_cfg, "127.0.0.1:0".parse().unwrap()).unwrap();
+    let server_addr = server_endpoint.local_addr().unwrap();
+
+    let server_handle = tokio::spawn(async move {
+        println!("server listening");
+        let incoming = server_endpoint.accept().await.unwrap();
+        println!("server incoming connection");
+        let res = incoming.await;
+        println!("server result {:?}", res);
+        res
+    });
+
+    let (client_cert, client_key) = gen_cert();
+
+    let mut client_auth_roots = rustls::RootCertStore::empty();
+    client_auth_roots.add(server_cert.clone()).unwrap();
+
+    let client_tls_config = rustls::ClientConfig::builder()
+        .with_root_certificates(client_auth_roots)
+        .with_client_auth_cert(vec![client_cert], client_key.into())
+        .unwrap();
+
+    let mut transport_config = TransportConfig::default();
+    transport_config.max_idle_timeout(Some(Duration::from_secs(20).try_into().unwrap()));
+
+    let mut client_cfg = quinn::ClientConfig::new(Arc::new(
+        QuicClientConfig::try_from(client_tls_config).unwrap(),
+    ));
+    client_cfg.transport_config(Arc::new(transport_config));
+
+    let client_endpoint = quinn::Endpoint::client("127.0.0.1:0".parse().unwrap()).unwrap();
+
+    println!("client connecting");
+    let connecting = client_endpoint
+        .connect_with(client_cfg, server_addr, "localhost")
+        .unwrap();
+
+    let client_res = connecting.await;
+    let server_res = server_handle.await.unwrap();
+
+    println!("client result: {:?}", client_res);
+    assert!(server_res.is_err());
+    assert!(client_res.is_err());
 }
 
 async fn read_from_peer(mut stream: quinn::RecvStream) -> Result<(), quinn::ConnectionError> {
