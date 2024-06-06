@@ -2465,11 +2465,13 @@ impl Connection {
                     // Server-only
                     self.spaces[SpaceId::Data].pending.handshake_done = true;
                     self.discard_space(now, SpaceId::Handshake);
-                }
 
-                self.events.push_back(Event::Connected);
-                self.state = State::Established;
-                trace!("established");
+                    // on server we consider the connection established at this point
+                    // but on client we must wait for HandshakeDone
+                    self.events.push_back(Event::Connected);
+                    self.state = State::Established;
+                    trace!("established");
+                }
                 Ok(())
             }
             Header::Initial(InitialHeader {
@@ -2876,9 +2878,14 @@ impl Connection {
                             "client sent HANDSHAKE_DONE",
                         ));
                     }
+
                     if self.spaces[SpaceId::Handshake].crypto.is_some() {
                         self.discard_space(now, SpaceId::Handshake);
                     }
+
+                    self.events.push_back(Event::Connected);
+                    self.state = State::Established;
+                    trace!("client received HandshakeDone, state = established");
                 }
             }
         }
