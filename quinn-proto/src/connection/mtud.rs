@@ -377,28 +377,25 @@ impl BlackHoleDetector {
     }
 
     fn on_probe_acked(&mut self, pn: u64, len: u16) {
-        debug_assert!(
-            pn >= self.largest_post_loss_packet,
-            "ACKs are delivered in order"
-        );
         // MTU probes are always larger than the previous MTU, so no previous loss bursts are
-        // suspicious.
+        // suspicious. At most one MTU probe is in flight at a time, so we don't need to worry about
+        // reordering between them.
         self.suspicious_loss_bursts.clear();
         self.acked_mtu = len;
+        // This might go backwards, but that's okay: a successful ACK means we haven't yet judged a
+        // more recently sent packet lost, and we just want to track the largest packet that's been
+        // successfully delivered more recently than a loss.
         self.largest_post_loss_packet = pn;
     }
 
     fn on_non_probe_acked(&mut self, pn: u64, len: u16) {
-        debug_assert!(
-            pn >= self.largest_post_loss_packet,
-            "ACKs are delivered in order"
-        );
         if len <= self.acked_mtu {
             // We've already seen a larger packet since the most recent suspicious loss burst;
             // nothing to do.
             return;
         }
         self.acked_mtu = len;
+        // This might go backwards, but that's okay as described in `on_probe_acked`.
         self.largest_post_loss_packet = pn;
         // Loss bursts packets smaller than this are retroactively deemed non-suspicious.
         self.suspicious_loss_bursts
