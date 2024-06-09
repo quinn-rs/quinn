@@ -213,7 +213,9 @@ impl TransportConfig {
     /// The provided configuration will be ignored if the peer does not support the acknowledgement
     /// frequency QUIC extension.
     ///
-    /// Defaults to `None`, which disables the ACK frequency feature.
+    /// Defaults to `None`, which disables controlling the peer's acknowledgement frequency. Even
+    /// if set to `None`, the local side still supports the acknowledgement frequency QUIC
+    /// extension and may use it in other ways.
     pub fn ack_frequency_config(&mut self, value: Option<AckFrequencyConfig>) -> &mut Self {
         self.ack_frequency_config = value;
         self
