@@ -92,7 +92,7 @@ impl RangeSet {
     /// Find the closest range to `x` that begins after it
     fn succ(&self, x: u64) -> Option<(u64, u64)> {
         self.0
-            .range((Excluded(x), Included(u64::max_value())))
+            .range((Excluded(x), Included(u64::MAX)))
             .next()
             .map(|(&x, &y)| (x, y))
     }

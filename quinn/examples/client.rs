@@ -135,7 +135,7 @@ async fn run(options: Opt) -> Result<()> {
     let response_start = Instant::now();
     eprintln!("request sent at {:?}", response_start - start);
     let resp = recv
-        .read_to_end(usize::max_value())
+        .read_to_end(usize::MAX)
         .await
         .map_err(|e| anyhow!("failed to read response: {}", e))?;
     let duration = response_start.elapsed();

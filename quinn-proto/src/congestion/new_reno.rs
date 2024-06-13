@@ -27,7 +27,7 @@ impl NewReno {
     pub fn new(config: Arc<NewRenoConfig>, now: Instant, current_mtu: u16) -> Self {
         Self {
             window: config.initial_window,
-            ssthresh: u64::max_value(),
+            ssthresh: u64::MAX,
             recovery_start_time: now,
             current_mtu: current_mtu as u64,
             config,

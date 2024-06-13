@@ -247,7 +247,7 @@ impl RecvStream {
             stream: self,
             size_limit,
             read: Vec::new(),
-            start: u64::max_value(),
+            start: u64::MAX,
             end: 0,
         }
         .await

@@ -157,10 +157,7 @@ fn read_after_close() {
             .expect("connect");
         tokio::time::sleep_until(Instant::now() + Duration::from_millis(100)).await;
         let mut stream = new_conn.accept_uni().await.expect("incoming streams");
-        let msg = stream
-            .read_to_end(usize::max_value())
-            .await
-            .expect("read_to_end");
+        let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
         assert_eq!(msg, MSG);
     });
 }
@@ -320,7 +317,7 @@ async fn zero_rtt() {
             let c = connection.clone();
             tokio::spawn(async move {
                 while let Ok(mut x) = c.accept_uni().await {
-                    let msg = x.read_to_end(usize::max_value()).await.unwrap();
+                    let msg = x.read_to_end(usize::MAX).await.unwrap();
                     assert_eq!(msg, MSG0);
                 }
             });
@@ -348,18 +345,12 @@ async fn zero_rtt() {
 
     {
         let mut stream = connection.accept_uni().await.expect("incoming streams");
-        let msg = stream
-            .read_to_end(usize::max_value())
-            .await
-            .expect("read_to_end");
+        let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
         assert_eq!(msg, MSG0);
         // Read a 1-RTT message to ensure the handshake completes fully, allowing the server's
         // NewSessionTicket frame to be received.
         let mut stream = connection.accept_uni().await.expect("incoming streams");
-        let msg = stream
-            .read_to_end(usize::max_value())
-            .await
-            .expect("read_to_end");
+        let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
         assert_eq!(msg, MSG1);
         drop(connection);
     }
@@ -381,10 +372,7 @@ async fn zero_rtt() {
     });
 
     let mut stream = connection.accept_uni().await.expect("incoming streams");
-    let msg = stream
-        .read_to_end(usize::max_value())
-        .await
-        .expect("read_to_end");
+    let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
     assert_eq!(msg, MSG0);
     assert!(zero_rtt.await);
 
@@ -581,8 +569,7 @@ fn run_echo(args: EchoArgs) {
                         send.write_all(&msg).await.expect("write");
                         send.finish().unwrap();
                     };
-                    let recv_task =
-                        async { recv.read_to_end(usize::max_value()).await.expect("read") };
+                    let recv_task = async { recv.read_to_end(usize::MAX).await.expect("read") };
 
                     let (_, data) = tokio::join!(send_task, recv_task);
 
