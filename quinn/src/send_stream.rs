@@ -189,12 +189,16 @@ impl SendStream {
         conn.inner.send_stream(self.stream).priority()
     }
 
-    /// Completes when the stream is stopped or read to completion by the peer
+    /// Completes when the peer stops the stream or reads the stream to completion
     ///
-    /// Yields `Some` with the stop error code when the stream is stopped by the peer. Yields `None`
-    /// when the stream is [`finish()`](Self::finish)ed locally and all stream data has been
-    /// received (but not necessarily processed) by the peer, after which it is no longer meaningful
-    /// for the stream to be stopped.
+    /// Yields `Some` with the stop error code if the peer stops the stream. Yields `None` if the
+    /// local side [`finish()`](Self::finish)es the stream and then the peer acknowledges receipt
+    /// of all stream data (although not necessarily the processing of it), after which the peer
+    /// closing the stream is no longer meaningful.
+    ///
+    /// For a variety of reasons, the peer may not send acknowledgements immediately upon receiving
+    /// data. As such, relying on `stopped` to know when the peer has read a stream to completion
+    /// may introduce more latency than using an application-level response of some sort.
     pub async fn stopped(&mut self) -> Result<Option<VarInt>, StoppedError> {
         Stopped { stream: self }.await
     }
