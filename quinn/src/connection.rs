@@ -79,29 +79,48 @@ impl Connecting {
 
     /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security
     ///
-    /// Opens up the connection for use before the handshake finishes, allowing the API user to
-    /// send data with 0-RTT encryption if the necessary key material is available. This is useful
-    /// for reducing start-up latency by beginning transmission of application data without waiting
-    /// for the handshake's cryptographic security guarantees to be established.
+    /// Returns `Ok` immediately if the local endpoint is able to attempt sending 0/0.5-RTT data.
+    /// If so, the returned [`Connection`] can be used to send application data without waiting for
+    /// the rest of the handshake to complete, at the cost of weakened cryptographic security
+    /// guarantees. The returned [`ZeroRttAccepted`] future resolves when the handshake does
+    /// complete, at which point subsequently opened streams and written data will have full
+    /// cryptographic protection.
     ///
-    /// When the `ZeroRttAccepted` future completes, the connection has been fully established.
+    /// ## Outgoing
     ///
-    /// # Security
+    /// For outgoing connections, the initial attempt to convert to a [`Connection`] which sends
+    /// 0-RTT data will proceed if the [`crypto::ClientConfig`][crate::crypto::ClientConfig]
+    /// attempts to resume a previous TLS session. However, **the remote endpoint may not actually
+    /// _accept_ the 0-RTT data**--yet still accept the connection attempt in general. This
+    /// possibility is conveyed through the [`ZeroRttAccepted`] future--when the handshake
+    /// completes, it resolves to true if the 0-RTT data was accepted and false if it was rejected.
+    /// If it was rejected, the existence of streams opened and other application data sent prior
+    /// to the handshake completing will not be conveyed to the remote application, and local
+    /// operations on them will return `ZeroRttRejected` errors.
     ///
-    /// On outgoing connections, this enables transmission of 0-RTT data, which might be vulnerable
-    /// to replay attacks, and should therefore never invoke non-idempotent operations.
+    /// A server may reject 0-RTT data at its discretion, but accepting 0-RTT data requires the
+    /// relevant resumption state to be stored in the server, which servers may limit or lose for
+    /// various reasons including not persisting resumption state across server restarts.
     ///
-    /// On incoming connections, this enables transmission of 0.5-RTT data, which might be
-    /// intercepted by a man-in-the-middle. If this occurs, the handshake will not complete
-    /// successfully.
+    /// If manually providing a [`crypto::ClientConfig`][crate::crypto::ClientConfig], check your
+    /// implementation's docs for 0-RTT pitfalls.
     ///
-    /// # Errors
+    /// ## Incoming
     ///
-    /// Outgoing connections are only 0-RTT-capable when a cryptographic session ticket cached from
-    /// a previous connection to the same server is available, and includes a 0-RTT key. If no such
-    /// ticket is found, `self` is returned unmodified.
+    /// For incoming connections, conversion to 0.5-RTT will always fully succeed. `into_0rtt` will
+    /// always return `Ok` and the [`ZeroRttAccepted`] will always resolve to true.
     ///
-    /// For incoming connections, a 0.5-RTT connection will always be successfully constructed.
+    /// If manually providing a [`crypto::ServerConfig`][crate::crypto::ServerConfig], check your
+    /// implementation's docs for 0-RTT pitfalls.
+    ///
+    /// ## Security
+    ///
+    /// On outgoing connections, this enables transmission of 0-RTT data, which is vulnerable to
+    /// replay attacks, and should therefore never invoke non-idempotent operations.
+    ///
+    /// On incoming connections, this enables transmission of 0.5-RTT data, which may be sent
+    /// before TLS client authentication has occurred, and should therefore not be used to send
+    /// data for which client authentication is being used.
     pub fn into_0rtt(mut self) -> Result<(Connection, ZeroRttAccepted), Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.

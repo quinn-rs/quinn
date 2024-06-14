@@ -257,10 +257,19 @@ pub struct HandshakeData {
 
 /// A QUIC-compatible TLS client configuration
 ///
-/// Can be constructed via [`ClientConfig::with_root_certificates()`][root_certs],
-/// [`ClientConfig::with_platform_verifier()`][platform] or by using the [`TryFrom`] implementation with a
-/// custom [`rustls::ClientConfig`]. A pre-existing `ClientConfig` must have TLS 1.3 support enabled for
-/// this to work. 0-RTT support is available if `enable_early_data` is set to `true`.
+/// Quinn implicitly constructs a `QuicClientConfig` with reasonable defaults within
+/// [`ClientConfig::with_root_certificates()`][root_certs] and [`ClientConfig::with_platform_verifier()`][platform].
+/// Alternatively, `QuicClientConfig`'s [`TryFrom`] implementation can be used to wrap around a
+/// custom [`rustls::ClientConfig`], in which case care should be taken around certain points:
+///
+/// - If `enable_early_data` is not set to true, then sending 0-RTT data will not be possible on
+///   outgoing connections.
+/// - The [`rustls::ClientConfig`] must have TLS 1.3 support enabled for conversion to succeed.
+///
+/// The object in the `resumption` field of the inner [`rustls::ClientConfig`] determines whether
+/// calling `into_0rtt` on outgoing connections returns `Ok` or `Err`. It typically allows
+/// `into_0rtt` to proceed if it recognizes the server name, and defaults to an in-memory cache of
+/// 256 server names.
 ///
 /// [root_certs]: crate::config::ClientConfig::with_root_certificates()
 /// [platform]: crate::config::ClientConfig::with_platform_verifier()
@@ -386,10 +395,14 @@ impl std::error::Error for NoInitialCipherSuite {}
 
 /// A QUIC-compatible TLS server configuration
 ///
-/// Can be constructed via [`ServerConfig::with_single_cert()`][single] or by using the
-/// [`TryFrom`] implementation with a custom [`rustls::ServerConfig`]. A pre-existing
-/// `ServerConfig` must have TLS 1.3 support enabled for this to work. 0-RTT support is
-/// available to clients if `max_early_data_size` is set to `u32::MAX`.
+/// Quinn implicitly constructs a `QuicServerConfig` with reasonable defaults within
+/// [`ServerConfig::with_single_cert()`][single]. Alternatively, `QuicServerConfig`'s [`TryFrom`]
+/// implementation or `with_initial` method can be used to wrap around a custom
+/// [`rustls::ServerConfig`], in which case care should be taken around certain points:
+///
+/// - If `max_early_data_size` is not set to `u32::MAX`, the server will not be able to accept
+///   incoming 0-RTT data. QUIC prohibits `max_early_data_size` values other than 0 or `u32::MAX`.
+/// - The `rustls::ServerConfig` must have TLS 1.3 support enabled for conversion to succeed.
 ///
 /// [single]: crate::config::ServerConfig::with_single_cert()
 pub struct QuicServerConfig {
