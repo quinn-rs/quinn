@@ -33,6 +33,8 @@ pub struct StreamsState {
     /// Maximum number of remotely-initiated streams that may be opened over the lifetime of the
     /// connection so far, per direction
     pub(super) max_remote: [u64; 2],
+    /// Value of `max_remote` most recently transmitted to the peer in a `MAX_STREAMS` frame
+    sent_max_remote: [u64; 2],
     /// Number of streams that we've given the peer permission to open and which aren't fully closed
     pub(super) allocated_remote_count: [u64; 2],
     /// Size of the desired stream flow control window. May be smaller than `allocated_remote_count`
@@ -108,6 +110,7 @@ impl StreamsState {
             next: [0, 0],
             max: [0, 0],
             max_remote: [max_remote_bi.into(), max_remote_uni.into()],
+            sent_max_remote: [max_remote_bi.into(), max_remote_uni.into()],
             allocated_remote_count: [max_remote_bi.into(), max_remote_uni.into()],
             max_concurrent_remote_count: [max_remote_bi.into(), max_remote_uni.into()],
             flow_control_adjusted: false,
@@ -189,6 +192,8 @@ impl StreamsState {
             // If 0-RTT was rejected, any flow control frames we sent were lost.
             if self.flow_control_adjusted {
                 self.max_streams_dirty[dir as usize] = true;
+                // Conservative approximation of whatever we sent in transport parameters
+                self.sent_max_remote[dir as usize] = 0;
             }
         }
 
@@ -470,6 +475,7 @@ impl StreamsState {
             pending.max_stream_id[dir as usize] = false;
             retransmits.get_or_create().max_stream_id[dir as usize] = true;
             self.max_streams_dirty[dir as usize] = false;
+            self.sent_max_remote[dir as usize] = self.max_remote[dir as usize];
             trace!(
                 value = self.max_remote[dir as usize],
                 "MAX_STREAMS ({:?})",
