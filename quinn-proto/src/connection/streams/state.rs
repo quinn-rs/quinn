@@ -748,9 +748,13 @@ impl StreamsState {
     pub(crate) fn queue_max_stream_id(&mut self, pending: &mut Retransmits) -> bool {
         let mut queued = false;
         for dir in Dir::iter() {
-            let dirty = self.sent_max_remote[dir as usize] != self.max_remote[dir as usize];
-            pending.max_stream_id[dir as usize] |= dirty;
-            queued |= dirty;
+            let diff = self.max_remote[dir as usize] - self.sent_max_remote[dir as usize];
+            // To reduce traffic, only announce updates if at least 1/8 of the flow control window
+            // has been consumed.
+            if diff > self.max_concurrent_remote_count[dir as usize] / 8 {
+                pending.max_stream_id[dir as usize] = true;
+                queued = true;
+            }
         }
         queued
     }
@@ -921,7 +925,14 @@ mod tests {
 
     #[test]
     fn trivial_flow_control() {
-        let mut client = make(Side::Client);
+        let mut client = StreamsState::new(
+            Side::Client,
+            1u32.into(),
+            1u32.into(),
+            1024 * 1024,
+            (1024 * 1024u32).into(),
+            (1024 * 1024u32).into(),
+        );
         let id = StreamId::new(Side::Server, Dir::Uni, 0);
         let initial_max = client.local_max_data;
         const MESSAGE_SIZE: usize = 2048;
