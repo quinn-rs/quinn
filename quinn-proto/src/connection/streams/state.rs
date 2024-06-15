@@ -81,8 +81,6 @@ pub struct StreamsState {
     pub(super) send_window: u64,
     /// Configured upper bound for how much unacked data the peer can send us per stream
     pub(super) stream_receive_window: u64,
-    /// Whether the corresponding `max_remote` has increased
-    max_streams_dirty: [bool; 2],
 
     // Pertinent state from the TransportParameters supplied by the peer
     initial_max_stream_data_uni: VarInt,
@@ -130,7 +128,6 @@ impl StreamsState {
             unacked_data: 0,
             send_window,
             stream_receive_window: stream_receive_window.into(),
-            max_streams_dirty: [false, false],
             initial_max_stream_data_uni: 0u32.into(),
             initial_max_stream_data_bidi_local: 0u32.into(),
             initial_max_stream_data_bidi_remote: 0u32.into(),
@@ -172,7 +169,6 @@ impl StreamsState {
         }
         self.allocated_remote_count[dir as usize] += new_count;
         self.max_remote[dir as usize] += new_count;
-        self.max_streams_dirty[dir as usize] = new_count != 0;
     }
 
     pub(crate) fn zero_rtt_rejected(&mut self) {
@@ -191,7 +187,6 @@ impl StreamsState {
 
             // If 0-RTT was rejected, any flow control frames we sent were lost.
             if self.flow_control_adjusted {
-                self.max_streams_dirty[dir as usize] = true;
                 // Conservative approximation of whatever we sent in transport parameters
                 self.sent_max_remote[dir as usize] = 0;
             }
@@ -474,7 +469,6 @@ impl StreamsState {
 
             pending.max_stream_id[dir as usize] = false;
             retransmits.get_or_create().max_stream_id[dir as usize] = true;
-            self.max_streams_dirty[dir as usize] = false;
             self.sent_max_remote[dir as usize] = self.max_remote[dir as usize];
             trace!(
                 value = self.max_remote[dir as usize],
@@ -754,7 +748,7 @@ impl StreamsState {
     pub(crate) fn queue_max_stream_id(&mut self, pending: &mut Retransmits) -> bool {
         let mut queued = false;
         for dir in Dir::iter() {
-            let dirty = mem::replace(&mut self.max_streams_dirty[dir as usize], false);
+            let dirty = self.sent_max_remote[dir as usize] != self.max_remote[dir as usize];
             pending.max_stream_id[dir as usize] |= dirty;
             queued |= dirty;
         }
@@ -1192,10 +1186,6 @@ mod tests {
             ShouldTransmit(false)
         );
         assert!(!client.recv.contains_key(&id), "stream state is freed");
-        assert!(
-            client.max_streams_dirty[Dir::Uni as usize],
-            "stream credit is issued"
-        );
         assert_eq!(client.max_remote[Dir::Uni as usize], prev_max + 1);
     }
 
@@ -1479,8 +1469,6 @@ mod tests {
         };
         stream.stop(0u32.into()).unwrap();
 
-        assert!(client.max_streams_dirty[Dir::Uni as usize]);
-
         // Open stream 128
         assert_eq!(
             client.received(
@@ -1532,8 +1520,6 @@ mod tests {
         // Relax limit by one
         client.set_max_concurrent(Dir::Uni, 129u32.into());
 
-        assert!(client.max_streams_dirty[Dir::Uni as usize]);
-
         // Open stream 128
         assert_eq!(
             client.received(
@@ -1577,7 +1563,6 @@ mod tests {
             pending: &mut pending,
         };
         stream.stop(0u32.into()).unwrap();
-        assert!(!client.max_streams_dirty[Dir::Uni as usize]);
 
         // Try to open stream 128, still exceeding limit
         assert_eq!(
@@ -1612,8 +1597,6 @@ mod tests {
             pending: &mut pending,
         };
         stream.stop(0u32.into()).unwrap();
-
-        assert!(client.max_streams_dirty[Dir::Uni as usize]);
 
         // Open stream 128
         assert_eq!(
