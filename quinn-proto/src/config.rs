@@ -20,7 +20,9 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     congestion,
     crypto::{self, HandshakeTokenKey, HmacKey},
-    VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MTU, MAX_UDP_PAYLOAD,
+    shared::ConnectionId,
+    RandomConnectionIdGenerator, VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS,
+    INITIAL_MTU, MAX_CID_SIZE, MAX_UDP_PAYLOAD,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -963,6 +965,9 @@ pub struct ClientConfig {
     /// Cryptographic configuration to use
     pub(crate) crypto: Arc<dyn crypto::ClientConfig>,
 
+    /// Provider that populates the destination connection ID of Initial Packets
+    pub(crate) initial_dst_cid_provider: Arc<dyn Fn() -> ConnectionId + Send + Sync>,
+
     /// QUIC protocol version to use
     pub(crate) version: u32,
 }
@@ -973,8 +978,27 @@ impl ClientConfig {
         Self {
             transport: Default::default(),
             crypto,
+            initial_dst_cid_provider: Arc::new(|| {
+                RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid()
+            }),
             version: 1,
         }
+    }
+
+    /// Configure how to populate the destination CID of the initial packet when attempting to
+    /// establish a new connection.
+    ///
+    /// By default, it's populated with random bytes with reasonable length, so unless you have
+    /// a good reason, you do not need to change it.
+    ///
+    /// When prefer to override the default, please note that the generated connection ID MUST be
+    /// at least 8 bytes long and unpredictable, as per section 7.2 of RFC 9000.
+    pub fn initial_dst_cid_provider(
+        &mut self,
+        initial_dst_cid_provider: Arc<dyn Fn() -> ConnectionId + Send + Sync>,
+    ) -> &mut Self {
+        self.initial_dst_cid_provider = initial_dst_cid_provider;
+        self
     }
 
     /// Set a custom [`TransportConfig`]
@@ -1016,7 +1040,7 @@ impl fmt::Debug for ClientConfig {
             .field("transport", &self.transport)
             .field("crypto", &"ClientConfig { elided }")
             .field("version", &self.version)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
