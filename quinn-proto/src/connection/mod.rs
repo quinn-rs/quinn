@@ -1311,6 +1311,10 @@ impl Connection {
     /// `count`s increase both minimum and worst-case memory consumption.
     pub fn set_max_concurrent_streams(&mut self, dir: Dir, count: VarInt) {
         self.streams.set_max_concurrent(dir, count);
+        // If the limit was reduced, then a flow control update previously deemed insignificant may
+        // now be significant.
+        let pending = &mut self.spaces[SpaceId::Data].pending;
+        self.streams.queue_max_stream_id(pending);
     }
 
     /// Current number of remotely initiated streams that may be concurrently open
