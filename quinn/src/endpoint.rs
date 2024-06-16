@@ -47,7 +47,7 @@ pub struct Endpoint {
     pub(crate) default_client_config: Option<ClientConfig>,
     runtime: Arc<dyn Runtime>,
 }
-
+#[derive(Debug, Default, Copy, Clone)]
 pub struct EndpointStats {
     pub open_connections: usize,
     pub incoming_handshakes_since_last_sample: usize,
