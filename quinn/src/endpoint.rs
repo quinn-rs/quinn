@@ -49,11 +49,11 @@ pub struct Endpoint {
 }
 
 pub struct EndpointStats {
-    open_connections: usize,
-    incoming_handshakes_since_last_sample: usize,
-    total_incoming_handshakes: usize,
-    total_outgoing_handshakes: usize,
-    outgoing_handshakes_since_last_sample: usize,
+    pub open_connections: usize,
+    pub incoming_handshakes_since_last_sample: usize,
+    pub total_incoming_handshakes: usize,
+    pub total_outgoing_handshakes: usize,
+    pub outgoing_handshakes_since_last_sample: usize,
 }
 
 impl Endpoint {
