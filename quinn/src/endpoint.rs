@@ -47,14 +47,6 @@ pub struct Endpoint {
     pub(crate) default_client_config: Option<ClientConfig>,
     runtime: Arc<dyn Runtime>,
 }
-#[derive(Debug, Default, Copy, Clone)]
-pub struct EndpointStats {
-    pub open_connections: usize,
-    pub incoming_handshakes_since_last_sample: usize,
-    pub total_incoming_handshakes: usize,
-    pub total_outgoing_handshakes: usize,
-    pub outgoing_handshakes_since_last_sample: usize,
-}
 
 impl Endpoint {
     /// Helper to construct an endpoint for use with outgoing connections only
@@ -93,21 +85,17 @@ impl Endpoint {
         )
     }
 
+    // Returns relevant stats from this Endpoint
+    //
     pub fn stats(&self) -> EndpointStats {
-        let mut state = self.inner.state.lock().unwrap();
-        let open_connections = state.inner.open_connections();
-        let incoming_handshakes_since_last_sample = state.incoming_handshakes_since_last_sample;
-        state.incoming_handshakes_since_last_sample = 0;
+        let state = self.inner.state.lock().unwrap();
+        let open_connections = state.inner.open_connections() as u64;
         let total_incoming_handshakes = state.total_incoming_handshakes;
         let total_outgoing_handshakes = state.total_outgoing_handshakes;
-        let outgoing_handshakes_since_last_sample = state.outgoing_handshakes_since_last_sample;
-        state.outgoing_handshakes_since_last_sample = 0;
         EndpointStats {
             open_connections,
-            incoming_handshakes_since_last_sample,
             total_incoming_handshakes,
             total_outgoing_handshakes,
-            outgoing_handshakes_since_last_sample,
         }
     }
 
@@ -245,7 +233,6 @@ impl Endpoint {
 
         let socket = endpoint.socket.clone();
         endpoint.total_outgoing_handshakes += 1;
-        endpoint.outgoing_handshakes_since_last_sample += 1;
         Ok(endpoint
             .recv_state
             .connections
@@ -346,6 +333,15 @@ impl Endpoint {
     }
 }
 
+// Struct for holding the stats returned from Endpoint::stats
+//
+#[derive(Debug, Default, Copy, Clone)]
+pub struct EndpointStats {
+    pub open_connections: u64,
+    pub total_incoming_handshakes: u64,
+    pub total_outgoing_handshakes: u64,
+}
+
 /// A future that drives IO on an endpoint
 ///
 /// This task functions as the switch point between the UDP socket object and the
@@ -426,7 +422,6 @@ impl EndpointInner {
         {
             Ok((handle, conn)) => {
                 state.total_incoming_handshakes += 1;
-                state.incoming_handshakes_since_last_sample += 1;
                 let socket = state.socket.clone();
                 let runtime = state.runtime.clone();
                 Ok(state
@@ -478,10 +473,8 @@ pub(crate) struct State {
     ref_count: usize,
     driver_lost: bool,
     runtime: Arc<dyn Runtime>,
-    incoming_handshakes_since_last_sample: usize,
-    total_incoming_handshakes: usize,
-    total_outgoing_handshakes: usize,
-    outgoing_handshakes_since_last_sample: usize,
+    total_incoming_handshakes: u64,
+    total_outgoing_handshakes: u64,
 }
 
 #[derive(Debug)]
@@ -700,9 +693,7 @@ impl EndpointRef {
                 recv_state,
                 runtime,
                 total_incoming_handshakes: 0,
-                incoming_handshakes_since_last_sample: 0,
                 total_outgoing_handshakes: 0,
-                outgoing_handshakes_since_last_sample: 0,
             }),
         }))
     }
