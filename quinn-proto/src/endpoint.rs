@@ -16,15 +16,17 @@ use thiserror::Error;
 use tracing::{debug, error, trace, warn};
 
 use crate::{
-    cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
+    cid_generator::{
+        ConnectionIdGenerator, RandomConnectionIdGenerator, ZeroLengthConnectionIdGenerator,
+    },
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
     connection::{Connection, ConnectionError},
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{
-        FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, Packet,
-        PacketDecodeError, PacketNumber, PartialDecode, ProtectedInitialHeader,
+        Header, InitialHeader, InitialPacket, Packet, PacketDecodeError, PacketNumber,
+        PartialDecode, ProtectedInitialHeader,
     },
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
@@ -44,7 +46,7 @@ pub struct Endpoint {
     rng: StdRng,
     index: ConnectionIndex,
     connections: Slab<ConnectionMeta>,
-    local_cid_generator: Box<dyn ConnectionIdGenerator>,
+    local_cid_generator: Option<Arc<dyn ConnectionIdGenerator>>,
     config: Arc<EndpointConfig>,
     server_config: Option<Arc<ServerConfig>>,
     /// Whether the underlying UDP socket promises not to fragment packets
@@ -72,7 +74,7 @@ impl Endpoint {
             rng: rng_seed.map_or(StdRng::from_entropy(), StdRng::from_seed),
             index: ConnectionIndex::default(),
             connections: Slab::new(),
-            local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
+            local_cid_generator: config.connection_id_generator.clone(),
             config,
             server_config,
             allow_mtud,
@@ -144,7 +146,10 @@ impl Endpoint {
         let datagram_len = data.len();
         let (first_decode, remaining) = match PartialDecode::new(
             data,
-            &FixedLengthConnectionIdParser::new(self.local_cid_generator.cid_len()),
+            self.local_cid_generator.as_ref().map_or(
+                &ZeroLengthConnectionIdGenerator as &dyn ConnectionIdGenerator,
+                |x| &**x,
+            ),
             &self.config.supported_versions,
             self.config.grease_quic_bit,
         ) {
@@ -302,8 +307,8 @@ impl Endpoint {
         if !first_decode.is_initial()
             && self
                 .local_cid_generator
-                .validate(first_decode.dst_cid())
-                .is_err()
+                .as_ref()
+                .map_or(false, |gen| gen.validate(first_decode.dst_cid()).is_err())
         {
             debug!("dropping packet with invalid CID");
             return None;
@@ -385,9 +390,6 @@ impl Endpoint {
         remote: SocketAddr,
         server_name: &str,
     ) -> Result<(ConnectionHandle, Connection), ConnectError> {
-        if self.cids_exhausted() {
-            return Err(ConnectError::CidsExhausted);
-        }
         if remote.port() == 0 || remote.ip().is_unspecified() {
             return Err(ConnectError::InvalidRemoteAddress(remote));
         }
@@ -403,7 +405,7 @@ impl Endpoint {
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
-            self.local_cid_generator.as_ref(),
+            self.local_cid_generator.is_some(),
             loc_cid,
             None,
         );
@@ -456,12 +458,11 @@ impl Endpoint {
     /// Generate a connection ID for `ch`
     fn new_cid(&mut self, ch: ConnectionHandle) -> ConnectionId {
         loop {
-            let cid = self.local_cid_generator.generate_cid();
-            if cid.len() == 0 {
+            let Some(cid_generator) = self.local_cid_generator.as_ref() else {
                 // Zero-length CID; nothing to track
-                debug_assert_eq!(self.local_cid_generator.cid_len(), 0);
-                return cid;
-            }
+                return ConnectionId::EMPTY;
+            };
+            let cid = cid_generator.generate_cid();
             if let hash_map::Entry::Vacant(e) = self.index.connection_ids.entry(cid) {
                 e.insert(ch);
                 break cid;
@@ -565,22 +566,6 @@ impl Endpoint {
             ..
         } = incoming.packet.header;
 
-        if self.cids_exhausted() {
-            debug!("refusing connection");
-            self.index.remove_initial(incoming.orig_dst_cid);
-            return Err(AcceptError {
-                cause: ConnectionError::CidsExhausted,
-                response: Some(self.initial_close(
-                    version,
-                    incoming.addresses,
-                    &incoming.crypto,
-                    &src_cid,
-                    TransportError::CONNECTION_REFUSED(""),
-                    buf,
-                )),
-            });
-        }
-
         let server_config =
             server_config.unwrap_or_else(|| self.server_config.as_ref().unwrap().clone());
 
@@ -608,7 +593,7 @@ impl Endpoint {
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
-            self.local_cid_generator.as_ref(),
+            self.local_cid_generator.is_some(),
             loc_cid,
             Some(&server_config),
         );
@@ -691,7 +676,7 @@ impl Endpoint {
         header: &ProtectedInitialHeader,
     ) -> Result<(), TransportError> {
         let config = &self.server_config.as_ref().unwrap();
-        if self.cids_exhausted() || self.incoming_buffers.len() >= config.max_incoming {
+        if self.incoming_buffers.len() >= config.max_incoming {
             return Err(TransportError::CONNECTION_REFUSED(""));
         }
 
@@ -699,10 +684,7 @@ impl Endpoint {
         // bytes. If this is a Retry packet, then the length must instead match our usual CID
         // length. If we ever issue non-Retry address validation tokens via `NEW_TOKEN`, then we'll
         // also need to validate CID length for those after decoding the token.
-        if header.dst_cid.len() < 8
-            && (!header.token_pos.is_empty()
-                && header.dst_cid.len() != self.local_cid_generator.cid_len())
-        {
+        if header.dst_cid.len() < 8 && !header.token_pos.is_empty() {
             debug!(
                 "rejecting connection due to invalid DCID length {}",
                 header.dst_cid.len()
@@ -749,7 +731,10 @@ impl Endpoint {
         // with established connections. In the unlikely event that a collision occurs
         // between two connections in the initial phase, both will fail fast and may be
         // retried by the application layer.
-        let loc_cid = self.local_cid_generator.generate_cid();
+        let loc_cid = self
+            .local_cid_generator
+            .as_ref()
+            .map_or(ConnectionId::EMPTY, |gen| gen.generate_cid());
 
         let token = RetryToken {
             orig_dst_cid: incoming.packet.header.dst_cid,
@@ -833,7 +818,7 @@ impl Endpoint {
             addresses.remote,
             addresses.local_ip,
             tls,
-            self.local_cid_generator.as_ref(),
+            self.local_cid_generator.clone(),
             now,
             version,
             self.allow_mtud,
@@ -879,7 +864,10 @@ impl Endpoint {
         // We don't need to worry about CID collisions in initial closes because the peer
         // shouldn't respond, and if it does, and the CID collides, we'll just drop the
         // unexpected response.
-        let local_id = self.local_cid_generator.generate_cid();
+        let local_id = self
+            .local_cid_generator
+            .as_ref()
+            .map_or(ConnectionId::EMPTY, |gen| gen.generate_cid());
         let number = PacketNumber::U8(0);
         let header = Header::Initial(InitialHeader {
             dst_cid: *remote_id,
@@ -929,18 +917,6 @@ impl Endpoint {
     #[cfg(test)]
     pub(crate) fn known_cids(&self) -> usize {
         self.index.connection_ids.len()
-    }
-
-    /// Whether we've used up 3/4 of the available CID space
-    ///
-    /// We leave some space unused so that `new_cid` can be relied upon to finish quickly. We don't
-    /// bother to check when CID longer than 4 bytes are used because 2^40 connections is a lot.
-    fn cids_exhausted(&self) -> bool {
-        self.local_cid_generator.cid_len() <= 4
-            && self.local_cid_generator.cid_len() != 0
-            && (2usize.pow(self.local_cid_generator.cid_len() as u32 * 8)
-                - self.index.connection_ids.len())
-                < 2usize.pow(self.local_cid_generator.cid_len() as u32 * 8 - 2)
     }
 }
 
@@ -1229,11 +1205,6 @@ pub enum ConnectError {
     /// Indicates that a necessary component of the endpoint has been dropped or otherwise disabled.
     #[error("endpoint stopping")]
     EndpointStopping,
-    /// The connection could not be created because not enough of the CID space is available
-    ///
-    /// Try using longer connection IDs
-    #[error("CIDs exhausted")]
-    CidsExhausted,
     /// The given server name was malformed
     #[error("invalid server name: {0}")]
     InvalidServerName(String),

@@ -767,30 +767,20 @@ impl PacketNumber {
     }
 }
 
-/// A [`ConnectionIdParser`] implementation that assumes the connection ID is of fixed length
-pub struct FixedLengthConnectionIdParser {
-    expected_len: usize,
-}
-
-impl FixedLengthConnectionIdParser {
-    /// Create a new instance of `FixedLengthConnectionIdParser`
-    pub fn new(expected_len: usize) -> Self {
-        Self { expected_len }
-    }
-}
-
-impl ConnectionIdParser for FixedLengthConnectionIdParser {
-    fn parse(&self, buffer: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError> {
-        (buffer.remaining() >= self.expected_len)
-            .then(|| ConnectionId::from_buf(buffer, self.expected_len))
-            .ok_or(PacketDecodeError::InvalidHeader("packet too small"))
-    }
-}
-
 /// Parse connection id in short header packet
 pub trait ConnectionIdParser {
     /// Parse a connection id from given buffer
     fn parse(&self, buf: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError>;
+}
+
+/// Trivial parser for zero-length connection IDs
+pub struct ZeroLengthConnectionIdParser;
+
+impl ConnectionIdParser for ZeroLengthConnectionIdParser {
+    #[inline]
+    fn parse(&self, _: &mut dyn Buf) -> Result<ConnectionId, PacketDecodeError> {
+        Ok(ConnectionId::new(&[]))
+    }
 }
 
 /// Long packet type including non-uniform cases
@@ -970,7 +960,7 @@ mod tests {
         let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
         let decode = PartialDecode::new(
             buf.as_slice().into(),
-            &FixedLengthConnectionIdParser::new(0),
+            &ZeroLengthConnectionIdParser,
             &supported_versions,
             false,
         )

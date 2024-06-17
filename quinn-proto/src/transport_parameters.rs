@@ -15,7 +15,6 @@ use bytes::{Buf, BufMut};
 use thiserror::Error;
 
 use crate::{
-    cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     config::{EndpointConfig, ServerConfig, TransportConfig},
@@ -132,7 +131,7 @@ impl TransportParameters {
     pub(crate) fn new(
         config: &TransportConfig,
         endpoint_config: &EndpointConfig,
-        cid_gen: &dyn ConnectionIdGenerator,
+        use_cids: bool,
         initial_src_cid: ConnectionId,
         server_config: Option<&ServerConfig>,
     ) -> Self {
@@ -147,7 +146,7 @@ impl TransportParameters {
             max_udp_payload_size: endpoint_config.max_udp_payload_size,
             max_idle_timeout: config.max_idle_timeout.unwrap_or(VarInt(0)),
             disable_active_migration: server_config.map_or(false, |c| !c.migration),
-            active_connection_id_limit: if cid_gen.cid_len() == 0 {
+            active_connection_id_limit: if !use_cids {
                 2 // i.e. default, i.e. unsent
             } else {
                 CidQueue::LEN as u32

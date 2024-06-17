@@ -21,19 +21,12 @@ pub(super) struct CidState {
     prev_retire_seq: u64,
     /// Sequence number to set in retire_prior_to field in NEW_CONNECTION_ID frame
     retire_seq: u64,
-    /// cid length used to decode short packet
-    cid_len: usize,
     //// cid lifetime
     cid_lifetime: Option<Duration>,
 }
 
 impl CidState {
-    pub(crate) fn new(
-        cid_len: usize,
-        cid_lifetime: Option<Duration>,
-        now: Instant,
-        issued: u64,
-    ) -> Self {
+    pub(crate) fn new(cid_lifetime: Option<Duration>, now: Instant, issued: u64) -> Self {
         let mut active_seq = FxHashSet::default();
         // Add sequence number of CIDs used in handshaking into tracking set
         for seq in 0..issued {
@@ -45,7 +38,6 @@ impl CidState {
             active_seq,
             prev_retire_seq: 0,
             retire_seq: 0,
-            cid_len,
             cid_lifetime,
         };
         // Track lifetime of CIDs used in handshaking
@@ -158,11 +150,6 @@ impl CidState {
         sequence: u64,
         limit: u64,
     ) -> Result<bool, TransportError> {
-        if self.cid_len == 0 {
-            return Err(TransportError::PROTOCOL_VIOLATION(
-                "RETIRE_CONNECTION_ID when CIDs aren't in use",
-            ));
-        }
         if sequence > self.issued {
             debug!(
                 sequence,
@@ -179,11 +166,6 @@ impl CidState {
         // and meanwhile send a RETIRE_CONNECTION_ID to retire cid 0 to peer B.
         // If peer B doesn't check the cid limit here and send a new cid again, peer A will then face CONNECTION_ID_LIMIT_ERROR
         Ok(limit > self.active_seq.len() as u64)
-    }
-
-    /// Length of local Connection IDs
-    pub(crate) fn cid_len(&self) -> usize {
-        self.cid_len
     }
 
     /// The value for `retire_prior_to` field in `NEW_CONNECTION_ID` frame

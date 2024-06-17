@@ -10,7 +10,7 @@ use std::{
 
 use crate::runtime::TokioRuntime;
 use bytes::Bytes;
-use proto::{crypto::rustls::QuicClientConfig, RandomConnectionIdGenerator};
+use proto::crypto::rustls::QuicClientConfig;
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
@@ -804,9 +804,7 @@ async fn two_datagram_readers() {
 async fn multiple_conns_with_zero_length_cids() {
     let _guard = subscribe();
     let mut factory = EndpointFactory::new();
-    factory
-        .endpoint_config
-        .cid_generator(|| Box::new(RandomConnectionIdGenerator::new(0)));
+    factory.endpoint_config.cid_generator(None);
     let server = {
         let _guard = error_span!("server").entered();
         factory.endpoint()

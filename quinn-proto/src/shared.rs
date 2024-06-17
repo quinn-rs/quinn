@@ -72,6 +72,12 @@ pub struct ConnectionId {
 }
 
 impl ConnectionId {
+    /// The zero-length connection ID
+    pub const EMPTY: Self = Self {
+        len: 0,
+        bytes: [0; MAX_CID_SIZE],
+    };
+
     /// Construct cid from byte array
     pub fn new(bytes: &[u8]) -> Self {
         debug_assert!(bytes.len() <= MAX_CID_SIZE);
