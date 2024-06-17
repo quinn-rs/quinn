@@ -629,6 +629,8 @@ pub struct EndpointConfig {
     pub(crate) grease_quic_bit: bool,
     /// Minimum interval between outgoing stateless reset packets
     pub(crate) min_reset_interval: Duration,
+    /// Optional seed to be used internally for random number generation
+    pub(crate) rng_seed: Option<[u8; 32]>,
 }
 
 impl EndpointConfig {
@@ -643,6 +645,7 @@ impl EndpointConfig {
             supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
             grease_quic_bit: true,
             min_reset_interval: Duration::from_millis(20),
+            rng_seed: None,
         }
     }
 
@@ -729,6 +732,17 @@ impl EndpointConfig {
         self.min_reset_interval = value;
         self
     }
+
+    /// Optional seed to be used internally for random number generation
+    ///
+    /// By default, quinn will initialize an endpoint's rng using a platform entropy source.
+    /// However, you can seed the rng yourself through this method (e.g. if you need to run quinn
+    /// deterministically or if you are using quinn in an environment that doesn't have a source of
+    /// entropy available).
+    pub fn rng_seed(&mut self, seed: Option<[u8; 32]>) -> &mut Self {
+        self.rng_seed = seed;
+        self
+    }
 }
 
 impl fmt::Debug for EndpointConfig {
@@ -739,6 +753,7 @@ impl fmt::Debug for EndpointConfig {
             .field("cid_generator_factory", &"[ elided ]")
             .field("supported_versions", &self.supported_versions)
             .field("grease_quic_bit", &self.grease_quic_bit)
+            .field("rng_seed", &self.rng_seed)
             .finish()
     }
 }
