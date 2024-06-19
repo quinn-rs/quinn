@@ -92,10 +92,12 @@ impl Endpoint {
         let open_connections = state.inner.open_connections() as u64;
         let total_incoming_handshakes = state.total_incoming_handshakes;
         let total_outgoing_handshakes = state.total_outgoing_handshakes;
+        let incoming_buffers_total_bytes = state.inner.incoming_buffers_total_bytes();
         EndpointStats {
             open_connections,
             total_incoming_handshakes,
             total_outgoing_handshakes,
+            incoming_buffers_total_bytes,
         }
     }
 
@@ -340,6 +342,7 @@ pub struct EndpointStats {
     pub open_connections: u64,
     pub total_incoming_handshakes: u64,
     pub total_outgoing_handshakes: u64,
+    pub incoming_buffers_total_bytes: u64,
 }
 
 /// A future that drives IO on an endpoint
