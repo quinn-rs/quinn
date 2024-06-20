@@ -14,5 +14,5 @@ rcgen = "0.13"
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.0.1", features = ["rt", "sync"] }
-tracing = "0.1.10"
+tracing = { version = "0.1.10", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }

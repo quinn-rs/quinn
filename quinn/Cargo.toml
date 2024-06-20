@@ -42,7 +42,7 @@ proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.11.2", 
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 smol = { version = "2", optional = true }
 thiserror = "1.0.21"
-tracing = "0.1.10"
+tracing = { version = "0.1.10", default-features = false, features = ["std"] }
 tokio = { version = "1.28.1", features = ["sync"] }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.5", default-features = false }
 
