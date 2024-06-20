@@ -42,7 +42,7 @@ proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.11.2", 
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 smol = { version = "2", optional = true }
 thiserror = "1.0.21"
-tracing = { version = "0.1.10", default-features = false, features = ["std"] }
+tracing =  { workspace = true }
 tokio = { version = "1.28.1", features = ["sync"] }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.5", default-features = false }
 
@@ -56,7 +56,7 @@ rcgen = "0.13"
 rustls-pemfile = "2"
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.28.1", features = ["rt", "rt-multi-thread", "time", "macros", "sync"] }
-tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
+tracing-subscriber = { workspace = true }
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
 url = "2"
 
