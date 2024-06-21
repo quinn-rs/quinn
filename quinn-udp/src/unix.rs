@@ -120,7 +120,7 @@ impl UdpSocketState {
         }
         #[cfg(any(
             target_os = "freebsd",
-            target_od = "openbsd",
+            target_os = "openbsd",
             target_os = "macos",
             target_os = "ios"
         ))]
