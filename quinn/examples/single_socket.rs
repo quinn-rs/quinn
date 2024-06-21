@@ -4,7 +4,7 @@
 
 use std::{error::Error, net::SocketAddr};
 
-use quinn::Endpoint;
+use iroh_quinn::Endpoint;
 
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};

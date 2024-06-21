@@ -1,5 +1,5 @@
 [package]
-name = "quinn"
+name = "iroh-quinn"
 version = "0.11.1"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
@@ -38,13 +38,13 @@ bytes = "1"
 futures-io = { version = "0.3.19", optional = true }
 rustc-hash = "1.1"
 pin-project-lite = "0.2"
-proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.11.2", default-features = false }
+proto = { package = "iroh-quinn-proto", path = "../quinn-proto", version = "0.11.2", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 smol = { version = "2", optional = true }
 thiserror = "1.0.21"
 tracing = "0.1.10"
 tokio = { version = "1.28.1", features = ["sync"] }
-udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.5", default-features = false }
+udp = { package = "iroh-quinn-udp", path = "../quinn-udp", version = "0.5", default-features = false }
 
 [dev-dependencies]
 anyhow = "1.0.22"

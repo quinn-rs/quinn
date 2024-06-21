@@ -1,7 +1,7 @@
 #![cfg(feature = "rustls")]
 //! Commonly used code in most examples.
 
-use quinn::{ClientConfig, Endpoint, ServerConfig};
+use iroh_quinn::{ClientConfig, Endpoint, ServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 
 use std::{error::Error, net::SocketAddr, sync::Arc};

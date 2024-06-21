@@ -6,7 +6,7 @@ use std::{
     slice,
 };
 
-use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
+use iroh_quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
 use socket2::Socket;
 
 #[test]

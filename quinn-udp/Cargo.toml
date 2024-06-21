@@ -1,5 +1,5 @@
 [package]
-name = "quinn-udp"
+name = "iroh-quinn-udp"
 version = "0.5.1"
 edition = "2021"
 rust-version = "1.66"

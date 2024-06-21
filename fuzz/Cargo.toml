@@ -15,7 +15,7 @@ libfuzzer-sys = "0.4.2"
 [dependencies.proto]
 features = ["arbitrary"]
 path = "../quinn-proto"
-package = "quinn-proto"
+package = "iroh-quinn-proto"
 
 [[bin]]
 name = "streams"

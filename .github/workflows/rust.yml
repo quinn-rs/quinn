@@ -2,10 +2,8 @@ name: CI
 
 on:
   push:
-    branches: ['main', '0.8.x']
+    branches: ['0.10.x']
   pull_request:
-  schedule:
-    - cron: "21 3 * * 5"
 
 jobs:
   test-freebsd:
@@ -43,12 +41,16 @@ jobs:
 
     runs-on: ${{ matrix.os }}
 
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
+
     steps:
       - uses: actions/checkout@v4
+      - uses: mozilla-actions/sccache-action@v0.0.4
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
-      - uses: Swatinem/rust-cache@v2
       - run: cargo build --all-targets
       - run: cargo test
       - run: cargo test --manifest-path fuzz/Cargo.toml
@@ -56,20 +58,26 @@ jobs:
 
   msrv:
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
       - uses: actions/checkout@v4
+      - uses: mozilla-actions/sccache-action@v0.0.4
       - uses: dtolnay/rust-toolchain@1.66.0
-      - uses: Swatinem/rust-cache@v2
-      - run: cargo check --lib --all-features -p quinn-udp -p quinn-proto -p quinn
+      - run: cargo check --lib --all-features -p iroh-quinn-udp -p iroh-quinn-proto -p iroh-quinn
 
   lint:
     runs-on: ubuntu-latest
+    env:
+      RUSTC_WRAPPER: "sccache"
+      SCCACHE_GHA_ENABLED: "on"
     steps:
       - uses: actions/checkout@v4
+      - uses: mozilla-actions/sccache-action@v0.0.4
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy
-      - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
       - run: cargo check --manifest-path quinn/Cargo.toml --all-targets --no-default-features
       - run: cargo clippy --all-targets -- -D warnings

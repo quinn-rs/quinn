@@ -12,6 +12,7 @@ use std::{
 
 use anyhow::{anyhow, bail, Context, Result};
 use clap::Parser;
+use iroh_quinn as quinn;
 use proto::crypto::rustls::QuicServerConfig;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer};
 use tracing::{error, info, info_span};

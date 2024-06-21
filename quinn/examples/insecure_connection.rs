@@ -4,8 +4,8 @@
 
 use std::{error::Error, net::SocketAddr, sync::Arc};
 
+use iroh_quinn::{ClientConfig, Endpoint};
 use proto::crypto::rustls::QuicClientConfig;
-use quinn::{ClientConfig, Endpoint};
 use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 
 mod common;
