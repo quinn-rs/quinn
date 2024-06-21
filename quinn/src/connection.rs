@@ -5,7 +5,7 @@ use std::{
     io,
     net::{IpAddr, SocketAddr},
     pin::Pin,
-    sync::Arc,
+    sync::{Arc, Weak},
     task::{Context, Poll, Waker},
     time::{Duration, Instant},
 };
@@ -268,6 +268,11 @@ impl Future for ConnectionDriver {
 pub struct Connection(ConnectionRef);
 
 impl Connection {
+    /// Returns a weak reference to the inner connection struct.
+    pub fn weak_handle(&self) -> WeakConnectionHandle {
+        WeakConnectionHandle(Arc::downgrade(&self.0 .0))
+    }
+
     /// Initiate a new outgoing unidirectional stream.
     ///
     /// Streams are cheap and instantaneous to open unless blocked by flow control. As a
@@ -896,6 +901,39 @@ impl std::ops::Deref for ConnectionRef {
 pub(crate) struct ConnectionInner {
     pub(crate) state: Mutex<State>,
     pub(crate) shared: Shared,
+}
+
+/// A handle to some connection internals, use with care.
+///
+/// This contains a weak reference to the connection so will not itself keep the connection
+/// alive.
+#[derive(Debug)]
+pub struct WeakConnectionHandle(Weak<ConnectionInner>);
+
+impl WeakConnectionHandle {
+    /// Returns `true` if the [`Connection`] associated with this handle is still alive.
+    pub fn is_alive(&self) -> bool {
+        self.0.upgrade().is_some()
+    }
+
+    /// Resets the congestion controller and round-trip estimator for the current path.
+    ///
+    /// This force-resets the congestion controller and round-trip estimator for the current
+    /// path.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the connection still existed and the congestion controller state was
+    /// reset.  `false` otherwise.
+    pub fn reset_congestion_state(&self) -> bool {
+        if let Some(inner) = self.0.upgrade() {
+            let mut inner_state = inner.state.lock("reset-congestion-state");
+            inner_state.inner.reset_congestion_state();
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Debug, Default)]
