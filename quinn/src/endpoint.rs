@@ -501,6 +501,14 @@ impl State {
     }
 }
 
+impl Drop for State {
+    fn drop(&mut self) {
+        for incoming in self.recv_state.incoming.drain(..) {
+            self.inner.ignore(incoming);
+        }
+    }
+}
+
 fn respond(transmit: proto::Transmit, response_buffer: &[u8], socket: &dyn AsyncUdpSocket) {
     // Send if there's kernel buffer space; otherwise, drop it
     //
