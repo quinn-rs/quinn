@@ -1061,11 +1061,7 @@ impl State {
                 ConnectionLost { reason } => {
                     self.terminate(reason, shared);
                 }
-                Stream(StreamEvent::Writable { id }) => {
-                    if let Some(writer) = self.blocked_writers.remove(&id) {
-                        writer.wake();
-                    }
-                }
+                Stream(StreamEvent::Writable { id }) => wake_stream(id, &mut self.blocked_writers),
                 Stream(StreamEvent::Opened { dir: Dir::Uni }) => {
                     shared.stream_incoming[Dir::Uni as usize].notify_waiters();
                 }
@@ -1078,27 +1074,15 @@ impl State {
                 DatagramsUnblocked => {
                     shared.datagrams_unblocked.notify_waiters();
                 }
-                Stream(StreamEvent::Readable { id }) => {
-                    if let Some(reader) = self.blocked_readers.remove(&id) {
-                        reader.wake();
-                    }
-                }
+                Stream(StreamEvent::Readable { id }) => wake_stream(id, &mut self.blocked_readers),
                 Stream(StreamEvent::Available { dir }) => {
                     // Might mean any number of streams are ready, so we wake up everyone
                     shared.stream_budget_available[dir as usize].notify_waiters();
                 }
-                Stream(StreamEvent::Finished { id }) => {
-                    if let Some(stopped) = self.stopped.remove(&id) {
-                        stopped.wake();
-                    }
-                }
+                Stream(StreamEvent::Finished { id }) => wake_stream(id, &mut self.stopped),
                 Stream(StreamEvent::Stopped { id, .. }) => {
-                    if let Some(stopped) = self.stopped.remove(&id) {
-                        stopped.wake();
-                    }
-                    if let Some(writer) = self.blocked_writers.remove(&id) {
-                        writer.wake();
-                    }
+                    wake_stream(id, &mut self.stopped);
+                    wake_stream(id, &mut self.blocked_writers);
                 }
             }
         }
@@ -1219,6 +1203,12 @@ impl Drop for State {
 impl fmt::Debug for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("State").field("inner", &self.inner).finish()
+    }
+}
+
+fn wake_stream(stream_id: StreamId, wakers: &mut FxHashMap<StreamId, Waker>) {
+    if let Some(waker) = wakers.remove(&stream_id) {
+        waker.wake();
     }
 }
 
