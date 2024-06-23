@@ -1167,12 +1167,8 @@ impl State {
         if let Some(x) = self.on_handshake_data.take() {
             let _ = x.send(());
         }
-        for (_, writer) in self.blocked_writers.drain() {
-            writer.wake()
-        }
-        for (_, reader) in self.blocked_readers.drain() {
-            reader.wake()
-        }
+        wake_all(&mut self.blocked_writers);
+        wake_all(&mut self.blocked_readers);
         shared.stream_budget_available[Dir::Uni as usize].notify_waiters();
         shared.stream_budget_available[Dir::Bi as usize].notify_waiters();
         shared.stream_incoming[Dir::Uni as usize].notify_waiters();
@@ -1182,9 +1178,7 @@ impl State {
         if let Some(x) = self.on_connected.take() {
             let _ = x.send(false);
         }
-        for (_, waker) in self.stopped.drain() {
-            waker.wake();
-        }
+        wake_all(&mut self.stopped);
         shared.closed.notify_waiters();
     }
 
@@ -1226,6 +1220,10 @@ impl fmt::Debug for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("State").field("inner", &self.inner).finish()
     }
+}
+
+fn wake_all(wakers: &mut FxHashMap<StreamId, Waker>) {
+    wakers.drain().for_each(|(_, waker)| waker.wake())
 }
 
 /// Errors that can arise when sending a datagram
