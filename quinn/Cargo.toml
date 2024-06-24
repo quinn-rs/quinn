@@ -36,7 +36,7 @@ async-std = { version = "1.11", optional = true }
 bytes = "1"
 # Enables futures::io::{AsyncRead, AsyncWrite} support for streams
 futures-io = { version = "0.3.19", optional = true }
-rustc-hash = "1.1"
+rustc-hash = "2"
 pin-project-lite = "0.2"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.11.2", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }

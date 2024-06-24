@@ -26,7 +26,7 @@ log = ["tracing/log"]
 [dependencies]
 arbitrary = { version = "1.0.1", features = ["derive"], optional = true }
 bytes = "1"
-rustc-hash = "1.1"
+rustc-hash = "2"
 rand = "0.8"
 ring = { version = "0.17", optional = true }
 rustls = { version = "0.23.5", default-features = false, features = ["ring", "std"], optional = true }
