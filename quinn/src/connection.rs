@@ -26,7 +26,7 @@ use crate::{
 };
 use proto::{
     congestion::Controller, ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent,
-    StreamEvent, StreamId,
+    RttEstimatorSnapshot, StreamEvent, StreamId,
 };
 
 /// In-progress connection attempt future
@@ -481,6 +481,16 @@ impl Connection {
     /// Current best estimate of this connection's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
         self.0.state.lock("rtt").inner.rtt()
+    }
+
+    /// A snapshot of the RTT estimator, which contains information
+    /// about this connection's latency.
+    pub fn rtt_estimator_snapshot(&self) -> RttEstimatorSnapshot {
+        self.0
+            .state
+            .lock("rtt_estimator_snapshot")
+            .inner
+            .rtt_estimator_snapshot()
     }
 
     /// Returns connection statistics
