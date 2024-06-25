@@ -90,14 +90,14 @@ impl Endpoint {
     pub fn stats(&self) -> EndpointStats {
         let state = self.inner.state.lock().unwrap();
         let open_connections = state.inner.open_connections() as u64;
-        let total_incoming_handshakes = state.total_incoming_handshakes;
-        let total_outgoing_handshakes = state.total_outgoing_handshakes;
-        let incoming_buffers_total_bytes = state.inner.incoming_buffers_total_bytes();
+        let incoming_handshakes = state.incoming_handshakes;
+        let outgoing_handshakes = state.outgoing_handshakes;
+        let incoming_buffer_bytes = state.inner.incoming_buffer_bytes();
         EndpointStats {
             open_connections,
-            total_incoming_handshakes,
-            total_outgoing_handshakes,
-            incoming_buffers_total_bytes,
+            incoming_handshakes,
+            outgoing_handshakes,
+            incoming_buffer_bytes,
         }
     }
 
@@ -234,7 +234,7 @@ impl Endpoint {
             .connect(self.runtime.now(), config, addr, server_name)?;
 
         let socket = endpoint.socket.clone();
-        endpoint.total_outgoing_handshakes += 1;
+        endpoint.outgoing_handshakes += 1;
         Ok(endpoint
             .recv_state
             .connections
@@ -340,9 +340,9 @@ impl Endpoint {
 #[derive(Debug, Default, Copy, Clone)]
 pub struct EndpointStats {
     pub open_connections: u64,
-    pub total_incoming_handshakes: u64,
-    pub total_outgoing_handshakes: u64,
-    pub incoming_buffers_total_bytes: u64,
+    pub incoming_handshakes: u64,
+    pub outgoing_handshakes: u64,
+    pub incoming_buffer_bytes: u64,
 }
 
 /// A future that drives IO on an endpoint
@@ -424,7 +424,7 @@ impl EndpointInner {
             .accept(incoming, now, &mut response_buffer, server_config)
         {
             Ok((handle, conn)) => {
-                state.total_incoming_handshakes += 1;
+                state.incoming_handshakes += 1;
                 let socket = state.socket.clone();
                 let runtime = state.runtime.clone();
                 Ok(state
@@ -476,8 +476,8 @@ pub(crate) struct State {
     ref_count: usize,
     driver_lost: bool,
     runtime: Arc<dyn Runtime>,
-    total_incoming_handshakes: u64,
-    total_outgoing_handshakes: u64,
+    incoming_handshakes: u64,
+    outgoing_handshakes: u64,
 }
 
 #[derive(Debug)]
@@ -695,8 +695,8 @@ impl EndpointRef {
                 driver_lost: false,
                 recv_state,
                 runtime,
-                total_incoming_handshakes: 0,
-                total_outgoing_handshakes: 0,
+                incoming_handshakes: 0,
+                outgoing_handshakes: 0,
             }),
         }))
     }
