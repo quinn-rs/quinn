@@ -43,8 +43,8 @@ mod connection;
 pub use crate::connection::{
     BytesSource, Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats,
     Datagrams, Event, FinishError, FrameStats, PathStats, ReadError, ReadableError, RecvStream,
-    RttEstimator, SendDatagramError, SendStream, StreamEvent, Streams, UdpStats, WriteError,
-    Written,
+    RttEstimator, RttEstimatorSnapshot, SendDatagramError, SendStream, StreamEvent, Streams,
+    UdpStats, WriteError, Written,
 };
 
 mod config;

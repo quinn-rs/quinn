@@ -146,6 +146,19 @@ impl PathData {
     }
 }
 
+/// A snapshot of a [`RttEstimator`] with no additional logic.
+#[derive(Debug, Copy, Clone)]
+pub struct RttEstimatorSnapshot {
+    /// The most recent RTT measurement made when receiving an ack for a previously unacked packet
+    pub latest: Duration,
+    /// The smoothed RTT of the connection, computed as described in RFC6298
+    pub smoothed: Option<Duration>,
+    /// The RTT variance, computed as described in RFC6298
+    pub var: Duration,
+    /// The minimum RTT seen in the connection, ignoring ack delay.
+    pub min: Duration,
+}
+
 /// RTT estimation for a particular network path
 #[derive(Copy, Clone)]
 pub struct RttEstimator {
@@ -185,6 +198,16 @@ impl RttEstimator {
     /// Minimum RTT registered so far for this estimator.
     pub fn min(&self) -> Duration {
         self.min
+    }
+
+    /// Get a snapshot of this RTT estimator.
+    pub fn snapshot(&self) -> RttEstimatorSnapshot {
+        RttEstimatorSnapshot {
+            latest: self.latest,
+            smoothed: self.smoothed,
+            var: self.var,
+            min: self.min,
+        }
     }
 
     // PTO computed as described in RFC9002#6.2.1

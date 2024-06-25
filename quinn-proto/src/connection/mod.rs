@@ -60,7 +60,8 @@ mod packet_crypto;
 use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
-pub use paths::RttEstimator;
+pub use paths::{RttEstimator, RttEstimatorSnapshot};
+
 use paths::{PathData, PathResponses};
 
 mod send_buffer;
@@ -1298,6 +1299,12 @@ impl Connection {
     /// Current best estimate of this connection's latency (round-trip-time)
     pub fn rtt(&self) -> Duration {
         self.path.rtt.get()
+    }
+
+    /// A snapshot of the RTT estimator, which contains information
+    /// about this connection's latency.
+    pub fn rtt_estimator_snapshot(&self) -> RttEstimatorSnapshot {
+        self.path.rtt.snapshot()
     }
 
     /// Current state of this connection's congestion controller, for debugging purposes
