@@ -341,6 +341,7 @@ impl Endpoint {
 
 // Struct for holding the stats returned from Endpoint::stats
 //
+#[non_exhaustive]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct EndpointStats {
     pub open_connections: u64,
