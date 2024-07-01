@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fmt,
     future::Future,
     io,
     io::IoSliceMut,
@@ -687,7 +688,6 @@ impl std::ops::Deref for EndpointRef {
 }
 
 /// State directly involved in handling incoming packets
-#[derive(Debug)]
 struct RecvState {
     incoming: VecDeque<proto::Incoming>,
     connections: ConnectionSet,
@@ -806,6 +806,17 @@ impl RecvState {
                 });
             }
         }
+    }
+}
+
+impl fmt::Debug for RecvState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("RecvState")
+            .field("incoming", &self.incoming)
+            .field("connections", &self.connections)
+            // recv_buf too large
+            .field("recv_limiter", &self.recv_limiter)
+            .finish_non_exhaustive()
     }
 }
 

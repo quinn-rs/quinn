@@ -5,7 +5,7 @@ use std::{
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
     sync::Arc,
-    time::{Duration, Instant},
+    time::{Duration, Instant, SystemTime},
 };
 
 use bytes::{Bytes, BytesMut};
@@ -21,7 +21,8 @@ use crate::{
     config::{ServerConfig, TransportConfig},
     crypto::{self, KeyPair, Keys, PacketKey},
     frame,
-    frame::{Close, Datagram, FrameStruct},
+    frame::{Close, Datagram, FrameStruct, NewToken},
+    new_token_store::NewTokenStore,
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -31,7 +32,7 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
         EndpointEvent, EndpointEventInner,
     },
-    token::ResetToken,
+    token::{NewTokenToken, ResetToken},
     transport_parameters::TransportParameters,
     Dir, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
     VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, TIMER_GRANULARITY,
@@ -194,7 +195,7 @@ pub struct Connection {
     error: Option<ConnectionError>,
     /// Sent in every outgoing Initial packet. Always empty for servers and after Initial keys are
     /// discarded.
-    retry_token: Bytes,
+    token: Bytes,
     /// Identifies Data-space packet numbers to skip. Not used in earlier spaces.
     packet_number_filter: PacketNumberFilter,
 
@@ -227,6 +228,9 @@ pub struct Connection {
     /// no outgoing application data.
     app_limited: bool,
 
+    new_token_store: Option<Arc<dyn NewTokenStore>>,
+    server_name: Option<String>,
+
     streams: StreamsState,
     /// Surplus remote CIDs for future use on new paths
     rem_cids: CidQueue,
@@ -258,6 +262,8 @@ impl Connection {
         allow_mtud: bool,
         rng_seed: [u8; 32],
         path_validated: bool,
+        new_token_store: Option<Arc<dyn NewTokenStore>>,
+        server_name: Option<String>,
     ) -> Self {
         let side = if server_config.is_some() {
             Side::Server
@@ -274,6 +280,16 @@ impl Connection {
             client_hello: None,
         });
         let mut rng = StdRng::from_seed(rng_seed);
+        let mut token = Bytes::new();
+        if let Some(new_token_store) = new_token_store.as_ref() {
+            if let Some(new_token) = new_token_store.take(server_name.as_ref().unwrap()) {
+                token = new_token;
+            }
+        }
+        let new_tokens_to_send = server_config
+            .as_ref()
+            .map(|sc| sc.new_tokens_sent_upon_validation)
+            .unwrap_or(0);
         let mut this = Self {
             endpoint_config,
             server_config,
@@ -286,7 +302,15 @@ impl Connection {
                 now,
                 if pref_addr_cid.is_some() { 2 } else { 1 },
             ),
-            path: PathData::new(remote, allow_mtud, None, now, path_validated, &config),
+            path: PathData::new(
+                remote,
+                allow_mtud,
+                None,
+                now,
+                path_validated,
+                &config,
+                new_tokens_to_send,
+            ),
             allow_mtud,
             local_ip,
             prev_path: None,
@@ -321,7 +345,7 @@ impl Connection {
             timers: TimerTable::default(),
             authentication_failures: 0,
             error: None,
-            retry_token: Bytes::new(),
+            token,
             #[cfg(test)]
             packet_number_filter: match config.deterministic_packet_numbers {
                 false => PacketNumberFilter::new(&mut rng),
@@ -342,6 +366,9 @@ impl Connection {
             app_limited: false,
             receiving_ecn: false,
             total_authed_packets: 0,
+
+            new_token_store,
+            server_name,
 
             streams: StreamsState::new(
                 side,
@@ -2079,7 +2106,7 @@ impl Connection {
         trace!("discarding {:?} keys", space_id);
         if space_id == SpaceId::Initial {
             // No longer needed
-            self.retry_token = Bytes::new();
+            self.token = Bytes::new();
         }
         let space = &mut self.spaces[space_id];
         space.crypto = None;
@@ -2395,7 +2422,7 @@ impl Connection {
                 self.streams.retransmit_all_for_0rtt();
 
                 let token_len = packet.payload.len() - 16;
-                self.retry_token = packet.payload.freeze().split_to(token_len);
+                self.token = packet.payload.freeze().split_to(token_len);
                 self.state = State::Handshake(state::Handshake {
                     expected_token: Bytes::new(),
                     rem_cid_set: false,
@@ -2829,15 +2856,17 @@ impl Connection {
                         self.update_rem_cid();
                     }
                 }
-                Frame::NewToken { token } => {
+                Frame::NewToken(new_token) => {
                     if self.side.is_server() {
                         return Err(TransportError::PROTOCOL_VIOLATION("client sent NEW_TOKEN"));
                     }
-                    if token.is_empty() {
+                    if new_token.token.is_empty() {
                         return Err(TransportError::FRAME_ENCODING_ERROR("empty token"));
                     }
                     trace!("got new token");
-                    // TODO: Cache, or perhaps forward to user?
+                    if let Some(new_token_store) = self.new_token_store.as_ref() {
+                        new_token_store.store(self.server_name.as_ref().unwrap(), new_token.token);
+                    }
                 }
                 Frame::Datagram(datagram) => {
                     if self
@@ -2947,6 +2976,10 @@ impl Connection {
                 now,
                 false,
                 &self.config,
+                self.server_config
+                    .as_ref()
+                    .map(|sc| sc.new_tokens_sent_upon_validation)
+                    .unwrap_or(0),
             )
         };
         new_path.challenge = Some(self.rng.gen());
@@ -3222,8 +3255,33 @@ impl Connection {
             self.datagrams.send_blocked = false;
         }
 
-        // STREAM
         if space_id == SpaceId::Data {
+            // NEW_TOKEN
+            while self.path.new_tokens_to_send > 0 {
+                let new_token = self.path.pending_new_token.take().unwrap_or_else(|| {
+                    let token = NewTokenToken {
+                        rand: self.rng.gen(),
+                        issued: SystemTime::now(),
+                    }
+                    .encode(
+                        &*self.server_config.as_ref().unwrap().token_key,
+                        &self.path.remote.ip(),
+                    );
+                    NewToken {
+                        token: token.into(),
+                    }
+                });
+
+                if buf.len() + new_token.size() >= max_size {
+                    self.path.pending_new_token = Some(new_token);
+                    break;
+                }
+
+                new_token.encode(buf);
+                self.path.new_tokens_to_send -= 1;
+            }
+
+            // STREAM
             sent.stream_frames = self.streams.write_stream_frames(buf, max_size);
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
