@@ -14,7 +14,7 @@ use std::{
 use anyhow::{anyhow, Result};
 use clap::Parser;
 use iroh_quinn as quinn;
-use proto::crypto::rustls::QuicClientConfig;
+use proto::{crypto::rustls::QuicClientConfig, TransportConfig};
 use rustls::pki_types::CertificateDer;
 use tracing::{error, info};
 use url::Url;
@@ -102,8 +102,13 @@ async fn run(options: Opt) -> Result<()> {
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
-    let client_config =
+    let mut transport = TransportConfig::default();
+    transport
+        .send_observed_address_reports(true)
+        .receive_observed_address_reports(true);
+    let mut client_config =
         quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto)?));
+    client_config.transport_config(Arc::new(transport));
     let mut endpoint = quinn::Endpoint::client(options.bind)?;
     endpoint.set_default_client_config(client_config);
 
@@ -118,6 +123,18 @@ async fn run(options: Opt) -> Result<()> {
         .await
         .map_err(|e| anyhow!("failed to connect: {}", e))?;
     eprintln!("connected at {:?}", start.elapsed());
+    let mut external_addresses = conn.observed_external_addr();
+    tokio::spawn(async move {
+        loop {
+            if let Some(new_addr) = *external_addresses.borrow_and_update() {
+                info!(%new_addr, "new external address report");
+            }
+            if external_addresses.changed().await.is_err() {
+                break;
+            }
+        }
+    });
+
     let (mut send, mut recv) = conn
         .open_bi()
         .await

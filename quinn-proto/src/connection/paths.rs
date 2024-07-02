@@ -7,7 +7,7 @@ use super::{
     pacing::Pacer,
     spaces::{PacketSpace, SentPacket},
 };
-use crate::{congestion, packet::SpaceId, TransportConfig, TIMER_GRANULARITY};
+use crate::{congestion, frame::ObservedAddr, packet::SpaceId, TransportConfig, TIMER_GRANULARITY};
 
 /// Description of a particular network path
 pub(super) struct PathData {
@@ -37,6 +37,11 @@ pub(super) struct PathData {
     /// Used in persistent congestion determination.
     pub(super) first_packet_after_rtt_sample: Option<(SpaceId, u64)>,
     pub(super) in_flight: InFlight,
+    /// Whether this path has had it's remote address reported back to the peer. This only happens
+    /// if both peers agree to so based on their transport parameters.
+    pub(super) observed_addr_sent: bool,
+    /// Observed address frame with the largest sequence number received from the peer on this path.
+    pub(super) last_observed_addr_report: Option<ObservedAddr>,
     /// Number of the first packet sent on this path
     ///
     /// Used to determine whether a packet was sent on an earlier path. Insufficient to determine if
@@ -90,10 +95,15 @@ impl PathData {
                 ),
             first_packet_after_rtt_sample: None,
             in_flight: InFlight::new(),
+            observed_addr_sent: false,
+            last_observed_addr_report: None,
             first_packet: None,
         }
     }
 
+    /// Create a new path from a previous one.
+    ///
+    /// This should only be called when migrating paths.
     pub(super) fn from_previous(remote: SocketAddr, prev: &Self, now: Instant) -> Self {
         let congestion = prev.congestion.clone_box();
         let smoothed_rtt = prev.rtt.get();
@@ -111,6 +121,8 @@ impl PathData {
             mtud: prev.mtud.clone(),
             first_packet_after_rtt_sample: prev.first_packet_after_rtt_sample,
             in_flight: InFlight::new(),
+            observed_addr_sent: false,
+            last_observed_addr_report: None,
             first_packet: None,
         }
     }
@@ -156,6 +168,37 @@ impl PathData {
         }
         self.in_flight.remove(packet);
         true
+    }
+
+    /// Updates the last observed address report received on this path.
+    ///
+    /// If the address was updated, it's returned to be informed to the application.
+    #[must_use = "updated observed address must be reported to the application"]
+    pub(super) fn update_observed_addr_report(
+        &mut self,
+        observed: ObservedAddr,
+    ) -> Option<SocketAddr> {
+        match self.last_observed_addr_report.as_mut() {
+            Some(prev) => {
+                if prev.seq_no >= observed.seq_no {
+                    // frames that do not increase the sequence number on this path are ignored
+                    None
+                } else if prev.ip == observed.ip && prev.port == observed.port {
+                    // keep track of the last seq_no but do not report the address as updated
+                    prev.seq_no = observed.seq_no;
+                    None
+                } else {
+                    let addr = observed.socket_addr();
+                    self.last_observed_addr_report = Some(observed);
+                    Some(addr)
+                }
+            }
+            None => {
+                let addr = observed.socket_addr();
+                self.last_observed_addr_report = Some(observed);
+                Some(addr)
+            }
+        }
     }
 }
 

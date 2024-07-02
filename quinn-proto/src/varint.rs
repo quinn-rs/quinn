@@ -50,6 +50,14 @@ impl VarInt {
         self.0
     }
 
+    /// Saturating integer addition. Computes self + rhs, saturating at the numeric bounds instead
+    /// of overflowing.
+    pub fn saturating_add(self, rhs: impl Into<Self>) -> Self {
+        let rhs = rhs.into();
+        let inner = self.0.saturating_add(rhs.0).min(Self::MAX.0);
+        Self(inner)
+    }
+
     /// Compute the number of bytes needed to encode this value
     pub(crate) fn size(self) -> usize {
         let x = self.0;
@@ -189,5 +197,21 @@ impl Codec for VarInt {
         } else {
             unreachable!("malformed VarInt")
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_saturating_add() {
+        // add within range behaves normally
+        let large: VarInt = u32::MAX.into();
+        let next = u64::from(u32::MAX) + 1;
+        assert_eq!(large.saturating_add(1u8), VarInt::from_u64(next).unwrap());
+
+        // outside range saturates
+        assert_eq!(VarInt::MAX.saturating_add(1u8), VarInt::MAX)
     }
 }

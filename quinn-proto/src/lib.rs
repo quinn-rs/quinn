@@ -86,6 +86,8 @@ pub use crate::cid_generator::{
 mod token;
 use token::{ResetToken, RetryToken};
 
+mod address_discovery;
+
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
 

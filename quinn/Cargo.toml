@@ -65,6 +65,7 @@ tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "macros
 tracing-subscriber = { workspace = true }
 tracing-futures = { workspace = true }
 url = { workspace = true }
+tokio-stream = "0.1.15"
 
 [[example]]
 name = "server"

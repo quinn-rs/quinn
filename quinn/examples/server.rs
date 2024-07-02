@@ -128,7 +128,10 @@ async fn run(options: Opt) -> Result<()> {
     let mut server_config =
         quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
     let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
-    transport_config.max_concurrent_uni_streams(0_u8.into());
+    transport_config
+        .max_concurrent_uni_streams(0_u8.into())
+        .send_observed_address_reports(true)
+        .receive_observed_address_reports(true);
 
     let root = Arc::<Path>::from(options.root.clone());
     if !root.exists() {
@@ -176,6 +179,21 @@ async fn handle_connection(root: Arc<Path>, conn: quinn::Incoming) -> Result<()>
             .downcast::<quinn::crypto::rustls::HandshakeData>().unwrap()
             .protocol
             .map_or_else(|| "<none>".into(), |x| String::from_utf8_lossy(&x).into_owned())
+    );
+
+    let mut external_addresses = connection.observed_external_addr();
+    tokio::spawn(
+        async move {
+            loop {
+                if let Some(new_addr) = *external_addresses.borrow_and_update() {
+                    info!(%new_addr, "new external address report");
+                }
+                if external_addresses.changed().await.is_err() {
+                    break;
+                }
+            }
+        }
+        .instrument(span.clone()),
     );
     async {
         info!("established");
