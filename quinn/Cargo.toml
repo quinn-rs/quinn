@@ -41,6 +41,7 @@ pin-project-lite = "0.2"
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.11.2", default-features = false }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
 smol = { version = "2", optional = true }
+socket2 = { workspace = true }
 thiserror = "1.0.21"
 tracing =  { workspace = true }
 tokio = { version = "1.28.1", features = ["sync"] }
