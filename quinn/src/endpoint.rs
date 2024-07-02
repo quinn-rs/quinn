@@ -71,6 +71,26 @@ impl Endpoint {
         )
     }
 
+    // Returns relevant stats from this Endpoint
+    //
+    pub fn stats(&self) -> EndpointStats {
+        let state = self.inner.state.lock().unwrap();
+        let open_connections = state.inner.open_connections() as u64;
+        let incoming_handshakes = state.incoming_handshakes;
+        let outgoing_handshakes = state.outgoing_handshakes;
+        let refused_handshakes = state.refused_handshakes;
+        let ignored_handshakes = state.ignored_handshakes;
+        let incoming_buffer_bytes = state.inner.incoming_buffer_bytes();
+        EndpointStats {
+            open_connections,
+            incoming_handshakes,
+            outgoing_handshakes,
+            refused_handshakes,
+            ignored_handshakes,
+            incoming_buffer_bytes,
+        }
+    }
+
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
     ///
     /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
@@ -204,6 +224,7 @@ impl Endpoint {
             .connect(self.runtime.now(), config, addr, server_name)?;
 
         let socket = endpoint.socket.clone();
+        endpoint.outgoing_handshakes += 1;
         Ok(endpoint
             .recv_state
             .connections
@@ -304,6 +325,18 @@ impl Endpoint {
     }
 }
 
+// Struct for holding the stats returned from Endpoint::stats
+//
+#[derive(Debug, Default, Copy, Clone)]
+pub struct EndpointStats {
+    pub open_connections: u64,
+    pub incoming_handshakes: u64,
+    pub outgoing_handshakes: u64,
+    pub refused_handshakes: u64,
+    pub ignored_handshakes: u64,
+    pub incoming_buffer_bytes: u64,
+}
+
 /// A future that drives IO on an endpoint
 ///
 /// This task functions as the switch point between the UDP socket object and the
@@ -383,6 +416,7 @@ impl EndpointInner {
             .accept(incoming, now, &mut response_buffer, server_config)
         {
             Ok((handle, conn)) => {
+                state.incoming_handshakes += 1;
                 let socket = state.socket.clone();
                 let runtime = state.runtime.clone();
                 Ok(state
@@ -401,6 +435,8 @@ impl EndpointInner {
 
     pub(crate) fn refuse(&self, incoming: proto::Incoming) {
         let mut state = self.state.lock().unwrap();
+        state.incoming_handshakes += 1;
+        state.refused_handshakes += 1;
         let mut response_buffer = Vec::new();
         let transmit = state.inner.refuse(incoming, &mut response_buffer);
         respond(transmit, &response_buffer, &*state.socket);
@@ -415,7 +451,10 @@ impl EndpointInner {
     }
 
     pub(crate) fn ignore(&self, incoming: proto::Incoming) {
-        self.state.lock().unwrap().inner.ignore(incoming);
+        let mut state = self.state.lock().unwrap();
+        state.incoming_handshakes += 1;
+        state.ignored_handshakes += 1;
+        state.inner.ignore(incoming);
     }
 }
 
@@ -434,6 +473,10 @@ pub(crate) struct State {
     ref_count: usize,
     driver_lost: bool,
     runtime: Arc<dyn Runtime>,
+    incoming_handshakes: u64,
+    outgoing_handshakes: u64,
+    refused_handshakes: u64,
+    ignored_handshakes: u64,
 }
 
 #[derive(Debug)]
@@ -651,6 +694,10 @@ impl EndpointRef {
                 driver_lost: false,
                 recv_state,
                 runtime,
+                incoming_handshakes: 0,
+                outgoing_handshakes: 0,
+                refused_handshakes: 0,
+                ignored_handshakes: 0,
             }),
         }))
     }
