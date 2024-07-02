@@ -42,7 +42,7 @@ pub struct UdpSocketState {
     gro_segments: usize,
     may_fragment: bool,
 
-    /// True if we have received EINVAL error from `sendmsg` or `sendmmsg` system call at least once.
+    /// True if we have received EINVAL error from `sendmsg` system call at least once.
     ///
     /// If enabled, we assume that old kernel is used and switch to fallback mode.
     /// In particular, we do not use IP_TOS cmsg_type in this case,
@@ -209,12 +209,12 @@ impl UdpSocketState {
         self.may_fragment
     }
 
-    /// Returns true if we previously got an EINVAL error from `sendmsg` or `sendmmsg` syscall.
+    /// Returns true if we previously got an EINVAL error from `sendmsg` syscall.
     fn sendmsg_einval(&self) -> bool {
         self.sendmsg_einval.load(Ordering::Relaxed)
     }
 
-    /// Sets the flag indicating we got EINVAL error from `sendmsg` or `sendmmsg` syscall.
+    /// Sets the flag indicating we got EINVAL error from `sendmsg` syscall.
     #[cfg(not(any(
         target_os = "macos",
         target_os = "ios",
