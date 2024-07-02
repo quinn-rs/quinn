@@ -406,7 +406,6 @@ fn echo_v4() {
 }
 
 #[test]
-#[cfg(any(target_os = "linux", target_os = "macos"))] // Dual-stack sockets aren't the default anywhere else.
 fn echo_dualstack() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
