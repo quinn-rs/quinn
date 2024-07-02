@@ -4,6 +4,7 @@ default-members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf"]
 resolver = "2"
 
 [workspace.dependencies]
+socket2 = "0.5"
 tracing = { version = "0.1.10", default-features = false, features = ["std"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
 
