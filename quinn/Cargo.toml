@@ -45,6 +45,7 @@ thiserror = "1.0.21"
 tracing =  { workspace = true }
 tokio = { version = "1.28.1", features = ["sync"] }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.5", default-features = false }
+socket2 = { workspace = true }
 
 [dev-dependencies]
 anyhow = "1.0.22"

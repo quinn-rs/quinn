@@ -20,7 +20,7 @@ log = ["tracing/log"]
 
 [dependencies]
 libc = "0.2.113"
-socket2 = "0.5"
+socket2 = { workspace = true }
 tracing = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
