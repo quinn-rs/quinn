@@ -1,5 +1,3 @@
-#![cfg(any(target_os = "linux", target_os = "windows"))]
-
 use criterion::{criterion_group, criterion_main, Criterion};
 use quinn_udp::{RecvMeta, Transmit, UdpSocketState};
 use std::cmp::min;
