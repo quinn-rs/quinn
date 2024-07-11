@@ -1,4 +1,9 @@
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "openbsd")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "openbsd",
+    target_os = "solaris",
+)))]
 use std::ptr;
 use std::{
     io::{self, IoSliceMut},
@@ -61,6 +66,7 @@ impl UdpSocketState {
             || cfg!(target_os = "macos")
             || cfg!(target_os = "ios")
             || cfg!(target_os = "android")
+            || cfg!(target_os = "solaris")
         {
             cmsg_platform_space +=
                 unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
@@ -83,7 +89,7 @@ impl UdpSocketState {
 
         // mac and ios do not support IP_RECVTOS on dual-stack sockets :(
         // older macos versions also don't have the flag and will error out if we don't ignore it
-        #[cfg(not(any(target_os = "openbsd", target_os = "netbsd")))]
+        #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
         if is_ipv4 || !io.only_v6()? {
             if let Err(err) = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
             {
@@ -136,10 +142,11 @@ impl UdpSocketState {
             target_os = "openbsd",
             target_os = "netbsd",
             target_os = "macos",
-            target_os = "ios"
+            target_os = "ios",
+            target_os = "solaris",
         ))]
         // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
-        // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS
+        // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS (the same on Solaris)
         // macOS also supports IP_PKTINFO
         {
             if is_ipv4 {
@@ -365,7 +372,12 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
     Ok(())
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "openbsd")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "openbsd",
+    target_os = "solaris",
+)))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
@@ -402,7 +414,12 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     Ok(msg_count as usize)
 }
 
-#[cfg(any(target_os = "macos", target_os = "ios", target_os = "openbsd"))]
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "openbsd",
+    target_os = "solaris",
+))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
     let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
@@ -431,7 +448,12 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
 ///
 /// It uses [`libc::syscall`] instead of [`libc::recvmmsg`]
 /// to avoid linking error on systems where libc does not contain `recvmmsg`.
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "openbsd")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "openbsd",
+    target_os = "solaris",
+)))]
 unsafe fn recvmmsg_with_fallback(
     sockfd: libc::c_int,
     msgvec: *mut libc::mmsghdr,
@@ -474,7 +496,12 @@ unsafe fn recvmmsg_with_fallback(
 /// Fallback implementation of `recvmmsg` using `recvmsg`
 /// for systems which do not support `recvmmsg`
 /// such as Linux <2.6.33.
-#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "openbsd")))]
+#[cfg(not(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "openbsd",
+    target_os = "solaris",
+)))]
 unsafe fn recvmmsg_fallback(
     sockfd: libc::c_int,
     msgvec: *mut libc::mmsghdr,
@@ -565,6 +592,7 @@ fn prepare_msg(
                     target_os = "netbsd",
                     target_os = "macos",
                     target_os = "ios",
+                    target_os = "solaris",
                 ))]
                 {
                     if encode_src_ip {
@@ -623,7 +651,7 @@ fn decode_recv(
                 ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
             },
             // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
-            #[cfg(not(any(target_os = "openbsd", target_os = "netbsd")))]
+            #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
             (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
                 ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
             },
