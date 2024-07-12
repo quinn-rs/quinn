@@ -1050,6 +1050,10 @@ impl Connection {
                 first_decode,
                 remaining,
             }) => {
+                if self.state.is_closed() {
+                    return;
+                }
+
                 // If this packet could initiate a migration and we're a client or a server that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
