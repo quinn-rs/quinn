@@ -93,7 +93,7 @@ impl FrameStats {
             Frame::Close(_) => self.connection_close += 1,
             Frame::AckFrequency(_) => self.ack_frequency += 1,
             Frame::ImmediateAck => self.immediate_ack += 1,
-            Frame::HandshakeDone => self.handshake_done += 1,
+            Frame::HandshakeDone => self.handshake_done = self.handshake_done.saturating_add(1),
         }
     }
 }
