@@ -85,8 +85,7 @@ impl Endpoint {
         )
     }
 
-    // Returns relevant stats from this Endpoint
-    //
+    /// Returns relevant stats from this Endpoint
     pub fn stats(&self) -> EndpointStats {
         let state = self.inner.state.lock().unwrap();
         let open_connections = state.inner.open_connections() as u64;
