@@ -24,21 +24,21 @@ platform-verifier = ["dep:rustls-platform-verifier"]
 log = ["tracing/log"]
 
 [dependencies]
-arbitrary = { version = "1.0.1", features = ["derive"], optional = true }
-bytes = "1"
-rustc-hash = "2"
-rand = "0.8"
-ring = { version = "0.17", optional = true }
-rustls = { version = "0.23.5", default-features = false, features = ["ring", "std"], optional = true }
-rustls-platform-verifier = { version = "0.3", optional = true }
-slab = "0.4"
-thiserror = "1.0.21"
-tinyvec = { version = "1.1", features = ["alloc"] }
+arbitrary = { workspace = true, optional = true }
+bytes = { workspace = true }
+rustc-hash = { workspace = true }
+rand = { workspace = true }
+ring = { workspace = true, optional = true }
+rustls = { workspace = true, optional = true }
+rustls-platform-verifier = { workspace = true, optional = true }
+slab = { workspace = true }
+thiserror = { workspace= true }
+tinyvec = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true }
 
 [dev-dependencies]
-assert_matches = "1.1"
-hex-literal = "0.4.0"
-rcgen = "0.13"
+assert_matches = { workspace = true }
+hex-literal = { workspace = true  }
+rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 lazy_static = "1"

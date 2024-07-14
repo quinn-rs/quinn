@@ -31,35 +31,35 @@ runtime-smol = ["async-io", "smol"]
 log = ["tracing/log", "proto/log", "udp/log"]
 
 [dependencies]
-async-io = { version = "2.0", optional = true }
-async-std = { version = "1.11", optional = true }
-bytes = "1"
+async-io = { workspace = true, optional = true }
+async-std = { workspace = true, optional = true }
+bytes = { workspace = true }
 # Enables futures::io::{AsyncRead, AsyncWrite} support for streams
-futures-io = { version = "0.3.19", optional = true }
-rustc-hash = "2"
-pin-project-lite = "0.2"
+futures-io = { workspace = true, optional = true }
+rustc-hash = { workspace = true }
+pin-project-lite = { workspace = true }
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.11.2", default-features = false }
-rustls = { version = "0.23", default-features = false, features = ["ring", "std"], optional = true }
-smol = { version = "2", optional = true }
+rustls = { workspace = true, optional = true }
+smol = { workspace = true, optional = true }
 socket2 = { workspace = true }
-thiserror = "1.0.21"
+thiserror = { workspace = true }
 tracing =  { workspace = true }
-tokio = { version = "1.28.1", features = ["sync"] }
+tokio = { workspace = true }
 udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.5", default-features = false }
 
 [dev-dependencies]
-anyhow = "1.0.22"
-crc = "3"
-bencher = "0.1.5"
-directories-next = "2"
-rand = "0.8"
-rcgen = "0.13"
-rustls-pemfile = "2"
-clap = { version = "4", features = ["derive"] }
-tokio = { version = "1.28.1", features = ["rt", "rt-multi-thread", "time", "macros", "sync"] }
+anyhow = { workspace = true }
+crc = { workspace = true }
+bencher = { workspace = true }
+directories-next = { workspace = true }
+rand = { workspace = true }
+rcgen = { workspace = true }
+rustls-pemfile = { workspace = true }
+clap = { workspace = true }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "macros"] }
 tracing-subscriber = { workspace = true }
-tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
-url = "2"
+tracing-futures = { workspace = true }
+url = { workspace = true }
 
 [[example]]
 name = "server"
