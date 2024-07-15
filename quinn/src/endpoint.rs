@@ -332,8 +332,7 @@ impl Endpoint {
     }
 }
 
-// Struct for holding the stats returned from Endpoint::stats
-//
+/// Struct for holding the stats returned from Endpoint::stats
 #[non_exhaustive]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct EndpointStats {
