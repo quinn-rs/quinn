@@ -332,15 +332,21 @@ impl Endpoint {
     }
 }
 
-/// Struct for holding the stats returned from Endpoint::stats
+/// Statistics on [Endpoint] activity
 #[non_exhaustive]
 #[derive(Debug, Default, Copy, Clone)]
 pub struct EndpointStats {
+    /// Number of open connecctions on this [Endpoint]
     pub open_connections: u64,
+    /// Cummulative number of Quic handshakes accepted by this [Endpoint]
     pub accepted_handshakes: u64,
+    /// Cummulative number of Quic handshakees sent from this [Endpoint]
     pub outgoing_handshakes: u64,
+    /// Cummulative number of Quic handshakes refused on this [Endpoint]
     pub refused_handshakes: u64,
+    /// Cummulative number of Quic handshakes ignored on this [Endpoint]
     pub ignored_handshakes: u64,
+    /// Number of bytes used in all incoming buffers on this [Endpoint]
     pub incoming_buffer_bytes: u64,
 }
 
