@@ -37,6 +37,9 @@ use std::{
     time::{Duration, Instant},
 };
 
+#[cfg(all(feature = "log", not(feature = "tracing")))]
+use log::warn;
+#[cfg(feature = "tracing")]
 use tracing::warn;
 
 #[cfg(any(unix, windows))]
@@ -126,6 +129,7 @@ const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
 ///
 /// Logging will only be performed if at least [`IO_ERROR_LOG_INTERVAL`]
 /// has elapsed since the last error was logged.
+#[cfg(any(feature = "tracing", feature = "log"))]
 fn log_sendmsg_error(
     last_send_error: &Mutex<Instant>,
     err: impl core::fmt::Debug,
@@ -140,6 +144,10 @@ fn log_sendmsg_error(
             err, transmit.destination, transmit.src_ip, transmit.ecn, transmit.contents.len(), transmit.segment_size);
     }
 }
+
+// No-op
+#[cfg(not(any(feature = "tracing", feature = "log")))]
+fn log_sendmsg_error(_: &Mutex<Instant>, _: impl core::fmt::Debug, _: &Transmit) {}
 
 /// A borrowed UDP socket
 ///
