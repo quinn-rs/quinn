@@ -13,6 +13,7 @@ use std::{
 };
 
 use socket2::SockRef;
+use tracing::{debug, error};
 
 use super::{
     cmsg, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
@@ -87,7 +88,7 @@ impl UdpSocketState {
         if is_ipv4 || !io.only_v6()? {
             if let Err(err) = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
             {
-                tracing::debug!("Ignoring error setting IP_RECVTOS on socket: {err:?}",);
+                debug!("Ignoring error setting IP_RECVTOS on socket: {err:?}",);
             }
         }
 
@@ -283,7 +284,7 @@ fn send(
                         // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
                         // may already be in the pipeline, so we need to tolerate additional failures.
                         if state.max_gso_segments() > 1 {
-                            tracing::error!("got transmit error, halting segmentation offload");
+                            error!("got transmit error, halting segmentation offload");
                             state
                                 .max_gso_segments
                                 .store(1, std::sync::atomic::Ordering::Relaxed);
