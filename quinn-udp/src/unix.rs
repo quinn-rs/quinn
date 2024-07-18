@@ -12,7 +12,10 @@ use std::{
     time::Instant,
 };
 
+#[cfg(all(feature = "direct-log", not(feature = "tracing")))]
+use log::{debug, error};
 use socket2::SockRef;
+#[cfg(feature = "tracing")]
 use tracing::{debug, error};
 
 use super::{
@@ -86,9 +89,11 @@ impl UdpSocketState {
         // older macos versions also don't have the flag and will error out if we don't ignore it
         #[cfg(not(any(target_os = "openbsd", target_os = "netbsd")))]
         if is_ipv4 || !io.only_v6()? {
+            #[allow(unused_variables)]
             if let Err(err) = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
             {
-                debug!("Ignoring error setting IP_RECVTOS on socket: {err:?}",);
+                #[cfg(any(feature = "tracing", feature = "direct-log"))]
+                debug!("Ignoring error setting IP_RECVTOS on socket: {err:?}");
             }
         }
 
@@ -284,6 +289,7 @@ fn send(
                         // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
                         // may already be in the pipeline, so we need to tolerate additional failures.
                         if state.max_gso_segments() > 1 {
+                            #[cfg(any(feature = "tracing", feature = "direct-log"))]
                             error!("got transmit error, halting segmentation offload");
                             state
                                 .max_gso_segments

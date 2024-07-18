@@ -18,6 +18,7 @@ futures-io = "0.3.19"
 hdrhistogram = { version = "7.2", default-features = false }
 hex-literal = "0.4"
 lazy_static = "1"
+log = "0.4"
 once_cell = "1.19"
 pin-project-lite = "0.2"
 rand = "0.8"
