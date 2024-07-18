@@ -14,14 +14,16 @@ workspace = ".."
 all-features = true
 
 [features]
-default = ["log"]
-# Write logs via the `log` crate when no `tracing` subscriber exists
+default = ["tracing", "log"]
+# Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 log = ["tracing/log"]
+direct-log = ["dep:log"]
 
 [dependencies]
 libc = "0.2.113"
+log = { workspace = true, optional = true }
 socket2 = { workspace = true }
-tracing = { workspace = true }
+tracing = { workspace = true, optional = true }
 
 [target.'cfg(windows)'.dependencies]
 once_cell = { workspace = true }

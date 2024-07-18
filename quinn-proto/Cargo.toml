@@ -20,7 +20,7 @@ ring = ["dep:ring"]
 # Enable rustls ring provider and direct ring usage
 # Provides `ClientConfig::with_platform_verifier()` convenience method
 platform-verifier = ["dep:rustls-platform-verifier"]
-# Write logs via the `log` crate when no `tracing` subscriber exists
+# Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 log = ["tracing/log"]
 
 [dependencies]
