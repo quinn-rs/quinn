@@ -280,6 +280,11 @@ impl Future for ConnectionDriver {
 /// automatically closed with an `error_code` of 0 and an empty `reason`. You can also close the
 /// connection explicitly by calling [`Connection::close()`].
 ///
+/// Closing the connection immediately abandons efforts to deliver data to the peer.  Upon
+/// receiving CONNECTION_CLOSE the peer *may* drop any stream data not yet delivered to the
+/// application. [`Connection::close()`] describes in more detail how to gracefully close a
+/// connection without losing application data.
+///
 /// May be cloned to obtain another handle to the same connection.
 ///
 /// [`Connection::close()`]: Connection::close
@@ -384,19 +389,35 @@ impl Connection {
 
     /// Close the connection immediately.
     ///
-    /// Pending operations will fail immediately with [`ConnectionError::LocallyClosed`]. Delivery
-    /// of data on unfinished streams is not guaranteed, so the application must call this only
-    /// when all important communications have been completed, e.g. by calling [`finish`] on
-    /// outstanding [`SendStream`]s and waiting for the resulting futures to complete.
+    /// Pending operations will fail immediately with [`ConnectionError::LocallyClosed`]. No
+    /// more data is sent to the peer and the peer may drop buffered data upon receiving
+    /// the CONNECTION_CLOSE frame.
     ///
     /// `error_code` and `reason` are not interpreted, and are provided directly to the peer.
     ///
     /// `reason` will be truncated to fit in a single packet with overhead; to improve odds that it
     /// is preserved in full, it should be kept under 1KiB.
     ///
+    /// # Gracefully closing a connection
+    ///
+    /// Only the peer last receiving application data can be certain that all data is
+    /// delivered. The only reliable action it can then take is to close the connection,
+    /// potentially with a custom error code. The delivery of the final CONNECTION_CLOSE
+    /// frame is very likely if both endpoints stay online long enough, and
+    /// [`Endpoint::wait_idle()`] can be used to provide sufficient time. Otherwise, the
+    /// remote peer will time out the connection, provided that the idle timeout is not
+    /// disabled.
+    ///
+    /// The sending side can not guarantee all stream data is delivered to the remote
+    /// application. It only knows the data is delivered to the QUIC stack of the remote
+    /// endpoint. Once the local side sends a CONNECTION_CLOSE frame in response to calling
+    /// [`close()`] the remote endpoint may drop any data it received but is as yet
+    /// undelivered to the application, including data that was acknowledged as received to
+    /// the local endpoint.
+    ///
     /// [`ConnectionError::LocallyClosed`]: crate::ConnectionError::LocallyClosed
-    /// [`finish`]: crate::SendStream::finish
-    /// [`SendStream`]: crate::SendStream
+    /// [`Endpoint::wait_idle()`]: crate::Endpoint::wait_idle
+    /// [`close()`]: Connection::close
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let conn = &mut *self.0.state.lock("close");
         conn.close(error_code, Bytes::copy_from_slice(reason), &self.0.shared);
