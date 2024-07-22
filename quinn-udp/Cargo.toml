@@ -1,6 +1,6 @@
 [package]
 name = "quinn-udp"
-version = "0.5.3"
+version = "0.6.0"
 edition = "2021"
 rust-version = "1.66"
 license = "MIT OR Apache-2.0"
@@ -14,10 +14,10 @@ workspace = ".."
 all-features = true
 
 [features]
-default = ["tracing", "log"]
+default = ["tracing", "tracing-log"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
-log = ["tracing/log"]
-direct-log = ["dep:log"]
+tracing-log = ["tracing/log"]
+log = ["dep:log"]
 
 [dependencies]
 libc = "0.2.113"

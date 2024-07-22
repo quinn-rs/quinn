@@ -14,14 +14,14 @@ workspace = ".."
 all-features = true
 
 [features]
-default = ["rustls", "log"]
+default = ["rustls", "tracing-log"]
 rustls = ["dep:rustls", "ring"]
 ring = ["dep:ring"]
 # Enable rustls ring provider and direct ring usage
 # Provides `ClientConfig::with_platform_verifier()` convenience method
 platform-verifier = ["dep:rustls-platform-verifier"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
-log = ["tracing/log"]
+tracing-log = ["tracing/log"]
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }

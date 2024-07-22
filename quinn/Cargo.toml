@@ -15,7 +15,7 @@ rust-version = "1.67"
 all-features = true
 
 [features]
-default = ["log", "platform-verifier", "ring", "runtime-tokio", "rustls"]
+default = ["tracing-log", "platform-verifier", "ring", "runtime-tokio", "rustls"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Provides `ClientConfig::with_platform_verifier()` convenience method
@@ -28,7 +28,7 @@ runtime-async-std = ["async-io", "async-std"]
 runtime-smol = ["async-io", "smol"]
 
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
-log = ["tracing/log", "proto/log", "udp/log"]
+tracing-log = ["tracing/log", "proto/tracing-log", "udp/tracing-log"]
 
 [dependencies]
 async-io = { workspace = true, optional = true }
@@ -45,7 +45,7 @@ socket2 = { workspace = true }
 thiserror = { workspace = true }
 tracing =  { workspace = true }
 tokio = { workspace = true }
-udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.5", default-features = false, features = ["tracing"] }
+udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.6", default-features = false, features = ["tracing"] }
 
 [dev-dependencies]
 anyhow = { workspace = true }
