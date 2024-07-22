@@ -15,7 +15,7 @@ rust-version.workspace = true
 [features]
 # NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
 # comment in that file for more information.
-default = ["log", "platform-verifier", "runtime-tokio", "rustls-ring", "bloom"]
+default = ["tracing-log", "platform-verifier", "runtime-tokio", "rustls-ring", "bloom"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 aws-lc-rs = ["proto/aws-lc-rs"]
 aws-lc-rs-fips = ["proto/aws-lc-rs-fips"]
@@ -39,7 +39,7 @@ runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
 runtime-smol = ["async-io", "smol"]
 
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
-log = ["tracing/log", "proto/log", "udp/log"]
+tracing-log = ["tracing/log", "proto/tracing-log", "udp/tracing-log"]
 # Enable rustls logging
 rustls-log = ["rustls?/logging"]
 # Enable qlog support
@@ -118,4 +118,4 @@ required-features = ["rustls-ring"]
 
 [package.metadata.docs.rs]
 # all non-default features except fips (cannot build on docs.rs environment)
-features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-smol", "log", "rustls-log"]
+features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-smol", "tracing-log", "rustls-log"]
