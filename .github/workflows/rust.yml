@@ -163,7 +163,7 @@ jobs:
 
       - run: cargo test --locked -p quinn-proto --target wasm32-unknown-unknown --no-run
       - run: cargo check --locked -p quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
-      - run: cargo rustc --locked -p quinn --target wasm32-unknown-unknown --no-default-features --features=log,platform-verifier,rustls-ring --crate-type=cdylib
+      - run: cargo rustc --locked -p quinn --target wasm32-unknown-unknown --no-default-features --features=tracing-log,platform-verifier,rustls-ring --crate-type=cdylib
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
