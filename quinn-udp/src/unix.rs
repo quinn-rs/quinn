@@ -13,10 +13,14 @@ use std::{
 };
 
 #[cfg(all(feature = "direct-log", not(feature = "tracing")))]
-use log::{debug, error};
+use log::debug;
+#[cfg(all(target_os = "linux", feature = "direct-log", not(feature = "tracing")))]
+use log::error;
 use socket2::SockRef;
 #[cfg(feature = "tracing")]
-use tracing::{debug, error};
+use tracing::debug;
+#[cfg(all(target_os = "linux", feature = "tracing"))]
+use tracing::error;
 
 use super::{
     cmsg, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
