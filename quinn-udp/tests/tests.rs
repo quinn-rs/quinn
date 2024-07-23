@@ -1,4 +1,4 @@
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::{
     io::IoSliceMut,
@@ -51,7 +51,7 @@ fn ecn_v6() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
 fn ecn_v4() {
     let send = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
     let recv = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
@@ -71,7 +71,7 @@ fn ecn_v4() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
 fn ecn_v6_dualstack() {
     let recv = socket2::Socket::new(
         socket2::Domain::IPV6,
@@ -114,7 +114,7 @@ fn ecn_v6_dualstack() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
 fn ecn_v4_mapped_v6() {
     let send = socket2::Socket::new(
         socket2::Domain::IPV6,
