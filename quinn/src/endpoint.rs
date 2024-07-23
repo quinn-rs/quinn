@@ -25,6 +25,7 @@ use proto::{
     EndpointEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
+#[cfg(feature = "ring")]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{futures::Notified, mpsc, Notify};
 use tracing::{Instrument, Span};
