@@ -37,11 +37,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-#[cfg(all(feature = "direct-log", not(feature = "tracing")))]
-use log::warn;
-#[cfg(feature = "tracing")]
-use tracing::warn;
-
 #[cfg(any(unix, windows))]
 mod cmsg;
 
@@ -57,6 +52,29 @@ mod imp;
 #[cfg(not(any(unix, windows)))]
 #[path = "fallback.rs"]
 mod imp;
+
+#[allow(unused_imports, unused_macros)]
+mod log {
+    #[cfg(all(feature = "direct-log", not(feature = "tracing")))]
+    pub(crate) use log::{debug, error, info, trace, warn};
+
+    #[cfg(feature = "tracing")]
+    pub(crate) use tracing::{debug, error, info, trace, warn};
+
+    #[cfg(not(any(feature = "direct-log", feature = "tracing")))]
+    mod no_op {
+        macro_rules! trace    ( ($($tt:tt)*) => {{}} );
+        macro_rules! debug    ( ($($tt:tt)*) => {{}} );
+        macro_rules! info     ( ($($tt:tt)*) => {{}} );
+        macro_rules! log_warn ( ($($tt:tt)*) => {{}} );
+        macro_rules! error    ( ($($tt:tt)*) => {{}} );
+
+        pub(crate) use {debug, error, info, log_warn as warn, trace};
+    }
+
+    #[cfg(not(any(feature = "direct-log", feature = "tracing")))]
+    pub(crate) use no_op::*;
+}
 
 pub use imp::UdpSocketState;
 
@@ -139,7 +157,7 @@ fn log_sendmsg_error(
     let last_send_error = &mut *last_send_error.lock().expect("poisend lock");
     if now.saturating_duration_since(*last_send_error) > IO_ERROR_LOG_INTERVAL {
         *last_send_error = now;
-        warn!(
+        log::warn!(
         "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, enc: {:?}, len: {:?}, segment_size: {:?} }}",
             err, transmit.destination, transmit.src_ip, transmit.ecn, transmit.contents.len(), transmit.segment_size);
     }
