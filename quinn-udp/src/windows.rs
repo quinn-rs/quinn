@@ -9,15 +9,12 @@ use std::{
 };
 
 use libc::{c_int, c_uint};
-#[cfg(all(feature = "direct-log", not(feature = "tracing")))]
-use log::{debug, error};
 use once_cell::sync::Lazy;
-#[cfg(feature = "tracing")]
-use tracing::{debug, error};
 use windows_sys::Win32::Networking::WinSock;
 
 use crate::{
     cmsg::{self, CMsgHdr},
+    log::{debug, error},
     log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
 };
 
@@ -64,7 +61,6 @@ impl UdpSocketState {
 
         // We don't support old versions of Windows that do not enable access to `WSARecvMsg()`
         if WSARECVMSG_PTR.is_none() {
-            #[cfg(any(feature = "tracing", feature = "direct-log"))]
             error!("network stack does not support WSARecvMsg function");
 
             return Err(io::Error::from(io::ErrorKind::Unsupported));
@@ -392,7 +388,6 @@ const OPTION_ON: u32 = 1;
 static WSARECVMSG_PTR: Lazy<WinSock::LPFN_WSARECVMSG> = Lazy::new(|| {
     let s = unsafe { WinSock::socket(WinSock::AF_INET as _, WinSock::SOCK_DGRAM as _, 0) };
     if s == WinSock::INVALID_SOCKET {
-        #[cfg(any(feature = "tracing", feature = "direct-log"))]
         debug!(
             "ignoring WSARecvMsg function pointer due to socket creation error: {}",
             io::Error::last_os_error()
@@ -422,13 +417,11 @@ static WSARECVMSG_PTR: Lazy<WinSock::LPFN_WSARECVMSG> = Lazy::new(|| {
     };
 
     if rc == -1 {
-        #[cfg(any(feature = "tracing", feature = "direct-log"))]
         debug!(
             "ignoring WSARecvMsg function pointer due to ioctl error: {}",
             io::Error::last_os_error()
         );
     } else if len as usize != mem::size_of::<WinSock::LPFN_WSARECVMSG>() {
-        #[cfg(any(feature = "tracing", feature = "direct-log"))]
         debug!("ignoring WSARecvMsg function pointer due to pointer size mismatch");
         wsa_recvmsg_ptr = None;
     }
