@@ -445,6 +445,18 @@ impl Header {
             VersionNegotiate { ref dst_cid, .. } => dst_cid,
         }
     }
+
+    /// Whether the payload of this packet contains QUIC frames
+    pub(crate) fn has_frames(&self) -> bool {
+        use Header::*;
+        match *self {
+            Initial(_) => true,
+            Long { .. } => true,
+            Retry { .. } => false,
+            Short { .. } => true,
+            VersionNegotiate { .. } => false,
+        }
+    }
 }
 
 pub(crate) struct PartialEncode {

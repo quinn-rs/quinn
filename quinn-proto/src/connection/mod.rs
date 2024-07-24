@@ -2301,7 +2301,10 @@ impl Connection {
             State::Established => {
                 match packet.header.space() {
                     SpaceId::Data => self.process_payload(now, remote, number.unwrap(), packet)?,
-                    _ => self.process_early_payload(now, packet)?,
+                    _ if packet.header.has_frames() => self.process_early_payload(now, packet)?,
+                    _ => {
+                        trace!("discarding unexpected pre-handshake packet");
+                    }
                 }
                 return Ok(());
             }
