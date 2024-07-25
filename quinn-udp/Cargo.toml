@@ -2,7 +2,7 @@
 name = "quinn-udp"
 version = "0.5.4"
 edition = "2021"
-rust-version = "1.70"
+rust-version.workspace = true
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
 description = "UDP sockets with ECN information for the QUIC transport protocol"
