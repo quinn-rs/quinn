@@ -47,3 +47,7 @@ debug = true
 
 [profile.release]
 debug = true
+
+[workspace.lints.rust]
+# https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
