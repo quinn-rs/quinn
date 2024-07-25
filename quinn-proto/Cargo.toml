@@ -42,3 +42,6 @@ hex-literal = { workspace = true  }
 rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 lazy_static = "1"
+
+[lints]
+workspace = true
