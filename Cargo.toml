@@ -3,6 +3,9 @@ members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf", "fuzz"]
 default-members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf"]
 resolver = "2"
 
+[workspace.package]
+rust-version = "1.70.0"
+
 [workspace.dependencies]
 anyhow = "1.0.22"
 arbitrary = { version = "1.0.1", features = ["derive"] }
