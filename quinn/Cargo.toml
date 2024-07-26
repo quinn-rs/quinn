@@ -1,14 +1,14 @@
 [package]
 name = "quinn"
 version = "0.11.2"
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/quinn-rs/quinn"
+license.workspace = true
+repository.workspace = true
 description = "Versatile QUIC transport protocol implementation"
 readme = "../README.md"
-keywords = ["quic"]
-categories = [ "network-programming", "asynchronous" ]
+keywords.workspace = true
+categories.workspace = true
 workspace = ".."
-edition = "2021"
+edition.workspace = true
 rust-version.workspace = true
 
 [package.metadata.docs.rs]

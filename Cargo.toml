@@ -5,6 +5,11 @@ resolver = "2"
 
 [workspace.package]
 rust-version = "1.70.0"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/quinn-rs/quinn"
+keywords = ["quic"]
+categories = ["network-programming", "asynchronous"]
 
 [workspace.dependencies]
 anyhow = "1.0.22"

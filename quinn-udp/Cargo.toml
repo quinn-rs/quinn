@@ -1,13 +1,13 @@
 [package]
 name = "quinn-udp"
 version = "0.5.4"
-edition = "2021"
+edition.workspace = true
 rust-version.workspace = true
-license = "MIT OR Apache-2.0"
-repository = "https://github.com/quinn-rs/quinn"
+license.workspace = true
+repository.workspace = true
 description = "UDP sockets with ECN information for the QUIC transport protocol"
-keywords = ["quic"]
-categories = ["network-programming", "asynchronous"]
+keywords.workspace = true
+categories.workspace = true
 workspace = ".."
 
 [package.metadata.docs.rs]
