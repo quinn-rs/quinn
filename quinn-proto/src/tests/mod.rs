@@ -578,6 +578,10 @@ fn zero_rtt_happypath() {
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
     );
 
@@ -613,6 +617,10 @@ fn zero_rtt_rejection() {
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Connected)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
     );
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     pair.client
@@ -654,6 +662,10 @@ fn zero_rtt_rejection() {
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Connected)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
     );
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
     let s2 = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
@@ -731,6 +743,10 @@ fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: 
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Connected)
+    );
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::HandshakeConfirmed)
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),

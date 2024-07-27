@@ -349,6 +349,22 @@ impl Connection {
         }
     }
 
+    /// Wait for the connection to enter the [`Handshake
+    /// Confirmed`](https://www.rfc-editor.org/rfc/rfc9001#name-handshake-confirmed) state
+    ///
+    /// For servers, this is the same as the time the connection becomes established. For clients,
+    /// this is the earliest time at which a client can know that the server has accepted client
+    /// authentication, typically one round-trip after the connection becomes established.
+    pub async fn handshake_confirmed(&self) -> Result<(), ConnectionError> {
+        self.0.shared.handshake_confirmed.notified().await;
+        self.0
+            .state
+            .lock("handshake_confirmed")
+            .error
+            .as_ref()
+            .map_or(Ok(()), |err| Err(err.clone()))
+    }
+
     /// Wait for the connection to be closed for any reason
     ///
     /// Despite the return type's name, closed connections are often not an error condition at the
@@ -555,7 +571,8 @@ impl Connection {
         self.0.stable_id()
     }
 
-    // Update traffic keys spontaneously for testing purposes.
+    // Update traffic keys spontaneously for testing purposes. Must not be called before the
+    // handshake is confirmed.
     #[doc(hidden)]
     pub fn force_key_update(&self) {
         self.0
@@ -927,6 +944,7 @@ pub(crate) struct Shared {
     datagram_received: Notify,
     datagrams_unblocked: Notify,
     closed: Notify,
+    handshake_confirmed: Notify,
 }
 
 pub(crate) struct State {
@@ -1084,6 +1102,9 @@ impl State {
                         wake_all(&mut self.stopped);
                     }
                 }
+                HandshakeConfirmed => {
+                    shared.handshake_confirmed.notify_waiters();
+                }
                 ConnectionLost { reason } => {
                     self.terminate(reason, shared);
                 }
@@ -1185,6 +1206,7 @@ impl State {
         shared.stream_incoming[Dir::Bi as usize].notify_waiters();
         shared.datagram_received.notify_waiters();
         shared.datagrams_unblocked.notify_waiters();
+        shared.handshake_confirmed.notify_waiters();
         if let Some(x) = self.on_connected.take() {
             let _ = x.send(false);
         }
