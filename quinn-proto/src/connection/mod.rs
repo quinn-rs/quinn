@@ -2475,6 +2475,9 @@ impl Connection {
                 }
 
                 self.events.push_back(Event::Connected);
+                if self.side.is_server() {
+                    self.events.push_back(Event::HandshakeConfirmed);
+                }
                 self.state = State::Established;
                 trace!("established");
                 Ok(())
@@ -2884,6 +2887,7 @@ impl Connection {
                         ));
                     }
                     if self.spaces[SpaceId::Handshake].crypto.is_some() {
+                        self.events.push_back(Event::HandshakeConfirmed);
                         self.discard_space(now, SpaceId::Handshake);
                     }
                 }
@@ -3726,6 +3730,8 @@ pub enum Event {
     HandshakeDataReady,
     /// The connection was successfully established
     Connected,
+    /// The handshake was [`confirmed`](https://www.rfc-editor.org/rfc/rfc9001#name-handshake-confirmed)
+    HandshakeConfirmed,
     /// The connection was lost
     ///
     /// Emitted if the peer closes the connection or an error is encountered.
