@@ -2,12 +2,15 @@
 
 extern crate proto;
 
+#[cfg(fuzzing)]
 use libfuzzer_sys::fuzz_target;
+#[cfg(fuzzing)]
 use proto::{
     fuzzing::{PacketParams, PartialDecode},
     FixedLengthConnectionIdParser, DEFAULT_SUPPORTED_VERSIONS,
 };
 
+#[cfg(fuzzing)]
 fuzz_target!(|data: PacketParams| {
     let len = data.buf.len();
     let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();

@@ -1,13 +1,19 @@
 #![no_main]
 
+#[cfg(fuzzing)]
 use arbitrary::Arbitrary;
+#[cfg(fuzzing)]
 use libfuzzer_sys::fuzz_target;
 
 extern crate proto;
+#[cfg(fuzzing)]
 use proto::fuzzing::{ConnectionState, ResetStream, Retransmits, StreamsState};
+#[cfg(fuzzing)]
 use proto::{Dir, Side, StreamId, VarInt};
+#[cfg(fuzzing)]
 use proto::{SendStream, Streams};
 
+#[cfg(fuzzing)]
 #[derive(Arbitrary, Debug)]
 struct StreamParams {
     side: Side,
@@ -19,6 +25,7 @@ struct StreamParams {
     dir: Dir,
 }
 
+#[cfg(fuzzing)]
 #[derive(Arbitrary, Debug)]
 enum Operation {
     Open,
@@ -29,6 +36,7 @@ enum Operation {
     Reset(StreamId),
 }
 
+#[cfg(fuzzing)]
 fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
     let (params, operations) = input;
     let (mut pending, conn_state) = (Retransmits::default(), ConnectionState::Established);
