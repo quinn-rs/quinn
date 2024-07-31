@@ -531,7 +531,7 @@ impl Endpoint {
 
         let incoming_idx = self.incoming_buffers.insert(IncomingBuffer::default());
         self.index
-            .insert_initial_incoming(orig_dst_cid, incoming_idx);
+            .insert_initial_incoming(header.dst_cid, incoming_idx);
 
         Some(DatagramEvent::NewConnection(Incoming {
             addresses,
