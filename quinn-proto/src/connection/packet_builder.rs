@@ -138,7 +138,9 @@ impl PacketBuilder {
                 crypto.packet.local.tag_len(),
             )
         } else if space_id == SpaceId::Data {
-            let zero_rtt = conn.zero_rtt_crypto.as_ref().unwrap();
+            let zero_rtt = conn.zero_rtt_crypto.as_ref().expect(
+                "sending packets in the application data space requires known 0-RTT or 1-RTT keys",
+            );
             (zero_rtt.header.sample_size(), zero_rtt.packet.tag_len())
         } else {
             unreachable!("tried to send {:?} packet without keys", space_id);
