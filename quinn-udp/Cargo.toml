@@ -35,6 +35,3 @@ criterion = "0.5"
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.bench]
 name = "throughput"
 harness = false
-
-[lints]
-workspace = true

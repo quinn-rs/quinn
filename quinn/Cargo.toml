@@ -85,6 +85,3 @@ required-features = ["rustls"]
 name = "bench"
 harness = false
 required-features = ["rustls"]
-
-[lints]
-workspace = true
