@@ -43,5 +43,6 @@ rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 lazy_static = "1"
 
-[lints]
-workspace = true
+[lints.rust]
+# https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
