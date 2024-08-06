@@ -345,7 +345,7 @@ impl TransportParameters {
         }
 
         if let Some(x) = self.min_ack_delay {
-            w.write_var(0xff04de1a);
+            w.write_var(0xff04de1b);
             w.write_var(x.size() as u64);
             w.write(x);
         }
@@ -412,7 +412,7 @@ impl TransportParameters {
                     0 => params.grease_quic_bit = true,
                     _ => return Err(Error::Malformed),
                 },
-                0xff04de1a => params.min_ack_delay = Some(r.get().unwrap()),
+                0xff04de1b => params.min_ack_delay = Some(r.get().unwrap()),
                 _ => {
                     macro_rules! parse {
                         {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
