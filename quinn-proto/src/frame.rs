@@ -146,7 +146,7 @@ pub(crate) enum Frame {
     ResetStream(ResetStream),
     StopSending(StopSending),
     Crypto(Crypto),
-    NewToken { token: Bytes },
+    NewToken(NewToken),
     Stream(Stream),
     MaxData(VarInt),
     MaxStreamData { id: StreamId, offset: u64 },
@@ -524,6 +524,23 @@ impl Crypto {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct NewToken {
+    pub(crate) token: Bytes,
+}
+
+impl NewToken {
+    pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
+        out.write(Type::NEW_TOKEN);
+        out.write_var(self.token.len() as u64);
+        out.put_slice(&self.token);
+    }
+
+    pub(crate) fn size(&self) -> usize {
+        1 + VarInt::from_u64(self.token.len() as u64).unwrap().size() + self.token.len()
+    }
+}
+
 pub(crate) struct Iter {
     // TODO: ditch io::Cursor after bytes 0.5
     bytes: io::Cursor<Bytes>,
@@ -675,9 +692,9 @@ impl Iter {
                 offset: self.bytes.get_var()?,
                 data: self.take_len()?,
             }),
-            Type::NEW_TOKEN => Frame::NewToken {
+            Type::NEW_TOKEN => Frame::NewToken(NewToken {
                 token: self.take_len()?,
-            },
+            }),
             Type::HANDSHAKE_DONE => Frame::HandshakeDone,
             Type::ACK_FREQUENCY => Frame::AckFrequency(AckFrequency {
                 sequence: self.bytes.get()?,

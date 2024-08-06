@@ -50,7 +50,7 @@ impl Incoming {
 
     /// Respond with a retry packet, requiring the client to retry with address validation
     ///
-    /// Errors if `remote_address_validated()` is true.
+    /// Errors if `may_retry()` is false.
     pub fn retry(mut self) -> Result<(), RetryError> {
         let state = self.0.take().unwrap();
         state.endpoint.retry(state.inner).map_err(|e| {
@@ -82,8 +82,19 @@ impl Incoming {
     ///
     /// This means that the sender of the initial packet has proved that they can receive traffic
     /// sent to `self.remote_address()`.
+    ///
+    /// If `self.remote_address_validated()` is false, `self.may_retry()` is guaranteed to be true.
+    /// The inverse is not guaranteed.
     pub fn remote_address_validated(&self) -> bool {
         self.0.as_ref().unwrap().inner.remote_address_validated()
+    }
+
+    /// Whether it is legal to respond with a retry packet
+    ///
+    /// If `self.remote_address_validated()` is false, `self.may_retry()` is guaranteed to be true.
+    /// The inverse is not guaranteed.
+    pub fn may_retry(&self) -> bool {
+        self.0.as_ref().unwrap().inner.may_retry()
     }
 }
 
@@ -105,7 +116,7 @@ struct State {
 /// Error for attempting to retry an [`Incoming`] which already bears an address
 /// validation token from a previous retry
 #[derive(Debug, Error)]
-#[error("retry() with validated Incoming")]
+#[error("retry() with Incoming already validated by retry")]
 pub struct RetryError(Incoming);
 
 impl RetryError {
