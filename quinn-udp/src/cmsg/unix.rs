@@ -20,6 +20,11 @@ impl MsgHdr for libc::msghdr {
 
     fn set_control_len(&mut self, len: usize) {
         self.msg_controllen = len as _;
+        if len == 0 {
+            // netbsd is particular about this being a NULL pointer if there are no control
+            // messages.
+            self.msg_control = std::ptr::null_mut();
+        }
     }
 
     fn control_len(&self) -> usize {

@@ -79,29 +79,48 @@ impl Connecting {
 
     /// Convert into a 0-RTT or 0.5-RTT connection at the cost of weakened security
     ///
-    /// Opens up the connection for use before the handshake finishes, allowing the API user to
-    /// send data with 0-RTT encryption if the necessary key material is available. This is useful
-    /// for reducing start-up latency by beginning transmission of application data without waiting
-    /// for the handshake's cryptographic security guarantees to be established.
+    /// Returns `Ok` immediately if the local endpoint is able to attempt sending 0/0.5-RTT data.
+    /// If so, the returned [`Connection`] can be used to send application data without waiting for
+    /// the rest of the handshake to complete, at the cost of weakened cryptographic security
+    /// guarantees. The returned [`ZeroRttAccepted`] future resolves when the handshake does
+    /// complete, at which point subsequently opened streams and written data will have full
+    /// cryptographic protection.
     ///
-    /// When the `ZeroRttAccepted` future completes, the connection has been fully established.
+    /// ## Outgoing
     ///
-    /// # Security
+    /// For outgoing connections, the initial attempt to convert to a [`Connection`] which sends
+    /// 0-RTT data will proceed if the [`crypto::ClientConfig`][crate::crypto::ClientConfig]
+    /// attempts to resume a previous TLS session. However, **the remote endpoint may not actually
+    /// _accept_ the 0-RTT data**--yet still accept the connection attempt in general. This
+    /// possibility is conveyed through the [`ZeroRttAccepted`] future--when the handshake
+    /// completes, it resolves to true if the 0-RTT data was accepted and false if it was rejected.
+    /// If it was rejected, the existence of streams opened and other application data sent prior
+    /// to the handshake completing will not be conveyed to the remote application, and local
+    /// operations on them will return `ZeroRttRejected` errors.
     ///
-    /// On outgoing connections, this enables transmission of 0-RTT data, which might be vulnerable
-    /// to replay attacks, and should therefore never invoke non-idempotent operations.
+    /// A server may reject 0-RTT data at its discretion, but accepting 0-RTT data requires the
+    /// relevant resumption state to be stored in the server, which servers may limit or lose for
+    /// various reasons including not persisting resumption state across server restarts.
     ///
-    /// On incoming connections, this enables transmission of 0.5-RTT data, which might be
-    /// intercepted by a man-in-the-middle. If this occurs, the handshake will not complete
-    /// successfully.
+    /// If manually providing a [`crypto::ClientConfig`][crate::crypto::ClientConfig], check your
+    /// implementation's docs for 0-RTT pitfalls.
     ///
-    /// # Errors
+    /// ## Incoming
     ///
-    /// Outgoing connections are only 0-RTT-capable when a cryptographic session ticket cached from
-    /// a previous connection to the same server is available, and includes a 0-RTT key. If no such
-    /// ticket is found, `self` is returned unmodified.
+    /// For incoming connections, conversion to 0.5-RTT will always fully succeed. `into_0rtt` will
+    /// always return `Ok` and the [`ZeroRttAccepted`] will always resolve to true.
     ///
-    /// For incoming connections, a 0.5-RTT connection will always be successfully constructed.
+    /// If manually providing a [`crypto::ServerConfig`][crate::crypto::ServerConfig], check your
+    /// implementation's docs for 0-RTT pitfalls.
+    ///
+    /// ## Security
+    ///
+    /// On outgoing connections, this enables transmission of 0-RTT data, which is vulnerable to
+    /// replay attacks, and should therefore never invoke non-idempotent operations.
+    ///
+    /// On incoming connections, this enables transmission of 0.5-RTT data, which may be sent
+    /// before TLS client authentication has occurred, and should therefore not be used to send
+    /// data for which client authentication is being used.
     pub fn into_0rtt(mut self) -> Result<(Connection, ZeroRttAccepted), Self> {
         // This lock borrows `self` and would normally be dropped at the end of this scope, so we'll
         // have to release it explicitly before returning `self` by value.
@@ -1095,15 +1114,18 @@ impl State {
                         // We don't care if the on-connected future was dropped
                         let _ = x.send(self.inner.accepted_0rtt());
                     }
+                    if self.inner.side().is_client() && !self.inner.accepted_0rtt() {
+                        // Wake up rejected 0-RTT streams so they can fail immediately with
+                        // `ZeroRttRejected` errors.
+                        wake_all(&mut self.blocked_writers);
+                        wake_all(&mut self.blocked_readers);
+                        wake_all(&mut self.stopped);
+                    }
                 }
                 ConnectionLost { reason } => {
                     self.terminate(reason, shared);
                 }
-                Stream(StreamEvent::Writable { id }) => {
-                    if let Some(writer) = self.blocked_writers.remove(&id) {
-                        writer.wake();
-                    }
-                }
+                Stream(StreamEvent::Writable { id }) => wake_stream(id, &mut self.blocked_writers),
                 Stream(StreamEvent::Opened { dir: Dir::Uni }) => {
                     shared.stream_incoming[Dir::Uni as usize].notify_waiters();
                 }
@@ -1116,27 +1138,15 @@ impl State {
                 DatagramsUnblocked => {
                     shared.datagrams_unblocked.notify_waiters();
                 }
-                Stream(StreamEvent::Readable { id }) => {
-                    if let Some(reader) = self.blocked_readers.remove(&id) {
-                        reader.wake();
-                    }
-                }
+                Stream(StreamEvent::Readable { id }) => wake_stream(id, &mut self.blocked_readers),
                 Stream(StreamEvent::Available { dir }) => {
                     // Might mean any number of streams are ready, so we wake up everyone
                     shared.stream_budget_available[dir as usize].notify_waiters();
                 }
-                Stream(StreamEvent::Finished { id }) => {
-                    if let Some(stopped) = self.stopped.remove(&id) {
-                        stopped.wake();
-                    }
-                }
+                Stream(StreamEvent::Finished { id }) => wake_stream(id, &mut self.stopped),
                 Stream(StreamEvent::Stopped { id, .. }) => {
-                    if let Some(stopped) = self.stopped.remove(&id) {
-                        stopped.wake();
-                    }
-                    if let Some(writer) = self.blocked_writers.remove(&id) {
-                        writer.wake();
-                    }
+                    wake_stream(id, &mut self.stopped);
+                    wake_stream(id, &mut self.blocked_writers);
                 }
             }
         }
@@ -1205,12 +1215,8 @@ impl State {
         if let Some(x) = self.on_handshake_data.take() {
             let _ = x.send(());
         }
-        for (_, writer) in self.blocked_writers.drain() {
-            writer.wake()
-        }
-        for (_, reader) in self.blocked_readers.drain() {
-            reader.wake()
-        }
+        wake_all(&mut self.blocked_writers);
+        wake_all(&mut self.blocked_readers);
         shared.stream_budget_available[Dir::Uni as usize].notify_waiters();
         shared.stream_budget_available[Dir::Bi as usize].notify_waiters();
         shared.stream_incoming[Dir::Uni as usize].notify_waiters();
@@ -1220,9 +1226,7 @@ impl State {
         if let Some(x) = self.on_connected.take() {
             let _ = x.send(false);
         }
-        for (_, waker) in self.stopped.drain() {
-            waker.wake();
-        }
+        wake_all(&mut self.stopped);
         shared.closed.notify_waiters();
     }
 
@@ -1264,6 +1268,16 @@ impl fmt::Debug for State {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
         f.debug_struct("State").field("inner", &self.inner).finish()
     }
+}
+
+fn wake_stream(stream_id: StreamId, wakers: &mut FxHashMap<StreamId, Waker>) {
+    if let Some(waker) = wakers.remove(&stream_id) {
+        waker.wake();
+    }
+}
+
+fn wake_all(wakers: &mut FxHashMap<StreamId, Waker>) {
+    wakers.drain().for_each(|(_, waker)| waker.wake())
 }
 
 /// Errors that can arise when sending a datagram

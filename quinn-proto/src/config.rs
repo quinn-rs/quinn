@@ -20,7 +20,9 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     congestion,
     crypto::{self, HandshakeTokenKey, HmacKey},
-    VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, INITIAL_MTU, MAX_UDP_PAYLOAD,
+    shared::ConnectionId,
+    RandomConnectionIdGenerator, VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS,
+    INITIAL_MTU, MAX_CID_SIZE, MAX_UDP_PAYLOAD,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -86,7 +88,7 @@ impl TransportConfig {
     /// Maximum duration of inactivity to accept before timing out the connection.
     ///
     /// The true idle timeout is the minimum of this and the peer's own max idle timeout. `None`
-    /// represents an infinite timeout.
+    /// represents an infinite timeout. Defaults to 30 seconds.
     ///
     /// **WARNING**: If a peer or its network path malfunctions or acts maliciously, an infinite
     /// idle timeout can result in permanently hung futures!
@@ -213,7 +215,9 @@ impl TransportConfig {
     /// The provided configuration will be ignored if the peer does not support the acknowledgement
     /// frequency QUIC extension.
     ///
-    /// Defaults to `None`, which disables the ACK frequency feature.
+    /// Defaults to `None`, which disables controlling the peer's acknowledgement frequency. Even
+    /// if set to `None`, the local side still supports the acknowledgement frequency QUIC
+    /// extension and may use it in other ways.
     pub fn ack_frequency_config(&mut self, value: Option<AckFrequencyConfig>) -> &mut Self {
         self.ack_frequency_config = value;
         self
@@ -330,7 +334,8 @@ impl Default for TransportConfig {
         Self {
             max_concurrent_bidi_streams: 100u32.into(),
             max_concurrent_uni_streams: 100u32.into(),
-            max_idle_timeout: Some(VarInt(10_000)),
+            // 30 second default recommended by RFC 9308 § 3.2
+            max_idle_timeout: Some(VarInt(30_000)),
             stream_receive_window: STREAM_RWND.into(),
             receive_window: VarInt::MAX,
             send_window: (8 * STREAM_RWND).into(),
@@ -625,6 +630,8 @@ pub struct EndpointConfig {
     pub(crate) grease_quic_bit: bool,
     /// Minimum interval between outgoing stateless reset packets
     pub(crate) min_reset_interval: Duration,
+    /// Optional seed to be used internally for random number generation
+    pub(crate) rng_seed: Option<[u8; 32]>,
 }
 
 impl EndpointConfig {
@@ -639,6 +646,7 @@ impl EndpointConfig {
             supported_versions: DEFAULT_SUPPORTED_VERSIONS.to_vec(),
             grease_quic_bit: true,
             min_reset_interval: Duration::from_millis(20),
+            rng_seed: None,
         }
     }
 
@@ -725,6 +733,17 @@ impl EndpointConfig {
         self.min_reset_interval = value;
         self
     }
+
+    /// Optional seed to be used internally for random number generation
+    ///
+    /// By default, quinn will initialize an endpoint's rng using a platform entropy source.
+    /// However, you can seed the rng yourself through this method (e.g. if you need to run quinn
+    /// deterministically or if you are using quinn in an environment that doesn't have a source of
+    /// entropy available).
+    pub fn rng_seed(&mut self, seed: Option<[u8; 32]>) -> &mut Self {
+        self.rng_seed = seed;
+        self
+    }
 }
 
 impl fmt::Debug for EndpointConfig {
@@ -735,6 +754,7 @@ impl fmt::Debug for EndpointConfig {
             .field("cid_generator_factory", &"[ elided ]")
             .field("supported_versions", &self.supported_versions)
             .field("grease_quic_bit", &self.grease_quic_bit)
+            .field("rng_seed", &self.rng_seed)
             .finish()
     }
 }
@@ -961,6 +981,9 @@ pub struct ClientConfig {
     /// Cryptographic configuration to use
     pub(crate) crypto: Arc<dyn crypto::ClientConfig>,
 
+    /// Provider that populates the destination connection ID of Initial Packets
+    pub(crate) initial_dst_cid_provider: Arc<dyn Fn() -> ConnectionId + Send + Sync>,
+
     /// QUIC protocol version to use
     pub(crate) version: u32,
 }
@@ -971,8 +994,27 @@ impl ClientConfig {
         Self {
             transport: Default::default(),
             crypto,
+            initial_dst_cid_provider: Arc::new(|| {
+                RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid()
+            }),
             version: 1,
         }
+    }
+
+    /// Configure how to populate the destination CID of the initial packet when attempting to
+    /// establish a new connection.
+    ///
+    /// By default, it's populated with random bytes with reasonable length, so unless you have
+    /// a good reason, you do not need to change it.
+    ///
+    /// When prefer to override the default, please note that the generated connection ID MUST be
+    /// at least 8 bytes long and unpredictable, as per section 7.2 of RFC 9000.
+    pub fn initial_dst_cid_provider(
+        &mut self,
+        initial_dst_cid_provider: Arc<dyn Fn() -> ConnectionId + Send + Sync>,
+    ) -> &mut Self {
+        self.initial_dst_cid_provider = initial_dst_cid_provider;
+        self
     }
 
     /// Set a custom [`TransportConfig`]
@@ -1014,7 +1056,7 @@ impl fmt::Debug for ClientConfig {
             .field("transport", &self.transport)
             .field("crypto", &"ClientConfig { elided }")
             .field("version", &self.version)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

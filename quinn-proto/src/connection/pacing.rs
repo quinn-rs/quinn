@@ -73,7 +73,7 @@ impl Pacer {
         }
 
         // we disable pacing for extremely large windows
-        if window > u32::max_value().into() {
+        if window > u32::MAX.into() {
             return None;
         }
 
@@ -104,7 +104,7 @@ impl Pacer {
 
         let unscaled_delay = smoothed_rtt
             .checked_mul((bytes_to_send.max(self.capacity) - self.tokens) as _)
-            .unwrap_or_else(|| Duration::new(u64::max_value(), 999_999_999))
+            .unwrap_or_else(|| Duration::new(u64::MAX, 999_999_999))
             / window;
 
         // divisions come before multiplications to prevent overflow

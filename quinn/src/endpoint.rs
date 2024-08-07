@@ -25,6 +25,8 @@ use proto::{
     EndpointEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
+#[cfg(feature = "ring")]
+use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{futures::Notified, mpsc, Notify};
 use tracing::{Instrument, Span};
 use udp::{RecvMeta, BATCH_SIZE};
@@ -54,21 +56,39 @@ impl Endpoint {
     /// address like `0.0.0.0:0` or `[::]:0`, which allow communication with any reachable IPv4 or
     /// IPv6 address respectively from an OS-assigned port.
     ///
-    /// Platform defaults for dual-stack sockets vary. For example, any socket bound to a wildcard
-    /// IPv6 address on Windows will not by default be able to communicate with IPv4
-    /// addresses. Portable applications should bind an address that matches the family they wish to
-    /// communicate within.
+    /// If an IPv6 address is provided, attempts to make the socket dual-stack so as to allow
+    /// communication with both IPv4 and IPv6 addresses. As such, calling `Endpoint::client` with
+    /// the address `[::]:0` is a reasonable default to maximize the ability to connect to other
+    /// address. For example:
+    ///
+    /// ```
+    /// quinn::Endpoint::client((std::net::Ipv6Addr::UNSPECIFIED, 0).into());
+    /// ```
+    ///
+    /// Some environments may not allow creation of dual-stack sockets, in which case an IPv6
+    /// client will only be able to connect to IPv6 servers. An IPv4 client is never dual-stack.
     #[cfg(feature = "ring")]
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
-        let socket = std::net::UdpSocket::bind(addr)?;
+        let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
+        if addr.is_ipv6() {
+            if let Err(e) = socket.set_only_v6(false) {
+                tracing::debug!(%e, "unable to make socket dual-stack");
+            }
+        }
+        socket.bind(&addr.into())?;
         let runtime = default_runtime()
             .ok_or_else(|| io::Error::new(io::ErrorKind::Other, "no async runtime found"))?;
         Self::new_with_abstract_socket(
             EndpointConfig::default(),
             None,
-            runtime.wrap_udp_socket(socket)?,
+            runtime.wrap_udp_socket(socket.into())?,
             runtime,
         )
+    }
+
+    /// Returns relevant stats from this Endpoint
+    pub fn stats(&self) -> EndpointStats {
+        self.inner.state.lock().unwrap().stats
     }
 
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
@@ -204,6 +224,7 @@ impl Endpoint {
             .connect(self.runtime.now(), config, addr, server_name)?;
 
         let socket = endpoint.socket.clone();
+        endpoint.stats.outgoing_handshakes += 1;
         Ok(endpoint
             .recv_state
             .connections
@@ -304,6 +325,20 @@ impl Endpoint {
     }
 }
 
+/// Statistics on [Endpoint] activity
+#[non_exhaustive]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct EndpointStats {
+    /// Cummulative number of Quic handshakes accepted by this [Endpoint]
+    pub accepted_handshakes: u64,
+    /// Cummulative number of Quic handshakees sent from this [Endpoint]
+    pub outgoing_handshakes: u64,
+    /// Cummulative number of Quic handshakes refused on this [Endpoint]
+    pub refused_handshakes: u64,
+    /// Cummulative number of Quic handshakes ignored on this [Endpoint]
+    pub ignored_handshakes: u64,
+}
+
 /// A future that drives IO on an endpoint
 ///
 /// This task functions as the switch point between the UDP socket object and the
@@ -383,6 +418,7 @@ impl EndpointInner {
             .accept(incoming, now, &mut response_buffer, server_config)
         {
             Ok((handle, conn)) => {
+                state.stats.accepted_handshakes += 1;
                 let socket = state.socket.clone();
                 let runtime = state.runtime.clone();
                 Ok(state
@@ -401,6 +437,7 @@ impl EndpointInner {
 
     pub(crate) fn refuse(&self, incoming: proto::Incoming) {
         let mut state = self.state.lock().unwrap();
+        state.stats.refused_handshakes += 1;
         let mut response_buffer = Vec::new();
         let transmit = state.inner.refuse(incoming, &mut response_buffer);
         respond(transmit, &response_buffer, &*state.socket);
@@ -415,7 +452,9 @@ impl EndpointInner {
     }
 
     pub(crate) fn ignore(&self, incoming: proto::Incoming) {
-        self.state.lock().unwrap().inner.ignore(incoming);
+        let mut state = self.state.lock().unwrap();
+        state.stats.ignored_handshakes += 1;
+        state.inner.ignore(incoming);
     }
 }
 
@@ -434,6 +473,7 @@ pub(crate) struct State {
     ref_count: usize,
     driver_lost: bool,
     runtime: Arc<dyn Runtime>,
+    stats: EndpointStats,
 }
 
 #[derive(Debug)]
@@ -498,6 +538,14 @@ impl State {
         }
 
         true
+    }
+}
+
+impl Drop for State {
+    fn drop(&mut self) {
+        for incoming in self.recv_state.incoming.drain(..) {
+            self.inner.ignore(incoming);
+        }
     }
 }
 
@@ -643,6 +691,7 @@ impl EndpointRef {
                 driver_lost: false,
                 recv_state,
                 runtime,
+                stats: EndpointStats::default(),
             }),
         }))
     }

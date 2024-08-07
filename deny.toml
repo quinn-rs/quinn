@@ -1,6 +1,13 @@
 [licenses]
-allow-osi-fsf-free = "either"
-copyleft = "warn"
+allow = [
+    "Apache-2.0",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "ISC",
+    "MIT",
+    "MPL-2.0",
+    "Unicode-DFS-2016",
+]
 exceptions = [{ allow = ["ISC", "MIT", "OpenSSL"], name = "ring" }]
 private = { ignore = true }
 

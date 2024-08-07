@@ -63,8 +63,8 @@ mod work_limiter;
 
 pub use proto::{
     congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream,
-    ConfigError, ConnectError, ConnectionClose, ConnectionError, EndpointConfig, IdleTimeout,
-    MtuDiscoveryConfig, ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
+    ConfigError, ConnectError, ConnectionClose, ConnectionError, ConnectionStats, EndpointConfig,
+    IdleTimeout, MtuDiscoveryConfig, ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
 };
 #[cfg(feature = "rustls")]
 pub use rustls;
@@ -76,7 +76,7 @@ pub use crate::connection::{
 };
 pub use crate::endpoint::{Accept, Endpoint};
 pub use crate::incoming::{Incoming, IncomingFuture, RetryError};
-pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream};
+pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError};
 #[cfg(feature = "runtime-async-std")]
 pub use crate::runtime::AsyncStdRuntime;
 #[cfg(feature = "runtime-smol")]

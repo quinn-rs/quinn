@@ -10,7 +10,7 @@ use std::{
 
 use crate::runtime::TokioRuntime;
 use bytes::Bytes;
-use proto::crypto::rustls::QuicClientConfig;
+use proto::{crypto::rustls::QuicClientConfig, RandomConnectionIdGenerator};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
@@ -24,7 +24,7 @@ use tracing::{error_span, info};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
-use super::{ClientConfig, Endpoint, RecvStream, SendStream, TransportConfig};
+use super::{ClientConfig, Endpoint, EndpointConfig, RecvStream, SendStream, TransportConfig};
 
 #[test]
 fn handshake_timeout() {
@@ -157,10 +157,7 @@ fn read_after_close() {
             .expect("connect");
         tokio::time::sleep_until(Instant::now() + Duration::from_millis(100)).await;
         let mut stream = new_conn.accept_uni().await.expect("incoming streams");
-        let msg = stream
-            .read_to_end(usize::max_value())
-            .await
-            .expect("read_to_end");
+        let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
         assert_eq!(msg, MSG);
     });
 }
@@ -264,11 +261,17 @@ fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
 }
 
 /// Constructs endpoints suitable for connecting to themselves and each other
-struct EndpointFactory(rcgen::CertifiedKey);
+struct EndpointFactory {
+    cert: rcgen::CertifiedKey,
+    endpoint_config: EndpointConfig,
+}
 
 impl EndpointFactory {
     fn new() -> Self {
-        Self(rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap())
+        Self {
+            cert: rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap(),
+            endpoint_config: EndpointConfig::default(),
+        }
     }
 
     fn endpoint(&self) -> Endpoint {
@@ -276,17 +279,19 @@ impl EndpointFactory {
     }
 
     fn endpoint_with_config(&self, transport_config: TransportConfig) -> Endpoint {
-        let key = PrivateKeyDer::Pkcs8(self.0.key_pair.serialize_der().into());
+        let key = PrivateKeyDer::Pkcs8(self.cert.key_pair.serialize_der().into());
         let transport_config = Arc::new(transport_config);
         let mut server_config =
-            crate::ServerConfig::with_single_cert(vec![self.0.cert.der().clone()], key).unwrap();
+            crate::ServerConfig::with_single_cert(vec![self.cert.cert.der().clone()], key).unwrap();
         server_config.transport_config(transport_config.clone());
 
         let mut roots = rustls::RootCertStore::empty();
-        roots.add(self.0.cert.der().clone()).unwrap();
-        let mut endpoint = Endpoint::server(
-            server_config,
-            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
+        roots.add(self.cert.cert.der().clone()).unwrap();
+        let mut endpoint = Endpoint::new(
+            self.endpoint_config.clone(),
+            Some(server_config),
+            UdpSocket::bind(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0)).unwrap(),
+            Arc::new(TokioRuntime),
         )
         .unwrap();
         let mut client_config = ClientConfig::with_root_certificates(Arc::new(roots)).unwrap();
@@ -312,7 +317,7 @@ async fn zero_rtt() {
             let c = connection.clone();
             tokio::spawn(async move {
                 while let Ok(mut x) = c.accept_uni().await {
-                    let msg = x.read_to_end(usize::max_value()).await.unwrap();
+                    let msg = x.read_to_end(usize::MAX).await.unwrap();
                     assert_eq!(msg, MSG0);
                 }
             });
@@ -340,18 +345,12 @@ async fn zero_rtt() {
 
     {
         let mut stream = connection.accept_uni().await.expect("incoming streams");
-        let msg = stream
-            .read_to_end(usize::max_value())
-            .await
-            .expect("read_to_end");
+        let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
         assert_eq!(msg, MSG0);
         // Read a 1-RTT message to ensure the handshake completes fully, allowing the server's
         // NewSessionTicket frame to be received.
         let mut stream = connection.accept_uni().await.expect("incoming streams");
-        let msg = stream
-            .read_to_end(usize::max_value())
-            .await
-            .expect("read_to_end");
+        let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
         assert_eq!(msg, MSG1);
         drop(connection);
     }
@@ -373,10 +372,7 @@ async fn zero_rtt() {
     });
 
     let mut stream = connection.accept_uni().await.expect("incoming streams");
-    let msg = stream
-        .read_to_end(usize::max_value())
-        .await
-        .expect("read_to_end");
+    let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
     assert_eq!(msg, MSG0);
     assert!(zero_rtt.await);
 
@@ -410,7 +406,6 @@ fn echo_v4() {
 }
 
 #[test]
-#[cfg(any(target_os = "linux", target_os = "macos"))] // Dual-stack sockets aren't the default anywhere else.
 fn echo_dualstack() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
@@ -423,7 +418,6 @@ fn echo_dualstack() {
 }
 
 #[test]
-#[cfg(not(tarpaulin))]
 fn stress_receive_window() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
@@ -436,7 +430,6 @@ fn stress_receive_window() {
 }
 
 #[test]
-#[cfg(not(tarpaulin))]
 fn stress_stream_receive_window() {
     // Note that there is no point in running this with too many streams,
     // since the window is only active within a stream.
@@ -451,7 +444,6 @@ fn stress_stream_receive_window() {
 }
 
 #[test]
-#[cfg(not(tarpaulin))]
 fn stress_both_windows() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
@@ -533,6 +525,7 @@ fn run_echo(args: EchoArgs) {
             if cfg!(target_os = "linux")
                 || cfg!(target_os = "freebsd")
                 || cfg!(target_os = "openbsd")
+                || cfg!(target_os = "netbsd")
                 || cfg!(target_os = "macos")
                 || cfg!(target_os = "windows")
             {
@@ -572,8 +565,7 @@ fn run_echo(args: EchoArgs) {
                         send.write_all(&msg).await.expect("write");
                         send.finish().unwrap();
                     };
-                    let recv_task =
-                        async { recv.read_to_end(usize::max_value()).await.expect("read") };
+                    let recv_task = async { recv.read_to_end(usize::MAX).await.expect("read") };
 
                     let (_, data) = tokio::join!(send_task, recv_task);
 
@@ -802,4 +794,55 @@ async fn two_datagram_readers() {
     );
     assert!(*a == *b"one" || *b == *b"one");
     assert!(*a == *b"two" || *b == *b"two");
+}
+
+#[tokio::test]
+async fn multiple_conns_with_zero_length_cids() {
+    let _guard = subscribe();
+    let mut factory = EndpointFactory::new();
+    factory
+        .endpoint_config
+        .cid_generator(|| Box::new(RandomConnectionIdGenerator::new(0)));
+    let server = {
+        let _guard = error_span!("server").entered();
+        factory.endpoint()
+    };
+    let server_addr = server.local_addr().unwrap();
+
+    let client1 = {
+        let _guard = error_span!("client1").entered();
+        factory.endpoint()
+    };
+    let client2 = {
+        let _guard = error_span!("client2").entered();
+        factory.endpoint()
+    };
+
+    let client1 = async move {
+        let conn = client1
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+        conn.closed().await;
+    }
+    .instrument(error_span!("client1"));
+    let client2 = async move {
+        let conn = client2
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+        conn.closed().await;
+    }
+    .instrument(error_span!("client2"));
+    let server = async move {
+        let client1 = server.accept().await.unwrap().await.unwrap();
+        let client2 = server.accept().await.unwrap().await.unwrap();
+        // Both connections are now concurrently live.
+        client1.close(42u32.into(), &[]);
+        client2.close(42u32.into(), &[]);
+    }
+    .instrument(error_span!("server"));
+    tokio::join!(client1, client2, server);
 }

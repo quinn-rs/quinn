@@ -247,7 +247,7 @@ impl RecvStream {
             stream: self,
             size_limit,
             read: Vec::new(),
-            start: u64::max_value(),
+            start: u64::MAX,
             end: 0,
         }
         .await
@@ -309,6 +309,9 @@ impl RecvStream {
                     Poll::Ready(Ok(Some(error_code)))
                 }
                 Ok(None) => {
+                    if let Some(e) = &conn.error {
+                        return Poll::Ready(Err(e.clone().into()));
+                    }
                     // Resets always notify readers, since a reset is an immediate read error. We
                     // could introduce a dedicated channel to reduce the risk of spurious wakeups,
                     // but that increased complexity is probably not justified, as an application

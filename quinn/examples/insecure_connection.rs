@@ -33,13 +33,12 @@ async fn run_server(addr: SocketAddr) {
 }
 
 async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let provider = rustls::crypto::CryptoProvider::get_default().unwrap();
     let mut endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap())?;
 
     endpoint.set_default_client_config(ClientConfig::new(Arc::new(QuicClientConfig::try_from(
         rustls::ClientConfig::builder()
             .dangerous()
-            .with_custom_certificate_verifier(SkipServerVerification::new(provider.clone()))
+            .with_custom_certificate_verifier(SkipServerVerification::new())
             .with_no_client_auth(),
     )?)));
 
@@ -64,8 +63,8 @@ async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error + Send 
 struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
 
 impl SkipServerVerification {
-    fn new(provider: Arc<rustls::crypto::CryptoProvider>) -> Arc<Self> {
-        Arc::new(Self(provider))
+    fn new() -> Arc<Self> {
+        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
     }
 }
 
