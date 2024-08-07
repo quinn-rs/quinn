@@ -18,3 +18,24 @@ The iroh-specific branches are:
 
 The default branch should be set the currently actively used branch by
 iroh.
+
+### Updating a branch
+
+To update a branch to include the upstream changes, merge the upstream
+branch.  E.g. when upstream is `main` and the current iroh branch is
+`iroh-0.11.x`:
+
+- Check which commits are new in main.
+
+  Using *magit*: `magit-cherry` (Y), from `main` to `iroh-0.11.x`
+
+- Find the commit to merge.
+
+  You probably want to find the last released commit on the `main`
+  branch, which might not be the last commit on main.  So you need to
+  find the commit hash as you can't use "main" in this case.
+
+- Merge this commit: `git merge abc123`
+
+- You can check the log and cherries again to see if the right commits
+  are left in main.
