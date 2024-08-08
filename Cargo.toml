@@ -17,6 +17,7 @@ arbitrary = { version = "1.0.1", features = ["derive"] }
 async-io = "2"
 async-std = "1.11"
 assert_matches = "1.1"
+aws-lc-rs = { version = "1.9", default-features = false }
 bencher = "0.1.5"
 bytes = "1"
 clap = { version = "4", features = ["derive"] }
@@ -33,7 +34,7 @@ rand = "0.8"
 rcgen = "0.13"
 ring = "0.17"
 rustc-hash = "2"
-rustls = { version = "0.23.5", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23.5", default-features = false, features = ["std"] }
 rustls-pemfile = "2"
 rustls-platform-verifier = "0.3"
 serde = { version = "1.0", features = ["derive"] }

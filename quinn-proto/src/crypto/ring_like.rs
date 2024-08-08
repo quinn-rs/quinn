@@ -1,3 +1,6 @@
+#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+use aws_lc_rs::{aead, error, hkdf, hmac};
+#[cfg(feature = "ring")]
 use ring::{aead, error, hkdf, hmac};
 
 use crate::crypto::{self, CryptoError};

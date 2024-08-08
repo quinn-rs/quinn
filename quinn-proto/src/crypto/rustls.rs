@@ -1,6 +1,9 @@
 use std::{any::Any, io, str, sync::Arc};
 
+#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+use aws_lc_rs::aead;
 use bytes::BytesMut;
+#[cfg(feature = "ring")]
 use ring::aead;
 pub use rustls::Error;
 use rustls::{
@@ -307,14 +310,12 @@ impl QuicClientConfig {
     }
 
     pub(crate) fn inner(verifier: Arc<dyn ServerCertVerifier>) -> rustls::ClientConfig {
-        let mut config = rustls::ClientConfig::builder_with_provider(
-            rustls::crypto::ring::default_provider().into(),
-        )
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap() // The *ring* default provider supports TLS 1.3
-        .dangerous()
-        .with_custom_certificate_verifier(verifier)
-        .with_no_client_auth();
+        let mut config = rustls::ClientConfig::builder_with_provider(configured_provider())
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap() // The default providers support TLS 1.3
+            .dangerous()
+            .with_custom_certificate_verifier(verifier)
+            .with_no_client_auth();
 
         config.enable_early_data = true;
         config
@@ -446,13 +447,11 @@ impl QuicServerConfig {
         cert_chain: Vec<CertificateDer<'static>>,
         key: PrivateKeyDer<'static>,
     ) -> Result<rustls::ServerConfig, rustls::Error> {
-        let mut inner = rustls::ServerConfig::builder_with_provider(
-            rustls::crypto::ring::default_provider().into(),
-        )
-        .with_protocol_versions(&[&rustls::version::TLS13])
-        .unwrap() // The *ring* default provider supports TLS 1.3
-        .with_no_client_auth()
-        .with_single_cert(cert_chain, key)?;
+        let mut inner = rustls::ServerConfig::builder_with_provider(configured_provider())
+            .with_protocol_versions(&[&rustls::version::TLS13])
+            .unwrap() // The *ring* default provider supports TLS 1.3
+            .with_no_client_auth()
+            .with_single_cert(cert_chain, key)?;
 
         inner.max_early_data_size = u32::MAX;
         Ok(inner)
@@ -547,6 +546,14 @@ pub(crate) fn initial_suite_from_provider(
             _ => None,
         })
         .flatten()
+}
+
+pub(crate) fn configured_provider() -> Arc<rustls::crypto::CryptoProvider> {
+    #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+    let provider = rustls::crypto::aws_lc_rs::default_provider();
+    #[cfg(feature = "ring")]
+    let provider = rustls::crypto::ring::default_provider();
+    Arc::new(provider)
 }
 
 fn to_vec(params: &TransportParameters) -> Vec<u8> {

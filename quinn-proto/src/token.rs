@@ -164,9 +164,13 @@ impl fmt::Display for ResetToken {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, any(feature = "aws-lc-rs", feature = "ring")))]
 mod test {
+    #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+    use aws_lc_rs::hkdf;
     #[cfg(feature = "ring")]
+    use ring::hkdf;
+
     #[test]
     fn token_sanity() {
         use super::*;
@@ -184,7 +188,7 @@ mod test {
         let mut master_key = [0; 64];
         rng.fill_bytes(&mut master_key);
 
-        let prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &[]).extract(&master_key);
+        let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
@@ -200,7 +204,6 @@ mod test {
         assert_eq!(token.issued, decoded.issued);
     }
 
-    #[cfg(feature = "ring")]
     #[test]
     fn invalid_token_returns_err() {
         use super::*;
@@ -214,7 +217,7 @@ mod test {
         let mut master_key = [0; 64];
         rng.fill_bytes(&mut master_key);
 
-        let prk = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &[]).extract(&master_key);
+        let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
         let addr = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();

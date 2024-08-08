@@ -1,4 +1,4 @@
-#![cfg(feature = "rustls")]
+#![cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use std::{
     convert::TryInto,
     sync::{Arc, Mutex},

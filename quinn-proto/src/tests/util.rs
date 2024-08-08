@@ -21,7 +21,7 @@ use rustls::{
 };
 use tracing::{info_span, trace};
 
-use super::crypto::rustls::{QuicClientConfig, QuicServerConfig};
+use super::crypto::rustls::{configured_provider, QuicClientConfig, QuicServerConfig};
 use super::*;
 
 pub(super) const DEFAULT_MTU: usize = 1452;
@@ -640,7 +640,7 @@ fn client_crypto_inner(
     }
 
     let mut inner = QuicClientConfig::inner(
-        WebPkiServerVerifier::builder(Arc::new(roots))
+        WebPkiServerVerifier::builder_with_provider(Arc::new(roots), configured_provider())
             .build()
             .unwrap(),
     );

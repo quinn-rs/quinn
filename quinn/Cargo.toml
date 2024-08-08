@@ -15,12 +15,19 @@ rust-version.workspace = true
 all-features = true
 
 [features]
-default = ["log", "platform-verifier", "ring", "runtime-tokio", "rustls"]
+default = ["log", "platform-verifier", "runtime-tokio", "rustls-ring"]
+# Enables `Endpoint::client` and `Endpoint::server` conveniences
+aws-lc-rs = ["proto/aws-lc-rs"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Provides `ClientConfig::with_platform_verifier()` convenience method
 platform-verifier = ["proto/platform-verifier"]
-rustls = ["dep:rustls", "proto/rustls", "proto/ring"]
+# For backwards compatibility, `rustls` forwards to `rustls-ring`
+rustls = ["rustls-ring"]
+# Enable rustls with the `aws-lc-rs` crypto provider
+rustls-aws-lc-rs = ["dep:rustls", "aws-lc-rs", "proto/rustls-aws-lc-rs", "proto/aws-lc-rs"]
+# Enable rustls with the `ring` crypto provider
+rustls-ring = ["dep:rustls", "ring", "proto/rustls-ring", "proto/ring"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
