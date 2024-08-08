@@ -1,4 +1,4 @@
-use ring::{aead, hkdf, hmac};
+use ring::{aead, error, hkdf, hmac};
 
 use crate::crypto::{self, CryptoError};
 
@@ -31,8 +31,8 @@ impl crypto::HandshakeTokenKey for hkdf::Prk {
 
 impl crypto::AeadKey for aead::LessSafeKey {
     fn seal(&self, data: &mut Vec<u8>, additional_data: &[u8]) -> Result<(), CryptoError> {
-        let aad = ring::aead::Aad::from(additional_data);
-        let zero_nonce = ring::aead::Nonce::assume_unique_for_key([0u8; 12]);
+        let aad = aead::Aad::from(additional_data);
+        let zero_nonce = aead::Nonce::assume_unique_for_key([0u8; 12]);
         Ok(self.seal_in_place_append_tag(zero_nonce, aad, data)?)
     }
 
@@ -41,14 +41,14 @@ impl crypto::AeadKey for aead::LessSafeKey {
         data: &'a mut [u8],
         additional_data: &[u8],
     ) -> Result<&'a mut [u8], CryptoError> {
-        let aad = ring::aead::Aad::from(additional_data);
-        let zero_nonce = ring::aead::Nonce::assume_unique_for_key([0u8; 12]);
+        let aad = aead::Aad::from(additional_data);
+        let zero_nonce = aead::Nonce::assume_unique_for_key([0u8; 12]);
         Ok(self.open_in_place(zero_nonce, aad, data)?)
     }
 }
 
-impl From<ring::error::Unspecified> for CryptoError {
-    fn from(_: ring::error::Unspecified) -> Self {
+impl From<error::Unspecified> for CryptoError {
+    fn from(_: error::Unspecified) -> Self {
         Self
     }
 }
