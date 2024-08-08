@@ -14,8 +14,14 @@ workspace = ".."
 all-features = true
 
 [features]
-default = ["rustls", "log"]
-rustls = ["dep:rustls", "ring"]
+default = ["rustls-ring", "log"]
+aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs/aws-lc-sys", "aws-lc-rs/prebuilt-nasm"]
+# For backwards compatibility, `rustls` forwards to `rustls-ring`
+rustls = ["rustls-ring"]
+# Enable rustls with the `aws-lc-rs` crypto provider
+rustls-aws-lc-rs = ["dep:rustls", "rustls/aws-lc-rs", "aws-lc-rs"]
+# Enable rustls with the `ring` crypto provider
+rustls-ring = ["dep:rustls", "rustls/ring", "ring"]
 ring = ["dep:ring"]
 # Enable rustls ring provider and direct ring usage
 # Provides `ClientConfig::with_platform_verifier()` convenience method
@@ -25,6 +31,7 @@ log = ["tracing/log"]
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
 bytes = { workspace = true }
 rustc-hash = { workspace = true }
 rand = { workspace = true }
@@ -32,7 +39,7 @@ ring = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 slab = { workspace = true }
-thiserror = { workspace= true }
+thiserror = { workspace = true }
 tinyvec = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true }
 

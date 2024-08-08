@@ -7,9 +7,12 @@ use std::{
 };
 
 use assert_matches::assert_matches;
+#[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+use aws_lc_rs::hmac;
 use bytes::{Bytes, BytesMut};
 use hex_literal::hex;
 use rand::RngCore;
+#[cfg(feature = "ring")]
 use ring::hmac;
 use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},

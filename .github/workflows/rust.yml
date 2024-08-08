@@ -55,6 +55,16 @@ jobs:
       - run: cargo test --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust }} == "stable"
 
+  test-aws-lc-rs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Prevent feature unification from selecting *ring* as the crypto provider
+      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs
+      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs,runtime-tokio
+
   msrv:
     runs-on: ubuntu-latest
     steps:
