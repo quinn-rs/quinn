@@ -16,11 +16,14 @@ all-features = true
 
 [features]
 default = ["log", "platform-verifier", "ring", "runtime-tokio", "rustls"]
+aws-lc-rs = ["proto/aws-lc-rs"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Provides `ClientConfig::with_platform_verifier()` convenience method
 platform-verifier = ["proto/platform-verifier"]
-rustls = ["dep:rustls", "proto/rustls", "proto/ring"]
+rustls = ["rustls-ring"]
+rustls-aws-lc-rs = ["dep:rustls", "proto/rustls-aws-lc-rs", "proto/aws-lc-rs"]
+rustls-ring = ["dep:rustls", "proto/rustls-ring", "proto/ring"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]

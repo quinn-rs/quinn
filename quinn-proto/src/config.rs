@@ -6,8 +6,6 @@ use std::{
     time::Duration,
 };
 
-#[cfg(feature = "ring")]
-use rand::RngCore;
 #[cfg(feature = "rustls")]
 use rustls::client::WebPkiServerVerifier;
 #[cfg(feature = "rustls")]
@@ -759,16 +757,19 @@ impl fmt::Debug for EndpointConfig {
     }
 }
 
-#[cfg(feature = "ring")]
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 impl Default for EndpointConfig {
     fn default() -> Self {
+        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+        use aws_lc_rs::hmac;
+        use rand::RngCore;
+        #[cfg(feature = "ring")]
+        use ring::hmac;
+
         let mut reset_key = [0; 64];
         rand::thread_rng().fill_bytes(&mut reset_key);
 
-        Self::new(Arc::new(ring::hmac::Key::new(
-            ring::hmac::HMAC_SHA256,
-            &reset_key,
-        )))
+        Self::new(Arc::new(hmac::Key::new(hmac::HMAC_SHA256, &reset_key)))
     }
 }
 
@@ -934,16 +935,22 @@ impl ServerConfig {
     }
 }
 
-#[cfg(feature = "ring")]
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 impl ServerConfig {
     /// Create a server config with the given [`crypto::ServerConfig`]
     ///
     /// Uses a randomized handshake token key.
     pub fn with_crypto(crypto: Arc<dyn crypto::ServerConfig>) -> Self {
+        #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
+        use aws_lc_rs::hkdf;
+        use rand::RngCore;
+        #[cfg(feature = "ring")]
+        use ring::hkdf;
+
         let rng = &mut rand::thread_rng();
         let mut master_key = [0u8; 64];
         rng.fill_bytes(&mut master_key);
-        let master_key = ring::hkdf::Salt::new(ring::hkdf::HKDF_SHA256, &[]).extract(&master_key);
+        let master_key = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
         Self::new(crypto, Arc::new(master_key))
     }

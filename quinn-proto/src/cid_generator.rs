@@ -171,7 +171,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "ring")]
     fn validate_keyed_cid() {
         let mut generator = HashedConnectionIdGenerator::new();
         let cid = generator.generate_cid();

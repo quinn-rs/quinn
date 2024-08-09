@@ -18,8 +18,8 @@ use crate::{
 };
 
 /// Cryptography interface based on *ring*
-#[cfg(feature = "ring")]
-pub(crate) mod ring;
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+pub(crate) mod ring_like;
 /// TLS interface based on rustls
 #[cfg(feature = "rustls")]
 pub mod rustls;
