@@ -447,7 +447,11 @@ unsafe fn recvmmsg_with_fallback(
     let flags = 0;
     let timeout = ptr::null_mut::<libc::timespec>();
 
-    #[cfg(not(any(target_os = "freebsd", target_os = "netbsd")))]
+    #[cfg(not(any(
+        target_os = "freebsd",
+        target_os = "netbsd",
+        all(target_os = "android", target_arch = "x86")
+    )))]
     {
         let ret =
             libc::syscall(libc::SYS_recvmmsg, sockfd, msgvec, vlen, flags, timeout) as libc::c_int;
@@ -462,6 +466,19 @@ unsafe fn recvmmsg_with_fallback(
     {
         #[cfg(target_os = "freebsd")]
         let vlen = vlen as usize;
+        let ret = libc::recvmmsg(sockfd, msgvec, vlen, flags, timeout) as libc::c_int;
+        if ret != -1 {
+            return ret;
+        }
+    }
+
+    // On Android x86 seccomp only allows `recvmmsg` dispatched through
+    // `socketcall`. The bionic libc implementation automatically dispatches
+    // `recvmmsg` through `socketcall` when calling `libc::recvmmsg`. Calling
+    // `SYS-recvmmsg` directly (i.e. `syscall(SYS_recvmmsg)`) does not dispatch
+    // through `socketcall` and is thus disallowed by seccomp.
+    #[cfg(all(target_os = "android", target_arch = "x86"))]
+    {
         let ret = libc::recvmmsg(sockfd, msgvec, vlen, flags, timeout) as libc::c_int;
         if ret != -1 {
             return ret;
