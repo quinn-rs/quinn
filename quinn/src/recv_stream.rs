@@ -499,9 +499,38 @@ impl Drop for RecvStream {
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
             return;
         }
-        if !self.all_data_read {
+
+        let mut stream = conn.inner.recv_stream(self.stream);
+
+        /// Read remaining data before deciding to send STOP_SENDING stream
+        fn really_all_data_read(stream: &mut proto::RecvStream) -> bool {
+            // read to all remaining data
+            let chunks = stream.read(true);
+            match chunks {
+                Ok(mut chunks) => {
+                    let status: ReadStatus<_> = loop {
+                        match chunks.next(usize::MAX) {
+                            // Ignore data, user dropped stream
+                            Ok(Some(_)) => (),
+                            res => break (Option::<Chunk>::None, res.err()).into(),
+                        }
+                    };
+
+                    let _ = chunks.finalize();
+                    match status {
+                        ReadStatus::Readable(_) => false,
+                        ReadStatus::Finished(_) => true,
+                        ReadStatus::Failed(_, proto::ReadError::Blocked) => false,
+                        ReadStatus::Failed(_, proto::ReadError::Reset(_)) => true,
+                    }
+                }
+                Err(_) => false,
+            }
+        }
+
+        if !self.all_data_read && !really_all_data_read(&mut stream) {
             // Ignore ClosedStream errors
-            let _ = conn.inner.recv_stream(self.stream).stop(0u32.into());
+            let _ = stream.stop(0u32.into());
             conn.wake();
         }
     }
