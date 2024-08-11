@@ -30,6 +30,8 @@ runtime-smol = ["async-io", "smol"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 log = ["tracing/log", "proto/log", "udp/log"]
 
+futures-io = ["dep:futures-io"]
+
 [dependencies]
 async-io = { workspace = true, optional = true }
 async-std = { workspace = true, optional = true }
@@ -43,9 +45,11 @@ rustls = { workspace = true, optional = true }
 smol = { workspace = true, optional = true }
 socket2 = { workspace = true }
 thiserror = { workspace = true }
-tracing =  { workspace = true }
+tracing = { workspace = true }
 tokio = { workspace = true }
-udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.5", default-features = false, features = ["tracing"] }
+udp = { package = "quinn-udp", path = "../quinn-udp", version = "0.5", default-features = false, features = [
+    "tracing",
+] }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -56,7 +60,12 @@ rand = { workspace = true }
 rcgen = { workspace = true }
 rustls-pemfile = { workspace = true }
 clap = { workspace = true }
-tokio = { workspace = true, features = ["rt", "rt-multi-thread", "time", "macros"] }
+tokio = { workspace = true, features = [
+    "rt",
+    "rt-multi-thread",
+    "time",
+    "macros",
+] }
 tracing-subscriber = { workspace = true }
 tracing-futures = { workspace = true }
 url = { workspace = true }
