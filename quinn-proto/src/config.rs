@@ -88,7 +88,7 @@ impl TransportConfig {
     /// Maximum duration of inactivity to accept before timing out the connection.
     ///
     /// The true idle timeout is the minimum of this and the peer's own max idle timeout. `None`
-    /// represents an infinite timeout.
+    /// represents an infinite timeout. Defaults to 30 seconds.
     ///
     /// **WARNING**: If a peer or its network path malfunctions or acts maliciously, an infinite
     /// idle timeout can result in permanently hung futures!
@@ -334,7 +334,8 @@ impl Default for TransportConfig {
         Self {
             max_concurrent_bidi_streams: 100u32.into(),
             max_concurrent_uni_streams: 100u32.into(),
-            max_idle_timeout: Some(VarInt(10_000)),
+            // 30 second default recommended by RFC 9308 § 3.2
+            max_idle_timeout: Some(VarInt(30_000)),
             stream_receive_window: STREAM_RWND.into(),
             receive_window: VarInt::MAX,
             send_window: (8 * STREAM_RWND).into(),

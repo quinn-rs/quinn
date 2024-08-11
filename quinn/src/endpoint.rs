@@ -25,6 +25,7 @@ use proto::{
     EndpointEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
+#[cfg(feature = "ring")]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{futures::Notified, mpsc, Notify};
 use tracing::{Instrument, Span};
@@ -83,6 +84,11 @@ impl Endpoint {
             runtime.wrap_udp_socket(socket.into())?,
             runtime,
         )
+    }
+
+    /// Returns relevant stats from this Endpoint
+    pub fn stats(&self) -> EndpointStats {
+        self.inner.state.lock().unwrap().stats
     }
 
     /// Helper to construct an endpoint for use with both incoming and outgoing connections
@@ -218,6 +224,7 @@ impl Endpoint {
             .connect(self.runtime.now(), config, addr, server_name)?;
 
         let socket = endpoint.socket.clone();
+        endpoint.stats.outgoing_handshakes += 1;
         Ok(endpoint
             .recv_state
             .connections
@@ -318,6 +325,20 @@ impl Endpoint {
     }
 }
 
+/// Statistics on [Endpoint] activity
+#[non_exhaustive]
+#[derive(Debug, Default, Copy, Clone)]
+pub struct EndpointStats {
+    /// Cummulative number of Quic handshakes accepted by this [Endpoint]
+    pub accepted_handshakes: u64,
+    /// Cummulative number of Quic handshakees sent from this [Endpoint]
+    pub outgoing_handshakes: u64,
+    /// Cummulative number of Quic handshakes refused on this [Endpoint]
+    pub refused_handshakes: u64,
+    /// Cummulative number of Quic handshakes ignored on this [Endpoint]
+    pub ignored_handshakes: u64,
+}
+
 /// A future that drives IO on an endpoint
 ///
 /// This task functions as the switch point between the UDP socket object and the
@@ -397,6 +418,7 @@ impl EndpointInner {
             .accept(incoming, now, &mut response_buffer, server_config)
         {
             Ok((handle, conn)) => {
+                state.stats.accepted_handshakes += 1;
                 let socket = state.socket.clone();
                 let runtime = state.runtime.clone();
                 Ok(state
@@ -415,6 +437,7 @@ impl EndpointInner {
 
     pub(crate) fn refuse(&self, incoming: proto::Incoming) {
         let mut state = self.state.lock().unwrap();
+        state.stats.refused_handshakes += 1;
         let mut response_buffer = Vec::new();
         let transmit = state.inner.refuse(incoming, &mut response_buffer);
         respond(transmit, &response_buffer, &*state.socket);
@@ -429,7 +452,9 @@ impl EndpointInner {
     }
 
     pub(crate) fn ignore(&self, incoming: proto::Incoming) {
-        self.state.lock().unwrap().inner.ignore(incoming);
+        let mut state = self.state.lock().unwrap();
+        state.stats.ignored_handshakes += 1;
+        state.inner.ignore(incoming);
     }
 }
 
@@ -448,6 +473,7 @@ pub(crate) struct State {
     ref_count: usize,
     driver_lost: bool,
     runtime: Arc<dyn Runtime>,
+    stats: EndpointStats,
 }
 
 #[derive(Debug)]
@@ -665,6 +691,7 @@ impl EndpointRef {
                 driver_lost: false,
                 recv_state,
                 runtime,
+                stats: EndpointStats::default(),
             }),
         }))
     }

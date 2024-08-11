@@ -15,7 +15,8 @@ use std::{
 use socket2::SockRef;
 
 use super::{
-    cmsg, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
+    cmsg, log::debug, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef,
+    IO_ERROR_LOG_INTERVAL,
 };
 
 // Defined in netinet6/in6.h on OpenBSD, this is not yet exported by the libc crate
@@ -85,9 +86,10 @@ impl UdpSocketState {
         // older macos versions also don't have the flag and will error out if we don't ignore it
         #[cfg(not(any(target_os = "openbsd", target_os = "netbsd")))]
         if is_ipv4 || !io.only_v6()? {
-            if let Err(err) = set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
+            if let Err(_err) =
+                set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
             {
-                tracing::debug!("Ignoring error setting IP_RECVTOS on socket: {err:?}",);
+                debug!("Ignoring error setting IP_RECVTOS on socket: {_err:?}");
             }
         }
 
@@ -283,7 +285,7 @@ fn send(
                         // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
                         // may already be in the pipeline, so we need to tolerate additional failures.
                         if state.max_gso_segments() > 1 {
-                            tracing::error!("got transmit error, halting segmentation offload");
+                            crate::log::error!("got transmit error, halting segmentation offload");
                             state
                                 .max_gso_segments
                                 .store(1, std::sync::atomic::Ordering::Relaxed);

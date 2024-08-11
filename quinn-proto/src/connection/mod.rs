@@ -1907,21 +1907,6 @@ impl Connection {
         if let Some(data) = remaining {
             self.handle_coalesced(now, remote, ecn, data);
         }
-
-        if self.highest_space == SpaceId::Initial && self.state.is_handshake() {
-            // "The first packet sent by a client always includes a CRYPTO frame that contains the
-            // start or all of the first cryptographic handshake message. The first CRYPTO frame
-            // sent always begins at an offset of 0; see Section 7."
-            // https://www.rfc-editor.org/rfc/rfc9000.html#section-17.2.2
-            let space = &self.spaces[SpaceId::Initial];
-            if space.crypto_stream.bytes_read() == 0 {
-                return Err(TransportError::PROTOCOL_VIOLATION(
-                    "received initial packet without CRYPTO frames",
-                )
-                .into());
-            }
-        }
-
         Ok(())
     }
 
@@ -2301,7 +2286,10 @@ impl Connection {
             State::Established => {
                 match packet.header.space() {
                     SpaceId::Data => self.process_payload(now, remote, number.unwrap(), packet)?,
-                    _ => self.process_early_payload(now, packet)?,
+                    _ if packet.header.has_frames() => self.process_early_payload(now, packet)?,
+                    _ => {
+                        trace!("discarding unexpected pre-handshake packet");
+                    }
                 }
                 return Ok(());
             }

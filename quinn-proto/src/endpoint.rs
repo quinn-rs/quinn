@@ -531,7 +531,7 @@ impl Endpoint {
 
         let incoming_idx = self.incoming_buffers.insert(IncomingBuffer::default());
         self.index
-            .insert_initial_incoming(orig_dst_cid, incoming_idx);
+            .insert_initial_incoming(header.dst_cid, incoming_idx);
 
         Some(DatagramEvent::NewConnection(Incoming {
             addresses,
@@ -918,6 +918,12 @@ impl Endpoint {
     /// Number of connections that are currently open
     pub fn open_connections(&self) -> usize {
         self.connections.len()
+    }
+
+    /// Counter for the number of bytes currently used
+    /// in the buffers for Initial and 0-RTT messages for pending incoming connections
+    pub fn incoming_buffer_bytes(&self) -> u64 {
+        self.all_incoming_buffers_total_bytes
     }
 
     #[cfg(test)]

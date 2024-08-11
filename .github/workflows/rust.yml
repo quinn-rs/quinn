@@ -4,6 +4,7 @@ on:
   push:
     branches: ['main', '0.8.x']
   pull_request:
+  merge_group:
   schedule:
     - cron: "21 3 * * 5"
 
@@ -58,7 +59,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@1.66.0
+      - uses: dtolnay/rust-toolchain@1.70.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --lib --all-features -p quinn-udp -p quinn-proto -p quinn
 
@@ -89,4 +90,4 @@ jobs:
     runs-on: ubuntu-latest
     steps:
     - uses: actions/checkout@v4
-    - uses: EmbarkStudios/cargo-deny-action@v1
+    - uses: EmbarkStudios/cargo-deny-action@v2
