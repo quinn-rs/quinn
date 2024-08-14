@@ -395,10 +395,12 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     }
     let msg_count = loop {
         let n = unsafe {
-            recvmmsg_with_fallback(
+            libc::recvmmsg(
                 io.as_raw_fd(),
                 hdrs.as_mut_ptr(),
                 bufs.len().min(BATCH_SIZE) as _,
+                0,
+                ptr::null_mut::<libc::timespec>(),
             )
         };
         if n == -1 {
@@ -443,86 +445,6 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     };
     meta[0] = decode_recv(&name, &hdr, n as usize);
     Ok(1)
-}
-
-/// Implementation of `recvmmsg` with a fallback
-/// to `recvmsg` if syscall is not available.
-///
-/// It uses [`libc::syscall`] instead of [`libc::recvmmsg`]
-/// to avoid linking error on systems where libc does not contain `recvmmsg`.
-#[cfg(not(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "openbsd",
-    target_os = "solaris",
-)))]
-unsafe fn recvmmsg_with_fallback(
-    sockfd: libc::c_int,
-    msgvec: *mut libc::mmsghdr,
-    vlen: libc::c_uint,
-) -> libc::c_int {
-    let flags = 0;
-    let timeout = ptr::null_mut::<libc::timespec>();
-
-    #[cfg(not(any(target_os = "freebsd", target_os = "netbsd")))]
-    {
-        let ret =
-            libc::syscall(libc::SYS_recvmmsg, sockfd, msgvec, vlen, flags, timeout) as libc::c_int;
-        if ret != -1 {
-            return ret;
-        }
-    }
-
-    // libc on FreeBSD and NetBSD implement `recvmmsg` as a high-level abstraction over
-    // `recvmsg`, thus `SYS_recvmmsg` constant and direct system call do not exist
-    #[cfg(any(target_os = "freebsd", target_os = "netbsd"))]
-    {
-        #[cfg(target_os = "freebsd")]
-        let vlen = vlen as usize;
-        let ret = libc::recvmmsg(sockfd, msgvec, vlen, flags, timeout) as libc::c_int;
-        if ret != -1 {
-            return ret;
-        }
-    }
-
-    let e = io::Error::last_os_error();
-    match e.raw_os_error() {
-        Some(libc::ENOSYS) => {
-            // Fallback to `recvmsg`.
-            recvmmsg_fallback(sockfd, msgvec, vlen)
-        }
-        _ => -1,
-    }
-}
-
-/// Fallback implementation of `recvmmsg` using `recvmsg`
-/// for systems which do not support `recvmmsg`
-/// such as Linux <2.6.33.
-#[cfg(not(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "openbsd",
-    target_os = "solaris",
-)))]
-unsafe fn recvmmsg_fallback(
-    sockfd: libc::c_int,
-    msgvec: *mut libc::mmsghdr,
-    vlen: libc::c_uint,
-) -> libc::c_int {
-    let flags = 0;
-    if vlen == 0 {
-        return 0;
-    }
-
-    let n = libc::recvmsg(sockfd, &mut (*msgvec).msg_hdr, flags);
-    if n == -1 {
-        -1
-    } else {
-        // type of `msg_len` field differs on Linux and FreeBSD,
-        // it is up to the compiler to infer and cast `n` to correct type
-        (*msgvec).msg_len = n as _;
-        1
-    }
 }
 
 const CMSG_LEN: usize = 88;
