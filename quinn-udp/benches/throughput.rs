@@ -1,5 +1,5 @@
 use criterion::{criterion_group, criterion_main, Criterion};
-use quinn_udp::{RecvMeta, Transmit, UdpSocketState};
+use iroh_quinn_udp::{RecvMeta, Transmit, UdpSocketState};
 use std::cmp::min;
 use std::{io::IoSliceMut, net::UdpSocket, slice};
 

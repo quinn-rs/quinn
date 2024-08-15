@@ -47,6 +47,11 @@ tracing =  { workspace = true }
 tokio = { workspace = true }
 udp = { package = "iroh-quinn-udp", path = "../quinn-udp", version = "0.5", default-features = false, features = ["tracing"] }
 
+# Fix minimal dependencies for indirect deps
+async-global-executor = { workspace = true, optional = true }
+async-fs = { workspace = true, optional = true }
+async-executor = { workspace = true, optional = true }
+
 [dev-dependencies]
 anyhow = { workspace = true }
 crc = { workspace = true }
