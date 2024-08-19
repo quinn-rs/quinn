@@ -118,7 +118,7 @@ jobs:
         java-version: '21'
 
     - name: Install Android SDK
-      uses: android-actions/setup-android@v2
+      uses: android-actions/setup-android@v3
 
     - name: Install Android NDK
       run: sdkmanager --install "ndk;25.2.9519653"
