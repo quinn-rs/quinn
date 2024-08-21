@@ -15,7 +15,7 @@ use windows_sys::Win32::Networking::WinSock;
 use crate::{
     cmsg::{self, CMsgHdr},
     log::{debug, error},
-    log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
+    EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
 };
 
 /// QUIC-friendly UDP socket for Windows
@@ -212,18 +212,7 @@ impl UdpSocketState {
         };
 
         if rc != 0 {
-            let e = io::Error::last_os_error();
-            if e.kind() == io::ErrorKind::WouldBlock {
-                return Err(e);
-            }
-
-            // Other errors are ignored, since they will usually be handled
-            // by higher level retransmits and timeouts.
-            // - PermissionDenied errors have been observed due to iptable rules.
-            //   Those are not fatal errors, since the
-            //   configuration can be dynamically changed.
-            // - Destination unreachable errors have been observed for other
-            log_sendmsg_error(&self.last_send_error, e, transmit);
+            return Err(io::Error::last_os_error());
         }
         Ok(())
     }

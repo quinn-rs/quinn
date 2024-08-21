@@ -20,8 +20,7 @@ use std::{
 use socket2::SockRef;
 
 use super::{
-    cmsg, log::debug, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef,
-    IO_ERROR_LOG_INTERVAL,
+    cmsg, log::debug, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
 };
 
 // Defined in netinet6/in6.h on OpenBSD, this is not yet exported by the libc crate
@@ -305,19 +304,7 @@ fn send(
                         state.set_sendmsg_einval();
                     }
 
-                    // Other errors are ignored, since they will usually be handled
-                    // by higher level retransmits and timeouts.
-                    // - PermissionDenied errors have been observed due to iptable rules.
-                    //   Those are not fatal errors, since the
-                    //   configuration can be dynamically changed.
-                    // - Destination unreachable errors have been observed for other
-                    // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
-                    //   these by automatically clamping the MTUD upper bound to the interface MTU.
-                    if e.raw_os_error() != Some(libc::EMSGSIZE) {
-                        log_sendmsg_error(&state.last_send_error, e, transmit);
-                    }
-
-                    return Ok(());
+                    return Err(e);
                 }
             }
         }
@@ -355,20 +342,7 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
             io::ErrorKind::Interrupted => {
                 // Retry the transmission
             }
-            io::ErrorKind::WouldBlock => return Err(e),
-            _ => {
-                // Other errors are ignored, since they will usually be handled
-                // by higher level retransmits and timeouts.
-                // - PermissionDenied errors have been observed due to iptable rules.
-                //   Those are not fatal errors, since the
-                //   configuration can be dynamically changed.
-                // - Destination unreachable errors have been observed for other
-                // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
-                //   these by automatically clamping the MTUD upper bound to the interface MTU.
-                if e.raw_os_error() != Some(libc::EMSGSIZE) {
-                    log_sendmsg_error(&state.last_send_error, e, transmit);
-                }
-            }
+            _ => return Err(e),
         }
     }
     Ok(())

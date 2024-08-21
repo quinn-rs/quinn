@@ -4,7 +4,7 @@ use std::{
     time::Instant,
 };
 
-use super::{log_sendmsg_error, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL};
+use super::{RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL};
 
 /// Fallback UDP socket interface that stubs out all special functionality
 ///
@@ -25,24 +25,10 @@ impl UdpSocketState {
     }
 
     pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        let Err(e) = socket.0.send_to(
+        socket.0.send_to(
             transmit.contents,
             &socket2::SockAddr::from(transmit.destination),
-        ) else {
-            return Ok(());
-        };
-        if e.kind() == io::ErrorKind::WouldBlock {
-            return Err(e);
-        }
-
-        // Other errors are ignored, since they will usually be handled
-        // by higher level retransmits and timeouts.
-        // - PermissionDenied errors have been observed due to iptable rules.
-        //   Those are not fatal errors, since the
-        //   configuration can be dynamically changed.
-        // - Destination unreachable errors have been observed for other
-        log_sendmsg_error(&self.last_send_error, e, transmit);
-        Ok(())
+        )
     }
 
     pub fn recv(

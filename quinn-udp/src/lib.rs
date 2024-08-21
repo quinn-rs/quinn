@@ -143,30 +143,6 @@ pub struct Transmit<'a> {
 /// Log at most 1 IO error per minute
 const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
 
-/// Logs a warning message when sendmsg fails
-///
-/// Logging will only be performed if at least [`IO_ERROR_LOG_INTERVAL`]
-/// has elapsed since the last error was logged.
-#[cfg(any(feature = "tracing", feature = "direct-log"))]
-fn log_sendmsg_error(
-    last_send_error: &Mutex<Instant>,
-    err: impl core::fmt::Debug,
-    transmit: &Transmit,
-) {
-    let now = Instant::now();
-    let last_send_error = &mut *last_send_error.lock().expect("poisend lock");
-    if now.saturating_duration_since(*last_send_error) > IO_ERROR_LOG_INTERVAL {
-        *last_send_error = now;
-        log::warn!(
-        "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, enc: {:?}, len: {:?}, segment_size: {:?} }}",
-            err, transmit.destination, transmit.src_ip, transmit.ecn, transmit.contents.len(), transmit.segment_size);
-    }
-}
-
-// No-op
-#[cfg(not(any(feature = "tracing", feature = "direct-log")))]
-fn log_sendmsg_error(_: &Mutex<Instant>, _: impl core::fmt::Debug, _: &Transmit) {}
-
 /// A borrowed UDP socket
 ///
 /// On Unix, constructible via `From<T: AsFd>`. On Windows, constructible via `From<T:
