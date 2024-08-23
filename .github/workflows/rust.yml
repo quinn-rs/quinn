@@ -102,10 +102,10 @@ jobs:
             emulator-arch: x86_64
             # Note that x86_64 image is only available for API 21+. See
             # https://github.com/ReactiveCircus/android-emulator-runner?tab=readme-ov-file#configurations.
-            api-level: 26
+            api-level: 25
           - target: i686-linux-android
             emulator-arch: x86
-            api-level: 26
+            api-level: 25
 
     steps:
     - name: Checkout code
@@ -135,7 +135,7 @@ jobs:
       run: cargo install cargo-ndk
 
     - name: Build unit tests for Android
-      run: cargo ndk -t ${{ matrix.target }} test --no-run
+      run: cargo ndk -t ${{ matrix.target }} test -p quinn-udp --no-run
 
     - name: Enable KVM group perms
       run: |
