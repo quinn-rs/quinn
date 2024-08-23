@@ -144,6 +144,8 @@ jobs:
         sudo udevadm trigger --name-match=kvm
 
     - name: Set up Android Emulator and run tests
+      env:
+        TARGET: ${{ matrix.target }}
       uses: reactivecircus/android-emulator-runner@v2
       with:
         api-level: ${{ matrix.api-level }}
