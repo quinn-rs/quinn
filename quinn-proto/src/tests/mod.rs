@@ -7,7 +7,7 @@ use std::{
 };
 
 use assert_matches::assert_matches;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use hex_literal::hex;
 use rand::RngCore;
 use ring::hmac;
@@ -3142,4 +3142,25 @@ fn voluntary_ack_with_large_datagrams() {
         COUNT as u64,
         "client should have sent some ACK-only packets"
     );
+}
+
+#[test]
+fn reject_short_idcid() {
+    let _guard = subscribe();
+    let client_addr = "[::2]:7890".parse().unwrap();
+    let mut server = Endpoint::new(
+        Default::default(),
+        Some(Arc::new(server_config())),
+        true,
+        None,
+    );
+    let now = Instant::now();
+    let mut buf = Vec::with_capacity(server.config().get_max_udp_payload_size() as usize);
+    // Initial header that has an empty DCID but is otherwise well-formed
+    let mut initial = BytesMut::from(hex!("c4 00000001 00 00 00 3f").as_ref());
+    initial.resize(MIN_INITIAL_SIZE.into(), 0);
+    let event = server.handle(now, client_addr, None, None, initial, &mut buf);
+    let Some(DatagramEvent::Response(Transmit { .. })) = event else {
+        panic!("expected an initial close");
+    };
 }
