@@ -306,6 +306,7 @@ pub(super) enum IncomingConnectionBehavior {
     AcceptAll,
     RejectAll,
     Validate,
+    ValidateThenReject,
     Wait,
 }
 
@@ -373,6 +374,13 @@ impl TestEndpoint {
                             IncomingConnectionBehavior::Validate => {
                                 if incoming.remote_address_validated() {
                                     let _ = self.try_accept(incoming, now);
+                                } else {
+                                    self.retry(incoming);
+                                }
+                            }
+                            IncomingConnectionBehavior::ValidateThenReject => {
+                                if incoming.remote_address_validated() {
+                                    self.reject(incoming);
                                 } else {
                                     self.retry(incoming);
                                 }

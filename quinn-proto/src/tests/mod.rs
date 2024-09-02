@@ -2995,6 +2995,32 @@ fn reject_manually() {
 }
 
 #[test]
+fn validate_then_reject_manually() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::ValidateThenReject;
+
+    // The server should now retry and reject incoming connections.
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive();
+    pair.server.assert_no_accept();
+    let client = pair.client.connections.get_mut(&client_ch).unwrap();
+    assert!(client.is_closed());
+    assert!(matches!(
+        client.poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::ConnectionClosed(close)
+        }) if close.error_code == TransportErrorCode::CONNECTION_REFUSED
+    ));
+    pair.drive();
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
+#[test]
 fn endpoint_and_connection_impl_send_sync() {
     const fn is_send_sync<T: Send + Sync>() {}
     is_send_sync::<Endpoint>();
