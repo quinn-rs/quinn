@@ -598,7 +598,7 @@ fn server_crypto_inner(
         )
     });
 
-    let mut config = QuicServerConfig::inner(vec![cert], key);
+    let mut config = QuicServerConfig::inner(vec![cert], key).unwrap();
     if let Some(alpn) = alpn {
         config.alpn_protocols = alpn;
     }
