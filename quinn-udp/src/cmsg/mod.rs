@@ -42,7 +42,7 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
     /// # Panics
     /// - If insufficient buffer space remains.
     /// - If `T` has stricter alignment requirements than `M::ControlMessage`
-    pub(crate) fn push<T: Copy + ?Sized>(&mut self, level: c_int, ty: c_int, value: T) {
+    pub(crate) fn push<T: Copy>(&mut self, level: c_int, ty: c_int, value: T) {
         assert!(mem::align_of::<T>() <= mem::align_of::<M::ControlMessage>());
         let space = M::ControlMessage::cmsg_space(mem::size_of_val(&value));
         assert!(
