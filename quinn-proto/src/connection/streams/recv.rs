@@ -220,7 +220,17 @@ impl Recv {
     }
 }
 
-/// Chunks
+/// Chunks returned from [`RecvStream::read()`][crate::RecvStream::read].
+///
+/// ### Note: Finalization Needed
+/// Bytes read from the stream are not released from the congestion window until
+/// either [`Self::finalize()`] is called, or this type is dropped.
+///
+/// It is recommended that you call [`Self::finalize()`] because it returns a flag
+/// telling you whether reading from the stream has resulted in the need to transmit a packet.
+///
+/// If this type is leaked, the stream will remain blocked on the remote peer until
+/// another read from the stream is done.
 pub struct Chunks<'a> {
     id: StreamId,
     ordered: bool,
@@ -302,17 +312,21 @@ impl<'a> Chunks<'a> {
         }
     }
 
-    /// Finalize
+    /// Mark the read data as consumed from the stream.
+    ///
+    /// The number of read bytes will be released from the congestion window,
+    /// allowing the remote peer to send more data if it was previously blocked.
+    ///
+    /// If [`ShouldTransmit::should_transmit()`] returns `true`,
+    /// a packet needs to be sent to the peer informing them that the stream is unblocked.
+    /// This means that you should call [`Connection::poll_transmit()`][crate::Connection::poll_transmit]
+    /// and send the returned packet as soon as is reasonable, to unblock the remote peer.
     pub fn finalize(mut self) -> ShouldTransmit {
-        self.finalize_inner(false)
+        self.finalize_inner()
     }
 
-    fn finalize_inner(&mut self, drop: bool) -> ShouldTransmit {
+    fn finalize_inner(&mut self) -> ShouldTransmit {
         let state = mem::replace(&mut self.state, ChunksState::Finalized);
-        debug_assert!(
-            !drop || matches!(state, ChunksState::Finalized),
-            "finalize must be called before drop"
-        );
         if let ChunksState::Finalized = state {
             // Noop on repeated calls
             return ShouldTransmit(false);
@@ -344,7 +358,7 @@ impl<'a> Chunks<'a> {
 
 impl<'a> Drop for Chunks<'a> {
     fn drop(&mut self) {
-        let _ = self.finalize_inner(true);
+        let _ = self.finalize_inner();
     }
 }
 
