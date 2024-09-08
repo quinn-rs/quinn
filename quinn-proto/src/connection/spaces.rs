@@ -2,8 +2,8 @@ use std::{
     cmp,
     collections::{BTreeMap, VecDeque},
     mem,
-    ops::{Bound, Index, IndexMut},
-    time::{Duration, Instant},
+    ops::{Bound, Index, IndexMut, Range},
+    time::{Duration, Instant, SystemTime},
 };
 
 use rand::Rng;
@@ -553,6 +553,50 @@ impl SendableFrames {
     }
 }
 
+pub struct ReceiverTimestamps(VecDeque<(u64, Instant)>);
+
+impl std::fmt::Debug for ReceiverTimestamps {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // todo
+        Ok(())
+    }
+}
+
+impl ReceiverTimestamps {
+    pub fn new() -> Self {
+        ReceiverTimestamps(VecDeque::new())
+    }
+
+    pub fn add(&mut self, packet_number: u64, t: Instant) -> Result<(), &str> {
+        if let Some(v) = self.0.back() {
+            if packet_number <= v.0 {
+                return Err("out of order packets are unsupported");
+            }
+        }
+        self.0.push_back((packet_number, t));
+        Ok(())
+    }
+
+    fn clear(&mut self) {
+        self.0.clear()
+    }
+
+    pub fn encode_iter(&mut self) {}
+
+    // why do we need '_
+    pub fn iter(&self) -> impl DoubleEndedIterator<Item = (u64, Instant)> + '_ {
+        self.0.iter().cloned()
+    }
+
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    pub fn inner(&self) -> &VecDeque<(u64, Instant)> {
+        &self.0
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct PendingAcks {
     /// Whether we should send an ACK immediately, even if that means sending an ACK-only packet
@@ -587,6 +631,8 @@ pub(super) struct PendingAcks {
     largest_ack_eliciting_packet: Option<u64>,
     /// The largest acknowledged packet number sent in an ACK frame
     largest_acked: Option<u64>,
+
+    received_timestamps: ReceiverTimestamps,
 }
 
 impl PendingAcks {
@@ -602,6 +648,7 @@ impl PendingAcks {
             largest_packet: None,
             largest_ack_eliciting_packet: None,
             largest_acked: None,
+            received_timestamps: ReceiverTimestamps::new(),
         }
     }
 
@@ -753,6 +800,10 @@ impl PendingAcks {
     /// Returns the set of currently pending ACK ranges
     pub(super) fn ranges(&self) -> &ArrayRangeSet {
         &self.ranges
+    }
+
+    pub(super) fn received_timestamps(&self) -> &ReceiverTimestamps {
+        &self.received_timestamps
     }
 
     /// Queue an ACK if a significant number of non-ACK-eliciting packets have not yet been
