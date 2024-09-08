@@ -65,12 +65,15 @@ use paths::{PathData, PathResponses};
 
 mod send_buffer;
 
-mod spaces;
-#[cfg(fuzzing)]
-pub use spaces::Retransmits;
+mod receiver_timestamps;
+use receiver_timestamps::ReceiverTimestampConfig;
+
+pub mod spaces;
 #[cfg(not(fuzzing))]
 use spaces::Retransmits;
 use spaces::{PacketNumberFilter, PacketSpace, SendableFrames, SentPacket, ThinRetransmits};
+#[cfg(fuzzing)]
+pub use spaces::{ReceivedTimestamps, Retransmits};
 
 mod stats;
 pub use stats::{ConnectionStats, FrameStats, PathStats, UdpStats};
@@ -227,6 +230,11 @@ pub struct Connection {
     /// no outgoing application data.
     app_limited: bool,
 
+    //
+    // Ack Receive Timestamps
+    //
+    receiver_timestamp_cfg: Option<ReceiverTimestampConfig>,
+
     streams: StreamsState,
     /// Surplus remote CIDs for future use on new paths
     rem_cids: CidQueue,
@@ -275,6 +283,7 @@ impl Connection {
         });
         let mut rng = StdRng::from_seed(rng_seed);
         let mut this = Self {
+            receiver_timestamp_cfg: None,
             endpoint_config,
             server_config,
             crypto,
@@ -817,6 +826,7 @@ impl Connection {
                         &mut self.spaces[space_id],
                         buf,
                         &mut self.stats,
+                        None,
                     );
                 }
 
@@ -3047,6 +3057,7 @@ impl Connection {
                 space,
                 buf,
                 &mut self.stats,
+                self.receiver_timestamp_cfg.as_ref(),
             );
         }
 
@@ -3231,6 +3242,7 @@ impl Connection {
         space: &mut PacketSpace,
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
+        timestamp_config: Option<&ReceiverTimestampConfig>,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
 
@@ -3255,7 +3267,16 @@ impl Connection {
             delay_micros
         );
 
-        frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
+        frame::Ack::encode(
+            delay as _,
+            space.pending_acks.ranges(),
+            ecn,
+            Some(space.pending_acks.received_timestamps()),
+            timestamp_config.as_ref().map(|cfg| cfg.basis),
+            timestamp_config.as_ref().map(|cfg| cfg.exponent),
+            timestamp_config.as_ref().map(|cfg| cfg.instant_basis),
+            buf,
+        );
         stats.frame_tx.acks += 1;
     }
 
