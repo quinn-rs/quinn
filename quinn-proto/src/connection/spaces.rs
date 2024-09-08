@@ -557,8 +557,11 @@ pub struct ReceiverTimestamps(VecDeque<(u64, Instant)>);
 
 impl std::fmt::Debug for ReceiverTimestamps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        // todo
-        Ok(())
+        let mut l = f.debug_list();
+        self.iter().for_each(|v| {
+            l.entry(&v);
+        });
+        l.finish()
     }
 }
 
