@@ -133,6 +133,8 @@ frame_types! {
     ACK_FREQUENCY = 0xaf,
     IMMEDIATE_ACK = 0x1f,
     // DATAGRAM
+    // Custom frame for https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html
+    ACK_RECEIVE_TIMESTAMPS = 0x40,
 }
 
 const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);

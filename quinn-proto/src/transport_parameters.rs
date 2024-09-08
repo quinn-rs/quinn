@@ -59,6 +59,15 @@ macro_rules! apply_params {
             max_ack_delay(0x000b) = 25,
             /// Maximum number of connection IDs from the peer that an endpoint is willing to store
             active_connection_id_limit(0x000e) = 2,
+            /// The below 2 fields are for the implementation of
+            /// https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html#name-extension-negotiation
+            ///
+            /// The transport parameter values selected are placeholders, using the first 2 reserved values specified
+            /// in https://www.rfc-editor.org/rfc/rfc9000#section-22.3
+            max_recv_timestamps_per_ack(0x00f0) = 0,
+            recv_timestamps_exponent(0x00f1) = 0,
+            receive_timestamp_basis(0x00f2) = 0,
+
         }
     };
 }
@@ -490,6 +499,9 @@ mod test {
             initial_max_streams_bidi: 16u32.into(),
             initial_max_streams_uni: 16u32.into(),
             ack_delay_exponent: 2u32.into(),
+            recv_timestamps_exponent: 3u32.into(),
+            max_recv_timestamps_per_ack: 5u32.into(),
+            receive_timestamp_basis: 3u32.into(),
             max_udp_payload_size: 1200u32.into(),
             preferred_address: Some(PreferredAddress {
                 address_v4: Some(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 42)),
