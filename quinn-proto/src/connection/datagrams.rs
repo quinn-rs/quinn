@@ -153,6 +153,7 @@ impl DatagramState {
                     datagram.data.len(),
                     max_payload
                 );
+                self.outgoing_total -= datagram.data.len();
             }
             result
         });
