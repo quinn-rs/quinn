@@ -16,6 +16,9 @@ use crate::{
     shared::IssuedCid, Dir, StreamId, TransportError, VarInt,
 };
 
+#[cfg(feature = "acktimestamps")]
+use crate::connection::receiver_timestamps::ReceiverTimestamps;
+
 pub(super) struct PacketSpace {
     pub(super) crypto: Option<Keys>,
     pub(super) dedup: Dedup,
@@ -278,6 +281,12 @@ impl IndexMut<SpaceId> for [PacketSpace; 3] {
 pub(super) struct SentPacket {
     /// The time the packet was sent.
     pub(super) time_sent: Instant,
+
+    #[cfg(feature = "acktimestamps")]
+    /// The time the packet was received by the receiver. The time Instant on this field is
+    /// relative to a basis negotiated by the two connections. Time arithmetic done using the
+    /// time_received field is only useful when compared to other time_received.
+    pub(super) time_received: Option<Instant>,
     /// The number of bytes sent in the packet, not including UDP or IP overhead, but including QUIC
     /// framing overhead. Zero if this packet is not counted towards congestion control, i.e. not an
     /// "in flight" packet.
@@ -587,6 +596,9 @@ pub(super) struct PendingAcks {
     largest_ack_eliciting_packet: Option<u64>,
     /// The largest acknowledged packet number sent in an ACK frame
     largest_acked: Option<u64>,
+
+    #[cfg(feature = "acktimestamps")]
+    receiver_timestamps: Option<ReceiverTimestamps>,
 }
 
 impl PendingAcks {
@@ -602,7 +614,15 @@ impl PendingAcks {
             largest_packet: None,
             largest_ack_eliciting_packet: None,
             largest_acked: None,
+
+            #[cfg(feature = "acktimestamps")]
+            receiver_timestamps: None,
         }
+    }
+
+    #[cfg(feature = "acktimestamps")]
+    pub(super) fn set_receiver_timestamp(&mut self, max_timestamps: usize) {
+        self.receiver_timestamps = Some(ReceiverTimestamps::new(max_timestamps));
     }
 
     pub(super) fn set_ack_frequency_params(&mut self, frame: &frame::AckFrequency) {
@@ -644,6 +664,11 @@ impl PendingAcks {
         ack_eliciting: bool,
         dedup: &Dedup,
     ) -> bool {
+        #[cfg(feature = "acktimestamps")]
+        if let Some(ts) = self.receiver_timestamps_as_mut() {
+            ts.add(packet_number, now);
+        }
+
         if !ack_eliciting {
             self.non_ack_eliciting_since_last_ack_sent += 1;
             return false;
@@ -748,11 +773,28 @@ impl PendingAcks {
     /// Remove ACKs of packets numbered at or below `max` from the set of pending ACKs
     pub(super) fn subtract_below(&mut self, max: u64) {
         self.ranges.remove(0..(max + 1));
+
+        #[cfg(feature = "acktimestamps")]
+        self.receiver_timestamps.as_mut().map(|v| {
+            v.subtract_below(max);
+        });
     }
 
     /// Returns the set of currently pending ACK ranges
     pub(super) fn ranges(&self) -> &ArrayRangeSet {
         &self.ranges
+    }
+
+
+    #[cfg(feature = "acktimestamps")]
+    pub(super) fn receiver_timestamps_as_mut(&mut self) -> Option<&mut ReceiverTimestamps> {
+        self.receiver_timestamps.as_mut()
+    }
+
+
+    #[cfg(feature = "acktimestamps")]
+    pub(super) fn receiver_timestamps_as_ref(&self) -> Option<&ReceiverTimestamps> {
+        self.receiver_timestamps.as_ref()
     }
 
     /// Queue an ACK if a significant number of non-ACK-eliciting packets have not yet been
