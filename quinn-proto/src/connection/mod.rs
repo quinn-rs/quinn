@@ -836,6 +836,8 @@ impl Connection {
                         &mut self.spaces[space_id],
                         buf,
                         &mut self.stats,
+                        #[cfg(feature = "acktimestamps")]
+                        None,
                     );
                 }
 
@@ -2350,8 +2352,10 @@ impl Connection {
             }
             Ok((packet, number)) => {
                 let span = match number {
-                    Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn),
-                    None => trace_span!("recv", space = ?packet.header.space()),
+                    Some(pn) => {
+                        trace_span!("recv", space = ?packet.header.space(), pn, side=?self.side)
+                    }
+                    None => trace_span!("recv", space = ?packet.header.space(), side=?self.side),
                 };
                 let _guard = span.enter();
 
@@ -3225,6 +3229,10 @@ impl Connection {
                 space,
                 buf,
                 &mut self.stats,
+                #[cfg(feature = "acktimestamps")]
+                self.peer_ack_timestamp_cfg
+                    .as_ref()
+                    .map_or(None, |v| Some(v.clone())),
             );
         }
 
@@ -3409,6 +3417,7 @@ impl Connection {
         space: &mut PacketSpace,
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
+        #[cfg(feature = "acktimestamps")] timestamp_config: Option<AckTimestampsConfig>,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
 
@@ -3433,7 +3442,26 @@ impl Connection {
             delay_micros
         );
 
-        frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
+        #[cfg(feature = "acktimestamps")]
+        if timestamp_config.is_some() {
+            let timestamp_config = timestamp_config.unwrap();
+            AckTimestampFrame::encode(
+                delay as _,
+                space.pending_acks.ranges(),
+                space.pending_acks.receiver_timestamps_as_ref().unwrap(),
+                timestamp_config.basis,
+                timestamp_config.exponent.0,
+                timestamp_config.max_timestamps_per_ack.0,
+                buf,
+            );
+        } else {
+            frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
+        }
+
+        if !cfg!(feature = "acktimestamps") {
+            frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
+        }
+
         stats.frame_tx.acks += 1;
     }
 
