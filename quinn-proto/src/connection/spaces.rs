@@ -785,12 +785,10 @@ impl PendingAcks {
         &self.ranges
     }
 
-
     #[cfg(feature = "acktimestamps")]
     pub(super) fn receiver_timestamps_as_mut(&mut self) -> Option<&mut ReceiverTimestamps> {
         self.receiver_timestamps.as_mut()
     }
-
 
     #[cfg(feature = "acktimestamps")]
     pub(super) fn receiver_timestamps_as_ref(&self) -> Option<&ReceiverTimestamps> {

@@ -380,7 +380,10 @@ impl Connection {
         if side.is_client() {
             // Kick off the connection
             this.write_crypto();
-            this.init_0rtt(now);
+            this.init_0rtt(
+                #[cfg(feature = "acktimestamps")]
+                now,
+            );
         }
         this
     }
@@ -2079,7 +2082,7 @@ impl Connection {
         Ok(())
     }
 
-    fn init_0rtt(&mut self, now: Instant) {
+    fn init_0rtt(&mut self, #[cfg(feature = "acktimestamps")] now: Instant) {
         let (header, packet) = match self.crypto.early_crypto() {
             Some(x) => x,
             None => return,
@@ -2101,7 +2104,11 @@ impl Connection {
                         max_ack_delay: TransportParameters::default().max_ack_delay,
                         ..params
                     };
-                    self.set_peer_params(params, now);
+                    self.set_peer_params(
+                        params,
+                        #[cfg(feature = "acktimestamps")]
+                        now,
+                    );
                 }
                 Err(e) => {
                     error!("session ticket has malformed transport parameters: {}", e);
@@ -2622,7 +2629,11 @@ impl Connection {
                         self.endpoint_events
                             .push_back(EndpointEventInner::ResetToken(self.path.remote, token));
                     }
-                    self.handle_peer_params(params, now)?;
+                    self.handle_peer_params(
+                        params,
+                        #[cfg(feature = "acktimestamps")]
+                        now,
+                    )?;
                     self.issue_first_cids(now);
                 } else {
                     // Server-only
@@ -2669,9 +2680,16 @@ impl Connection {
                                 frame: None,
                                 reason: "transport parameters missing".into(),
                             })?;
-                    self.handle_peer_params(params, now)?;
+                    self.handle_peer_params(
+                        params,
+                        #[cfg(feature = "acktimestamps")]
+                        now,
+                    )?;
                     self.issue_first_cids(now);
-                    self.init_0rtt(now);
+                    self.init_0rtt(
+                        #[cfg(feature = "acktimestamps")]
+                        now,
+                    );
                 }
                 Ok(())
             }
@@ -3481,7 +3499,7 @@ impl Connection {
     fn handle_peer_params(
         &mut self,
         params: TransportParameters,
-        now: Instant,
+        #[cfg(feature = "acktimestamps")] now: Instant,
     ) -> Result<(), TransportError> {
         if Some(self.orig_rem_cid) != params.initial_src_cid
             || (self.side.is_client()
@@ -3493,12 +3511,20 @@ impl Connection {
             ));
         }
 
-        self.set_peer_params(params, now);
+        self.set_peer_params(
+            params,
+            #[cfg(feature = "acktimestamps")]
+            now,
+        );
 
         Ok(())
     }
 
-    fn set_peer_params(&mut self, params: TransportParameters, now: Instant) {
+    fn set_peer_params(
+        &mut self,
+        params: TransportParameters,
+        #[cfg(feature = "acktimestamps")] now: Instant,
+    ) {
         self.streams.set_params(&params);
         self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
             (None, VarInt(0)) => None,
