@@ -53,6 +53,9 @@ pub struct TransportConfig {
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
     pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
 
+    #[cfg(feature = "acktimestamps")]
+    pub(crate) ack_timestamp_config: Option<AckTimestampsConfig>,
+
     pub(crate) persistent_congestion_threshold: u32,
     pub(crate) keep_alive_interval: Option<Duration>,
     pub(crate) crypto_buffer_size: usize,
@@ -223,6 +226,16 @@ impl TransportConfig {
         self
     }
 
+    /// Specifies the ACK timestamp config.
+    /// Defaults to `None`, which disables receiving acknowledgement timestamps from the sender.
+    /// If `Some`, TransportParameters are sent to the peer to enable acknowledgement timestamps
+    /// if supported.
+    #[cfg(feature = "acktimestamps")]
+    pub fn ack_timestamp_config(&mut self, value: Option<AckTimestampsConfig>) -> &mut Self {
+        self.ack_timestamp_config = value;
+        self
+    }
+
     /// Number of consecutive PTOs after which network is considered to be experiencing persistent congestion.
     pub fn persistent_congestion_threshold(&mut self, value: u32) -> &mut Self {
         self.persistent_congestion_threshold = value;
@@ -360,6 +373,9 @@ impl Default for TransportConfig {
             congestion_controller_factory: Arc::new(congestion::CubicConfig::default()),
 
             enable_segmentation_offload: true,
+
+            #[cfg(feature = "acktimestamps")]
+            ack_timestamp_config: None,
         }
     }
 }
@@ -390,9 +406,12 @@ impl fmt::Debug for TransportConfig {
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
             enable_segmentation_offload,
+            #[cfg(feature = "acktimestamps")]
+            ack_timestamp_config,
         } = self;
-        fmt.debug_struct("TransportConfig")
-            .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
+        let mut s = fmt.debug_struct("TransportConfig");
+
+        s.field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
             .field("max_concurrent_uni_streams", max_concurrent_uni_streams)
             .field("max_idle_timeout", max_idle_timeout)
             .field("stream_receive_window", stream_receive_window)
@@ -415,8 +434,55 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_receive_buffer_size", datagram_receive_buffer_size)
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             .field("congestion_controller_factory", &"[ opaque ]")
-            .field("enable_segmentation_offload", enable_segmentation_offload)
-            .finish()
+            .field("enable_segmentation_offload", enable_segmentation_offload);
+
+        #[cfg(feature = "acktimestamps")]
+        s.field("ack_timestamp_config", ack_timestamp_config);
+
+        s.finish()
+    }
+}
+
+/// Parameters for controlling the peer's acknowledgements with receiver timestamps.
+#[cfg(feature = "acktimestamps")]
+#[derive(Clone, Debug)]
+pub struct AckTimestampsConfig {
+    pub(crate) max_timestamps_per_ack: VarInt,
+    pub(crate) exponent: VarInt,
+    pub(crate) basis: std::time::Instant,
+}
+
+#[cfg(feature = "acktimestamps")]
+impl AckTimestampsConfig {
+    /// Sets the maximum number of timestamp entries per ACK frame.
+    pub fn max_timestamps_per_ack(&mut self, value: VarInt) -> &mut Self {
+        self.max_timestamps_per_ack = value;
+        self
+    }
+
+    /// Timestamp values are divided by the exponent value provided. This reduces the size of the
+    /// VARINT for loss in precision. A exponent of 0 represents microsecond precision.
+    pub fn exponent(&mut self, value: VarInt) -> &mut Self {
+        self.exponent = value;
+        self
+    }
+
+    /// Sets the time base for which all timestamps are anchored on.
+    /// Defaults to Instant::now of when the default struct was created.
+    pub fn basis(&mut self, instant: std::time::Instant) -> &mut Self {
+        self.basis = instant;
+        self
+    }
+}
+
+#[cfg(feature = "acktimestamps")]
+impl Default for AckTimestampsConfig {
+    fn default() -> Self {
+        Self {
+            max_timestamps_per_ack: 10u32.into(),
+            exponent: 0u32.into(),
+            basis: std::time::Instant::now(),
+        }
     }
 }
 

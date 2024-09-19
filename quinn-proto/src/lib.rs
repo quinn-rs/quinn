@@ -48,6 +48,8 @@ pub use crate::connection::{
 };
 
 mod config;
+#[cfg(feature = "acktimestamps")]
+pub use config::AckTimestampsConfig;
 pub use config::{
     AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
     ServerConfig, TransportConfig,
