@@ -1211,6 +1211,11 @@ impl Incoming {
     pub fn remote_address_validated(&self) -> bool {
         self.retry_src_cid.is_some()
     }
+
+    /// The original destination connection ID sent by the client
+    pub fn orig_dst_cid(&self) -> &ConnectionId {
+        &self.orig_dst_cid
+    }
 }
 
 impl fmt::Debug for Incoming {
