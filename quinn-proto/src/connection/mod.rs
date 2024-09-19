@@ -1911,7 +1911,7 @@ impl Connection {
         Ok(())
     }
 
-    fn init_0rtt(&mut self) {
+    fn init_0rtt(&mut self, now: Instant) {
         let (header, packet) = match self.crypto.early_crypto() {
             Some(x) => x,
             None => return,
@@ -1933,7 +1933,7 @@ impl Connection {
                         max_ack_delay: TransportParameters::default().max_ack_delay,
                         ..params
                     };
-                    self.set_peer_params(params);
+                    self.set_peer_params(params, now);
                 }
                 Err(e) => {
                     error!("session ticket has malformed transport parameters: {}", e);
@@ -2452,7 +2452,7 @@ impl Connection {
                         self.endpoint_events
                             .push_back(EndpointEventInner::ResetToken(self.path.remote, token));
                     }
-                    self.handle_peer_params(params)?;
+                    self.handle_peer_params(params, now)?;
                     self.issue_first_cids(now);
                 } else {
                     // Server-only
@@ -2499,9 +2499,9 @@ impl Connection {
                                 frame: None,
                                 reason: "transport parameters missing".into(),
                             })?;
-                    self.handle_peer_params(params)?;
+                    self.handle_peer_params(params, now)?;
                     self.issue_first_cids(now);
-                    self.init_0rtt();
+                    self.init_0rtt(now);
                 }
                 Ok(())
             }
@@ -3272,7 +3272,11 @@ impl Connection {
     }
 
     /// Handle transport parameters received from the peer
-    fn handle_peer_params(&mut self, params: TransportParameters) -> Result<(), TransportError> {
+    fn handle_peer_params(
+        &mut self,
+        params: TransportParameters,
+        now: Instant,
+    ) -> Result<(), TransportError> {
         if Some(self.orig_rem_cid) != params.initial_src_cid
             || (self.side.is_client()
                 && (Some(self.initial_dst_cid) != params.original_dst_cid
@@ -3283,12 +3287,12 @@ impl Connection {
             ));
         }
 
-        self.set_peer_params(params);
+        self.set_peer_params(params, now);
 
         Ok(())
     }
 
-    fn set_peer_params(&mut self, params: TransportParameters) {
+    fn set_peer_params(&mut self, params: TransportParameters, now: Instant) {
         self.streams.set_params(&params);
         self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
             (None, VarInt(0)) => None,
@@ -3309,6 +3313,27 @@ impl Connection {
         self.path.mtud.on_peer_max_udp_payload_size_received(
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
         );
+
+        #[cfg(feature = "acktimestamps")]
+        {
+            self.peer_ack_timestamp_cfg = if let (Some(max_timestamps_per_ack), Some(exponent)) = (
+                params.max_recv_timestamps_per_ack,
+                params.receive_timestamps_exponent,
+            ) {
+                for space in self.spaces.iter_mut() {
+                    space
+                        .pending_acks
+                        .set_receiver_timestamp(max_timestamps_per_ack.0 as usize);
+                }
+                Some(AckTimestampsConfig {
+                    exponent,
+                    max_timestamps_per_ack,
+                    basis: now,
+                })
+            } else {
+                None
+            };
+        }
     }
 
     fn decrypt_packet(
