@@ -6,7 +6,7 @@ use std::{
     task::{Context, Poll},
 };
 
-use proto::{ConnectionError, ServerConfig};
+use proto::{ConnectionError, ConnectionId, ServerConfig};
 use thiserror::Error;
 
 use crate::{
@@ -84,6 +84,11 @@ impl Incoming {
     /// sent to `self.remote_address()`.
     pub fn remote_address_validated(&self) -> bool {
         self.0.as_ref().unwrap().inner.remote_address_validated()
+    }
+
+    /// The original destination CID when initiating the connection
+    pub fn orig_dst_cid(&self) -> ConnectionId {
+        *self.0.as_ref().unwrap().inner.orig_dst_cid()
     }
 }
 
