@@ -210,6 +210,9 @@ impl PacketBuilder {
             ack_eliciting,
             retransmits: sent.retransmits,
             stream_frames: sent.stream_frames,
+
+            #[cfg(feature = "acktimestamps")]
+            time_received: None,
         };
 
         conn.path
