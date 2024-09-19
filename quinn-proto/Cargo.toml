@@ -22,6 +22,7 @@ ring = ["dep:ring"]
 platform-verifier = ["dep:rustls-platform-verifier"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 log = ["tracing/log"]
+acktimestamps = []
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }

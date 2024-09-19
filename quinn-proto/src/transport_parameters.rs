@@ -99,6 +99,12 @@ macro_rules! make_struct {
             pub(crate) stateless_reset_token: Option<ResetToken>,
             /// The server's preferred address for communication after handshake completion
             pub(crate) preferred_address: Option<PreferredAddress>,
+
+
+            #[cfg(feature = "acktimestamps")]
+            pub(crate) receive_timestamps_exponent: Option<VarInt>,
+            #[cfg(feature = "acktimestamps")]
+            pub(crate) max_recv_timestamps_per_ack: Option<VarInt>,
         }
 
         // We deliberately don't implement the `Default` trait, since that would be public, and
@@ -120,6 +126,10 @@ macro_rules! make_struct {
                     retry_src_cid: None,
                     stateless_reset_token: None,
                     preferred_address: None,
+                    #[cfg(feature = "acktimestamps")]
+                    receive_timestamps_exponent: None,
+                    #[cfg(feature = "acktimestamps")]
+                    max_recv_timestamps_per_ack: None,
                 }
             }
         }
@@ -160,6 +170,19 @@ impl TransportParameters {
             min_ack_delay: Some(
                 VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
             ),
+
+            #[cfg(feature = "acktimestamps")]
+            receive_timestamps_exponent: config
+                .ack_timestamp_config
+                .as_ref()
+                .map_or(None, |cfg| Some(cfg.exponent)),
+
+            #[cfg(feature = "acktimestamps")]
+            max_recv_timestamps_per_ack: config
+                .ack_timestamp_config
+                .as_ref()
+                .map_or(None, |cfg| Some(cfg.max_timestamps_per_ack)),
+
             ..Self::default()
         }
     }
@@ -349,6 +372,25 @@ impl TransportParameters {
             w.write_var(x.size() as u64);
             w.write(x);
         }
+
+        // The below 2 fields are for the implementation of
+        // https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html#name-extension-negotiation
+        // The transport parameter values selected are placeholders, using the first 2 reserved values specified
+        // in https://www.rfc-editor.org/rfc/rfc9000#section-22.3
+
+        #[cfg(feature = "acktimestamps")]
+        if let Some(x) = self.max_recv_timestamps_per_ack {
+            w.write_var(0x00f0);
+            w.write_var(x.size() as u64);
+            w.write(x);
+        }
+
+        #[cfg(feature = "acktimestamps")]
+        if let Some(x) = self.receive_timestamps_exponent {
+            w.write_var(0x00f1);
+            w.write_var(x.size() as u64);
+            w.write(x);
+        }
     }
 
     /// Decode `TransportParameters` from buffer
@@ -413,6 +455,22 @@ impl TransportParameters {
                     _ => return Err(Error::Malformed),
                 },
                 0xff04de1b => params.min_ack_delay = Some(r.get().unwrap()),
+
+                #[cfg(feature = "acktimestamps")]
+                0x00f0 => {
+                    if len > 8 || params.max_recv_timestamps_per_ack.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    params.max_recv_timestamps_per_ack = Some(r.get().unwrap());
+                }
+                #[cfg(feature = "acktimestamps")]
+                0x00f1 => {
+                    if len > 8 || params.receive_timestamps_exponent.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    params.receive_timestamps_exponent = Some(r.get().unwrap());
+                }
+
                 _ => {
                     macro_rules! parse {
                         {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
@@ -464,6 +522,15 @@ impl TransportParameters {
             return Err(Error::IllegalValue);
         }
 
+        // https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html#name-extension-negotiation
+        #[cfg(feature = "acktimestamps")]
+        if params
+            .receive_timestamps_exponent
+            .map_or(false, |x| x.0 > 20)
+        {
+            return Err(Error::IllegalValue);
+        }
+
         Ok(params)
     }
 }
@@ -499,6 +566,12 @@ mod test {
             }),
             grease_quic_bit: true,
             min_ack_delay: Some(2_000u32.into()),
+
+            #[cfg(feature = "acktimestamps")]
+            receive_timestamps_exponent: Some(3u32.into()),
+            #[cfg(feature = "acktimestamps")]
+            max_recv_timestamps_per_ack: Some(5u32.into()),
+
             ..TransportParameters::default()
         };
         params.write(&mut buf);
