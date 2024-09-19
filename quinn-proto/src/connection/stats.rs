@@ -62,6 +62,8 @@ impl FrameStats {
             Frame::Padding => {}
             Frame::Ping => self.ping += 1,
             Frame::Ack(_) => self.acks += 1,
+            #[cfg(feature = "acktimestamps")]
+            Frame::AckTimestamps(_) => self.acks += 1,
             Frame::ResetStream(_) => self.reset_stream += 1,
             Frame::StopSending(_) => self.stop_sending += 1,
             Frame::Crypto(_) => self.crypto += 1,

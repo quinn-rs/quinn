@@ -15,6 +15,9 @@ use crate::{
     RESET_TOKEN_SIZE,
 };
 
+#[cfg(feature = "acktimestamps")]
+use crate::ack_timestamp_frame;
+
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
 
@@ -133,6 +136,9 @@ frame_types! {
     ACK_FREQUENCY = 0xaf,
     IMMEDIATE_ACK = 0x1f,
     // DATAGRAM
+    // Custom frame for https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html
+    // can't cfg here in macro #[cfg(feature = "acktimestamps")]
+    ACK_RECEIVE_TIMESTAMPS = 0x40,
 }
 
 const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
@@ -143,19 +149,39 @@ pub(crate) enum Frame {
     Padding,
     Ping,
     Ack(Ack),
+    #[cfg(feature = "acktimestamps")]
+    AckTimestamps(ack_timestamp_frame::AckTimestampFrame),
     ResetStream(ResetStream),
     StopSending(StopSending),
     Crypto(Crypto),
-    NewToken { token: Bytes },
+    NewToken {
+        token: Bytes,
+    },
     Stream(Stream),
     MaxData(VarInt),
-    MaxStreamData { id: StreamId, offset: u64 },
-    MaxStreams { dir: Dir, count: u64 },
-    DataBlocked { offset: u64 },
-    StreamDataBlocked { id: StreamId, offset: u64 },
-    StreamsBlocked { dir: Dir, limit: u64 },
+    MaxStreamData {
+        id: StreamId,
+        offset: u64,
+    },
+    MaxStreams {
+        dir: Dir,
+        count: u64,
+    },
+    DataBlocked {
+        offset: u64,
+    },
+    StreamDataBlocked {
+        id: StreamId,
+        offset: u64,
+    },
+    StreamsBlocked {
+        dir: Dir,
+        limit: u64,
+    },
     NewConnectionId(NewConnectionId),
-    RetireConnectionId { sequence: u64 },
+    RetireConnectionId {
+        sequence: u64,
+    },
     PathChallenge(u64),
     PathResponse(u64),
     Close(Close),
@@ -185,6 +211,8 @@ impl Frame {
             StopSending { .. } => Type::STOP_SENDING,
             RetireConnectionId { .. } => Type::RETIRE_CONNECTION_ID,
             Ack(_) => Type::ACK,
+            #[cfg(feature = "acktimestamps")]
+            AckTimestamps(_) => Type::ACK_RECEIVE_TIMESTAMPS,
             Stream(ref x) => {
                 let mut ty = *STREAM_TYS.start();
                 if x.fin {
@@ -641,6 +669,27 @@ impl Iter {
                     },
                 })
             }
+            #[cfg(feature = "acktimestamps")]
+            Type::ACK_RECEIVE_TIMESTAMPS => {
+                let largest = self.bytes.get_var()?;
+                let delay = self.bytes.get_var()?;
+                let range_count = self.bytes.get_var()? as usize;
+                let start = self.bytes.position() as usize;
+                scan_ack_blocks(&mut self.bytes, largest, range_count)?;
+                let end = self.bytes.position() as usize;
+                Frame::AckTimestamps(ack_timestamp_frame::AckTimestampFrame {
+                    delay,
+                    largest,
+                    ranges: self.bytes.get_ref().slice(start..end),
+                    timestamps: {
+                        let ts_start = end;
+                        let ts_range_count = self.bytes.get_var()?;
+                        scan_ack_timestamp_blocks(&mut self.bytes, largest, ts_range_count)?;
+                        let ts_end = self.bytes.position() as usize;
+                        self.bytes.get_ref().slice(ts_start..ts_end)
+                    },
+                })
+            }
             Type::PATH_CHALLENGE => Frame::PathChallenge(self.bytes.get()?),
             Type::PATH_RESPONSE => Frame::PathResponse(self.bytes.get()?),
             Type::NEW_CONNECTION_ID => {
@@ -767,10 +816,44 @@ fn scan_ack_blocks(buf: &mut io::Cursor<Bytes>, largest: u64, n: usize) -> Resul
     Ok(())
 }
 
+#[cfg(feature = "acktimestamps")]
+fn scan_ack_timestamp_blocks(
+    buf: &mut io::Cursor<Bytes>,
+    largest: u64,
+    range_count: u64,
+) -> Result<(), IterErr> {
+    let mut next = largest;
+    let mut first = true;
+    for _ in 0..range_count {
+        let gap = buf.get_var()?;
+        next = if first {
+            first = false;
+            next.checked_sub(gap).ok_or(IterErr::Malformed)?
+        } else {
+            next.checked_sub(gap + 2).ok_or(IterErr::Malformed)?
+        };
+        let timestamp_delta_count = buf.get_var()?;
+        next = next
+            .checked_sub(timestamp_delta_count - 1)
+            .ok_or(IterErr::Malformed)?;
+        for _ in 0..timestamp_delta_count {
+            buf.get_var()?;
+        }
+    }
+    Ok(())
+}
+
+#[derive(PartialEq, Eq)]
 enum IterErr {
     UnexpectedEnd,
     InvalidFrameId,
     Malformed,
+}
+
+impl std::fmt::Debug for IterErr {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str(self.reason())
+    }
 }
 
 impl IterErr {
@@ -797,7 +880,7 @@ pub struct AckIter<'a> {
 }
 
 impl<'a> AckIter<'a> {
-    fn new(largest: u64, payload: &'a [u8]) -> Self {
+    pub(crate) fn new(largest: u64, payload: &'a [u8]) -> Self {
         let data = io::Cursor::new(payload);
         Self { largest, data }
     }
@@ -994,5 +1077,84 @@ mod test {
         let frames = frames(buf);
         assert_eq!(frames.len(), 1);
         assert_matches!(&frames[0], Frame::ImmediateAck);
+    }
+
+    #[cfg(test)]
+    #[cfg(feature = "acktimestamps")]
+    mod ack_timestamp_tests {
+        use super::*;
+
+        #[test]
+        fn test_scan_ack_timestamp_block() {
+            let mut buf = bytes::BytesMut::new();
+            buf.write_var(0); // gap
+            buf.write_var(3); // delta count
+            buf.write_var(1); // delta
+            buf.write_var(2); // delta
+            buf.write_var(3); // delta
+
+            let buf_len = buf.len() as u64;
+            let mut c = io::Cursor::new(buf.freeze());
+            scan_ack_timestamp_blocks(&mut c, 3, 1).unwrap();
+            assert_eq!(buf_len, c.position());
+        }
+
+        #[test]
+        fn test_scan_ack_timestamp_block_with_gap() {
+            let mut buf = bytes::BytesMut::new();
+            buf.write_var(1); // gap
+            buf.write_var(3); // delta count
+            buf.write_var(1); // pn 9
+            buf.write_var(2); // pn 8
+            buf.write_var(3); // pn 7
+
+            buf.write_var(1); // gap
+            buf.write_var(6); // delta count
+            buf.write_var(1); // pn 4
+            buf.write_var(2); // pn 3
+            buf.write_var(3); // pn 2
+            buf.write_var(3); // pn 1
+            buf.write_var(3); // pn 0
+
+            let buf_len = buf.len() as u64;
+            let mut c = io::Cursor::new(buf.freeze());
+            scan_ack_timestamp_blocks(&mut c, 10, 2).unwrap();
+            assert_eq!(buf_len, c.position());
+        }
+
+        #[test]
+        fn test_scan_ack_timestamp_block_with_gap_malforned() {
+            let mut buf = bytes::BytesMut::new();
+            buf.write_var(1); // gap
+            buf.write_var(3); // delta count
+            buf.write_var(1); // pn 9
+            buf.write_var(2); // pn 8
+            buf.write_var(3); // pn 7
+
+            buf.write_var(2); // gap
+            buf.write_var(6); // delta count
+            buf.write_var(1); // pn 3
+            buf.write_var(2); // pn 2
+            buf.write_var(3); // pn 1
+            buf.write_var(3); // pn 0
+            buf.write_var(3); // pn -1 this will cause an error
+
+            let mut c = io::Cursor::new(buf.freeze());
+            assert!(scan_ack_timestamp_blocks(&mut c, 10, 2).is_err());
+        }
+
+        #[test]
+        fn test_scan_ack_timestamp_block_malformed() {
+            let mut buf = bytes::BytesMut::new();
+            buf.write_var(5); // gap
+            buf.write_var(1); // delta count
+            buf.write_var(1); // packet number 0
+
+            let mut c = io::Cursor::new(buf.freeze());
+            assert_eq!(
+                IterErr::Malformed,
+                scan_ack_timestamp_blocks(&mut c, 5, 2).unwrap_err(),
+            );
+        }
     }
 }

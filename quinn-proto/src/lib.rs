@@ -88,6 +88,9 @@ pub use crate::cid_generator::{
 mod token;
 use token::{ResetToken, RetryToken};
 
+#[cfg(feature = "acktimestamps")]
+mod ack_timestamp_frame;
+
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
 
