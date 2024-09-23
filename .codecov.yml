@@ -1,0 +1,7 @@
+# Do not notify until at least three results have been uploaded from the CI pipeline.
+# (Corresponds to the three platforms we check coverage on: Linux, macOS, and Windows.)
+codecov:
+    notify:
+        after_n_builds: 3
+comment:
+    after_n_builds: 3
