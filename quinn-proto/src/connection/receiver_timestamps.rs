@@ -67,10 +67,6 @@ impl ReceiverTimestamps {
         });
     }
 
-    fn clear(&mut self) {
-        self.data.clear()
-    }
-
     pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = PacketTimestamp> + '_ {
         self.data.iter().cloned()
     }
@@ -91,7 +87,7 @@ impl ReceiverTimestamps {
             .data
             .partition_point(|v| v.packet_number < packet_number);
         if idx == self.data.len() {
-            self.clear();
+            self.data.clear();
         } else {
             let _ = self.data.drain(0..=idx);
         }

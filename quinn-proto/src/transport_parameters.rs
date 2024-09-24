@@ -369,9 +369,7 @@ impl TransportParameters {
 
         // The below 2 fields are for the implementation of
         // https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html#name-extension-negotiation
-        // The transport parameter values selected are placeholders, using the first 2 reserved values specified
-        // in https://www.rfc-editor.org/rfc/rfc9000#section-22.3
-
+        // Values of 0x00f0 and 0x00f1 arbitrarily chosen.
         if let Some(x) = self.max_recv_timestamps_per_ack {
             w.write_var(0x00f0);
             w.write_var(x.size() as u64);

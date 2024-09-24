@@ -405,9 +405,8 @@ impl fmt::Debug for TransportConfig {
             enable_segmentation_offload,
             ack_timestamp_config,
         } = self;
-        let mut s = fmt.debug_struct("TransportConfig");
-
-        s.field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
+        fmt.debug_struct("TransportConfig")
+            .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
             .field("max_concurrent_uni_streams", max_concurrent_uni_streams)
             .field("max_idle_timeout", max_idle_timeout)
             .field("stream_receive_window", stream_receive_window)
