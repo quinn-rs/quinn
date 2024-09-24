@@ -35,7 +35,6 @@ pub trait Controller: Send + Sync {
     }
 
     #[allow(unused_variables)]
-    #[cfg(feature = "acktimestamps")]
     /// Packet deliveries were confirmed with timestamps information.
     fn on_ack_packet(
         &mut self,

@@ -15,7 +15,6 @@ use crate::{
     RESET_TOKEN_SIZE,
 };
 
-#[cfg(feature = "acktimestamps")]
 use crate::ack_timestamp_frame;
 
 #[cfg(feature = "arbitrary")]
@@ -137,7 +136,6 @@ frame_types! {
     IMMEDIATE_ACK = 0x1f,
     // DATAGRAM
     // Custom frame for https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html
-    // can't cfg here in macro #[cfg(feature = "acktimestamps")]
     ACK_RECEIVE_TIMESTAMPS = 0x40,
 }
 
@@ -149,39 +147,20 @@ pub(crate) enum Frame {
     Padding,
     Ping,
     Ack(Ack),
-    #[cfg(feature = "acktimestamps")]
     AckTimestamps(ack_timestamp_frame::AckTimestampFrame),
     ResetStream(ResetStream),
     StopSending(StopSending),
     Crypto(Crypto),
-    NewToken {
-        token: Bytes,
-    },
+    NewToken { token: Bytes },
     Stream(Stream),
     MaxData(VarInt),
-    MaxStreamData {
-        id: StreamId,
-        offset: u64,
-    },
-    MaxStreams {
-        dir: Dir,
-        count: u64,
-    },
-    DataBlocked {
-        offset: u64,
-    },
-    StreamDataBlocked {
-        id: StreamId,
-        offset: u64,
-    },
-    StreamsBlocked {
-        dir: Dir,
-        limit: u64,
-    },
+    MaxStreamData { id: StreamId, offset: u64 },
+    MaxStreams { dir: Dir, count: u64 },
+    DataBlocked { offset: u64 },
+    StreamDataBlocked { id: StreamId, offset: u64 },
+    StreamsBlocked { dir: Dir, limit: u64 },
     NewConnectionId(NewConnectionId),
-    RetireConnectionId {
-        sequence: u64,
-    },
+    RetireConnectionId { sequence: u64 },
     PathChallenge(u64),
     PathResponse(u64),
     Close(Close),
@@ -211,7 +190,6 @@ impl Frame {
             StopSending { .. } => Type::STOP_SENDING,
             RetireConnectionId { .. } => Type::RETIRE_CONNECTION_ID,
             Ack(_) => Type::ACK,
-            #[cfg(feature = "acktimestamps")]
             AckTimestamps(_) => Type::ACK_RECEIVE_TIMESTAMPS,
             Stream(ref x) => {
                 let mut ty = *STREAM_TYS.start();
@@ -669,7 +647,6 @@ impl Iter {
                     },
                 })
             }
-            #[cfg(feature = "acktimestamps")]
             Type::ACK_RECEIVE_TIMESTAMPS => {
                 let largest = self.bytes.get_var()?;
                 let delay = self.bytes.get_var()?;
@@ -816,7 +793,6 @@ fn scan_ack_blocks(buf: &mut io::Cursor<Bytes>, largest: u64, n: usize) -> Resul
     Ok(())
 }
 
-#[cfg(feature = "acktimestamps")]
 fn scan_ack_timestamp_blocks(
     buf: &mut io::Cursor<Bytes>,
     largest: u64,
@@ -1080,7 +1056,6 @@ mod test {
     }
 
     #[cfg(test)]
-    #[cfg(feature = "acktimestamps")]
     mod ack_timestamp_tests {
         use super::*;
 

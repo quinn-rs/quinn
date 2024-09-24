@@ -53,7 +53,6 @@ pub struct TransportConfig {
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
     pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
 
-    #[cfg(feature = "acktimestamps")]
     pub(crate) ack_timestamp_config: Option<AckTimestampsConfig>,
 
     pub(crate) persistent_congestion_threshold: u32,
@@ -230,7 +229,6 @@ impl TransportConfig {
     /// Defaults to `None`, which disables receiving acknowledgement timestamps from the sender.
     /// If `Some`, TransportParameters are sent to the peer to enable acknowledgement timestamps
     /// if supported.
-    #[cfg(feature = "acktimestamps")]
     pub fn ack_timestamp_config(&mut self, value: Option<AckTimestampsConfig>) -> &mut Self {
         self.ack_timestamp_config = value;
         self
@@ -374,7 +372,6 @@ impl Default for TransportConfig {
 
             enable_segmentation_offload: true,
 
-            #[cfg(feature = "acktimestamps")]
             ack_timestamp_config: None,
         }
     }
@@ -406,7 +403,6 @@ impl fmt::Debug for TransportConfig {
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
             enable_segmentation_offload,
-            #[cfg(feature = "acktimestamps")]
             ack_timestamp_config,
         } = self;
         let mut s = fmt.debug_struct("TransportConfig");
@@ -434,17 +430,13 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_receive_buffer_size", datagram_receive_buffer_size)
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             .field("congestion_controller_factory", &"[ opaque ]")
-            .field("enable_segmentation_offload", enable_segmentation_offload);
-
-        #[cfg(feature = "acktimestamps")]
-        s.field("ack_timestamp_config", ack_timestamp_config);
-
-        s.finish()
+            .field("enable_segmentation_offload", enable_segmentation_offload)
+            .field("ack_timestamp_config", ack_timestamp_config)
+            .finish()
     }
 }
 
 /// Parameters for controlling the peer's acknowledgements with receiver timestamps.
-#[cfg(feature = "acktimestamps")]
 #[derive(Clone, Debug)]
 pub struct AckTimestampsConfig {
     pub(crate) max_timestamps_per_ack: VarInt,
@@ -452,7 +444,6 @@ pub struct AckTimestampsConfig {
     pub(crate) basis: std::time::Instant,
 }
 
-#[cfg(feature = "acktimestamps")]
 impl AckTimestampsConfig {
     /// Sets the maximum number of timestamp entries per ACK frame.
     pub fn max_timestamps_per_ack(&mut self, value: VarInt) -> &mut Self {
@@ -475,7 +466,6 @@ impl AckTimestampsConfig {
     }
 }
 
-#[cfg(feature = "acktimestamps")]
 impl Default for AckTimestampsConfig {
     fn default() -> Self {
         Self {

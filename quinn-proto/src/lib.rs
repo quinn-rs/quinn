@@ -48,7 +48,6 @@ pub use crate::connection::{
 };
 
 mod config;
-#[cfg(feature = "acktimestamps")]
 pub use config::AckTimestampsConfig;
 pub use config::{
     AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
@@ -88,7 +87,6 @@ pub use crate::cid_generator::{
 mod token;
 use token::{ResetToken, RetryToken};
 
-#[cfg(feature = "acktimestamps")]
 mod ack_timestamp_frame;
 
 #[cfg(feature = "arbitrary")]

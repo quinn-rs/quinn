@@ -16,7 +16,6 @@ use crate::{
     shared::IssuedCid, Dir, StreamId, TransportError, VarInt,
 };
 
-#[cfg(feature = "acktimestamps")]
 use crate::connection::receiver_timestamps::ReceiverTimestamps;
 
 pub(super) struct PacketSpace {
@@ -282,7 +281,6 @@ pub(super) struct SentPacket {
     /// The time the packet was sent.
     pub(super) time_sent: Instant,
 
-    #[cfg(feature = "acktimestamps")]
     /// The time the packet was received by the receiver. The time Instant on this field is
     /// relative to a basis negotiated by the two connections. Time arithmetic done using the
     /// time_received field is only useful when compared to other time_received.
@@ -597,7 +595,6 @@ pub(super) struct PendingAcks {
     /// The largest acknowledged packet number sent in an ACK frame
     largest_acked: Option<u64>,
 
-    #[cfg(feature = "acktimestamps")]
     receiver_timestamps: Option<ReceiverTimestamps>,
 }
 
@@ -615,12 +612,10 @@ impl PendingAcks {
             largest_ack_eliciting_packet: None,
             largest_acked: None,
 
-            #[cfg(feature = "acktimestamps")]
             receiver_timestamps: None,
         }
     }
 
-    #[cfg(feature = "acktimestamps")]
     pub(super) fn set_receiver_timestamp(&mut self, max_timestamps: usize) {
         self.receiver_timestamps = Some(ReceiverTimestamps::new(max_timestamps));
     }
@@ -664,7 +659,6 @@ impl PendingAcks {
         ack_eliciting: bool,
         dedup: &Dedup,
     ) -> bool {
-        #[cfg(feature = "acktimestamps")]
         if let Some(ts) = self.receiver_timestamps_as_mut() {
             ts.add(packet_number, now);
         }
@@ -774,7 +768,6 @@ impl PendingAcks {
     pub(super) fn subtract_below(&mut self, max: u64) {
         self.ranges.remove(0..(max + 1));
 
-        #[cfg(feature = "acktimestamps")]
         self.receiver_timestamps.as_mut().map(|v| {
             v.subtract_below(max);
         });
@@ -785,12 +778,10 @@ impl PendingAcks {
         &self.ranges
     }
 
-    #[cfg(feature = "acktimestamps")]
     pub(super) fn receiver_timestamps_as_mut(&mut self) -> Option<&mut ReceiverTimestamps> {
         self.receiver_timestamps.as_mut()
     }
 
-    #[cfg(feature = "acktimestamps")]
     pub(super) fn receiver_timestamps_as_ref(&self) -> Option<&ReceiverTimestamps> {
         self.receiver_timestamps.as_ref()
     }

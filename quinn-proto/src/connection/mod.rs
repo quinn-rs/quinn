@@ -36,10 +36,8 @@ use crate::{
     VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, TIMER_GRANULARITY,
 };
 
-#[cfg(feature = "acktimestamps")]
 use crate::config::AckTimestampsConfig;
 
-#[cfg(feature = "acktimestamps")]
 use crate::ack_timestamp_frame::AckTimestampFrame;
 
 mod ack_frequency;
@@ -70,9 +68,7 @@ use paths::{PathData, PathResponses};
 
 mod send_buffer;
 
-#[cfg(feature = "acktimestamps")]
 mod receiver_timestamps;
-#[cfg(feature = "acktimestamps")]
 pub(crate) use receiver_timestamps::{PacketTimestamp, ReceiverTimestamps};
 
 pub(crate) mod spaces;
@@ -240,7 +236,6 @@ pub struct Connection {
     //
     // Ack Receive Timestamps
     //
-    #[cfg(feature = "acktimestamps")]
     peer_ack_timestamp_cfg: Option<AckTimestampsConfig>,
 
     streams: StreamsState,
@@ -353,7 +348,6 @@ impl Connection {
                 &TransportParameters::default(),
             )),
 
-            #[cfg(feature = "acktimestamps")]
             peer_ack_timestamp_cfg: None,
 
             pto_count: 0,
@@ -380,10 +374,7 @@ impl Connection {
         if side.is_client() {
             // Kick off the connection
             this.write_crypto();
-            this.init_0rtt(
-                #[cfg(feature = "acktimestamps")]
-                now,
-            );
+            this.init_0rtt(now);
         }
         this
     }
@@ -839,7 +830,6 @@ impl Connection {
                         &mut self.spaces[space_id],
                         buf,
                         &mut self.stats,
-                        #[cfg(feature = "acktimestamps")]
                         None,
                     );
                 }
@@ -1358,7 +1348,6 @@ impl Connection {
         }
     }
 
-    #[cfg(feature = "acktimestamps")]
     fn on_ack_with_timestamp_received(
         &mut self,
         now: Instant,
@@ -1658,7 +1647,6 @@ impl Connection {
                 &self.path.rtt,
             );
 
-            #[cfg(feature = "acktimestamps")]
             self.path.congestion.on_ack_packet(
                 pn,
                 now,
@@ -2082,7 +2070,7 @@ impl Connection {
         Ok(())
     }
 
-    fn init_0rtt(&mut self, #[cfg(feature = "acktimestamps")] now: Instant) {
+    fn init_0rtt(&mut self, now: Instant) {
         let (header, packet) = match self.crypto.early_crypto() {
             Some(x) => x,
             None => return,
@@ -2104,11 +2092,7 @@ impl Connection {
                         max_ack_delay: TransportParameters::default().max_ack_delay,
                         ..params
                     };
-                    self.set_peer_params(
-                        params,
-                        #[cfg(feature = "acktimestamps")]
-                        now,
-                    );
+                    self.set_peer_params(params, now);
                 }
                 Err(e) => {
                     error!("session ticket has malformed transport parameters: {}", e);
@@ -2629,11 +2613,7 @@ impl Connection {
                         self.endpoint_events
                             .push_back(EndpointEventInner::ResetToken(self.path.remote, token));
                     }
-                    self.handle_peer_params(
-                        params,
-                        #[cfg(feature = "acktimestamps")]
-                        now,
-                    )?;
+                    self.handle_peer_params(params, now)?;
                     self.issue_first_cids(now);
                 } else {
                     // Server-only
@@ -2680,16 +2660,9 @@ impl Connection {
                                 frame: None,
                                 reason: "transport parameters missing".into(),
                             })?;
-                    self.handle_peer_params(
-                        params,
-                        #[cfg(feature = "acktimestamps")]
-                        now,
-                    )?;
+                    self.handle_peer_params(params, now)?;
                     self.issue_first_cids(now);
-                    self.init_0rtt(
-                        #[cfg(feature = "acktimestamps")]
-                        now,
-                    );
+                    self.init_0rtt(now);
                 }
                 Ok(())
             }
@@ -2759,7 +2732,6 @@ impl Connection {
                     return Ok(());
                 }
 
-                #[cfg(feature = "acktimestamps")]
                 Frame::AckTimestamps(ack) => {
                     self.on_ack_with_timestamp_received(now, packet.header.space(), ack)?;
                 }
@@ -2857,7 +2829,6 @@ impl Connection {
                     self.on_ack_received(now, SpaceId::Data, ack)?;
                 }
 
-                #[cfg(feature = "acktimestamps")]
                 Frame::AckTimestamps(ack) => {
                     self.on_ack_with_timestamp_received(now, SpaceId::Data, ack)?;
                 }
@@ -3247,7 +3218,6 @@ impl Connection {
                 space,
                 buf,
                 &mut self.stats,
-                #[cfg(feature = "acktimestamps")]
                 self.peer_ack_timestamp_cfg
                     .as_ref()
                     .map_or(None, |v| Some(v.clone())),
@@ -3435,7 +3405,7 @@ impl Connection {
         space: &mut PacketSpace,
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
-        #[cfg(feature = "acktimestamps")] timestamp_config: Option<AckTimestampsConfig>,
+        timestamp_config: Option<AckTimestampsConfig>,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
 
@@ -3460,7 +3430,6 @@ impl Connection {
             delay_micros
         );
 
-        #[cfg(feature = "acktimestamps")]
         if timestamp_config.is_some() {
             let timestamp_config = timestamp_config.unwrap();
             AckTimestampFrame::encode(
@@ -3473,10 +3442,6 @@ impl Connection {
                 buf,
             );
         } else {
-            frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
-        }
-
-        if !cfg!(feature = "acktimestamps") {
             frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
         }
 
@@ -3499,7 +3464,7 @@ impl Connection {
     fn handle_peer_params(
         &mut self,
         params: TransportParameters,
-        #[cfg(feature = "acktimestamps")] now: Instant,
+        now: Instant,
     ) -> Result<(), TransportError> {
         if Some(self.orig_rem_cid) != params.initial_src_cid
             || (self.side.is_client()
@@ -3511,20 +3476,12 @@ impl Connection {
             ));
         }
 
-        self.set_peer_params(
-            params,
-            #[cfg(feature = "acktimestamps")]
-            now,
-        );
+        self.set_peer_params(params, now);
 
         Ok(())
     }
 
-    fn set_peer_params(
-        &mut self,
-        params: TransportParameters,
-        #[cfg(feature = "acktimestamps")] now: Instant,
-    ) {
+    fn set_peer_params(&mut self, params: TransportParameters, now: Instant) {
         self.streams.set_params(&params);
         self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
             (None, VarInt(0)) => None,
@@ -3546,7 +3503,6 @@ impl Connection {
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
         );
 
-        #[cfg(feature = "acktimestamps")]
         {
             self.peer_ack_timestamp_cfg = if let (Some(max_timestamps_per_ack), Some(exponent)) = (
                 params.max_recv_timestamps_per_ack,
