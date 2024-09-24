@@ -11,7 +11,7 @@ pub(crate) struct PacketTimestamp {
 
 impl Default for PacketTimestamp {
     fn default() -> Self {
-        PacketTimestamp {
+        Self {
             packet_number: 0,
             timestamp: Instant::now(),
         }
@@ -45,7 +45,7 @@ impl std::fmt::Debug for ReceiverTimestamps {
 
 impl ReceiverTimestamps {
     pub(crate) fn new(max: usize) -> Self {
-        ReceiverTimestamps {
+        Self {
             data: VecDeque::with_capacity(max),
             max,
         }
@@ -101,10 +101,10 @@ mod receiver_timestamp_tests {
     #[test]
     fn subtract_below() {
         let mut ts = ReceiverTimestamps::new(10);
-        let _ = ts.add(1, Instant::now());
-        let _ = ts.add(2, Instant::now());
-        let _ = ts.add(3, Instant::now());
-        let _ = ts.add(4, Instant::now());
+        ts.add(1, Instant::now());
+        ts.add(2, Instant::now());
+        ts.add(3, Instant::now());
+        ts.add(4, Instant::now());
         ts.subtract_below(3);
         assert_eq!(1, ts.len());
     }
@@ -112,7 +112,7 @@ mod receiver_timestamp_tests {
     #[test]
     fn subtract_below_everything() {
         let mut ts = ReceiverTimestamps::new(10);
-        let _ = ts.add(5, Instant::now());
+        ts.add(5, Instant::now());
         ts.subtract_below(10);
         assert_eq!(0, ts.len());
     }
@@ -120,10 +120,10 @@ mod receiver_timestamp_tests {
     #[test]
     fn receiver_timestamp_max() {
         let mut ts = ReceiverTimestamps::new(2);
-        let _ = ts.add(1, Instant::now());
-        let _ = ts.add(2, Instant::now());
-        let _ = ts.add(3, Instant::now());
-        let _ = ts.add(4, Instant::now());
+        ts.add(1, Instant::now());
+        ts.add(2, Instant::now());
+        ts.add(3, Instant::now());
+        ts.add(4, Instant::now());
         assert_eq!(2, ts.len());
         assert_eq!(3, ts.data.front().unwrap().packet_number);
         assert_eq!(4, ts.data.back().unwrap().packet_number);

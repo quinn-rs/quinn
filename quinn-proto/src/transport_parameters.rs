@@ -170,12 +170,12 @@ impl TransportParameters {
             receive_timestamps_exponent: config
                 .ack_timestamp_config
                 .as_ref()
-                .map_or(None, |cfg| Some(cfg.exponent)),
+                .map(|cfg| cfg.exponent),
 
             max_recv_timestamps_per_ack: config
                 .ack_timestamp_config
                 .as_ref()
-                .map_or(None, |cfg| Some(cfg.max_timestamps_per_ack)),
+                .map(|cfg| cfg.max_timestamps_per_ack),
 
             ..Self::default()
         }

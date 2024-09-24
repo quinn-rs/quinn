@@ -768,9 +768,9 @@ impl PendingAcks {
     pub(super) fn subtract_below(&mut self, max: u64) {
         self.ranges.remove(0..(max + 1));
 
-        self.receiver_timestamps.as_mut().map(|v| {
+        if let Some(v) = self.receiver_timestamps.as_mut() {
             v.subtract_below(max);
-        });
+        }
     }
 
     /// Returns the set of currently pending ACK ranges

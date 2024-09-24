@@ -3221,9 +3221,7 @@ impl Connection {
                 space,
                 buf,
                 &mut self.stats,
-                self.peer_ack_timestamp_cfg
-                    .as_ref()
-                    .map_or(None, |v| Some(v.clone())),
+                self.peer_ack_timestamp_cfg.clone(),
             );
         }
 
