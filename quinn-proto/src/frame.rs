@@ -1084,7 +1084,7 @@ mod test {
             buf.write_var(3); // pn 7
 
             buf.write_var(1); // gap
-            buf.write_var(6); // delta count
+            buf.write_var(5); // delta count
             buf.write_var(1); // pn 4
             buf.write_var(2); // pn 3
             buf.write_var(3); // pn 2
@@ -1127,7 +1127,7 @@ mod test {
 
             let mut c = io::Cursor::new(buf.freeze());
             assert_eq!(
-                IterErr::Malformed,
+                IterErr::UnexpectedEnd,
                 scan_ack_timestamp_blocks(&mut c, 5, 2).unwrap_err(),
             );
         }
