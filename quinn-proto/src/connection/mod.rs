@@ -3293,7 +3293,7 @@ impl Connection {
         space: &mut PacketSpace,
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
-        timestamp_config: Option<AckTimestampsConfig>,
+        peer_timestamp_config: Option<AckTimestampsConfig>,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
 
@@ -3322,8 +3322,9 @@ impl Connection {
             delay as _,
             space.pending_acks.ranges(),
             ecn,
-            timestamp_config.map(|cfg| {
+            peer_timestamp_config.map(|cfg| {
                 (
+                    // Safety: If peer_timestamp_config is set, receiver_timestamps must be set.
                     space.pending_acks.receiver_timestamps_as_ref().unwrap(),
                     cfg.basis,
                     cfg.exponent.0,
