@@ -4,7 +4,7 @@ use std::time::Instant;
 use tracing::warn;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct PacketTimestamp {
+pub struct PacketTimestamp {
     pub packet_number: u64,
     pub timestamp: Instant,
 }
@@ -18,7 +18,7 @@ impl Default for PacketTimestamp {
     }
 }
 
-pub(crate) struct ReceiverTimestamps {
+pub struct ReceiverTimestamps {
     data: VecDeque<PacketTimestamp>,
     max: usize,
 }

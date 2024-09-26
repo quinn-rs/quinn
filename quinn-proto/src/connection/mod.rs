@@ -38,8 +38,6 @@ use crate::{
 
 use crate::config::AckTimestampsConfig;
 
-use crate::ack_timestamp_frame::AckTimestampFrame;
-
 mod ack_frequency;
 use ack_frequency::AckFrequencyState;
 
@@ -249,8 +247,8 @@ pub struct Connection {
     stats: ConnectionStats,
     /// QUIC version used for the connection.
     version: u32,
-    /// Instant created
-    created_at: Instant,
+    /// Created at time instant.
+    epoch: Instant,
 }
 
 impl Connection {
@@ -372,7 +370,7 @@ impl Connection {
             rng,
             stats: ConnectionStats::default(),
             version,
-            created_at: now,
+            epoch: now,
         };
         if side.is_client() {
             // Kick off the connection
@@ -1351,21 +1349,21 @@ impl Connection {
         }
     }
 
-    fn on_ack_with_timestamp_received(
+    fn on_ack_received(
         &mut self,
         now: Instant,
         space: SpaceId,
-        ack: AckTimestampFrame,
+        ack: frame::Ack,
     ) -> Result<(), TransportError> {
         if ack.largest >= self.spaces[space].next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
 
-        let Some(timestamp_config) = self.config.ack_timestamp_config.as_ref() else {
+        if ack.timestamps.is_some() != self.config.ack_timestamp_config.is_some() {
             return Err(TransportError::PROTOCOL_VIOLATION(
-                "no timestamp config set",
+                "ack with timestamps expectation mismatched",
             ));
-        };
+        }
 
         let new_largest = {
             let space = &mut self.spaces[space];
@@ -1386,14 +1384,6 @@ impl Connection {
             }
         };
 
-        let decoder = ack.timestamp_iter(timestamp_config.basis, timestamp_config.exponent.0);
-        let mut timestamp_iter = {
-            let mut v: tinyvec::TinyVec<[PacketTimestamp; 10]> = tinyvec::TinyVec::new();
-            decoder.for_each(|elt| v.push(elt));
-            v.reverse();
-            v.into_iter().peekable()
-        };
-
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
         let mut newly_acked = ArrayRangeSet::new();
         for range in ack.iter() {
@@ -1402,6 +1392,14 @@ impl Connection {
                 newly_acked.insert_one(pn);
             }
         }
+
+        let mut timestamp_iter = self.config.ack_timestamp_config.as_ref().map(|cfg| {
+            let decoder = ack.timestamp_iter(cfg.basis, cfg.exponent.0).unwrap();
+            let mut v: tinyvec::TinyVec<[PacketTimestamp; 10]> = tinyvec::TinyVec::new();
+            decoder.for_each(|elt| v.push(elt));
+            v.reverse();
+            v.into_iter().peekable()
+        });
 
         if newly_acked.is_empty() {
             return Ok(());
@@ -1431,125 +1429,24 @@ impl Connection {
                 // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame
                 self.ack_frequency.on_acked(packet);
 
-                while let Some(v) = timestamp_iter.peek() {
-                    match v.packet_number.cmp(&packet) {
-                        cmp::Ordering::Less => {
-                            let _ = timestamp_iter.next();
-                        }
-                        cmp::Ordering::Equal => {
-                            // Unwrap safety is guaranteed because a value was validated
-                            // to exist using peek
-                            let ts = timestamp_iter.next().unwrap();
-                            info.time_received = Some(ts.timestamp);
-                        }
-                        cmp::Ordering::Greater => {
-                            break;
+                if let Some(timestamp_iter) = timestamp_iter.as_mut() {
+                    while let Some(v) = timestamp_iter.peek() {
+                        match v.packet_number.cmp(&packet) {
+                            cmp::Ordering::Less => {
+                                let _ = timestamp_iter.next();
+                            }
+                            cmp::Ordering::Equal => {
+                                // Unwrap safety is guaranteed because a value was validated
+                                // to exist using peek
+                                let ts = timestamp_iter.next().unwrap();
+                                info.time_received = Some(ts.timestamp);
+                            }
+                            cmp::Ordering::Greater => {
+                                break;
+                            }
                         }
                     }
                 }
-                self.on_packet_acked(now, packet, info);
-            }
-        }
-
-        self.path.congestion.on_end_acks(
-            now,
-            self.path.in_flight.bytes,
-            self.app_limited,
-            self.spaces[space].largest_acked_packet,
-        );
-
-        if new_largest && ack_eliciting_acked {
-            let ack_delay = if space != SpaceId::Data {
-                Duration::from_micros(0)
-            } else {
-                cmp::min(
-                    self.ack_frequency.peer_max_ack_delay,
-                    Duration::from_micros(ack.delay << self.peer_params.ack_delay_exponent.0),
-                )
-            };
-            let rtt = instant_saturating_sub(now, self.spaces[space].largest_acked_packet_sent);
-            self.path.rtt.update(ack_delay, rtt);
-            if self.path.first_packet_after_rtt_sample.is_none() {
-                self.path.first_packet_after_rtt_sample =
-                    Some((space, self.spaces[space].next_packet_number));
-            }
-        }
-
-        // Must be called before crypto/pto_count are clobbered
-        self.detect_lost_packets(now, space, true);
-
-        if self.peer_completed_address_validation() {
-            self.pto_count = 0;
-        }
-
-        self.set_loss_detection_timer(now);
-        Ok(())
-    }
-
-    fn on_ack_received(
-        &mut self,
-        now: Instant,
-        space: SpaceId,
-        ack: frame::Ack,
-    ) -> Result<(), TransportError> {
-        if ack.largest >= self.spaces[space].next_packet_number {
-            return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
-        }
-        let new_largest = {
-            let space = &mut self.spaces[space];
-            if space
-                .largest_acked_packet
-                .map_or(true, |pn| ack.largest > pn)
-            {
-                space.largest_acked_packet = Some(ack.largest);
-                if let Some(info) = space.sent_packets.get(&ack.largest) {
-                    // This should always succeed, but a misbehaving peer might ACK a packet we
-                    // haven't sent. At worst, that will result in us spuriously reducing the
-                    // congestion window.
-                    space.largest_acked_packet_sent = info.time_sent;
-                }
-                true
-            } else {
-                false
-            }
-        };
-
-        // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
-        let mut newly_acked = ArrayRangeSet::new();
-        for range in ack.iter() {
-            self.packet_number_filter.check_ack(space, range.clone())?;
-            for (&pn, _) in self.spaces[space].sent_packets.range(range) {
-                newly_acked.insert_one(pn);
-            }
-        }
-
-        if newly_acked.is_empty() {
-            return Ok(());
-        }
-
-        let mut ack_eliciting_acked = false;
-        for packet in newly_acked.elts() {
-            if let Some(info) = self.spaces[space].take(packet) {
-                if let Some(acked) = info.largest_acked {
-                    // Assume ACKs for all packets below the largest acknowledged in `packet` have
-                    // been received. This can cause the peer to spuriously retransmit if some of
-                    // our earlier ACKs were lost, but allows for simpler state tracking. See
-                    // discussion at
-                    // https://www.rfc-editor.org/rfc/rfc9000.html#name-limiting-ranges-by-tracking
-                    self.spaces[space].pending_acks.subtract_below(acked);
-                }
-                ack_eliciting_acked |= info.ack_eliciting;
-
-                // Notify MTU discovery that a packet was acked, because it might be an MTU probe
-                let mtu_updated = self.path.mtud.on_acked(space, packet, info.size);
-                if mtu_updated {
-                    self.path
-                        .congestion
-                        .on_mtu_update(self.path.mtud.current_mtu());
-                }
-
-                // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame
-                self.ack_frequency.on_acked(packet);
 
                 self.on_packet_acked(now, packet, info);
             }
@@ -2734,11 +2631,6 @@ impl Connection {
                     self.state = State::Draining;
                     return Ok(());
                 }
-
-                Frame::AckTimestamps(ack) => {
-                    self.on_ack_with_timestamp_received(now, packet.header.space(), ack)?;
-                }
-
                 _ => {
                     let mut err =
                         TransportError::PROTOCOL_VIOLATION("illegal frame type in handshake");
@@ -2831,11 +2723,6 @@ impl Connection {
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, ack)?;
                 }
-
-                Frame::AckTimestamps(ack) => {
-                    self.on_ack_with_timestamp_received(now, SpaceId::Data, ack)?;
-                }
-
                 Frame::Padding | Frame::Ping => {}
                 Frame::Close(reason) => {
                     close = Some(reason);
@@ -3431,20 +3318,20 @@ impl Connection {
             delay_micros
         );
 
-        if timestamp_config.is_some() {
-            let timestamp_config = timestamp_config.unwrap();
-            AckTimestampFrame::encode(
-                delay as _,
-                space.pending_acks.ranges(),
-                space.pending_acks.receiver_timestamps_as_ref().unwrap(),
-                timestamp_config.basis,
-                timestamp_config.exponent.0,
-                timestamp_config.max_timestamps_per_ack.0,
-                buf,
-            );
-        } else {
-            frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
-        }
+        frame::Ack::encode(
+            delay as _,
+            space.pending_acks.ranges(),
+            ecn,
+            timestamp_config.map(|cfg| {
+                (
+                    space.pending_acks.receiver_timestamps_as_ref().unwrap(),
+                    cfg.basis,
+                    cfg.exponent.0,
+                    cfg.max_timestamps_per_ack.0,
+                )
+            }),
+            buf,
+        );
 
         stats.frame_tx.acks += 1;
     }
@@ -3513,7 +3400,7 @@ impl Connection {
                 Some(AckTimestampsConfig {
                     exponent,
                     max_timestamps_per_ack,
-                    basis: self.created_at,
+                    basis: self.epoch,
                 })
             } else {
                 None
