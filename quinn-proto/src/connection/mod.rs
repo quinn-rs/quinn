@@ -2243,10 +2243,8 @@ impl Connection {
             }
             Ok((packet, number)) => {
                 let span = match number {
-                    Some(pn) => {
-                        trace_span!("recv", space = ?packet.header.space(), pn, side=?self.side)
-                    }
-                    None => trace_span!("recv", space = ?packet.header.space(), side=?self.side),
+                    Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn),
+                    None => trace_span!("recv", space = ?packet.header.space()),
                 };
                 let _guard = span.enter();
 
