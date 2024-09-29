@@ -29,6 +29,14 @@ impl Assembler {
         Self::default()
     }
 
+    /// Reset to the initial state
+    pub(super) fn reinit(&mut self) {
+        let old_data = mem::take(&mut self.data);
+        *self = Self::default();
+        self.data = old_data;
+        self.data.clear();
+    }
+
     pub(super) fn ensure_ordering(&mut self, ordered: bool) -> Result<(), IllegalOrderedRead> {
         if ordered && !self.state.is_ordered() {
             return Err(IllegalOrderedRead);
