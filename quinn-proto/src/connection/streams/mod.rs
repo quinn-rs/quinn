@@ -7,10 +7,11 @@ use bytes::Bytes;
 use thiserror::Error;
 use tracing::trace;
 
-use self::state::get_or_insert_recv;
-
 use super::spaces::{Retransmits, ThinRetransmits};
-use crate::{connection::streams::state::get_or_insert_send, frame, Dir, StreamId, VarInt};
+use crate::{
+    connection::streams::state::{get_or_insert_recv, get_or_insert_send},
+    frame, Dir, StreamId, VarInt,
+};
 
 mod recv;
 use recv::Recv;
@@ -149,8 +150,8 @@ impl<'a> RecvStream<'a> {
         // connection-level flow control to account for discarded data. Otherwise, we can discard
         // state immediately.
         if !stream.final_offset_unknown() {
-            entry.remove();
-            self.state.stream_freed(self.id, StreamHalf::Recv);
+            let recv = entry.remove().expect("must have recv when stopping");
+            self.state.stream_recv_freed(self.id, recv);
         }
 
         if self.state.add_read_credits(read_credits).should_transmit() {
@@ -168,7 +169,7 @@ impl<'a> RecvStream<'a> {
         let hash_map::Entry::Occupied(entry) = self.state.recv.entry(self.id) else {
             return Err(ClosedStream { _private: () });
         };
-        let Some(s) = entry.get().as_ref() else {
+        let Some(s) = entry.get().as_ref().and_then(|s| s.as_open_recv()) else {
             return Ok(None);
         };
         if s.stopped {
@@ -180,8 +181,9 @@ impl<'a> RecvStream<'a> {
 
         // Clean up state after application observes the reset, since there's no reason for the
         // application to attempt to read or stop the stream once it knows it's reset
-        entry.remove_entry();
-        self.state.stream_freed(self.id, StreamHalf::Recv);
+        let (_, recv) = entry.remove_entry();
+        self.state
+            .stream_recv_freed(self.id, recv.expect("must have recv on reset"));
         self.state.queue_max_stream_id(self.pending);
 
         Ok(Some(code))

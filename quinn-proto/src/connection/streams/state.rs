@@ -20,12 +20,58 @@ use crate::{
     Dir, Side, StreamId, TransportError, VarInt, MAX_STREAM_COUNT,
 };
 
+/// Wrapper around `Recv` that facilitates reusing `Recv` instances
+#[derive(Debug)]
+pub(super) enum StreamRecv {
+    /// A `Recv` that is ready to be opened
+    Free(Box<Recv>),
+    /// A `Recv` that has been opened
+    Open(Box<Recv>),
+}
+
+impl StreamRecv {
+    /// Returns a reference to the inner `Recv` if the stream is open
+    pub(super) fn as_open_recv(&self) -> Option<&Recv> {
+        match self {
+            Self::Open(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    // Returns a mutable reference to the inner `Recv` if the stream is open
+    pub(super) fn as_open_recv_mut(&mut self) -> Option<&mut Recv> {
+        match self {
+            Self::Open(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    // Returns the inner `Recv`
+    pub(super) fn into_inner(self) -> Box<Recv> {
+        match self {
+            Self::Free(r) | Self::Open(r) => r,
+        }
+    }
+
+    // Reinitialize the stream so the inner `Recv` can be reused
+    pub(super) fn free(self, initial_max_data: u64) -> Self {
+        match self {
+            Self::Free(_) => unreachable!("Self::Free on reinit()"),
+            Self::Open(mut recv) => {
+                recv.reinit(initial_max_data);
+                Self::Free(recv)
+            }
+        }
+    }
+}
+
 #[allow(unreachable_pub)] // fuzzing only
 pub struct StreamsState {
     pub(super) side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
     pub(super) send: FxHashMap<StreamId, Option<Box<Send>>>,
-    pub(super) recv: FxHashMap<StreamId, Option<Box<Recv>>>,
+    pub(super) recv: FxHashMap<StreamId, Option<StreamRecv>>,
+    pub(super) free_recv: Vec<StreamRecv>,
     pub(super) next: [u64; 2],
     /// Maximum number of locally-initiated streams that may be opened over the lifetime of the
     /// connection so far, per direction
@@ -105,6 +151,7 @@ impl StreamsState {
             side,
             send: FxHashMap::default(),
             recv: FxHashMap::default(),
+            free_recv: Vec::new(),
             next: [0, 0],
             max: [0, 0],
             max_remote: [max_remote_bi.into(), max_remote_uni.into()],
@@ -240,8 +287,8 @@ impl StreamsState {
 
         // Stopped streams become closed instantly on FIN, so check whether we need to clean up
         if closed {
-            self.recv.remove(&id);
-            self.stream_freed(id, StreamHalf::Recv);
+            let rs = self.recv.remove(&id).flatten().unwrap();
+            self.stream_recv_freed(id, rs);
         }
 
         // We don't buffer data on stopped streams, so issue flow control credit immediately
@@ -293,8 +340,8 @@ impl StreamsState {
         let end = rs.end;
         if stopped {
             // Stopped streams should be disposed immediately on reset
-            self.recv.remove(&id);
-            self.stream_freed(id, StreamHalf::Recv);
+            let rs = self.recv.remove(&id).flatten().unwrap();
+            self.stream_recv_freed(id, rs);
         }
         self.on_stream_frame(!stopped, id);
 
@@ -358,6 +405,7 @@ impl StreamsState {
         self.recv
             .get(&id)
             .and_then(|s| s.as_ref())
+            .and_then(|s| s.as_open_recv())
             .map_or(false, |s| s.can_send_flow_control())
     }
 
@@ -442,7 +490,12 @@ impl StreamsState {
                 None => break,
             };
             pending.max_stream_data.remove(&id);
-            let rs = match self.recv.get_mut(&id).and_then(|s| s.as_mut()) {
+            let rs = match self
+                .recv
+                .get_mut(&id)
+                .and_then(|s| s.as_mut())
+                .and_then(|s| s.as_open_recv_mut())
+            {
                 Some(x) => x,
                 None => continue,
             };
@@ -831,7 +884,8 @@ impl StreamsState {
         }
         // bidirectional OR (unidirectional AND remote)
         if bi || remote {
-            assert!(self.recv.insert(id, None).is_none());
+            let recv = self.free_recv.pop();
+            assert!(self.recv.insert(id, recv).is_none());
         }
     }
 
@@ -883,6 +937,11 @@ impl StreamsState {
         }
     }
 
+    pub(super) fn stream_recv_freed(&mut self, id: StreamId, recv: StreamRecv) {
+        self.free_recv.push(recv.free(self.stream_receive_window));
+        self.stream_freed(id, StreamHalf::Recv);
+    }
+
     pub(super) fn max_send_data(&self, id: StreamId) -> VarInt {
         let remote = self.side != id.initiator();
         match id.dir() {
@@ -905,8 +964,16 @@ pub(super) fn get_or_insert_send(
 #[inline]
 pub(super) fn get_or_insert_recv(
     initial_max_data: u64,
-) -> impl Fn(&mut Option<Box<Recv>>) -> &mut Box<Recv> {
-    move |opt| opt.get_or_insert_with(|| Recv::new(initial_max_data))
+) -> impl FnMut(&mut Option<StreamRecv>) -> &mut Recv {
+    move |opt| {
+        *opt = opt.take().map(|s| match s {
+            StreamRecv::Free(recv) => StreamRecv::Open(recv),
+            s => s,
+        });
+        opt.get_or_insert_with(|| StreamRecv::Open(Recv::new(initial_max_data)))
+            .as_open_recv_mut()
+            .unwrap()
+    }
 }
 
 #[cfg(test)]
