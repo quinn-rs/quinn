@@ -1,10 +1,10 @@
-use std::time::Instant;
 use tracing::{debug, trace};
 
 use crate::connection::spaces::PacketSpace;
 use crate::crypto::{HeaderKey, KeyPair, PacketKey};
 use crate::packet::{Packet, PartialDecode, SpaceId};
 use crate::token::ResetToken;
+use crate::Instant;
 use crate::{TransportError, RESET_TOKEN_SIZE};
 
 /// Removes header protection of a packet, or returns `None` if the packet was dropped
