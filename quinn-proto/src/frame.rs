@@ -439,10 +439,10 @@ impl Ack {
     }
 
     // https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html#ts-ranges
-    fn encode_timestamps<W: BufMut>(
+    fn encode_timestamps(
         timestamps: &ReceiverTimestamps,
         mut largest: u64,
-        buf: &mut W,
+        buf: &mut impl BufMut,
         mut basis: Instant,
         exponent: u64,
         max_timestamps: u64,
@@ -451,7 +451,7 @@ impl Ack {
             buf.write_var(0);
             return;
         }
-        let mut prev: Option<u64> = None;
+        let mut prev = None;
 
         // segment_idx tracks the positions in `timestamps` in which a gap occurs.
         let mut segment_idxs = Vec::<usize>::new();
@@ -924,7 +924,7 @@ enum IterErr {
     Malformed,
 }
 
-impl std::fmt::Debug for IterErr {
+impl fmt::Debug for IterErr {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str(self.reason())
     }
@@ -979,8 +979,8 @@ impl<'a> Iterator for AckTimestampIter<'a> {
     type Item = PacketTimestamp;
     fn next(&mut self) -> Option<Self::Item> {
         if !self.data.has_remaining() {
-            debug_assert!(
-                self.deltas_remaining == 0,
+            debug_assert_eq!(
+                self.deltas_remaining, 0,
                 "timestamp delta remaining should be 0"
             );
             return None;

@@ -3,7 +3,7 @@ use std::{
     net::{SocketAddrV4, SocketAddrV6},
     num::TryFromIntError,
     sync::Arc,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 #[cfg(feature = "ring")]
@@ -459,7 +459,7 @@ impl AckTimestampsConfig {
 
     /// Sets the time base for which all timestamps are anchored on.
     /// Defaults to Instant::now of when the default struct was created.
-    pub fn basis(&mut self, instant: std::time::Instant) -> &mut Self {
+    pub fn basis(&mut self, instant: Instant) -> &mut Self {
         self.basis = instant;
         self
     }

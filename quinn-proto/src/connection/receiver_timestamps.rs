@@ -1,9 +1,8 @@
-use std::collections::VecDeque;
-use std::time::Instant;
+use std::{collections::VecDeque, fmt, time::Instant};
 
 use tracing::warn;
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Copy)]
 pub struct PacketTimestamp {
     pub packet_number: u64,
     pub timestamp: Instant,
@@ -23,7 +22,7 @@ pub struct ReceiverTimestamps {
     max: usize,
 }
 
-impl std::fmt::Debug for ReceiverTimestamps {
+impl fmt::Debug for ReceiverTimestamps {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let mut l = f.debug_list();
         let mut last: Option<(u64, Instant)> = None;
@@ -67,18 +66,6 @@ impl ReceiverTimestamps {
         });
     }
 
-    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = PacketTimestamp> + '_ {
-        self.data.iter().cloned()
-    }
-
-    pub(crate) fn len(&self) -> usize {
-        self.data.len()
-    }
-
-    pub(crate) fn inner(&self) -> &VecDeque<PacketTimestamp> {
-        &self.data
-    }
-
     pub(crate) fn subtract_below(&mut self, packet_number: u64) {
         if self.data.is_empty() {
             return;
@@ -91,6 +78,18 @@ impl ReceiverTimestamps {
         } else {
             let _ = self.data.drain(0..=idx);
         }
+    }
+
+    pub(crate) fn iter(&self) -> impl DoubleEndedIterator<Item = PacketTimestamp> + '_ {
+        self.data.iter().cloned()
+    }
+
+    pub(crate) fn len(&self) -> usize {
+        self.data.len()
+    }
+
+    pub(crate) fn inner(&self) -> &VecDeque<PacketTimestamp> {
+        &self.data
     }
 }
 

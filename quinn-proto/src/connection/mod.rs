@@ -18,7 +18,7 @@ use crate::{
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::BufMutExt,
-    config::{ServerConfig, TransportConfig},
+    config::{AckTimestampsConfig, ServerConfig, TransportConfig},
     crypto::{self, KeyPair, Keys, PacketKey},
     frame::{self, Close, Datagram, FrameStruct},
     packet::{
@@ -35,8 +35,6 @@ use crate::{
     Dir, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
     VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, TIMER_GRANULARITY,
 };
-
-use crate::config::AckTimestampsConfig;
 
 mod ack_frequency;
 use ack_frequency::AckFrequencyState;
