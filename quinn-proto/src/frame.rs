@@ -962,6 +962,7 @@ impl<'a> AckTimestampIter<'a> {
     fn new(largest: u64, epoch: Instant, exponent: u64, mut data: &'a [u8]) -> Self {
         // We read and throw away the Timestamp Range Count value because
         // it was already used to properly slice the data.
+        // Unwrap safety: this byte block was scanned prior using scan_ack_timestamps_blocks.
         let _ = data.get_var().unwrap();
         AckTimestampIter {
             timestamp_basis: 0,

@@ -1397,18 +1397,22 @@ impl Connection {
             }
         }
 
-        let mut timestamp_iter =
-            if let Some(_) = self.config.ack_timestamps_config.max_timestamps_per_ack {
-                let decoder = ack
-                    .timestamp_iter(self.epoch, self.config.ack_timestamps_config.exponent.0)
-                    .unwrap();
-                let mut v: tinyvec::TinyVec<[PacketTimestamp; 10]> = tinyvec::TinyVec::new();
-                decoder.for_each(|elt| v.push(elt));
-                v.reverse();
-                Some(v.into_iter().peekable())
-            } else {
-                None
-            };
+        let mut timestamp_iter = if self
+            .config
+            .ack_timestamps_config
+            .max_timestamps_per_ack
+            .is_some()
+        {
+            let decoder = ack
+                .timestamp_iter(self.epoch, self.config.ack_timestamps_config.exponent.0)
+                .unwrap();
+            let mut v: tinyvec::TinyVec<[PacketTimestamp; 10]> = tinyvec::TinyVec::new();
+            decoder.for_each(|elt| v.push(elt));
+            v.reverse();
+            Some(v.into_iter().peekable())
+        } else {
+            None
+        };
 
         if newly_acked.is_empty() {
             return Ok(());
@@ -1548,14 +1552,6 @@ impl Connection {
         if info.ack_eliciting && self.path.challenge.is_none() {
             // Only pass ACKs to the congestion controller if we are not validating the current
             // path, so as to ignore any ACKs from older paths still coming in.
-            self.path.congestion.on_ack(
-                now,
-                info.time_sent,
-                info.size.into(),
-                self.app_limited,
-                &self.path.rtt,
-            );
-
             self.path.congestion.on_ack_packet(
                 pn,
                 now,
@@ -3115,7 +3111,7 @@ impl Connection {
                 space,
                 buf,
                 &mut self.stats,
-                self.ack_timestamps_cfg.clone(),
+                self.ack_timestamps_cfg,
                 self.epoch,
             );
         }

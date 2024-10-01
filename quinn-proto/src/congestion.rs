@@ -46,6 +46,7 @@ pub trait Controller: Send + Sync {
         app_limited: bool,
         rtt: &RttEstimator,
     ) {
+        self.on_ack(now, sent, bytes, app_limited, rtt);
     }
 
     /// Packets are acked in batches, all with the same `now` argument. This indicates one of those batches has completed.
