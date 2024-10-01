@@ -231,7 +231,7 @@ pub struct Connection {
 
     // Ack Receive Timestamps
     // The timestamp config of the peer.
-    ack_timestamp_cfg: AckTimestampsConfig,
+    ack_timestamps_cfg: AckTimestampsConfig,
 
     streams: StreamsState,
     /// Surplus remote CIDs for future use on new paths
@@ -345,7 +345,7 @@ impl Connection {
                 &TransportParameters::default(),
             )),
 
-            ack_timestamp_cfg: AckTimestampsConfig::default(),
+            ack_timestamps_cfg: AckTimestampsConfig::default(),
 
             pto_count: 0,
 
@@ -828,7 +828,7 @@ impl Connection {
                         &mut self.spaces[space_id],
                         buf,
                         &mut self.stats,
-                        self.ack_timestamp_cfg,
+                        self.ack_timestamps_cfg,
                         self.epoch,
                     );
                 }
@@ -1360,7 +1360,7 @@ impl Connection {
         if ack.timestamps.is_some()
             != self
                 .config
-                .ack_timestamp_config
+                .ack_timestamps_config
                 .max_timestamps_per_ack
                 .is_some()
         {
@@ -1398,9 +1398,9 @@ impl Connection {
         }
 
         let mut timestamp_iter =
-            if let Some(_) = self.config.ack_timestamp_config.max_timestamps_per_ack {
+            if let Some(_) = self.config.ack_timestamps_config.max_timestamps_per_ack {
                 let decoder = ack
-                    .timestamp_iter(self.epoch, self.config.ack_timestamp_config.exponent.0)
+                    .timestamp_iter(self.epoch, self.config.ack_timestamps_config.exponent.0)
                     .unwrap();
                 let mut v: tinyvec::TinyVec<[PacketTimestamp; 10]> = tinyvec::TinyVec::new();
                 decoder.for_each(|elt| v.push(elt));
@@ -3115,7 +3115,7 @@ impl Connection {
                 space,
                 buf,
                 &mut self.stats,
-                self.ack_timestamp_cfg.clone(),
+                self.ack_timestamps_cfg.clone(),
                 self.epoch,
             );
         }
@@ -3396,7 +3396,7 @@ impl Connection {
         self.path.mtud.on_peer_max_udp_payload_size_received(
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
         );
-        self.ack_timestamp_cfg = params.ack_timestamps_cfg;
+        self.ack_timestamps_cfg = params.ack_timestamps_cfg;
         if let Some(max) = params.ack_timestamps_cfg.max_timestamps_per_ack {
             for space in self.spaces.iter_mut() {
                 space.pending_acks.set_receiver_timestamp(max.0 as usize);

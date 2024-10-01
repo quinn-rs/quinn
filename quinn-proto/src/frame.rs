@@ -759,7 +759,7 @@ impl Iter {
                     } else {
                         let ts_start = end;
                         let ts_range_count = self.bytes.get_var()?;
-                        scan_ack_timestamp_blocks(&mut self.bytes, largest, ts_range_count)?;
+                        scan_ack_timestamps_blocks(&mut self.bytes, largest, ts_range_count)?;
                         let ts_end = self.bytes.position() as usize;
                         Some(self.bytes.get_ref().slice(ts_start..ts_end))
                     },
@@ -891,7 +891,7 @@ fn scan_ack_blocks(buf: &mut io::Cursor<Bytes>, largest: u64, n: usize) -> Resul
     Ok(())
 }
 
-fn scan_ack_timestamp_blocks(
+fn scan_ack_timestamps_blocks(
     buf: &mut io::Cursor<Bytes>,
     largest: u64,
     range_count: u64,
@@ -1220,11 +1220,11 @@ mod test {
     }
 
     #[cfg(test)]
-    mod ack_timestamp_tests {
+    mod ack_timestamps_tests {
         use super::*;
 
         #[test]
-        fn test_scan_ack_timestamp_block() {
+        fn test_scan_ack_timestamps_block() {
             let mut buf = bytes::BytesMut::new();
             buf.write_var(0); // gap
             buf.write_var(3); // delta count
@@ -1234,12 +1234,12 @@ mod test {
 
             let buf_len = buf.len() as u64;
             let mut c = io::Cursor::new(buf.freeze());
-            scan_ack_timestamp_blocks(&mut c, 3, 1).unwrap();
+            scan_ack_timestamps_blocks(&mut c, 3, 1).unwrap();
             assert_eq!(buf_len, c.position());
         }
 
         #[test]
-        fn test_scan_ack_timestamp_block_with_gap() {
+        fn test_scan_ack_timestamps_block_with_gap() {
             let mut buf = bytes::BytesMut::new();
             buf.write_var(1); // gap
             buf.write_var(3); // delta count
@@ -1257,12 +1257,12 @@ mod test {
 
             let buf_len = buf.len() as u64;
             let mut c = io::Cursor::new(buf.freeze());
-            scan_ack_timestamp_blocks(&mut c, 10, 2).unwrap();
+            scan_ack_timestamps_blocks(&mut c, 10, 2).unwrap();
             assert_eq!(buf_len, c.position());
         }
 
         #[test]
-        fn test_scan_ack_timestamp_block_with_gap_malforned() {
+        fn test_scan_ack_timestamps_block_with_gap_malforned() {
             let mut buf = bytes::BytesMut::new();
             buf.write_var(1); // gap
             buf.write_var(3); // delta count
@@ -1279,11 +1279,11 @@ mod test {
             buf.write_var(3); // pn -1 this will cause an error
 
             let mut c = io::Cursor::new(buf.freeze());
-            assert!(scan_ack_timestamp_blocks(&mut c, 10, 2).is_err());
+            assert!(scan_ack_timestamps_blocks(&mut c, 10, 2).is_err());
         }
 
         #[test]
-        fn test_scan_ack_timestamp_block_malformed() {
+        fn test_scan_ack_timestamps_block_malformed() {
             let mut buf = bytes::BytesMut::new();
             buf.write_var(5); // gap
             buf.write_var(1); // delta count
@@ -1292,7 +1292,7 @@ mod test {
             let mut c = io::Cursor::new(buf.freeze());
             assert_eq!(
                 IterErr::UnexpectedEnd,
-                scan_ack_timestamp_blocks(&mut c, 5, 2).unwrap_err(),
+                scan_ack_timestamps_blocks(&mut c, 5, 2).unwrap_err(),
             );
         }
 

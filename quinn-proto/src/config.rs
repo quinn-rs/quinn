@@ -52,7 +52,7 @@ pub struct TransportConfig {
     pub(crate) min_mtu: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
     pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
-    pub(crate) ack_timestamp_config: AckTimestampsConfig,
+    pub(crate) ack_timestamps_config: AckTimestampsConfig,
 
     pub(crate) persistent_congestion_threshold: u32,
     pub(crate) keep_alive_interval: Option<Duration>,
@@ -228,8 +228,14 @@ impl TransportConfig {
     /// Defaults to `None`, which disables receiving acknowledgement timestamps from the sender.
     /// If `Some`, TransportParameters are sent to the peer to enable acknowledgement timestamps
     /// if supported.
-    pub fn ack_timestamp_config(&mut self, value: AckTimestampsConfig) -> &mut Self {
-        self.ack_timestamp_config = value;
+    pub fn max_ack_timestamps(&mut self, value: VarInt) -> &mut Self {
+        self.ack_timestamps_config.max_timestamps_per_ack = Some(value);
+        self
+    }
+
+    /// Specifies the exponent used when encoding the timestamps.
+    pub fn ack_timestamps_exponent(&mut self, value: VarInt) -> &mut Self {
+        self.ack_timestamps_config.exponent = value;
         self
     }
 
@@ -371,7 +377,7 @@ impl Default for TransportConfig {
 
             enable_segmentation_offload: true,
 
-            ack_timestamp_config: AckTimestampsConfig::default(),
+            ack_timestamps_config: AckTimestampsConfig::default(),
         }
     }
 }
@@ -402,7 +408,7 @@ impl fmt::Debug for TransportConfig {
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
             enable_segmentation_offload,
-            ack_timestamp_config,
+            ack_timestamps_config,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -429,7 +435,7 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             .field("congestion_controller_factory", &"[ opaque ]")
             .field("enable_segmentation_offload", enable_segmentation_offload)
-            .field("ack_timestamp_config", ack_timestamp_config)
+            .field("ack_timestamps_config", ack_timestamps_config)
             .finish()
     }
 }

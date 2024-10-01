@@ -165,7 +165,7 @@ impl TransportParameters {
                 VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
             ),
 
-            ack_timestamps_cfg: config.ack_timestamp_config,
+            ack_timestamps_cfg: config.ack_timestamps_config,
 
             ..Self::default()
         }
