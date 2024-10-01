@@ -52,7 +52,7 @@ pub struct TransportConfig {
     pub(crate) min_mtu: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
     pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
-    pub(crate) ack_timestamp_config: Option<AckTimestampsConfig>,
+    pub(crate) ack_timestamp_config: AckTimestampsConfig,
 
     pub(crate) persistent_congestion_threshold: u32,
     pub(crate) keep_alive_interval: Option<Duration>,
@@ -228,7 +228,7 @@ impl TransportConfig {
     /// Defaults to `None`, which disables receiving acknowledgement timestamps from the sender.
     /// If `Some`, TransportParameters are sent to the peer to enable acknowledgement timestamps
     /// if supported.
-    pub fn ack_timestamp_config(&mut self, value: Option<AckTimestampsConfig>) -> &mut Self {
+    pub fn ack_timestamp_config(&mut self, value: AckTimestampsConfig) -> &mut Self {
         self.ack_timestamp_config = value;
         self
     }
@@ -371,7 +371,7 @@ impl Default for TransportConfig {
 
             enable_segmentation_offload: true,
 
-            ack_timestamp_config: None,
+            ack_timestamp_config: AckTimestampsConfig::default(),
         }
     }
 }
@@ -435,16 +435,17 @@ impl fmt::Debug for TransportConfig {
 }
 
 /// Parameters for controlling the peer's acknowledgements with receiver timestamps.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, PartialEq, Eq, Copy)]
 pub struct AckTimestampsConfig {
-    pub(crate) max_timestamps_per_ack: VarInt,
+    /// If max_timestamp_per_ack is None, this feature is disabled.
+    pub(crate) max_timestamps_per_ack: Option<VarInt>,
     pub(crate) exponent: VarInt,
 }
 
 impl AckTimestampsConfig {
     /// Sets the maximum number of timestamp entries per ACK frame.
     pub fn max_timestamps_per_ack(&mut self, value: VarInt) -> &mut Self {
-        self.max_timestamps_per_ack = value;
+        self.max_timestamps_per_ack = Some(value);
         self
     }
 
@@ -459,7 +460,8 @@ impl AckTimestampsConfig {
 impl Default for AckTimestampsConfig {
     fn default() -> Self {
         Self {
-            max_timestamps_per_ack: 10u32.into(),
+            max_timestamps_per_ack: None,
+            // Default to 0 as per draft.
             exponent: 0u32.into(),
         }
     }

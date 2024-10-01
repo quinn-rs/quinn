@@ -231,7 +231,7 @@ pub struct Connection {
 
     // Ack Receive Timestamps
     // The timestamp config of the peer.
-    ack_timestamp_cfg: Option<AckTimestampsConfig>,
+    ack_timestamp_cfg: AckTimestampsConfig,
 
     streams: StreamsState,
     /// Surplus remote CIDs for future use on new paths
@@ -345,7 +345,7 @@ impl Connection {
                 &TransportParameters::default(),
             )),
 
-            ack_timestamp_cfg: None,
+            ack_timestamp_cfg: AckTimestampsConfig::default(),
 
             pto_count: 0,
 
@@ -828,7 +828,7 @@ impl Connection {
                         &mut self.spaces[space_id],
                         buf,
                         &mut self.stats,
-                        None,
+                        self.ack_timestamp_cfg,
                         self.epoch,
                     );
                 }
@@ -1357,7 +1357,13 @@ impl Connection {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
 
-        if ack.timestamps.is_some() != self.config.ack_timestamp_config.is_some() {
+        if ack.timestamps.is_some()
+            != self
+                .config
+                .ack_timestamp_config
+                .max_timestamps_per_ack
+                .is_some()
+        {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "ack with timestamps expectation mismatched",
             ));
@@ -1391,13 +1397,18 @@ impl Connection {
             }
         }
 
-        let mut timestamp_iter = self.config.ack_timestamp_config.as_ref().map(|cfg| {
-            let decoder = ack.timestamp_iter(self.epoch, cfg.exponent.0).unwrap();
-            let mut v: tinyvec::TinyVec<[PacketTimestamp; 10]> = tinyvec::TinyVec::new();
-            decoder.for_each(|elt| v.push(elt));
-            v.reverse();
-            v.into_iter().peekable()
-        });
+        let mut timestamp_iter =
+            if let Some(_) = self.config.ack_timestamp_config.max_timestamps_per_ack {
+                let decoder = ack
+                    .timestamp_iter(self.epoch, self.config.ack_timestamp_config.exponent.0)
+                    .unwrap();
+                let mut v: tinyvec::TinyVec<[PacketTimestamp; 10]> = tinyvec::TinyVec::new();
+                decoder.for_each(|elt| v.push(elt));
+                v.reverse();
+                Some(v.into_iter().peekable())
+            } else {
+                None
+            };
 
         if newly_acked.is_empty() {
             return Ok(());
@@ -3290,7 +3301,7 @@ impl Connection {
         space: &mut PacketSpace,
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
-        peer_timestamp_config: Option<AckTimestampsConfig>,
+        ack_timestamps_config: AckTimestampsConfig,
         epoch: Instant,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
@@ -3320,13 +3331,13 @@ impl Connection {
             delay as _,
             space.pending_acks.ranges(),
             ecn,
-            peer_timestamp_config.map(|cfg| {
+            ack_timestamps_config.max_timestamps_per_ack.map(|max| {
                 (
                     // Safety: If peer_timestamp_config is set, receiver_timestamps must be set.
                     space.pending_acks.receiver_timestamps_as_ref().unwrap(),
                     epoch,
-                    cfg.exponent.0,
-                    cfg.max_timestamps_per_ack.0,
+                    ack_timestamps_config.exponent.0,
+                    max.0,
                 )
             }),
             buf,
@@ -3385,25 +3396,12 @@ impl Connection {
         self.path.mtud.on_peer_max_udp_payload_size_received(
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
         );
-
-        {
-            self.ack_timestamp_cfg = if let (Some(max_timestamps_per_ack), Some(exponent)) = (
-                params.max_recv_timestamps_per_ack,
-                params.receive_timestamps_exponent,
-            ) {
-                for space in self.spaces.iter_mut() {
-                    space
-                        .pending_acks
-                        .set_receiver_timestamp(max_timestamps_per_ack.0 as usize);
-                }
-                Some(AckTimestampsConfig {
-                    exponent,
-                    max_timestamps_per_ack,
-                })
-            } else {
-                None
-            };
-        }
+        self.ack_timestamp_cfg = params.ack_timestamps_cfg;
+        if let Some(max) = params.ack_timestamps_cfg.max_timestamps_per_ack {
+            for space in self.spaces.iter_mut() {
+                space.pending_acks.set_receiver_timestamp(max.0 as usize);
+            }
+        };
     }
 
     fn decrypt_packet(
