@@ -3,7 +3,7 @@ use std::{
     net::{SocketAddrV4, SocketAddrV6},
     num::TryFromIntError,
     sync::Arc,
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 #[cfg(feature = "ring")]
@@ -52,7 +52,6 @@ pub struct TransportConfig {
     pub(crate) min_mtu: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
     pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
-
     pub(crate) ack_timestamp_config: Option<AckTimestampsConfig>,
 
     pub(crate) persistent_congestion_threshold: u32,
@@ -440,7 +439,6 @@ impl fmt::Debug for TransportConfig {
 pub struct AckTimestampsConfig {
     pub(crate) max_timestamps_per_ack: VarInt,
     pub(crate) exponent: VarInt,
-    pub(crate) basis: std::time::Instant,
 }
 
 impl AckTimestampsConfig {
@@ -456,13 +454,6 @@ impl AckTimestampsConfig {
         self.exponent = value;
         self
     }
-
-    /// Sets the time base for which all timestamps are anchored on.
-    /// Defaults to Instant::now of when the default struct was created.
-    pub fn basis(&mut self, instant: Instant) -> &mut Self {
-        self.basis = instant;
-        self
-    }
 }
 
 impl Default for AckTimestampsConfig {
@@ -470,7 +461,6 @@ impl Default for AckTimestampsConfig {
         Self {
             max_timestamps_per_ack: 10u32.into(),
             exponent: 0u32.into(),
-            basis: std::time::Instant::now(),
         }
     }
 }

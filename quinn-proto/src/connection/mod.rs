@@ -229,10 +229,9 @@ pub struct Connection {
     /// no outgoing application data.
     app_limited: bool,
 
-    //
     // Ack Receive Timestamps
-    //
-    peer_ack_timestamp_cfg: Option<AckTimestampsConfig>,
+    // The timestamp config of the peer.
+    ack_timestamp_cfg: Option<AckTimestampsConfig>,
 
     streams: StreamsState,
     /// Surplus remote CIDs for future use on new paths
@@ -346,7 +345,7 @@ impl Connection {
                 &TransportParameters::default(),
             )),
 
-            peer_ack_timestamp_cfg: None,
+            ack_timestamp_cfg: None,
 
             pto_count: 0,
 
@@ -830,6 +829,7 @@ impl Connection {
                         buf,
                         &mut self.stats,
                         None,
+                        self.epoch,
                     );
                 }
 
@@ -1392,7 +1392,7 @@ impl Connection {
         }
 
         let mut timestamp_iter = self.config.ack_timestamp_config.as_ref().map(|cfg| {
-            let decoder = ack.timestamp_iter(cfg.basis, cfg.exponent.0).unwrap();
+            let decoder = ack.timestamp_iter(self.epoch, cfg.exponent.0).unwrap();
             let mut v: tinyvec::TinyVec<[PacketTimestamp; 10]> = tinyvec::TinyVec::new();
             decoder.for_each(|elt| v.push(elt));
             v.reverse();
@@ -3104,7 +3104,8 @@ impl Connection {
                 space,
                 buf,
                 &mut self.stats,
-                self.peer_ack_timestamp_cfg.clone(),
+                self.ack_timestamp_cfg.clone(),
+                self.epoch,
             );
         }
 
@@ -3290,6 +3291,7 @@ impl Connection {
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
         peer_timestamp_config: Option<AckTimestampsConfig>,
+        epoch: Instant,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
 
@@ -3322,7 +3324,7 @@ impl Connection {
                 (
                     // Safety: If peer_timestamp_config is set, receiver_timestamps must be set.
                     space.pending_acks.receiver_timestamps_as_ref().unwrap(),
-                    cfg.basis,
+                    epoch,
                     cfg.exponent.0,
                     cfg.max_timestamps_per_ack.0,
                 )
@@ -3385,7 +3387,7 @@ impl Connection {
         );
 
         {
-            self.peer_ack_timestamp_cfg = if let (Some(max_timestamps_per_ack), Some(exponent)) = (
+            self.ack_timestamp_cfg = if let (Some(max_timestamps_per_ack), Some(exponent)) = (
                 params.max_recv_timestamps_per_ack,
                 params.receive_timestamps_exponent,
             ) {
@@ -3397,7 +3399,6 @@ impl Connection {
                 Some(AckTimestampsConfig {
                     exponent,
                     max_timestamps_per_ack,
-                    basis: self.epoch,
                 })
             } else {
                 None

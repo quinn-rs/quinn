@@ -432,10 +432,10 @@ impl Ack {
         self.into_iter()
     }
 
-    pub fn timestamp_iter(&self, basis: Instant, exponent: u64) -> Option<AckTimestampIter> {
+    pub fn timestamp_iter(&self, epoch: Instant, exponent: u64) -> Option<AckTimestampIter> {
         self.timestamps
             .as_ref()
-            .map(|v| AckTimestampIter::new(self.largest, basis, exponent, &v[..]))
+            .map(|v| AckTimestampIter::new(self.largest, epoch, exponent, &v[..]))
     }
 
     // https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html#ts-ranges
@@ -950,7 +950,7 @@ impl From<UnexpectedEnd> for IterErr {
 pub struct AckTimestampIter<'a> {
     timestamp_basis: u64,
     timestamp_exponent: u64,
-    timestamp_instant_basis: Instant,
+    epoch: Instant,
     data: &'a [u8],
 
     deltas_remaining: usize,
@@ -959,14 +959,14 @@ pub struct AckTimestampIter<'a> {
 }
 
 impl<'a> AckTimestampIter<'a> {
-    fn new(largest: u64, basis_instant: Instant, exponent: u64, mut data: &'a [u8]) -> Self {
+    fn new(largest: u64, epoch: Instant, exponent: u64, mut data: &'a [u8]) -> Self {
         // We read and throw away the Timestamp Range Count value because
         // it was already used to properly slice the data.
         let _ = data.get_var().unwrap();
         AckTimestampIter {
             timestamp_basis: 0,
             timestamp_exponent: exponent,
-            timestamp_instant_basis: basis_instant,
+            epoch,
             data,
             deltas_remaining: 0,
             first: true,
@@ -1009,7 +1009,7 @@ impl<'a> Iterator for AckTimestampIter<'a> {
 
         Some(PacketTimestamp {
             packet_number: self.next_pn,
-            timestamp: self.timestamp_instant_basis + Duration::from_micros(self.timestamp_basis),
+            timestamp: self.epoch + Duration::from_micros(self.timestamp_basis),
         })
     }
 }
