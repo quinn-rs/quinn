@@ -949,7 +949,7 @@ impl From<UnexpectedEnd> for IterErr {
 
 pub struct AckTimestampIter<'a> {
     timestamp_basis: u64,
-    timestamp_exponent: u64,
+    exponent: u64,
     epoch: Instant,
     data: &'a [u8],
 
@@ -965,7 +965,7 @@ impl<'a> AckTimestampIter<'a> {
         let _ = data.get_var().unwrap();
         AckTimestampIter {
             timestamp_basis: 0,
-            timestamp_exponent: exponent,
+            exponent,
             epoch,
             data,
             deltas_remaining: 0,
@@ -988,11 +988,10 @@ impl<'a> Iterator for AckTimestampIter<'a> {
         if self.deltas_remaining == 0 {
             let gap = self.data.get_var().unwrap();
             self.deltas_remaining = self.data.get_var().unwrap() as usize;
-            if self.first {
-                self.next_pn -= gap;
-            } else {
-                self.next_pn -= gap + 2;
-            }
+            self.next_pn -= match self.first {
+                true => gap,
+                false => gap + 2,
+            };
         } else {
             self.next_pn -= 1;
         }
@@ -1001,10 +1000,10 @@ impl<'a> Iterator for AckTimestampIter<'a> {
         self.deltas_remaining -= 1;
 
         if self.first {
-            self.timestamp_basis = delta << self.timestamp_exponent;
+            self.timestamp_basis = delta << self.exponent;
             self.first = false;
         } else {
-            self.timestamp_basis -= delta << self.timestamp_exponent;
+            self.timestamp_basis -= delta << self.exponent;
         }
 
         Some(PacketTimestamp {
