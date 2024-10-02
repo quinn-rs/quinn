@@ -1,6 +1,7 @@
 #[cfg(not(any(
     target_os = "macos",
     target_os = "ios",
+    target_os = "visionos",
     target_os = "openbsd",
     target_os = "solaris",
 )))]
@@ -66,6 +67,7 @@ impl UdpSocketState {
             || cfg!(target_os = "netbsd")
             || cfg!(target_os = "macos")
             || cfg!(target_os = "ios")
+            || cfg!(target_os = "visionos")
             || cfg!(target_os = "android")
             || cfg!(target_os = "solaris")
         {
@@ -127,7 +129,12 @@ impl UdpSocketState {
                 )?;
             }
         }
-        #[cfg(any(target_os = "freebsd", target_os = "macos", target_os = "ios"))]
+        #[cfg(any(
+            target_os = "freebsd",
+            target_os = "macos",
+            target_os = "ios",
+            target_os = "visionos"
+        ))]
         {
             if is_ipv4 {
                 // Set `may_fragment` to `true` if this option is not supported on the platform.
@@ -145,6 +152,7 @@ impl UdpSocketState {
             target_os = "netbsd",
             target_os = "macos",
             target_os = "ios",
+            target_os = "visionos",
             target_os = "solaris",
         ))]
         // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
@@ -227,6 +235,7 @@ impl UdpSocketState {
     #[cfg(not(any(
         target_os = "macos",
         target_os = "ios",
+        target_os = "visionos",
         target_os = "openbsd",
         target_os = "netbsd"
     )))]
@@ -238,6 +247,7 @@ impl UdpSocketState {
 #[cfg(not(any(
     target_os = "macos",
     target_os = "ios",
+    target_os = "visionos",
     target_os = "openbsd",
     target_os = "netbsd"
 )))]
@@ -328,6 +338,7 @@ fn send(
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",
+    target_os = "visionos",
     target_os = "openbsd",
     target_os = "netbsd"
 ))]
@@ -344,6 +355,7 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
         &mut ctrl,
         cfg!(target_os = "macos")
             || cfg!(target_os = "ios")
+            || cfg!(target_os = "visionos")
             || cfg!(target_os = "openbsd")
             || cfg!(target_os = "netbsd"),
         state.sendmsg_einval(),
@@ -377,6 +389,7 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
 #[cfg(not(any(
     target_os = "macos",
     target_os = "ios",
+    target_os = "visionos",
     target_os = "openbsd",
     target_os = "solaris",
 )))]
@@ -421,6 +434,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
 #[cfg(any(
     target_os = "macos",
     target_os = "ios",
+    target_os = "visionos",
     target_os = "openbsd",
     target_os = "solaris",
 ))]
@@ -516,6 +530,7 @@ fn prepare_msg(
                     target_os = "netbsd",
                     target_os = "macos",
                     target_os = "ios",
+                    target_os = "visionos",
                     target_os = "solaris",
                 ))]
                 {
@@ -583,7 +598,9 @@ fn decode_recv(
                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
                 // https://bugreport.apple.com/web/?problemID=48761855
                 #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
-                if (cfg!(target_os = "macos") || cfg!(target_os = "ios"))
+                if (cfg!(target_os = "macos")
+                    || cfg!(target_os = "ios")
+                    || cfg!(target_os = "visionos"))
                     && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
                 {
                     ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
@@ -604,6 +621,7 @@ fn decode_recv(
                 target_os = "netbsd",
                 target_os = "macos",
                 target_os = "ios",
+                target_os = "visionos",
             ))]
             (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
                 let in_addr = unsafe { cmsg::decode::<libc::in_addr, libc::cmsghdr>(cmsg) };
@@ -654,11 +672,11 @@ fn decode_recv(
     }
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "ios")))]
+#[cfg(not(any(target_os = "macos", target_os = "ios", target_os = "visionos")))]
 // Chosen somewhat arbitrarily; might benefit from additional tuning.
 pub(crate) const BATCH_SIZE: usize = 32;
 
-#[cfg(any(target_os = "macos", target_os = "ios"))]
+#[cfg(any(target_os = "macos", target_os = "ios", target_os = "visionos"))]
 pub(crate) const BATCH_SIZE: usize = 1;
 
 #[cfg(target_os = "linux")]
