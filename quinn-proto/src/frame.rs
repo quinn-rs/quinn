@@ -364,7 +364,7 @@ impl fmt::Debug for Ack {
         ranges.push(']');
 
         let timestamp_count = self
-            .timestamp_iter(Instant::now(), 0)
+            .timestamps_iter(Instant::now(), 0)
             .map(|iter| iter.count());
 
         f.debug_struct("Ack")
@@ -432,7 +432,7 @@ impl Ack {
         self.into_iter()
     }
 
-    pub fn timestamp_iter(&self, epoch: Instant, exponent: u64) -> Option<AckTimestampIter> {
+    pub fn timestamps_iter(&self, epoch: Instant, exponent: u64) -> Option<AckTimestampIter> {
         self.timestamps
             .as_ref()
             .map(|v| AckTimestampIter::new(self.largest, epoch, exponent, &v[..]))

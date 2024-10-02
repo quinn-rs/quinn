@@ -1397,22 +1397,18 @@ impl Connection {
             }
         }
 
-        let mut timestamp_iter = if self
-            .config
-            .ack_timestamps_config
-            .max_timestamps_per_ack
-            .is_some()
-        {
-            let decoder = ack
-                .timestamp_iter(self.epoch, self.config.ack_timestamps_config.exponent.0)
-                .unwrap();
-            let mut v: tinyvec::TinyVec<[PacketTimestamp; 10]> = tinyvec::TinyVec::new();
-            decoder.for_each(|elt| v.push(elt));
-            v.reverse();
-            Some(v.into_iter().peekable())
-        } else {
-            None
-        };
+        let timestamp_iter =
+            ack.timestamps_iter(self.epoch, self.config.ack_timestamps_config.exponent.0);
+        if self.config.ack_timestamps_config.enabled() && timestamp_iter.is_some() {
+            // Safety: checked by is_some()
+            let iter = timestamp_iter.unwrap();
+            let packet_space = &mut self.spaces[space];
+            for pkt in iter {
+                if let Some(sent_packet) = packet_space.get_mut_sent_packet(pkt.packet_number) {
+                    sent_packet.time_received = Some(pkt.timestamp);
+                }
+            }
+        }
 
         if newly_acked.is_empty() {
             return Ok(());
@@ -1420,7 +1416,7 @@ impl Connection {
 
         let mut ack_eliciting_acked = false;
         for packet in newly_acked.elts() {
-            if let Some(mut info) = self.spaces[space].take(packet) {
+            if let Some(info) = self.spaces[space].take(packet) {
                 if let Some(acked) = info.largest_acked {
                     // Assume ACKs for all packets below the largest acknowledged in `packet` have
                     // been received. This can cause the peer to spuriously retransmit if some of
@@ -1441,25 +1437,6 @@ impl Connection {
 
                 // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame
                 self.ack_frequency.on_acked(packet);
-
-                if let Some(timestamp_iter) = timestamp_iter.as_mut() {
-                    while let Some(v) = timestamp_iter.peek() {
-                        match v.packet_number.cmp(&packet) {
-                            cmp::Ordering::Less => {
-                                let _ = timestamp_iter.next();
-                            }
-                            cmp::Ordering::Equal => {
-                                // Unwrap safety is guaranteed because a value was validated
-                                // to exist using peek
-                                let ts = timestamp_iter.next().unwrap();
-                                info.time_received = Some(ts.timestamp);
-                            }
-                            cmp::Ordering::Greater => {
-                                break;
-                            }
-                        }
-                    }
-                }
 
                 self.on_packet_acked(now, packet, info);
             }

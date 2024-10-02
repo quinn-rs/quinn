@@ -221,6 +221,10 @@ impl PacketSpace {
         Some(packet)
     }
 
+    pub(super) fn get_mut_sent_packet(&mut self, number: u64) -> Option<&mut SentPacket> {
+        self.sent_packets.get_mut(&number)
+    }
+
     /// Returns the number of bytes to *remove* from the connection's in-flight count
     pub(super) fn sent(&mut self, number: u64, packet: SentPacket) -> u64 {
         // Retain state for at most this many non-ACK-eliciting packets sent after the most recently
