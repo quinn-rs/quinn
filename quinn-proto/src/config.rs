@@ -449,11 +449,6 @@ pub struct AckTimestampsConfig {
 }
 
 impl AckTimestampsConfig {
-    /// Enabled returns true if the feature is enabled.
-    pub fn enabled(&self) -> bool {
-        self.max_timestamps_per_ack.is_some()
-    }
-
     /// Sets the maximum number of timestamp entries per ACK frame.
     pub fn max_timestamps_per_ack(&mut self, value: VarInt) -> &mut Self {
         self.max_timestamps_per_ack = Some(value);

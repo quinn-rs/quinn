@@ -18,7 +18,7 @@ impl Default for PacketTimestamp {
 }
 
 pub struct ReceiverTimestamps {
-    data: VecDeque<PacketTimestamp>,
+    pub data: VecDeque<PacketTimestamp>,
     max: usize,
 }
 
@@ -86,10 +86,6 @@ impl ReceiverTimestamps {
 
     pub(crate) fn len(&self) -> usize {
         self.data.len()
-    }
-
-    pub(crate) fn inner(&self) -> &VecDeque<PacketTimestamp> {
-        &self.data
     }
 }
 

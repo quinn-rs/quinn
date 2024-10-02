@@ -1357,18 +1357,6 @@ impl Connection {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
 
-        if ack.timestamps.is_some()
-            != self
-                .config
-                .ack_timestamps_config
-                .max_timestamps_per_ack
-                .is_some()
-        {
-            return Err(TransportError::PROTOCOL_VIOLATION(
-                "ack with timestamps expectation mismatched",
-            ));
-        }
-
         let new_largest = {
             let space = &mut self.spaces[space];
             if space
@@ -1399,14 +1387,21 @@ impl Connection {
 
         let timestamp_iter =
             ack.timestamps_iter(self.epoch, self.config.ack_timestamps_config.exponent.0);
-        if self.config.ack_timestamps_config.enabled() && timestamp_iter.is_some() {
-            // Safety: checked by is_some()
-            let iter = timestamp_iter.unwrap();
+        if let (Some(max), Some(iter)) = (
+            self.config.ack_timestamps_config.max_timestamps_per_ack,
+            timestamp_iter,
+        ) {
             let packet_space = &mut self.spaces[space];
+            let mut n = 0;
             for pkt in iter {
+                if n > max.0 {
+                    warn!("peer is sending more timestamps than max requested");
+                    break;
+                }
                 if let Some(sent_packet) = packet_space.get_mut_sent_packet(pkt.packet_number) {
                     sent_packet.time_received = Some(pkt.timestamp);
                 }
+                n += 1;
             }
         }
 

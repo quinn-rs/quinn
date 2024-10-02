@@ -473,7 +473,7 @@ impl Ack {
         let mut counter = 0;
 
         for segment_idx in segment_idxs {
-            let Some(elt) = timestamps.inner().get(right - 1) else {
+            let Some(elt) = timestamps.data.get(right - 1) else {
                 debug_assert!(
                     false,
                     "an invalid indexing occurred on the ReceiverTimestamps vector"
@@ -499,7 +499,7 @@ impl Ack {
             // *Timestamp Delta Count
             buf.write_var((right - segment_idx) as u64);
             // *Timestamp Deltas
-            for pkt in timestamps.inner().range(segment_idx..right).rev() {
+            for pkt in timestamps.data.range(segment_idx..right).rev() {
                 let delta: u64 = if first {
                     first = false;
                     // For the first Timestamp Delta of the first Timestamp Range in the frame: the value
