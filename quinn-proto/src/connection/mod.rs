@@ -1392,16 +1392,14 @@ impl Connection {
             timestamp_iter,
         ) {
             let packet_space = &mut self.spaces[space];
-            let mut n = 0;
-            for pkt in iter {
-                if n > max.0 {
+            for (i, pkt) in iter.enumerate() {
+                if i > max.0 as usize {
                     warn!("peer is sending more timestamps than max requested");
                     break;
                 }
                 if let Some(sent_packet) = packet_space.get_mut_sent_packet(pkt.packet_number) {
                     sent_packet.time_received = Some(pkt.timestamp);
                 }
-                n += 1;
             }
         }
 
