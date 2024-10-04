@@ -31,6 +31,7 @@ windows-sys = { workspace = true }
 
 [dev-dependencies]
 criterion = "0.5"
+tracing-subscriber = { workspace = true }
 
 [target.'cfg(any(target_os = "linux", target_os = "windows"))'.bench]
 name = "throughput"

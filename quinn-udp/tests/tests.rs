@@ -33,6 +33,7 @@ fn basic() {
 
 #[test]
 fn ecn_v6() {
+    let _ = tracing_subscriber::fmt::try_init();
     let send = Socket::from(UdpSocket::bind("[::1]:0").unwrap());
     let recv = Socket::from(UdpSocket::bind("[::1]:0").unwrap());
     for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
@@ -53,6 +54,7 @@ fn ecn_v6() {
 #[test]
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
 fn ecn_v4() {
+    let _ = tracing_subscriber::fmt::try_init();
     let send = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
     let recv = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
     for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
@@ -73,6 +75,7 @@ fn ecn_v4() {
 #[test]
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
 fn ecn_v6_dualstack() {
+    let _ = tracing_subscriber::fmt::try_init();
     let recv = socket2::Socket::new(
         socket2::Domain::IPV6,
         socket2::Type::DGRAM,
