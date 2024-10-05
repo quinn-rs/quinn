@@ -391,6 +391,23 @@ impl PendingStreamsQueue {
             id,
         });
     }
+
+    fn pop(&mut self) -> Option<PendingStream> {
+        self.streams.pop()
+    }
+
+    fn clear(&mut self) {
+        self.streams.clear();
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &PendingStream> {
+        self.streams.iter()
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.streams.len()
+    }
 }
 
 /// The [`StreamId`] of a stream with pending data queued, ordered by its priority and recency
