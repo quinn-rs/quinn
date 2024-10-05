@@ -378,6 +378,23 @@ impl PendingStreamsQueue {
         }
     }
 
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.streams.len()
+    }
+
+    fn clear(&mut self) {
+        self.streams.clear();
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &PendingStream> {
+        self.streams.iter()
+    }
+
+    fn pop(&mut self) -> Option<PendingStream> {
+        self.streams.pop()
+    }
+
     /// Push a pending stream ID with the given priority, queued after any already-queued streams for the priority
     fn push_pending(&mut self, id: StreamId, priority: i32) {
         // As the recency counter is monotonically decreasing, we know that using its value to sort this stream will queue it
