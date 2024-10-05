@@ -192,7 +192,7 @@ impl StreamsState {
             }
         }
 
-        self.pending.streams.clear();
+        self.pending.clear();
         self.send_streams = 0;
         self.data_sent = 0;
         self.connection_blocked.clear();
@@ -345,7 +345,7 @@ impl StreamsState {
     /// Whether any stream data is queued, regardless of control frames
     pub(crate) fn can_send_stream_data(&self) -> bool {
         // Reset streams may linger in the pending stream list, but will never produce stream frames
-        self.pending.streams.iter().any(|stream| {
+        self.pending.iter().any(|stream| {
             self.send
                 .get(&stream.id)
                 .and_then(|s| s.as_ref())
@@ -503,7 +503,7 @@ impl StreamsState {
 
             // Pop the stream of the highest priority that currently has pending data
             // If the stream still has some pending data left after writing, it will be reinserted, otherwise not
-            let Some(stream) = self.pending.streams.pop() else {
+            let Some(stream) = self.pending.pop() else {
                 break;
             };
 
@@ -1312,7 +1312,7 @@ mod tests {
         assert_eq!(meta[2].id, id_low);
 
         assert!(!server.can_send_stream_data());
-        assert_eq!(server.pending.streams.len(), 0);
+        assert_eq!(server.pending.len(), 0);
     }
 
     #[test]
@@ -1341,7 +1341,7 @@ mod tests {
             conn_state: &state,
         };
         assert_eq!(mid.write(b"mid").unwrap(), 3);
-        assert_eq!(server.pending.streams.len(), 1);
+        assert_eq!(server.pending.len(), 1);
 
         let mut high = SendStream {
             id: id_high,
@@ -1351,7 +1351,7 @@ mod tests {
         };
         high.set_priority(1).unwrap();
         assert_eq!(high.write(&[0; 200]).unwrap(), 200);
-        assert_eq!(server.pending.streams.len(), 2);
+        assert_eq!(server.pending.len(), 2);
 
         // Requeue the high priority stream to lowest priority. The initial send
         // still uses high priority since it's queued that way. After that it will
@@ -1370,7 +1370,7 @@ mod tests {
         assert_eq!(meta[0].id, id_high);
 
         // After requeuing we should end up with 2 priorities - not 3
-        assert_eq!(server.pending.streams.len(), 2);
+        assert_eq!(server.pending.len(), 2);
 
         // Send the remaining data. The initial mid priority one should go first now
         let meta = server.write_stream_frames(&mut buf, 1000);
@@ -1379,7 +1379,7 @@ mod tests {
         assert_eq!(meta[1].id, id_high);
 
         assert!(!server.can_send_stream_data());
-        assert_eq!(server.pending.streams.len(), 0);
+        assert_eq!(server.pending.len(), 0);
     }
 
     #[test]
