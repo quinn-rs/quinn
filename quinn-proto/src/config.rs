@@ -42,6 +42,7 @@ pub struct TransportConfig {
     pub(crate) stream_receive_window: VarInt,
     pub(crate) receive_window: VarInt,
     pub(crate) send_window: u64,
+    pub(crate) send_fairness: bool,
 
     pub(crate) packet_threshold: u32,
     pub(crate) time_threshold: f32,
@@ -142,6 +143,21 @@ impl TransportConfig {
     /// every connection uses the entire window.
     pub fn send_window(&mut self, value: u64) -> &mut Self {
         self.send_window = value;
+        self
+    }
+
+    /// Whether to implement fair queuing for send streams having the same priority.
+    ///
+    /// When enabled, connections schedule data from outgoing streams having the same priority in a
+    /// round-robin fashion. When disabled, streams are scheduled in the order they are written to.
+    ///
+    /// Note that this only affects streams with the same priority. Higher priority streams always
+    /// take precedence over lower priority streams.
+    ///
+    /// Disabling fairness can reduce fragmentation and protocol overhead for workloads that use
+    /// many small streams.
+    pub fn send_fairness(&mut self, value: bool) -> &mut Self {
+        self.send_fairness = value;
         self
     }
 
@@ -337,6 +353,7 @@ impl Default for TransportConfig {
             stream_receive_window: STREAM_RWND.into(),
             receive_window: VarInt::MAX,
             send_window: (8 * STREAM_RWND).into(),
+            send_fairness: true,
 
             packet_threshold: 3,
             time_threshold: 9.0 / 8.0,
@@ -371,6 +388,7 @@ impl fmt::Debug for TransportConfig {
             stream_receive_window,
             receive_window,
             send_window,
+            send_fairness,
             packet_threshold,
             time_threshold,
             initial_rtt,
@@ -396,6 +414,7 @@ impl fmt::Debug for TransportConfig {
             .field("stream_receive_window", stream_receive_window)
             .field("receive_window", receive_window)
             .field("send_window", send_window)
+            .field("send_fairness", send_fairness)
             .field("packet_threshold", packet_threshold)
             .field("time_threshold", time_threshold)
             .field("initial_rtt", initial_rtt)
