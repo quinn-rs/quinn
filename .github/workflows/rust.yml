@@ -64,6 +64,9 @@ jobs:
       # Prevent feature unification from selecting *ring* as the crypto provider
       - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs
       - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs,runtime-tokio
+      # FIPS
+      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips
+      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips,runtime-tokio
 
   msrv:
     runs-on: ubuntu-latest
