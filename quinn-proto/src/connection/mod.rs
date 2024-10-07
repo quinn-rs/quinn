@@ -3213,7 +3213,9 @@ impl Connection {
 
         // STREAM
         if space_id == SpaceId::Data {
-            sent.stream_frames = self.streams.write_stream_frames(buf, max_size);
+            sent.stream_frames =
+                self.streams
+                    .write_stream_frames(buf, max_size, self.config.send_fairness);
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 

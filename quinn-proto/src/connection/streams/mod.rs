@@ -365,6 +365,9 @@ impl<'a> SendStream<'a> {
 /// A queue of streams with pending outgoing data, sorted by priority
 struct PendingStreamsQueue {
     streams: BinaryHeap<PendingStream>,
+    /// The next stream to write out. This is `Some` when `TransportConfig::send_fairness(false)` and writing a stream is
+    /// interrupted while the stream still has some pending data. See `reinsert_pending()`.
+    next: Option<PendingStream>,
     /// A monotonically decreasing counter, used to implement round-robin scheduling for streams of the same priority.
     /// Underflowing is not a practical concern, as it is initialized to u64::MAX and only decremented by 1 in `push_pending`
     recency: u64,
@@ -374,12 +377,28 @@ impl PendingStreamsQueue {
     fn new() -> Self {
         Self {
             streams: BinaryHeap::new(),
+            next: None,
             recency: u64::MAX,
         }
     }
 
+    /// Reinsert a stream that was pending and still contains unsent data.
+    fn reinsert_pending(&mut self, id: StreamId, priority: i32) {
+        assert!(self.next.is_none());
+
+        self.next = Some(PendingStream {
+            priority,
+            recency: self.recency, // the value here doesn't really matter
+            id,
+        });
+    }
+
     /// Push a pending stream ID with the given priority, queued after any already-queued streams for the priority
     fn push_pending(&mut self, id: StreamId, priority: i32) {
+        // Note that in the case where fairness is disabled, if we have a reinserted stream we don't
+        // bump it even if priority > next.priority. In order to minimize fragmentation we
+        // always try to complete a stream once part of it has been written.
+
         // As the recency counter is monotonically decreasing, we know that using its value to sort this stream will queue it
         // after all other queued streams of the same priority.
         // This is enough to implement round-robin scheduling for streams that are still pending even after being handled,
@@ -393,25 +412,26 @@ impl PendingStreamsQueue {
     }
 
     fn pop(&mut self) -> Option<PendingStream> {
-        self.streams.pop()
+        self.next.take().or_else(|| self.streams.pop())
     }
 
     fn clear(&mut self) {
+        self.next = None;
         self.streams.clear();
     }
 
     fn iter(&self) -> impl Iterator<Item = &PendingStream> {
-        self.streams.iter()
+        self.next.iter().chain(self.streams.iter())
     }
 
     #[cfg(test)]
     fn len(&self) -> usize {
-        self.streams.len()
+        self.streams.len() + self.next.is_some() as usize
     }
 }
 
 /// The [`StreamId`] of a stream with pending data queued, ordered by its priority and recency
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PendingStream {
     /// The priority of the stream
     // Note that this field should be kept above the `recency` field, in order for the `Ord` derive to be correct
