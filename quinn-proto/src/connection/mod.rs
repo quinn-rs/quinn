@@ -186,7 +186,7 @@ pub struct Connection {
     /// Whether the idle timer should be reset the next time an ack-eliciting packet is transmitted.
     permit_idle_reset: bool,
     /// Negotiated idle timeout
-    idle_timeout: Option<VarInt>,
+    idle_timeout: Option<Duration>,
     timers: TimerTable,
     /// Number of packets received which could not be authenticated
     authentication_failures: u64,
@@ -317,7 +317,10 @@ impl Connection {
             next_crypto: None,
             accepted_0rtt: false,
             permit_idle_reset: true,
-            idle_timeout: config.max_idle_timeout,
+            idle_timeout: match config.max_idle_timeout {
+                None | Some(VarInt(0)) => None,
+                Some(dur) => Some(Duration::from_millis(dur.0)),
+            },
             timers: TimerTable::default(),
             authentication_failures: 0,
             error: None,
@@ -1845,7 +1848,7 @@ impl Connection {
     fn reset_idle_timeout(&mut self, now: Instant, space: SpaceId) {
         let timeout = match self.idle_timeout {
             None => return,
-            Some(x) => Duration::from_millis(x.0),
+            Some(dur) => dur,
         };
         if self.state.is_closed() {
             self.timers.stop(Timer::Idle);
@@ -3290,12 +3293,9 @@ impl Connection {
 
     fn set_peer_params(&mut self, params: TransportParameters) {
         self.streams.set_params(&params);
-        self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
-            (None, VarInt(0)) => None,
-            (None, x) => Some(x),
-            (Some(x), VarInt(0)) => Some(x),
-            (Some(x), y) => Some(cmp::min(x, y)),
-        };
+        self.idle_timeout =
+            negotiate_max_idle_timeout(self.config.max_idle_timeout, Some(params.max_idle_timeout));
+        trace!("negotiated max idle timeout {:?}", self.idle_timeout);
         if let Some(ref info) = params.preferred_address {
             self.rem_cids.insert(frame::NewConnectionId {
                 sequence: 1,
@@ -3772,5 +3772,51 @@ impl SentFrames {
             && !self.non_retransmits
             && self.stream_frames.is_empty()
             && self.retransmits.is_empty(streams)
+    }
+}
+
+/// Compute the negotiated idle timeout based on local and remote max_idle_timeout transport parameters.
+///
+/// According to the definition of max_idle_timeout, a value of `0` means the timeout is disabled; see <https://www.rfc-editor.org/rfc/rfc9000#section-18.2-4.4.1.>
+///
+/// According to the negotiation procedure, either the minimum of the timeouts or one specified is used as the negotiated value; see <https://www.rfc-editor.org/rfc/rfc9000#section-10.1-2.>
+///
+/// Returns the negotiated idle timeout as a `Duration`, or `None` when both endpoints have opted out of idle timeout.
+fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Duration> {
+    match (x, y) {
+        (Some(VarInt(0)) | None, Some(VarInt(0)) | None) => None,
+        (Some(VarInt(0)) | None, Some(y)) => Some(Duration::from_millis(y.0)),
+        (Some(x), Some(VarInt(0)) | None) => Some(Duration::from_millis(x.0)),
+        (Some(x), Some(y)) => Some(Duration::from_millis(cmp::min(x, y).0)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn negotiate_max_idle_timeout_commutative() {
+        let test_params = [
+            (None, None, None),
+            (None, Some(VarInt(0)), None),
+            (None, Some(VarInt(2)), Some(Duration::from_millis(2))),
+            (Some(VarInt(0)), Some(VarInt(0)), None),
+            (
+                Some(VarInt(2)),
+                Some(VarInt(0)),
+                Some(Duration::from_millis(2)),
+            ),
+            (
+                Some(VarInt(1)),
+                Some(VarInt(4)),
+                Some(Duration::from_millis(1)),
+            ),
+        ];
+
+        for (left, right, result) in test_params {
+            assert_eq!(negotiate_max_idle_timeout(left, right), result);
+            assert_eq!(negotiate_max_idle_timeout(right, left), result);
+        }
     }
 }
