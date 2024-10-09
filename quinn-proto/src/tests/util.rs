@@ -8,7 +8,6 @@ use std::{
     ops::RangeFrom,
     str,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
 
 use assert_matches::assert_matches;
@@ -23,6 +22,7 @@ use tracing::{info_span, trace};
 
 use super::crypto::rustls::{configured_provider, QuicClientConfig, QuicServerConfig};
 use super::*;
+use crate::{Duration, Instant};
 
 pub(super) const DEFAULT_MTU: usize = 1452;
 
@@ -539,11 +539,13 @@ impl ::std::ops::DerefMut for TestEndpoint {
 }
 
 pub(super) fn subscribe() -> tracing::subscriber::DefaultGuard {
-    let sub = tracing_subscriber::FmtSubscriber::builder()
+    let builder = tracing_subscriber::FmtSubscriber::builder()
         .with_max_level(tracing::Level::TRACE)
-        .with_writer(|| TestWriter)
-        .finish();
-    tracing::subscriber::set_default(sub)
+        .with_writer(|| TestWriter);
+    // tracing uses std::time to trace time, which panics in wasm.
+    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
+    let builder = builder.without_time();
+    tracing::subscriber::set_default(builder.finish())
 }
 
 struct TestWriter;

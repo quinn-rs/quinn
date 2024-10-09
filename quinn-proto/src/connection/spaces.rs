@@ -3,7 +3,6 @@ use std::{
     collections::{BTreeMap, VecDeque},
     mem,
     ops::{Bound, Index, IndexMut},
-    time::{Duration, Instant},
 };
 
 use rand::Rng;
@@ -13,7 +12,7 @@ use tracing::trace;
 use super::assembler::Assembler;
 use crate::{
     connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
-    shared::IssuedCid, Dir, StreamId, TransportError, VarInt,
+    shared::IssuedCid, Dir, Duration, Instant, StreamId, TransportError, VarInt,
 };
 
 pub(super) struct PacketSpace {

@@ -1,7 +1,6 @@
 //! Connection statistics
 
-use crate::{frame::Frame, Dir};
-use std::time::Duration;
+use crate::{frame::Frame, Dir, Duration};
 
 /// Statistics about UDP datagrams transmitted or received on a connection
 #[derive(Default, Debug, Copy, Clone)]
