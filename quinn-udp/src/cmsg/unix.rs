@@ -32,15 +32,7 @@ impl MsgHdr for libc::msghdr {
     }
 }
 
-#[cfg(all(
-    feature = "fast-apple-datapath",
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-    )
-))]
+#[cfg(apple_fast)]
 impl MsgHdr for crate::imp::msghdr_x {
     type ControlMessage = libc::cmsghdr;
 

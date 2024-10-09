@@ -1,11 +1,4 @@
-#[cfg(not(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "tvos",
-    target_os = "visionos",
-    target_os = "openbsd",
-    target_os = "solaris",
-)))]
+#[cfg(not(any(apple, target_os = "openbsd", target_os = "solaris",)))]
 use std::ptr;
 use std::{
     io::{self, IoSliceMut},
@@ -19,15 +12,7 @@ use std::{
     time::Instant,
 };
 
-#[cfg(all(
-    feature = "fast-apple-datapath",
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-    )
-))]
+#[cfg(apple_fast)]
 use std::ffi::{c_int, c_uint, c_void};
 
 use socket2::SockRef;
@@ -38,15 +23,7 @@ use super::{
 };
 
 // Adapted from https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/socket.h
-#[cfg(all(
-    feature = "fast-apple-datapath",
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-    )
-))]
+#[cfg(apple_fast)]
 #[repr(C)]
 #[allow(non_camel_case_types)]
 pub(crate) struct msghdr_x {
@@ -60,15 +37,7 @@ pub(crate) struct msghdr_x {
     pub msg_datalen: usize,
 }
 
-#[cfg(all(
-    feature = "fast-apple-datapath",
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-    )
-))]
+#[cfg(apple_fast)]
 extern "C" {
     fn recvmsg_x(s: c_int, msgp: *const msghdr_x, cnt: c_uint, flags: c_int) -> isize;
 
@@ -115,10 +84,7 @@ impl UdpSocketState {
             || cfg!(target_os = "freebsd")
             || cfg!(target_os = "openbsd")
             || cfg!(target_os = "netbsd")
-            || cfg!(target_os = "macos")
-            || cfg!(target_os = "ios")
-            || cfg!(target_os = "tvos")
-            || cfg!(target_os = "visionos")
+            || cfg!(apple)
             || cfg!(target_os = "android")
             || cfg!(target_os = "solaris")
         {
@@ -180,13 +146,7 @@ impl UdpSocketState {
                 )?;
             }
         }
-        #[cfg(any(
-            target_os = "freebsd",
-            target_os = "macos",
-            target_os = "ios",
-            target_os = "tvos",
-            target_os = "visionos"
-        ))]
+        #[cfg(any(target_os = "freebsd", apple,))]
         {
             if is_ipv4 {
                 // Set `may_fragment` to `true` if this option is not supported on the platform.
@@ -202,10 +162,7 @@ impl UdpSocketState {
             target_os = "freebsd",
             target_os = "openbsd",
             target_os = "netbsd",
-            target_os = "macos",
-            target_os = "ios",
-            target_os = "tvos",
-            target_os = "visionos",
+            apple,
             target_os = "solaris",
         ))]
         // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
@@ -285,27 +242,13 @@ impl UdpSocketState {
     }
 
     /// Sets the flag indicating we got EINVAL error from `sendmsg` syscall.
-    #[cfg(not(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "openbsd",
-        target_os = "netbsd"
-    )))]
+    #[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd")))]
     fn set_sendmsg_einval(&self) {
         self.sendmsg_einval.store(true, Ordering::Relaxed)
     }
 }
 
-#[cfg(not(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "tvos",
-    target_os = "visionos",
-    target_os = "openbsd",
-    target_os = "netbsd"
-)))]
+#[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd")))]
 fn send(
     #[allow(unused_variables)] // only used on Linux
     state: &UdpSocketState,
@@ -390,15 +333,7 @@ fn send(
     }
 }
 
-#[cfg(all(
-    feature = "fast-apple-datapath",
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-    )
-))]
+#[cfg(apple_fast)]
 fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
     let mut hdrs = unsafe { mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
     let mut iovs = unsafe { mem::zeroed::<[libc::iovec; BATCH_SIZE]>() };
@@ -458,17 +393,7 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
     Ok(())
 }
 
-#[cfg(all(
-    not(feature = "fast-apple-datapath"),
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "openbsd",
-        target_os = "netbsd"
-    )
-))]
+#[cfg(any(target_os = "openbsd", target_os = "netbsd", apple_slow))]
 fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
     let mut iov: libc::iovec = unsafe { mem::zeroed() };
@@ -480,12 +405,7 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
         &mut hdr,
         &mut iov,
         &mut ctrl,
-        cfg!(target_os = "macos")
-            || cfg!(target_os = "ios")
-            || cfg!(target_os = "tvos")
-            || cfg!(target_os = "visionos")
-            || cfg!(target_os = "openbsd")
-            || cfg!(target_os = "netbsd"),
+        cfg!(apple) || cfg!(target_os = "openbsd") || cfg!(target_os = "netbsd"),
         state.sendmsg_einval(),
     );
     let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
@@ -514,14 +434,7 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
     Ok(())
 }
 
-#[cfg(not(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "tvos",
-    target_os = "visionos",
-    target_os = "openbsd",
-    target_os = "solaris",
-)))]
+#[cfg(not(any(apple, target_os = "openbsd", target_os = "solaris",)))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
@@ -560,15 +473,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     Ok(msg_count as usize)
 }
 
-#[cfg(all(
-    feature = "fast-apple-datapath",
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-    )
-))]
+#[cfg(apple_fast)]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
@@ -603,17 +508,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     Ok(msg_count as usize)
 }
 
-#[cfg(all(
-    not(feature = "fast-apple-datapath"),
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "openbsd",
-        target_os = "solaris"
-    )
-))]
+#[cfg(any(target_os = "openbsd", target_os = "netbsd", apple_slow))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
     let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
@@ -642,26 +537,8 @@ const CMSG_LEN: usize = 88;
 fn prepare_msg(
     transmit: &Transmit<'_>,
     dst_addr: &socket2::SockAddr,
-    #[cfg(not(all(
-        feature = "fast-apple-datapath",
-        any(
-            target_os = "macos",
-            target_os = "ios",
-            target_os = "tvos",
-            target_os = "visionos",
-        )
-    )))]
-    hdr: &mut libc::msghdr,
-    #[cfg(all(
-        feature = "fast-apple-datapath",
-        any(
-            target_os = "macos",
-            target_os = "ios",
-            target_os = "tvos",
-            target_os = "visionos",
-        )
-    ))]
-    hdr: &mut msghdr_x,
+    #[cfg(not(apple_fast))] hdr: &mut libc::msghdr,
+    #[cfg(apple_fast)] hdr: &mut msghdr_x,
     iov: &mut libc::iovec,
     ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
     #[allow(unused_variables)] // only used on FreeBSD & macOS
@@ -723,10 +600,7 @@ fn prepare_msg(
                     target_os = "freebsd",
                     target_os = "openbsd",
                     target_os = "netbsd",
-                    target_os = "macos",
-                    target_os = "ios",
-                    target_os = "tvos",
-                    target_os = "visionos",
+                    apple,
                     target_os = "solaris",
                 ))]
                 {
@@ -753,17 +627,7 @@ fn prepare_msg(
     encoder.finish();
 }
 
-#[cfg(all(
-    not(feature = "fast-apple-datapath"),
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-        target_os = "openbsd",
-        target_os = "netbsd"
-    )
-))]
+#[cfg(not(apple_fast))]
 fn prepare_recv(
     buf: &mut IoSliceMut,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
@@ -779,15 +643,7 @@ fn prepare_recv(
     hdr.msg_flags = 0;
 }
 
-#[cfg(all(
-    feature = "fast-apple-datapath",
-    any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos",
-    )
-))]
+#[cfg(apple_fast)]
 fn prepare_recv(
     buf: &mut IoSliceMut,
     name: &mut MaybeUninit<libc::sockaddr_storage>,
@@ -806,26 +662,8 @@ fn prepare_recv(
 
 fn decode_recv(
     name: &MaybeUninit<libc::sockaddr_storage>,
-    #[cfg(not(all(
-        feature = "fast-apple-datapath",
-        any(
-            target_os = "macos",
-            target_os = "ios",
-            target_os = "tvos",
-            target_os = "visionos",
-        )
-    )))]
-    hdr: &libc::msghdr,
-    #[cfg(all(
-        feature = "fast-apple-datapath",
-        any(
-            target_os = "macos",
-            target_os = "ios",
-            target_os = "tvos",
-            target_os = "visionos",
-        )
-    ))]
-    hdr: &msghdr_x,
+    #[cfg(not(apple_fast))] hdr: &libc::msghdr,
+    #[cfg(apple_fast)] hdr: &msghdr_x,
     len: usize,
 ) -> RecvMeta {
     let name = unsafe { name.assume_init() };
@@ -849,10 +687,7 @@ fn decode_recv(
                 // Temporary hack around broken macos ABI. Remove once upstream fixes it.
                 // https://bugreport.apple.com/web/?problemID=48761855
                 #[allow(clippy::unnecessary_cast)] // cmsg.cmsg_len defined as size_t
-                if (cfg!(target_os = "macos")
-                    || cfg!(target_os = "ios")
-                    || cfg!(target_os = "tvos")
-                    || cfg!(target_os = "visionos"))
+                if cfg!(apple)
                     && cmsg.cmsg_len as usize == libc::CMSG_LEN(mem::size_of::<u8>() as _) as usize
                 {
                     ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
@@ -871,10 +706,7 @@ fn decode_recv(
                 target_os = "freebsd",
                 target_os = "openbsd",
                 target_os = "netbsd",
-                target_os = "macos",
-                target_os = "ios",
-                target_os = "tvos",
-                target_os = "visionos",
+                apple
             ))]
             (libc::IPPROTO_IP, libc::IP_RECVDSTADDR) => {
                 let in_addr = unsafe { cmsg::decode::<libc::in_addr, libc::cmsghdr>(cmsg) };
@@ -925,27 +757,11 @@ fn decode_recv(
     }
 }
 
-#[cfg(any(
-    feature = "fast-apple-datapath",
-    not(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos"
-    ))
-))]
+#[cfg(not(apple_slow))]
 // Chosen somewhat arbitrarily; might benefit from additional tuning.
 pub(crate) const BATCH_SIZE: usize = 32;
 
-#[cfg(not(any(
-    feature = "fast-apple-datapath",
-    not(any(
-        target_os = "macos",
-        target_os = "ios",
-        target_os = "tvos",
-        target_os = "visionos"
-    ))
-)))]
+#[cfg(apple_slow)]
 pub(crate) const BATCH_SIZE: usize = 1;
 
 #[cfg(target_os = "linux")]
@@ -989,26 +805,8 @@ mod gso {
     }
 
     pub(super) fn set_segment_size(
-        #[cfg(not(all(
-            feature = "fast-apple-datapath",
-            any(
-                target_os = "macos",
-                target_os = "ios",
-                target_os = "tvos",
-                target_os = "visionos",
-            )
-        )))]
-        _encoder: &mut cmsg::Encoder<libc::msghdr>,
-        #[cfg(all(
-            feature = "fast-apple-datapath",
-            any(
-                target_os = "macos",
-                target_os = "ios",
-                target_os = "tvos",
-                target_os = "visionos",
-            )
-        ))]
-        _encoder: &mut cmsg::Encoder<msghdr_x>,
+        #[cfg(not(apple_fast))] _encoder: &mut cmsg::Encoder<libc::msghdr>,
+        #[cfg(apple_fast)] _encoder: &mut cmsg::Encoder<msghdr_x>,
         _segment_size: u16,
     ) {
     }
