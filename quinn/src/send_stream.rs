@@ -327,7 +327,7 @@ struct Write<'a> {
     buf: &'a [u8],
 }
 
-impl<'a> Future for Write<'a> {
+impl Future for Write<'_> {
     type Output = Result<usize, WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -345,7 +345,7 @@ struct WriteAll<'a> {
     buf: &'a [u8],
 }
 
-impl<'a> Future for WriteAll<'a> {
+impl Future for WriteAll<'_> {
     type Output = Result<(), WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -369,7 +369,7 @@ struct WriteChunks<'a> {
     bufs: &'a mut [Bytes],
 }
 
-impl<'a> Future for WriteChunks<'a> {
+impl Future for WriteChunks<'_> {
     type Output = Result<Written, WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -387,7 +387,7 @@ struct WriteChunk<'a> {
     buf: [Bytes; 1],
 }
 
-impl<'a> Future for WriteChunk<'a> {
+impl Future for WriteChunk<'_> {
     type Output = Result<(), WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -411,7 +411,7 @@ struct WriteAllChunks<'a> {
     offset: usize,
 }
 
-impl<'a> Future for WriteAllChunks<'a> {
+impl Future for WriteAllChunks<'_> {
     type Output = Result<(), WriteError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();

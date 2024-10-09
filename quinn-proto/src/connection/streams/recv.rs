@@ -379,7 +379,7 @@ impl<'a> Chunks<'a> {
     }
 }
 
-impl<'a> Drop for Chunks<'a> {
+impl Drop for Chunks<'_> {
     fn drop(&mut self) {
         let _ = self.finalize_inner();
     }
