@@ -348,6 +348,7 @@ impl Connection {
                 config.max_concurrent_uni_streams,
                 config.max_concurrent_bidi_streams,
                 config.send_window,
+                config.send_fairness,
                 config.receive_window,
                 config.stream_receive_window,
             ),

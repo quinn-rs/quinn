@@ -14,6 +14,7 @@ struct StreamParams {
     max_remote_uni: u16,
     max_remote_bi: u16,
     send_window: u16,
+    send_fairness: bool,
     receive_window: u16,
     stream_receive_window: u16,
     dir: Dir,
@@ -37,6 +38,7 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
         params.max_remote_uni.into(),
         params.max_remote_bi.into(),
         params.send_window.into(),
+        params.send_fairness,
         params.receive_window.into(),
         params.stream_receive_window.into(),
     );

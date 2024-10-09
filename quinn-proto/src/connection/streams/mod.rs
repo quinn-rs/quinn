@@ -365,21 +365,62 @@ impl<'a> SendStream<'a> {
 /// A queue of streams with pending outgoing data, sorted by priority
 struct PendingStreamsQueue {
     streams: BinaryHeap<PendingStream>,
+    fair: bool,
+    reinserted: Option<PendingStream>,
     /// A monotonically decreasing counter, used to implement round-robin scheduling for streams of the same priority.
     /// Underflowing is not a practical concern, as it is initialized to u64::MAX and only decremented by 1 in `push_pending`
     recency: u64,
 }
 
 impl PendingStreamsQueue {
-    fn new() -> Self {
+    fn new(fair: bool) -> Self {
         Self {
             streams: BinaryHeap::new(),
+            fair,
+            reinserted: None,
             recency: u64::MAX,
+        }
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.streams.len()
+    }
+
+    fn clear(&mut self) {
+        self.reinserted = None;
+        self.streams.clear();
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &PendingStream> {
+        self.reinserted.iter().chain(self.streams.iter())
+    }
+
+    fn pop(&mut self) -> Option<PendingStream> {
+        self.reinserted.take().or_else(|| self.streams.pop())
+    }
+
+    /// Reinsert a stream that was pending and still contains unsent data.
+    fn reinsert_pending(&mut self, id: StreamId, priority: i32) {
+        assert!(self.reinserted.is_none());
+
+        if self.fair {
+            self.push_pending(id, priority);
+        } else {
+            self.reinserted = Some(PendingStream {
+                priority,
+                recency: self.recency, // the value here doesn't really matter
+                id,
+            });
         }
     }
 
     /// Push a pending stream ID with the given priority, queued after any already-queued streams for the priority
     fn push_pending(&mut self, id: StreamId, priority: i32) {
+        // Note that in the case where fairness is disabled, if we have a reinserted stream we don't
+        // bump it even if priority > reinserted.priority. In order to minimize fragmentation we
+        // always try to complete a stream once part of it has been written.
+
         // As the recency counter is monotonically decreasing, we know that using its value to sort this stream will queue it
         // after all other queued streams of the same priority.
         // This is enough to implement round-robin scheduling for streams that are still pending even after being handled,
@@ -394,7 +435,7 @@ impl PendingStreamsQueue {
 }
 
 /// The [`StreamId`] of a stream with pending data queued, ordered by its priority and recency
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PendingStream {
     /// The priority of the stream
     // Note that this field should be kept above the `recency` field, in order for the `Ord` derive to be correct
