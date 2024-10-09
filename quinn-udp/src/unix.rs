@@ -1,4 +1,4 @@
-#[cfg(not(any(apple, target_os = "openbsd", target_os = "solaris",)))]
+#[cfg(not(any(apple, target_os = "openbsd", target_os = "solaris")))]
 use std::ptr;
 use std::{
     io::{self, IoSliceMut},
@@ -151,7 +151,7 @@ impl UdpSocketState {
                 )?;
             }
         }
-        #[cfg(any(target_os = "freebsd", apple,))]
+        #[cfg(any(target_os = "freebsd", apple))]
         {
             if is_ipv4 {
                 // Set `may_fragment` to `true` if this option is not supported on the platform.
@@ -433,7 +433,7 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
     Ok(())
 }
 
-#[cfg(not(any(apple, target_os = "openbsd", target_os = "solaris",)))]
+#[cfg(not(any(apple, target_os = "openbsd", target_os = "solaris")))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
