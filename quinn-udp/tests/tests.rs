@@ -11,11 +11,11 @@ use socket2::Socket;
 
 #[test]
 fn basic() {
-    let send = UdpSocket::bind("[::1]:0")
-        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         .unwrap();
-    let recv = UdpSocket::bind("[::1]:0")
-        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         .unwrap();
     let dst_addr = recv.local_addr().unwrap();
     test_send_recv(
@@ -33,8 +33,8 @@ fn basic() {
 
 #[test]
 fn ecn_v6() {
-    let send = Socket::from(UdpSocket::bind("[::1]:0").unwrap());
-    let recv = Socket::from(UdpSocket::bind("[::1]:0").unwrap());
+    let send = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
+    let recv = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
     for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
         test_send_recv(
             &send,
@@ -53,8 +53,8 @@ fn ecn_v6() {
 #[test]
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
 fn ecn_v4() {
-    let send = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
-    let recv = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
+    let send = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
+    let recv = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
     for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
         test_send_recv(
             &send,
@@ -93,7 +93,10 @@ fn ecn_v6_dualstack() {
         0,
     ));
     let recv_v4 = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, recv_v6.port()));
-    for (src, dst) in [("[::1]:0", recv_v6), ("127.0.0.1:0", recv_v4)] {
+    for (src, dst) in [
+        (SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0), recv_v6),
+        (SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0), recv_v4),
+    ] {
         dbg!(src, dst);
         let send = UdpSocket::bind(src).unwrap();
         let send = Socket::from(send);
@@ -128,7 +131,7 @@ fn ecn_v4_mapped_v6() {
     ))
     .unwrap();
 
-    let recv = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let recv = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let recv = Socket::from(recv);
     let recv_v4_mapped_v6 = SocketAddr::V6(SocketAddrV6::new(
         Ipv4Addr::LOCALHOST.to_ipv6_mapped(),
@@ -155,11 +158,11 @@ fn ecn_v4_mapped_v6() {
 #[test]
 #[cfg_attr(not(any(target_os = "linux", target_os = "windows")), ignore)]
 fn gso() {
-    let send = UdpSocket::bind("[::1]:0")
-        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         .unwrap();
-    let recv = UdpSocket::bind("[::1]:0")
-        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         .unwrap();
     let max_segments = UdpSocketState::new((&send).into())
         .unwrap()

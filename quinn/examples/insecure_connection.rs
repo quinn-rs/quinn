@@ -14,7 +14,7 @@ use common::make_server_endpoint;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     // server and client are running on the same thread asynchronously
-    let addr = "127.0.0.1:5000".parse().unwrap();
+    let addr = (Ipv4Addr::LOCALHOST, 5000).parse().unwrap();
     tokio::spawn(run_server(addr));
     run_client(addr).await?;
     Ok(())
@@ -33,7 +33,7 @@ async fn run_server(addr: SocketAddr) {
 }
 
 async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let mut endpoint = Endpoint::client("127.0.0.1:0".parse().unwrap())?;
+    let mut endpoint = Endpoint::client((Ipv4Addr::LOCALHOST, 0).parse().unwrap())?;
 
     endpoint.set_default_client_config(ClientConfig::new(Arc::new(QuicClientConfig::try_from(
         rustls::ClientConfig::builder()

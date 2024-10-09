@@ -435,7 +435,7 @@ static WSARECVMSG_PTR: Lazy<WinSock::LPFN_WSARECVMSG> = Lazy::new(|| {
 
 static MAX_GSO_SEGMENTS: Lazy<usize> = Lazy::new(|| {
     let socket = match std::net::UdpSocket::bind("[::]:0")
-        .or_else(|_| std::net::UdpSocket::bind("127.0.0.1:0"))
+        .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
     {
         Ok(socket) => socket,
         Err(_) => return 1,
