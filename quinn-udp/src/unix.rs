@@ -12,9 +12,6 @@ use std::{
     time::Instant,
 };
 
-#[cfg(apple_fast)]
-use std::ffi::{c_int, c_uint, c_void};
-
 use socket2::SockRef;
 
 use super::{
@@ -22,26 +19,36 @@ use super::{
     IO_ERROR_LOG_INTERVAL,
 };
 
-// Adapted from https://github.com/apple-oss-distributions/xnu/blob/main/bsd/sys/socket.h
+// Adapted from https://github.com/apple-oss-distributions/xnu/blob/8d741a5de7ff4191bf97d57b9f54c2f6d4a15585/bsd/sys/socket_private.h
 #[cfg(apple_fast)]
 #[repr(C)]
 #[allow(non_camel_case_types)]
 pub(crate) struct msghdr_x {
-    pub msg_name: *mut c_void,
+    pub msg_name: *mut libc::c_void,
     pub msg_namelen: libc::socklen_t,
     pub msg_iov: *mut libc::iovec,
-    pub msg_iovlen: c_int,
-    pub msg_control: *mut c_void,
+    pub msg_iovlen: libc::c_int,
+    pub msg_control: *mut libc::c_void,
     pub msg_controllen: libc::socklen_t,
-    pub msg_flags: c_int,
+    pub msg_flags: libc::c_int,
     pub msg_datalen: usize,
 }
 
 #[cfg(apple_fast)]
 extern "C" {
-    fn recvmsg_x(s: c_int, msgp: *const msghdr_x, cnt: c_uint, flags: c_int) -> isize;
+    fn recvmsg_x(
+        s: libc::c_int,
+        msgp: *const msghdr_x,
+        cnt: libc::c_uint,
+        flags: libc::c_int,
+    ) -> isize;
 
-    fn sendmsg_x(s: c_int, msgp: *const msghdr_x, cnt: c_uint, flags: c_int) -> isize;
+    fn sendmsg_x(
+        s: libc::c_int,
+        msgp: *const msghdr_x,
+        cnt: libc::c_uint,
+        flags: libc::c_int,
+    ) -> isize;
 }
 
 // Defined in netinet6/in6.h on OpenBSD, this is not yet exported by the libc crate
