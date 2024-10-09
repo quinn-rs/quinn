@@ -64,6 +64,9 @@ jobs:
       # Prevent feature unification from selecting *ring* as the crypto provider
       - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs
       - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs,runtime-tokio
+      # FIPS
+      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips
+      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips,runtime-tokio
 
   msrv:
     runs-on: ubuntu-latest
@@ -169,8 +172,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RUSTFLAGS: -Dwarnings
+      # skip FIPS features outside of Linux
+      SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs-fips,aws-lc-rs-fips' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
-      - run: cargo hack check --feature-powerset --optional-deps --no-dev-deps --ignore-unknown-features --ignore-private --group-features runtime-async-std,async-io,async-std --group-features runtime-smol,async-io,smol
+      - run: cargo hack check --feature-powerset --optional-deps --no-dev-deps --ignore-unknown-features --ignore-private --group-features runtime-async-std,async-io,async-std --group-features runtime-smol,async-io,smol --skip "$SKIP_FEATURES"
+
