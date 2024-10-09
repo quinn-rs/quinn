@@ -967,7 +967,6 @@ mod tests {
         for byte in &buf {
             print!("{byte:02x}");
         }
-        println!();
         assert_eq!(
             buf[..],
             hex!(

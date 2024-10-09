@@ -18,7 +18,7 @@ use crate::{
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
-    config::{EndpointConfig, ServerConfig, TransportConfig},
+    config::{AckTimestampsConfig, EndpointConfig, ServerConfig, TransportConfig},
     shared::ConnectionId,
     ResetToken, Side, TransportError, VarInt, LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT,
     RESET_TOKEN_SIZE, TIMER_GRANULARITY,
@@ -99,6 +99,9 @@ macro_rules! make_struct {
             pub(crate) stateless_reset_token: Option<ResetToken>,
             /// The server's preferred address for communication after handshake completion
             pub(crate) preferred_address: Option<PreferredAddress>,
+
+
+            pub(crate) ack_timestamps_cfg: AckTimestampsConfig,
         }
 
         // We deliberately don't implement the `Default` trait, since that would be public, and
@@ -120,6 +123,7 @@ macro_rules! make_struct {
                     retry_src_cid: None,
                     stateless_reset_token: None,
                     preferred_address: None,
+                    ack_timestamps_cfg: AckTimestampsConfig::default(),
                 }
             }
         }
@@ -160,6 +164,9 @@ impl TransportParameters {
             min_ack_delay: Some(
                 VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
             ),
+
+            ack_timestamps_cfg: config.ack_timestamps_config,
+
             ..Self::default()
         }
     }
@@ -349,6 +356,20 @@ impl TransportParameters {
             w.write_var(x.size() as u64);
             w.write(x);
         }
+
+        // The below 2 fields are for the implementation of
+        // https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html#name-extension-negotiation
+        // Values of 0x00f0 and 0x00f1 arbitrarily chosen.
+        if let Some(max) = self.ack_timestamps_cfg.max_timestamps_per_ack {
+            w.write_var(0x00f0);
+            w.write_var(max.size() as u64);
+            w.write(max);
+
+            let exponent = self.ack_timestamps_cfg.exponent;
+            w.write_var(0x00f1);
+            w.write_var(exponent.size() as u64);
+            w.write(exponent);
+        }
     }
 
     /// Decode `TransportParameters` from buffer
@@ -413,6 +434,22 @@ impl TransportParameters {
                     _ => return Err(Error::Malformed),
                 },
                 0xff04de1b => params.min_ack_delay = Some(r.get().unwrap()),
+
+                0x00f0 => {
+                    if len > 8 || params.ack_timestamps_cfg.max_timestamps_per_ack.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    params
+                        .ack_timestamps_cfg
+                        .max_timestamps_per_ack(r.get().unwrap());
+                }
+                0x00f1 => {
+                    if len > 8 {
+                        return Err(Error::Malformed);
+                    }
+                    params.ack_timestamps_cfg.exponent(r.get().unwrap());
+                }
+
                 _ => {
                     macro_rules! parse {
                         {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
@@ -464,6 +501,11 @@ impl TransportParameters {
             return Err(Error::IllegalValue);
         }
 
+        // https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html#name-extension-negotiation
+        if params.ack_timestamps_cfg.exponent.0 > 20 {
+            return Err(Error::IllegalValue);
+        }
+
         Ok(params)
     }
 }
@@ -499,6 +541,11 @@ mod test {
             }),
             grease_quic_bit: true,
             min_ack_delay: Some(2_000u32.into()),
+
+            ack_timestamps_cfg: AckTimestampsConfig {
+                max_timestamps_per_ack: Some(10u32.into()),
+                exponent: 2u32.into(),
+            },
             ..TransportParameters::default()
         };
         params.write(&mut buf);

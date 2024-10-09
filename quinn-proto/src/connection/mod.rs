@@ -18,10 +18,9 @@ use crate::{
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::BufMutExt,
-    config::{ServerConfig, TransportConfig},
+    config::{AckTimestampsConfig, ServerConfig, TransportConfig},
     crypto::{self, KeyPair, Keys, PacketKey},
-    frame,
-    frame::{Close, Datagram, FrameStruct},
+    frame::{self, Close, Datagram, FrameStruct},
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -65,7 +64,10 @@ use paths::{PathData, PathResponses};
 
 mod send_buffer;
 
-mod spaces;
+mod receiver_timestamps;
+pub(crate) use receiver_timestamps::{PacketTimestamp, ReceiverTimestamps};
+
+pub(crate) mod spaces;
 #[cfg(fuzzing)]
 pub use spaces::Retransmits;
 #[cfg(not(fuzzing))]
@@ -227,6 +229,10 @@ pub struct Connection {
     /// no outgoing application data.
     app_limited: bool,
 
+    // Ack Receive Timestamps
+    // The timestamp config of the peer.
+    ack_timestamps_cfg: AckTimestampsConfig,
+
     streams: StreamsState,
     /// Surplus remote CIDs for future use on new paths
     rem_cids: CidQueue,
@@ -238,6 +244,8 @@ pub struct Connection {
     stats: ConnectionStats,
     /// QUIC version used for the connection.
     version: u32,
+    /// Created at time instant.
+    epoch: Instant,
 }
 
 impl Connection {
@@ -337,6 +345,8 @@ impl Connection {
                 &TransportParameters::default(),
             )),
 
+            ack_timestamps_cfg: AckTimestampsConfig::default(),
+
             pto_count: 0,
 
             app_limited: false,
@@ -357,6 +367,7 @@ impl Connection {
             rng,
             stats: ConnectionStats::default(),
             version,
+            epoch: now,
         };
         if side.is_client() {
             // Kick off the connection
@@ -817,6 +828,8 @@ impl Connection {
                         &mut self.spaces[space_id],
                         buf,
                         &mut self.stats,
+                        self.ack_timestamps_cfg,
+                        self.epoch,
                     );
                 }
 
@@ -1343,6 +1356,7 @@ impl Connection {
         if ack.largest >= self.spaces[space].next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
+
         let new_largest = {
             let space = &mut self.spaces[space];
             if space
@@ -1368,6 +1382,24 @@ impl Connection {
             self.packet_number_filter.check_ack(space, range.clone())?;
             for (&pn, _) in self.spaces[space].sent_packets.range(range) {
                 newly_acked.insert_one(pn);
+            }
+        }
+
+        let timestamp_iter =
+            ack.timestamps_iter(self.epoch, self.config.ack_timestamps_config.exponent.0);
+        if let (Some(max), Some(iter)) = (
+            self.config.ack_timestamps_config.max_timestamps_per_ack,
+            timestamp_iter,
+        ) {
+            let packet_space = &mut self.spaces[space];
+            for (i, pkt) in iter.enumerate() {
+                if i > max.0 as usize {
+                    warn!("peer is sending more timestamps than max requested");
+                    break;
+                }
+                if let Some(sent_packet) = packet_space.get_mut_sent_packet(pkt.packet_number) {
+                    sent_packet.time_received = Some(pkt.timestamp);
+                }
             }
         }
 
@@ -1490,9 +1522,11 @@ impl Connection {
         if info.ack_eliciting && self.path.challenge.is_none() {
             // Only pass ACKs to the congestion controller if we are not validating the current
             // path, so as to ignore any ACKs from older paths still coming in.
-            self.path.congestion.on_ack(
+            self.path.congestion.on_ack_packet(
+                pn,
                 now,
                 info.time_sent,
+                info.time_received,
                 info.size.into(),
                 self.app_limited,
                 &self.path.rtt,
@@ -3047,6 +3081,8 @@ impl Connection {
                 space,
                 buf,
                 &mut self.stats,
+                self.ack_timestamps_cfg,
+                self.epoch,
             );
         }
 
@@ -3231,6 +3267,8 @@ impl Connection {
         space: &mut PacketSpace,
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
+        ack_timestamps_config: AckTimestampsConfig,
+        epoch: Instant,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
 
@@ -3255,7 +3293,22 @@ impl Connection {
             delay_micros
         );
 
-        frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
+        frame::Ack::encode(
+            delay as _,
+            space.pending_acks.ranges(),
+            ecn,
+            ack_timestamps_config.max_timestamps_per_ack.map(|max| {
+                (
+                    // Safety: If peer_timestamp_config is set, receiver_timestamps must be set.
+                    space.pending_acks.receiver_timestamps_as_ref().unwrap(),
+                    epoch,
+                    ack_timestamps_config.exponent.0,
+                    max.0,
+                )
+            }),
+            buf,
+        );
+
         stats.frame_tx.acks += 1;
     }
 
@@ -3309,6 +3362,12 @@ impl Connection {
         self.path.mtud.on_peer_max_udp_payload_size_received(
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
         );
+        self.ack_timestamps_cfg = params.ack_timestamps_cfg;
+        if let Some(max) = params.ack_timestamps_cfg.max_timestamps_per_ack {
+            for space in self.spaces.iter_mut() {
+                space.pending_acks.set_receiver_timestamp(max.0 as usize);
+            }
+        };
     }
 
     fn decrypt_packet(
