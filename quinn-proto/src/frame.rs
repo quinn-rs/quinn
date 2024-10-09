@@ -803,7 +803,7 @@ impl<'a> AckIter<'a> {
     }
 }
 
-impl<'a> Iterator for AckIter<'a> {
+impl Iterator for AckIter<'_> {
     type Item = RangeInclusive<u64>;
     fn next(&mut self) -> Option<RangeInclusive<u64>> {
         if !self.data.has_remaining() {

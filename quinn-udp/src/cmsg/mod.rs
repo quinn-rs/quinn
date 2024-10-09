@@ -72,7 +72,7 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
 
 // Statically guarantees that the encoding operation is "finished" before the control buffer is read
 // by `sendmsg` like API.
-impl<'a, M: MsgHdr> Drop for Encoder<'a, M> {
+impl<M: MsgHdr> Drop for Encoder<'_, M> {
     fn drop(&mut self) {
         self.hdr.set_control_len(self.len as _);
     }

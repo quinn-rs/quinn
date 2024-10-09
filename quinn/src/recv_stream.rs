@@ -603,7 +603,7 @@ struct Read<'a> {
     buf: ReadBuf<'a>,
 }
 
-impl<'a> Future for Read<'a> {
+impl Future for Read<'_> {
     type Output = Result<Option<usize>, ReadError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -625,7 +625,7 @@ struct ReadExact<'a> {
     buf: ReadBuf<'a>,
 }
 
-impl<'a> Future for ReadExact<'a> {
+impl Future for ReadExact<'_> {
     type Output = Result<(), ReadExactError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -663,7 +663,7 @@ struct ReadChunk<'a> {
     ordered: bool,
 }
 
-impl<'a> Future for ReadChunk<'a> {
+impl Future for ReadChunk<'_> {
     type Output = Result<Option<Chunk>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let (max_length, ordered) = (self.max_length, self.ordered);
@@ -680,7 +680,7 @@ struct ReadChunks<'a> {
     bufs: &'a mut [Bytes],
 }
 
-impl<'a> Future for ReadChunks<'a> {
+impl Future for ReadChunks<'_> {
     type Output = Result<Option<usize>, ReadError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
