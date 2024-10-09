@@ -1,6 +1,7 @@
 use criterion::{criterion_group, criterion_main, Criterion};
 use quinn_udp::{RecvMeta, Transmit, UdpSocketState};
 use std::cmp::min;
+use std::net::{Ipv4Addr, Ipv6Addr};
 use std::{io::IoSliceMut, net::UdpSocket, slice};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
@@ -9,11 +10,11 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     const MAX_BUFFER_SIZE: usize = u16::MAX as usize;
     const SEGMENT_SIZE: usize = 1280;
 
-    let send = UdpSocket::bind("[::1]:0")
-        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         .unwrap();
-    let recv = UdpSocket::bind("[::1]:0")
-        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         .unwrap();
     let max_segments = min(
         UdpSocketState::new((&send).into())

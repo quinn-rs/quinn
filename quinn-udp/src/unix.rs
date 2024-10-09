@@ -712,7 +712,7 @@ mod gso {
         const GSO_SIZE: libc::c_int = 1500;
 
         let socket = match std::net::UdpSocket::bind("[::]:0")
-            .or_else(|_| std::net::UdpSocket::bind("127.0.0.1:0"))
+            .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         {
             Ok(socket) => socket,
             Err(_) => return 1,
@@ -750,7 +750,7 @@ mod gro {
 
     pub(crate) fn gro_segments() -> usize {
         let socket = match std::net::UdpSocket::bind("[::]:0")
-            .or_else(|_| std::net::UdpSocket::bind("127.0.0.1:0"))
+            .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         {
             Ok(socket) => socket,
             Err(_) => return 1,

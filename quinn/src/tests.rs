@@ -111,7 +111,7 @@ async fn close_endpoint() {
 
 #[test]
 fn local_addr() {
-    let socket = UdpSocket::bind("[::1]:0").unwrap();
+    let socket = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap();
     let addr = socket.local_addr().unwrap();
     let runtime = rt_basic();
     let ep = {
