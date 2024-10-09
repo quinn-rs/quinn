@@ -12,6 +12,13 @@ fn main() {
                 target_os = "visionos"
             )
         },
+        bsd: {
+            any(
+                target_os = "freebsd",
+                target_os = "openbsd",
+                target_os = "netbsd"
+            )
+        },
         // Convenience aliases
         apple_fast: { all(apple, feature = "fast-apple-datapath") },
         apple_slow: { all(apple, not(feature = "fast-apple-datapath")) },
