@@ -85,6 +85,14 @@ impl Incoming {
     pub fn remote_address_validated(&self) -> bool {
         self.0.as_ref().unwrap().inner.remote_address_validated()
     }
+
+    /// The original destination connection id
+    pub fn orig_dst_cid(&self) -> Option<proto::ConnectionId> {
+        match &self.0 {
+            Some(v) => Some(v.inner.orig_dst_cid()),
+            None => None,
+        }
+    }
 }
 
 impl Drop for Incoming {
