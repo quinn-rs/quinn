@@ -23,7 +23,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     let mut permutations = vec![];
     for gso_enabled in [
         false,
-        #[cfg(any(target_os = "linux", target_os = "windows"))]
+        #[cfg(any(target_os = "linux", target_os = "windows", apple))]
         true,
     ] {
         for gro_enabled in [false, true] {
