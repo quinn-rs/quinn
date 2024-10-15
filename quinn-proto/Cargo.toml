@@ -57,9 +57,7 @@ hex-literal = { workspace = true  }
 rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 lazy_static = "1"
-
-[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dev-dependencies]
-wasm-bindgen-test = { version = "0.3" }
+wasm-bindgen-test = { version = "0.3.45" }
 
 [lints.rust]
 # https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
