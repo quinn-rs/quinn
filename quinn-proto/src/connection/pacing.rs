@@ -1,6 +1,6 @@
 //! Pacing of packet transmissions.
 
-use std::time::{Duration, Instant};
+use crate::{Duration, Instant};
 
 use tracing::warn;
 

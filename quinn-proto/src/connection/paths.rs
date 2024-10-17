@@ -1,4 +1,4 @@
-use std::{cmp, net::SocketAddr, time::Duration, time::Instant};
+use std::{cmp, net::SocketAddr};
 
 use tracing::trace;
 
@@ -7,7 +7,7 @@ use super::{
     pacing::Pacer,
     spaces::{PacketSpace, SentPacket},
 };
-use crate::{congestion, packet::SpaceId, TransportConfig, TIMER_GRANULARITY};
+use crate::{congestion, packet::SpaceId, Duration, Instant, TransportConfig, TIMER_GRANULARITY};
 
 /// Description of a particular network path
 pub(super) struct PathData {

@@ -3,7 +3,6 @@ use std::{
     net::{SocketAddrV4, SocketAddrV6},
     num::TryFromIntError,
     sync::Arc,
-    time::Duration,
 };
 
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
@@ -19,8 +18,8 @@ use crate::{
     congestion,
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
-    RandomConnectionIdGenerator, VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS,
-    INITIAL_MTU, MAX_CID_SIZE, MAX_UDP_PAYLOAD,
+    Duration, RandomConnectionIdGenerator, VarInt, VarIntBoundsExceeded,
+    DEFAULT_SUPPORTED_VERSIONS, INITIAL_MTU, MAX_CID_SIZE, MAX_UDP_PAYLOAD,
 };
 
 /// Parameters governing the core QUIC state machine
