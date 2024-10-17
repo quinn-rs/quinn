@@ -210,6 +210,8 @@ impl PacketBuilder {
             ack_eliciting,
             retransmits: sent.retransmits,
             stream_frames: sent.stream_frames,
+
+            time_received: None,
         };
 
         conn.path
