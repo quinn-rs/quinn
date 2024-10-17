@@ -72,25 +72,25 @@ url = { workspace = true }
 
 [[example]]
 name = "server"
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
 
 [[example]]
 name = "client"
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
 
 [[example]]
 name = "insecure_connection"
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
 
 [[example]]
 name = "single_socket"
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
 
 [[example]]
 name = "connection"
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
 
 [[bench]]
 name = "bench"
 harness = false
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
