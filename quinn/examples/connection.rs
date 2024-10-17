@@ -2,14 +2,17 @@
 //!
 //! Checkout the `README.md` for guidance.
 
-use std::error::Error;
+use std::{
+    error::Error,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
 
 mod common;
 use common::{make_client_endpoint, make_server_endpoint};
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let server_addr = (Ipv4Addr::LOCALHOST, 5000).parse().unwrap();
+    let server_addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5000);
     let (endpoint, server_cert) = make_server_endpoint(server_addr)?;
     // accept a single connection
     let endpoint2 = endpoint.clone();

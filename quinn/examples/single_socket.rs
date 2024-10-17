@@ -2,7 +2,10 @@
 //!
 //! Checkout the `README.md` for guidance.
 
-use std::{error::Error, net::SocketAddr};
+use std::{
+    error::Error,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+};
 
 use quinn::Endpoint;
 
@@ -12,15 +15,15 @@ use rustls::pki_types::CertificateDer;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let addr1 = (Ipv4Addr::LOCALHOST, 5000).parse().unwrap();
-    let addr2 = (Ipv4Addr::LOCALHOST, 5001).parse().unwrap();
-    let addr3 = (Ipv4Addr::LOCALHOST, 5002).parse().unwrap();
+    let addr1 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5000);
+    let addr2 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5001);
+    let addr3 = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 5002);
     let server1_cert = run_server(addr1)?;
     let server2_cert = run_server(addr2)?;
     let server3_cert = run_server(addr3)?;
 
     let client = make_client_endpoint(
-        (Ipv4Addr::LOCALHOST, 0).parse().unwrap(),
+        SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0),
         &[&server1_cert, &server2_cert, &server3_cert],
     )?;
 

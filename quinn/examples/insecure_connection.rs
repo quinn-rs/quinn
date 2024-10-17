@@ -2,7 +2,11 @@
 //!
 //! Checkout the `README.md` for guidance.
 
-use std::{error::Error, net::SocketAddr, sync::Arc};
+use std::{
+    error::Error,
+    net::{IpAddr, Ipv4Addr, SocketAddr},
+    sync::Arc,
+};
 
 use proto::crypto::rustls::QuicClientConfig;
 use quinn::{ClientConfig, Endpoint};
@@ -14,7 +18,7 @@ use common::make_server_endpoint;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
     // server and client are running on the same thread asynchronously
-    let addr = (Ipv4Addr::LOCALHOST, 5000).parse().unwrap();
+    let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 8080);
     tokio::spawn(run_server(addr));
     run_client(addr).await?;
     Ok(())
@@ -33,7 +37,7 @@ async fn run_server(addr: SocketAddr) {
 }
 
 async fn run_client(server_addr: SocketAddr) -> Result<(), Box<dyn Error + Send + Sync + 'static>> {
-    let mut endpoint = Endpoint::client((Ipv4Addr::LOCALHOST, 0).parse().unwrap())?;
+    let mut endpoint = Endpoint::client(SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0))?;
 
     endpoint.set_default_client_config(ClientConfig::new(Arc::new(QuicClientConfig::try_from(
         rustls::ClientConfig::builder()
