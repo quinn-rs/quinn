@@ -939,6 +939,9 @@ mod tests {
     fn header_encoding() {
         use crate::crypto::rustls::{initial_keys, initial_suite_from_provider};
         use crate::Side;
+        #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
+        use rustls::crypto::aws_lc_rs::default_provider;
+        #[cfg(feature = "rustls-ring")]
         use rustls::crypto::ring::default_provider;
         use rustls::quic::Version;
 
