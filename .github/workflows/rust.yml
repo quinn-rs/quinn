@@ -30,7 +30,7 @@ jobs:
             $HOME/.cargo/bin/rustc --version
             echo "~~~~ freebsd-version ~~~~"
             freebsd-version
-          run: $HOME/.cargo/bin/cargo build --all-targets && $HOME/.cargo/bin/cargo test && $HOME/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml
+          run: $HOME/.cargo/bin/cargo build --all-targets && $HOME/.cargo/bin/cargo test && $HOME/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml && $HOME/.cargo/bin/cargo test --benches
   test:
     strategy:
       matrix:
@@ -54,6 +54,7 @@ jobs:
       - run: cargo test
       - run: cargo test --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust }} == "stable"
+      - run: cargo test --benches
 
   test-aws-lc-rs:
     runs-on: ubuntu-latest
