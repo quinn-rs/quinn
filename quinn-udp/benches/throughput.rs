@@ -7,7 +7,7 @@ use std::{
 use criterion::{criterion_group, criterion_main, Criterion};
 use tokio::{io::Interest, runtime::Runtime};
 
-use quinn_udp::{RecvMeta, Transmit, UdpSocketState};
+use quinn_udp::{RecvMeta, Transmit, UdpSocketState, BATCH_SIZE};
 
 pub fn criterion_benchmark(c: &mut Criterion) {
     const TOTAL_BYTES: usize = 10 * 1024 * 1024;
@@ -39,12 +39,17 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 continue;
             }
 
-            permutations.push((gso_enabled, gro_enabled));
+            for recvmmsg_enabled in [false, true] {
+                permutations.push((gso_enabled, gro_enabled, recvmmsg_enabled));
+            }
         }
     }
 
-    for (gso_enabled, gro_enabled) in permutations {
-        let mut group = c.benchmark_group(format!("gso_{}_gro_{}", gso_enabled, gro_enabled));
+    for (gso_enabled, gro_enabled, recvmmsg_enabled) in permutations {
+        let mut group = c.benchmark_group(format!(
+            "gso_{}_gro_{}_recvmmsg_{}",
+            gso_enabled, gro_enabled, recvmmsg_enabled
+        ));
         group.throughput(criterion::Throughput::Bytes(TOTAL_BYTES as u64));
 
         let gso_segments = if gso_enabled {
@@ -65,7 +70,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         } else {
             1
         };
-        let batch_size = 1;
+        let batch_size = if recvmmsg_enabled { BATCH_SIZE } else { 1 };
 
         group.bench_function("throughput", |b| {
             b.to_async(&rt).iter(|| async {
