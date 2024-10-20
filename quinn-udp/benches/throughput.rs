@@ -10,23 +10,18 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     const MAX_BUFFER_SIZE: usize = u16::MAX as usize;
     const SEGMENT_SIZE: usize = 1280;
 
-    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
-        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
-        .unwrap();
-    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
-        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
-        .unwrap();
+    let (send_state, send_socket) = new_socket();
+    let (recv_state, recv_socket) = new_socket();
+    // Reverse non-blocking flag set by `UdpSocketState` to make the test non-racy
+    recv_socket.set_nonblocking(false).unwrap();
+
     let max_segments = min(
-        UdpSocketState::new((&send).into())
+        UdpSocketState::new((&send_socket).into())
             .unwrap()
             .max_gso_segments(),
         MAX_BUFFER_SIZE / SEGMENT_SIZE,
     );
-    let dst_addr = recv.local_addr().unwrap();
-    let send_state = UdpSocketState::new((&send).into()).unwrap();
-    let recv_state = UdpSocketState::new((&recv).into()).unwrap();
-    // Reverse non-blocking flag set by `UdpSocketState` to make the test non-racy
-    recv.set_nonblocking(false).unwrap();
+    let dst_addr = recv_socket.local_addr().unwrap();
 
     let mut receive_buffer = vec![0; MAX_BUFFER_SIZE];
     let mut meta = RecvMeta::default();
@@ -50,14 +45,14 @@ pub fn criterion_benchmark(c: &mut Criterion) {
             b.iter(|| {
                 let mut sent: usize = 0;
                 while sent < TOTAL_BYTES {
-                    send_state.send((&send).into(), &transmit).unwrap();
+                    send_state.send((&send_socket).into(), &transmit).unwrap();
                     sent += transmit.contents.len();
 
                     let mut received_segments = 0;
                     while received_segments < segments {
                         let n = recv_state
                             .recv(
-                                (&recv).into(),
+                                (&recv_socket).into(),
                                 &mut [IoSliceMut::new(&mut receive_buffer)],
                                 slice::from_mut(&mut meta),
                             )
@@ -72,5 +67,12 @@ pub fn criterion_benchmark(c: &mut Criterion) {
     }
 }
 
+fn new_socket() -> (UdpSocketState, UdpSocket) {
+    let socket = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+
+    (UdpSocketState::new((&socket).into()).unwrap(), socket)
+}
 criterion_group!(benches, criterion_benchmark);
 criterion_main!(benches);
