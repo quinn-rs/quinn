@@ -131,6 +131,9 @@ impl UdpSocketState {
     /// UDP transmission errors are considered non-fatal because higher-level protocols must
     /// employ retransmits and timeouts anyway in order to deal with UDP's unreliable nature.
     /// Thus, logging is most likely the only thing you can do with these errors.
+    ///
+    /// If you would like to handle these errors yourself, use [`UdpSocketState::try_send`]
+    /// instead.
     pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
         match send(socket, transmit) {
             Ok(()) => Ok(()),
@@ -141,6 +144,11 @@ impl UdpSocketState {
                 Ok(())
             }
         }
+    }
+
+    /// Sends a [`Transmit`] on the given socket without any additional error handling.
+    pub fn try_send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
+        send(socket, transmit)
     }
 
     pub fn recv(
