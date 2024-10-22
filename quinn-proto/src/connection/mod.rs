@@ -3304,6 +3304,11 @@ impl Connection {
             buf,
         );
 
+        if let Some(ts) = space.pending_acks.receiver_timestamps_as_mut() {
+            // Best effort / one try to send the timestamps to the peer.
+            ts.clear();
+        }
+
         stats.frame_tx.acks += 1;
     }
 

@@ -774,10 +774,6 @@ impl PendingAcks {
     /// Remove ACKs of packets numbered at or below `max` from the set of pending ACKs
     pub(super) fn subtract_below(&mut self, max: u64) {
         self.ranges.remove(0..(max + 1));
-
-        if let Some(v) = self.receiver_timestamps.as_mut() {
-            v.subtract_below(max);
-        }
     }
 
     /// Returns the set of currently pending ACK ranges

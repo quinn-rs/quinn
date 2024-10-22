@@ -61,6 +61,11 @@ impl ReceiverTimestamps {
         });
     }
 
+    pub(crate) fn clear(&mut self) {
+        self.data.clear();
+    }
+
+    #[allow(dead_code)]
     pub(crate) fn subtract_below(&mut self, packet_number: u64) {
         if self.data.is_empty() {
             return;
