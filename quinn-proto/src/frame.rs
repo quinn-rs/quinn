@@ -2,7 +2,7 @@ use std::{
     fmt::{self, Write},
     io, mem,
     ops::{Range, RangeInclusive},
-    time::{Duration, Instant},
+    time::Duration,
 };
 
 use bytes::{Buf, BufMut, Bytes};
@@ -363,9 +363,7 @@ impl fmt::Debug for Ack {
         }
         ranges.push(']');
 
-        let timestamp_count = self
-            .timestamps_iter(Instant::now(), 0)
-            .map(|iter| iter.count());
+        let timestamp_count = self.timestamps_iter(0).map(|iter| iter.count());
 
         f.debug_struct("Ack")
             .field("largest", &self.largest)
@@ -386,24 +384,25 @@ impl<'a> IntoIterator for &'a Ack {
     }
 }
 
+pub struct AckTimestampEncodeParams<'a> {
+    pub(crate) receiver_timestamps: &'a ReceiverTimestamps,
+    pub(crate) exponent: u64,
+    pub(crate) max_timestamps: u64,
+}
+
 impl Ack {
     pub fn encode<W: BufMut>(
         delay: u64,
         ranges: &ArrayRangeSet,
         ecn: Option<&EcnCounts>,
-        timestamps: Option<(
-            &ReceiverTimestamps,
-            Instant,
-            u64, // exponent
-            u64, // max_timestamps
-        )>,
+        ts_params: Option<AckTimestampEncodeParams>,
         buf: &mut W,
     ) {
         let mut rest = ranges.iter().rev();
         let first = rest.next().unwrap();
         let largest = first.end - 1;
         let first_size = first.end - first.start;
-        buf.write(if timestamps.is_some() {
+        buf.write(if ts_params.is_some() {
             Type::ACK_RECEIVE_TIMESTAMPS
         } else if ecn.is_some() {
             Type::ACK_ECN
@@ -421,8 +420,14 @@ impl Ack {
             buf.write_var(size - 1);
             prev = block.start;
         }
-        if let Some(x) = timestamps {
-            Self::encode_timestamps(x.0, largest, buf, x.1, x.2, x.3)
+        if let Some(x) = ts_params {
+            Self::encode_timestamps(
+                x.receiver_timestamps,
+                largest,
+                buf,
+                x.exponent,
+                x.max_timestamps,
+            )
         } else if let Some(x) = ecn {
             x.encode(buf)
         }
@@ -432,10 +437,10 @@ impl Ack {
         self.into_iter()
     }
 
-    pub fn timestamps_iter(&self, epoch: Instant, exponent: u64) -> Option<AckTimestampIter> {
+    pub fn timestamps_iter(&self, exponent: u64) -> Option<AckTimestampIter> {
         self.timestamps
             .as_ref()
-            .map(|v| AckTimestampIter::new(self.largest, epoch, exponent, &v[..]))
+            .map(|v| AckTimestampIter::new(self.largest, exponent, &v[..]))
     }
 
     // https://www.ietf.org/archive/id/draft-smith-quic-receive-ts-00.html#ts-ranges
@@ -443,7 +448,6 @@ impl Ack {
         timestamps: &ReceiverTimestamps,
         mut largest: u64,
         buf: &mut impl BufMut,
-        mut basis: Instant,
         exponent: u64,
         max_timestamps: u64,
     ) {
@@ -471,6 +475,7 @@ impl Ack {
         let mut right = timestamps.len();
         let mut first = true;
         let mut counter = 0;
+        let mut basis = Duration::ZERO;
 
         for segment_idx in segment_idxs {
             let Some(elt) = timestamps.data.get(right - 1) else {
@@ -505,12 +510,12 @@ impl Ack {
                     // For the first Timestamp Delta of the first Timestamp Range in the frame: the value
                     // is the difference between (a) the receive timestamp of the largest packet in the
                     // Timestamp Range (indicated by Gap) and (b) the session receive_timestamp_basis
-                    pkt.timestamp.duration_since(basis).as_micros() as u64
+                    pkt.timestamp.as_micros() as u64
                 } else {
                     // For all other Timestamp Deltas: the value is the difference between
                     // (a) the receive timestamp specified by the previous Timestamp Delta and
                     // (b) the receive timestamp of the current packet in the Timestamp Range, decoded as described below.
-                    basis.duration_since(pkt.timestamp).as_micros() as u64
+                    (basis - pkt.timestamp).as_micros() as u64
                 };
                 buf.write_var(delta >> exponent);
                 basis = pkt.timestamp;
@@ -950,7 +955,6 @@ impl From<UnexpectedEnd> for IterErr {
 pub struct AckTimestampIter<'a> {
     timestamp_basis: u64,
     exponent: u64,
-    epoch: Instant,
     data: &'a [u8],
 
     deltas_remaining: usize,
@@ -959,7 +963,7 @@ pub struct AckTimestampIter<'a> {
 }
 
 impl<'a> AckTimestampIter<'a> {
-    fn new(largest: u64, epoch: Instant, exponent: u64, mut data: &'a [u8]) -> Self {
+    fn new(largest: u64, exponent: u64, mut data: &'a [u8]) -> Self {
         // We read and throw away the Timestamp Range Count value because
         // it was already used to properly slice the data.
         // Unwrap safety: this byte block was scanned prior using scan_ack_timestamps_blocks.
@@ -967,7 +971,6 @@ impl<'a> AckTimestampIter<'a> {
         AckTimestampIter {
             timestamp_basis: 0,
             exponent,
-            epoch,
             data,
             deltas_remaining: 0,
             first: true,
@@ -1009,7 +1012,7 @@ impl<'a> Iterator for AckTimestampIter<'a> {
 
         Some(PacketTimestamp {
             packet_number: self.next_pn,
-            timestamp: self.epoch + Duration::from_micros(self.timestamp_basis),
+            timestamp: Duration::from_micros(self.timestamp_basis),
         })
     }
 }
@@ -1223,6 +1226,7 @@ mod test {
     #[cfg(test)]
     mod ack_timestamps_tests {
         use super::*;
+        use std::time::Instant;
 
         #[test]
         fn test_scan_ack_timestamps_block() {
@@ -1299,15 +1303,17 @@ mod test {
 
         #[test]
         fn timestamp_iter() {
-            let mut timestamps = ReceiverTimestamps::new(100);
             let second = Duration::from_secs(1);
             let t0 = Instant::now();
+
+            let mut timestamps = ReceiverTimestamps::new(100, t0);
+
             timestamps.add(1, t0 + second);
             timestamps.add(2, t0 + second * 2);
             timestamps.add(3, t0 + second * 3);
             let mut buf = bytes::BytesMut::new();
 
-            Ack::encode_timestamps(&timestamps, 12, &mut buf, t0, 0, 10);
+            Ack::encode_timestamps(&timestamps, 12, &mut buf, 0, 10);
 
             // Manually decode and assert the values in the buffer.
             assert_eq!(1, buf.get_var().unwrap()); // timestamp_range_count
@@ -1321,7 +1327,8 @@ mod test {
 
         #[test]
         fn timestamp_iter_with_gaps() {
-            let mut timestamps = ReceiverTimestamps::new(100);
+            let t0 = Instant::now();
+            let mut timestamps = ReceiverTimestamps::new(100, t0);
             let one_second = Duration::from_secs(1);
             let t0 = Instant::now();
             vec![(1..=3), (5..=5), (10..=12)]
@@ -1331,7 +1338,7 @@ mod test {
 
             let mut buf = bytes::BytesMut::new();
 
-            Ack::encode_timestamps(&timestamps, 12, &mut buf, t0, 0, 10);
+            Ack::encode_timestamps(&timestamps, 12, &mut buf, 0, 10);
             // Manually decode and assert the values in the buffer.
             assert_eq!(3, buf.get_var().unwrap()); // timestamp_range_count
                                                    //
@@ -1357,15 +1364,15 @@ mod test {
 
         #[test]
         fn timestamp_iter_with_exponent() {
-            let mut timestamps = ReceiverTimestamps::new(100);
-            let millisecond = Duration::from_millis(1);
             let t0 = Instant::now();
+            let mut timestamps = ReceiverTimestamps::new(100, t0);
+            let millisecond = Duration::from_millis(1);
             timestamps.add(1, t0 + millisecond * 200);
             timestamps.add(2, t0 + millisecond * 300);
             let mut buf = bytes::BytesMut::new();
 
             let exponent = 2;
-            Ack::encode_timestamps(&timestamps, 12, &mut buf, t0, exponent, 10);
+            Ack::encode_timestamps(&timestamps, 12, &mut buf, exponent, 10);
 
             // values below are tested in another unit test
             buf.get_var().unwrap(); // timestamp_range_count
@@ -1378,57 +1385,57 @@ mod test {
 
         #[test]
         fn timestamp_encode_decode() {
-            let mut timestamps = ReceiverTimestamps::new(100);
-            let one_second = Duration::from_secs(1);
             let t0 = Instant::now();
+            let mut timestamps = ReceiverTimestamps::new(100, t0);
+            let one_second = Duration::from_secs(1);
             timestamps.add(1, t0 + one_second);
             timestamps.add(2, t0 + one_second * 2);
             timestamps.add(3, t0 + one_second * 3);
 
             let mut buf = bytes::BytesMut::new();
 
-            Ack::encode_timestamps(&timestamps, 12, &mut buf, t0, 0, 10);
+            Ack::encode_timestamps(&timestamps, 12, &mut buf, 0, 10);
 
-            let decoder = AckTimestampIter::new(12, t0, 0, &buf);
+            let decoder = AckTimestampIter::new(12, 0, &buf);
 
             let got: Vec<_> = decoder.collect();
             // [(3, _), (2, _), (1, _)]
             assert_eq!(3, got.len());
             assert_eq!(3, got[0].packet_number);
-            assert_eq!(t0 + (3 * one_second), got[0].timestamp,);
+            assert_eq!(3 * one_second, got[0].timestamp,);
 
             assert_eq!(2, got[1].packet_number);
-            assert_eq!(t0 + (2 * one_second), got[1].timestamp,);
+            assert_eq!(2 * one_second, got[1].timestamp,);
 
             assert_eq!(1, got[2].packet_number);
-            assert_eq!(t0 + (1 * one_second), got[2].timestamp);
+            assert_eq!(1 * one_second, got[2].timestamp);
         }
 
         #[test]
         fn timestamp_encode_decode_with_gaps() {
-            let mut timestamps = ReceiverTimestamps::new(100);
-            let one_second = Duration::from_secs(1);
             let t0 = Instant::now();
+            let mut timestamps = ReceiverTimestamps::new(100, t0);
+            let one_second = Duration::from_secs(1);
             let expect: Vec<_> = vec![(1..=3), (5..=5), (10..=12)]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>()
                 .into_iter()
                 .map(|i| {
-                    let t = t0 + one_second * i as u32;
-                    timestamps.add(i, t);
+                    let dt = one_second * i as u32;
+                    timestamps.add(i, t0 + dt);
                     PacketTimestamp {
                         packet_number: i,
-                        timestamp: t,
+                        timestamp: dt,
                     }
                 })
                 .collect();
 
             let mut buf = bytes::BytesMut::new();
 
-            Ack::encode_timestamps(&timestamps, 12, &mut buf, t0, 0, 10);
+            Ack::encode_timestamps(&timestamps, 12, &mut buf, 0, 10);
 
-            let decoder = AckTimestampIter::new(12, t0, 0, &buf);
+            let decoder = AckTimestampIter::new(12, 0, &buf);
             let got: Vec<_> = decoder.collect();
 
             assert_eq!(7, got.len());
@@ -1438,28 +1445,28 @@ mod test {
         #[test]
         fn timestamp_encode_max_ack() {
             // fix this
-            let mut timestamps = ReceiverTimestamps::new(2);
-            let one_second = Duration::from_secs(1);
             let t0 = Instant::now();
+            let mut timestamps = ReceiverTimestamps::new(2, t0);
+            let one_second = Duration::from_secs(1);
             let expect: Vec<_> = vec![(1..=3), (5..=5), (10..=12)]
                 .into_iter()
                 .flatten()
                 .collect::<Vec<_>>()
                 .into_iter()
                 .map(|i| {
-                    let t = t0 + one_second * i as u32;
-                    timestamps.add(i, t);
+                    let dt = one_second * i as u32;
+                    timestamps.add(i, t0 + dt);
                     PacketTimestamp {
                         packet_number: i,
-                        timestamp: t,
+                        timestamp: dt,
                     }
                 })
                 .collect();
 
             let mut buf = bytes::BytesMut::new();
 
-            Ack::encode_timestamps(&timestamps, 12, &mut buf, t0, 0, 2);
-            let decoder = AckTimestampIter::new(12, t0, 0, &buf);
+            Ack::encode_timestamps(&timestamps, 12, &mut buf, 0, 2);
+            let decoder = AckTimestampIter::new(12, 0, &buf);
             let got: Vec<_> = decoder.collect();
 
             assert_eq!(2, got.len());

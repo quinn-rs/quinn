@@ -291,7 +291,7 @@ pub(super) struct SentPacket {
     /// The time the packet was received by the receiver. The time Instant on this field is
     /// relative to a basis negotiated by the two connections. Time arithmetic done using the
     /// time_received field is only useful when compared to other time_received.
-    pub(super) time_received: Option<Instant>,
+    pub(super) time_received: Option<Duration>,
     /// The number of bytes sent in the packet, not including UDP or IP overhead, but including QUIC
     /// framing overhead. Zero if this packet is not counted towards congestion control, i.e. not an
     /// "in flight" packet.
@@ -623,8 +623,8 @@ impl PendingAcks {
         }
     }
 
-    pub(super) fn set_receiver_timestamp(&mut self, max_timestamps: usize) {
-        self.receiver_timestamps = Some(ReceiverTimestamps::new(max_timestamps));
+    pub(super) fn set_receiver_timestamp(&mut self, max_timestamps: usize, epoch: Instant) {
+        self.receiver_timestamps = Some(ReceiverTimestamps::new(max_timestamps, epoch));
     }
 
     pub(super) fn set_ack_frequency_params(&mut self, frame: &frame::AckFrequency) {

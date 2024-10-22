@@ -9,7 +9,7 @@ use std::{
 };
 
 use bytes::{Bytes, BytesMut};
-use frame::StreamMetaVec;
+use frame::{AckTimestampEncodeParams, StreamMetaVec};
 use rand::{rngs::StdRng, Rng, SeedableRng};
 use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
@@ -829,7 +829,6 @@ impl Connection {
                         buf,
                         &mut self.stats,
                         self.ack_timestamps_cfg,
-                        self.epoch,
                     );
                 }
 
@@ -1385,8 +1384,7 @@ impl Connection {
             }
         }
 
-        let timestamp_iter =
-            ack.timestamps_iter(self.epoch, self.config.ack_timestamps_config.exponent.0);
+        let timestamp_iter = ack.timestamps_iter(self.config.ack_timestamps_config.exponent.0);
         if let (Some(max), Some(iter)) = (
             self.config.ack_timestamps_config.max_timestamps_per_ack,
             timestamp_iter,
@@ -1522,7 +1520,7 @@ impl Connection {
         if info.ack_eliciting && self.path.challenge.is_none() {
             // Only pass ACKs to the congestion controller if we are not validating the current
             // path, so as to ignore any ACKs from older paths still coming in.
-            self.path.congestion.on_ack_packet(
+            self.path.congestion.on_ack_timestamped(
                 pn,
                 now,
                 info.time_sent,
@@ -3082,7 +3080,6 @@ impl Connection {
                 buf,
                 &mut self.stats,
                 self.ack_timestamps_cfg,
-                self.epoch,
             );
         }
 
@@ -3268,7 +3265,6 @@ impl Connection {
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
         ack_timestamps_config: AckTimestampsConfig,
-        epoch: Instant,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
 
@@ -3298,13 +3294,12 @@ impl Connection {
             space.pending_acks.ranges(),
             ecn,
             ack_timestamps_config.max_timestamps_per_ack.map(|max| {
-                (
+                AckTimestampEncodeParams {
                     // Safety: If peer_timestamp_config is set, receiver_timestamps must be set.
-                    space.pending_acks.receiver_timestamps_as_ref().unwrap(),
-                    epoch,
-                    ack_timestamps_config.exponent.0,
-                    max.0,
-                )
+                    receiver_timestamps: space.pending_acks.receiver_timestamps_as_ref().unwrap(),
+                    exponent: ack_timestamps_config.exponent.0,
+                    max_timestamps: max.0,
+                }
             }),
             buf,
         );
@@ -3365,7 +3360,9 @@ impl Connection {
         self.ack_timestamps_cfg = params.ack_timestamps_cfg;
         if let Some(max) = params.ack_timestamps_cfg.max_timestamps_per_ack {
             for space in self.spaces.iter_mut() {
-                space.pending_acks.set_receiver_timestamp(max.0 as usize);
+                space
+                    .pending_acks
+                    .set_receiver_timestamp(max.0 as usize, self.epoch);
             }
         };
     }
