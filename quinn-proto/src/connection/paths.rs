@@ -115,6 +115,19 @@ impl PathData {
         }
     }
 
+    /// Resets RTT, congestion control and MTU states.
+    ///
+    /// This is useful when it is known the underlying path has changed.
+    pub(super) fn reset(&mut self, config: &TransportConfig) {
+        let now = Instant::now();
+        self.rtt = RttEstimator::new(config.initial_rtt);
+        self.congestion = config
+            .congestion_controller_factory
+            .clone()
+            .build(now, config.get_initial_mtu());
+        self.mtud.reset(config.get_initial_mtu(), config.min_mtu);
+    }
+
     /// Indicates whether we're a server that hasn't validated the peer's address and hasn't
     /// received enough data from the peer to permit sending `bytes_to_send` additional bytes
     pub(super) fn anti_amplification_blocked(&self, bytes_to_send: u64) -> bool {

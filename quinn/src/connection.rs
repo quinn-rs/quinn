@@ -956,19 +956,24 @@ impl WeakConnectionHandle {
         self.0.upgrade().is_some()
     }
 
-    /// Resets the congestion controller and round-trip estimator for the current path.
+    /// Resets path-specific state.
     ///
-    /// This force-resets the congestion controller and round-trip estimator for the current
-    /// path.
+    /// This resets several subsystems keeping state for a specific network path.  It is
+    /// useful if it is known that the underlying network path changed substantially.
+    ///
+    /// Currently resets:
+    /// - RTT Estimator
+    /// - Congestion Controller
+    /// - MTU Discovery
     ///
     /// # Returns
     ///
     /// `true` if the connection still existed and the congestion controller state was
     /// reset.  `false` otherwise.
-    pub fn reset_congestion_state(&self) -> bool {
+    pub fn network_path_changed(&self) -> bool {
         if let Some(inner) = self.0.upgrade() {
             let mut inner_state = inner.state.lock("reset-congestion-state");
-            inner_state.inner.reset_congestion_state();
+            inner_state.inner.network_path_changed();
             true
         } else {
             false
