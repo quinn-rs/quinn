@@ -1,4 +1,5 @@
 use std::{
+    cmp::min,
     io::{ErrorKind, IoSliceMut},
     net::{Ipv4Addr, Ipv6Addr, UdpSocket},
 };
@@ -51,7 +52,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         } else {
             1
         };
-        let msg = vec![0xAB; SEGMENT_SIZE * gso_segments];
+        let msg = vec![0xAB; min(MAX_DATAGRAM_SIZE, SEGMENT_SIZE * gso_segments)];
         let transmit = Transmit {
             destination: dst_addr,
             ecn: None,
@@ -117,3 +118,6 @@ fn new_socket() -> (UdpSocketState, tokio::net::UdpSocket) {
 
 criterion_group!(benches, criterion_benchmark);
 criterion_main!(benches);
+
+const MAX_IP_UDP_HEADER_SIZE: usize = 48;
+const MAX_DATAGRAM_SIZE: usize = u16::MAX as usize - MAX_IP_UDP_HEADER_SIZE;
