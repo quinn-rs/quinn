@@ -45,12 +45,21 @@ thiserror = { workspace = true }
 tinyvec = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true }
 
+# Feature flags & dependencies for wasm
+# wasm-bindgen is assumed for a wasm*-*-unknown target
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+ring = { workspace = true, features = ["wasm32_unknown_unknown_js"] }
+getrandom = { workspace = true, features = ["js"] }
+rustls-pki-types = { workspace = true, features = ["web"] } # only added as dependency to enforce the `web` feature for this target
+web-time = { workspace = true }
+
 [dev-dependencies]
 assert_matches = { workspace = true }
 hex-literal = { workspace = true  }
 rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 lazy_static = "1"
+wasm-bindgen-test = { version = "0.3.45" }
 
 [lints.rust]
 # https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing

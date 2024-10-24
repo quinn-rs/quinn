@@ -3,7 +3,6 @@ use std::{
     mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
-    time::{Duration, Instant},
 };
 
 use assert_matches::assert_matches;
@@ -31,11 +30,19 @@ use crate::{
     crypto::rustls::QuicServerConfig,
     frame::FrameStruct,
     transport_parameters::TransportParameters,
+    Duration, Instant,
 };
 mod util;
 use util::*;
 
-#[test]
+use wasm_bindgen_test::wasm_bindgen_test;
+
+// Enable this if you want to run these tests in the browser.
+// Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in nodejs.
+// #[cfg(all(target_family = "wasm", target_os = "unknown"))]
+// wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
+
+#[wasm_bindgen_test(unsupported = test)]
 fn version_negotiate_server() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
@@ -67,7 +74,7 @@ fn version_negotiate_server() {
     }));
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn version_negotiate_client() {
     let _guard = subscribe();
     let server_addr = "[::2]:7890".parse().unwrap();
@@ -113,7 +120,7 @@ fn version_negotiate_client() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn lifecycle() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -141,7 +148,7 @@ fn lifecycle() {
     assert_eq!(pair.server.known_cids(), 0);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn draft_version_compat() {
     let _guard = subscribe();
 
@@ -174,7 +181,7 @@ fn draft_version_compat() {
     assert_eq!(pair.server.known_cids(), 0);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn stateless_retry() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -192,7 +199,7 @@ fn stateless_retry() {
     assert_eq!(pair.server.known_cids(), 0);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn server_stateless_reset() {
     let _guard = subscribe();
     let mut key_material = vec![0; 64];
@@ -222,7 +229,7 @@ fn server_stateless_reset() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn client_stateless_reset() {
     let _guard = subscribe();
     let mut key_material = vec![0; 64];
@@ -256,7 +263,8 @@ fn client_stateless_reset() {
 }
 
 /// Verify that stateless resets are rate-limited
-#[test]
+
+#[wasm_bindgen_test(unsupported = test)]
 fn stateless_reset_limit() {
     let _guard = subscribe();
     let remote = SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 42);
@@ -295,7 +303,7 @@ fn stateless_reset_limit() {
     assert!(matches!(event, Some(DatagramEvent::Response(_))));
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn export_keying_material() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -321,7 +329,7 @@ fn export_keying_material() {
     assert_eq!(&client_buf[..], &server_buf[..]);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn finish_stream_simple() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -361,7 +369,7 @@ fn finish_stream_simple() {
     let _ = chunks.finalize();
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn reset_stream() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -390,7 +398,7 @@ fn reset_stream() {
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn stop_stream() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -422,7 +430,7 @@ fn stop_stream() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn reject_self_signed_server_cert() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -450,7 +458,7 @@ fn reject_self_signed_server_cert() {
                     if error.code == TransportErrorCode::crypto(AlertDescription::UnknownCA.into()));
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn reject_missing_client_cert() {
     let _guard = subscribe();
 
@@ -508,7 +516,7 @@ fn reject_missing_client_cert() {
                     if error.code == TransportErrorCode::crypto(AlertDescription::CertificateRequired.into()));
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn congestion() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -530,7 +538,7 @@ fn congestion() {
 }
 
 #[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn high_latency_handshake() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -542,7 +550,7 @@ fn high_latency_handshake() {
     assert!(pair.server_conn_mut(server_ch).using_ecn());
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn zero_rtt_happypath() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -608,7 +616,7 @@ fn zero_rtt_happypath() {
     assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn zero_rtt_rejection() {
     let _guard = subscribe();
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec![
@@ -776,21 +784,21 @@ fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: 
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn zero_rtt_incoming_buffer_size() {
     test_zero_rtt_incoming_limit(|config| {
         config.incoming_buffer_size(4000);
     });
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn zero_rtt_incoming_buffer_size_total() {
     test_zero_rtt_incoming_limit(|config| {
         config.incoming_buffer_size_total(4000);
     });
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn alpn_success() {
     let _guard = subscribe();
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec![
@@ -829,7 +837,7 @@ fn alpn_success() {
     assert_eq!(hd.protocol.unwrap(), &b"bar"[..]);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn server_alpn_unset() {
     let _guard = subscribe();
     let mut pair = Pair::new(Arc::new(EndpointConfig::default()), server_config());
@@ -843,7 +851,7 @@ fn server_alpn_unset() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn client_alpn_unset() {
     let _guard = subscribe();
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec![
@@ -861,7 +869,7 @@ fn client_alpn_unset() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn alpn_mismatch() {
     let _guard = subscribe();
     let server_config = ServerConfig::with_crypto(Arc::new(server_crypto_with_alpn(vec![
@@ -883,7 +891,7 @@ fn alpn_mismatch() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn stream_id_limit() {
     let _guard = subscribe();
     let server = ServerConfig {
@@ -971,7 +979,7 @@ fn stream_id_limit() {
     let _ = chunks.finalize();
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn key_update_simple() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1024,7 +1032,7 @@ fn key_update_simple() {
     assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn key_update_reordered() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1072,7 +1080,7 @@ fn key_update_reordered() {
     assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn initial_retransmit() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1090,7 +1098,7 @@ fn initial_retransmit() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn instant_close_1() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1115,7 +1123,7 @@ fn instant_close_1() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn instant_close_2() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1146,7 +1154,7 @@ fn instant_close_2() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn instant_server_close() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1173,7 +1181,7 @@ fn instant_server_close() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn idle_timeout() {
     let _guard = subscribe();
     const IDLE_TIMEOUT: u64 = 100;
@@ -1215,7 +1223,7 @@ fn idle_timeout() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn connection_close_sends_acks() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1239,7 +1247,7 @@ fn connection_close_sends_acks() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn server_hs_retransmit() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1258,7 +1266,7 @@ fn server_hs_retransmit() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn migration() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1399,7 +1407,7 @@ fn test_flow_control(config: TransportConfig, window_size: usize) {
     info!("finished reading");
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn stream_flow_control() {
     test_flow_control(
         TransportConfig {
@@ -1410,7 +1418,7 @@ fn stream_flow_control() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn conn_flow_control() {
     test_flow_control(
         TransportConfig {
@@ -1421,7 +1429,7 @@ fn conn_flow_control() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn stop_opens_bidi() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1466,7 +1474,7 @@ fn stop_opens_bidi() {
     assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn implicit_open() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1484,7 +1492,7 @@ fn implicit_open() {
     assert_eq!(pair.server_streams(server_ch).accept(Dir::Uni), None);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn zero_length_cid() {
     let _guard = subscribe();
     let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
@@ -1513,7 +1521,7 @@ fn zero_length_cid() {
     pair.connect();
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn keep_alive() {
     let _guard = subscribe();
     const IDLE_TIMEOUT: u64 = 10;
@@ -1540,7 +1548,7 @@ fn keep_alive() {
     }
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn cid_rotation() {
     let _guard = subscribe();
     const CID_TIMEOUT: Duration = Duration::from_secs(2);
@@ -1600,7 +1608,7 @@ fn cid_rotation() {
     }
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn cid_retirement() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1634,7 +1642,7 @@ fn cid_retirement() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn finish_stream_flow_control_reordered() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1682,7 +1690,7 @@ fn finish_stream_flow_control_reordered() {
     let _ = chunks.finalize();
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn handshake_1rtt_handling() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1717,7 +1725,7 @@ fn handshake_1rtt_handling() {
     let _ = chunks.finalize();
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn stop_before_finish() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1739,7 +1747,7 @@ fn stop_before_finish() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn stop_during_finish() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1764,7 +1772,8 @@ fn stop_during_finish() {
 }
 
 // Ensure we can recover from loss of tail packets when the congestion window is full
-#[test]
+
+#[wasm_bindgen_test(unsupported = test)]
 fn congested_tail_loss() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1788,7 +1797,7 @@ fn congested_tail_loss() {
     pair.client_send(client_ch, s).write(&[42; 1024]).unwrap();
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn datagram_send_recv() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -1809,7 +1818,7 @@ fn datagram_send_recv() {
     assert_matches!(pair.server_datagrams(server_ch).recv(), None);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn datagram_recv_buffer_overflow() {
     let _guard = subscribe();
     const WINDOW: usize = 100;
@@ -1857,7 +1866,7 @@ fn datagram_recv_buffer_overflow() {
     assert_matches!(pair.server_datagrams(server_ch).recv(), None);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn datagram_unsupported() {
     let _guard = subscribe();
     let server = ServerConfig {
@@ -1879,7 +1888,7 @@ fn datagram_unsupported() {
     }
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn large_initial() {
     let _guard = subscribe();
     let server_config =
@@ -1910,7 +1919,7 @@ fn large_initial() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test]
 /// Ensure that we don't yield a finish event before the actual FIN is acked so the peer isn't left
 /// hanging
 fn finish_acked() {
@@ -1966,7 +1975,7 @@ fn finish_acked() {
     let _ = chunks.finalize();
 }
 
-#[test]
+#[wasm_bindgen_test]
 /// Ensure that we don't yield a finish event while there's still unacknowledged data
 fn finish_retransmit() {
     let _guard = subscribe();
@@ -2015,7 +2024,8 @@ fn finish_retransmit() {
 
 /// Ensures that exchanging data on a client-initiated bidirectional stream works past the initial
 /// stream window.
-#[test]
+
+#[wasm_bindgen_test(unsupported = test)]
 fn repeated_request_response() {
     let _guard = subscribe();
     let server = ServerConfig {
@@ -2064,7 +2074,8 @@ fn repeated_request_response() {
 }
 
 /// Ensures that the client sends an anti-deadlock probe after an incomplete server's first flight
-#[test]
+
+#[wasm_bindgen_test(unsupported = test)]
 fn handshake_anti_deadlock_probe() {
     let _guard = subscribe();
 
@@ -2096,7 +2107,8 @@ fn handshake_anti_deadlock_probe() {
 
 /// Ensures that the server can respond with 3 initial packets during the handshake
 /// before the anti-amplification limit kicks in when MTUs are similar.
-#[test]
+
+#[wasm_bindgen_test(unsupported = test)]
 fn server_can_send_3_inital_packets() {
     let _guard = subscribe();
 
@@ -2140,7 +2152,7 @@ fn big_cert_and_key() -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
     )
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn malformed_token_len() {
     let _guard = subscribe();
     let client_addr = "[::2]:7890".parse().unwrap();
@@ -2161,7 +2173,7 @@ fn malformed_token_len() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn loss_probe_requests_immediate_ack() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -2187,7 +2199,7 @@ fn loss_probe_requests_immediate_ack() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test]
 /// This is mostly a sanity check to ensure our testing code is correctly dropping packets above the
 /// pmtu
 fn connect_too_low_mtu() {
@@ -2202,7 +2214,7 @@ fn connect_too_low_mtu() {
     pair.server.assert_no_accept();
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn connect_lost_mtu_probes_do_not_trigger_congestion_control() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -2225,7 +2237,7 @@ fn connect_lost_mtu_probes_do_not_trigger_congestion_control() {
     assert_eq!(server_stats.path.congestion_events, 0);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn connect_detects_mtu() {
     let _guard = subscribe();
     let max_udp_payload_and_expected_mtu = &[(1200, 1200), (1400, 1389), (1500, 1452)];
@@ -2241,7 +2253,7 @@ fn connect_detects_mtu() {
     }
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn migrate_detects_new_mtu_and_respects_original_peer_max_udp_payload_size() {
     let _guard = subscribe();
 
@@ -2298,7 +2310,7 @@ fn migrate_detects_new_mtu_and_respects_original_peer_max_udp_payload_size() {
     assert_eq!(pair.client_conn_mut(client_ch).path_mtu(), 1293);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn connect_runs_mtud_again_after_600_seconds() {
     let _guard = subscribe();
     let mut server_config = server_config();
@@ -2344,7 +2356,7 @@ fn connect_runs_mtud_again_after_600_seconds() {
     assert_eq!(pair.server_conn_mut(server_ch).path_mtu(), 1452);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn blackhole_after_mtu_change_repairs_itself() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -2383,7 +2395,7 @@ fn blackhole_after_mtu_change_repairs_itself() {
     assert_eq!(client_stats.path.black_holes_detected, 1);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn mtud_probes_include_immediate_ack() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -2398,7 +2410,7 @@ fn mtud_probes_include_immediate_ack() {
     assert_eq!(stats.frame_tx.immediate_ack, 4);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn packet_splitting_with_default_mtu() {
     let _guard = subscribe();
 
@@ -2420,7 +2432,7 @@ fn packet_splitting_with_default_mtu() {
     assert_eq!(pair.server.inbound.len(), 2);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn packet_splitting_not_necessary_after_higher_mtu_discovered() {
     let _guard = subscribe();
     let payload = vec![42; 1300];
@@ -2441,7 +2453,7 @@ fn packet_splitting_not_necessary_after_higher_mtu_discovered() {
     assert_eq!(pair.server.inbound.len(), 1);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn single_ack_eliciting_packet_triggers_ack_after_delay() {
     let _guard = subscribe();
     let mut pair = Pair::default_with_deterministic_pns();
@@ -2506,7 +2518,7 @@ fn single_ack_eliciting_packet_triggers_ack_after_delay() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn immediate_ack_triggers_ack() {
     let _guard = subscribe();
     let mut pair = Pair::default_with_deterministic_pns();
@@ -2525,7 +2537,7 @@ fn immediate_ack_triggers_ack() {
     assert_eq!(acks_after_ping - acks_after_connect, 1);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn out_of_order_ack_eliciting_packet_triggers_ack() {
     let _guard = subscribe();
     let mut pair = Pair::default_with_deterministic_pns();
@@ -2583,7 +2595,7 @@ fn out_of_order_ack_eliciting_packet_triggers_ack() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn single_ack_eliciting_packet_with_ce_bit_triggers_immediate_ack() {
     let _guard = subscribe();
     let mut pair = Pair::default_with_deterministic_pns();
@@ -2649,7 +2661,8 @@ fn setup_ack_frequency_test(max_ack_delay: Duration) -> (Pair, ConnectionHandle,
 }
 
 /// Verify that max ACK delay is counted from the first ACK-eliciting packet
-#[test]
+
+#[wasm_bindgen_test(unsupported = test)]
 fn ack_frequency_ack_delayed_from_first_of_flight() {
     let _guard = subscribe();
     let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(Duration::from_millis(30));
@@ -2706,7 +2719,7 @@ fn ack_frequency_ack_delayed_from_first_of_flight() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn ack_frequency_ack_sent_after_max_ack_delay() {
     let _guard = subscribe();
     let max_ack_delay = Duration::from_millis(30);
@@ -2745,7 +2758,7 @@ fn ack_frequency_ack_sent_after_max_ack_delay() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn ack_frequency_ack_sent_after_packets_above_threshold() {
     let _guard = subscribe();
     let max_ack_delay = Duration::from_millis(30);
@@ -2793,7 +2806,7 @@ fn ack_frequency_ack_sent_after_packets_above_threshold() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn ack_frequency_ack_sent_after_reordered_packets_below_threshold() {
     let _guard = subscribe();
     let max_ack_delay = Duration::from_millis(30);
@@ -2848,7 +2861,7 @@ fn ack_frequency_ack_sent_after_reordered_packets_below_threshold() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn ack_frequency_ack_sent_after_reordered_packets_above_threshold() {
     let _guard = subscribe();
     let max_ack_delay = Duration::from_millis(30);
@@ -2900,7 +2913,7 @@ fn ack_frequency_ack_sent_after_reordered_packets_above_threshold() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn ack_frequency_update_max_delay() {
     let _guard = subscribe();
     let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(Duration::from_millis(200));
@@ -2960,7 +2973,8 @@ fn stream_chunks(mut recv: RecvStream) -> Vec<u8> {
 /// Verify that an endpoint which receives but does not send ACK-eliciting data still receives ACKs
 /// occasionally. This is not required for conformance, but makes loss detection more responsive and
 /// reduces receiver memory use.
-#[test]
+
+#[wasm_bindgen_test(unsupported = test)]
 fn pure_sender_voluntarily_acks() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -2981,7 +2995,7 @@ fn pure_sender_voluntarily_acks() {
     assert!(receiver_acks_final > receiver_acks_initial);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn reject_manually() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -3001,7 +3015,7 @@ fn reject_manually() {
     ));
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn validate_then_reject_manually() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -3027,14 +3041,14 @@ fn validate_then_reject_manually() {
     assert_eq!(pair.server.known_cids(), 0);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn endpoint_and_connection_impl_send_sync() {
     const fn is_send_sync<T: Send + Sync>() {}
     is_send_sync::<Endpoint>();
     is_send_sync::<Connection>();
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn stream_gso() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -3056,7 +3070,7 @@ fn stream_gso() {
     assert_eq!(final_ios - initial_ios, 2);
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn datagram_gso() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -3086,7 +3100,7 @@ fn datagram_gso() {
     );
 }
 
-#[test]
+#[wasm_bindgen_test(unsupported = test)]
 fn gso_truncation() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -3120,7 +3134,8 @@ fn gso_truncation() {
 
 /// Verify that a large application datagram is sent successfully when an ACK frame too large to fit
 /// alongside it is also queued, in exactly 2 UDP datagrams.
-#[test]
+
+#[wasm_bindgen_test(unsupported = test)]
 fn large_datagram_with_acks() {
     let _guard = subscribe();
     let mut pair = Pair::default();
@@ -3149,7 +3164,8 @@ fn large_datagram_with_acks() {
 
 /// Verify that an ACK prompted by receipt of many non-ACK-eliciting packets is sent alongside
 /// outgoing application datagrams too large to coexist in the same packet with it.
-#[test]
+
+#[wasm_bindgen_test(unsupported = test)]
 fn voluntary_ack_with_large_datagrams() {
     let _guard = subscribe();
     let mut pair = Pair::default();

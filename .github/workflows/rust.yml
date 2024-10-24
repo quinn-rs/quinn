@@ -69,6 +69,25 @@ jobs:
       - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips
       - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips,runtime-tokio
 
+  wasm_test:
+    name: test wasm32-unknown-unknown
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install wasm-bindgen-test-runner
+        run: cargo install wasm-bindgen-cli
+
+      - name: wasm32 test (quinn-proto)
+        run: cargo test -p quinn-proto --target wasm32-unknown-unknown
+
   msrv:
     runs-on: ubuntu-latest
     steps:
