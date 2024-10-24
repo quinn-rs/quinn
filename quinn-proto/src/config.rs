@@ -930,7 +930,7 @@ impl ServerConfig {
     ) -> Result<Self, rustls::Error> {
         Ok(Self::with_crypto(Arc::new(QuicServerConfig::new(
             cert_chain, key,
-        ))))
+        )?)))
     }
 }
 

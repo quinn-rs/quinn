@@ -2,7 +2,7 @@ name: CI
 
 on:
   push:
-    branches: ['0.10.x']
+    branches: ['0.10.x', '0.11.x']
   pull_request:
 
 jobs:
@@ -99,3 +99,76 @@ jobs:
     steps:
     - uses: actions/checkout@v4
     - uses: EmbarkStudios/cargo-deny-action@v2
+
+  test-android:
+    runs-on: ubuntu-latest
+
+    strategy:
+      matrix:
+        include:
+          - target: x86_64-linux-android
+            emulator-arch: x86_64
+            # Note that x86_64 image is only available for API 21+. See
+            # https://github.com/ReactiveCircus/android-emulator-runner?tab=readme-ov-file#configurations.
+            api-level: 26
+          - target: i686-linux-android
+            emulator-arch: x86
+            api-level: 26
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+
+    - name: Install JDK
+      uses: actions/setup-java@v4
+      with:
+        distribution: 'zulu'
+        java-version: '21'
+
+    - name: Install Android SDK
+      uses: android-actions/setup-android@v3
+
+    - name: Install Android NDK
+      run: sdkmanager --install "ndk;25.2.9519653"
+
+    - name: Install Rust
+      uses: dtolnay/rust-toolchain@stable
+      with:
+        toolchain: stable
+        target: ${{ matrix.target }}
+
+    - uses: Swatinem/rust-cache@v2
+
+    - name: Install cargo-ndk
+      run: cargo install cargo-ndk
+
+    - name: Build unit tests for Android
+      run: cargo ndk -t ${{ matrix.target }} test --no-run
+
+    - name: Enable KVM group perms
+      run: |
+        echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+        sudo udevadm control --reload-rules
+        sudo udevadm trigger --name-match=kvm
+
+    - name: Set up Android Emulator and run tests
+      env:
+        TARGET: ${{ matrix.target }}
+      uses: reactivecircus/android-emulator-runner@v2
+      with:
+        api-level: ${{ matrix.api-level }}
+        arch: ${{ matrix.emulator-arch }}
+        script: .github/workflows/rust-android-run-tests-on-emulator.sh
+
+  features:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    env:
+      RUSTFLAGS: -Dwarnings
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: taiki-e/install-action@cargo-hack
+      - run: cargo hack check --feature-powerset --optional-deps --no-dev-deps --ignore-unknown-features --ignore-private --group-features runtime-async-std,async-io,async-std --group-features runtime-smol,async-io,smol

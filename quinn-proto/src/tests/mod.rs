@@ -7,7 +7,7 @@ use std::{
 };
 
 use assert_matches::assert_matches;
-use bytes::Bytes;
+use bytes::{Bytes, BytesMut};
 use hex_literal::hex;
 use rand::RngCore;
 use ring::hmac;
@@ -2995,6 +2995,32 @@ fn reject_manually() {
 }
 
 #[test]
+fn validate_then_reject_manually() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::ValidateThenReject;
+
+    // The server should now retry and reject incoming connections.
+    let client_ch = pair.begin_connect(client_config());
+    pair.drive();
+    pair.server.assert_no_accept();
+    let client = pair.client.connections.get_mut(&client_ch).unwrap();
+    assert!(client.is_closed());
+    assert!(matches!(
+        client.poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::ConnectionClosed(close)
+        }) if close.error_code == TransportErrorCode::CONNECTION_REFUSED
+    ));
+    pair.drive();
+    assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
+#[test]
 fn endpoint_and_connection_impl_send_sync() {
     const fn is_send_sync<T: Send + Sync>() {}
     is_send_sync::<Endpoint>();
@@ -3142,4 +3168,25 @@ fn voluntary_ack_with_large_datagrams() {
         COUNT as u64,
         "client should have sent some ACK-only packets"
     );
+}
+
+#[test]
+fn reject_short_idcid() {
+    let _guard = subscribe();
+    let client_addr = "[::2]:7890".parse().unwrap();
+    let mut server = Endpoint::new(
+        Default::default(),
+        Some(Arc::new(server_config())),
+        true,
+        None,
+    );
+    let now = Instant::now();
+    let mut buf = Vec::with_capacity(server.config().get_max_udp_payload_size() as usize);
+    // Initial header that has an empty DCID but is otherwise well-formed
+    let mut initial = BytesMut::from(hex!("c4 00000001 00 00 00 3f").as_ref());
+    initial.resize(MIN_INITIAL_SIZE.into(), 0);
+    let event = server.handle(now, client_addr, None, None, initial, &mut buf);
+    let Some(DatagramEvent::Response(Transmit { .. })) = event else {
+        panic!("expected an initial close");
+    };
 }
