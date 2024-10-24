@@ -123,109 +123,32 @@ impl UdpSocketState {
         })
     }
 
+    /// Sends a [`Transmit`] on the given socket.
+    ///
+    /// This function will only ever return errors of kind [`io::ErrorKind::WouldBlock`].
+    /// All other errors will be logged and converted to `Ok`.
+    ///
+    /// UDP transmission errors are considered non-fatal because higher-level protocols must
+    /// employ retransmits and timeouts anyway in order to deal with UDP's unreliable nature.
+    /// Thus, logging is most likely the only thing you can do with these errors.
+    ///
+    /// If you would like to handle these errors yourself, use [`UdpSocketState::try_send`]
+    /// instead.
     pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        // we cannot use [`socket2::sendmsg()`] and [`socket2::MsgHdr`] as we do not have access
-        // to the inner field which holds the WSAMSG
-        let mut ctrl_buf = cmsg::Aligned([0; CMSG_LEN]);
-        let daddr = socket2::SockAddr::from(transmit.destination);
+        match send(socket, transmit) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
+            Err(e) => {
+                log_sendmsg_error(&self.last_send_error, e, transmit);
 
-        let mut data = WinSock::WSABUF {
-            buf: transmit.contents.as_ptr() as *mut _,
-            len: transmit.contents.len() as _,
-        };
-
-        let ctrl = WinSock::WSABUF {
-            buf: ctrl_buf.0.as_mut_ptr(),
-            len: ctrl_buf.0.len() as _,
-        };
-
-        let mut wsa_msg = WinSock::WSAMSG {
-            name: daddr.as_ptr() as *mut _,
-            namelen: daddr.len(),
-            lpBuffers: &mut data,
-            Control: ctrl,
-            dwBufferCount: 1,
-            dwFlags: 0,
-        };
-
-        // Add control messages (ECN and PKTINFO)
-        let mut encoder = unsafe { cmsg::Encoder::new(&mut wsa_msg) };
-
-        if let Some(ip) = transmit.src_ip {
-            let ip = std::net::SocketAddr::new(ip, 0);
-            let ip = socket2::SockAddr::from(ip);
-            match ip.family() {
-                WinSock::AF_INET => {
-                    let src_ip = unsafe { ptr::read(ip.as_ptr() as *const WinSock::SOCKADDR_IN) };
-                    let pktinfo = WinSock::IN_PKTINFO {
-                        ipi_addr: src_ip.sin_addr,
-                        ipi_ifindex: 0,
-                    };
-                    encoder.push(WinSock::IPPROTO_IP, WinSock::IP_PKTINFO, pktinfo);
-                }
-                WinSock::AF_INET6 => {
-                    let src_ip = unsafe { ptr::read(ip.as_ptr() as *const WinSock::SOCKADDR_IN6) };
-                    let pktinfo = WinSock::IN6_PKTINFO {
-                        ipi6_addr: src_ip.sin6_addr,
-                        ipi6_ifindex: unsafe { src_ip.Anonymous.sin6_scope_id },
-                    };
-                    encoder.push(WinSock::IPPROTO_IPV6, WinSock::IPV6_PKTINFO, pktinfo);
-                }
-                _ => {
-                    return Err(io::Error::from(io::ErrorKind::InvalidInput));
-                }
+                Ok(())
             }
         }
+    }
 
-        // ECN is a C integer https://learn.microsoft.com/en-us/windows/win32/winsock/winsock-ecn
-        let ecn = transmit.ecn.map_or(0, |x| x as c_int);
-        // True for IPv4 or IPv4-Mapped IPv6
-        let is_ipv4 = transmit.destination.is_ipv4()
-            || matches!(transmit.destination.ip(), IpAddr::V6(addr) if addr.to_ipv4_mapped().is_some());
-        if is_ipv4 {
-            encoder.push(WinSock::IPPROTO_IP, WinSock::IP_ECN, ecn);
-        } else {
-            encoder.push(WinSock::IPPROTO_IPV6, WinSock::IPV6_ECN, ecn);
-        }
-
-        // Segment size is a u32 https://learn.microsoft.com/en-us/windows/win32/api/ws2tcpip/nf-ws2tcpip-wsasetudpsendmessagesize
-        if let Some(segment_size) = transmit.segment_size {
-            encoder.push(
-                WinSock::IPPROTO_UDP,
-                WinSock::UDP_SEND_MSG_SIZE,
-                segment_size as u32,
-            );
-        }
-
-        encoder.finish();
-
-        let mut len = 0;
-        let rc = unsafe {
-            WinSock::WSASendMsg(
-                socket.0.as_raw_socket() as usize,
-                &wsa_msg,
-                0,
-                &mut len,
-                ptr::null_mut(),
-                None,
-            )
-        };
-
-        if rc != 0 {
-            let e = io::Error::last_os_error();
-            if e.kind() == io::ErrorKind::WouldBlock {
-                return Err(e);
-            }
-
-            // Other errors are ignored, since they will usually be handled
-            // by higher level retransmits and timeouts.
-            // - PermissionDenied errors have been observed due to iptable rules.
-            //   Those are not fatal errors, since the
-            //   configuration can be dynamically changed.
-            // - Destination unreachable errors have been observed for other
-            log_sendmsg_error(&self.last_send_error, e, transmit);
-        }
-        Ok(())
+    /// Sends a [`Transmit`] on the given socket without any additional error handling.
+    pub fn try_send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
+        send(socket, transmit)
     }
 
     pub fn recv(
@@ -354,6 +277,100 @@ impl UdpSocketState {
     #[inline]
     pub fn may_fragment(&self) -> bool {
         false
+    }
+}
+
+fn send(socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
+    // we cannot use [`socket2::sendmsg()`] and [`socket2::MsgHdr`] as we do not have access
+    // to the inner field which holds the WSAMSG
+    let mut ctrl_buf = cmsg::Aligned([0; CMSG_LEN]);
+    let daddr = socket2::SockAddr::from(transmit.destination);
+
+    let mut data = WinSock::WSABUF {
+        buf: transmit.contents.as_ptr() as *mut _,
+        len: transmit.contents.len() as _,
+    };
+
+    let ctrl = WinSock::WSABUF {
+        buf: ctrl_buf.0.as_mut_ptr(),
+        len: ctrl_buf.0.len() as _,
+    };
+
+    let mut wsa_msg = WinSock::WSAMSG {
+        name: daddr.as_ptr() as *mut _,
+        namelen: daddr.len(),
+        lpBuffers: &mut data,
+        Control: ctrl,
+        dwBufferCount: 1,
+        dwFlags: 0,
+    };
+
+    // Add control messages (ECN and PKTINFO)
+    let mut encoder = unsafe { cmsg::Encoder::new(&mut wsa_msg) };
+
+    if let Some(ip) = transmit.src_ip {
+        let ip = std::net::SocketAddr::new(ip, 0);
+        let ip = socket2::SockAddr::from(ip);
+        match ip.family() {
+            WinSock::AF_INET => {
+                let src_ip = unsafe { ptr::read(ip.as_ptr() as *const WinSock::SOCKADDR_IN) };
+                let pktinfo = WinSock::IN_PKTINFO {
+                    ipi_addr: src_ip.sin_addr,
+                    ipi_ifindex: 0,
+                };
+                encoder.push(WinSock::IPPROTO_IP, WinSock::IP_PKTINFO, pktinfo);
+            }
+            WinSock::AF_INET6 => {
+                let src_ip = unsafe { ptr::read(ip.as_ptr() as *const WinSock::SOCKADDR_IN6) };
+                let pktinfo = WinSock::IN6_PKTINFO {
+                    ipi6_addr: src_ip.sin6_addr,
+                    ipi6_ifindex: unsafe { src_ip.Anonymous.sin6_scope_id },
+                };
+                encoder.push(WinSock::IPPROTO_IPV6, WinSock::IPV6_PKTINFO, pktinfo);
+            }
+            _ => {
+                return Err(io::Error::from(io::ErrorKind::InvalidInput));
+            }
+        }
+    }
+
+    // ECN is a C integer https://learn.microsoft.com/en-us/windows/win32/winsock/winsock-ecn
+    let ecn = transmit.ecn.map_or(0, |x| x as c_int);
+    // True for IPv4 or IPv4-Mapped IPv6
+    let is_ipv4 = transmit.destination.is_ipv4()
+        || matches!(transmit.destination.ip(), IpAddr::V6(addr) if addr.to_ipv4_mapped().is_some());
+    if is_ipv4 {
+        encoder.push(WinSock::IPPROTO_IP, WinSock::IP_ECN, ecn);
+    } else {
+        encoder.push(WinSock::IPPROTO_IPV6, WinSock::IPV6_ECN, ecn);
+    }
+
+    // Segment size is a u32 https://learn.microsoft.com/en-us/windows/win32/api/ws2tcpip/nf-ws2tcpip-wsasetudpsendmessagesize
+    if let Some(segment_size) = transmit.segment_size {
+        encoder.push(
+            WinSock::IPPROTO_UDP,
+            WinSock::UDP_SEND_MSG_SIZE,
+            segment_size as u32,
+        );
+    }
+
+    encoder.finish();
+
+    let mut len = 0;
+    let rc = unsafe {
+        WinSock::WSASendMsg(
+            socket.0.as_raw_socket() as usize,
+            &wsa_msg,
+            0,
+            &mut len,
+            ptr::null_mut(),
+            None,
+        )
+    };
+
+    match rc {
+        0 => Ok(()),
+        _ => Err(io::Error::last_os_error()),
     }
 }
 
