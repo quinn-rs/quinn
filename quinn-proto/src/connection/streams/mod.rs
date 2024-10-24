@@ -32,6 +32,7 @@ pub struct Streams<'a> {
     pub(super) conn_state: &'a super::State,
 }
 
+#[allow(clippy::needless_lifetimes)] // Needed for cfg(fuzzing)
 impl<'a> Streams<'a> {
     #[cfg(fuzzing)]
     pub fn new(state: &'a mut StreamsState, conn_state: &'a super::State) -> Self {
@@ -106,7 +107,7 @@ pub struct RecvStream<'a> {
     pub(super) pending: &'a mut Retransmits,
 }
 
-impl<'a> RecvStream<'a> {
+impl RecvStream<'_> {
     /// Read from the given recv stream
     ///
     /// `max_length` limits the maximum size of the returned `Bytes` value; passing `usize::MAX`
@@ -198,6 +199,7 @@ pub struct SendStream<'a> {
     pub(super) conn_state: &'a super::State,
 }
 
+#[allow(clippy::needless_lifetimes)] // Needed for cfg(fuzzing)
 impl<'a> SendStream<'a> {
     #[cfg(fuzzing)]
     pub fn new(
