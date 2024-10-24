@@ -34,6 +34,21 @@ pub trait Controller: Send + Sync {
     ) {
     }
 
+    #[allow(unused_variables)]
+    /// Packet deliveries were confirmed with timestamps information.
+    fn on_ack_packet(
+        &mut self,
+        pn: u64,
+        now: Instant,
+        sent: Instant,
+        received: Option<Instant>,
+        bytes: u64,
+        app_limited: bool,
+        rtt: &RttEstimator,
+    ) {
+        self.on_ack(now, sent, bytes, app_limited, rtt);
+    }
+
     /// Packets are acked in batches, all with the same `now` argument. This indicates one of those batches has completed.
     #[allow(unused_variables)]
     fn on_end_acks(
