@@ -85,7 +85,7 @@ jobs:
         uses: cargo-bins/cargo-binstall@main
 
       - name: Install wasm-bindgen-test-runner
-        run: cargo binstall wasm-bindgen-cli --no-confirm
+        run: cargo binstall wasm-bindgen-cli --version 0.2.95 --no-confirm
 
       - name: wasm32 test (quinn-proto)
         run: cargo test -p quinn-proto --target wasm32-unknown-unknown

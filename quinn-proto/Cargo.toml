@@ -63,6 +63,7 @@ rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 lazy_static = "1"
 wasm-bindgen-test = { version = "0.3.45" }
+wasm-bindgen = { version = "=0.2.95" }
 
 [lints.rust]
 # https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
