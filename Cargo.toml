@@ -24,6 +24,7 @@ clap = { version = "4", features = ["derive"] }
 crc = "3"
 directories-next = "2"
 futures-io = "0.3.19"
+getrandom = { version = "0.2", default-features = false }
 hdrhistogram = { version = "7.2", default-features = false }
 hex-literal = "0.4"
 lazy_static = "1"
@@ -36,6 +37,7 @@ ring = "0.17"
 rustc-hash = "2"
 rustls = { version = "0.23.5", default-features = false, features = ["std"] }
 rustls-pemfile = "2"
+rustls-pki-types = "1.7"
 rustls-platform-verifier = "0.3"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
@@ -49,6 +51,7 @@ tracing = { version = "0.1.10", default-features = false, features = ["std"] }
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
 url = "2"
+web-time = "1"
 windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
 
 [profile.bench]

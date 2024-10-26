@@ -1,4 +1,4 @@
-use std::time::Instant;
+use crate::Instant;
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub(crate) enum Timer {
