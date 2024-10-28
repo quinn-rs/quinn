@@ -49,7 +49,7 @@ tracing = { version = "0.1.10", default-features = false, features = ["std"] }
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
 url = "2"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
+windows-sys = { version = ">=0.52, <=0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
 
 [profile.bench]
 debug = true
