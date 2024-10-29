@@ -3,6 +3,8 @@ name: Coverage
 on:
   push:
     branches: ['main', '0.8.x']
+  pull_request:
+
 
 jobs:
   coverage:
