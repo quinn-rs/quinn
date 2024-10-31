@@ -56,6 +56,15 @@ impl MtuDiscovery {
         }
     }
 
+    pub(super) fn reset(&mut self, current_mtu: u16, min_mtu: u16) {
+        self.current_mtu = current_mtu;
+        if let Some(state) = self.state.take() {
+            self.state = Some(EnabledMtuDiscovery::new(state.config));
+            self.on_peer_max_udp_payload_size_received(state.peer_max_udp_payload_size);
+        }
+        self.black_hole_detector = BlackHoleDetector::new(min_mtu);
+    }
+
     /// Returns the current MTU
     pub(crate) fn current_mtu(&self) -> u16 {
         self.current_mtu
