@@ -787,10 +787,7 @@ impl Connection {
                 "Previous packet must have been finished"
             );
 
-            // This should really be `builder.insert()`, but `Option::insert`
-            // is not stable yet. Since we `debug_assert!(builder.is_none())` it
-            // doesn't make any functional difference.
-            let builder = builder_storage.get_or_insert(PacketBuilder::new(
+            let builder = builder_storage.insert(PacketBuilder::new(
                 now,
                 space_id,
                 self.rem_cids.active(),
