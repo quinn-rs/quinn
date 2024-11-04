@@ -173,8 +173,8 @@ impl PacketBuilder {
         })
     }
 
-    /// Append the minimum amount of padding such that, after encryption, the packet will occupy at
-    /// least `min_size` bytes
+    /// Append the minimum amount of padding to the packet such that, after encryption, the
+    /// enclosing datagram will occupy at least `min_size` bytes
     pub(super) fn pad_to(&mut self, min_size: u16) {
         let prev = self.min_size;
         self.min_size = self.datagram_start + (min_size as usize) - self.tag_len;

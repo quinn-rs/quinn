@@ -705,7 +705,7 @@ impl Connection {
                             break;
                         }
 
-                        // Pad the current packet to GSO segment size so it can be included in the
+                        // Pad the current datagram to GSO segment size so it can be included in the
                         // GSO batch.
                         builder.pad_to(segment_size as u16);
                     }
