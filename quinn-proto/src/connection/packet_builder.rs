@@ -176,9 +176,13 @@ impl PacketBuilder {
     /// Append the minimum amount of padding to the packet such that, after encryption, the
     /// enclosing datagram will occupy at least `min_size` bytes
     pub(super) fn pad_to(&mut self, min_size: u16) {
-        let prev = self.min_size;
-        self.min_size = self.datagram_start + (min_size as usize) - self.tag_len;
-        debug_assert!(self.min_size >= prev, "padding must not shrink datagram");
+        // The datagram might already have a larger minimum size than the caller is requesting, if
+        // e.g. we're coalescing packets and have populated more than `min_size` bytes with packets
+        // already.
+        self.min_size = Ord::max(
+            self.min_size,
+            self.datagram_start + (min_size as usize) - self.tag_len,
+        );
     }
 
     pub(super) fn finish_and_track(
