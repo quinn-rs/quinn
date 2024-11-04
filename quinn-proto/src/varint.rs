@@ -51,7 +51,7 @@ impl VarInt {
     }
 
     /// Compute the number of bytes needed to encode this value
-    pub(crate) fn size(self) -> usize {
+    pub(crate) const fn size(self) -> usize {
         let x = self.0;
         if x < 2u64.pow(6) {
             1
@@ -62,7 +62,7 @@ impl VarInt {
         } else if x < 2u64.pow(62) {
             8
         } else {
-            unreachable!("malformed VarInt");
+            panic!("malformed VarInt");
         }
     }
 }
