@@ -51,6 +51,7 @@ pub struct TransportConfig {
     pub(crate) min_mtu: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
     pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
+    pub(crate) ack_timestamps_config: AckTimestampsConfig,
 
     pub(crate) persistent_congestion_threshold: u32,
     pub(crate) keep_alive_interval: Option<Duration>,
@@ -237,6 +238,21 @@ impl TransportConfig {
         self
     }
 
+    /// Specifies the ACK timestamp config.
+    /// Defaults to `None`, which disables receiving acknowledgement timestamps from the sender.
+    /// If `Some`, TransportParameters are sent to the peer to enable acknowledgement timestamps
+    /// if supported.
+    pub fn max_ack_timestamps(&mut self, value: VarInt) -> &mut Self {
+        self.ack_timestamps_config.max_timestamps_per_ack = Some(value);
+        self
+    }
+
+    /// Specifies the exponent used when encoding the timestamps.
+    pub fn ack_timestamps_exponent(&mut self, value: VarInt) -> &mut Self {
+        self.ack_timestamps_config.exponent = value;
+        self
+    }
+
     /// Number of consecutive PTOs after which network is considered to be experiencing persistent congestion.
     pub fn persistent_congestion_threshold(&mut self, value: u32) -> &mut Self {
         self.persistent_congestion_threshold = value;
@@ -375,6 +391,8 @@ impl Default for TransportConfig {
             congestion_controller_factory: Arc::new(congestion::CubicConfig::default()),
 
             enable_segmentation_offload: true,
+
+            ack_timestamps_config: AckTimestampsConfig::default(),
         }
     }
 }
@@ -406,6 +424,7 @@ impl fmt::Debug for TransportConfig {
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
             enable_segmentation_offload,
+            ack_timestamps_config,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -433,7 +452,41 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             .field("congestion_controller_factory", &"[ opaque ]")
             .field("enable_segmentation_offload", enable_segmentation_offload)
+            .field("ack_timestamps_config", ack_timestamps_config)
             .finish()
+    }
+}
+
+/// Parameters for controlling the peer's acknowledgements with receiver timestamps.
+#[derive(Clone, Debug, PartialEq, Eq, Copy)]
+pub struct AckTimestampsConfig {
+    /// If max_timestamp_per_ack is None, this feature is disabled.
+    pub(crate) max_timestamps_per_ack: Option<VarInt>,
+    pub(crate) exponent: VarInt,
+}
+
+impl AckTimestampsConfig {
+    /// Sets the maximum number of timestamp entries per ACK frame.
+    pub fn max_timestamps_per_ack(&mut self, value: VarInt) -> &mut Self {
+        self.max_timestamps_per_ack = Some(value);
+        self
+    }
+
+    /// Timestamp values are divided by the exponent value provided. This reduces the size of the
+    /// VARINT for loss in precision. A exponent of 0 represents microsecond precision.
+    pub fn exponent(&mut self, value: VarInt) -> &mut Self {
+        self.exponent = value;
+        self
+    }
+}
+
+impl Default for AckTimestampsConfig {
+    fn default() -> Self {
+        Self {
+            max_timestamps_per_ack: None,
+            // Default to 0 as per draft.
+            exponent: 0u32.into(),
+        }
     }
 }
 

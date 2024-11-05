@@ -3,7 +3,7 @@
 use crate::connection::RttEstimator;
 use std::any::Any;
 use std::sync::Arc;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 mod bbr;
 mod cubic;
@@ -32,6 +32,21 @@ pub trait Controller: Send + Sync {
         app_limited: bool,
         rtt: &RttEstimator,
     ) {
+    }
+
+    #[allow(unused_variables)]
+    /// Packet deliveries were confirmed with timestamps information.
+    fn on_ack_timestamped(
+        &mut self,
+        pn: u64,
+        now: Instant,
+        sent: Instant,
+        received: Option<Duration>,
+        bytes: u64,
+        app_limited: bool,
+        rtt: &RttEstimator,
+    ) {
+        self.on_ack(now, sent, bytes, app_limited, rtt);
     }
 
     /// Packets are acked in batches, all with the same `now` argument. This indicates one of those batches has completed.
