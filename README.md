@@ -39,3 +39,14 @@ branch.  E.g. when upstream is `main` and the current iroh branch is
 
 - You can check the log and cherries again to see if the right commits
   are left in main.
+
+### Upstream versions
+
+We only try to merge tagged upstream versions.  To check the current
+matching upstream version run:
+
+`git tag --merged`
+
+This will show all the tags which are in the ancestors of HEAD.  Look
+for the highest `quinn`, `quinn-proto` and `quinn-udp` tags which are
+found in all the ancestor commits.
