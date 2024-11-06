@@ -1,9 +1,9 @@
 //! Logic for controlling the rate at which data is sent
 
 use crate::connection::RttEstimator;
+use crate::Instant;
 use std::any::Any;
 use std::sync::Arc;
-use std::time::Instant;
 
 mod bbr;
 mod cubic;
