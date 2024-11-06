@@ -3,7 +3,6 @@ use std::{
     mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
-    time::{Duration, Instant},
 };
 
 use assert_matches::assert_matches;
@@ -31,9 +30,18 @@ use crate::{
     crypto::rustls::QuicServerConfig,
     frame::FrameStruct,
     transport_parameters::TransportParameters,
+    Duration, Instant,
 };
 mod util;
 use util::*;
+
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+use wasm_bindgen_test::wasm_bindgen_test as test;
+
+// Enable this if you want to run these tests in the browser.
+// Unfortunately it's either-or: Enable this and you can run in the browser, disable to run in nodejs.
+// #[cfg(all(target_family = "wasm", target_os = "unknown"))]
+// wasm_bindgen_test::wasm_bindgen_test_configure!(run_in_browser);
 
 #[test]
 fn version_negotiate_server() {

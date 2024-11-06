@@ -5,7 +5,6 @@ use std::{
     net::{IpAddr, SocketAddr},
     ops::{Index, IndexMut},
     sync::Arc,
-    time::{Instant, SystemTime},
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
@@ -32,8 +31,8 @@ use crate::{
     },
     token::TokenDecodeError,
     transport_parameters::{PreferredAddress, TransportParameters},
-    ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
-    MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    Instant, ResetToken, RetryToken, Side, SystemTime, Transmit, TransportConfig, TransportError,
+    INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library

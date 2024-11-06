@@ -69,6 +69,50 @@ jobs:
       - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips
       - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips,runtime-tokio
 
+  wasm_test:
+    name: test wasm32-unknown-unknown
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install nodejs v20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup `wasm-tools`
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
+
+      - name: Install cargo binstall
+        uses: cargo-bins/cargo-binstall@main
+      
+      # We need to downgrade cc to version 1.1.31 for ring Wasm compilation to work.
+      # See the upstream issue https://github.com/rust-lang/cc-rs/issues/1275
+      - name: Use working `cc` version 1.1.31
+        run: cargo update -p cc --precise 1.1.31
+
+      - name: build wasm32 tests (quinn-proto)
+        run: cargo test -p quinn-proto --target wasm32-unknown-unknown --no-run
+
+      # If the Wasm file contains any 'import "env"' declarations, then
+      # some non-Wasm-compatible code made it into the final code.
+      - name: Check for 'import "env"' in Wasm
+        run: |
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/deps/quinn_proto-*.wasm | grep 'import "env"'
+
+      - name: Install wasm-bindgen-test-runner
+        run: cargo binstall wasm-bindgen-cli --locked --no-confirm
+
+      - name: wasm32 test (quinn-proto)
+        run: cargo test -p quinn-proto --target wasm32-unknown-unknown
+
   msrv:
     runs-on: ubuntu-latest
     steps:
