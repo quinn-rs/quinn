@@ -18,6 +18,7 @@ use crate::{
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
 
+/// A QUIC frame type
 #[derive(Copy, Clone, Eq, PartialEq)]
 pub struct FrameType(u64);
 
@@ -55,7 +56,7 @@ pub(crate) trait FrameStruct {
 macro_rules! frame_types {
     {$($name:ident = $val:expr,)*} => {
         impl FrameType {
-            $(pub const $name: FrameType = FrameType($val);)*
+            $(pub(crate) const $name: FrameType = FrameType($val);)*
         }
 
         impl fmt::Debug for FrameType {

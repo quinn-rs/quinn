@@ -46,6 +46,9 @@ pub use crate::connection::{
     WriteError, Written,
 };
 
+#[cfg(feature = "rustls")]
+pub use rustls;
+
 mod config;
 pub use config::{
     AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
@@ -56,7 +59,7 @@ pub mod crypto;
 
 mod frame;
 use crate::frame::Frame;
-pub use crate::frame::{ApplicationClose, ConnectionClose, Datagram};
+pub use crate::frame::{ApplicationClose, ConnectionClose, Datagram, FrameType};
 
 mod endpoint;
 pub use crate::endpoint::{
