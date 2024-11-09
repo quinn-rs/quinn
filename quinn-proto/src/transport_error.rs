@@ -13,7 +13,7 @@ pub struct Error {
     /// Type of error
     pub code: Code,
     /// Frame type that triggered the error
-    pub frame: Option<frame::Type>,
+    pub frame: Option<frame::FrameType>,
     /// Human-readable explanation of the reason
     pub reason: String,
 }
