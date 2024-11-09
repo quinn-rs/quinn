@@ -38,6 +38,8 @@ runtime-smol = ["async-io", "smol"]
 
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 log = ["tracing/log", "proto/log", "udp/log"]
+# Enable rustls logging
+rustls-log = ["rustls?/logging"]
 
 [dependencies]
 async-io = { workspace = true, optional = true }
