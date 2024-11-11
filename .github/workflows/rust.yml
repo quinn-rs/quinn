@@ -121,11 +121,6 @@ jobs:
 
       - name: Install cargo binstall
         uses: cargo-bins/cargo-binstall@main
-      
-      # We need to downgrade cc to version 1.1.31 for ring Wasm compilation to work.
-      # See the upstream issue https://github.com/rust-lang/cc-rs/issues/1275
-      - name: Use working `cc` version 1.1.31
-        run: cargo update -p cc --precise 1.1.31
 
       - name: build wasm32 tests (quinn-proto)
         run: cargo test -p quinn-proto --target wasm32-unknown-unknown --no-run
