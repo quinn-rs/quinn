@@ -7,7 +7,6 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll, Waker},
-    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
@@ -22,7 +21,7 @@ use crate::{
     recv_stream::RecvStream,
     runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller},
     send_stream::SendStream,
-    udp_transmit, ConnectionEvent, VarInt,
+    udp_transmit, ConnectionEvent, Duration, Instant, VarInt,
 };
 use proto::{
     congestion::Controller, ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent,

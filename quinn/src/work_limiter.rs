@@ -1,4 +1,4 @@
-use std::time::{Duration, Instant};
+use crate::{Duration, Instant};
 
 /// Limits the amount of time spent on a certain type of work in a cycle
 ///
