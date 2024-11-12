@@ -26,11 +26,40 @@ jobs:
             pkg install -y curl
             curl https://sh.rustup.rs -sSf --output rustup.sh
             sh rustup.sh -y --profile minimal --default-toolchain stable
-            echo "~~~~ rustc --version ~~~~"
-            $HOME/.cargo/bin/rustc --version
-            echo "~~~~ freebsd-version ~~~~"
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "===== rustc --version ====="
+            rustc --version
+            echo "===== freebsd-version ====="
             freebsd-version
-          run: $HOME/.cargo/bin/cargo build --all-targets && $HOME/.cargo/bin/cargo test && $HOME/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml && $HOME/.cargo/bin/cargo test -p quinn-udp --benches
+
+            cargo build --all-targets && cargo test && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+
+  test-netbsd:
+    name: test on netbsd
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: test on netbsd
+        uses: vmactions/netbsd-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            export PATH="/usr/sbin:/sbin:$PATH"
+            pkg_add curl
+            curl https://sh.rustup.rs -sSf --output rustup.sh
+            sh rustup.sh -y --profile minimal --default-toolchain stable
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "===== rustc --version ====="
+            rustc --version
+            echo "===== uname -a        ====="
+            uname -a
+
+            cargo build --all-targets && cargo test && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+
   test:
     strategy:
       matrix:
