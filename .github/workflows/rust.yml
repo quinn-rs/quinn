@@ -73,26 +73,15 @@ jobs:
     name: test wasm32-unknown-unknown
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Add wasm target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Install nodejs v20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: bytecodealliance/actions/wasm-tools/setup@v1
+      - uses: cargo-bins/cargo-binstall@main
 
-      - name: Setup `wasm-tools`
-        uses: bytecodealliance/actions/wasm-tools/setup@v1
-
-      - name: Install cargo binstall
-        uses: cargo-bins/cargo-binstall@main
-      
       # We need to downgrade cc to version 1.1.31 for ring Wasm compilation to work.
       # See the upstream issue https://github.com/rust-lang/cc-rs/issues/1275
       - name: Downgrade `cc` to version 1.1.31
