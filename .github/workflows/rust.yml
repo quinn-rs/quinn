@@ -144,25 +144,14 @@ jobs:
     name: test wasm32-unknown-unknown
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Add wasm target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Install nodejs v20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
-
-      - name: Setup `wasm-tools`
-        uses: bytecodealliance/actions/wasm-tools/setup@v1
-
-      - name: Install cargo binstall
-        uses: cargo-bins/cargo-binstall@main
+      - uses: bytecodealliance/actions/wasm-tools/setup@v1
+      - uses: cargo-bins/cargo-binstall@main
 
       - run: cargo test -p quinn-proto --target wasm32-unknown-unknown --no-run
       - run: cargo check -p quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
