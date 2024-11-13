@@ -60,6 +60,28 @@ jobs:
 
             cargo build --all-targets && cargo test && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
 
+  test-solaris:
+    name: test on solaris
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: test on Solaris
+        uses: vmactions/solaris-vm@v1
+        with:
+          release: "11.4-gcc"
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            source <(curl -s https://raw.githubusercontent.com/psumbera/solaris-rust/refs/heads/main/sh.rust-web-install)
+            echo "~~~~ rustc --version ~~~~"
+            rustc --version
+            echo "~~~~ Solaris-version ~~~~"
+            uname -a
+          run: |
+            export PATH=$HOME/.rust_solaris/bin:$PATH
+            cargo build --all-targets && cargo test && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+
   test:
     strategy:
       matrix:
