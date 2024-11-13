@@ -10,9 +10,6 @@ keywords.workspace = true
 categories.workspace = true
 workspace = ".."
 
-[package.metadata.docs.rs]
-all-features = true
-
 [features]
 default = ["rustls-ring", "log"]
 aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs?/aws-lc-sys", "aws-lc-rs?/prebuilt-nasm"]
@@ -66,3 +63,6 @@ wasm-bindgen-test = { workspace = true }
 [lints.rust]
 # https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
+[package.metadata.docs.rs]
+all-features = true
