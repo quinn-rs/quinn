@@ -10,9 +10,6 @@ keywords.workspace = true
 categories.workspace = true
 workspace = ".."
 
-[package.metadata.docs.rs]
-all-features = true
-
 [features]
 default = ["tracing", "log"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
@@ -45,3 +42,6 @@ bench = false
 [[bench]]
 name = "throughput"
 harness = false
+
+[package.metadata.docs.rs]
+all-features = true

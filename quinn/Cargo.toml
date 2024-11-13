@@ -11,9 +11,6 @@ workspace = ".."
 edition.workspace = true
 rust-version.workspace = true
 
-[package.metadata.docs.rs]
-all-features = true
-
 [features]
 default = ["log", "platform-verifier", "runtime-tokio", "rustls-ring"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
@@ -96,3 +93,6 @@ required-features = ["rustls-ring"]
 name = "bench"
 harness = false
 required-features = ["rustls-ring"]
+
+[package.metadata.docs.rs]
+all-features = true
