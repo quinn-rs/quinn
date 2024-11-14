@@ -30,11 +30,14 @@ rustls-aws-lc-rs = ["dep:rustls", "aws-lc-rs", "proto/rustls-aws-lc-rs", "proto/
 rustls-aws-lc-rs-fips = ["dep:rustls", "aws-lc-rs-fips", "proto/rustls-aws-lc-rs-fips", "proto/aws-lc-rs-fips"]
 # Enable rustls with the `ring` crypto provider
 rustls-ring = ["dep:rustls", "ring", "proto/rustls-ring", "proto/ring"]
-# Enables `Endpoint::client` and `Endpoint::server` conveniences
+# Enable the `ring` crypto provider.
+# Together with the `net` feature, this enables `Endpoint::client` and `Endpoint::server` conveniences.
 ring = ["proto/ring"]
 runtime-tokio = ["net", "tokio/time", "tokio/rt", "tokio/net"]
 runtime-async-std = ["net", "async-io", "async-std"]
 runtime-smol = ["net", "async-io", "smol"]
+# Enables dependencies on native sockets. Required for `Endpoint::client` and `Endpoint::server` conveniences.
+# Disabling allows compiling to wasm.
 net = ["dep:socket2", "udp/net"]
 
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.

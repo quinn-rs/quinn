@@ -20,6 +20,7 @@ log = ["tracing/log"]
 direct-log = ["dep:log"]
 # Use private Apple APIs to send multiple packets in a single syscall.
 fast-apple-datapath = []
+# Enables dependencies on native sockets. Disabling allows compiling to wasm.
 net = ["dep:socket2"]
 
 [dependencies]
