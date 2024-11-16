@@ -14,6 +14,7 @@ use std::{
 };
 
 use crate::runtime::TokioRuntime;
+use crate::{Duration, Instant};
 use bytes::Bytes;
 use proto::{crypto::rustls::QuicClientConfig, RandomConnectionIdGenerator};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -21,10 +22,7 @@ use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
     RootCertStore,
 };
-use tokio::{
-    runtime::{Builder, Runtime},
-    time::{Duration, Instant},
-};
+use tokio::runtime::{Builder, Runtime};
 use tracing::{error_span, info};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
@@ -160,7 +158,7 @@ fn read_after_close() {
             .unwrap()
             .await
             .expect("connect");
-        tokio::time::sleep_until(Instant::now() + Duration::from_millis(100)).await;
+        tokio::time::sleep(Duration::from_millis(100)).await;
         let mut stream = new_conn.accept_uni().await.expect("incoming streams");
         let msg = stream.read_to_end(usize::MAX).await.expect("read_to_end");
         assert_eq!(msg, MSG);
