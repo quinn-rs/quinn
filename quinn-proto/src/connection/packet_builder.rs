@@ -1,5 +1,3 @@
-use std::cmp;
-
 use bytes::Bytes;
 use rand::Rng;
 use tracing::{trace, trace_span};
@@ -8,7 +6,7 @@ use super::{spaces::SentPacket, Connection, SentFrames};
 use crate::{
     frame::{self, Close},
     packet::{Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
-    ConnectionId, Instant, TransportError, TransportErrorCode, INITIAL_MTU,
+    ConnectionId, Instant, TransportError, TransportErrorCode,
 };
 
 pub(super) struct PacketBuilder {
@@ -38,7 +36,7 @@ impl PacketBuilder {
         space_id: SpaceId,
         dst_cid: ConnectionId,
         buffer: &mut Vec<u8>,
-        mut buffer_capacity: usize,
+        buffer_capacity: usize,
         datagram_start: usize,
         ack_eliciting: bool,
         conn: &mut Connection,
@@ -79,13 +77,6 @@ impl PacketBuilder {
         }
 
         let space = &mut conn.spaces[space_id];
-
-        if space.loss_probes != 0 {
-            space.loss_probes -= 1;
-            // Clamp the packet size to at most the minimum MTU to ensure that loss probes can get
-            // through and enable recovery even if the path MTU has shrank unexpectedly.
-            buffer_capacity = cmp::min(buffer_capacity, datagram_start + usize::from(INITIAL_MTU));
-        }
         let exact_number = match space_id {
             SpaceId::Data => conn.packet_number_filter.allocate(&mut conn.rng, space),
             _ => space.get_tx_number(),
