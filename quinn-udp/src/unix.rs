@@ -804,7 +804,14 @@ mod gso {
     use super::*;
 
     pub(super) fn max_gso_segments() -> usize {
-        BATCH_SIZE
+        #[cfg(apple_fast)]
+        {
+            BATCH_SIZE
+        }
+        #[cfg(not(apple_fast))]
+        {
+            1
+        }
     }
 
     pub(super) fn set_segment_size(
