@@ -156,7 +156,10 @@ fn ecn_v4_mapped_v6() {
 }
 
 #[test]
-#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), ignore)]
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "windows", target_os = "android")),
+    ignore
+)]
 fn gso() {
     let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
         .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))

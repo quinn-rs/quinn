@@ -318,7 +318,7 @@ fn send(
                     // Some network adapters and drivers do not support GSO. Unfortunately, Linux
                     // offers no easy way for us to detect this short of an EIO or sometimes EINVAL
                     // when we try to actually send datagrams using it.
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     if let Some(libc::EIO) | Some(libc::EINVAL) = e.raw_os_error() {
                         // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
                         // may already be in the pipeline, so we need to tolerate additional failures.
@@ -767,9 +767,15 @@ pub(crate) const BATCH_SIZE: usize = 32;
 #[cfg(apple_slow)]
 pub(crate) const BATCH_SIZE: usize = 1;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod gso {
     use super::*;
+
+    #[cfg(not(target_os = "android"))]
+    const UDP_SEGMENT: libc::c_int = libc::UDP_SEGMENT;
+    #[cfg(target_os = "android")]
+    // TODO: Add this to libc
+    const UDP_SEGMENT: libc::c_int = 103;
 
     /// Checks whether GSO support is available by setting the UDP_SEGMENT
     /// option on a socket
@@ -785,21 +791,21 @@ mod gso {
 
         // As defined in linux/udp.h
         // #define UDP_MAX_SEGMENTS        (1 << 6UL)
-        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_SEGMENT, GSO_SIZE) {
+        match set_socket_option(&socket, libc::SOL_UDP, UDP_SEGMENT, GSO_SIZE) {
             Ok(()) => 64,
             Err(_) => 1,
         }
     }
 
     pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
-        encoder.push(libc::SOL_UDP, libc::UDP_SEGMENT, segment_size);
+        encoder.push(libc::SOL_UDP, UDP_SEGMENT, segment_size);
     }
 }
 
 // On Apple platforms using the `sendmsg_x` call, UDP datagram segmentation is not
 // offloaded to the NIC or even the kernel, but instead done here in user space in
 // [`send`]) and then passed to the OS as individual `iovec`s (up to `BATCH_SIZE`).
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 mod gso {
     use super::*;
 
