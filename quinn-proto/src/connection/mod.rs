@@ -32,7 +32,7 @@ use crate::{
     token::ResetToken,
     transport_parameters::TransportParameters,
     Dir, Duration, EndpointConfig, Frame, Instant, Side, StreamId, Transmit, TransportError,
-    TransportErrorCode, VarInt, MAX_CID_SIZE, MAX_STREAM_COUNT, MIN_INITIAL_SIZE,
+    TransportErrorCode, VarInt, INITIAL_MTU, MAX_CID_SIZE, MAX_STREAM_COUNT, MIN_INITIAL_SIZE,
     TIMER_GRANULARITY,
 };
 
@@ -692,13 +692,21 @@ impl Connection {
                         // waste large amounts of bandwidth. The exact threshold is a bit arbitrary
                         // and might benefit from further tuning, though there's no universally
                         // optimal value.
+                        //
+                        // Additionally, if this datagram is a loss probe and `segment_size` is
+                        // larger than `INITIAL_MTU`, then padding it to `segment_size` to continue
+                        // the GSO batch would risk failure to recover from a reduction in path
+                        // MTU. Loss probes are the only packets for which we might grow
+                        // `buf_capacity` by less than `segment_size`.
                         const MAX_PADDING: usize = 16;
                         let packet_len_unpadded = cmp::max(builder.min_size, buf.len())
                             - datagram_start
                             + builder.tag_len;
-                        if packet_len_unpadded + MAX_PADDING < segment_size {
+                        if packet_len_unpadded + MAX_PADDING < segment_size
+                            || datagram_start + segment_size > buf_capacity
+                        {
                             trace!(
-                                "GSO truncated by demand for {} padding bytes",
+                                "GSO truncated by demand for {} padding bytes or loss probe",
                                 segment_size - packet_len_unpadded
                             );
                             builder_storage = Some(builder);
@@ -741,7 +749,17 @@ impl Connection {
                 }
 
                 // Allocate space for another datagram
-                buf_capacity += segment_size;
+                let next_datagram_size_limit = match self.spaces[space_id].loss_probes {
+                    0 => segment_size,
+                    _ => {
+                        self.spaces[space_id].loss_probes -= 1;
+                        // Clamp the datagram to at most the minimum MTU to ensure that loss probes
+                        // can get through and enable recovery even if the path MTU has shrank
+                        // unexpectedly.
+                        usize::from(INITIAL_MTU)
+                    }
+                };
+                buf_capacity += next_datagram_size_limit;
                 if buf.capacity() < buf_capacity {
                     // We reserve the maximum space for sending `max_datagrams` upfront
                     // to avoid any reallocations if more datagrams have to be appended later on.
