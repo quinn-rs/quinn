@@ -127,8 +127,7 @@ impl UdpSocketState {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // opportunistically try to enable GRO. See gro::gro_segments().
-            #[cfg(target_os = "linux")]
-            let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
+            let _ = set_socket_option(&*io, libc::SOL_UDP, gro::UDP_GRO, OPTION_ON);
 
             // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
             // Set `may_fragment` to `true` if this option is not supported on the platform.
@@ -719,8 +718,8 @@ fn decode_recv(
                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
                 dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
             }
-            #[cfg(target_os = "linux")]
-            (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            (libc::SOL_UDP, gro::UDP_GRO) => unsafe {
                 stride = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as usize;
             },
             _ => {}
@@ -828,9 +827,15 @@ mod gso {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod gro {
     use super::*;
+
+    #[cfg(not(target_os = "android"))]
+    pub(crate) const UDP_GRO: libc::c_int = libc::UDP_GRO;
+    #[cfg(target_os = "android")]
+    // TODO: Add this to libc
+    pub(crate) const UDP_GRO: libc::c_int = 104;
 
     pub(crate) fn gro_segments() -> usize {
         let socket = match std::net::UdpSocket::bind("[::]:0")
@@ -847,7 +852,7 @@ mod gro {
         // (get_max_udp_payload_size() * gro_segments()) is large enough to hold the largest GRO
         // list the kernel might potentially produce. See
         // https://github.com/quinn-rs/quinn/pull/1354.
-        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON) {
+        match set_socket_option(&socket, libc::SOL_UDP, UDP_GRO, OPTION_ON) {
             Ok(()) => 64,
             Err(_) => 1,
         }
@@ -895,7 +900,7 @@ fn set_socket_option(
 
 const OPTION_ON: libc::c_int = 1;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 mod gro {
     pub(super) fn gro_segments() -> usize {
         1
