@@ -792,7 +792,13 @@ mod gso {
         // #define UDP_MAX_SEGMENTS        (1 << 6UL)
         match set_socket_option(&socket, libc::SOL_UDP, UDP_SEGMENT, GSO_SIZE) {
             Ok(()) => 64,
-            Err(_) => 1,
+            Err(_e) => {
+                crate::log::debug!(
+                    "failed to set `UDP_SEGMENT` socket option ({_e}); setting `max_gso_segments = 1`"
+                );
+
+                1
+            }
         }
     }
 
