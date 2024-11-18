@@ -215,11 +215,11 @@ impl Endpoint {
                     if incoming_buffer
                         .total_bytes
                         .checked_add(datagram_len as u64)
-                        .map_or(false, |n| n <= config.incoming_buffer_size)
+                        .is_some_and(|n| n <= config.incoming_buffer_size)
                         && self
                             .all_incoming_buffers_total_bytes
                             .checked_add(datagram_len as u64)
-                            .map_or(false, |n| n <= config.incoming_buffer_size_total)
+                            .is_some_and(|n| n <= config.incoming_buffer_size_total)
                     {
                         incoming_buffer.datagrams.push(event);
                         incoming_buffer.total_bytes += datagram_len as u64;
@@ -334,7 +334,7 @@ impl Endpoint {
     ) -> Option<Transmit> {
         if self
             .last_stateless_reset
-            .map_or(false, |last| last + self.config.min_reset_interval > now)
+            .is_some_and(|last| last + self.config.min_reset_interval > now)
         {
             debug!("ignoring unexpected packet within minimum stateless reset interval");
             return None;

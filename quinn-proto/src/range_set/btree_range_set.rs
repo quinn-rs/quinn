@@ -18,7 +18,7 @@ impl RangeSet {
     }
 
     pub fn contains(&self, x: u64) -> bool {
-        self.pred(x).map_or(false, |(_, end)| end > x)
+        self.pred(x).is_some_and(|(_, end)| end > x)
     }
 
     pub fn insert_one(&mut self, x: u64) -> bool {

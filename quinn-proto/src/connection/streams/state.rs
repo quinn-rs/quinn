@@ -396,7 +396,7 @@ impl StreamsState {
             self.send
                 .get(&stream.id)
                 .and_then(|s| s.as_ref())
-                .map_or(false, |s| !s.is_reset())
+                .is_some_and(|s| !s.is_reset())
         })
     }
 
@@ -406,7 +406,7 @@ impl StreamsState {
             .get(&id)
             .and_then(|s| s.as_ref())
             .and_then(|s| s.as_open_recv())
-            .map_or(false, |s| s.can_send_flow_control())
+            .is_some_and(|s| s.can_send_flow_control())
     }
 
     pub(in crate::connection) fn write_control_frames(

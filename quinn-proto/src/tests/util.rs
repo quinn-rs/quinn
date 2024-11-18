@@ -356,7 +356,7 @@ impl TestEndpoint {
         let buffer_size = self.endpoint.config().get_max_udp_payload_size() as usize;
         let mut buf = Vec::with_capacity(buffer_size);
 
-        while self.inbound.front().map_or(false, |x| x.0 <= now) {
+        while self.inbound.front().is_some_and(|x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
             if let Some(event) = self
                 .endpoint
@@ -415,7 +415,7 @@ impl TestEndpoint {
         loop {
             let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
             for (ch, conn) in self.connections.iter_mut() {
-                if self.timeout.map_or(false, |x| x <= now) {
+                if self.timeout.is_some_and(|x| x <= now) {
                     self.timeout = None;
                     conn.handle_timeout(now);
                 }
