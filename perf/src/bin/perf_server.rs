@@ -215,7 +215,7 @@ async fn drain_stream(mut stream: quinn::RecvStream) -> Result<()> {
 }
 
 async fn respond(mut bytes: u64, mut stream: quinn::SendStream) -> Result<()> {
-    const DATA: [u8; 1024 * 1024] = [42; 1024 * 1024];
+    static DATA: [u8; 1024 * 1024] = [42; 1024 * 1024];
 
     while bytes > 0 {
         let chunk_len = bytes.min(DATA.len() as u64);

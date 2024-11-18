@@ -769,7 +769,7 @@ impl PacketNumber {
         // The following code calculates a candidate value and makes sure it's within the packet
         // number window.
         let candidate = (expected & !mask) | truncated;
-        if expected.checked_sub(hwin).map_or(false, |x| candidate <= x) {
+        if expected.checked_sub(hwin).is_some_and(|x| candidate <= x) {
             candidate + win
         } else if candidate > expected + hwin && candidate > win {
             candidate - win

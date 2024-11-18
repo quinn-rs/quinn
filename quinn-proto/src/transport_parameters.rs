@@ -146,7 +146,7 @@ impl TransportParameters {
             initial_max_stream_data_uni: config.stream_receive_window,
             max_udp_payload_size: endpoint_config.max_udp_payload_size,
             max_idle_timeout: config.max_idle_timeout.unwrap_or(VarInt(0)),
-            disable_active_migration: server_config.map_or(false, |c| !c.migration),
+            disable_active_migration: server_config.is_some_and(|c| !c.migration),
             active_connection_id_limit: if cid_gen.cid_len() == 0 {
                 2 // i.e. default, i.e. unsent
             } else {
@@ -446,7 +446,7 @@ impl TransportParameters {
             || params.initial_max_streams_bidi.0 > MAX_STREAM_COUNT
             || params.initial_max_streams_uni.0 > MAX_STREAM_COUNT
             // https://www.ietf.org/archive/id/draft-ietf-quic-ack-frequency-08.html#section-3-4
-            || params.min_ack_delay.map_or(false, |min_ack_delay| {
+            || params.min_ack_delay.is_some_and(|min_ack_delay| {
                 // min_ack_delay uses microseconds, whereas max_ack_delay uses milliseconds
                 min_ack_delay.0 > params.max_ack_delay.0 * 1_000
             })
@@ -458,8 +458,7 @@ impl TransportParameters {
                     || params.stateless_reset_token.is_some()))
             // https://www.rfc-editor.org/rfc/rfc9000.html#section-18.2-4.38.1
             || params
-                .preferred_address
-                .map_or(false, |x| x.connection_id.is_empty())
+                .preferred_address.is_some_and(|x| x.connection_id.is_empty())
         {
             return Err(Error::IllegalValue);
         }

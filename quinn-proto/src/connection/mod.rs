@@ -973,14 +973,10 @@ impl Connection {
         // Send MTU probe if necessary
         if buf.is_empty() && self.state.is_established() {
             let space_id = SpaceId::Data;
-            let probe_size = match self
+            let probe_size = self
                 .path
                 .mtud
-                .poll_transmit(now, self.packet_number_filter.peek(&self.spaces[space_id]))
-            {
-                Some(next_probe_size) => next_probe_size,
-                None => return None,
-            };
+                .poll_transmit(now, self.packet_number_filter.peek(&self.spaces[space_id]))?;
 
             let buf_capacity = probe_size as usize;
             buf.reserve(buf_capacity);
@@ -1655,7 +1651,7 @@ impl Connection {
                             None if self
                                 .path
                                 .first_packet_after_rtt_sample
-                                .map_or(false, |x| x < (pn_space, packet)) =>
+                                .is_some_and(|x| x < (pn_space, packet)) =>
                             {
                                 persistent_congestion_start = Some(info.time_sent);
                             }
@@ -2230,7 +2226,7 @@ impl Connection {
                 let _guard = span.enter();
 
                 let is_duplicate = |n| self.spaces[packet.header.space()].dedup.insert(n);
-                if number.map_or(false, is_duplicate) {
+                if number.is_some_and(is_duplicate) {
                     debug!("discarding possible duplicate packet");
                     return;
                 } else if self.state.is_handshake() && packet.header.is_short() {
@@ -3544,13 +3540,13 @@ impl Connection {
             || self
                 .prev_path
                 .as_ref()
-                .map_or(false, |(_, x)| x.challenge_pending)
+                .is_some_and(|(_, x)| x.challenge_pending)
             || !self.path_responses.is_empty()
             || self
                 .datagrams
                 .outgoing
                 .front()
-                .map_or(false, |x| x.size(true) <= max_size)
+                .is_some_and(|x| x.size(true) <= max_size)
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned

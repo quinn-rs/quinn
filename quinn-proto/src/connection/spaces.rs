@@ -853,7 +853,7 @@ impl PacketNumberFilter {
         if space_id == SpaceId::Data
             && self
                 .prev_skipped_packet_number
-                .map_or(false, |x| range.contains(&x))
+                .is_some_and(|x| range.contains(&x))
         {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
