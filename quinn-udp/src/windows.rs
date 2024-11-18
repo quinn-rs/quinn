@@ -14,7 +14,7 @@ use windows_sys::Win32::Networking::WinSock;
 
 use crate::{
     cmsg::{self, CMsgHdr},
-    log::{debug, error},
+    log::debug,
     log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
 };
 
@@ -61,9 +61,10 @@ impl UdpSocketState {
 
         // We don't support old versions of Windows that do not enable access to `WSARecvMsg()`
         if WSARECVMSG_PTR.is_none() {
-            error!("network stack does not support WSARecvMsg function");
-
-            return Err(io::Error::from(io::ErrorKind::Unsupported));
+            return Err(io::Error::new(
+                io::ErrorKind::Unsupported,
+                "network stack does not support WSARecvMsg function",
+            ));
         }
 
         if is_ipv4 {
