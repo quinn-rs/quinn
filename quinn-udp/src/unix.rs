@@ -591,7 +591,12 @@ fn prepare_msg(
         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
     }
 
-    if let Some(segment_size) = transmit.segment_size {
+    // Only set the segment size if it is different from the size of the contents.
+    // Some network drivers don't like being told to do GSO even if there is effectively only a single segment.
+    if let Some(segment_size) = transmit
+        .segment_size
+        .filter(|segment_size| *segment_size != transmit.contents.len())
+    {
         gso::set_segment_size(&mut encoder, segment_size as u16);
     }
 
