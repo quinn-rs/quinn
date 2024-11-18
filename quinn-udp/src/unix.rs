@@ -322,7 +322,9 @@ fn send(
                         // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
                         // may already be in the pipeline, so we need to tolerate additional failures.
                         if state.max_gso_segments() > 1 {
-                            crate::log::error!("got transmit error, halting segmentation offload");
+                            crate::log::info!(
+                                "`libc::sendmsg` failed with {e}; halting segmentation offload"
+                            );
                             state
                                 .max_gso_segments
                                 .store(1, std::sync::atomic::Ordering::Relaxed);
