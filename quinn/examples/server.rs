@@ -128,6 +128,8 @@ async fn run(options: Opt) -> Result<()> {
         quinn::ServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(server_crypto)?));
     let transport_config = Arc::get_mut(&mut server_config.transport).unwrap();
     transport_config.max_concurrent_uni_streams(0_u8.into());
+    transport_config.max_idle_timeout(Some(std::time::Duration::from_secs(2).try_into()?));
+    transport_config.keep_alive_interval(Some(std::time::Duration::from_millis(500).try_into()?));
 
     let root = Arc::<Path>::from(options.root.clone());
     if !root.exists() {
@@ -136,6 +138,8 @@ async fn run(options: Opt) -> Result<()> {
 
     let endpoint = quinn::Endpoint::server(server_config, options.listen)?;
     eprintln!("listening on {}", endpoint.local_addr()?);
+
+    let mut longsleep = true;
 
     while let Some(conn) = endpoint.accept().await {
         if options
@@ -151,13 +155,22 @@ async fn run(options: Opt) -> Result<()> {
             info!("requiring connection to validate its address");
             conn.retry().unwrap();
         } else {
-            info!("accepting connection");
+            info!("attempt to accept connection");
             let fut = handle_connection(root.clone(), conn);
-            tokio::spawn(async move {
-                if let Err(e) = fut.await {
-                    error!("connection failed: {reason}", reason = e.to_string())
-                }
-            });
+
+            if longsleep {
+                // If this sleep is longer than the min idle timeout of both endpoints,
+                // It will cause failures
+                // This "longsleep" simulates the first bad request to break the system.
+                tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+                longsleep = false;
+            }
+
+            // tokio::spawn(async move {
+            if let Err(e) = fut.await {
+                error!("connection failed: {reason}", reason = e.to_string())
+            }
+            //});
         }
     }
 
