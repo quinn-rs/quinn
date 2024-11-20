@@ -82,6 +82,24 @@ jobs:
             export PATH=$HOME/.rust_solaris/bin:$PATH
             cargo build --all-targets && cargo test && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
 
+  test-illumos:
+    name: test on illumos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: test on Illumos
+        uses: vmactions/omnios-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install gcc14 curl pkg-config glib2
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          run: |
+            . "$HOME/.cargo/env"
+            cargo build --all-targets && cargo test && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+
   test:
     strategy:
       matrix:
