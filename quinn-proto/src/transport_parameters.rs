@@ -12,6 +12,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
+use rand::{Rng as _, RngCore};
 use thiserror::Error;
 
 use crate::{
@@ -99,6 +100,10 @@ macro_rules! make_struct {
             pub(crate) stateless_reset_token: Option<ResetToken>,
             /// The server's preferred address for communication after handshake completion
             pub(crate) preferred_address: Option<PreferredAddress>,
+            /// The randomly generated reserved transport parameter to sustain future extensibility
+            /// of transport parameter extensions.
+            /// When present, it is included during serialization but ignored during deserialization.
+            pub(crate) grease_transport_parameter: Option<ReservedTransportParameter>,
         }
 
         // We deliberately don't implement the `Default` trait, since that would be public, and
@@ -120,6 +125,7 @@ macro_rules! make_struct {
                     retry_src_cid: None,
                     stateless_reset_token: None,
                     preferred_address: None,
+                    grease_transport_parameter: None,
                 }
             }
         }
@@ -135,6 +141,7 @@ impl TransportParameters {
         cid_gen: &dyn ConnectionIdGenerator,
         initial_src_cid: ConnectionId,
         server_config: Option<&ServerConfig>,
+        rng: &mut impl RngCore,
     ) -> Self {
         Self {
             initial_src_cid: Some(initial_src_cid),
@@ -160,6 +167,7 @@ impl TransportParameters {
             min_ack_delay: Some(
                 VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
             ),
+            grease_transport_parameter: Some(ReservedTransportParameter::random(rng)),
             ..Self::default()
         }
     }
@@ -300,9 +308,9 @@ impl TransportParameters {
         }
         apply_params!(write_params);
 
-        // Add a reserved parameter to keep people on their toes
-        w.write_var(31 * 5 + 27);
-        w.write_var(0);
+        if let Some(param) = self.grease_transport_parameter {
+            param.write(w);
+        }
 
         if let Some(ref x) = self.stateless_reset_token {
             w.write_var(0x02);
@@ -467,6 +475,81 @@ impl TransportParameters {
     }
 }
 
+/// A reserved transport parameter.
+///
+/// It has an identifier of the form 31 * N + 27 for the integer value of N.
+/// Such identifiers are reserved to exercise the requirement that unknown transport parameters be ignored.
+/// The reserved transport parameter has no semantics and can carry arbitrary values.
+/// It may be included in transport parameters sent to the peer, and should be ignored when received.
+///
+/// See spec: <https://www.rfc-editor.org/rfc/rfc9000.html#section-18.1>
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub(crate) struct ReservedTransportParameter {
+    /// The reserved identifier of the transport parameter
+    id: VarInt,
+
+    /// Buffer to store the parameter payload
+    payload: [u8; Self::MAX_PAYLOAD_LEN],
+
+    /// The number of bytes to include in the wire format from the `payload` buffer
+    payload_len: usize,
+}
+
+impl ReservedTransportParameter {
+    /// Generates a transport parameter with a random payload and a reserved ID.
+    ///
+    /// The implementation is inspired by quic-go and quiche:
+    /// 1. <https://github.com/quic-go/quic-go/blob/3e0a67b2476e1819752f04d75968de042b197b56/internal/wire/transport_parameters.go#L338-L344>
+    /// 2. <https://github.com/google/quiche/blob/cb1090b20c40e2f0815107857324e99acf6ec567/quiche/quic/core/crypto/transport_parameters.cc#L843-L860>
+    fn random(rng: &mut impl RngCore) -> Self {
+        let id = Self::generate_reserved_id(rng);
+
+        let payload_len = rng.gen_range(0..Self::MAX_PAYLOAD_LEN);
+
+        let payload = {
+            let mut slice = [0u8; Self::MAX_PAYLOAD_LEN];
+            rng.fill_bytes(&mut slice[..payload_len]);
+            slice
+        };
+
+        Self {
+            id,
+            payload,
+            payload_len,
+        }
+    }
+
+    fn write(&self, w: &mut impl BufMut) {
+        w.write_var(self.id.0);
+        w.write_var(self.payload_len as u64);
+        w.put_slice(&self.payload[..self.payload_len]);
+    }
+
+    /// Generates a random reserved identifier of the form `31 * N + 27`, as required by RFC 9000.
+    /// Reserved transport parameter identifiers are used to test compliance with the requirement
+    /// that unknown transport parameters must be ignored by peers.
+    /// See: <https://www.rfc-editor.org/rfc/rfc9000.html#section-18.1> and <https://www.rfc-editor.org/rfc/rfc9000.html#section-22.3>
+    fn generate_reserved_id(rng: &mut impl RngCore) -> VarInt {
+        let id = {
+            let rand = rng.gen_range(0u64..(1 << 62) - 27);
+            let n = rand / 31;
+            31 * n + 27
+        };
+        debug_assert!(
+            id % 31 == 27,
+            "generated id does not have the form of 31 * N + 27"
+        );
+        VarInt::from_u64(id).expect(
+            "generated id does fit into range of allowed transport parameter IDs: [0; 2^62)",
+        )
+    }
+
+    /// The maximum length of the payload to include as the parameter payload.
+    /// This value is not a specification-imposed limit but is chosen to match
+    /// the limit used by other implementations of QUIC, e.g., quic-go and quiche.
+    const MAX_PAYLOAD_LEN: usize = 16;
+}
+
 fn decode_cid(len: usize, value: &mut Option<ConnectionId>, r: &mut impl Buf) -> Result<(), Error> {
     if len > MAX_CID_SIZE || value.is_some() || r.remaining() < len {
         return Err(Error::Malformed);
@@ -505,6 +588,52 @@ mod test {
             TransportParameters::read(Side::Client, &mut buf.as_slice()).unwrap(),
             params
         );
+    }
+
+    #[test]
+    fn reserved_transport_parameter_generate_reserved_id() {
+        use rand::rngs::mock::StepRng;
+        let mut rngs = [
+            StepRng::new(0, 1),
+            StepRng::new(1, 1),
+            StepRng::new(27, 1),
+            StepRng::new(31, 1),
+            StepRng::new(u32::MAX as u64, 1),
+            StepRng::new(u32::MAX as u64 - 1, 1),
+            StepRng::new(u32::MAX as u64 + 1, 1),
+            StepRng::new(u32::MAX as u64 - 27, 1),
+            StepRng::new(u32::MAX as u64 + 27, 1),
+            StepRng::new(u32::MAX as u64 - 31, 1),
+            StepRng::new(u32::MAX as u64 + 31, 1),
+            StepRng::new(u64::MAX, 1),
+            StepRng::new(u64::MAX - 1, 1),
+            StepRng::new(u64::MAX - 27, 1),
+            StepRng::new(u64::MAX - 31, 1),
+            StepRng::new(1 << 62, 1),
+            StepRng::new((1 << 62) - 1, 1),
+            StepRng::new((1 << 62) + 1, 1),
+            StepRng::new((1 << 62) - 27, 1),
+            StepRng::new((1 << 62) + 27, 1),
+            StepRng::new((1 << 62) - 31, 1),
+            StepRng::new((1 << 62) + 31, 1),
+        ];
+        for rng in &mut rngs {
+            let id = ReservedTransportParameter::generate_reserved_id(rng);
+            assert!(id.0 % 31 == 27)
+        }
+    }
+
+    #[test]
+    fn reserved_transport_parameter_ignored_when_read() {
+        let mut buf = Vec::new();
+        let reserved_parameter = ReservedTransportParameter::random(&mut rand::thread_rng());
+        assert!(reserved_parameter.payload_len < ReservedTransportParameter::MAX_PAYLOAD_LEN);
+        assert!(reserved_parameter.id.0 % 31 == 27);
+
+        reserved_parameter.write(&mut buf);
+        assert!(!buf.is_empty());
+        let read_params = TransportParameters::read(Side::Server, &mut buf.as_slice()).unwrap();
+        assert_eq!(read_params, TransportParameters::default());
     }
 
     #[test]
