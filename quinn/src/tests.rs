@@ -387,7 +387,10 @@ async fn zero_rtt() {
 }
 
 #[test]
-#[cfg_attr(target_os = "solaris", ignore = "Fails on Solaris")]
+#[cfg_attr(
+    any(target_os = "solaris", target_os = "illumos"),
+    ignore = "Fails on Solaris and Illumos"
+)]
 fn echo_v6() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
