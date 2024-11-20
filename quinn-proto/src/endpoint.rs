@@ -411,6 +411,7 @@ impl Endpoint {
             self.local_cid_generator.as_ref(),
             loc_cid,
             None,
+            &mut self.rng,
         );
         let tls = config
             .crypto
@@ -632,6 +633,7 @@ impl Endpoint {
             self.local_cid_generator.as_ref(),
             loc_cid,
             Some(&server_config),
+            &mut self.rng,
         );
         params.stateless_reset_token = Some(ResetToken::new(&*self.config.reset_key, &loc_cid));
         params.original_dst_cid = Some(incoming.orig_dst_cid);
