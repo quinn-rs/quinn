@@ -222,6 +222,12 @@ pub struct Connection {
     /// no outgoing application data.
     app_limited: bool,
 
+    //
+    // ObservedAddr
+    //
+    /// Sequence number for the next observed address frame sent to the peer.
+    next_observed_addr_seq_no: VarInt,
+
     streams: StreamsState,
     /// Surplus remote CIDs for future use on new paths
     rem_cids: CidQueue,
@@ -335,6 +341,8 @@ impl Connection {
             app_limited: false,
             receiving_ecn: false,
             total_authed_packets: 0,
+
+            next_observed_addr_seq_no: 0u32.into(),
 
             streams: StreamsState::new(
                 side,
@@ -2633,6 +2641,9 @@ impl Connection {
         let mut close = None;
         let payload_len = payload.len();
         let mut ack_eliciting = false;
+        // if this packet triggers a path migration and includes a observed address frame, it's
+        // stored here
+        let mut migration_observed_addr = None;
         for result in frame::Iter::new(payload)? {
             let frame = result?;
             let span = match frame {
@@ -2905,7 +2916,33 @@ impl Connection {
                         self.discard_space(now, SpaceId::Handshake);
                     }
                 }
-                Frame::ObservedAddr(_observed) => {}
+                Frame::ObservedAddr(observed) => {
+                    // check if params allows the peer to send report and this node to receive it
+                    if !self
+                        .peer_params
+                        .address_discovery_role
+                        .should_report(&self.config.address_discovery_role)
+                    {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received OBSERVED_ADDRESS frame when not negotiated",
+                        ));
+                    }
+                    // must only be sent in data space
+                    if packet.header.space() != SpaceId::Data {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "OBSERVED_ADDRESS frame outside data space",
+                        ));
+                    }
+
+                    if remote == self.path.remote {
+                        if let Some(updated) = self.path.update_observed_addr_report(observed) {
+                            self.events.push_back(Event::ObservedAddr(updated));
+                        }
+                    } else {
+                        // include in migration
+                        migration_observed_addr = Some(observed)
+                    }
+                }
             }
         }
 
@@ -2942,7 +2979,7 @@ impl Connection {
                 server_config.migration,
                 "migration-initiating packets should have been dropped immediately"
             );
-            self.migrate(now, remote);
+            self.migrate(now, remote, migration_observed_addr);
             // Break linkability, if possible
             self.update_rem_cid();
             self.spin = false;
@@ -2951,7 +2988,7 @@ impl Connection {
         Ok(())
     }
 
-    fn migrate(&mut self, now: Instant, remote: SocketAddr) {
+    fn migrate(&mut self, now: Instant, remote: SocketAddr, observed_addr: Option<ObservedAddr>) {
         trace!(%remote, "migration initiated");
         // Reset rtt/congestion state for new path unless it looks like a NAT rebinding.
         // Note that the congestion window will not grow until validation terminates. Helps mitigate
@@ -2971,6 +3008,12 @@ impl Connection {
                 &self.config,
             )
         };
+        new_path.last_observed_addr_report = self.path.last_observed_addr_report;
+        if let Some(report) = observed_addr {
+            if let Some(updated) = new_path.update_observed_addr_report(report) {
+                self.events.push_back(Event::ObservedAddr(updated));
+            }
+        }
         new_path.challenge = Some(self.rng.gen());
         new_path.challenge_pending = true;
         let prev_pto = self.pto(SpaceId::Data);
@@ -3055,6 +3098,53 @@ impl Connection {
                 self.stats.frame_tx.handshake_done.saturating_add(1);
         }
 
+        // OBSERVED_ADDR
+        let mut send_observed_address =
+            |space_id: SpaceId,
+             buf: &mut Vec<u8>,
+             max_size: usize,
+             space: &mut PacketSpace,
+             sent: &mut SentFrames,
+             stats: &mut ConnectionStats,
+             skip_sent_check: bool| {
+                // should only be sent within Data space and only if allowed by extension
+                // negotiation
+                // send is also skipped if the path has already sent an observed address
+                let send_allowed = self
+                    .config
+                    .address_discovery_role
+                    .should_report(&self.peer_params.address_discovery_role);
+                let send_required =
+                    space.pending.observed_addr || !self.path.observed_addr_sent || skip_sent_check;
+                if space_id != SpaceId::Data || !send_allowed || !send_required {
+                    return;
+                }
+
+                let observed =
+                    frame::ObservedAddr::new(self.path.remote, self.next_observed_addr_seq_no);
+
+                if buf.len() + observed.size() < max_size {
+                    observed.write(buf);
+
+                    self.next_observed_addr_seq_no =
+                        self.next_observed_addr_seq_no.saturating_add(1u8);
+                    self.path.observed_addr_sent = true;
+
+                    stats.frame_tx.observed_addr += 1;
+                    sent.retransmits.get_or_create().observed_addr = true;
+                    space.pending.observed_addr = false;
+                }
+            };
+        send_observed_address(
+            space_id,
+            buf,
+            max_size,
+            space,
+            &mut sent,
+            &mut self.stats,
+            false,
+        );
+
         // PING
         if mem::replace(&mut space.ping_pending, false) {
             trace!("PING");
@@ -3124,7 +3214,16 @@ impl Connection {
                 trace!("PATH_CHALLENGE {:08x}", token);
                 buf.write(frame::FrameType::PATH_CHALLENGE);
                 buf.write(token);
-                self.stats.frame_tx.path_challenge += 1;
+
+                send_observed_address(
+                    space_id,
+                    buf,
+                    max_size,
+                    space,
+                    &mut sent,
+                    &mut self.stats,
+                    true,
+                );
             }
         }
 
@@ -3137,6 +3236,19 @@ impl Connection {
                 buf.write(frame::FrameType::PATH_RESPONSE);
                 buf.write(token);
                 self.stats.frame_tx.path_response += 1;
+
+                // NOTE: this is technically not required but might be useful to ride the
+                // request/response nature of path challenges to refresh an observation
+                // Since PATH_RESPONSE is a probing frame, this is allowed by the spec.
+                send_observed_address(
+                    space_id,
+                    buf,
+                    max_size,
+                    space,
+                    &mut sent,
+                    &mut self.stats,
+                    true,
+                );
             }
         }
 
@@ -3840,6 +3952,8 @@ pub enum Event {
     DatagramReceived,
     /// One or more application datagrams have been sent after blocking
     DatagramsUnblocked,
+    /// Received an observation of our external address from the peer.
+    ObservedAddr(SocketAddr),
 }
 
 fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {

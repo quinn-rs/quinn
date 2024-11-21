@@ -14,7 +14,7 @@ use bytes::Bytes;
 use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
-use tokio::sync::{futures::Notified, mpsc, oneshot, Notify};
+use tokio::sync::{futures::Notified, mpsc, oneshot, watch, Notify};
 use tracing::{debug_span, Instrument, Span};
 
 use crate::{
@@ -636,6 +636,12 @@ impl Connection {
         // May need to send MAX_STREAMS to make progress
         conn.wake();
     }
+
+    /// Track changed on our external address as reported by the peer.
+    pub fn observed_external_addr(&self) -> watch::Receiver<Option<SocketAddr>> {
+        let conn = self.0.state.lock("external_addr");
+        conn.observed_external_addr.subscribe()
+    }
 }
 
 pin_project! {
@@ -892,6 +898,7 @@ impl ConnectionRef {
                 runtime,
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
+                observed_external_addr: watch::Sender::new(None),
             }),
             shared: Shared::default(),
         }))
@@ -974,6 +981,8 @@ pub(crate) struct State {
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<proto::Transmit>,
+    /// Our last external address reported by the peer.
+    observed_external_addr: watch::Sender<Option<SocketAddr>>,
 }
 
 impl State {
@@ -1130,6 +1139,12 @@ impl State {
                 Stream(StreamEvent::Stopped { id, .. }) => {
                     wake_stream(id, &mut self.stopped);
                     wake_stream(id, &mut self.blocked_writers);
+                }
+                ObservedAddr(observed) => {
+                    self.observed_external_addr.send_if_modified(|addr| {
+                        let old = addr.replace(observed);
+                        old != *addr
+                    });
                 }
             }
         }
