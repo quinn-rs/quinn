@@ -19,7 +19,7 @@ use crate::{
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     crypto::{self, KeyPair, Keys, PacketKey},
-    frame::{self, Close, Datagram, FrameStruct},
+    frame::{self, Close, Datagram, FrameStruct, ObservedAddr},
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -2676,7 +2676,8 @@ impl Connection {
                 Frame::Padding
                 | Frame::PathChallenge(_)
                 | Frame::PathResponse(_)
-                | Frame::NewConnectionId(_) => {}
+                | Frame::NewConnectionId(_)
+                | Frame::ObservedAddr(_) => {}
                 _ => {
                     is_probing_packet = false;
                 }
@@ -2904,6 +2905,7 @@ impl Connection {
                         self.discard_space(now, SpaceId::Handshake);
                     }
                 }
+                Frame::ObservedAddr(_observed) => {}
             }
         }
 
