@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Write},
     mem,
+    net::{IpAddr, SocketAddr},
     ops::{Range, RangeInclusive},
 };
 
@@ -134,6 +135,9 @@ frame_types! {
     ACK_FREQUENCY = 0xaf,
     IMMEDIATE_ACK = 0x1f,
     // DATAGRAM
+    // ADDRESS DISCOVERY REPORT
+    OBSERVED_IPV4_ADDR = 0x9f81a6,
+    OBSERVED_IPV6_ADDR = 0x9f81a7,
 }
 
 const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
@@ -164,6 +168,7 @@ pub(crate) enum Frame {
     AckFrequency(AckFrequency),
     ImmediateAck,
     HandshakeDone,
+    ObservedAddr(ObservedAddr),
 }
 
 impl Frame {
@@ -205,6 +210,7 @@ impl Frame {
             AckFrequency(_) => FrameType::ACK_FREQUENCY,
             ImmediateAck => FrameType::IMMEDIATE_ACK,
             HandshakeDone => FrameType::HANDSHAKE_DONE,
+            ObservedAddr(ref observed) => observed.get_type(),
         }
     }
 
@@ -682,6 +688,11 @@ impl Iter {
                 reordering_threshold: self.bytes.get()?,
             }),
             FrameType::IMMEDIATE_ACK => Frame::ImmediateAck,
+            FrameType::OBSERVED_IPV4_ADDR | FrameType::OBSERVED_IPV6_ADDR => {
+                let is_ipv6 = ty == FrameType::OBSERVED_IPV6_ADDR;
+                let observed = ObservedAddr::read(&mut self.bytes, is_ipv6)?;
+                Frame::ObservedAddr(observed)
+            }
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {
@@ -922,8 +933,87 @@ impl AckFrequency {
     }
 }
 
+/* Address Discovery https://datatracker.ietf.org/doc/draft-seemann-quic-address-discovery/ */
+
+/// Conjuction of the information contained in the address discovery frames
+/// ([`FrameType::OBSERVED_IPV4_ADDR`], [`FrameType::OBSERVED_IPV6_ADDR`]).
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub(crate) struct ObservedAddr {
+    /// Monotonically increasing integer within the same connection.
+    pub(crate) seq_no: VarInt,
+    /// Reported observed address.
+    pub(crate) ip: IpAddr,
+    /// Reported observed port.
+    pub(crate) port: u16,
+}
+
+impl ObservedAddr {
+    pub(crate) fn new(remote: SocketAddr, seq_no: VarInt) -> Self {
+        Self {
+            ip: remote.ip(),
+            port: remote.port(),
+            seq_no,
+        }
+    }
+
+    /// Get the [`FrameType`] for this frame.
+    pub(crate) fn get_type(&self) -> FrameType {
+        if self.ip.is_ipv6() {
+            FrameType::OBSERVED_IPV6_ADDR
+        } else {
+            FrameType::OBSERVED_IPV4_ADDR
+        }
+    }
+
+    /// Compute the number of bytes needed to encode the frame.
+    pub(crate) fn size(&self) -> usize {
+        let type_size = VarInt(self.get_type().0).size();
+        let req_id_bytes = self.seq_no.size();
+        let ip_bytes = if self.ip.is_ipv6() { 16 } else { 4 };
+        let port_bytes = 2;
+        type_size + req_id_bytes + ip_bytes + port_bytes
+    }
+
+    /// Unconditionally write this frame to `buf`.
+    pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
+        buf.write(self.get_type());
+        buf.write(self.seq_no);
+        match self.ip {
+            IpAddr::V4(ipv4_addr) => {
+                buf.write(ipv4_addr);
+            }
+            IpAddr::V6(ipv6_addr) => {
+                buf.write(ipv6_addr);
+            }
+        }
+        buf.write::<u16>(self.port);
+    }
+
+    /// Reads the frame contents from the buffer.
+    ///
+    /// Should only be called when the fram type has been identified as
+    /// [`FrameType::OBSERVED_IPV4_ADDR`] or [`FrameType::OBSERVED_IPV6_ADDR`].
+    pub(crate) fn read<R: Buf>(bytes: &mut R, is_ipv6: bool) -> coding::Result<Self> {
+        Ok(Self {
+            seq_no: bytes.get()?,
+            ip: if is_ipv6 {
+                IpAddr::V6(bytes.get()?)
+            } else {
+                IpAddr::V4(bytes.get()?)
+            },
+            port: bytes.get()?,
+        })
+    }
+
+    /// Gives the [`SocketAddr`] reported in the frame.
+    pub(crate) fn socket_addr(&self) -> SocketAddr {
+        (self.ip, self.port).into()
+    }
+}
+
 #[cfg(test)]
 mod test {
+
     use super::*;
     use crate::coding::Codec;
     use assert_matches::assert_matches;
@@ -987,5 +1077,30 @@ mod test {
         let frames = frames(buf);
         assert_eq!(frames.len(), 1);
         assert_matches!(&frames[0], Frame::ImmediateAck);
+    }
+
+    /// Test that encoding and decoding [`ObservedAddr`] produces the same result.
+    #[test]
+    fn test_observed_addr_roundrip() {
+        let observed_addr = ObservedAddr {
+            seq_no: VarInt(42),
+            ip: std::net::Ipv4Addr::LOCALHOST.into(),
+            port: 4242,
+        };
+        let mut buf = Vec::with_capacity(observed_addr.size());
+        observed_addr.write(&mut buf);
+
+        assert_eq!(
+            observed_addr.size(),
+            buf.len(),
+            "expected written bytes and actual size differ"
+        );
+
+        let mut decoded = frames(buf);
+        assert_eq!(decoded.len(), 1);
+        match decoded.pop().expect("non empty") {
+            Frame::ObservedAddr(decoded) => assert_eq!(decoded, observed_addr),
+            x => panic!("incorrect frame {x:?}"),
+        }
     }
 }
