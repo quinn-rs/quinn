@@ -514,7 +514,7 @@ pub enum ReadError {
     ///
     /// Carries an application-defined error code.
     #[error("stream reset by peer: error {0}")]
-    Reset(VarInt),
+    Reset(pub VarInt),
     /// The connection was lost
     #[error("connection lost")]
     ConnectionLost(#[from] ConnectionError),
