@@ -164,7 +164,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       # Note that we must also update the README when changing the MSRV
-      - uses: dtolnay/rust-toolchain@1.70.0
+      - uses: dtolnay/rust-toolchain@1.71.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --lib --all-features -p quinn-udp -p quinn-proto -p quinn
 
@@ -271,4 +271,3 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - run: cargo hack check --feature-powerset --optional-deps --no-dev-deps --ignore-unknown-features --ignore-private --group-features runtime-async-std,async-io,async-std --group-features runtime-smol,async-io,smol --skip "${{env.SKIP_FEATURES}}"
-
