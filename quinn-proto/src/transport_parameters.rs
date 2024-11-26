@@ -35,37 +35,37 @@ macro_rules! apply_params {
         $macro! {
             // #[doc] name (id) = default,
             /// Milliseconds, disabled if zero
-            max_idle_timeout(0x0001) = 0,
+            max_idle_timeout(MaxIdleTimeout) = 0,
             /// Limits the size of UDP payloads that the endpoint is willing to receive
-            max_udp_payload_size(0x0003) = 65527,
+            max_udp_payload_size(MaxUdpPayloadSize) = 65527,
 
             /// Initial value for the maximum amount of data that can be sent on the connection
-            initial_max_data(0x0004) = 0,
+            initial_max_data(InitialMaxData) = 0,
             /// Initial flow control limit for locally-initiated bidirectional streams
-            initial_max_stream_data_bidi_local(0x0005) = 0,
+            initial_max_stream_data_bidi_local(InitialMaxStreamDataBidiLocal) = 0,
             /// Initial flow control limit for peer-initiated bidirectional streams
-            initial_max_stream_data_bidi_remote(0x0006) = 0,
+            initial_max_stream_data_bidi_remote(InitialMaxStreamDataBidiRemote) = 0,
             /// Initial flow control limit for unidirectional streams
-            initial_max_stream_data_uni(0x0007) = 0,
+            initial_max_stream_data_uni(InitialMaxStreamDataUni) = 0,
 
             /// Initial maximum number of bidirectional streams the peer may initiate
-            initial_max_streams_bidi(0x0008) = 0,
+            initial_max_streams_bidi(InitialMaxStreamsBidi) = 0,
             /// Initial maximum number of unidirectional streams the peer may initiate
-            initial_max_streams_uni(0x0009) = 0,
+            initial_max_streams_uni(InitialMaxStreamsUni) = 0,
 
             /// Exponent used to decode the ACK Delay field in the ACK frame
-            ack_delay_exponent(0x000a) = 3,
+            ack_delay_exponent(AckDelayExponent) = 3,
             /// Maximum amount of time in milliseconds by which the endpoint will delay sending
             /// acknowledgments
-            max_ack_delay(0x000b) = 25,
+            max_ack_delay(MaxAckDelay) = 25,
             /// Maximum number of connection IDs from the peer that an endpoint is willing to store
-            active_connection_id_limit(0x000e) = 2,
+            active_connection_id_limit(ActiveConnectionIdLimit) = 2,
         }
     };
 }
 
 macro_rules! make_struct {
-    {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
+    {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
         /// Transport parameters used to negotiate connection-level preferences between peers
         #[derive(Debug, Copy, Clone, Eq, PartialEq)]
         pub struct TransportParameters {
@@ -296,10 +296,10 @@ impl TransportParameters {
     /// Encode `TransportParameters` into buffer
     pub fn write<W: BufMut>(&self, w: &mut W) {
         macro_rules! write_params {
-            {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
+            {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
                 $(
                     if self.$name.0 != $default {
-                        w.write_var($code);
+                        w.write_var(TransportParameterId::$id as u64);
                         w.write(VarInt::try_from(self.$name.size()).unwrap());
                         w.write(self.$name);
                     }
@@ -366,7 +366,7 @@ impl TransportParameters {
 
         // State to check for duplicate transport parameters.
         macro_rules! param_state {
-            {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {{
+            {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {{
                 struct ParamState {
                     $($name: bool,)*
                 }
@@ -385,10 +385,17 @@ impl TransportParameters {
                 return Err(Error::Malformed);
             }
             let len = len as usize;
+            let Ok(id) = TransportParameterId::try_from(id) else {
+                // unknown transport parameters are ignored
+                r.advance(len);
+                continue;
+            };
 
             match id {
-                0x00 => decode_cid(len, &mut params.original_dst_cid, r)?,
-                0x02 => {
+                TransportParameterId::OriginalDestinationConnectionId => {
+                    decode_cid(len, &mut params.original_dst_cid, r)?
+                }
+                TransportParameterId::StatelessResetToken => {
                     if len != 16 || params.stateless_reset_token.is_some() {
                         return Err(Error::Malformed);
                     }
@@ -396,42 +403,48 @@ impl TransportParameters {
                     r.copy_to_slice(&mut tok);
                     params.stateless_reset_token = Some(tok.into());
                 }
-                0x0c => {
+                TransportParameterId::DisableActiveMigration => {
                     if len != 0 || params.disable_active_migration {
                         return Err(Error::Malformed);
                     }
                     params.disable_active_migration = true;
                 }
-                0x0d => {
+                TransportParameterId::PreferredAddress => {
                     if params.preferred_address.is_some() {
                         return Err(Error::Malformed);
                     }
                     params.preferred_address = Some(PreferredAddress::read(&mut r.take(len))?);
                 }
-                0x0f => decode_cid(len, &mut params.initial_src_cid, r)?,
-                0x10 => decode_cid(len, &mut params.retry_src_cid, r)?,
-                0x20 => {
+                TransportParameterId::InitialSourceConnectionId => {
+                    decode_cid(len, &mut params.initial_src_cid, r)?
+                }
+                TransportParameterId::RetrySourceConnectionId => {
+                    decode_cid(len, &mut params.retry_src_cid, r)?
+                }
+                TransportParameterId::MaxDatagramFrameSize => {
                     if len > 8 || params.max_datagram_frame_size.is_some() {
                         return Err(Error::Malformed);
                     }
                     params.max_datagram_frame_size = Some(r.get().unwrap());
                 }
-                0x2ab2 => match len {
+                TransportParameterId::GreaseQuicBit => match len {
                     0 => params.grease_quic_bit = true,
                     _ => return Err(Error::Malformed),
                 },
-                0xff04de1b => params.min_ack_delay = Some(r.get().unwrap()),
+                TransportParameterId::MinAckDelayDraft07 => {
+                    params.min_ack_delay = Some(r.get().unwrap())
+                }
                 _ => {
                     macro_rules! parse {
-                        {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
+                        {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
                             match id {
-                                $($code => {
+                                $(TransportParameterId::$id => {
                                     let value = r.get::<VarInt>()?;
                                     if len != value.size() || got.$name { return Err(Error::Malformed); }
                                     params.$name = value.into();
                                     got.$name = true;
                                 })*
-                                _ => r.advance(len as usize),
+                                _ => r.advance(len),
                             }
                         }
                     }
@@ -548,6 +561,83 @@ impl ReservedTransportParameter {
     /// This value is not a specification-imposed limit but is chosen to match
     /// the limit used by other implementations of QUIC, e.g., quic-go and quiche.
     const MAX_PAYLOAD_LEN: usize = 16;
+}
+
+#[repr(u64)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TransportParameterId {
+    // https://www.rfc-editor.org/rfc/rfc9000.html#iana-tp-table
+    OriginalDestinationConnectionId = 0x00,
+    MaxIdleTimeout = 0x01,
+    StatelessResetToken = 0x02,
+    MaxUdpPayloadSize = 0x03,
+    InitialMaxData = 0x04,
+    InitialMaxStreamDataBidiLocal = 0x05,
+    InitialMaxStreamDataBidiRemote = 0x06,
+    InitialMaxStreamDataUni = 0x07,
+    InitialMaxStreamsBidi = 0x08,
+    InitialMaxStreamsUni = 0x09,
+    AckDelayExponent = 0x0A,
+    MaxAckDelay = 0x0B,
+    DisableActiveMigration = 0x0C,
+    PreferredAddress = 0x0D,
+    ActiveConnectionIdLimit = 0x0E,
+    InitialSourceConnectionId = 0x0F,
+    RetrySourceConnectionId = 0x10,
+
+    // Smallest possible ID of reserved transport parameter https://datatracker.ietf.org/doc/html/rfc9000#section-22.3
+    ReservedTransportParameter = 0x1B,
+
+    // https://www.rfc-editor.org/rfc/rfc9221.html#section-3
+    MaxDatagramFrameSize = 0x20,
+
+    // https://www.rfc-editor.org/rfc/rfc9287.html#section-3
+    GreaseQuicBit = 0x2AB2,
+
+    // https://datatracker.ietf.org/doc/html/draft-ietf-quic-ack-frequency#section-10.1
+    MinAckDelayDraft07 = 0xFF04DE1B,
+}
+
+impl std::cmp::PartialEq<u64> for TransportParameterId {
+    fn eq(&self, other: &u64) -> bool {
+        *other == (*self as u64)
+    }
+}
+
+impl TryFrom<u64> for TransportParameterId {
+    type Error = ();
+
+    fn try_from(value: u64) -> Result<Self, Self::Error> {
+        let param = match value {
+            id if Self::MaxIdleTimeout == id => Self::MaxIdleTimeout,
+            id if Self::MaxUdpPayloadSize == id => Self::MaxUdpPayloadSize,
+            id if Self::InitialMaxData == id => Self::InitialMaxData,
+            id if Self::InitialMaxStreamDataBidiLocal == id => Self::InitialMaxStreamDataBidiLocal,
+            id if Self::InitialMaxStreamDataBidiRemote == id => {
+                Self::InitialMaxStreamDataBidiRemote
+            }
+            id if Self::InitialMaxStreamDataUni == id => Self::InitialMaxStreamDataUni,
+            id if Self::InitialMaxStreamsBidi == id => Self::InitialMaxStreamsBidi,
+            id if Self::InitialMaxStreamsUni == id => Self::InitialMaxStreamsUni,
+            id if Self::AckDelayExponent == id => Self::AckDelayExponent,
+            id if Self::MaxAckDelay == id => Self::MaxAckDelay,
+            id if Self::ActiveConnectionIdLimit == id => Self::ActiveConnectionIdLimit,
+            id if Self::ReservedTransportParameter == id => Self::ReservedTransportParameter,
+            id if Self::StatelessResetToken == id => Self::StatelessResetToken,
+            id if Self::DisableActiveMigration == id => Self::DisableActiveMigration,
+            id if Self::MaxDatagramFrameSize == id => Self::MaxDatagramFrameSize,
+            id if Self::PreferredAddress == id => Self::PreferredAddress,
+            id if Self::OriginalDestinationConnectionId == id => {
+                Self::OriginalDestinationConnectionId
+            }
+            id if Self::InitialSourceConnectionId == id => Self::InitialSourceConnectionId,
+            id if Self::RetrySourceConnectionId == id => Self::RetrySourceConnectionId,
+            id if Self::GreaseQuicBit == id => Self::GreaseQuicBit,
+            id if Self::MinAckDelayDraft07 == id => Self::MinAckDelayDraft07,
+            _ => return Err(()),
+        };
+        Ok(param)
+    }
 }
 
 fn decode_cid(len: usize, value: &mut Option<ConnectionId>, r: &mut impl Buf) -> Result<(), Error> {
