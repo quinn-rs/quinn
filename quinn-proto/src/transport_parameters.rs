@@ -16,6 +16,7 @@ use rand::{Rng as _, RngCore};
 use thiserror::Error;
 
 use crate::{
+    address_discovery,
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
@@ -104,6 +105,8 @@ macro_rules! make_struct {
             /// of transport parameter extensions.
             /// When present, it is included during serialization but ignored during deserialization.
             pub(crate) grease_transport_parameter: Option<ReservedTransportParameter>,
+            /// The role of this peer in address discovery, if any.
+            pub(crate) address_discovery_role: address_discovery::Role,
         }
 
         // We deliberately don't implement the `Default` trait, since that would be public, and
@@ -126,6 +129,8 @@ macro_rules! make_struct {
                     stateless_reset_token: None,
                     preferred_address: None,
                     grease_transport_parameter: None,
+
+                    address_discovery_role: address_discovery::Role::Disabled,
                 }
             }
         }
@@ -168,6 +173,7 @@ impl TransportParameters {
                 VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
             ),
             grease_transport_parameter: Some(ReservedTransportParameter::random(rng)),
+            address_discovery_role: config.address_discovery_role,
             ..Self::default()
         }
     }
@@ -184,6 +190,7 @@ impl TransportParameters {
             || cached.initial_max_streams_uni > self.initial_max_streams_uni
             || cached.max_datagram_frame_size > self.max_datagram_frame_size
             || cached.grease_quic_bit && !self.grease_quic_bit
+            || cached.address_discovery_role != self.address_discovery_role
         {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "0-RTT accepted with incompatible transport parameters",
@@ -357,6 +364,12 @@ impl TransportParameters {
             w.write_var(x.size() as u64);
             w.write(x);
         }
+
+        if let Some(varint_role) = self.address_discovery_role.as_transport_parameter() {
+            w.write_var(address_discovery::TRANSPORT_PARAMETER_CODE);
+            w.write_var(varint_role.size() as u64);
+            w.write(varint_role);
+        }
     }
 
     /// Decode `TransportParameters` from buffer
@@ -421,6 +434,21 @@ impl TransportParameters {
                     _ => return Err(Error::Malformed),
                 },
                 0xff04de1b => params.min_ack_delay = Some(r.get().unwrap()),
+                address_discovery::TRANSPORT_PARAMETER_CODE => {
+                    if !params.address_discovery_role.is_disabled() {
+                        // duplicate parameter
+                        return Err(Error::Malformed);
+                    }
+                    let value: VarInt = r.get()?;
+                    if len != value.size() {
+                        return Err(Error::Malformed);
+                    }
+                    params.address_discovery_role = value.try_into()?;
+                    tracing::debug!(
+                        role = ?params.address_discovery_role,
+                        "address discovery enabled for peer"
+                    );
+                }
                 _ => {
                     macro_rules! parse {
                         {$($(#[$doc:meta])* $name:ident ($code:expr) = $default:expr,)*} => {
@@ -581,6 +609,7 @@ mod test {
             }),
             grease_quic_bit: true,
             min_ack_delay: Some(2_000u32.into()),
+            address_discovery_role: address_discovery::Role::SendOnly,
             ..TransportParameters::default()
         };
         params.write(&mut buf);
