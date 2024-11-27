@@ -38,6 +38,11 @@ log = ["tracing/log", "proto/log", "udp/log"]
 # Enable rustls logging
 rustls-log = ["rustls?/logging"]
 
+# Internal (PRIVATE!) features used to aid testing.
+# Don't rely on these whatsoever. They may disappear at any time.
+
+__rustls-post-quantum-test =  ["dep:rustls-post-quantum", "rustls-aws-lc-rs", "proto/__rustls-post-quantum-test"]
+
 [dependencies]
 async-io = { workspace = true, optional = true }
 async-std = { workspace = true, optional = true }
