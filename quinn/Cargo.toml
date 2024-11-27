@@ -53,6 +53,7 @@ rustc-hash = { workspace = true }
 pin-project-lite = { workspace = true }
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.11.7", default-features = false }
 rustls = { workspace = true, optional = true }
+rustls-post-quantum = { workspace = true, optional = true }
 smol = { workspace = true, optional = true }
 socket2 = { workspace = true }
 thiserror = { workspace = true }
@@ -93,6 +94,10 @@ required-features = ["rustls-ring"]
 [[example]]
 name = "connection"
 required-features = ["rustls-ring"]
+
+[[test]]
+name = "post_quantum"
+required-features = ["__rustls-post-quantum-test"]
 
 [[bench]]
 name = "bench"
