@@ -12,7 +12,7 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
-use rand::{Rng as _, RngCore};
+use rand::{seq::SliceRandom as _, Rng as _, RngCore};
 use thiserror::Error;
 
 use crate::{
@@ -104,6 +104,12 @@ macro_rules! make_struct {
             /// of transport parameter extensions.
             /// When present, it is included during serialization but ignored during deserialization.
             pub(crate) grease_transport_parameter: Option<ReservedTransportParameter>,
+
+            /// Defines the order in which transport parameters are serialized.
+            ///
+            /// This field is initialized only for outgoing `TransportParameters` instances and
+            /// is set to `None` for `TransportParameters` received from a peer.
+            pub(crate) write_order: Option<[u8; TransportParameterId::SUPPORTED.len()]>,
         }
 
         // We deliberately don't implement the `Default` trait, since that would be public, and
@@ -126,6 +132,7 @@ macro_rules! make_struct {
                     stateless_reset_token: None,
                     preferred_address: None,
                     grease_transport_parameter: None,
+                    write_order: None,
                 }
             }
         }
@@ -168,6 +175,11 @@ impl TransportParameters {
                 VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
             ),
             grease_transport_parameter: Some(ReservedTransportParameter::random(rng)),
+            write_order: Some({
+                let mut order = std::array::from_fn(|i| i as u8);
+                order.shuffle(rng);
+                order
+            }),
             ..Self::default()
         }
     }
@@ -295,67 +307,99 @@ impl From<UnexpectedEnd> for Error {
 impl TransportParameters {
     /// Encode `TransportParameters` into buffer
     pub fn write<W: BufMut>(&self, w: &mut W) {
-        macro_rules! write_params {
-            {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
-                $(
-                    if self.$name.0 != $default {
-                        w.write_var(TransportParameterId::$id as u64);
-                        w.write(VarInt::try_from(self.$name.size()).unwrap());
-                        w.write(self.$name);
+        for idx in self
+            .write_order
+            .as_ref()
+            .unwrap_or(&std::array::from_fn(|i| i as u8))
+        {
+            let id = TransportParameterId::SUPPORTED[*idx as usize];
+            match id {
+                TransportParameterId::ReservedTransportParameter => {
+                    if let Some(param) = self.grease_transport_parameter {
+                        param.write(w);
                     }
-                )*
+                }
+                TransportParameterId::StatelessResetToken => {
+                    if let Some(ref x) = self.stateless_reset_token {
+                        w.write_var(id as u64);
+                        w.write_var(16);
+                        w.put_slice(x);
+                    }
+                }
+                TransportParameterId::DisableActiveMigration => {
+                    if self.disable_active_migration {
+                        w.write_var(id as u64);
+                        w.write_var(0);
+                    }
+                }
+                TransportParameterId::MaxDatagramFrameSize => {
+                    if let Some(x) = self.max_datagram_frame_size {
+                        w.write_var(id as u64);
+                        w.write_var(x.size() as u64);
+                        w.write(x);
+                    }
+                }
+                TransportParameterId::PreferredAddress => {
+                    if let Some(ref x) = self.preferred_address {
+                        w.write_var(id as u64);
+                        w.write_var(x.wire_size() as u64);
+                        x.write(w);
+                    }
+                }
+                TransportParameterId::OriginalDestinationConnectionId => {
+                    if let Some(ref cid) = self.original_dst_cid {
+                        w.write_var(id as u64);
+                        w.write_var(cid.len() as u64);
+                        w.put_slice(cid);
+                    }
+                }
+                TransportParameterId::InitialSourceConnectionId => {
+                    if let Some(ref cid) = self.initial_src_cid {
+                        w.write_var(id as u64);
+                        w.write_var(cid.len() as u64);
+                        w.put_slice(cid);
+                    }
+                }
+                TransportParameterId::RetrySourceConnectionId => {
+                    if let Some(ref cid) = self.retry_src_cid {
+                        w.write_var(id as u64);
+                        w.write_var(cid.len() as u64);
+                        w.put_slice(cid);
+                    }
+                }
+                TransportParameterId::GreaseQuicBit => {
+                    if self.grease_quic_bit {
+                        w.write_var(id as u64);
+                        w.write_var(0);
+                    }
+                }
+                TransportParameterId::MinAckDelayDraft07 => {
+                    if let Some(x) = self.min_ack_delay {
+                        w.write_var(id as u64);
+                        w.write_var(x.size() as u64);
+                        w.write(x);
+                    }
+                }
+                id => {
+                    macro_rules! write_params {
+                        {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
+                            match id {
+                                $(TransportParameterId::$id => {
+                                    if self.$name.0 != $default {
+                                        w.write_var(id as u64);
+                                        w.write(VarInt::try_from(self.$name.size()).unwrap());
+                                        w.write(self.$name);
+                                    }
+                                })*,
+                                _ => {
+                                    unimplemented!("Missing implementation of write for transport parameter with code {id:?}");
+                                }
+                            }
+                        }
+                    }
+                    apply_params!(write_params);
+                }
             }
-        }
-        apply_params!(write_params);
-
-        if let Some(param) = self.grease_transport_parameter {
-            param.write(w);
-        }
-
-        if let Some(ref x) = self.stateless_reset_token {
-            w.write_var(0x02);
-            w.write_var(16);
-            w.put_slice(x);
-        }
-
-        if self.disable_active_migration {
-            w.write_var(0x0c);
-            w.write_var(0);
-        }
-
-        if let Some(x) = self.max_datagram_frame_size {
-            w.write_var(0x20);
-            w.write_var(x.size() as u64);
-            w.write(x);
-        }
-
-        if let Some(ref x) = self.preferred_address {
-            w.write_var(0x000d);
-            w.write_var(x.wire_size() as u64);
-            x.write(w);
-        }
-
-        for &(tag, cid) in &[
-            (0x00, &self.original_dst_cid),
-            (0x0f, &self.initial_src_cid),
-            (0x10, &self.retry_src_cid),
-        ] {
-            if let Some(ref cid) = *cid {
-                w.write_var(tag);
-                w.write_var(cid.len() as u64);
-                w.put_slice(cid);
-            }
-        }
-
-        if self.grease_quic_bit {
-            w.write_var(0x2ab2);
-            w.write_var(0);
-        }
-
-        if let Some(x) = self.min_ack_delay {
-            w.write_var(0xff04de1b);
-            w.write_var(x.size() as u64);
-            w.write(x);
         }
     }
 
@@ -596,6 +640,33 @@ pub(crate) enum TransportParameterId {
 
     // https://datatracker.ietf.org/doc/html/draft-ietf-quic-ack-frequency#section-10.1
     MinAckDelayDraft07 = 0xFF04DE1B,
+}
+
+impl TransportParameterId {
+    /// Array with all supported transport parameter IDs
+    const SUPPORTED: [Self; 21] = [
+        Self::MaxIdleTimeout,
+        Self::MaxUdpPayloadSize,
+        Self::InitialMaxData,
+        Self::InitialMaxStreamDataBidiLocal,
+        Self::InitialMaxStreamDataBidiRemote,
+        Self::InitialMaxStreamDataUni,
+        Self::InitialMaxStreamsBidi,
+        Self::InitialMaxStreamsUni,
+        Self::AckDelayExponent,
+        Self::MaxAckDelay,
+        Self::ActiveConnectionIdLimit,
+        Self::ReservedTransportParameter,
+        Self::StatelessResetToken,
+        Self::DisableActiveMigration,
+        Self::MaxDatagramFrameSize,
+        Self::PreferredAddress,
+        Self::OriginalDestinationConnectionId,
+        Self::InitialSourceConnectionId,
+        Self::RetrySourceConnectionId,
+        Self::GreaseQuicBit,
+        Self::MinAckDelayDraft07,
+    ];
 }
 
 impl std::cmp::PartialEq<u64> for TransportParameterId {
