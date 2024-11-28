@@ -43,6 +43,8 @@ pub struct TransportConfig {
     pub(crate) congestion_controller_factory: Arc<dyn congestion::ControllerFactory + Send + Sync>,
 
     pub(crate) enable_segmentation_offload: bool,
+
+    pub(crate) send_grease_transport_parameter: bool,
 }
 
 impl TransportConfig {
@@ -314,6 +316,14 @@ impl TransportConfig {
         self.enable_segmentation_offload = enabled;
         self
     }
+
+    /// Specifies whether the GREASE transport parameter is sent during transport parameter negotiation.
+    ///
+    /// Defaults to `true`.
+    pub fn send_grease_random_transport_parameter(&mut self, enabled: bool) -> &mut Self {
+        self.send_grease_transport_parameter = enabled;
+        self
+    }
 }
 
 impl Default for TransportConfig {
@@ -354,6 +364,8 @@ impl Default for TransportConfig {
             congestion_controller_factory: Arc::new(congestion::CubicConfig::default()),
 
             enable_segmentation_offload: true,
+
+            send_grease_transport_parameter: true,
         }
     }
 }
@@ -385,6 +397,7 @@ impl fmt::Debug for TransportConfig {
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
             enable_segmentation_offload,
+            send_grease_transport_parameter,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -412,6 +425,10 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             .field("congestion_controller_factory", &"[ opaque ]")
             .field("enable_segmentation_offload", enable_segmentation_offload)
+            .field(
+                "send_grease_transport_parameter",
+                send_grease_transport_parameter,
+            )
             .finish()
     }
 }

@@ -167,7 +167,11 @@ impl TransportParameters {
             min_ack_delay: Some(
                 VarInt::from_u64(u64::try_from(TIMER_GRANULARITY.as_micros()).unwrap()).unwrap(),
             ),
-            grease_transport_parameter: Some(ReservedTransportParameter::random(rng)),
+            grease_transport_parameter: if config.send_grease_transport_parameter {
+                Some(ReservedTransportParameter::random(rng))
+            } else {
+                None
+            },
             ..Self::default()
         }
     }
@@ -634,6 +638,30 @@ mod test {
         assert!(!buf.is_empty());
         let read_params = TransportParameters::read(Side::Server, &mut buf.as_slice()).unwrap();
         assert_eq!(read_params, TransportParameters::default());
+    }
+
+    #[test]
+    fn grease_transport_parameter_not_serialized_when_disabled() {
+        let mut params = TransportParameters::default();
+        params.grease_transport_parameter = None;
+
+        let mut buf = Vec::new();
+        params.write(&mut buf);
+        assert!(buf.is_empty());
+    }
+
+    #[test]
+    fn grease_transport_parameter_is_serialized_when_enabled() {
+        let mut params = TransportParameters::default();
+        params.grease_transport_parameter = Some(ReservedTransportParameter {
+            id: VarInt::from_u32(27),
+            payload: [0xAB, 0xFF, 0x1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0],
+            payload_len: 3,
+        });
+
+        let mut buf = Vec::new();
+        params.write(&mut buf);
+        assert_eq!(buf, [27, 3, 0xAB, 0xFF, 0x1])
     }
 
     #[test]
