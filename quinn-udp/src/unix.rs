@@ -395,16 +395,10 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
         }
         io::ErrorKind::WouldBlock => return Err(e),
         _ => {
-            // Other errors are ignored, since they will usually be handled
-            // by higher level retransmits and timeouts.
-            // - PermissionDenied errors have been observed due to iptable rules.
-            //   Those are not fatal errors, since the
-            //   configuration can be dynamically changed.
-            // - Destination unreachable errors have been observed for other
             // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
             //   these by automatically clamping the MTUD upper bound to the interface MTU.
             if e.raw_os_error() != Some(libc::EMSGSIZE) {
-                log_sendmsg_error(&state.last_send_error, e, transmit);
+                return Err(e);
             }
         }
     }
