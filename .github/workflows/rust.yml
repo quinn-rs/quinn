@@ -33,7 +33,7 @@ jobs:
             echo "===== freebsd-version ====="
             freebsd-version
 
-            cargo build --all-targets && cargo test && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+            cargo build --all-targets && cargo test && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
 
   test-netbsd:
     name: test on netbsd
@@ -58,7 +58,7 @@ jobs:
             echo "===== uname -a        ====="
             uname -a
 
-            cargo build --all-targets && cargo test && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+            cargo build --all-targets && cargo test && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
 
   test-solaris:
     name: test on solaris
@@ -80,7 +80,7 @@ jobs:
             uname -a
           run: |
             export PATH=$HOME/.rust_solaris/bin:$PATH
-            cargo build --all-targets && cargo test && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+            cargo build --all-targets && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
 
   test-illumos:
     name: test on illumos
@@ -98,7 +98,7 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
           run: |
             . "$HOME/.cargo/env"
-            cargo build --all-targets && cargo test && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+            cargo build --all-targets && cargo test && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
 
   test:
     strategy:
@@ -121,6 +121,7 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - run: cargo build --all-targets
       - run: cargo test
+      - run: cargo test -- --ignored stress
       - run: cargo test --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust }} == "stable"
       - run: cargo test -p quinn-udp --benches
