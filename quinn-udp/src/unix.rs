@@ -383,25 +383,27 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
         hdrs[i].msg_datalen = chunk.len();
         cnt += 1;
     }
-    let n = unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) };
-    if n >= 0 {
-        return Ok(());
-    }
-    let e = io::Error::last_os_error();
-    match e.kind() {
-        io::ErrorKind::Interrupted => {
-            // Retry the transmission
-        }
-        io::ErrorKind::WouldBlock => return Err(e),
-        _ => {
-            // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
-            //   these by automatically clamping the MTUD upper bound to the interface MTU.
-            if e.raw_os_error() != Some(libc::EMSGSIZE) {
-                return Err(e);
+    loop {
+        let n = unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            match e.kind() {
+                io::ErrorKind::Interrupted => {
+                    // Retry the transmission
+                    continue;
+                }
+                io::ErrorKind::WouldBlock => return Err(e),
+                _ => {
+                    // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
+                    //   these by automatically clamping the MTUD upper bound to the interface MTU.
+                    if e.raw_os_error() != Some(libc::EMSGSIZE) {
+                        return Err(e);
+                    }
+                }
             }
         }
+        return Ok(());
     }
-    Ok(())
 }
 
 #[cfg(any(target_os = "openbsd", target_os = "netbsd", apple_slow))]
@@ -419,24 +421,27 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
         cfg!(apple) || cfg!(target_os = "openbsd") || cfg!(target_os = "netbsd"),
         state.sendmsg_einval(),
     );
-    let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
-    if n == -1 {
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            io::ErrorKind::Interrupted => {
-                // Retry the transmission
-            }
-            io::ErrorKind::WouldBlock => return Err(e),
-            _ => {
-                // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
-                //   these by automatically clamping the MTUD upper bound to the interface MTU.
-                if e.raw_os_error() != Some(libc::EMSGSIZE) {
-                    return Err(e);
+    loop {
+        let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            match e.kind() {
+                io::ErrorKind::Interrupted => {
+                    // Retry the transmission
+                    continue;
+                }
+                io::ErrorKind::WouldBlock => return Err(e),
+                _ => {
+                    // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
+                    //   these by automatically clamping the MTUD upper bound to the interface MTU.
+                    if e.raw_os_error() != Some(libc::EMSGSIZE) {
+                        return Err(e);
+                    }
                 }
             }
         }
+        return Ok(());
     }
-    Ok(())
 }
 
 #[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd", solarish)))]
