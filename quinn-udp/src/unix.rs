@@ -145,7 +145,7 @@ impl UdpSocketState {
                     &*io,
                     libc::IPPROTO_IPV6,
                     libc::IPV6_MTU_DISCOVER,
-                    libc::IP_PMTUDISC_PROBE,
+                    libc::IPV6_PMTUDISC_PROBE,
                 )?;
             }
         }
