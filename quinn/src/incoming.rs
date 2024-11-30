@@ -29,11 +29,9 @@ impl Incoming {
         state.endpoint.accept(state.inner, None)
     }
 
-    /// Accept this incoming connection using a custom configuration.
+    /// Accept this incoming connection using a custom configuration
     ///
-    /// See [`accept()`] for more details.
-    ///
-    /// [`accept()`]: Incoming::accept
+    /// See [`accept()`][Incoming::accept] for more details.
     pub fn accept_with(
         mut self,
         server_config: Arc<ServerConfig>,
@@ -67,8 +65,7 @@ impl Incoming {
         state.endpoint.ignore(state.inner);
     }
 
-    /// The local IP address which was used when the peer established
-    /// the connection
+    /// The local IP address which was used when the peer established the connection
     pub fn local_ip(&self) -> Option<IpAddr> {
         self.0.as_ref().unwrap().inner.local_ip()
     }
@@ -107,8 +104,8 @@ struct State {
     endpoint: EndpointRef,
 }
 
-/// Error for attempting to retry an [`Incoming`] which already bears an address
-/// validation token from a previous retry
+/// Error for attempting to retry an [`Incoming`] which already bears an address validation token
+/// from a previous retry
 #[derive(Debug, Error)]
 #[error("retry() with validated Incoming")]
 pub struct RetryError(Incoming);

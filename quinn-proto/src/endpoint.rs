@@ -1209,20 +1209,19 @@ pub struct Incoming {
 }
 
 impl Incoming {
-    /// The local IP address which was used when the peer established
-    /// the connection
+    /// The local IP address which was used when the peer established the connection
     ///
-    /// This has the same behavior as [`Connection::local_ip`]
+    /// This has the same behavior as [`Connection::local_ip`].
     pub fn local_ip(&self) -> Option<IpAddr> {
         self.addresses.local_ip
     }
 
-    /// The peer's UDP address.
+    /// The peer's UDP address
     pub fn remote_address(&self) -> SocketAddr {
         self.addresses.remote
     }
 
-    /// Whether the socket address that is initiating this connection has been validated.
+    /// Whether the socket address that is initiating this connection has been validated
     ///
     /// This means that the sender of the initial packet has proved that they can receive traffic
     /// sent to `self.remote_address()`.
@@ -1308,8 +1307,8 @@ pub struct AcceptError {
     pub response: Option<Transmit>,
 }
 
-/// Error for attempting to retry an [`Incoming`] which already bears an address
-/// validation token from a previous retry
+/// Error for attempting to retry an [`Incoming`] which already bears an address validation token
+/// from a previous retry
 #[derive(Debug, Error)]
 #[error("retry() with validated Incoming")]
 pub struct RetryError(Incoming);
