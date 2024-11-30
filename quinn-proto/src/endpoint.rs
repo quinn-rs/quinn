@@ -1307,8 +1307,7 @@ pub struct AcceptError {
     pub response: Option<Transmit>,
 }
 
-/// Error for attempting to retry an [`Incoming`] which already bears an address validation token
-/// from a previous retry
+/// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
 #[derive(Debug, Error)]
 #[error("retry() with validated Incoming")]
 pub struct RetryError(Incoming);

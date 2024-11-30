@@ -201,7 +201,7 @@ pub struct ServerConfig {
     /// Used to generate one-time AEAD keys to protect handshake tokens
     pub(crate) token_key: Arc<dyn HandshakeTokenKey>,
 
-    /// Duration after a stateless retry token was issued for which it's considered valid
+    /// Duration after a retry token was issued for which it's considered valid
     pub(crate) retry_token_lifetime: Duration,
 
     /// Whether to allow clients to migrate to new addresses
@@ -254,7 +254,7 @@ impl ServerConfig {
         self
     }
 
-    /// Duration after a stateless retry token was issued for which it's considered valid
+    /// Duration after a retry token was issued for which it's considered valid
     ///
     /// Defaults to 15 seconds.
     pub fn retry_token_lifetime(&mut self, value: Duration) -> &mut Self {
