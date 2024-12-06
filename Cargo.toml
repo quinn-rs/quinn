@@ -25,6 +25,7 @@ crc = "3"
 directories-next = "2"
 futures-io = "0.3.19"
 getrandom = { version = "0.2", default-features = false }
+fastbloom = "0.8"
 hdrhistogram = { version = "7.2", default-features = false }
 hex-literal = "0.4"
 lazy_static = "1"

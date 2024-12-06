@@ -12,7 +12,9 @@ edition.workspace = true
 rust-version.workspace = true
 
 [features]
-default = ["log", "platform-verifier", "runtime-tokio", "rustls-ring"]
+default = ["log", "platform-verifier", "runtime-tokio", "rustls-ring", "fastbloom"]
+# Enables BloomTokenLog
+fastbloom = ["proto/fastbloom"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 aws-lc-rs = ["proto/aws-lc-rs"]
 aws-lc-rs-fips = ["proto/aws-lc-rs-fips"]

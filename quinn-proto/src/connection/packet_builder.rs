@@ -4,6 +4,7 @@ use tracing::{trace, trace_span};
 
 use super::{spaces::SentPacket, Connection, SentFrames};
 use crate::{
+    connection::SideState,
     frame::{self, Close},
     packet::{Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
     ConnectionId, Instant, TransportError, TransportErrorCode,
@@ -113,7 +114,10 @@ impl PacketBuilder {
             SpaceId::Initial => Header::Initial(InitialHeader {
                 src_cid: conn.handshake_cid,
                 dst_cid,
-                token: conn.retry_token.clone(),
+                token: match conn.side_state {
+                    SideState::Client { ref token, .. } => token.clone(),
+                    SideState::Server { .. } => Bytes::new(),
+                },
                 number,
                 version,
             }),

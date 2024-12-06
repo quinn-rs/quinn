@@ -11,7 +11,7 @@ categories.workspace = true
 workspace = ".."
 
 [features]
-default = ["rustls-ring", "log"]
+default = ["rustls-ring", "log", "fastbloom"]
 aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs?/aws-lc-sys", "aws-lc-rs?/prebuilt-nasm"]
 aws-lc-rs-fips = ["aws-lc-rs", "aws-lc-rs?/fips"]
 # For backwards compatibility, `rustls` forwards to `rustls-ring`
@@ -34,6 +34,7 @@ rustls-log = ["rustls?/logging"]
 arbitrary = { workspace = true, optional = true }
 aws-lc-rs = { workspace = true, optional = true }
 bytes = { workspace = true }
+fastbloom = { workspace = true, optional = true }
 rustc-hash = { workspace = true }
 rand = { workspace = true }
 ring = { workspace = true, optional = true }
@@ -55,6 +56,7 @@ web-time = { workspace = true }
 [dev-dependencies]
 assert_matches = { workspace = true }
 hex-literal = { workspace = true  }
+rand_pcg = "0.3"
 rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 lazy_static = "1"

@@ -86,7 +86,16 @@ pub use crate::cid_generator::{
 };
 
 mod token;
-use token::{ResetToken, RetryToken};
+use token::{ResetToken, Token};
+pub use token::{TokenLog, TokenReuseError};
+
+mod token_store;
+pub use token_store::{TokenMemoryCache, TokenStore};
+
+#[cfg(feature = "fastbloom")]
+mod bloom_token_log;
+#[cfg(feature = "fastbloom")]
+pub use bloom_token_log::BloomTokenLog;
 
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
