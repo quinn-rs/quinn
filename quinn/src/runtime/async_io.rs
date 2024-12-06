@@ -89,7 +89,7 @@ impl UdpSocket {
     fn new(sock: std::net::UdpSocket) -> io::Result<Self> {
         Ok(Self {
             inner: udp::UdpSocketState::new((&sock).into())?,
-            io: Async::new(sock)?,
+            io: Async::new_nonblocking(sock)?,
         })
     }
 }
