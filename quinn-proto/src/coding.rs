@@ -1,3 +1,5 @@
+//! Coding related traits.
+
 use std::net::{Ipv4Addr, Ipv6Addr};
 
 use bytes::{Buf, BufMut};
@@ -5,14 +7,19 @@ use thiserror::Error;
 
 use crate::VarInt;
 
+/// Unexpected end of buffer error.
 #[derive(Error, Debug, Copy, Clone, Eq, PartialEq)]
 #[error("unexpected end of buffer")]
 pub struct UnexpectedEnd;
 
+#[doc(hidden)]
 pub type Result<T> = ::std::result::Result<T, UnexpectedEnd>;
 
+/// Trait to handle encoding and decoding from byte buffers.
 pub trait Codec: Sized {
+    /// Try to decode `Self` from the provided buffer.
     fn decode<B: Buf>(buf: &mut B) -> Result<Self>;
+    /// Encode `self` into the provided buffer.
     fn encode<B: BufMut>(&self, buf: &mut B);
 }
 
@@ -92,6 +99,7 @@ impl Codec for Ipv6Addr {
     }
 }
 
+#[doc(hidden)]
 pub trait BufExt {
     fn get<T: Codec>(&mut self) -> Result<T>;
     fn get_var(&mut self) -> Result<u64>;
@@ -106,7 +114,7 @@ impl<T: Buf> BufExt for T {
         Ok(VarInt::decode(self)?.into_inner())
     }
 }
-
+#[doc(hidden)]
 pub trait BufMutExt {
     fn write<T: Codec>(&mut self, x: T);
     fn write_var(&mut self, x: u64);
