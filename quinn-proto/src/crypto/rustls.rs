@@ -64,11 +64,6 @@ impl crypto::Session for TlsSession {
                 Connection::Client(_) => None,
                 Connection::Server(ref session) => session.server_name().map(|x| x.into()),
             },
-            negotiated_cipher_suite: self
-                .inner
-                .negotiated_cipher_suite()
-                .expect("cipher is negotiated")
-                .suite(),
         }))
     }
 
@@ -261,8 +256,6 @@ pub struct HandshakeData {
     ///
     /// Always `None` for outgoing connections
     pub server_name: Option<String>,
-    /// The ciphersuite negotiated with the peer
-    pub negotiated_cipher_suite: CipherSuite,
 }
 
 /// A QUIC-compatible TLS client configuration

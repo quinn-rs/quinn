@@ -32,7 +32,7 @@ use crate::{
     token::ResetToken,
     transport_parameters::TransportParameters,
     Dir, Duration, EndpointConfig, Frame, Instant, Side, StreamId, Transmit, TransportError,
-    TransportErrorCode, VarInt, MAX_CID_SIZE, MAX_STREAM_COUNT, MIN_INITIAL_SIZE,
+    TransportErrorCode, VarInt, INITIAL_MTU, MAX_CID_SIZE, MAX_STREAM_COUNT, MIN_INITIAL_SIZE,
     TIMER_GRANULARITY,
 };
 
@@ -501,7 +501,7 @@ impl Connection {
                     self,
                 )?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
-                buf.write(frame::Type::PATH_CHALLENGE);
+                buf.write(frame::FrameType::PATH_CHALLENGE);
                 buf.write(token);
                 self.stats.frame_tx.path_challenge += 1;
 
@@ -692,13 +692,21 @@ impl Connection {
                         // waste large amounts of bandwidth. The exact threshold is a bit arbitrary
                         // and might benefit from further tuning, though there's no universally
                         // optimal value.
+                        //
+                        // Additionally, if this datagram is a loss probe and `segment_size` is
+                        // larger than `INITIAL_MTU`, then padding it to `segment_size` to continue
+                        // the GSO batch would risk failure to recover from a reduction in path
+                        // MTU. Loss probes are the only packets for which we might grow
+                        // `buf_capacity` by less than `segment_size`.
                         const MAX_PADDING: usize = 16;
                         let packet_len_unpadded = cmp::max(builder.min_size, buf.len())
                             - datagram_start
                             + builder.tag_len;
-                        if packet_len_unpadded + MAX_PADDING < segment_size {
+                        if packet_len_unpadded + MAX_PADDING < segment_size
+                            || datagram_start + segment_size > buf_capacity
+                        {
                             trace!(
-                                "GSO truncated by demand for {} padding bytes",
+                                "GSO truncated by demand for {} padding bytes or loss probe",
                                 segment_size - packet_len_unpadded
                             );
                             builder_storage = Some(builder);
@@ -741,7 +749,17 @@ impl Connection {
                 }
 
                 // Allocate space for another datagram
-                buf_capacity += segment_size;
+                let next_datagram_size_limit = match self.spaces[space_id].loss_probes {
+                    0 => segment_size,
+                    _ => {
+                        self.spaces[space_id].loss_probes -= 1;
+                        // Clamp the datagram to at most the minimum MTU to ensure that loss probes
+                        // can get through and enable recovery even if the path MTU has shrank
+                        // unexpectedly.
+                        usize::from(INITIAL_MTU)
+                    }
+                };
+                buf_capacity += next_datagram_size_limit;
                 if buf.capacity() < buf_capacity {
                     // We reserve the maximum space for sending `max_datagrams` upfront
                     // to avoid any reallocations if more datagrams have to be appended later on.
@@ -883,7 +901,7 @@ impl Connection {
                     // above.
                     let mut builder = builder_storage.take().unwrap();
                     trace!("PATH_RESPONSE {:08x} (off-path)", token);
-                    buf.write(frame::Type::PATH_RESPONSE);
+                    buf.write(frame::FrameType::PATH_RESPONSE);
                     buf.write(token);
                     self.stats.frame_tx.path_response += 1;
                     builder.pad_to(MIN_INITIAL_SIZE);
@@ -955,14 +973,10 @@ impl Connection {
         // Send MTU probe if necessary
         if buf.is_empty() && self.state.is_established() {
             let space_id = SpaceId::Data;
-            let probe_size = match self
+            let probe_size = self
                 .path
                 .mtud
-                .poll_transmit(now, self.packet_number_filter.peek(&self.spaces[space_id]))
-            {
-                Some(next_probe_size) => next_probe_size,
-                None => return None,
-            };
+                .poll_transmit(now, self.packet_number_filter.peek(&self.spaces[space_id]))?;
 
             let buf_capacity = probe_size as usize;
             buf.reserve(buf_capacity);
@@ -979,12 +993,12 @@ impl Connection {
             )?;
 
             // We implement MTU probes as ping packets padded up to the probe size
-            buf.write(frame::Type::PING);
+            buf.write(frame::FrameType::PING);
             self.stats.frame_tx.ping += 1;
 
             // If supported by the peer, we want no delays to the probe's ACK
             if self.peer_supports_ack_frequency() {
-                buf.write(frame::Type::IMMEDIATE_ACK);
+                buf.write(frame::FrameType::IMMEDIATE_ACK);
                 self.stats.frame_tx.immediate_ack += 1;
             }
 
@@ -1637,7 +1651,7 @@ impl Connection {
                             None if self
                                 .path
                                 .first_packet_after_rtt_sample
-                                .map_or(false, |x| x < (pn_space, packet)) =>
+                                .is_some_and(|x| x < (pn_space, packet)) =>
                             {
                                 persistent_congestion_start = Some(info.time_sent);
                             }
@@ -2212,7 +2226,7 @@ impl Connection {
                 let _guard = span.enter();
 
                 let is_duplicate = |n| self.spaces[packet.header.space()].dedup.insert(n);
-                if number.map_or(false, is_duplicate) {
+                if number.is_some_and(is_duplicate) {
                     debug!("discarding possible duplicate packet");
                     return;
                 } else if self.state.is_handshake() && packet.header.is_short() {
@@ -3037,7 +3051,7 @@ impl Connection {
 
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
-            buf.write(frame::Type::HANDSHAKE_DONE);
+            buf.write(frame::FrameType::HANDSHAKE_DONE);
             sent.retransmits.get_or_create().handshake_done = true;
             // This is just a u8 counter and the frame is typically just sent once
             self.stats.frame_tx.handshake_done =
@@ -3047,7 +3061,7 @@ impl Connection {
         // PING
         if mem::replace(&mut space.ping_pending, false) {
             trace!("PING");
-            buf.write(frame::Type::PING);
+            buf.write(frame::FrameType::PING);
             sent.non_retransmits = true;
             self.stats.frame_tx.ping += 1;
         }
@@ -3055,7 +3069,7 @@ impl Connection {
         // IMMEDIATE_ACK
         if mem::replace(&mut space.immediate_ack_pending, false) {
             trace!("IMMEDIATE_ACK");
-            buf.write(frame::Type::IMMEDIATE_ACK);
+            buf.write(frame::FrameType::IMMEDIATE_ACK);
             sent.non_retransmits = true;
             self.stats.frame_tx.immediate_ack += 1;
         }
@@ -3111,7 +3125,7 @@ impl Connection {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
                 trace!("PATH_CHALLENGE {:08x}", token);
-                buf.write(frame::Type::PATH_CHALLENGE);
+                buf.write(frame::FrameType::PATH_CHALLENGE);
                 buf.write(token);
                 self.stats.frame_tx.path_challenge += 1;
             }
@@ -3123,7 +3137,7 @@ impl Connection {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
                 trace!("PATH_RESPONSE {:08x}", token);
-                buf.write(frame::Type::PATH_RESPONSE);
+                buf.write(frame::FrameType::PATH_RESPONSE);
                 buf.write(token);
                 self.stats.frame_tx.path_response += 1;
             }
@@ -3210,7 +3224,7 @@ impl Connection {
                 None => break,
             };
             trace!(sequence = seq, "RETIRE_CONNECTION_ID");
-            buf.write(frame::Type::RETIRE_CONNECTION_ID);
+            buf.write(frame::FrameType::RETIRE_CONNECTION_ID);
             buf.write_var(seq);
             sent.retransmits.get_or_create().retire_cids.push(seq);
             self.stats.frame_tx.retire_connection_id += 1;
@@ -3526,13 +3540,13 @@ impl Connection {
             || self
                 .prev_path
                 .as_ref()
-                .map_or(false, |(_, x)| x.challenge_pending)
+                .is_some_and(|(_, x)| x.challenge_pending)
             || !self.path_responses.is_empty()
             || self
                 .datagrams
                 .outgoing
                 .front()
-                .map_or(false, |x| x.size(true) <= max_size)
+                .is_some_and(|x| x.size(true) <= max_size)
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned

@@ -1,4 +1,4 @@
-#[cfg(not(any(apple, target_os = "openbsd", target_os = "solaris")))]
+#[cfg(not(any(apple, target_os = "openbsd", solarish)))]
 use std::ptr;
 use std::{
     io::{self, IoSliceMut},
@@ -15,8 +15,7 @@ use std::{
 use socket2::SockRef;
 
 use super::{
-    cmsg, log::debug, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef,
-    IO_ERROR_LOG_INTERVAL,
+    cmsg, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
 };
 
 // Adapted from https://github.com/apple-oss-distributions/xnu/blob/8d741a5de7ff4191bf97d57b9f54c2f6d4a15585/bsd/sys/socket_private.h
@@ -91,7 +90,7 @@ impl UdpSocketState {
             || cfg!(bsd)
             || cfg!(apple)
             || cfg!(target_os = "android")
-            || cfg!(target_os = "solaris")
+            || cfg!(solarish)
         {
             cmsg_platform_space +=
                 unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
@@ -114,12 +113,12 @@ impl UdpSocketState {
 
         // mac and ios do not support IP_RECVTOS on dual-stack sockets :(
         // older macos versions also don't have the flag and will error out if we don't ignore it
-        #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
+        #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
         if is_ipv4 || !io.only_v6()? {
             if let Err(_err) =
                 set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVTOS, OPTION_ON)
             {
-                debug!("Ignoring error setting IP_RECVTOS on socket: {_err:?}");
+                crate::log::debug!("Ignoring error setting IP_RECVTOS on socket: {_err:?}");
             }
         }
 
@@ -127,8 +126,7 @@ impl UdpSocketState {
         #[cfg(any(target_os = "linux", target_os = "android"))]
         {
             // opportunistically try to enable GRO. See gro::gro_segments().
-            #[cfg(target_os = "linux")]
-            let _ = set_socket_option(&*io, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON);
+            let _ = set_socket_option(&*io, libc::SOL_UDP, gro::UDP_GRO, OPTION_ON);
 
             // Forbid IPv4 fragmentation. Set even for IPv6 to account for IPv6 mapped IPv4 addresses.
             // Set `may_fragment` to `true` if this option is not supported on the platform.
@@ -147,7 +145,7 @@ impl UdpSocketState {
                     &*io,
                     libc::IPPROTO_IPV6,
                     libc::IPV6_MTU_DISCOVER,
-                    libc::IP_PMTUDISC_PROBE,
+                    libc::IPV6_PMTUDISC_PROBE,
                 )?;
             }
         }
@@ -163,7 +161,7 @@ impl UdpSocketState {
                 )?;
             }
         }
-        #[cfg(any(bsd, apple, target_os = "solaris"))]
+        #[cfg(any(bsd, apple, solarish))]
         // IP_RECVDSTADDR == IP_SENDSRCADDR on FreeBSD
         // macOS uses only IP_RECVDSTADDR, no IP_SENDSRCADDR on macOS (the same on Solaris)
         // macOS also supports IP_PKTINFO
@@ -318,12 +316,14 @@ fn send(
                     // Some network adapters and drivers do not support GSO. Unfortunately, Linux
                     // offers no easy way for us to detect this short of an EIO or sometimes EINVAL
                     // when we try to actually send datagrams using it.
-                    #[cfg(target_os = "linux")]
+                    #[cfg(any(target_os = "linux", target_os = "android"))]
                     if let Some(libc::EIO) | Some(libc::EINVAL) = e.raw_os_error() {
                         // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
                         // may already be in the pipeline, so we need to tolerate additional failures.
                         if state.max_gso_segments() > 1 {
-                            crate::log::error!("got transmit error, halting segmentation offload");
+                            crate::log::info!(
+                                "`libc::sendmsg` failed with {e}; halting segmentation offload"
+                            );
                             state
                                 .max_gso_segments
                                 .store(1, std::sync::atomic::Ordering::Relaxed);
@@ -383,31 +383,27 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
         hdrs[i].msg_datalen = chunk.len();
         cnt += 1;
     }
-    let n = unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) };
-    if n >= 0 {
-        return Ok(());
-    }
-    let e = io::Error::last_os_error();
-    match e.kind() {
-        io::ErrorKind::Interrupted => {
-            // Retry the transmission
-        }
-        io::ErrorKind::WouldBlock => return Err(e),
-        _ => {
-            // Other errors are ignored, since they will usually be handled
-            // by higher level retransmits and timeouts.
-            // - PermissionDenied errors have been observed due to iptable rules.
-            //   Those are not fatal errors, since the
-            //   configuration can be dynamically changed.
-            // - Destination unreachable errors have been observed for other
-            // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
-            //   these by automatically clamping the MTUD upper bound to the interface MTU.
-            if e.raw_os_error() != Some(libc::EMSGSIZE) {
-                log_sendmsg_error(&state.last_send_error, e, transmit);
+    loop {
+        let n = unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            match e.kind() {
+                io::ErrorKind::Interrupted => {
+                    // Retry the transmission
+                    continue;
+                }
+                io::ErrorKind::WouldBlock => return Err(e),
+                _ => {
+                    // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
+                    //   these by automatically clamping the MTUD upper bound to the interface MTU.
+                    if e.raw_os_error() != Some(libc::EMSGSIZE) {
+                        return Err(e);
+                    }
+                }
             }
         }
+        return Ok(());
     }
-    Ok(())
 }
 
 #[cfg(any(target_os = "openbsd", target_os = "netbsd", apple_slow))]
@@ -425,27 +421,30 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
         cfg!(apple) || cfg!(target_os = "openbsd") || cfg!(target_os = "netbsd"),
         state.sendmsg_einval(),
     );
-    let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
-    if n == -1 {
-        let e = io::Error::last_os_error();
-        match e.kind() {
-            io::ErrorKind::Interrupted => {
-                // Retry the transmission
-            }
-            io::ErrorKind::WouldBlock => return Err(e),
-            _ => {
-                // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
-                //   these by automatically clamping the MTUD upper bound to the interface MTU.
-                if e.raw_os_error() != Some(libc::EMSGSIZE) {
-                    return Err(e);
+    loop {
+        let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
+        if n == -1 {
+            let e = io::Error::last_os_error();
+            match e.kind() {
+                io::ErrorKind::Interrupted => {
+                    // Retry the transmission
+                    continue;
+                }
+                io::ErrorKind::WouldBlock => return Err(e),
+                _ => {
+                    // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
+                    //   these by automatically clamping the MTUD upper bound to the interface MTU.
+                    if e.raw_os_error() != Some(libc::EMSGSIZE) {
+                        return Err(e);
+                    }
                 }
             }
         }
+        return Ok(());
     }
-    Ok(())
 }
 
-#[cfg(not(any(apple, target_os = "openbsd", target_os = "solaris")))]
+#[cfg(not(any(apple, target_os = "openbsd", target_os = "netbsd", solarish)))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut names = [MaybeUninit::<libc::sockaddr_storage>::uninit(); BATCH_SIZE];
     let mut ctrls = [cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit()); BATCH_SIZE];
@@ -512,12 +511,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     Ok(msg_count as usize)
 }
 
-#[cfg(any(
-    target_os = "openbsd",
-    target_os = "netbsd",
-    target_os = "solaris",
-    apple_slow
-))]
+#[cfg(any(target_os = "openbsd", target_os = "netbsd", solarish, apple_slow))]
 fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> io::Result<usize> {
     let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
     let mut ctrl = cmsg::Aligned(MaybeUninit::<[u8; CMSG_LEN]>::uninit());
@@ -587,7 +581,12 @@ fn prepare_msg(
         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
     }
 
-    if let Some(segment_size) = transmit.segment_size {
+    // Only set the segment size if it is different from the size of the contents.
+    // Some network drivers don't like being told to do GSO even if there is effectively only a single segment.
+    if let Some(segment_size) = transmit
+        .segment_size
+        .filter(|segment_size| *segment_size != transmit.contents.len())
+    {
         gso::set_segment_size(&mut encoder, segment_size as u16);
     }
 
@@ -605,7 +604,7 @@ fn prepare_msg(
                     };
                     encoder.push(libc::IPPROTO_IP, libc::IP_PKTINFO, pktinfo);
                 }
-                #[cfg(any(bsd, apple, target_os = "solaris"))]
+                #[cfg(any(bsd, apple, solarish))]
                 {
                     if encode_src_ip {
                         let addr = libc::in_addr {
@@ -682,7 +681,7 @@ fn decode_recv(
                 ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
             },
             // FreeBSD uses IP_RECVTOS here, and we can be liberal because cmsgs are opt-in.
-            #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
+            #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
             (libc::IPPROTO_IP, libc::IP_RECVTOS) => unsafe {
                 ecn_bits = cmsg::decode::<u8, libc::cmsghdr>(cmsg);
             },
@@ -714,8 +713,8 @@ fn decode_recv(
                 let pktinfo = unsafe { cmsg::decode::<libc::in6_pktinfo, libc::cmsghdr>(cmsg) };
                 dst_ip = Some(IpAddr::V6(Ipv6Addr::from(pktinfo.ipi6_addr.s6_addr)));
             }
-            #[cfg(target_os = "linux")]
-            (libc::SOL_UDP, libc::UDP_GRO) => unsafe {
+            #[cfg(any(target_os = "linux", target_os = "android"))]
+            (libc::SOL_UDP, gro::UDP_GRO) => unsafe {
                 stride = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as usize;
             },
             _ => {}
@@ -762,9 +761,15 @@ pub(crate) const BATCH_SIZE: usize = 32;
 #[cfg(apple_slow)]
 pub(crate) const BATCH_SIZE: usize = 1;
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod gso {
     use super::*;
+
+    #[cfg(not(target_os = "android"))]
+    const UDP_SEGMENT: libc::c_int = libc::UDP_SEGMENT;
+    #[cfg(target_os = "android")]
+    // TODO: Add this to libc
+    const UDP_SEGMENT: libc::c_int = 103;
 
     /// Checks whether GSO support is available by setting the UDP_SEGMENT
     /// option on a socket
@@ -780,26 +785,39 @@ mod gso {
 
         // As defined in linux/udp.h
         // #define UDP_MAX_SEGMENTS        (1 << 6UL)
-        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_SEGMENT, GSO_SIZE) {
+        match set_socket_option(&socket, libc::SOL_UDP, UDP_SEGMENT, GSO_SIZE) {
             Ok(()) => 64,
-            Err(_) => 1,
+            Err(_e) => {
+                crate::log::debug!(
+                    "failed to set `UDP_SEGMENT` socket option ({_e}); setting `max_gso_segments = 1`"
+                );
+
+                1
+            }
         }
     }
 
     pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
-        encoder.push(libc::SOL_UDP, libc::UDP_SEGMENT, segment_size);
+        encoder.push(libc::SOL_UDP, UDP_SEGMENT, segment_size);
     }
 }
 
 // On Apple platforms using the `sendmsg_x` call, UDP datagram segmentation is not
 // offloaded to the NIC or even the kernel, but instead done here in user space in
 // [`send`]) and then passed to the OS as individual `iovec`s (up to `BATCH_SIZE`).
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 mod gso {
     use super::*;
 
     pub(super) fn max_gso_segments() -> usize {
-        BATCH_SIZE
+        #[cfg(apple_fast)]
+        {
+            BATCH_SIZE
+        }
+        #[cfg(not(apple_fast))]
+        {
+            1
+        }
     }
 
     pub(super) fn set_segment_size(
@@ -810,9 +828,15 @@ mod gso {
     }
 }
 
-#[cfg(target_os = "linux")]
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod gro {
     use super::*;
+
+    #[cfg(not(target_os = "android"))]
+    pub(crate) const UDP_GRO: libc::c_int = libc::UDP_GRO;
+    #[cfg(target_os = "android")]
+    // TODO: Add this to libc
+    pub(crate) const UDP_GRO: libc::c_int = 104;
 
     pub(crate) fn gro_segments() -> usize {
         let socket = match std::net::UdpSocket::bind("[::]:0")
@@ -829,7 +853,7 @@ mod gro {
         // (get_max_udp_payload_size() * gro_segments()) is large enough to hold the largest GRO
         // list the kernel might potentially produce. See
         // https://github.com/quinn-rs/quinn/pull/1354.
-        match set_socket_option(&socket, libc::SOL_UDP, libc::UDP_GRO, OPTION_ON) {
+        match set_socket_option(&socket, libc::SOL_UDP, UDP_GRO, OPTION_ON) {
             Ok(()) => 64,
             Err(_) => 1,
         }
@@ -877,7 +901,7 @@ fn set_socket_option(
 
 const OPTION_ON: libc::c_int = 1;
 
-#[cfg(not(target_os = "linux"))]
+#[cfg(not(any(target_os = "linux", target_os = "android")))]
 mod gro {
     pub(super) fn gro_segments() -> usize {
         1

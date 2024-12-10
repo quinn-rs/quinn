@@ -417,7 +417,7 @@ impl BlackHoleDetector {
         let end_last_burst = self
             .current_loss_burst
             .as_ref()
-            .map_or(false, |current| pn - current.latest_non_probe != 1);
+            .is_some_and(|current| pn - current.latest_non_probe != 1);
 
         if end_last_burst {
             self.finish_loss_burst();

@@ -1,6 +1,6 @@
 [package]
 name = "quinn-udp"
-version = "0.5.7"
+version = "0.5.8"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -9,9 +9,6 @@ description = "UDP sockets with ECN information for the QUIC transport protocol"
 keywords.workspace = true
 categories.workspace = true
 workspace = ".."
-
-[package.metadata.docs.rs]
-all-features = true
 
 [features]
 default = ["tracing", "log", "net"]
@@ -50,3 +47,6 @@ bench = false
 [[bench]]
 name = "throughput"
 harness = false
+
+[package.metadata.docs.rs]
+all-features = true

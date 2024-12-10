@@ -24,7 +24,7 @@ The project was founded by [Dirkjan Ochtman](https://github.com/djc) and
   [rustls][rustls] and [*ring*][ring]
 - Application-layer datagrams for small, unreliable messages
 - Future-based async API
-- Minimum supported Rust version of 1.66
+- Minimum supported Rust version of 1.71
 
 ## Overview
 

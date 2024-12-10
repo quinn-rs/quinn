@@ -31,8 +31,8 @@ use crate::{
     },
     token::TokenDecodeError,
     transport_parameters::{PreferredAddress, TransportParameters},
-    Instant, ResetToken, RetryToken, Side, SystemTime, Transmit, TransportConfig, TransportError,
-    INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    Duration, Instant, ResetToken, RetryToken, Side, SystemTime, Transmit, TransportConfig,
+    TransportError, INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -215,11 +215,11 @@ impl Endpoint {
                     if incoming_buffer
                         .total_bytes
                         .checked_add(datagram_len as u64)
-                        .map_or(false, |n| n <= config.incoming_buffer_size)
+                        .is_some_and(|n| n <= config.incoming_buffer_size)
                         && self
                             .all_incoming_buffers_total_bytes
                             .checked_add(datagram_len as u64)
-                            .map_or(false, |n| n <= config.incoming_buffer_size_total)
+                            .is_some_and(|n| n <= config.incoming_buffer_size_total)
                     {
                         incoming_buffer.datagrams.push(event);
                         incoming_buffer.total_bytes += datagram_len as u64;
@@ -284,7 +284,7 @@ impl Endpoint {
 
             return match first_decode.finish(Some(&*crypto.header.remote)) {
                 Ok(packet) => {
-                    self.handle_first_packet(addresses, ecn, packet, remaining, crypto, buf)
+                    self.handle_first_packet(addresses, ecn, packet, remaining, crypto, buf, now)
                 }
                 Err(e) => {
                     trace!("unable to decode initial packet: {}", e);
@@ -334,7 +334,7 @@ impl Endpoint {
     ) -> Option<Transmit> {
         if self
             .last_stateless_reset
-            .map_or(false, |last| last + self.config.min_reset_interval > now)
+            .is_some_and(|last| last + self.config.min_reset_interval > now)
         {
             debug!("ignoring unexpected packet within minimum stateless reset interval");
             return None;
@@ -411,6 +411,7 @@ impl Endpoint {
             self.local_cid_generator.as_ref(),
             loc_cid,
             None,
+            &mut self.rng,
         );
         let tls = config
             .crypto
@@ -482,6 +483,7 @@ impl Endpoint {
         rest: Option<BytesMut>,
         crypto: Keys,
         buf: &mut Vec<u8>,
+        now: Instant,
     ) -> Option<DatagramEvent> {
         if !packet.reserved_bits_valid() {
             debug!("dropping connection attempt with invalid reserved bits");
@@ -533,6 +535,7 @@ impl Endpoint {
             .insert_initial_incoming(header.dst_cid, incoming_idx);
 
         Some(DatagramEvent::NewConnection(Incoming {
+            received_at: now,
             addresses,
             ecn,
             packet: InitialPacket {
@@ -569,6 +572,23 @@ impl Endpoint {
             version,
             ..
         } = incoming.packet.header;
+        let server_config =
+            server_config.unwrap_or_else(|| self.server_config.as_ref().unwrap().clone());
+
+        if server_config
+            .transport
+            .max_idle_timeout
+            .is_some_and(|timeout| {
+                incoming.received_at + Duration::from_millis(timeout.into()) <= now
+            })
+        {
+            debug!("abandoning accept of stale initial");
+            self.index.remove_initial(dst_cid);
+            return Err(AcceptError {
+                cause: ConnectionError::TimedOut,
+                response: None,
+            });
+        }
 
         if self.cids_exhausted() {
             debug!("refusing connection");
@@ -585,9 +605,6 @@ impl Endpoint {
                 )),
             });
         }
-
-        let server_config =
-            server_config.unwrap_or_else(|| self.server_config.as_ref().unwrap().clone());
 
         if incoming
             .crypto
@@ -616,6 +633,7 @@ impl Endpoint {
             self.local_cid_generator.as_ref(),
             loc_cid,
             Some(&server_config),
+            &mut self.rng,
         );
         params.stateless_reset_token = Some(ResetToken::new(&*self.config.reset_key, &loc_cid));
         params.original_dst_cid = Some(incoming.orig_dst_cid);
@@ -644,7 +662,7 @@ impl Endpoint {
             src_cid,
             pref_addr_cid,
             incoming.addresses,
-            now,
+            incoming.received_at,
             tls,
             Some(server_config),
             transport_config,
@@ -653,7 +671,7 @@ impl Endpoint {
         self.index.insert_initial(dst_cid, ch);
 
         match conn.handle_first_packet(
-            now,
+            incoming.received_at,
             incoming.addresses.remote,
             incoming.ecn,
             packet_number,
@@ -1178,6 +1196,7 @@ pub enum DatagramEvent {
 
 /// An incoming connection for which the server has not yet begun its part of the handshake.
 pub struct Incoming {
+    received_at: Instant,
     addresses: FourTuple,
     ecn: Option<EcnCodepoint>,
     packet: InitialPacket,

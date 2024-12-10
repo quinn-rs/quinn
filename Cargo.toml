@@ -4,7 +4,7 @@ default-members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf"]
 resolver = "2"
 
 [workspace.package]
-rust-version = "1.70.0"
+rust-version = "1.71"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
@@ -53,7 +53,7 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
 url = "2"
 wasm-bindgen-test = { version = "0.3.45" }
 web-time = "1"
-windows-sys = { version = ">=0.52, <=0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
+windows-sys = { version = ">=0.52, <=0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock", "Win32_System_SystemInformation", "Win32_System_Threading"] }
 
 [profile.bench]
 debug = true

@@ -385,6 +385,10 @@ async fn zero_rtt() {
 }
 
 #[test]
+#[cfg_attr(
+    any(target_os = "solaris", target_os = "illumos"),
+    ignore = "Fails on Solaris and Illumos"
+)]
 fn echo_v6() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
@@ -397,6 +401,7 @@ fn echo_v6() {
 }
 
 #[test]
+#[cfg_attr(target_os = "solaris", ignore = "Sometimes hangs in poll() on Solaris")]
 fn echo_v4() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
@@ -409,6 +414,7 @@ fn echo_v4() {
 }
 
 #[test]
+#[cfg_attr(target_os = "solaris", ignore = "Hangs in poll() on Solaris")]
 fn echo_dualstack() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V6(Ipv6Addr::UNSPECIFIED), 0),
@@ -421,6 +427,7 @@ fn echo_dualstack() {
 }
 
 #[test]
+#[cfg_attr(target_os = "solaris", ignore = "Hangs in poll() on Solaris")]
 fn stress_receive_window() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),
@@ -433,6 +440,7 @@ fn stress_receive_window() {
 }
 
 #[test]
+#[cfg_attr(target_os = "solaris", ignore = "Hangs in poll() on Solaris")]
 fn stress_stream_receive_window() {
     // Note that there is no point in running this with too many streams,
     // since the window is only active within a stream.
@@ -447,6 +455,7 @@ fn stress_stream_receive_window() {
 }
 
 #[test]
+#[cfg_attr(target_os = "solaris", ignore = "Hangs in poll() on Solaris")]
 fn stress_both_windows() {
     run_echo(EchoArgs {
         client_addr: SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0),

@@ -121,9 +121,7 @@ impl AckFrequencyState {
     ) -> Result<bool, TransportError> {
         if self
             .last_ack_frequency_frame
-            .map_or(false, |highest_sequence_nr| {
-                frame.sequence.into_inner() <= highest_sequence_nr
-            })
+            .is_some_and(|highest_sequence_nr| frame.sequence.into_inner() <= highest_sequence_nr)
         {
             return Ok(false);
         }

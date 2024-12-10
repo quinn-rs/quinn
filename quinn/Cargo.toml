@@ -1,6 +1,6 @@
 [package]
 name = "quinn"
-version = "0.11.5"
+version = "0.11.7"
 license.workspace = true
 repository.workspace = true
 description = "Versatile QUIC transport protocol implementation"
@@ -10,9 +10,6 @@ categories.workspace = true
 workspace = ".."
 edition.workspace = true
 rust-version.workspace = true
-
-[package.metadata.docs.rs]
-all-features = true
 
 [features]
 default = ["log", "platform-verifier", "net", "runtime-tokio", "rustls-ring"]
@@ -103,3 +100,7 @@ required-features = ["rustls-ring"]
 name = "bench"
 harness = false
 required-features = ["rustls-ring"]
+
+[package.metadata.docs.rs]
+# all non-default features except fips (cannot build on docs.rs environment)
+features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-async-std", "runtime-smol", "log", "rustls-log"]

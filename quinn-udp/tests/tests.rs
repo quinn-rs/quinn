@@ -1,4 +1,4 @@
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::{
     io::IoSliceMut,
@@ -51,7 +51,7 @@ fn ecn_v6() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 fn ecn_v4() {
     let send = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
     let recv = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
@@ -71,7 +71,7 @@ fn ecn_v4() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 fn ecn_v6_dualstack() {
     let recv = socket2::Socket::new(
         socket2::Domain::IPV6,
@@ -117,7 +117,7 @@ fn ecn_v6_dualstack() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 fn ecn_v4_mapped_v6() {
     let send = socket2::Socket::new(
         socket2::Domain::IPV6,
@@ -156,7 +156,10 @@ fn ecn_v4_mapped_v6() {
 }
 
 #[test]
-#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), ignore)]
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "windows", target_os = "android")),
+    ignore
+)]
 fn gso() {
     let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
         .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
@@ -190,7 +193,7 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
     // Reverse non-blocking flag set by `UdpSocketState` to make the test non-racy
     recv.set_nonblocking(false).unwrap();
 
-    send_state.send(send.into(), &transmit).unwrap();
+    send_state.try_send(send.into(), &transmit).unwrap();
 
     let mut buf = [0; u16::MAX as usize];
     let mut meta = RecvMeta::default();
