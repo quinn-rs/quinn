@@ -27,7 +27,6 @@ use std::{
 };
 
 mod cid_queue;
-#[doc(hidden)]
 pub mod coding;
 mod constant_time;
 mod range_set;
