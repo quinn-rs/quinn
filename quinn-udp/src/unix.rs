@@ -330,10 +330,20 @@ fn send(
                         }
                     }
 
-                    if e.raw_os_error() == Some(libc::EINVAL) {
-                        // Some arguments to `sendmsg` are not supported.
-                        // Switch to fallback mode.
+                    // Some arguments to `sendmsg` are not supported. Switch to
+                    // fallback mode and retry if we haven't already.
+                    if e.raw_os_error() == Some(libc::EINVAL) && !state.sendmsg_einval() {
                         state.set_sendmsg_einval();
+                        prepare_msg(
+                            transmit,
+                            &dst_addr,
+                            &mut msg_hdr,
+                            &mut iovec,
+                            &mut cmsgs,
+                            encode_src_ip,
+                            state.sendmsg_einval(),
+                        );
+                        continue;
                     }
 
                     // - EMSGSIZE is expected for MTU probes. Future work might be able to avoid
