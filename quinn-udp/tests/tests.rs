@@ -225,9 +225,12 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         );
         let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
         let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
-        let src = meta.addr.ip();
-        let dst = meta.dst_ip.unwrap();
-        for addr in [src, dst] {
+        let mut addresses = vec![meta.addr.ip()];
+        // Not populated on every OS. See `RecvMeta::dst_ip` for details.
+        if let Some(addr) = meta.dst_ip {
+            addresses.push(addr);
+        }
+        for addr in addresses {
             match (send_v6, recv_v6) {
                 (_, false) => assert_eq!(addr, Ipv4Addr::LOCALHOST),
                 // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
@@ -240,7 +243,23 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
                 ),
             }
         }
-        assert_eq!(meta.ecn, transmit.ecn);
+
+        if match transmit.destination.ip() {
+            IpAddr::V4(_) => true,
+            IpAddr::V6(a) => a.to_ipv4_mapped().is_some(),
+        } && cfg!(target_os = "android")
+            && std::env::var("API_LEVEL")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .expect("API_LEVEL environment variable to be set on Android")
+                <= 25
+        {
+            // On Android API level <= 25 the IPv4 `IP_TOS` control message is
+            // not supported and thus ECN bits can not be received.
+            assert_eq!(meta.ecn, None);
+        } else {
+            assert_eq!(meta.ecn, transmit.ecn);
+        }
     }
     assert_eq!(datagrams, expected_datagrams);
 }

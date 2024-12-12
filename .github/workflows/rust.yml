@@ -222,17 +222,19 @@ jobs:
 
     strategy:
       matrix:
-        include:
+        target: [x86_64-linux-android, i686-linux-android]
+        emulator-arch: [x86_64, x86]
+        api-level: [26, 25]
+        exclude:
           - target: x86_64-linux-android
-            emulator-arch: x86_64
-            # Note that x86_64 image is only available for API 21+. See
-            # https://github.com/ReactiveCircus/android-emulator-runner?tab=readme-ov-file#configurations.
-            api-level: 26
-          - target: i686-linux-android
             emulator-arch: x86
-            api-level: 26
+          - target: i686-linux-android
+            emulator-arch: x86_64
 
     steps:
+    - name: Set API level environment variable
+      run: echo "API_LEVEL=${{ matrix.api-level }}" >> $GITHUB_ENV
+
     - name: Checkout code
       uses: actions/checkout@v4
 
