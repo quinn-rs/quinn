@@ -244,18 +244,21 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
             }
         }
 
-        if match transmit.destination.ip() {
+        let ipv4_or_ipv4_mapped_ipv6 = match transmit.destination.ip() {
             IpAddr::V4(_) => true,
             IpAddr::V6(a) => a.to_ipv4_mapped().is_some(),
-        } && cfg!(target_os = "android")
+        };
+
+        // On Android API level <= 25 the IPv4 `IP_TOS` control message is
+        // not supported and thus ECN bits can not be received.
+        if ipv4_or_ipv4_mapped_ipv6
+            && cfg!(target_os = "android")
             && std::env::var("API_LEVEL")
                 .ok()
                 .and_then(|v| v.parse::<u32>().ok())
                 .expect("API_LEVEL environment variable to be set on Android")
                 <= 25
         {
-            // On Android API level <= 25 the IPv4 `IP_TOS` control message is
-            // not supported and thus ECN bits can not be received.
             assert_eq!(meta.ecn, None);
         } else {
             assert_eq!(meta.ecn, transmit.ecn);
