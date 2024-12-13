@@ -341,8 +341,6 @@ fn send(
                     if e.raw_os_error() != Some(libc::EMSGSIZE) {
                         return Err(e);
                     }
-
-                    return Ok(());
                 }
             }
         }
