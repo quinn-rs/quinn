@@ -29,11 +29,9 @@ impl Incoming {
         state.endpoint.accept(state.inner, None)
     }
 
-    /// Accept this incoming connection using a custom configuration.
+    /// Accept this incoming connection using a custom configuration
     ///
-    /// See [`accept()`] for more details.
-    ///
-    /// [`accept()`]: Incoming::accept
+    /// See [`accept()`][Incoming::accept] for more details.
     pub fn accept_with(
         mut self,
         server_config: Arc<ServerConfig>,
@@ -50,7 +48,7 @@ impl Incoming {
 
     /// Respond with a retry packet, requiring the client to retry with address validation
     ///
-    /// Errors if `remote_address_validated()` is true.
+    /// Errors if `may_retry()` is false.
     pub fn retry(mut self) -> Result<(), RetryError> {
         let state = self.0.take().unwrap();
         state.endpoint.retry(state.inner).map_err(|e| {
@@ -67,8 +65,7 @@ impl Incoming {
         state.endpoint.ignore(state.inner);
     }
 
-    /// The local IP address which was used when the peer established
-    /// the connection
+    /// The local IP address which was used when the peer established the connection
     pub fn local_ip(&self) -> Option<IpAddr> {
         self.0.as_ref().unwrap().inner.local_ip()
     }
@@ -82,8 +79,19 @@ impl Incoming {
     ///
     /// This means that the sender of the initial packet has proved that they can receive traffic
     /// sent to `self.remote_address()`.
+    ///
+    /// If `self.remote_address_validated()` is false, `self.may_retry()` is guaranteed to be true.
+    /// The inverse is not guaranteed.
     pub fn remote_address_validated(&self) -> bool {
         self.0.as_ref().unwrap().inner.remote_address_validated()
+    }
+
+    /// Whether it is legal to respond with a retry packet
+    ///
+    /// If `self.remote_address_validated()` is false, `self.may_retry()` is guaranteed to be true.
+    /// The inverse is not guaranteed.
+    pub fn may_retry(&self) -> bool {
+        self.0.as_ref().unwrap().inner.may_retry()
     }
 
     /// The original destination CID when initiating the connection
@@ -107,8 +115,7 @@ struct State {
     endpoint: EndpointRef,
 }
 
-/// Error for attempting to retry an [`Incoming`] which already bears an address
-/// validation token from a previous retry
+/// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
 #[derive(Debug, Error)]
 #[error("retry() with validated Incoming")]
 pub struct RetryError(Incoming);

@@ -2,6 +2,7 @@ use std::{
     cmp,
     collections::{BTreeMap, VecDeque},
     mem,
+    net::SocketAddr,
     ops::{Bound, Index, IndexMut},
 };
 
@@ -309,6 +310,13 @@ pub struct Retransmits {
     pub(super) retire_cids: Vec<u64>,
     pub(super) ack_frequency: bool,
     pub(super) handshake_done: bool,
+    /// Two notable things about `new_tokens`:
+    ///
+    /// - NEW_TOKEN frames from an old path are not retransmitted on a new path
+    /// - If a token is lost, a new randomly generated token is re-transmitted rather than the
+    ///   original. This is so that if both transmissions end up being received, the client won't
+    ///   risk sending the same token twice.
+    pub(super) new_tokens: Vec<SocketAddr>,
 }
 
 impl Retransmits {
@@ -326,6 +334,7 @@ impl Retransmits {
             && self.retire_cids.is_empty()
             && !self.ack_frequency
             && !self.handshake_done
+            && self.new_tokens.is_empty()
     }
 }
 
@@ -347,6 +356,7 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.retire_cids.extend(rhs.retire_cids);
         self.ack_frequency |= rhs.ack_frequency;
         self.handshake_done |= rhs.handshake_done;
+        self.new_tokens.extend_from_slice(&rhs.new_tokens);
     }
 }
 

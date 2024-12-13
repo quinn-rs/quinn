@@ -2,7 +2,7 @@ use std::{
     convert::TryInto,
     mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use assert_matches::assert_matches;
@@ -186,11 +186,208 @@ fn draft_version_compat() {
 fn stateless_retry() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
+    pair.server.handle_incoming = Box::new(validate_incoming);
     let (client_ch, _server_ch) = pair.connect();
     pair.client
         .connections
         .get_mut(&client_ch)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
+#[cfg(feature = "fastbloom")]
+#[test]
+fn use_token() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let client_config = client_config();
+    let (client_ch, _server_ch) = pair.connect_with(client_config.clone());
+    pair.client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+
+    pair.server.handle_incoming = Box::new(|incoming| {
+        assert!(incoming.remote_address_validated());
+        assert!(incoming.may_retry());
+        IncomingConnectionBehavior::Accept
+    });
+    let (client_ch_2, _server_ch_2) = pair.connect_with(client_config);
+    pair.client
+        .connections
+        .get_mut(&client_ch_2)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
+#[cfg(feature = "fastbloom")]
+#[test]
+fn retry_then_use_token() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let client_config = client_config();
+    pair.server.handle_incoming = Box::new(validate_incoming);
+    let (client_ch, _server_ch) = pair.connect_with(client_config.clone());
+    pair.client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+
+    pair.server.handle_incoming = Box::new(|incoming| {
+        assert!(incoming.remote_address_validated());
+        assert!(incoming.may_retry());
+        IncomingConnectionBehavior::Accept
+    });
+    let (client_ch_2, _server_ch_2) = pair.connect_with(client_config);
+    pair.client
+        .connections
+        .get_mut(&client_ch_2)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
+#[cfg(feature = "fastbloom")]
+#[test]
+fn use_token_then_retry() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let client_config = client_config();
+    let (client_ch, _server_ch) = pair.connect_with(client_config.clone());
+    pair.client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+
+    pair.server.handle_incoming = Box::new({
+        let mut i = 0;
+        move |incoming| {
+            if i == 0 {
+                assert!(incoming.remote_address_validated());
+                assert!(incoming.may_retry());
+                i += 1;
+                IncomingConnectionBehavior::Retry
+            } else if i == 1 {
+                assert!(incoming.remote_address_validated());
+                assert!(!incoming.may_retry());
+                i += 1;
+                IncomingConnectionBehavior::Accept
+            } else {
+                panic!("too many handle_incoming iterations")
+            }
+        }
+    });
+    let (client_ch_2, _server_ch_2) = pair.connect_with(client_config);
+    pair.client
+        .connections
+        .get_mut(&client_ch_2)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+}
+
+#[cfg(feature = "fastbloom")]
+#[test]
+fn use_same_token_twice() {
+    #[derive(Default)]
+    struct EvilTokenStore(Mutex<Bytes>);
+
+    impl TokenStore for EvilTokenStore {
+        fn insert(&self, _server_name: &str, token: Bytes) {
+            let mut lock = self.0.lock().unwrap();
+            if lock.is_empty() {
+                *lock = token;
+            }
+        }
+
+        fn take(&self, _server_name: &str) -> Option<Bytes> {
+            let lock = self.0.lock().unwrap();
+            if lock.is_empty() {
+                None
+            } else {
+                Some(lock.clone())
+            }
+        }
+    }
+
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let mut client_config = client_config();
+    client_config.token_store(Some(Arc::new(EvilTokenStore::default())));
+    let (client_ch, _server_ch) = pair.connect_with(client_config.clone());
+    pair.client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+
+    pair.server.handle_incoming = Box::new(|incoming| {
+        assert!(incoming.remote_address_validated());
+        assert!(incoming.may_retry());
+        IncomingConnectionBehavior::Accept
+    });
+    let (client_ch_2, _server_ch_2) = pair.connect_with(client_config.clone());
+    pair.client
+        .connections
+        .get_mut(&client_ch_2)
+        .unwrap()
+        .close(pair.time, VarInt(42), Bytes::new());
+    pair.drive();
+    assert_eq!(pair.client.known_connections(), 0);
+    assert_eq!(pair.client.known_cids(), 0);
+    assert_eq!(pair.server.known_connections(), 0);
+    assert_eq!(pair.server.known_cids(), 0);
+
+    pair.server.handle_incoming = Box::new(|incoming| {
+        assert!(!incoming.remote_address_validated());
+        assert!(incoming.may_retry());
+        IncomingConnectionBehavior::Accept
+    });
+    let (client_ch_3, _server_ch_3) = pair.connect_with(client_config);
+    pair.client
+        .connections
+        .get_mut(&client_ch_3)
         .unwrap()
         .close(pair.time, VarInt(42), Bytes::new());
     pair.drive();
@@ -554,7 +751,7 @@ fn high_latency_handshake() {
 fn zero_rtt_happypath() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
+    pair.server.handle_incoming = Box::new(validate_incoming);
     let config = client_config();
 
     // Establish normal connection
@@ -723,7 +920,7 @@ fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: 
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
     info!("resuming session");
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Wait;
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
     let client_ch = pair.begin_connect(config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
@@ -2993,7 +3190,7 @@ fn pure_sender_voluntarily_acks() {
 fn reject_manually() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::RejectAll;
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Reject);
 
     // The server should now reject incoming connections.
     let client_ch = pair.begin_connect(client_config());
@@ -3013,7 +3210,20 @@ fn reject_manually() {
 fn validate_then_reject_manually() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::ValidateThenReject;
+    pair.server.handle_incoming = Box::new({
+        let mut i = 0;
+        move |incoming| {
+            if incoming.remote_address_validated() {
+                assert_eq!(i, 1);
+                i += 1;
+                IncomingConnectionBehavior::Reject
+            } else {
+                assert_eq!(i, 0);
+                i += 1;
+                IncomingConnectionBehavior::Retry
+            }
+        }
+    });
 
     // The server should now retry and reject incoming connections.
     let client_ch = pair.begin_connect(client_config());

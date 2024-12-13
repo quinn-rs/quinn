@@ -11,14 +11,16 @@ use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
+#[cfg(feature = "fastbloom")]
+use crate::bloom_token_log::BloomTokenLog;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use crate::crypto::rustls::{configured_provider, QuicServerConfig};
 use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
-    Duration, RandomConnectionIdGenerator, VarInt, VarIntBoundsExceeded,
-    DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
+    Duration, RandomConnectionIdGenerator, TokenLog, TokenMemoryCache, TokenStore, VarInt,
+    VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
 };
 
 mod transport;
@@ -159,13 +161,13 @@ impl EndpointConfig {
 impl fmt::Debug for EndpointConfig {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
         fmt.debug_struct("EndpointConfig")
-            .field("reset_key", &"[ elided ]")
+            // reset_key not debug
             .field("max_udp_payload_size", &self.max_udp_payload_size)
-            .field("cid_generator_factory", &"[ elided ]")
+            // cid_generator_factory not debug
             .field("supported_versions", &self.supported_versions)
             .field("grease_quic_bit", &self.grease_quic_bit)
             .field("rng_seed", &self.rng_seed)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -193,7 +195,7 @@ pub struct ServerConfig {
     /// Transport configuration to use for incoming connections
     pub transport: Arc<TransportConfig>,
 
-    /// TLS configuration used for incoming connections.
+    /// TLS configuration used for incoming connections
     ///
     /// Must be set to use TLS 1.3 only.
     pub crypto: Arc<dyn crypto::ServerConfig>,
@@ -201,7 +203,7 @@ pub struct ServerConfig {
     /// Used to generate one-time AEAD keys to protect handshake tokens
     pub(crate) token_key: Arc<dyn HandshakeTokenKey>,
 
-    /// Microseconds after a stateless retry token was issued for which it's considered valid.
+    /// Duration after a retry token was issued for which it's considered valid
     pub(crate) retry_token_lifetime: Duration,
 
     /// Whether to allow clients to migrate to new addresses
@@ -209,6 +211,16 @@ pub struct ServerConfig {
     /// Improves behavior for clients that move between different internet connections or suffer NAT
     /// rebinding. Enabled by default.
     pub(crate) migration: bool,
+
+    /// Duration after an address validation token was issued for which it's considered valid
+    pub(crate) validation_token_lifetime: Duration,
+
+    /// Responsible for limiting clients' ability to reuse tokens from NEW_TOKEN frames
+    pub(crate) validation_token_log: Option<Arc<dyn TokenLog>>,
+
+    /// Number of address validation tokens sent to a client via NEW_TOKEN frames when its path is
+    /// validated
+    pub(crate) validation_tokens_sent: u32,
 
     pub(crate) preferred_address_v4: Option<SocketAddrV4>,
     pub(crate) preferred_address_v6: Option<SocketAddrV6>,
@@ -224,6 +236,10 @@ impl ServerConfig {
         crypto: Arc<dyn crypto::ServerConfig>,
         token_key: Arc<dyn HandshakeTokenKey>,
     ) -> Self {
+        #[cfg(feature = "fastbloom")]
+        let validation_token_log = Some(Arc::new(BloomTokenLog::default()) as _);
+        #[cfg(not(feature = "fastbloom"))]
+        let validation_token_log = None;
         Self {
             transport: Arc::new(TransportConfig::default()),
             crypto,
@@ -232,6 +248,10 @@ impl ServerConfig {
             retry_token_lifetime: Duration::from_secs(15),
 
             migration: true,
+
+            validation_token_lifetime: Duration::from_secs(2 * 7 * 24 * 60 * 60),
+            validation_token_log,
+            validation_tokens_sent: 2,
 
             preferred_address_v4: None,
             preferred_address_v6: None,
@@ -248,15 +268,49 @@ impl ServerConfig {
         self
     }
 
-    /// Private key used to authenticate data included in handshake tokens.
+    /// Private key used to authenticate data included in handshake tokens
     pub fn token_key(&mut self, value: Arc<dyn HandshakeTokenKey>) -> &mut Self {
         self.token_key = value;
         self
     }
 
-    /// Duration after a stateless retry token was issued for which it's considered valid.
+    /// Duration after a retry token was issued for which it's considered valid
+    ///
+    /// Defaults to 15 seconds.
     pub fn retry_token_lifetime(&mut self, value: Duration) -> &mut Self {
         self.retry_token_lifetime = value;
+        self
+    }
+
+    /// Duration after an address validation token was issued for which it's considered valid
+    ///
+    /// This refers only to tokens sent in NEW_TOKEN frames, in contrast to retry tokens.
+    ///
+    /// Defaults to 2 weeks.
+    pub fn validation_token_lifetime(&mut self, value: Duration) -> &mut Self {
+        self.validation_token_lifetime = value;
+        self
+    }
+
+    /// Set a custom [`TokenLog`]
+    ///
+    /// Setting this to `None` makes the server ignore all address validation tokens (that is,
+    /// tokens originating from NEW_TOKEN frames--retry tokens may still be accepted).
+    ///
+    /// Defaults to a default [`BloomTokenLog`], unless the `fastbloom` default feature is
+    /// disabled, in which case this defaults to `None`.
+    pub fn validation_token_log(&mut self, log: Option<Arc<dyn TokenLog>>) -> &mut Self {
+        self.validation_token_log = log;
+        self
+    }
+
+    /// Number of address validation tokens sent to a client when its path is validated
+    ///
+    /// This refers only to tokens sent in NEW_TOKEN frames, in contrast to retry tokens.
+    ///
+    /// Defaults to 2.
+    pub fn validation_tokens_sent(&mut self, value: u32) -> &mut Self {
+        self.validation_tokens_sent = value;
         self
     }
 
@@ -269,14 +323,16 @@ impl ServerConfig {
         self
     }
 
-    /// The preferred IPv4 address that will be communicated to clients during handshaking.
+    /// The preferred IPv4 address that will be communicated to clients during handshaking
+    ///
     /// If the client is able to reach this address, it will switch to it.
     pub fn preferred_address_v4(&mut self, address: Option<SocketAddrV4>) -> &mut Self {
         self.preferred_address_v4 = address;
         self
     }
 
-    /// The preferred IPv6 address that will be communicated to clients during handshaking.
+    /// The preferred IPv6 address that will be communicated to clients during handshaking
+    ///
     /// If the client is able to reach this address, it will switch to it.
     pub fn preferred_address_v6(&mut self, address: Option<SocketAddrV6>) -> &mut Self {
         self.preferred_address_v6 = address;
@@ -370,11 +426,14 @@ impl ServerConfig {
 
 impl fmt::Debug for ServerConfig {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_struct("ServerConfig<T>")
+        fmt.debug_struct("ServerConfig")
             .field("transport", &self.transport)
-            .field("crypto", &"ServerConfig { elided }")
-            .field("token_key", &"[ elided ]")
+            // crypto not debug
+            // token not debug
             .field("retry_token_lifetime", &self.retry_token_lifetime)
+            .field("validation_token_lifetime", &self.validation_token_lifetime)
+            // validation_token_log not debug
+            .field("validation_tokens_sent", &self.validation_tokens_sent)
             .field("migration", &self.migration)
             .field("preferred_address_v4", &self.preferred_address_v4)
             .field("preferred_address_v6", &self.preferred_address_v6)
@@ -384,7 +443,7 @@ impl fmt::Debug for ServerConfig {
                 "incoming_buffer_size_total",
                 &self.incoming_buffer_size_total,
             )
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 
@@ -400,6 +459,9 @@ pub struct ClientConfig {
     /// Cryptographic configuration to use
     pub(crate) crypto: Arc<dyn crypto::ClientConfig>,
 
+    /// Validation token store to use
+    pub(crate) token_store: Option<Arc<dyn TokenStore>>,
+
     /// Provider that populates the destination connection ID of Initial Packets
     pub(crate) initial_dst_cid_provider: Arc<dyn Fn() -> ConnectionId + Send + Sync>,
 
@@ -413,6 +475,7 @@ impl ClientConfig {
         Self {
             transport: Default::default(),
             crypto,
+            token_store: Some(Arc::new(TokenMemoryCache::<2>::default())),
             initial_dst_cid_provider: Arc::new(|| {
                 RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid()
             }),
@@ -421,7 +484,7 @@ impl ClientConfig {
     }
 
     /// Configure how to populate the destination CID of the initial packet when attempting to
-    /// establish a new connection.
+    /// establish a new connection
     ///
     /// By default, it's populated with random bytes with reasonable length, so unless you have
     /// a good reason, you do not need to change it.
@@ -439,6 +502,19 @@ impl ClientConfig {
     /// Set a custom [`TransportConfig`]
     pub fn transport_config(&mut self, transport: Arc<TransportConfig>) -> &mut Self {
         self.transport = transport;
+        self
+    }
+
+    /// Set a custom [`TokenStore`]
+    ///
+    /// Defaults to a [`TokenMemoryCache`] limited to 256 servers and 2 tokens per server. This
+    /// default is chosen to complement `rustls`'s default [`ClientSessionStore`].
+    ///
+    /// [`ClientSessionStore`]: rustls::client::ClientSessionStore
+    ///
+    /// Setting to `None` disables the use of tokens from NEW_TOKEN frames as a client.
+    pub fn token_store(&mut self, store: Option<Arc<dyn TokenStore>>) -> &mut Self {
+        self.token_store = store;
         self
     }
 
@@ -471,9 +547,10 @@ impl ClientConfig {
 
 impl fmt::Debug for ClientConfig {
     fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
-        fmt.debug_struct("ClientConfig<T>")
+        fmt.debug_struct("ClientConfig")
             .field("transport", &self.transport)
-            .field("crypto", &"ClientConfig { elided }")
+            // token_store not debug
+            // crypto not debug
             .field("version", &self.version)
             .finish_non_exhaustive()
     }
