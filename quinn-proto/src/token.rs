@@ -178,6 +178,13 @@ impl fmt::Display for ResetToken {
     }
 }
 
+/// State in an `Incoming` determined by a token or lack thereof
+#[derive(Debug)]
+pub(crate) struct IncomingToken {
+    pub(crate) retry_src_cid: Option<ConnectionId>,
+    pub(crate) orig_dst_cid: ConnectionId,
+}
+
 #[cfg(all(test, any(feature = "aws-lc-rs", feature = "ring")))]
 mod test {
     #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
