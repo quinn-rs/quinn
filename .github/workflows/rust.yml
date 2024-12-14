@@ -78,9 +78,10 @@ jobs:
             rustc --version
             echo "~~~~ Solaris-version ~~~~"
             uname -a
+          # Unlike others, don't un-ignore stress tests, because they hang on Solaris
           run: |
             export PATH=$HOME/.rust_solaris/bin:$PATH
-            cargo build --all-targets && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+            cargo build --all-targets && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
 
   test-illumos:
     name: test on illumos
