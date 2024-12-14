@@ -287,6 +287,7 @@ impl Default for Pair {
 pub(super) struct TestEndpoint {
     pub(super) endpoint: Endpoint,
     pub(super) addr: SocketAddr,
+    time_converter: TimeConverter,
     socket: Option<UdpSocket>,
     timeout: Option<Instant>,
     pub(super) outbound: VecDeque<(Transmit, Bytes)>,
@@ -324,6 +325,7 @@ impl TestEndpoint {
         Self {
             endpoint,
             addr,
+            time_converter: TimeConverter::new(),
             socket,
             timeout: None,
             outbound: VecDeque::new(),
@@ -358,10 +360,16 @@ impl TestEndpoint {
 
         while self.inbound.front().is_some_and(|x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
-            if let Some(event) = self
-                .endpoint
-                .handle(recv_time, remote, None, ecn, packet, &mut buf)
-            {
+            let recv_system_time = self.time_converter.convert(recv_time);
+            if let Some(event) = self.endpoint.handle(
+                recv_time,
+                recv_system_time,
+                remote,
+                None,
+                ecn,
+                packet,
+                &mut buf,
+            ) {
                 match event {
                     DatagramEvent::NewConnection(incoming) => {
                         match self.incoming_connection_behavior {
@@ -535,6 +543,29 @@ impl ::std::ops::Deref for TestEndpoint {
 impl ::std::ops::DerefMut for TestEndpoint {
     fn deref_mut(&mut self) -> &mut Endpoint {
         &mut self.endpoint
+    }
+}
+
+/// Conversion from `Instant` to `SystemTime` for tests
+struct TimeConverter {
+    instant_0: Instant,
+    system_time_0: SystemTime,
+}
+
+impl TimeConverter {
+    fn new() -> Self {
+        Self {
+            instant_0: Instant::now(),
+            system_time_0: SystemTime::now(),
+        }
+    }
+
+    fn convert(&self, instant: Instant) -> SystemTime {
+        if instant > self.instant_0 {
+            self.system_time_0 + (instant - self.instant_0)
+        } else {
+            self.system_time_0 - (self.instant_0 - instant)
+        }
     }
 }
 

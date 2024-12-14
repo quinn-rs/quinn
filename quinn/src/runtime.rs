@@ -6,7 +6,7 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Instant,
+    time::{Instant, SystemTime},
 };
 
 use udp::{RecvMeta, Transmit};
@@ -15,15 +15,25 @@ use udp::{RecvMeta, Transmit};
 pub trait Runtime: Send + Sync + Debug + 'static {
     /// Construct a timer that will expire at `i`
     fn new_timer(&self, i: Instant) -> Pin<Box<dyn AsyncTimer>>;
+
     /// Drive `future` to completion in the background
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
+
     /// Convert `t` into the socket type used by this runtime
     fn wrap_udp_socket(&self, t: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>>;
+
     /// Look up the current time
     ///
     /// Allows simulating the flow of time for testing.
     fn now(&self) -> Instant {
         Instant::now()
+    }
+
+    /// Look up the current [`SystemTime`]
+    ///
+    /// Allows simulating the flow of time for testing.
+    fn system_now(&self) -> SystemTime {
+        SystemTime::now()
     }
 }
 
@@ -31,6 +41,7 @@ pub trait Runtime: Send + Sync + Debug + 'static {
 pub trait AsyncTimer: Send + Debug + 'static {
     /// Update the timer to expire at `i`
     fn reset(self: Pin<&mut Self>, i: Instant);
+
     /// Check whether the timer has expired, and register to be woken if not
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<()>;
 }

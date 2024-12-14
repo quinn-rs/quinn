@@ -2,15 +2,14 @@ use std::{
     collections::VecDeque,
     fmt,
     future::Future,
-    io,
-    io::IoSliceMut,
+    io::{self, IoSliceMut},
     mem,
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
-    time::Instant,
+    time::{Instant, SystemTime},
 };
 
 #[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
@@ -365,8 +364,9 @@ impl Future for EndpointDriver {
         }
 
         let now = endpoint.runtime.now();
+        let system_now = endpoint.runtime.system_now();
         let mut keep_going = false;
-        keep_going |= endpoint.drive_recv(cx, now)?;
+        keep_going |= endpoint.drive_recv(cx, now, system_now)?;
         keep_going |= endpoint.handle_events(cx, &self.0.shared);
 
         if !endpoint.recv_state.incoming.is_empty() {
@@ -484,21 +484,36 @@ pub(crate) struct Shared {
 }
 
 impl State {
-    fn drive_recv(&mut self, cx: &mut Context, now: Instant) -> Result<bool, io::Error> {
+    fn drive_recv(
+        &mut self,
+        cx: &mut Context,
+        now: Instant,
+        system_now: SystemTime,
+    ) -> Result<bool, io::Error> {
         let get_time = || self.runtime.now();
         self.recv_state.recv_limiter.start_cycle(get_time);
         if let Some(socket) = &self.prev_socket {
             // We don't care about the `PollProgress` from old sockets.
-            let poll_res =
-                self.recv_state
-                    .poll_socket(cx, &mut self.inner, &**socket, &*self.runtime, now);
+            let poll_res = self.recv_state.poll_socket(
+                cx,
+                &mut self.inner,
+                &**socket,
+                &*self.runtime,
+                now,
+                system_now,
+            );
             if poll_res.is_err() {
                 self.prev_socket = None;
             }
         };
-        let poll_res =
-            self.recv_state
-                .poll_socket(cx, &mut self.inner, &*self.socket, &*self.runtime, now);
+        let poll_res = self.recv_state.poll_socket(
+            cx,
+            &mut self.inner,
+            &*self.socket,
+            &*self.runtime,
+            now,
+            system_now,
+        );
         self.recv_state.recv_limiter.finish_cycle(get_time);
         let poll_res = poll_res?;
         if poll_res.received_connection_packet {
@@ -767,6 +782,7 @@ impl RecvState {
         socket: &dyn AsyncUdpSocket,
         runtime: &dyn Runtime,
         now: Instant,
+        system_now: SystemTime,
     ) -> Result<PollProgress, io::Error> {
         let mut received_connection_packet = false;
         let mut metas = [RecvMeta::default(); BATCH_SIZE];
@@ -792,6 +808,7 @@ impl RecvState {
                             let mut response_buffer = Vec::new();
                             match endpoint.handle(
                                 now,
+                                system_now,
                                 meta.addr,
                                 meta.dst_ip,
                                 meta.ecn.map(proto_ecn),

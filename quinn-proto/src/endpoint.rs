@@ -140,6 +140,7 @@ impl Endpoint {
     pub fn handle(
         &mut self,
         now: Instant,
+        system_now: SystemTime,
         remote: SocketAddr,
         local_ip: Option<IpAddr>,
         ecn: Option<EcnCodepoint>,
@@ -283,9 +284,9 @@ impl Endpoint {
             }
 
             return match first_decode.finish(Some(&*crypto.header.remote)) {
-                Ok(packet) => {
-                    self.handle_first_packet(addresses, ecn, packet, remaining, crypto, buf, now)
-                }
+                Ok(packet) => self.handle_first_packet(
+                    addresses, ecn, packet, remaining, crypto, buf, now, system_now,
+                ),
                 Err(e) => {
                     trace!("unable to decode initial packet: {}", e);
                     None
@@ -484,6 +485,7 @@ impl Endpoint {
         crypto: Keys,
         buf: &mut Vec<u8>,
         now: Instant,
+        system_now: SystemTime,
     ) -> Option<DatagramEvent> {
         if !packet.reserved_bits_valid() {
             debug!("dropping connection attempt with invalid reserved bits");
@@ -505,9 +507,7 @@ impl Endpoint {
                 &header.dst_cid,
                 &header.token,
             ) {
-                Ok(token)
-                    if token.issued + server_config.retry_token_lifetime > SystemTime::now() =>
-                {
+                Ok(token) if token.issued + server_config.retry_token_lifetime > system_now => {
                     (Some(header.dst_cid), token.orig_dst_cid)
                 }
                 Err(TokenDecodeError::UnknownToken) => {
@@ -536,6 +536,7 @@ impl Endpoint {
 
         Some(DatagramEvent::NewConnection(Incoming {
             received_at: now,
+            received_at_system: system_now,
             addresses,
             ecn,
             packet: InitialPacket {
@@ -774,7 +775,7 @@ impl Endpoint {
 
         let token = RetryToken {
             orig_dst_cid: incoming.packet.header.dst_cid,
-            issued: SystemTime::now(),
+            issued: incoming.received_at_system,
         }
         .encode(
             &*server_config.token_key,
@@ -1197,6 +1198,7 @@ pub enum DatagramEvent {
 /// An incoming connection for which the server has not yet begun its part of the handshake.
 pub struct Incoming {
     received_at: Instant,
+    received_at_system: SystemTime,
     addresses: FourTuple,
     ecn: Option<EcnCodepoint>,
     packet: InitialPacket,
