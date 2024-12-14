@@ -129,7 +129,6 @@ use timer::{Timer, TimerTable};
 /// events or timeouts with different instants must not be interleaved.
 pub struct Connection {
     endpoint_config: Arc<EndpointConfig>,
-    server_config: Option<Arc<ServerConfig>>,
     config: Arc<TransportConfig>,
     rng: StdRng,
     crypto: Box<dyn crypto::Session>,
@@ -145,7 +144,7 @@ pub struct Connection {
     allow_mtud: bool,
     prev_path: Option<(ConnectionId, PathData)>,
     state: State,
-    side: Side,
+    side: ConnectionSide,
     /// Whether or not 0-RTT was enabled during the handshake. Does not imply acceptance.
     zero_rtt_enabled: bool,
     /// Set if 0-RTT is supported, then cleared when no longer needed.
@@ -191,9 +190,6 @@ pub struct Connection {
     authentication_failures: u64,
     /// Why the connection was lost, if it has been
     error: Option<ConnectionError>,
-    /// Sent in every outgoing Initial packet. Always empty for servers and after Initial keys are
-    /// discarded.
-    retry_token: Bytes,
     /// Identifies Data-space packet numbers to skip. Not used in earlier spaces.
     packet_number_filter: PacketNumberFilter,
 
@@ -258,11 +254,16 @@ impl Connection {
         rng_seed: [u8; 32],
         path_validated: bool,
     ) -> Self {
-        let side = if server_config.is_some() {
-            Side::Server
+        let connection_side = if let Some(server_config) = server_config.clone() {
+            ConnectionSide::Server { server_config }
         } else {
-            Side::Client
+            assert!(pref_addr_cid.is_none());
+            assert!(path_validated);
+            ConnectionSide::Client {
+                token: Bytes::new(),
+            }
         };
+        let side = connection_side.side();
         let initial_space = PacketSpace {
             crypto: Some(crypto.initial_keys(&init_cid, side)),
             ..PacketSpace::new(now)
@@ -275,7 +276,6 @@ impl Connection {
         let mut rng = StdRng::from_seed(rng_seed);
         let mut this = Self {
             endpoint_config,
-            server_config,
             crypto,
             handshake_cid: loc_cid,
             rem_handshake_cid: rem_cid,
@@ -289,8 +289,8 @@ impl Connection {
             allow_mtud,
             local_ip,
             prev_path: None,
-            side,
             state,
+            side: connection_side,
             zero_rtt_enabled: false,
             zero_rtt_crypto: None,
             key_phase: false,
@@ -323,7 +323,6 @@ impl Connection {
             timers: TimerTable::default(),
             authentication_failures: 0,
             error: None,
-            retry_token: Bytes::new(),
             #[cfg(test)]
             packet_number_filter: match config.deterministic_packet_numbers {
                 false => PacketNumberFilter::new(&mut rng),
@@ -420,7 +419,7 @@ impl Connection {
     /// Provide control over streams
     #[must_use]
     pub fn recv_stream(&mut self, id: StreamId) -> RecvStream<'_> {
-        assert!(id.dir() == Dir::Bi || id.initiator() != self.side);
+        assert!(id.dir() == Dir::Bi || id.initiator() != self.side.side());
         RecvStream {
             id,
             state: &mut self.streams,
@@ -431,7 +430,7 @@ impl Connection {
     /// Provide control over streams
     #[must_use]
     pub fn send_stream(&mut self, id: StreamId) -> SendStream<'_> {
-        assert!(id.dir() == Dir::Bi || id.initiator() == self.side);
+        assert!(id.dir() == Dir::Bi || id.initiator() == self.side.side());
         SendStream {
             id,
             state: &mut self.streams,
@@ -1075,9 +1074,7 @@ impl Connection {
                 // If this packet could initiate a migration and we're a client or a server that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
-                if remote != self.path.remote
-                    && self.server_config.as_ref().map_or(true, |x| !x.migration)
-                {
+                if remote != self.path.remote && !self.side.remote_may_migrate() {
                     trace!("discarding packet from unrecognized peer {}", remote);
                     return;
                 }
@@ -1297,7 +1294,7 @@ impl Connection {
 
     /// Look up whether we're the client or server of this Connection
     pub fn side(&self) -> Side {
-        self.side
+        self.side.side()
     }
 
     /// The latest socket address for this connection's peer
@@ -2101,7 +2098,9 @@ impl Connection {
         trace!("discarding {:?} keys", space_id);
         if space_id == SpaceId::Initial {
             // No longer needed
-            self.retry_token = Bytes::new();
+            if let ConnectionSide::Client { token, .. } = &mut self.side {
+                *token = Bytes::new();
+            }
         }
         let space = &mut self.spaces[space_id];
         space.crypto = None;
@@ -2398,7 +2397,7 @@ impl Connection {
 
                 self.discard_space(now, SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
                 self.spaces[SpaceId::Initial] = PacketSpace {
-                    crypto: Some(self.crypto.initial_keys(&rem_cid, self.side)),
+                    crypto: Some(self.crypto.initial_keys(&rem_cid, self.side.side())),
                     next_packet_number: self.spaces[SpaceId::Initial].next_packet_number,
                     crypto_offset: client_hello.len() as u64,
                     ..PacketSpace::new(now)
@@ -2420,7 +2419,10 @@ impl Connection {
                 self.streams.retransmit_all_for_0rtt();
 
                 let token_len = packet.payload.len() - 16;
-                self.retry_token = packet.payload.freeze().split_to(token_len);
+                let ConnectionSide::Client { ref mut token, .. } = self.side else {
+                    unreachable!("we already short-circuited if we're server");
+                };
+                *token = packet.payload.freeze().split_to(token_len);
                 self.state = State::Handshake(state::Handshake {
                     expected_token: Bytes::new(),
                     rem_cid_set: false,
@@ -2745,7 +2747,7 @@ impl Connection {
                     debug!(offset, "peer claims to be blocked at connection level");
                 }
                 Frame::StreamDataBlocked { id, offset } => {
-                    if id.initiator() == self.side && id.dir() == Dir::Uni {
+                    if id.initiator() == self.side.side() && id.dir() == Dir::Uni {
                         debug!("got STREAM_DATA_BLOCKED on send-only {}", id);
                         return Err(TransportError::STREAM_STATE_ERROR(
                             "STREAM_DATA_BLOCKED on send-only stream",
@@ -2768,7 +2770,7 @@ impl Connection {
                     );
                 }
                 Frame::StopSending(frame::StopSending { id, error_code }) => {
-                    if id.initiator() != self.side {
+                    if id.initiator() != self.side.side() {
                         if id.dir() == Dir::Uni {
                             debug!("got STOP_SENDING on recv-only {}", id);
                             return Err(TransportError::STREAM_STATE_ERROR(
@@ -2938,11 +2940,11 @@ impl Connection {
             && !is_probing_packet
             && number == self.spaces[SpaceId::Data].rx_packet
         {
+            let ConnectionSide::Server { ref server_config } = self.side else {
+                panic!("packets from unknown remote should be dropped by clients");
+            };
             debug_assert!(
-                self.server_config
-                    .as_ref()
-                    .expect("packets from unknown remote should be dropped by clients")
-                    .migration,
+                server_config.migration,
                 "migration-initiating packets should have been dropped immediately"
             );
             self.migrate(now, remote);
@@ -3615,6 +3617,41 @@ impl fmt::Debug for Connection {
         f.debug_struct("Connection")
             .field("handshake_cid", &self.handshake_cid)
             .finish()
+    }
+}
+
+/// Fields of `Connection` specific to it being client-side or server-side
+enum ConnectionSide {
+    Client {
+        /// Sent in every outgoing Initial packet. Always empty after Initial keys are discarded
+        token: Bytes,
+    },
+    Server {
+        server_config: Arc<ServerConfig>,
+    },
+}
+
+impl ConnectionSide {
+    fn side(&self) -> Side {
+        match *self {
+            Self::Client { .. } => Side::Client,
+            Self::Server { .. } => Side::Server,
+        }
+    }
+
+    fn is_client(&self) -> bool {
+        self.side().is_client()
+    }
+
+    fn is_server(&self) -> bool {
+        self.side().is_server()
+    }
+
+    fn remote_may_migrate(&self) -> bool {
+        match self {
+            Self::Server { server_config } => server_config.migration,
+            Self::Client { .. } => false,
+        }
     }
 }
 
