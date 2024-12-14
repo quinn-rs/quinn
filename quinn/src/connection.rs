@@ -172,6 +172,8 @@ impl Connecting {
     /// This will return `None` for clients, or when the platform does not expose this
     /// information. See [`quinn_udp::RecvMeta::dst_ip`](udp::RecvMeta::dst_ip) for a list of
     /// supported platforms when using [`quinn_udp`](udp) for I/O, which is the default.
+    ///
+    /// Will panic if called after `poll` has returned `Ready`.
     pub fn local_ip(&self) -> Option<IpAddr> {
         let conn = self.conn.as_ref().unwrap();
         let inner = conn.state.lock("local_ip");
@@ -179,7 +181,7 @@ impl Connecting {
         inner.inner.local_ip()
     }
 
-    /// The peer's UDP address.
+    /// The peer's UDP address
     ///
     /// Will panic if called after `poll` has returned `Ready`.
     pub fn remote_address(&self) -> SocketAddr {
