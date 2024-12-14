@@ -31,7 +31,6 @@ use proto::{
 
 /// In-progress connection attempt future
 #[derive(Debug)]
-#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct Connecting {
     conn: Option<ConnectionRef>,
     connected: oneshot::Receiver<bool>,
@@ -212,7 +211,6 @@ impl Future for Connecting {
 ///
 /// For clients, the resulting value indicates if 0-RTT was accepted. For servers, the resulting
 /// value is meaningless.
-#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 pub struct ZeroRttAccepted(oneshot::Receiver<bool>);
 
 impl Future for ZeroRttAccepted {
