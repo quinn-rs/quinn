@@ -65,8 +65,9 @@ pub use proto::{
     congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream,
     ConfigError, ConnectError, ConnectionClose, ConnectionError, ConnectionId,
     ConnectionIdGenerator, ConnectionStats, Dir, EcnCodepoint, EndpointConfig, FrameStats,
-    FrameType, IdleTimeout, MtuDiscoveryConfig, PathStats, ServerConfig, Side, StreamId, Transmit,
-    TransportConfig, TransportErrorCode, UdpStats, VarInt, VarIntBoundsExceeded, Written,
+    FrameType, IdleTimeout, MtuDiscoveryConfig, PathStats, ServerConfig, Side, StdSystemTime,
+    StreamId, TimeSource, Transmit, TransportConfig, TransportErrorCode, UdpStats, VarInt,
+    VarIntBoundsExceeded, Written,
 };
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 pub use rustls;
