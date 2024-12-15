@@ -17,7 +17,7 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
-    Duration, RandomConnectionIdGenerator, VarInt, VarIntBoundsExceeded,
+    Duration, RandomConnectionIdGenerator, SystemTime, VarInt, VarIntBoundsExceeded,
     DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
 };
 
@@ -216,6 +216,8 @@ pub struct ServerConfig {
     pub(crate) max_incoming: usize,
     pub(crate) incoming_buffer_size: u64,
     pub(crate) incoming_buffer_size_total: u64,
+
+    pub(crate) time_source: Arc<dyn TimeSource>,
 }
 
 impl ServerConfig {
@@ -239,6 +241,8 @@ impl ServerConfig {
             max_incoming: 1 << 16,
             incoming_buffer_size: 10 << 20,
             incoming_buffer_size_total: 100 << 20,
+
+            time_source: Arc::new(StdSystemTime),
         }
     }
 
@@ -334,6 +338,16 @@ impl ServerConfig {
         self.incoming_buffer_size_total = incoming_buffer_size_total;
         self
     }
+
+    /// Object to get current [`SystemTime`]
+    ///
+    /// This exists to allow system time to be mocked in tests, or wherever else desired.
+    ///
+    /// Defaults to [`StdSystemTime`], which simply calls [`SystemTime::now()`](SystemTime::now).
+    pub fn time_source(&mut self, time_source: Arc<dyn TimeSource>) -> &mut Self {
+        self.time_source = time_source;
+        self
+    }
 }
 
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
@@ -388,6 +402,7 @@ impl fmt::Debug for ServerConfig {
                 "incoming_buffer_size_total",
                 &self.incoming_buffer_size_total,
             )
+            // system_time_clock not debug
             .finish_non_exhaustive()
     }
 }
@@ -501,5 +516,24 @@ impl From<TryFromIntError> for ConfigError {
 impl From<VarIntBoundsExceeded> for ConfigError {
     fn from(_: VarIntBoundsExceeded) -> Self {
         Self::OutOfBounds
+    }
+}
+
+/// Object to get current [`SystemTime`]
+///
+/// This exists to allow system time to be mocked in tests, or wherever else desired.
+pub trait TimeSource: Send + Sync {
+    /// Get [`SystemTime::now()`](SystemTime::now) or the mocked equivalent
+    fn now(&self) -> SystemTime;
+}
+
+/// Default implementation of [`TimeSource`]
+///
+/// Implements `now` by calling [`SystemTime::now()`](SystemTime::now).
+pub struct StdSystemTime;
+
+impl TimeSource for StdSystemTime {
+    fn now(&self) -> SystemTime {
+        SystemTime::now()
     }
 }

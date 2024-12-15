@@ -31,8 +31,8 @@ use crate::{
     },
     token,
     transport_parameters::{PreferredAddress, TransportParameters},
-    Duration, Instant, ResetToken, RetryToken, Side, SystemTime, Transmit, TransportConfig,
-    TransportError, INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    Duration, Instant, ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError,
+    INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -506,7 +506,8 @@ impl Endpoint {
                 &header.token,
             ) {
                 Ok(token)
-                    if token.issued + server_config.retry_token_lifetime > SystemTime::now() =>
+                    if token.issued + server_config.retry_token_lifetime
+                        > server_config.time_source.now() =>
                 {
                     (Some(header.dst_cid), token.orig_dst_cid)
                 }
@@ -769,7 +770,7 @@ impl Endpoint {
 
         let token = RetryToken {
             orig_dst_cid: incoming.packet.header.dst_cid,
-            issued: SystemTime::now(),
+            issued: server_config.time_source.now(),
         }
         .encode(
             &*server_config.token_key,
