@@ -731,6 +731,7 @@ mod tests {
         assert!(completed(&mtud));
     }
 
+    #[cfg(debug_assertions)]
     #[test]
     #[should_panic]
     fn mtu_discovery_with_peer_max_udp_payload_size_after_search_panics() {
