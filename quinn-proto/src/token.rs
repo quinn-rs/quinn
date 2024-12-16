@@ -8,8 +8,9 @@ use bytes::{Buf, BufMut};
 use crate::{
     coding::{BufExt, BufMutExt},
     crypto::{CryptoError, HandshakeTokenKey, HmacKey},
+    packet::InitialHeader,
     shared::ConnectionId,
-    Duration, SystemTime, RESET_TOKEN_SIZE, UNIX_EPOCH,
+    Duration, ServerConfig, SystemTime, RESET_TOKEN_SIZE, UNIX_EPOCH,
 };
 
 pub(crate) struct RetryToken {
@@ -43,7 +44,7 @@ impl RetryToken {
         buf
     }
 
-    pub(crate) fn from_bytes(
+    fn from_bytes(
         key: &dyn HandshakeTokenKey,
         address: &SocketAddr,
         retry_src_cid: &ConnectionId,
@@ -69,6 +70,22 @@ impl RetryToken {
         Ok(Self {
             orig_dst_cid,
             issued,
+        })
+    }
+
+    /// Ensure that this token validates an `Incoming`, and construct its token state
+    fn validate(
+        &self,
+        header: &InitialHeader,
+        server_config: &ServerConfig,
+    ) -> Result<IncomingToken, ValidationError> {
+        if self.issued + server_config.retry_token_lifetime < server_config.time_source.now() {
+            return Err(ValidationError::InvalidRetry);
+        }
+
+        Ok(IncomingToken {
+            retry_src_cid: Some(header.dst_cid),
+            orig_dst_cid: self.orig_dst_cid,
         })
     }
 }
@@ -99,7 +116,7 @@ fn decode_addr<B: Buf>(buf: &mut B) -> Option<SocketAddr> {
 
 /// Error for a token failing to validate a client's address
 #[derive(Debug, Copy, Clone)]
-pub(crate) enum ValidationError {
+enum ValidationError {
     /// Token may have come from a NEW_TOKEN frame (including from a different server or a previous
     /// run of this server with different keys), and was not valid
     ///
@@ -184,6 +201,45 @@ pub(crate) struct IncomingToken {
     pub(crate) retry_src_cid: Option<ConnectionId>,
     pub(crate) orig_dst_cid: ConnectionId,
 }
+
+impl IncomingToken {
+    /// Construct for an `Incoming` which is not validated by a token
+    fn unvalidated(header: &InitialHeader) -> Self {
+        Self {
+            retry_src_cid: None,
+            orig_dst_cid: header.dst_cid,
+        }
+    }
+
+    /// Construct for an `Incoming` given the first packet header, or error if the connection
+    /// cannot be established
+    pub(crate) fn from_header(
+        header: &InitialHeader,
+        server_config: &ServerConfig,
+        remote_address: SocketAddr,
+    ) -> Result<Self, InvalidRetryTokenError> {
+        if header.token.is_empty() {
+            return Ok(Self::unvalidated(header));
+        }
+
+        RetryToken::from_bytes(
+            &*server_config.token_key,
+            &remote_address,
+            &header.dst_cid,
+            &header.token,
+        )
+        .and_then(|token| token.validate(header, server_config))
+        .or_else(|e| match e {
+            ValidationError::Unusable => Ok(Self::unvalidated(header)),
+            ValidationError::InvalidRetry => Err(InvalidRetryTokenError),
+        })
+    }
+}
+
+/// Error for a token being unambiguously from a Retry packet, and not valid
+///
+/// The connection cannot be established.
+pub(crate) struct InvalidRetryTokenError;
 
 #[cfg(all(test, any(feature = "aws-lc-rs", feature = "ring")))]
 mod test {

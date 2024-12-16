@@ -29,7 +29,7 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
         EndpointEvent, EndpointEventInner, IssuedCid,
     },
-    token::{self, IncomingToken},
+    token::{IncomingToken, InvalidRetryTokenError},
     transport_parameters::{PreferredAddress, TransportParameters},
     Duration, Instant, ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError,
     INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
@@ -494,33 +494,18 @@ impl Endpoint {
 
         let server_config = self.server_config.as_ref().unwrap().clone();
 
-        let (retry_src_cid, orig_dst_cid) = if header.token.is_empty() {
-            (None, header.dst_cid)
-        } else {
-            match RetryToken::from_bytes(
-                &*server_config.token_key,
-                &addresses.remote,
-                &header.dst_cid,
-                &header.token,
-            ) {
-                Ok(token)
-                    if token.issued + server_config.retry_token_lifetime
-                        > server_config.time_source.now() =>
-                {
-                    (Some(header.dst_cid), token.orig_dst_cid)
-                }
-                Err(token::ValidationError::Unusable) => (None, header.dst_cid),
-                _ => {
-                    debug!("rejecting invalid stateless retry token");
-                    return Some(DatagramEvent::Response(self.initial_close(
-                        header.version,
-                        addresses,
-                        &crypto,
-                        &header.src_cid,
-                        TransportError::INVALID_TOKEN(""),
-                        buf,
-                    )));
-                }
+        let token = match IncomingToken::from_header(&header, &server_config, addresses.remote) {
+            Ok(token) => token,
+            Err(InvalidRetryTokenError) => {
+                debug!("rejecting invalid retry token");
+                return Some(DatagramEvent::Response(self.initial_close(
+                    header.version,
+                    addresses,
+                    &crypto,
+                    &header.src_cid,
+                    TransportError::INVALID_TOKEN(""),
+                    buf,
+                )));
             }
         };
 
@@ -539,10 +524,7 @@ impl Endpoint {
             },
             rest,
             crypto,
-            token: IncomingToken {
-                retry_src_cid,
-                orig_dst_cid,
-            },
+            token,
             incoming_idx,
             improper_drop_warner: IncomingImproperDropWarner,
         }))
