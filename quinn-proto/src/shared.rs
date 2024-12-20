@@ -144,11 +144,11 @@ impl fmt::Display for ConnectionId {
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EcnCodepoint {
-    #[doc(hidden)]
+    /// The ECT(0) codepoint, indicating that an endpoint is ECN-capable
     Ect0 = 0b10,
-    #[doc(hidden)]
+    /// The ECT(1) codepoint, indicating that an endpoint is ECN-capable
     Ect1 = 0b01,
-    #[doc(hidden)]
+    /// The CE codepoint, signalling that congestion was experienced
     Ce = 0b11,
 }
 
