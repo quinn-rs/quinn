@@ -203,14 +203,6 @@ pub(crate) struct IncomingToken {
 }
 
 impl IncomingToken {
-    /// Construct for an `Incoming` which is not validated by a token
-    fn unvalidated(header: &InitialHeader) -> Self {
-        Self {
-            retry_src_cid: None,
-            orig_dst_cid: header.dst_cid,
-        }
-    }
-
     /// Construct for an `Incoming` given the first packet header, or error if the connection
     /// cannot be established
     pub(crate) fn from_header(
@@ -218,8 +210,13 @@ impl IncomingToken {
         server_config: &ServerConfig,
         remote_address: SocketAddr,
     ) -> Result<Self, InvalidRetryTokenError> {
+        let unvalidated = Self {
+            retry_src_cid: None,
+            orig_dst_cid: header.dst_cid,
+        };
+
         if header.token.is_empty() {
-            return Ok(Self::unvalidated(header));
+            return Ok(unvalidated);
         }
 
         RetryToken::from_bytes(
@@ -230,7 +227,7 @@ impl IncomingToken {
         )
         .and_then(|token| token.validate(header, server_config))
         .or_else(|e| match e {
-            ValidationError::Unusable => Ok(Self::unvalidated(header)),
+            ValidationError::Unusable => Ok(unvalidated),
             ValidationError::InvalidRetry => Err(InvalidRetryTokenError),
         })
     }
