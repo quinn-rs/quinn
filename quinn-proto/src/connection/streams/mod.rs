@@ -508,17 +508,10 @@ impl ShouldTransmit {
 }
 
 /// Error indicating that a stream has not been opened or has already been finished or reset
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Error, Clone, PartialEq, Eq)]
 #[error("closed stream")]
 pub struct ClosedStream {
     _private: (),
-}
-
-impl ClosedStream {
-    #[doc(hidden)] // For use in quinn only
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
 }
 
 impl From<ClosedStream> for io::Error {
