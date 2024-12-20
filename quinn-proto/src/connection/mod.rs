@@ -1233,7 +1233,7 @@ impl Connection {
     /// Update traffic keys spontaneously
     ///
     /// This can be useful for testing key updates, as they otherwise only happen infrequently.
-    pub fn initiate_key_update(&mut self) {
+    pub fn force_key_update(&mut self) {
         self.update_keys(None, false);
     }
 

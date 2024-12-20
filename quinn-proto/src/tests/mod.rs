@@ -1012,7 +1012,7 @@ fn key_update_simple() {
     let _ = chunks.finalize();
 
     info!("initiating key update");
-    pair.client_conn_mut(client_ch).initiate_key_update();
+    pair.client_conn_mut(client_ch).force_key_update();
 
     const MSG2: &[u8] = b"hello2";
     pair.client_send(client_ch, s).write(MSG2).unwrap();
@@ -1052,7 +1052,7 @@ fn key_update_reordered() {
     assert!(!pair.client.outbound.is_empty());
     pair.client.delay_outbound();
 
-    pair.client_conn_mut(client_ch).initiate_key_update();
+    pair.client_conn_mut(client_ch).force_key_update();
     info!("updated keys");
 
     const MSG2: &[u8] = b"two";
