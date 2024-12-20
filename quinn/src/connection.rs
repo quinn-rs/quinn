@@ -576,8 +576,9 @@ impl Connection {
         self.0.stable_id()
     }
 
-    // Update traffic keys spontaneously for testing purposes.
-    #[doc(hidden)]
+    /// Update traffic keys spontaneously
+    ///
+    /// This primarily exists for testing purposes.
     pub fn force_key_update(&self) {
         self.0
             .state
