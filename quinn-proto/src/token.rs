@@ -13,6 +13,59 @@ use crate::{
     Duration, ServerConfig, SystemTime, RESET_TOKEN_SIZE, UNIX_EPOCH,
 };
 
+/// State in an `Incoming` determined by a token or lack thereof
+#[derive(Debug)]
+pub(crate) struct IncomingToken {
+    pub(crate) retry_src_cid: Option<ConnectionId>,
+    pub(crate) orig_dst_cid: ConnectionId,
+}
+
+impl IncomingToken {
+    /// Construct for an `Incoming` given the first packet header, or error if the connection
+    /// cannot be established
+    pub(crate) fn from_header(
+        header: &InitialHeader,
+        server_config: &ServerConfig,
+        remote_address: SocketAddr,
+    ) -> Result<Self, InvalidRetryTokenError> {
+        let unvalidated = Self {
+            retry_src_cid: None,
+            orig_dst_cid: header.dst_cid,
+        };
+
+        if header.token.is_empty() {
+            return Ok(unvalidated);
+        }
+
+        let result = RetryToken::from_bytes(
+            &*server_config.token_key,
+            &remote_address,
+            &header.dst_cid,
+            &header.token,
+        );
+
+        let retry = match result {
+            Ok(retry) => retry,
+            Err(ValidationError::Unusable) => return Ok(unvalidated),
+            Err(ValidationError::InvalidRetry) => return Err(InvalidRetryTokenError),
+        };
+
+        if retry.issued + server_config.retry_token_lifetime < server_config.time_source.now() {
+            return Err(InvalidRetryTokenError);
+        }
+
+        Ok(Self {
+            retry_src_cid: Some(header.dst_cid),
+            orig_dst_cid: retry.orig_dst_cid,
+        })
+    }
+}
+
+/// Error for a token being unambiguously from a Retry packet, and not valid
+///
+/// The connection cannot be established.
+pub(crate) struct InvalidRetryTokenError;
+
 pub(crate) struct RetryToken {
     /// The destination connection ID set in the very first packet from the client
     pub(crate) orig_dst_cid: ConnectionId,
@@ -178,59 +231,6 @@ impl fmt::Display for ResetToken {
         Ok(())
     }
 }
-
-/// State in an `Incoming` determined by a token or lack thereof
-#[derive(Debug)]
-pub(crate) struct IncomingToken {
-    pub(crate) retry_src_cid: Option<ConnectionId>,
-    pub(crate) orig_dst_cid: ConnectionId,
-}
-
-impl IncomingToken {
-    /// Construct for an `Incoming` given the first packet header, or error if the connection
-    /// cannot be established
-    pub(crate) fn from_header(
-        header: &InitialHeader,
-        server_config: &ServerConfig,
-        remote_address: SocketAddr,
-    ) -> Result<Self, InvalidRetryTokenError> {
-        let unvalidated = Self {
-            retry_src_cid: None,
-            orig_dst_cid: header.dst_cid,
-        };
-
-        if header.token.is_empty() {
-            return Ok(unvalidated);
-        }
-
-        let result = RetryToken::from_bytes(
-            &*server_config.token_key,
-            &remote_address,
-            &header.dst_cid,
-            &header.token,
-        );
-
-        let retry = match result {
-            Ok(retry) => retry,
-            Err(ValidationError::Unusable) => return Ok(unvalidated),
-            Err(ValidationError::InvalidRetry) => return Err(InvalidRetryTokenError),
-        };
-
-        if retry.issued + server_config.retry_token_lifetime < server_config.time_source.now() {
-            return Err(InvalidRetryTokenError);
-        }
-
-        Ok(Self {
-            retry_src_cid: Some(header.dst_cid),
-            orig_dst_cid: retry.orig_dst_cid,
-        })
-    }
-}
-
-/// Error for a token being unambiguously from a Retry packet, and not valid
-///
-/// The connection cannot be established.
-pub(crate) struct InvalidRetryTokenError;
 
 #[cfg(all(test, any(feature = "aws-lc-rs", feature = "ring")))]
 mod test {
