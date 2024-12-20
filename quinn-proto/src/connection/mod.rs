@@ -1230,7 +1230,9 @@ impl Connection {
         self.spaces[self.highest_space].ping_pending = true;
     }
 
-    #[doc(hidden)]
+    /// Update traffic keys spontaneously
+    ///
+    /// This can be useful for testing key updates, as they otherwise only happen infrequently.
     pub fn initiate_key_update(&mut self) {
         self.update_keys(None, false);
     }
