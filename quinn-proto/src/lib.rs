@@ -218,7 +218,7 @@ impl fmt::Display for Dir {
 /// Identifier for a stream within a particular connection
 #[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
-pub struct StreamId(#[doc(hidden)] pub u64);
+pub struct StreamId(u64);
 
 impl fmt::Display for StreamId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
@@ -276,6 +276,12 @@ impl From<StreamId> for VarInt {
 impl From<VarInt> for StreamId {
     fn from(v: VarInt) -> Self {
         Self(v.0)
+    }
+}
+
+impl From<StreamId> for u64 {
+    fn from(x: StreamId) -> Self {
+        x.0
     }
 }
 
