@@ -203,8 +203,7 @@ impl SendStream {
         Stopped { stream: self }.await
     }
 
-    #[doc(hidden)]
-    pub fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<Option<VarInt>, StoppedError>> {
+    fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<Option<VarInt>, StoppedError>> {
         let mut conn = self.conn.state.lock("SendStream::poll_stopped");
 
         if self.is_0rtt {
