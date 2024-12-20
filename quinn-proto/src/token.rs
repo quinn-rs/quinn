@@ -72,22 +72,6 @@ impl RetryToken {
             issued,
         })
     }
-
-    /// Ensure that this token validates an `Incoming`, and construct its token state
-    fn validate(
-        &self,
-        header: &InitialHeader,
-        server_config: &ServerConfig,
-    ) -> Result<IncomingToken, ValidationError> {
-        if self.issued + server_config.retry_token_lifetime < server_config.time_source.now() {
-            return Err(ValidationError::InvalidRetry);
-        }
-
-        Ok(IncomingToken {
-            retry_src_cid: Some(header.dst_cid),
-            orig_dst_cid: self.orig_dst_cid,
-        })
-    }
 }
 
 fn encode_addr(buf: &mut Vec<u8>, address: &SocketAddr) {
@@ -225,10 +209,26 @@ impl IncomingToken {
             &header.dst_cid,
             &header.token,
         )
-        .and_then(|token| token.validate(header, server_config))
+        .and_then(|token| Self::from_retry(token, header, server_config))
         .or_else(|e| match e {
             ValidationError::Unusable => Ok(unvalidated),
             ValidationError::InvalidRetry => Err(InvalidRetryTokenError),
+        })
+    }
+
+    /// Ensure that this token validates an `Incoming`, and construct its token state
+    fn from_retry(
+        token: RetryToken,
+        header: &InitialHeader,
+        server_config: &ServerConfig,
+    ) -> Result<Self, ValidationError> {
+        if token.issued + server_config.retry_token_lifetime < server_config.time_source.now() {
+            return Err(ValidationError::InvalidRetry);
+        }
+
+        Ok(Self {
+            retry_src_cid: Some(header.dst_cid),
+            orig_dst_cid: token.orig_dst_cid,
         })
     }
 }
