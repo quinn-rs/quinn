@@ -96,7 +96,6 @@ pub(crate) use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 pub(crate) use web_time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-#[doc(hidden)]
 #[cfg(fuzzing)]
 pub mod fuzzing {
     pub use crate::connection::{Retransmits, State as ConnectionState, StreamsState};
