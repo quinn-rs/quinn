@@ -203,32 +203,26 @@ impl IncomingToken {
             return Ok(unvalidated);
         }
 
-        RetryToken::from_bytes(
+        let result = RetryToken::from_bytes(
             &*server_config.token_key,
             &remote_address,
             &header.dst_cid,
             &header.token,
-        )
-        .and_then(|token| Self::from_retry(token, header, server_config))
-        .or_else(|e| match e {
-            ValidationError::Unusable => Ok(unvalidated),
-            ValidationError::InvalidRetry => Err(InvalidRetryTokenError),
-        })
-    }
+        );
 
-    /// Ensure that this token validates an `Incoming`, and construct its token state
-    fn from_retry(
-        token: RetryToken,
-        header: &InitialHeader,
-        server_config: &ServerConfig,
-    ) -> Result<Self, ValidationError> {
-        if token.issued + server_config.retry_token_lifetime < server_config.time_source.now() {
-            return Err(ValidationError::InvalidRetry);
+        let retry = match result {
+            Ok(retry) => retry,
+            Err(ValidationError::Unusable) => return Ok(unvalidated),
+            Err(ValidationError::InvalidRetry) => return Err(InvalidRetryTokenError),
+        };
+
+        if retry.issued + server_config.retry_token_lifetime < server_config.time_source.now() {
+            return Err(InvalidRetryTokenError);
         }
 
         Ok(Self {
             retry_src_cid: Some(header.dst_cid),
-            orig_dst_cid: token.orig_dst_cid,
+            orig_dst_cid: retry.orig_dst_cid,
         })
     }
 }
