@@ -29,10 +29,10 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
         EndpointEvent, EndpointEventInner, IssuedCid,
     },
-    token::{IncomingToken, InvalidRetryTokenError},
+    token::{IncomingToken, InvalidRetryTokenError, RetryToken},
     transport_parameters::{PreferredAddress, TransportParameters},
-    Duration, Instant, ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError,
-    INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    Duration, Instant, ResetToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
+    MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -743,14 +743,11 @@ impl Endpoint {
         let loc_cid = self.local_cid_generator.generate_cid();
 
         let token = RetryToken {
+            address: incoming.addresses.remote,
             orig_dst_cid: incoming.packet.header.dst_cid,
             issued: server_config.time_source.now(),
         }
-        .encode(
-            &*server_config.token_key,
-            incoming.addresses.remote,
-            loc_cid,
-        );
+        .encode(&*server_config.token_key, loc_cid);
 
         let header = Header::Retry {
             src_cid: loc_cid,
