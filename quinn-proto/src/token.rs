@@ -40,7 +40,7 @@ impl IncomingToken {
         let result = RetryToken::from_bytes(
             &*server_config.token_key,
             remote_address,
-            &header.dst_cid,
+            header.dst_cid,
             &header.token,
         );
 
@@ -78,9 +78,9 @@ impl RetryToken {
         &self,
         key: &dyn HandshakeTokenKey,
         address: SocketAddr,
-        retry_src_cid: &ConnectionId,
+        retry_src_cid: ConnectionId,
     ) -> Vec<u8> {
-        let aead_key = key.aead_from_hkdf(retry_src_cid);
+        let aead_key = key.aead_from_hkdf(&retry_src_cid);
 
         let mut buf = Vec::new();
         encode_addr(&mut buf, address);
@@ -100,10 +100,10 @@ impl RetryToken {
     fn from_bytes(
         key: &dyn HandshakeTokenKey,
         address: SocketAddr,
-        retry_src_cid: &ConnectionId,
+        retry_src_cid: ConnectionId,
         raw_token_bytes: &[u8],
     ) -> Result<Self, ValidationError> {
-        let aead_key = key.aead_from_hkdf(retry_src_cid);
+        let aead_key = key.aead_from_hkdf(&retry_src_cid);
         let mut sealed_token = raw_token_bytes.to_vec();
 
         let data = aead_key.open(&mut sealed_token, &[])?;
@@ -192,9 +192,9 @@ impl From<CryptoError> for ValidationError {
 pub(crate) struct ResetToken([u8; RESET_TOKEN_SIZE]);
 
 impl ResetToken {
-    pub(crate) fn new(key: &dyn HmacKey, id: &ConnectionId) -> Self {
+    pub(crate) fn new(key: &dyn HmacKey, id: ConnectionId) -> Self {
         let mut signature = vec![0; key.signature_len()];
-        key.sign(id, &mut signature);
+        key.sign(&id, &mut signature);
         // TODO: Server ID??
         let mut result = [0; RESET_TOKEN_SIZE];
         result.copy_from_slice(&signature[..RESET_TOKEN_SIZE]);
@@ -262,9 +262,9 @@ mod test {
             orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
             issued: UNIX_EPOCH + Duration::new(42, 0), // Fractional seconds would be lost
         };
-        let encoded = token.encode(&prk, addr, &retry_src_cid);
+        let encoded = token.encode(&prk, addr, retry_src_cid);
 
-        let decoded = RetryToken::from_bytes(&prk, addr, &retry_src_cid, &encoded)
+        let decoded = RetryToken::from_bytes(&prk, addr, retry_src_cid, &encoded)
             .expect("token didn't validate");
         assert_eq!(token.orig_dst_cid, decoded.orig_dst_cid);
         assert_eq!(token.issued, decoded.issued);
@@ -295,6 +295,6 @@ mod test {
         invalid_token.put_slice(&random_data);
 
         // Assert: garbage sealed data returns err
-        assert!(RetryToken::from_bytes(&prk, addr, &retry_src_cid, &invalid_token).is_err());
+        assert!(RetryToken::from_bytes(&prk, addr, retry_src_cid, &invalid_token).is_err());
     }
 }

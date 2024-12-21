@@ -435,14 +435,14 @@ impl Header {
         )
     }
 
-    pub(crate) fn dst_cid(&self) -> &ConnectionId {
+    pub(crate) fn dst_cid(&self) -> ConnectionId {
         use Header::*;
         match *self {
-            Initial(InitialHeader { ref dst_cid, .. }) => dst_cid,
-            Long { ref dst_cid, .. } => dst_cid,
-            Retry { ref dst_cid, .. } => dst_cid,
-            Short { ref dst_cid, .. } => dst_cid,
-            VersionNegotiate { ref dst_cid, .. } => dst_cid,
+            Initial(InitialHeader { dst_cid, .. }) => dst_cid,
+            Long { dst_cid, .. } => dst_cid,
+            Retry { dst_cid, .. } => dst_cid,
+            Short { dst_cid, .. } => dst_cid,
+            VersionNegotiate { dst_cid, .. } => dst_cid,
         }
     }
 
@@ -949,7 +949,7 @@ mod tests {
         let provider = default_provider();
 
         let suite = initial_suite_from_provider(&std::sync::Arc::new(provider)).unwrap();
-        let client = initial_keys(Version::V1, &dcid, Side::Client, &suite);
+        let client = initial_keys(Version::V1, dcid, Side::Client, &suite);
         let mut buf = Vec::new();
         let header = Header::Initial(InitialHeader {
             number: PacketNumber::U8(0),
@@ -979,7 +979,7 @@ mod tests {
             )[..]
         );
 
-        let server = initial_keys(Version::V1, &dcid, Side::Server, &suite);
+        let server = initial_keys(Version::V1, dcid, Side::Server, &suite);
         let supported_versions = crate::DEFAULT_SUPPORTED_VERSIONS.to_vec();
         let decode = PartialDecode::new(
             buf.as_slice().into(),
