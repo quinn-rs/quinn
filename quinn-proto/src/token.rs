@@ -80,13 +80,15 @@ impl RetryToken {
         address: SocketAddr,
         retry_src_cid: ConnectionId,
     ) -> Vec<u8> {
-        let aead_key = key.aead_from_hkdf(&retry_src_cid);
-
         let mut buf = Vec::new();
+
+        // Encode payload
         encode_addr(&mut buf, address);
         self.orig_dst_cid.encode_long(&mut buf);
         encode_unix_secs(&mut buf, self.issued);
 
+        // Encrypt
+        let aead_key = key.aead_from_hkdf(&retry_src_cid);
         aead_key.seal(&mut buf, &[]).unwrap();
 
         buf
