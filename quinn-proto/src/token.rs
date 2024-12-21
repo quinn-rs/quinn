@@ -153,8 +153,8 @@ fn decode_ip<B: Buf>(buf: &mut B) -> Option<IpAddr> {
 fn encode_unix_secs(buf: &mut Vec<u8>, time: SystemTime) {
     buf.write::<u64>(
         time.duration_since(UNIX_EPOCH)
-            .map(|x| x.as_secs())
-            .unwrap_or(0),
+            .unwrap_or_default()
+            .as_secs(),
     );
 }
 
