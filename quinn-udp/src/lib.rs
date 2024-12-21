@@ -209,7 +209,7 @@ pub enum EcnCodepoint {
 impl EcnCodepoint {
     /// Create new object from the given bits
     pub fn from_bits(x: u8) -> Option<Self> {
-        use self::EcnCodepoint::*;
+        use EcnCodepoint::*;
         Some(match x & 0b11 {
             0b10 => Ect0,
             0b01 => Ect1,

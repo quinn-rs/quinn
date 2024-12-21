@@ -461,7 +461,7 @@ impl From<StoppedError> for WriteError {
 
 impl From<WriteError> for io::Error {
     fn from(x: WriteError) -> Self {
-        use self::WriteError::*;
+        use WriteError::*;
         let kind = match x {
             Stopped(_) | ZeroRttRejected => io::ErrorKind::ConnectionReset,
             ConnectionLost(_) | ClosedStream => io::ErrorKind::NotConnected,

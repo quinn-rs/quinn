@@ -168,7 +168,7 @@ pub(crate) enum Frame {
 
 impl Frame {
     pub(crate) fn ty(&self) -> FrameType {
-        use self::Frame::*;
+        use Frame::*;
         match *self {
             Padding => FrameType::PADDING,
             ResetStream(_) => FrameType::RESET_STREAM,
@@ -776,7 +776,7 @@ enum IterErr {
 
 impl IterErr {
     fn reason(&self) -> &'static str {
-        use self::IterErr::*;
+        use IterErr::*;
         match *self {
             UnexpectedEnd => "unexpected end",
             InvalidFrameId => "invalid frame ID",

@@ -12,6 +12,7 @@ use async_io::{Async, Timer};
 use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPollHelper};
 
 #[cfg(feature = "smol")]
+// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 pub use self::smol::SmolRuntime;
 
 #[cfg(feature = "smol")]
@@ -41,6 +42,7 @@ mod smol {
 }
 
 #[cfg(feature = "async-std")]
+// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 pub use self::async_std::AsyncStdRuntime;
 
 #[cfg(feature = "async-std")]

@@ -1054,7 +1054,7 @@ impl Connection {
     /// (including application `Event`s, `EndpointEvent`s and outgoing datagrams) that should be
     /// extracted through the relevant methods.
     pub fn handle_event(&mut self, event: ConnectionEvent) {
-        use self::ConnectionEventInner::*;
+        use ConnectionEventInner::*;
         match event.0 {
             Datagram(DatagramConnectionEvent {
                 now,
@@ -3744,7 +3744,7 @@ impl From<Close> for ConnectionError {
 // For compatibility with API consumers
 impl From<ConnectionError> for io::Error {
     fn from(x: ConnectionError) -> Self {
-        use self::ConnectionError::*;
+        use ConnectionError::*;
         let kind = match x {
             TimedOut => io::ErrorKind::TimedOut,
             Reset => io::ErrorKind::ConnectionReset,
