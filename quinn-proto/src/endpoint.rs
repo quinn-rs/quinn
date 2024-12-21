@@ -202,7 +202,7 @@ impl Endpoint {
         if let Some(route_to) = self.index.get(&addresses, &first_decode) {
             let event = DatagramConnectionEvent {
                 now,
-                remote: addresses.remote,
+                remote,
                 ecn,
                 first_decode,
                 remaining,
