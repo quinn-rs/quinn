@@ -134,7 +134,7 @@ fn encode_addr(buf: &mut Vec<u8>, address: SocketAddr) {
 
 fn decode_addr<B: Buf>(buf: &mut B) -> Option<SocketAddr> {
     let ip = decode_ip(buf)?;
-    let port = buf.get_u16();
+    let port = buf.get().ok()?;
     Some(SocketAddr::new(ip, port))
 }
 
@@ -152,7 +152,7 @@ fn encode_ip(buf: &mut Vec<u8>, ip: IpAddr) {
 }
 
 fn decode_ip<B: Buf>(buf: &mut B) -> Option<IpAddr> {
-    match buf.get_u8() {
+    match buf.get::<u8>().ok()? {
         0 => buf.get().ok().map(IpAddr::V4),
         1 => buf.get().ok().map(IpAddr::V6),
         _ => None,
