@@ -187,10 +187,12 @@ pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
 
 #[cfg(feature = "runtime-tokio")]
 mod tokio;
+// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 #[cfg(feature = "runtime-tokio")]
 pub use self::tokio::TokioRuntime;
 
 #[cfg(feature = "async-io")]
 mod async_io;
+// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 #[cfg(feature = "async-io")]
 pub use self::async_io::*;
