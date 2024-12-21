@@ -85,12 +85,7 @@ impl RetryToken {
         let mut buf = Vec::new();
         encode_addr(&mut buf, address);
         self.orig_dst_cid.encode_long(&mut buf);
-        buf.write::<u64>(
-            self.issued
-                .duration_since(UNIX_EPOCH)
-                .map(|x| x.as_secs())
-                .unwrap_or(0),
-        );
+        encode_unix_secs(&mut buf, self.issued);
 
         aead_key.seal(&mut buf, &[]).unwrap();
 
@@ -114,11 +109,7 @@ impl RetryToken {
         }
         let orig_dst_cid =
             ConnectionId::decode_long(&mut reader).ok_or(ValidationError::Unusable)?;
-        let issued = UNIX_EPOCH
-            + Duration::new(
-                reader.get::<u64>().map_err(|_| ValidationError::Unusable)?,
-                0,
-            );
+        let issued = decode_unix_secs(&mut reader).ok_or(ValidationError::Unusable)?;
 
         Ok(Self {
             orig_dst_cid,
@@ -157,6 +148,18 @@ fn decode_ip<B: Buf>(buf: &mut B) -> Option<IpAddr> {
         1 => buf.get().ok().map(IpAddr::V6),
         _ => None,
     }
+}
+
+fn encode_unix_secs(buf: &mut Vec<u8>, time: SystemTime) {
+    buf.write::<u64>(
+        time.duration_since(UNIX_EPOCH)
+            .map(|x| x.as_secs())
+            .unwrap_or(0),
+    );
+}
+
+fn decode_unix_secs<B: Buf>(buf: &mut B) -> Option<SystemTime> {
+    Some(UNIX_EPOCH + Duration::new(buf.get::<u64>().ok()?, 0))
 }
 
 /// Error for a token failing to validate a client's address
