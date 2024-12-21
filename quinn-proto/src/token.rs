@@ -1,5 +1,5 @@
 use std::{
-    fmt, io,
+    fmt,
     net::{IpAddr, SocketAddr},
 };
 
@@ -102,7 +102,7 @@ impl RetryToken {
         let mut sealed_token = raw_token_bytes.to_vec();
 
         let data = aead_key.open(&mut sealed_token, &[])?;
-        let mut reader = io::Cursor::new(data);
+        let mut reader = &data[..];
         let token_addr = decode_addr(&mut reader).ok_or(ValidationError::Unusable)?;
         if token_addr != address {
             return Err(ValidationError::InvalidRetry);
