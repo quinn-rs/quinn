@@ -119,6 +119,11 @@ impl RetryToken {
         let orig_dst_cid = ConnectionId::decode_long(&mut reader)?;
         let issued = decode_unix_secs(&mut reader)?;
 
+        if !reader.is_empty() {
+            // Consider extra bytes a decoding error (it may be from an incompatible endpoint)
+            return None;
+        }
+
         Some(Self {
             address,
             orig_dst_cid,
