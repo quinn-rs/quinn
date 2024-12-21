@@ -128,7 +128,18 @@ impl RetryToken {
 }
 
 fn encode_addr(buf: &mut Vec<u8>, address: SocketAddr) {
-    match address.ip() {
+    encode_ip(buf, address.ip());
+    buf.put_u16(address.port());
+}
+
+fn decode_addr<B: Buf>(buf: &mut B) -> Option<SocketAddr> {
+    let ip = decode_ip(buf)?;
+    let port = buf.get_u16();
+    Some(SocketAddr::new(ip, port))
+}
+
+fn encode_ip(buf: &mut Vec<u8>, ip: IpAddr) {
+    match ip {
         IpAddr::V4(x) => {
             buf.put_u8(0);
             buf.put_slice(&x.octets());
@@ -138,17 +149,14 @@ fn encode_addr(buf: &mut Vec<u8>, address: SocketAddr) {
             buf.put_slice(&x.octets());
         }
     }
-    buf.put_u16(address.port());
 }
 
-fn decode_addr<B: Buf>(buf: &mut B) -> Option<SocketAddr> {
-    let ip = match buf.get_u8() {
-        0 => IpAddr::V4(buf.get().ok()?),
-        1 => IpAddr::V6(buf.get().ok()?),
-        _ => return None,
-    };
-    let port = buf.get_u16();
-    Some(SocketAddr::new(ip, port))
+fn decode_ip<B: Buf>(buf: &mut B) -> Option<IpAddr> {
+    match buf.get_u8() {
+        0 => buf.get().ok().map(IpAddr::V4),
+        1 => buf.get().ok().map(IpAddr::V6),
+        _ => None,
+    }
 }
 
 /// Error for a token failing to validate a client's address
