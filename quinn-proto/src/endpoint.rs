@@ -242,14 +242,11 @@ impl Endpoint {
         //
 
         let dst_cid = first_decode.dst_cid();
-        let server_config = match &self.server_config {
-            Some(config) => config,
-            None => {
-                debug!("packet for unrecognized connection {}", dst_cid);
-                return self
-                    .stateless_reset(now, datagram_len, addresses, dst_cid, buf)
-                    .map(DatagramEvent::Response);
-            }
+        let Some(server_config) = &self.server_config else {
+            debug!("packet for unrecognized connection {}", dst_cid);
+            return self
+                .stateless_reset(now, datagram_len, addresses, dst_cid, buf)
+                .map(DatagramEvent::Response);
         };
 
         if let Some(header) = first_decode.initial_header() {
