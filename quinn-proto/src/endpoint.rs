@@ -116,7 +116,7 @@ impl Endpoint {
             RetireConnectionId(now, seq, allow_more_cids) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
                     trace!("peer retired CID {}: {}", seq, cid);
-                    self.index.retire(&cid);
+                    self.index.retire(cid);
                     if allow_more_cids {
                         return Some(self.send_new_identifiers(now, ch, 1));
                     }
@@ -245,7 +245,7 @@ impl Endpoint {
         let Some(server_config) = &self.server_config else {
             debug!("packet for unrecognized connection {}", dst_cid);
             return self
-                .stateless_reset(now, datagram_len, addresses, dst_cid, buf)
+                .stateless_reset(now, datagram_len, addresses, *dst_cid, buf)
                 .map(DatagramEvent::Response);
         };
 
@@ -313,7 +313,7 @@ impl Endpoint {
 
         if !dst_cid.is_empty() {
             return self
-                .stateless_reset(now, datagram_len, addresses, dst_cid, buf)
+                .stateless_reset(now, datagram_len, addresses, *dst_cid, buf)
                 .map(DatagramEvent::Response);
         }
 
@@ -326,7 +326,7 @@ impl Endpoint {
         now: Instant,
         inciting_dgram_len: usize,
         addresses: FourTuple,
-        dst_cid: &ConnectionId,
+        dst_cid: ConnectionId,
         buf: &mut Vec<u8>,
     ) -> Option<Transmit> {
         if self
@@ -448,7 +448,7 @@ impl Endpoint {
             ids.push(IssuedCid {
                 sequence,
                 id,
-                reset_token: ResetToken::new(&*self.config.reset_key, &id),
+                reset_token: ResetToken::new(&*self.config.reset_key, id),
             });
         }
         ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
@@ -610,7 +610,7 @@ impl Endpoint {
             Some(&server_config),
             &mut self.rng,
         );
-        params.stateless_reset_token = Some(ResetToken::new(&*self.config.reset_key, &loc_cid));
+        params.stateless_reset_token = Some(ResetToken::new(&*self.config.reset_key, loc_cid));
         params.original_dst_cid = Some(incoming.token.orig_dst_cid);
         params.retry_src_cid = incoming.token.retry_src_cid;
         let mut pref_addr_cid = None;
@@ -623,7 +623,7 @@ impl Endpoint {
                 address_v4: server_config.preferred_address_v4,
                 address_v6: server_config.preferred_address_v6,
                 connection_id: cid,
-                stateless_reset_token: ResetToken::new(&*self.config.reset_key, &cid),
+                stateless_reset_token: ResetToken::new(&*self.config.reset_key, cid),
             });
         }
 
@@ -756,7 +756,7 @@ impl Endpoint {
         .encode(
             &*server_config.token_key,
             incoming.addresses.remote,
-            &loc_cid,
+            loc_cid,
         );
 
         let header = Header::Retry {
@@ -1063,8 +1063,8 @@ impl ConnectionIndex {
     }
 
     /// Discard a connection ID
-    fn retire(&mut self, dst_cid: &ConnectionId) {
-        self.connection_ids.remove(dst_cid);
+    fn retire(&mut self, dst_cid: ConnectionId) {
+        self.connection_ids.remove(&dst_cid);
     }
 
     /// Remove all references to a connection
