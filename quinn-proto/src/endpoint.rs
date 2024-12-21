@@ -758,7 +758,7 @@ impl Endpoint {
         }
         .encode(
             &*server_config.token_key,
-            &incoming.addresses.remote,
+            incoming.addresses.remote,
             &loc_cid,
         );
 

@@ -887,7 +887,7 @@ impl Connection {
             // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
             // validation can occur while the link is saturated.
             if space_id == SpaceId::Data && num_datagrams == 1 {
-                if let Some((token, remote)) = self.path_responses.pop_off_path(&self.path.remote) {
+                if let Some((token, remote)) = self.path_responses.pop_off_path(self.path.remote) {
                     // `unwrap` guaranteed to succeed because `builder_storage` was populated just
                     // above.
                     let mut builder = builder_storage.take().unwrap();
@@ -3129,7 +3129,7 @@ impl Connection {
 
         // PATH_RESPONSE
         if buf.len() + 9 < max_size && space_id == SpaceId::Data {
-            if let Some(token) = self.path_responses.pop_on_path(&self.path.remote) {
+            if let Some(token) = self.path_responses.pop_on_path(self.path.remote) {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
                 trace!("PATH_RESPONSE {:08x}", token);
