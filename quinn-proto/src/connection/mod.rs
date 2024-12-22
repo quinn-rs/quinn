@@ -1763,7 +1763,6 @@ impl Connection {
         result
     }
 
-    #[allow(clippy::suspicious_operation_groupings)]
     fn peer_completed_address_validation(&self) -> bool {
         if self.side.is_server() || self.state.is_closed() {
             return true;

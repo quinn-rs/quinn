@@ -239,8 +239,7 @@ struct ConnectionDriver(ConnectionRef);
 impl Future for ConnectionDriver {
     type Output = Result<(), io::Error>;
 
-    #[allow(unused_mut)] // MSRV
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.state.lock("poll");
 
         let span = debug_span!("drive", id = conn.handle.0);
