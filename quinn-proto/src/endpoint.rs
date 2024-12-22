@@ -157,10 +157,7 @@ impl Endpoint {
             Err(e) => return self.handle_decode_err(e, remote, local_ip, buf),
         };
 
-        //
         // Handle packet on existing connection, if any
-        //
-
         let addresses = FourTuple { remote, local_ip };
         if let Some(route_to) = self.index.get(&addresses, &first_decode) {
             let event = DatagramConnectionEvent {
@@ -173,12 +170,7 @@ impl Endpoint {
             return self.route_datagram(route_to, datagram_len, event);
         }
 
-        //
         // Potentially create a new connection
-        //
-
-        let dst_cid = first_decode.dst_cid();
-
         if first_decode.initial_header().is_some() {
             return self.handle_first_packet(
                 first_decode,
@@ -191,6 +183,7 @@ impl Endpoint {
             );
         }
 
+        let dst_cid = first_decode.dst_cid();
         if first_decode.has_long_header() {
             debug!(
                 "ignoring non-initial packet for unknown connection {}",
@@ -199,11 +192,8 @@ impl Endpoint {
             return None;
         }
 
-        //
         // If we got this far, we're a server receiving a seemingly valid packet for an unknown
         // connection. Send a stateless reset if possible.
-        //
-
         if !first_decode.is_initial()
             && self
                 .local_cid_generator
