@@ -154,44 +154,7 @@ impl Endpoint {
             self.config.grease_quic_bit,
         ) {
             Ok(x) => x,
-            Err(PacketDecodeError::UnsupportedVersion {
-                src_cid,
-                dst_cid,
-                version,
-            }) => {
-                if self.server_config.is_none() {
-                    debug!("dropping packet with unsupported version");
-                    return None;
-                }
-                trace!("sending version negotiation");
-                // Negotiate versions
-                Header::VersionNegotiate {
-                    random: self.rng.gen::<u8>() | 0x40,
-                    src_cid: dst_cid,
-                    dst_cid: src_cid,
-                }
-                .encode(buf);
-                // Grease with a reserved version
-                if version != 0x0a1a_2a3a {
-                    buf.write::<u32>(0x0a1a_2a3a);
-                } else {
-                    buf.write::<u32>(0x0a1a_2a4a);
-                }
-                for &version in &self.config.supported_versions {
-                    buf.write(version);
-                }
-                return Some(DatagramEvent::Response(Transmit {
-                    destination: remote,
-                    ecn: None,
-                    size: buf.len(),
-                    segment_size: None,
-                    src_ip: local_ip,
-                }));
-            }
-            Err(e) => {
-                trace!("malformed header: {}", e);
-                return None;
-            }
+            Err(e) => return self.handle_decode_err(e, remote, local_ip, buf),
         };
 
         //
@@ -319,6 +282,56 @@ impl Endpoint {
 
         trace!("dropping unrecognized short packet without ID");
         None
+    }
+
+    /// Handle an incoming UDP datagram which can not be decoded
+    fn handle_decode_err(
+        &mut self,
+        error: PacketDecodeError,
+        remote: SocketAddr,
+        local_ip: Option<IpAddr>,
+        buf: &mut Vec<u8>,
+    ) -> Option<DatagramEvent> {
+        match error {
+            PacketDecodeError::UnsupportedVersion {
+                src_cid,
+                dst_cid,
+                version,
+            } => {
+                if self.server_config.is_none() {
+                    debug!("dropping packet with unsupported version");
+                    return None;
+                }
+                trace!("sending version negotiation");
+                // Negotiate versions
+                Header::VersionNegotiate {
+                    random: self.rng.gen::<u8>() | 0x40,
+                    src_cid: dst_cid,
+                    dst_cid: src_cid,
+                }
+                .encode(buf);
+                // Grease with a reserved version
+                if version != 0x0a1a_2a3a {
+                    buf.write::<u32>(0x0a1a_2a3a);
+                } else {
+                    buf.write::<u32>(0x0a1a_2a4a);
+                }
+                for &version in &self.config.supported_versions {
+                    buf.write(version);
+                }
+                Some(DatagramEvent::Response(Transmit {
+                    destination: remote,
+                    ecn: None,
+                    size: buf.len(),
+                    segment_size: None,
+                    src_ip: local_ip,
+                }))
+            }
+            _ => {
+                trace!("malformed header: {}", error);
+                None
+            }
+        }
     }
 
     fn stateless_reset(
