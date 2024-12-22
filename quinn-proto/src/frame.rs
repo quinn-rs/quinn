@@ -943,7 +943,6 @@ mod test {
     }
 
     #[test]
-    #[allow(clippy::range_plus_one)]
     fn ack_coding() {
         const PACKETS: &[u64] = &[1, 2, 3, 5, 10, 11, 14];
         let mut ranges = ArrayRangeSet::new();

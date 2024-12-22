@@ -357,8 +357,7 @@ pub(crate) struct EndpointDriver(pub(crate) EndpointRef);
 impl Future for EndpointDriver {
     type Output = Result<(), io::Error>;
 
-    #[allow(unused_mut)] // MSRV
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let mut endpoint = self.0.state.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());

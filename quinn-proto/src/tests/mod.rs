@@ -537,7 +537,6 @@ fn congestion() {
     pair.client_send(client_ch, s).write(&[42; 1024]).unwrap();
 }
 
-#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 #[test]
 fn high_latency_handshake() {
     let _guard = subscribe();
