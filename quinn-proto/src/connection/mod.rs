@@ -26,8 +26,8 @@ use crate::{
     },
     range_set::ArrayRangeSet,
     shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
-        EndpointEvent, EndpointEventInner,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, DatagramInfo,
+        EcnCodepoint, EndpointEvent, EndpointEventInner,
     },
     token::ResetToken,
     transport_parameters::TransportParameters,
@@ -1057,11 +1057,14 @@ impl Connection {
         use ConnectionEventInner::*;
         match event.0 {
             Datagram(DatagramConnectionEvent {
-                now,
-                remote,
-                ecn,
                 first_decode,
-                remaining,
+                info:
+                    DatagramInfo {
+                        now,
+                        remote,
+                        ecn,
+                        remaining,
+                    },
             }) => {
                 // If this packet could initiate a migration and we're a client or a server that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
@@ -3425,7 +3428,7 @@ impl Connection {
         let (first_decode, remaining) = match &event.0 {
             ConnectionEventInner::Datagram(DatagramConnectionEvent {
                 first_decode,
-                remaining,
+                info: DatagramInfo { remaining, .. },
                 ..
             }) => (first_decode, remaining),
             _ => return None,

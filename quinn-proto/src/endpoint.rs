@@ -26,8 +26,8 @@ use crate::{
         PacketNumber, PartialDecode, ProtectedInitialHeader,
     },
     shared::{
-        ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
-        EndpointEvent, EndpointEventInner, IssuedCid,
+        ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, DatagramInfo,
+        EcnCodepoint, EndpointEvent, EndpointEventInner, IssuedCid,
     },
     token::{IncomingToken, InvalidRetryTokenError},
     transport_parameters::{PreferredAddress, TransportParameters},
@@ -161,11 +161,13 @@ impl Endpoint {
         let addresses = FourTuple { remote, local_ip };
         if let Some(route_to) = self.index.get(&addresses, &first_decode) {
             let event = DatagramConnectionEvent {
-                now,
-                remote,
-                ecn,
                 first_decode,
-                remaining,
+                info: DatagramInfo {
+                    now,
+                    remote,
+                    ecn,
+                    remaining,
+                },
             };
             return self.route_datagram(route_to, datagram_len, event);
         }

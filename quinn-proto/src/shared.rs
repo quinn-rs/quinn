@@ -19,10 +19,16 @@ pub(crate) enum ConnectionEventInner {
 /// Variant of [`ConnectionEventInner`].
 #[derive(Debug)]
 pub(crate) struct DatagramConnectionEvent {
+    pub(crate) first_decode: PartialDecode,
+    pub(crate) info: DatagramInfo,
+}
+
+/// Information about a received datagram beyond the partially decoded first packet
+#[derive(Debug)]
+pub(crate) struct DatagramInfo {
     pub(crate) now: Instant,
     pub(crate) remote: SocketAddr,
     pub(crate) ecn: Option<EcnCodepoint>,
-    pub(crate) first_decode: PartialDecode,
     pub(crate) remaining: Option<BytesMut>,
 }
 
