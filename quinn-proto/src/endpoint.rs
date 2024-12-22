@@ -22,8 +22,8 @@ use crate::{
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{
-        FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, Packet,
-        PacketDecodeError, PacketNumber, PartialDecode, ProtectedInitialHeader,
+        FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, PacketDecodeError,
+        PacketNumber, PartialDecode, ProtectedInitialHeader,
     },
     shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
@@ -178,52 +178,17 @@ impl Endpoint {
         //
 
         let dst_cid = first_decode.dst_cid();
-        let Some(server_config) = &self.server_config else {
-            debug!("packet for unrecognized connection {}", dst_cid);
-            return self
-                .stateless_reset(now, datagram_len, addresses, dst_cid, buf)
-                .map(DatagramEvent::Response);
-        };
 
-        if let Some(header) = first_decode.initial_header() {
-            if datagram_len < MIN_INITIAL_SIZE as usize {
-                debug!("ignoring short initial for connection {}", dst_cid);
-                return None;
-            }
-
-            let crypto = match server_config.crypto.initial_keys(header.version, dst_cid) {
-                Ok(keys) => keys,
-                Err(UnsupportedVersion) => {
-                    // This probably indicates that the user set supported_versions incorrectly in
-                    // `EndpointConfig`.
-                    debug!(
-                        "ignoring initial packet version {:#x} unsupported by cryptographic layer",
-                        header.version
-                    );
-                    return None;
-                }
-            };
-
-            if let Err(reason) = self.early_validate_first_packet(header) {
-                return Some(DatagramEvent::Response(self.initial_close(
-                    header.version,
-                    addresses,
-                    &crypto,
-                    &header.src_cid,
-                    reason,
-                    buf,
-                )));
-            }
-
-            return match first_decode.finish(Some(&*crypto.header.remote)) {
-                Ok(packet) => {
-                    self.handle_first_packet(addresses, ecn, packet, remaining, crypto, buf, now)
-                }
-                Err(e) => {
-                    trace!("unable to decode initial packet: {}", e);
-                    None
-                }
-            };
+        if first_decode.initial_header().is_some() {
+            return self.handle_first_packet(
+                first_decode,
+                datagram_len,
+                addresses,
+                ecn,
+                remaining,
+                buf,
+                now,
+            );
         } else if first_decode.has_long_header() {
             debug!(
                 "ignoring non-initial packet for unknown connection {}",
@@ -490,14 +455,61 @@ impl Endpoint {
 
     fn handle_first_packet(
         &mut self,
+        first_decode: PartialDecode,
+        datagram_len: usize,
         addresses: FourTuple,
         ecn: Option<EcnCodepoint>,
-        packet: Packet,
         rest: Option<BytesMut>,
-        crypto: Keys,
         buf: &mut Vec<u8>,
         now: Instant,
     ) -> Option<DatagramEvent> {
+        let dst_cid = first_decode.dst_cid();
+        let header = first_decode.initial_header().unwrap();
+
+        let Some(server_config) = &self.server_config else {
+            debug!("packet for unrecognized connection {}", dst_cid);
+            return self
+                .stateless_reset(now, datagram_len, addresses, dst_cid, buf)
+                .map(DatagramEvent::Response);
+        };
+
+        if datagram_len < MIN_INITIAL_SIZE as usize {
+            debug!("ignoring short initial for connection {}", dst_cid);
+            return None;
+        }
+
+        let crypto = match server_config.crypto.initial_keys(header.version, dst_cid) {
+            Ok(keys) => keys,
+            Err(UnsupportedVersion) => {
+                // This probably indicates that the user set supported_versions incorrectly in
+                // `EndpointConfig`.
+                debug!(
+                    "ignoring initial packet version {:#x} unsupported by cryptographic layer",
+                    header.version
+                );
+                return None;
+            }
+        };
+
+        if let Err(reason) = self.early_validate_first_packet(header) {
+            return Some(DatagramEvent::Response(self.initial_close(
+                header.version,
+                addresses,
+                &crypto,
+                &header.src_cid,
+                reason,
+                buf,
+            )));
+        }
+
+        let packet = match first_decode.finish(Some(&*crypto.header.remote)) {
+            Ok(packet) => packet,
+            Err(e) => {
+                trace!("unable to decode initial packet: {}", e);
+                return None;
+            }
+        };
+
         if !packet.reserved_bits_valid() {
             debug!("dropping connection attempt with invalid reserved bits");
             return None;
