@@ -189,7 +189,9 @@ impl Endpoint {
                 buf,
                 now,
             );
-        } else if first_decode.has_long_header() {
+        }
+
+        if first_decode.has_long_header() {
             debug!(
                 "ignoring non-initial packet for unknown connection {}",
                 dst_cid
