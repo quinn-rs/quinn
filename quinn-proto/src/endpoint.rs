@@ -207,7 +207,7 @@ impl Endpoint {
                 first_decode,
                 remaining,
             };
-            match route_to {
+            return match route_to {
                 RouteDatagramTo::Incoming(incoming_idx) => {
                     let incoming_buffer = &mut self.incoming_buffers[incoming_idx];
                     let config = &self.server_config.as_ref().unwrap();
@@ -226,15 +226,13 @@ impl Endpoint {
                         self.all_incoming_buffers_total_bytes += datagram_len as u64;
                     }
 
-                    return None;
+                    None
                 }
-                RouteDatagramTo::Connection(ch) => {
-                    return Some(DatagramEvent::ConnectionEvent(
-                        ch,
-                        ConnectionEvent(ConnectionEventInner::Datagram(event)),
-                    ))
-                }
-            }
+                RouteDatagramTo::Connection(ch) => Some(DatagramEvent::ConnectionEvent(
+                    ch,
+                    ConnectionEvent(ConnectionEventInner::Datagram(event)),
+                )),
+            };
         }
 
         //
