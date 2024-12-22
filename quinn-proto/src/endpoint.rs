@@ -301,12 +301,7 @@ impl Endpoint {
         // connection. Send a stateless reset if possible.
         //
 
-        if !first_decode.is_initial()
-            && self
-                .local_cid_generator
-                .validate(first_decode.dst_cid())
-                .is_err()
-        {
+        if !first_decode.is_initial() && self.local_cid_generator.validate(dst_cid).is_err() {
             debug!("dropping packet with invalid CID");
             return None;
         }
