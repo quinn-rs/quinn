@@ -205,9 +205,7 @@ impl Endpoint {
         }
 
         if !dst_cid.is_empty() {
-            return self
-                .stateless_reset(now, datagram_len, addresses, dst_cid, buf)
-                .map(DatagramEvent::Response);
+            return self.stateless_reset(now, datagram_len, addresses, dst_cid, buf);
         }
 
         trace!("dropping unrecognized short packet without ID");
@@ -312,9 +310,7 @@ impl Endpoint {
 
         let Some(server_config) = &self.server_config else {
             debug!("packet for unrecognized connection {}", dst_cid);
-            return self
-                .stateless_reset(now, datagram_len, addresses, dst_cid, buf)
-                .map(DatagramEvent::Response);
+            return self.stateless_reset(now, datagram_len, addresses, dst_cid, buf);
         };
 
         if datagram_len < MIN_INITIAL_SIZE as usize {
@@ -401,6 +397,7 @@ impl Endpoint {
         }))
     }
 
+    /// Handle an incoming UDP datagram which may warrant a stateless reset
     fn stateless_reset(
         &mut self,
         now: Instant,
@@ -408,7 +405,7 @@ impl Endpoint {
         addresses: FourTuple,
         dst_cid: &ConnectionId,
         buf: &mut Vec<u8>,
-    ) -> Option<Transmit> {
+    ) -> Option<DatagramEvent> {
         if self
             .last_stateless_reset
             .is_some_and(|last| last + self.config.min_reset_interval > now)
@@ -450,13 +447,13 @@ impl Endpoint {
 
         debug_assert!(buf.len() < inciting_dgram_len);
 
-        Some(Transmit {
+        Some(DatagramEvent::Response(Transmit {
             destination: addresses.remote,
             ecn: None,
             size: buf.len(),
             segment_size: None,
             src_ip: addresses.local_ip,
-        })
+        }))
     }
 
     /// Initiate a connection
