@@ -176,11 +176,10 @@ impl Endpoint {
             return self.handle_first_packet(datagram_len, event, addresses, buf);
         }
 
-        let dst_cid = event.first_decode.dst_cid();
         if event.first_decode.has_long_header() {
             debug!(
                 "ignoring non-initial packet for unknown connection {}",
-                dst_cid
+                event.first_decode.dst_cid()
             );
             return None;
         }
@@ -197,8 +196,8 @@ impl Endpoint {
             return None;
         }
 
-        if !dst_cid.is_empty() {
-            return self.stateless_reset(now, datagram_len, addresses, dst_cid, buf);
+        if !event.first_decode.dst_cid().is_empty() {
+            return self.stateless_reset(datagram_len, event, addresses, buf);
         }
 
         trace!("dropping unrecognized short packet without ID");
@@ -300,7 +299,7 @@ impl Endpoint {
 
         let Some(server_config) = &self.server_config else {
             debug!("packet for unrecognized connection {}", dst_cid);
-            return self.stateless_reset(event.info.now, datagram_len, addresses, dst_cid, buf);
+            return self.stateless_reset(datagram_len, event, addresses, buf);
         };
 
         if datagram_len < MIN_INITIAL_SIZE as usize {
@@ -390,15 +389,14 @@ impl Endpoint {
     /// Handle an incoming UDP datagram which may warrant a stateless reset
     fn stateless_reset(
         &mut self,
-        now: Instant,
         inciting_dgram_len: usize,
+        event: DatagramConnectionEvent,
         addresses: FourTuple,
-        dst_cid: &ConnectionId,
         buf: &mut Vec<u8>,
     ) -> Option<DatagramEvent> {
         if self
             .last_stateless_reset
-            .is_some_and(|last| last + self.config.min_reset_interval > now)
+            .is_some_and(|last| last + self.config.min_reset_interval > event.info.now)
         {
             debug!("ignoring unexpected packet within minimum stateless reset interval");
             return None;
@@ -417,11 +415,12 @@ impl Endpoint {
             }
         };
 
+        let dst_cid = event.first_decode.dst_cid();
         debug!(
             "sending stateless reset for {} to {}",
             dst_cid, addresses.remote
         );
-        self.last_stateless_reset = Some(now);
+        self.last_stateless_reset = Some(event.info.now);
         // Resets with at least this much padding can't possibly be distinguished from real packets
         const IDEAL_MIN_PADDING_LEN: usize = MIN_PADDING_LEN + MAX_CID_SIZE;
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
