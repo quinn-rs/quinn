@@ -179,11 +179,10 @@ impl Endpoint {
                 }
                 .encode(buf);
                 // Grease with a reserved version
-                if version != 0x0a1a_2a3a {
-                    buf.write::<u32>(0x0a1a_2a3a);
-                } else {
-                    buf.write::<u32>(0x0a1a_2a4a);
-                }
+                buf.write::<u32>(match version {
+                    0x0a1a_2a3a => 0x0a1a_2a4a,
+                    _ => 0x0a1a_2a3a,
+                });
                 for &version in &self.config.supported_versions {
                     buf.write(version);
                 }
