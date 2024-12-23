@@ -237,15 +237,7 @@ impl Endpoint {
         let dst_cid = event.first_decode.dst_cid();
 
         if event.first_decode.initial_header().is_some() {
-            return self.handle_first_packet(
-                event.first_decode,
-                datagram_len,
-                addresses,
-                ecn,
-                event.remaining,
-                buf,
-                now,
-            );
+            return self.handle_first_packet(datagram_len, event, addresses, buf);
         } else if event.first_decode.has_long_header() {
             debug!(
                 "ignoring non-initial packet for unknown connection {}",
@@ -424,21 +416,18 @@ impl Endpoint {
 
     fn handle_first_packet(
         &mut self,
-        first_decode: PartialDecode,
         datagram_len: usize,
+        event: DatagramConnectionEvent,
         addresses: FourTuple,
-        ecn: Option<EcnCodepoint>,
-        rest: Option<BytesMut>,
         buf: &mut Vec<u8>,
-        now: Instant,
     ) -> Option<DatagramEvent> {
-        let dst_cid = first_decode.dst_cid();
-        let header = first_decode.initial_header().unwrap();
+        let dst_cid = event.first_decode.dst_cid();
+        let header = event.first_decode.initial_header().unwrap();
 
         let Some(server_config) = &self.server_config else {
             debug!("packet for unrecognized connection {}", dst_cid);
             return self
-                .stateless_reset(now, datagram_len, addresses, *dst_cid, buf)
+                .stateless_reset(event.now, datagram_len, addresses, *dst_cid, buf)
                 .map(DatagramEvent::Response);
         };
 
@@ -471,7 +460,7 @@ impl Endpoint {
             )));
         }
 
-        let packet = match first_decode.finish(Some(&*crypto.header.remote)) {
+        let packet = match event.first_decode.finish(Some(&*crypto.header.remote)) {
             Ok(packet) => packet,
             Err(e) => {
                 trace!("unable to decode initial packet: {}", e);
@@ -510,15 +499,15 @@ impl Endpoint {
             .insert_initial_incoming(header.dst_cid, incoming_idx);
 
         Some(DatagramEvent::NewConnection(Incoming {
-            received_at: now,
+            received_at: event.now,
             addresses,
-            ecn,
+            ecn: event.ecn,
             packet: InitialPacket {
                 header,
                 header_data: packet.header_data,
                 payload: packet.payload,
             },
-            rest,
+            rest: event.remaining,
             crypto,
             token,
             incoming_idx,
