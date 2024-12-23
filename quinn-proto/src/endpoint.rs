@@ -146,6 +146,7 @@ impl Endpoint {
         data: BytesMut,
         buf: &mut Vec<u8>,
     ) -> Option<DatagramEvent> {
+        // Partially decode packet or short-circuit if unable
         let datagram_len = data.len();
         let event = match PartialDecode::new(
             data,
@@ -200,11 +201,12 @@ impl Endpoint {
             }
         };
 
-        // Handle packet on existing connection, if any
-
         let addresses = FourTuple { remote, local_ip };
+        let dst_cid = event.first_decode.dst_cid();
+
         if let Some(route_to) = self.index.get(&addresses, &event.first_decode) {
-            return match route_to {
+            // Handle packet on existing connection
+            match route_to {
                 RouteDatagramTo::Incoming(incoming_idx) => {
                     let incoming_buffer = &mut self.incoming_buffers[incoming_idx];
                     let config = &self.server_config.as_ref().unwrap();
@@ -229,40 +231,32 @@ impl Endpoint {
                     ch,
                     ConnectionEvent(ConnectionEventInner::Datagram(event)),
                 )),
-            };
-        }
+            }
+        } else if event.first_decode.initial_header().is_some() {
+            // Potentially create a new connection
 
-        // Potentially create a new connection
-
-        let dst_cid = event.first_decode.dst_cid();
-
-        if event.first_decode.initial_header().is_some() {
-            return self.handle_first_packet(datagram_len, event, addresses, buf);
+            self.handle_first_packet(datagram_len, event, addresses, buf)
         } else if event.first_decode.has_long_header() {
             debug!(
                 "ignoring non-initial packet for unknown connection {}",
                 dst_cid
             );
-            return None;
-        }
+            None
+        } else if !event.first_decode.is_initial()
+            && self.local_cid_generator.validate(dst_cid).is_err()
+        {
+            // If we got this far, we're receiving a seemingly valid packet for an unknown
+            // connection. Send a stateless reset if possible.
 
-        // If we got this far, we're receiving a seemingly valid packet for an unknown connection.
-        // Send a stateless reset if possible.
-
-        if !first_decode.is_initial() && self.local_cid_generator.validate(dst_cid).is_err() {
-        if !event.first_decode.is_initial() && self.local_cid_generator.validate(dst_cid).is_err() {
             debug!("dropping packet with invalid CID");
-            return None;
+            None
+        } else if dst_cid.is_empty() {
+            trace!("dropping unrecognized short packet without ID");
+            None
+        } else {
+            self.stateless_reset(now, datagram_len, addresses, *dst_cid, buf)
+                .map(DatagramEvent::Response)
         }
-
-        if !dst_cid.is_empty() {
-            return self
-                .stateless_reset(now, datagram_len, addresses, *dst_cid, buf)
-                .map(DatagramEvent::Response);
-        }
-
-        trace!("dropping unrecognized short packet without ID");
-        None
     }
 
     fn stateless_reset(
