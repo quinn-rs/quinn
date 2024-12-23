@@ -194,9 +194,7 @@ impl Endpoint {
             }
         };
 
-        //
         // Handle packet on existing connection, if any
-        //
 
         let addresses = FourTuple { remote, local_ip };
         if let Some(route_to) = self.index.get(&addresses, &first_decode) {
@@ -235,9 +233,7 @@ impl Endpoint {
             };
         }
 
-        //
         // Potentially create a new connection
-        //
 
         let dst_cid = first_decode.dst_cid();
 
@@ -259,10 +255,8 @@ impl Endpoint {
             return None;
         }
 
-        //
         // If we got this far, we're receiving a seemingly valid packet for an unknown connection.
         // Send a stateless reset if possible.
-        //
 
         if !first_decode.is_initial() && self.local_cid_generator.validate(dst_cid).is_err() {
             debug!("dropping packet with invalid CID");
