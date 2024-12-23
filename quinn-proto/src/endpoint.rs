@@ -147,13 +147,19 @@ impl Endpoint {
         buf: &mut Vec<u8>,
     ) -> Option<DatagramEvent> {
         let datagram_len = data.len();
-        let (first_decode, remaining) = match PartialDecode::new(
+        let event = match PartialDecode::new(
             data,
             &FixedLengthConnectionIdParser::new(self.local_cid_generator.cid_len()),
             &self.config.supported_versions,
             self.config.grease_quic_bit,
         ) {
-            Ok(x) => x,
+            Ok((first_decode, remaining)) => DatagramConnectionEvent {
+                now,
+                remote,
+                ecn,
+                first_decode,
+                remaining,
+            },
             Err(PacketDecodeError::UnsupportedVersion {
                 src_cid,
                 dst_cid,
@@ -197,14 +203,7 @@ impl Endpoint {
         // Handle packet on existing connection, if any
 
         let addresses = FourTuple { remote, local_ip };
-        if let Some(route_to) = self.index.get(&addresses, &first_decode) {
-            let event = DatagramConnectionEvent {
-                now,
-                remote,
-                ecn,
-                first_decode,
-                remaining,
-            };
+        if let Some(route_to) = self.index.get(&addresses, &event.first_decode) {
             return match route_to {
                 RouteDatagramTo::Incoming(incoming_idx) => {
                     let incoming_buffer = &mut self.incoming_buffers[incoming_idx];
@@ -235,19 +234,19 @@ impl Endpoint {
 
         // Potentially create a new connection
 
-        let dst_cid = first_decode.dst_cid();
+        let dst_cid = event.first_decode.dst_cid();
 
-        if first_decode.initial_header().is_some() {
+        if event.first_decode.initial_header().is_some() {
             return self.handle_first_packet(
-                first_decode,
+                event.first_decode,
                 datagram_len,
                 addresses,
                 ecn,
-                remaining,
+                event.remaining,
                 buf,
                 now,
             );
-        } else if first_decode.has_long_header() {
+        } else if event.first_decode.has_long_header() {
             debug!(
                 "ignoring non-initial packet for unknown connection {}",
                 dst_cid
@@ -259,6 +258,7 @@ impl Endpoint {
         // Send a stateless reset if possible.
 
         if !first_decode.is_initial() && self.local_cid_generator.validate(dst_cid).is_err() {
+        if !event.first_decode.is_initial() && self.local_cid_generator.validate(dst_cid).is_err() {
             debug!("dropping packet with invalid CID");
             return None;
         }
