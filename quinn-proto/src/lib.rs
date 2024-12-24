@@ -51,7 +51,7 @@ pub use rustls;
 mod config;
 pub use config::{
     AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
-    ServerConfig, StdSystemTime, TimeSource, TransportConfig,
+    ServerConfig, StdSystemTime, TimeSource, TransportConfig, ValidationTokenConfig,
 };
 
 pub mod crypto;
@@ -86,6 +86,7 @@ pub use crate::cid_generator::{
 
 mod token;
 use token::ResetToken;
+pub use token::{NoneTokenLog, TokenLog, TokenReuseError};
 
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;

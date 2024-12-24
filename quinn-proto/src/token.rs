@@ -15,6 +15,66 @@ use crate::{
     Duration, ServerConfig, SystemTime, RESET_TOKEN_SIZE, UNIX_EPOCH,
 };
 
+/// Responsible for limiting clients' ability to reuse validation tokens
+///
+/// [_RFC 9000 § 8.1.4:_](https://www.rfc-editor.org/rfc/rfc9000.html#section-8.1.4)
+///
+/// > Attackers could replay tokens to use servers as amplifiers in DDoS attacks. To protect
+/// > against such attacks, servers MUST ensure that replay of tokens is prevented or limited.
+/// > Servers SHOULD ensure that tokens sent in Retry packets are only accepted for a short time,
+/// > as they are returned immediately by clients. Tokens that are provided in NEW_TOKEN frames
+/// > (Section 19.7) need to be valid for longer but SHOULD NOT be accepted multiple times.
+/// > Servers are encouraged to allow tokens to be used only once, if possible; tokens MAY include
+/// > additional information about clients to further narrow applicability or reuse.
+///
+/// `TokenLog` pertains only to tokens provided in NEW_TOKEN frames.
+pub trait TokenLog: Send + Sync {
+    /// Record that the token was used and, ideally, return a token reuse error if the token may
+    /// have been already used previously
+    ///
+    /// False negatives and false positives are both permissible. Called when a client uses an
+    /// address validation token.
+    ///
+    /// Parameters:
+    /// - `nonce`: A server-generated random unique value for the token.
+    /// - `issued`: The time the server issued the token.
+    /// - `lifetime`: The expiration time of address validation tokens sent via NEW_TOKEN frames,
+    ///   as configured by [`ServerValidationTokenConfig::lifetime`][1].
+    ///
+    /// [1]: crate::ValidationTokenConfig::lifetime
+    ///
+    /// ## Security & Performance
+    ///
+    /// To the extent that it is possible to repeatedly trigger false negatives (returning `Ok` for
+    /// a token which has been reused), an attacker could use the server to perform [amplification
+    /// attacks][2]. The QUIC specification requires that this be limited, if not prevented fully.
+    ///
+    /// A false positive (returning `Err` for a token which has never been used) is not a security
+    /// vulnerability; it is permissible for a `TokenLog` to always return `Err`. A false positive
+    /// causes the token to be ignored, which may cause the transmission of some 0.5-RTT data to be
+    /// delayed until the handshake completes, if a sufficient amount of 0.5-RTT data it sent.
+    ///
+    /// [2]: https://en.wikipedia.org/wiki/Denial-of-service_attack#Amplification
+    fn check_and_insert(
+        &self,
+        nonce: u128,
+        issued: SystemTime,
+        lifetime: Duration,
+    ) -> Result<(), TokenReuseError>;
+}
+
+/// Error for when a validation token may have been reused
+pub struct TokenReuseError;
+
+/// Null implementation of [`TokenLog`], which never accepts tokens
+pub struct NoneTokenLog;
+
+impl TokenLog for NoneTokenLog {
+    fn check_and_insert(&self, _: u128, _: SystemTime, _: Duration) -> Result<(), TokenReuseError> {
+        Err(TokenReuseError)
+    }
+}
+
 /// State in an `Incoming` determined by a token or lack thereof
 #[derive(Debug)]
 pub(crate) struct IncomingToken {
@@ -75,6 +135,30 @@ impl IncomingToken {
                     validated: true,
                 })
             }
+            TokenPayload::Validation { ip, issued } => {
+                if ip != remote_address.ip() {
+                    return Ok(unvalidated);
+                }
+                if issued + server_config.validation_token.lifetime
+                    < server_config.time_source.now()
+                {
+                    return Ok(unvalidated);
+                }
+                if server_config
+                    .validation_token
+                    .log
+                    .check_and_insert(retry.nonce, issued, server_config.validation_token.lifetime)
+                    .is_err()
+                {
+                    return Ok(unvalidated);
+                }
+
+                Ok(Self {
+                    retry_src_cid: None,
+                    orig_dst_cid: header.dst_cid,
+                    validated: true,
+                })
+            }
         }
     }
 }
@@ -117,6 +201,11 @@ impl Token {
                 orig_dst_cid.encode_long(&mut buf);
                 encode_unix_secs(&mut buf, issued);
             }
+            TokenPayload::Validation { ip, issued } => {
+                buf.put_u8(TokenType::Validation as u8);
+                encode_ip(&mut buf, ip);
+                encode_unix_secs(&mut buf, issued);
+            }
         }
 
         // Encrypt
@@ -149,6 +238,10 @@ impl Token {
                 orig_dst_cid: ConnectionId::decode_long(&mut reader)?,
                 issued: decode_unix_secs(&mut reader)?,
             },
+            TokenType::Validation => TokenPayload::Validation {
+                ip: decode_ip(&mut reader)?,
+                issued: decode_unix_secs(&mut reader)?,
+            },
         };
 
         if !reader.is_empty() {
@@ -171,6 +264,13 @@ pub(crate) enum TokenPayload {
         /// The time at which this token was issued
         issued: SystemTime,
     },
+    /// Token originating from a NEW_TOKEN frame
+    Validation {
+        /// The client's IP address (its port is likely to change between sessions)
+        ip: IpAddr,
+        /// The time at which this token was issued
+        issued: SystemTime,
+    },
 }
 
 /// Variant tag for a [`TokenPayload`]
@@ -178,12 +278,13 @@ pub(crate) enum TokenPayload {
 #[repr(u8)]
 enum TokenType {
     Retry = 0,
+    Validation = 1,
 }
 
 impl TokenType {
     fn from_byte(n: u8) -> Option<Self> {
         use TokenType::*;
-        [Retry].into_iter().find(|ty| *ty as u8 == n)
+        [Retry, Validation].into_iter().find(|ty| *ty as u8 == n)
     }
 }
 
@@ -316,7 +417,6 @@ mod test {
             orig_dst_cid: orig_dst_cid_1,
             issued: issued_1,
         };
-        #[allow(irrefutable_let_patterns)] // TEMPORARY until next commit
         let TokenPayload::Retry {
             address: address_2,
             orig_dst_cid: orig_dst_cid_2,
@@ -328,6 +428,31 @@ mod test {
 
         assert_eq!(address_1, address_2);
         assert_eq!(orig_dst_cid_1, orig_dst_cid_2);
+        assert_eq!(issued_1, issued_2);
+    }
+
+    #[test]
+    fn validation_token_sanity() {
+        use crate::{Duration, UNIX_EPOCH};
+
+        use std::net::Ipv6Addr;
+
+        let ip_1 = Ipv6Addr::LOCALHOST.into();
+        let issued_1 = UNIX_EPOCH + Duration::from_secs(42); // Fractional seconds would be lost
+
+        let payload_1 = TokenPayload::Validation {
+            ip: ip_1,
+            issued: issued_1,
+        };
+        let TokenPayload::Validation {
+            ip: ip_2,
+            issued: issued_2,
+        } = token_round_trip(payload_1)
+        else {
+            panic!("token decoded as wrong variant");
+        };
+
+        assert_eq!(ip_1, ip_2);
         assert_eq!(issued_1, issued_2);
     }
 
