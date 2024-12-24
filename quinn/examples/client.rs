@@ -21,7 +21,7 @@ use url::Url;
 mod common;
 
 /// HTTP/0.9 over QUIC client
-#[derive(Parser, Debug)]
+#[derive(Parser, Debug, Clone)]
 #[clap(name = "client")]
 struct Opt {
     /// Perform NSS-compatible TLS key logging to the file specified in `SSLKEYLOGFILE`.
@@ -68,15 +68,8 @@ fn main() {
 
 #[tokio::main]
 async fn run(options: Opt) -> Result<()> {
-    let url = options.url;
-    let url_host = strip_ipv6_brackets(url.host_str().unwrap());
-    let remote = (url_host, url.port().unwrap_or(4433))
-        .to_socket_addrs()?
-        .next()
-        .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
-
     let mut roots = rustls::RootCertStore::empty();
-    if let Some(ca_path) = options.ca {
+    if let Some(ref ca_path) = options.ca {
         roots.add(CertificateDer::from(fs::read(ca_path)?))?;
     } else {
         let dirs = directories_next::ProjectDirs::from("org", "quinn", "quinn-examples").unwrap();
@@ -101,8 +94,38 @@ async fn run(options: Opt) -> Result<()> {
         client_crypto.key_log = Arc::new(rustls::KeyLogFile::new());
     }
 
-    let client_config =
+    let options = Arc::new(options);
+    let mut handles = vec![];
+    info!("starting");
+    for _i in 0..5 {
+        let client_crypto = client_crypto.clone();
+        let options = options.clone();
+        let handle = tokio::spawn(async move {
+            let _ = work(client_crypto, options).await;
+        });
+        handles.push(handle);
+    }
+    for handle in handles {
+        handle.await?
+    }
+
+    info!("exiting");
+    Ok(())
+}
+
+async fn work(client_crypto: rustls::ClientConfig, options: Arc<Opt>) -> Result<()> {
+    let url = options.url.clone();
+    let url_host = strip_ipv6_brackets(url.host_str().unwrap());
+    let remote = (url_host, url.port().unwrap_or(4433))
+        .to_socket_addrs()?
+        .next()
+        .ok_or_else(|| anyhow!("couldn't resolve to an address"))?;
+    let mut client_config =
         quinn::ClientConfig::new(Arc::new(QuicClientConfig::try_from(client_crypto)?));
+    let mut transport_config = quinn::TransportConfig::default();
+    transport_config.max_idle_timeout(Some(std::time::Duration::from_secs(1).try_into()?));
+    client_config.transport_config(Arc::new(transport_config));
+
     let mut endpoint = quinn::Endpoint::client(options.bind)?;
     endpoint.set_default_client_config(client_config);
 
@@ -144,13 +167,12 @@ async fn run(options: Opt) -> Result<()> {
         duration,
         resp.len() as f32 / (duration_secs(&duration) * 1024.0)
     );
-    io::stdout().write_all(&resp).unwrap();
-    io::stdout().flush().unwrap();
+    //io::stdout().write_all(&resp).unwrap();
+    //io::stdout().flush().unwrap();
     conn.close(0u32.into(), b"done");
 
     // Give the server a fair chance to receive the close packet
-    endpoint.wait_idle().await;
-
+    endpoint.close(0u8.into(), b"");
     Ok(())
 }
 
