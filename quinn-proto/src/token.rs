@@ -20,6 +20,7 @@ use crate::{
 pub(crate) struct IncomingToken {
     pub(crate) retry_src_cid: Option<ConnectionId>,
     pub(crate) orig_dst_cid: ConnectionId,
+    pub(crate) validated: bool,
 }
 
 impl IncomingToken {
@@ -33,6 +34,7 @@ impl IncomingToken {
         let unvalidated = Self {
             retry_src_cid: None,
             orig_dst_cid: header.dst_cid,
+            validated: false,
         };
 
         // Decode token or short-circuit
@@ -67,6 +69,7 @@ impl IncomingToken {
         Ok(Self {
             retry_src_cid: Some(header.dst_cid),
             orig_dst_cid: retry.payload.orig_dst_cid,
+            validated: true,
         })
     }
 }
