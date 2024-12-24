@@ -364,7 +364,10 @@ impl Endpoint {
             now,
             tls,
             config.transport,
-            SideArgs::Client,
+            SideArgs::Client {
+                token_store: config.validation_token_store,
+                server_name: server_name.into(),
+            },
         );
         Ok((ch, conn))
     }

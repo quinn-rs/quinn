@@ -4,7 +4,7 @@ use std::{
     net::{IpAddr, SocketAddr},
 };
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes};
 use rand::Rng;
 
 use crate::{
@@ -72,6 +72,33 @@ pub struct NoneTokenLog;
 impl TokenLog for NoneTokenLog {
     fn check_and_insert(&self, _: u128, _: SystemTime, _: Duration) -> Result<(), TokenReuseError> {
         Err(TokenReuseError)
+    }
+}
+
+/// Responsible for storing validation tokens received from servers and retrieving them for use in
+/// subsequent connections
+pub trait TokenStore: Send + Sync {
+    /// Potentially store a token for later one-time use
+    ///
+    /// Called when a NEW_TOKEN frame is received from the server.
+    fn insert(&self, server_name: &str, token: Bytes);
+
+    /// Try to find and take a token that was stored with the given server name
+    ///
+    /// The same token must never be returned from `take` twice, as doing so can be used to
+    /// de-anonymize a client's traffic.
+    ///
+    /// Called when trying to connect to a server. It is always ok for this to return `None`.
+    fn take(&self, server_name: &str) -> Option<Bytes>;
+}
+
+/// Null implementation of [`TokenStore`], which does not store any tokens
+pub struct NoneTokenStore;
+
+impl TokenStore for NoneTokenStore {
+    fn insert(&self, _: &str, _: Bytes) {}
+    fn take(&self, _: &str) -> Option<Bytes> {
+        None
     }
 }
 
