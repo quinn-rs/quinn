@@ -735,7 +735,7 @@ impl Endpoint {
             orig_dst_cid: incoming.packet.header.dst_cid,
             issued: server_config.time_source.now(),
         };
-        let token = Token { payload }.encode(&*server_config.token_key, loc_cid);
+        let token = Token::new(payload, &mut self.rng).encode(&*server_config.token_key);
 
         let header = Header::Retry {
             src_cid: loc_cid,
