@@ -29,7 +29,7 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
         EndpointEvent, EndpointEventInner, IssuedCid,
     },
-    token::{IncomingToken, InvalidRetryTokenError, Token},
+    token::{IncomingToken, InvalidRetryTokenError, Token, TokenPayload},
     transport_parameters::{PreferredAddress, TransportParameters},
     Duration, Instant, ResetToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
     MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
@@ -730,12 +730,12 @@ impl Endpoint {
         // retried by the application layer.
         let loc_cid = self.local_cid_generator.generate_cid();
 
-        let token = Token {
+        let payload = TokenPayload {
             address: incoming.addresses.remote,
             orig_dst_cid: incoming.packet.header.dst_cid,
             issued: server_config.time_source.now(),
-        }
-        .encode(&*server_config.token_key, loc_cid);
+        };
+        let token = Token { payload }.encode(&*server_config.token_key, loc_cid);
 
         let header = Header::Retry {
             src_cid: loc_cid,
