@@ -65,7 +65,7 @@ impl FrameStats {
             Frame::StopSending(_) => self.stop_sending += 1,
             Frame::Crypto(_) => self.crypto += 1,
             Frame::Datagram(_) => self.datagram += 1,
-            Frame::NewToken { .. } => self.new_token += 1,
+            Frame::NewToken(_) => self.new_token += 1,
             Frame::MaxData(_) => self.max_data += 1,
             Frame::MaxStreamData { .. } => self.max_stream_data += 1,
             Frame::MaxStreams { dir, .. } => {
