@@ -530,6 +530,18 @@ pub(crate) struct NewToken {
     pub(crate) token: Bytes,
 }
 
+impl NewToken {
+    pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
+        out.write(FrameType::NEW_TOKEN);
+        out.write_var(self.token.len() as u64);
+        out.put_slice(&self.token);
+    }
+
+    pub(crate) fn size(&self) -> usize {
+        1 + VarInt::from_u64(self.token.len() as u64).unwrap().size() + self.token.len()
+    }
+}
+
 pub(crate) struct Iter {
     // TODO: ditch io::Cursor after bytes 0.5
     bytes: io::Cursor<Bytes>,

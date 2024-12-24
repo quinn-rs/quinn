@@ -29,7 +29,7 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
         EndpointEvent, EndpointEventInner,
     },
-    token::ResetToken,
+    token::{ResetToken, Token, TokenPayload},
     transport_parameters::TransportParameters,
     Dir, Duration, EndpointConfig, Frame, Instant, Side, StreamId, Transmit, TransportError,
     TransportErrorCode, VarInt, INITIAL_MTU, MAX_CID_SIZE, MAX_STREAM_COUNT, MIN_INITIAL_SIZE,
@@ -351,6 +351,9 @@ impl Connection {
             stats: ConnectionStats::default(),
             version,
         };
+        if path_validated {
+            this.on_path_validated();
+        }
         if side.is_client() {
             // Kick off the connection
             this.write_crypto();
@@ -2435,7 +2438,7 @@ impl Connection {
                     );
                     return Ok(());
                 }
-                self.path.validated = true;
+                self.on_path_validated();
 
                 self.process_early_payload(now, packet)?;
                 if self.state.is_closed() {
@@ -3242,6 +3245,43 @@ impl Connection {
             self.datagrams.send_blocked = false;
         }
 
+        // NEW_TOKEN
+        while let Some(remote_addr) = space.pending.new_tokens.pop() {
+            debug_assert_eq!(space_id, SpaceId::Data);
+            let ConnectionSide::Server { ref server_config } = self.side else {
+                panic!("NEW_TOKEN frames should not be enqueued by clients");
+            };
+
+            if remote_addr != self.path.remote {
+                // NEW_TOKEN frames contain tokens bound to a client's IP address, and are only
+                // useful if used from the same IP address.  Thus, we abandon enqueued NEW_TOKEN
+                // frames upon an path change. Instead, when the new path becomes validated,
+                // NEW_TOKEN frames may be enqueued  for the new path instead.
+                continue;
+            }
+
+            let payload = TokenPayload::Validation {
+                ip: remote_addr.ip(),
+                issued: server_config.time_source.now(),
+            };
+            let token = Token::new(payload, &mut self.rng).encode(&*server_config.token_key);
+            let new_token = NewToken {
+                token: token.into(),
+            };
+
+            if buf.len() + new_token.size() >= max_size {
+                space.pending.new_tokens.push(remote_addr);
+                break;
+            }
+
+            new_token.encode(buf);
+            sent.retransmits
+                .get_or_create()
+                .new_tokens
+                .push(remote_addr);
+            self.stats.frame_tx.new_token += 1;
+        }
+
         // STREAM
         if space_id == SpaceId::Data {
             sent.stream_frames =
@@ -3602,6 +3642,18 @@ impl Connection {
         // this writing, all QUIC cipher suites use 16-byte tags. We could return `None` instead,
         // but that would needlessly prevent sending datagrams during 0-RTT.
         key.map_or(16, |x| x.tag_len())
+    }
+
+    /// Mark the path as validated, and enqueue NEW_TOKEN frames to be sent as appropriate
+    fn on_path_validated(&mut self) {
+        self.path.validated = true;
+        if let ConnectionSide::Server { server_config } = &self.side {
+            let new_tokens = &mut self.spaces[SpaceId::Data as usize].pending.new_tokens;
+            new_tokens.clear();
+            for _ in 0..server_config.validation_tokens_sent {
+                new_tokens.push(self.path.remote);
+            }
+        }
     }
 }
 
