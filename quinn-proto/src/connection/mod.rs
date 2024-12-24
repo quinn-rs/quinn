@@ -31,9 +31,9 @@ use crate::{
     },
     token::{ResetToken, Token, TokenPayload},
     transport_parameters::TransportParameters,
-    Dir, Duration, EndpointConfig, Frame, Instant, Side, StreamId, Transmit, TransportError,
-    TransportErrorCode, VarInt, INITIAL_MTU, MAX_CID_SIZE, MAX_STREAM_COUNT, MIN_INITIAL_SIZE,
-    TIMER_GRANULARITY,
+    Dir, Duration, EndpointConfig, Frame, Instant, Side, StreamId, TokenStore, Transmit,
+    TransportError, TransportErrorCode, VarInt, INITIAL_MTU, MAX_CID_SIZE, MAX_STREAM_COUNT,
+    MIN_INITIAL_SIZE, TIMER_GRANULARITY,
 };
 
 mod ack_frequency;
@@ -2853,14 +2853,19 @@ impl Connection {
                     }
                 }
                 Frame::NewToken(NewToken { token }) => {
-                    if self.side.is_server() {
+                    let ConnectionSide::Client {
+                        token_store,
+                        server_name,
+                        ..
+                    } = &self.side
+                    else {
                         return Err(TransportError::PROTOCOL_VIOLATION("client sent NEW_TOKEN"));
-                    }
+                    };
                     if token.is_empty() {
                         return Err(TransportError::FRAME_ENCODING_ERROR("empty token"));
                     }
                     trace!("got new token");
-                    // TODO: Cache, or perhaps forward to user?
+                    token_store.insert(server_name, token);
                 }
                 Frame::Datagram(datagram) => {
                     if self
@@ -3672,6 +3677,8 @@ enum ConnectionSide {
     Client {
         /// Sent in every outgoing Initial packet. Always empty after Initial keys are discarded
         token: Bytes,
+        token_store: Arc<dyn TokenStore>,
+        server_name: String,
     },
     Server {
         server_config: Arc<ServerConfig>,
@@ -3705,8 +3712,13 @@ impl ConnectionSide {
 impl From<SideArgs> for ConnectionSide {
     fn from(side: SideArgs) -> Self {
         match side {
-            SideArgs::Client => Self::Client {
-                token: Bytes::new(),
+            SideArgs::Client {
+                token_store,
+                server_name,
+            } => Self::Client {
+                token: token_store.take(&server_name).unwrap_or_default(),
+                token_store,
+                server_name,
             },
             SideArgs::Server {
                 server_config,
@@ -3719,7 +3731,10 @@ impl From<SideArgs> for ConnectionSide {
 
 /// Parameters to `Connection::new` specific to it being client-side or server-side
 pub(crate) enum SideArgs {
-    Client,
+    Client {
+        token_store: Arc<dyn TokenStore>,
+        server_name: String,
+    },
     Server {
         server_config: Arc<ServerConfig>,
         pref_addr_cid: Option<ConnectionId>,
