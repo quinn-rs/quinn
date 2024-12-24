@@ -27,29 +27,35 @@
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
-#[cfg(unix)]
+use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+#[cfg(all(feature = "net", unix))]
 use std::os::unix::io::AsFd;
-#[cfg(windows)]
+#[cfg(all(feature = "net", windows))]
 use std::os::windows::io::AsSocket;
-use std::{
-    net::{IpAddr, Ipv6Addr, SocketAddr},
-    sync::Mutex,
-    time::{Duration, Instant},
-};
+#[cfg(feature = "net")]
+use std::sync::Mutex;
+// Allowing unused, otherwise the cfg condition complexity gets
+// out of control only to skip an unused `Duration` import.
+#[allow(unused)]
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+use std::time::{Duration, Instant};
+#[allow(unused)]
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+use web_time::{Duration, Instant};
 
-#[cfg(any(unix, windows))]
+#[cfg(all(feature = "net", any(unix, windows)))]
 mod cmsg;
 
-#[cfg(unix)]
+#[cfg(all(feature = "net", unix))]
 #[path = "unix.rs"]
 mod imp;
 
-#[cfg(windows)]
+#[cfg(all(feature = "net", windows))]
 #[path = "windows.rs"]
 mod imp;
 
 // No ECN support
-#[cfg(not(any(unix, windows)))]
+#[cfg(all(feature = "net", not(any(unix, windows))))]
 #[path = "fallback.rs"]
 mod imp;
 
@@ -76,10 +82,15 @@ mod log {
     pub(crate) use no_op::*;
 }
 
+#[cfg(feature = "net")]
 pub use imp::UdpSocketState;
 
 /// Number of UDP packets to send/receive at a time
+#[cfg(feature = "net")]
 pub const BATCH_SIZE: usize = imp::BATCH_SIZE;
+/// Number of UDP packets to send/receive at a time
+#[cfg(not(feature = "net"))]
+pub const BATCH_SIZE: usize = 1;
 
 /// Metadata for a single buffer filled with bytes received from the network
 ///
@@ -141,13 +152,14 @@ pub struct Transmit<'a> {
 }
 
 /// Log at most 1 IO error per minute
+#[cfg(feature = "net")]
 const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
 
 /// Logs a warning message when sendmsg fails
 ///
 /// Logging will only be performed if at least [`IO_ERROR_LOG_INTERVAL`]
 /// has elapsed since the last error was logged.
-#[cfg(any(feature = "tracing", feature = "direct-log"))]
+#[cfg(all(feature = "net", any(feature = "tracing", feature = "direct-log")))]
 fn log_sendmsg_error(
     last_send_error: &Mutex<Instant>,
     err: impl core::fmt::Debug,
@@ -164,7 +176,7 @@ fn log_sendmsg_error(
 }
 
 // No-op
-#[cfg(not(any(feature = "tracing", feature = "direct-log")))]
+#[cfg(all(feature = "net", not(any(feature = "tracing", feature = "direct-log"))))]
 fn log_sendmsg_error(_: &Mutex<Instant>, _: impl core::fmt::Debug, _: &Transmit) {}
 
 /// A borrowed UDP socket
@@ -172,9 +184,10 @@ fn log_sendmsg_error(_: &Mutex<Instant>, _: impl core::fmt::Debug, _: &Transmit)
 /// On Unix, constructible via `From<T: AsFd>`. On Windows, constructible via `From<T:
 /// AsSocket>`.
 // Wrapper around socket2 to avoid making it a public dependency and incurring stability risk
+#[cfg(feature = "net")]
 pub struct UdpSockRef<'a>(socket2::SockRef<'a>);
 
-#[cfg(unix)]
+#[cfg(all(feature = "net", unix))]
 impl<'s, S> From<&'s S> for UdpSockRef<'s>
 where
     S: AsFd,
@@ -184,7 +197,7 @@ where
     }
 }
 
-#[cfg(windows)]
+#[cfg(all(feature = "net", windows))]
 impl<'s, S> From<&'s S> for UdpSockRef<'s>
 where
     S: AsSocket,
