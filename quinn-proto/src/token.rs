@@ -1,9 +1,11 @@
 use std::{
     fmt,
+    mem::size_of,
     net::{IpAddr, SocketAddr},
 };
 
 use bytes::{Buf, BufMut};
+use rand::Rng;
 
 use crate::{
     coding::{BufExt, BufMutExt},
@@ -47,8 +49,7 @@ impl IncomingToken {
         //
         // > If the token is invalid, then the server SHOULD proceed as if the client did not have
         // > a validated address, including potentially sending a Retry packet.
-        let Some(retry) = Token::decode(&*server_config.token_key, header.dst_cid, &header.token)
-        else {
+        let Some(retry) = Token::decode(&*server_config.token_key, &header.token) else {
             return Ok(unvalidated);
         };
 
@@ -77,16 +78,23 @@ pub(crate) struct InvalidRetryTokenError;
 
 /// Retry or validation token
 pub(crate) struct Token {
+    /// Randomly generated value, which must be unique, and is visible to the client
+    rand: u128,
     /// Content that is encrypted from the client
     pub(crate) payload: TokenPayload,
 }
 
 impl Token {
-    pub(crate) fn encode(
-        &self,
-        key: &dyn HandshakeTokenKey,
-        retry_src_cid: ConnectionId,
-    ) -> Vec<u8> {
+    /// Construct with newly sampled randomness
+    pub(crate) fn new<R: Rng>(payload: TokenPayload, rng: &mut R) -> Self {
+        Self {
+            rand: rng.gen(),
+            payload,
+        }
+    }
+
+    /// Encode and encrypt
+    pub(crate) fn encode(&self, key: &dyn HandshakeTokenKey) -> Vec<u8> {
         let mut buf = Vec::new();
 
         // Encode payload
@@ -95,20 +103,24 @@ impl Token {
         encode_unix_secs(&mut buf, self.payload.issued);
 
         // Encrypt
-        let aead_key = key.aead_from_hkdf(&retry_src_cid);
+        let aead_key = key.aead_from_hkdf(&self.rand.to_le_bytes());
         aead_key.seal(&mut buf, &[]).unwrap();
+        buf.extend(&self.rand.to_le_bytes());
 
         buf
     }
 
-    fn decode(
-        key: &dyn HandshakeTokenKey,
-        retry_src_cid: ConnectionId,
-        raw_token_bytes: &[u8],
-    ) -> Option<Self> {
+    /// Decode and decrypt
+    fn decode(key: &dyn HandshakeTokenKey, raw_token_bytes: &[u8]) -> Option<Self> {
         // Decrypt
-        let aead_key = key.aead_from_hkdf(&retry_src_cid);
-        let mut sealed_token = raw_token_bytes.to_vec();
+
+        let rand_slice_start = raw_token_bytes.len().checked_sub(size_of::<u128>())?;
+        let mut rand_bytes = [0; size_of::<u128>()];
+        rand_bytes.copy_from_slice(&raw_token_bytes[rand_slice_start..]);
+        let rand = u128::from_le_bytes(rand_bytes);
+
+        let aead_key = key.aead_from_hkdf(&rand_bytes);
+        let mut sealed_token = raw_token_bytes[..rand_slice_start].to_vec();
         let data = aead_key.open(&mut sealed_token, &[]).ok()?;
 
         // Decode payload
@@ -123,6 +135,7 @@ impl Token {
         }
 
         Some(Self {
+            rand,
             payload: TokenPayload {
                 address,
                 orig_dst_cid,
@@ -259,17 +272,17 @@ mod test {
         let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
         let address = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
-        let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         let token = Token {
+            rand: rng.gen(),
             payload: TokenPayload {
                 address,
                 orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
                 issued: UNIX_EPOCH + Duration::new(42, 0), // Fractional seconds would be lost
             },
         };
-        let encoded = token.encode(&prk, retry_src_cid);
+        let encoded = token.encode(&prk);
 
-        let decoded = Token::decode(&prk, retry_src_cid, &encoded).expect("token didn't validate");
+        let decoded = Token::decode(&prk, &encoded).expect("token didn't validate");
         assert_eq!(token.payload.address, decoded.payload.address);
         assert_eq!(token.payload.orig_dst_cid, decoded.payload.orig_dst_cid);
         assert_eq!(token.payload.issued, decoded.payload.issued);
@@ -278,8 +291,6 @@ mod test {
     #[test]
     fn invalid_token_returns_err() {
         use super::*;
-        use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
-        use crate::MAX_CID_SIZE;
         use rand::RngCore;
 
         let rng = &mut rand::thread_rng();
@@ -289,8 +300,6 @@ mod test {
 
         let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
 
-        let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
-
         let mut invalid_token = Vec::new();
 
         let mut random_data = [0; 32];
@@ -298,6 +307,6 @@ mod test {
         invalid_token.put_slice(&random_data);
 
         // Assert: garbage sealed data returns err
-        assert!(Token::decode(&prk, retry_src_cid, &invalid_token).is_none());
+        assert!(Token::decode(&prk, &invalid_token).is_none());
     }
 }
