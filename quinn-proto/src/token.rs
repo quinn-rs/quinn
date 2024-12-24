@@ -47,8 +47,7 @@ impl IncomingToken {
         //
         // > If the token is invalid, then the server SHOULD proceed as if the client did not have
         // > a validated address, including potentially sending a Retry packet.
-        let Some(retry) =
-            RetryToken::decode(&*server_config.token_key, header.dst_cid, &header.token)
+        let Some(retry) = Token::decode(&*server_config.token_key, header.dst_cid, &header.token)
         else {
             return Ok(unvalidated);
         };
@@ -74,7 +73,8 @@ impl IncomingToken {
 /// The connection cannot be established.
 pub(crate) struct InvalidRetryTokenError;
 
-pub(crate) struct RetryToken {
+/// Retry or validation token
+pub(crate) struct Token {
     /// The client's address
     pub(crate) address: SocketAddr,
     /// The destination connection ID set in the very first packet from the client
@@ -83,7 +83,7 @@ pub(crate) struct RetryToken {
     pub(crate) issued: SystemTime,
 }
 
-impl RetryToken {
+impl Token {
     pub(crate) fn encode(
         &self,
         key: &dyn HandshakeTokenKey,
@@ -250,15 +250,14 @@ mod test {
 
         let address = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
-        let token = RetryToken {
+        let token = Token {
             address,
             orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
             issued: UNIX_EPOCH + Duration::from_secs(42), // Fractional seconds would be lost
         };
         let encoded = token.encode(&prk, retry_src_cid);
 
-        let decoded =
-            RetryToken::decode(&prk, retry_src_cid, &encoded).expect("token didn't validate");
+        let decoded = Token::decode(&prk, retry_src_cid, &encoded).expect("token didn't validate");
         assert_eq!(token.address, decoded.address);
         assert_eq!(token.orig_dst_cid, decoded.orig_dst_cid);
         assert_eq!(token.issued, decoded.issued);
@@ -287,6 +286,6 @@ mod test {
         invalid_token.put_slice(&random_data);
 
         // Assert: garbage sealed data returns err
-        assert!(RetryToken::decode(&prk, retry_src_cid, &invalid_token).is_none());
+        assert!(Token::decode(&prk, retry_src_cid, &invalid_token).is_none());
     }
 }
