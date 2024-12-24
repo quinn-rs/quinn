@@ -17,8 +17,8 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
-    Duration, RandomConnectionIdGenerator, SystemTime, TokenLog, VarInt, VarIntBoundsExceeded,
-    DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
+    Duration, RandomConnectionIdGenerator, SystemTime, TokenLog, TokenStore, VarInt,
+    VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
 };
 
 mod transport;
@@ -460,6 +460,9 @@ pub struct ClientConfig {
     /// Cryptographic configuration to use
     pub(crate) crypto: Arc<dyn crypto::ClientConfig>,
 
+    /// Validation token store to use
+    pub(crate) token_store: Option<Arc<dyn TokenStore>>,
+
     /// Provider that populates the destination connection ID of Initial Packets
     pub(crate) initial_dst_cid_provider: Arc<dyn Fn() -> ConnectionId + Send + Sync>,
 
@@ -473,6 +476,7 @@ impl ClientConfig {
         Self {
             transport: Default::default(),
             crypto,
+            token_store: None,
             initial_dst_cid_provider: Arc::new(|| {
                 RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid()
             }),
@@ -499,6 +503,16 @@ impl ClientConfig {
     /// Set a custom [`TransportConfig`]
     pub fn transport_config(&mut self, transport: Arc<TransportConfig>) -> &mut Self {
         self.transport = transport;
+        self
+    }
+
+    /// Set a custom [`TokenStore`]
+    ///
+    /// Defaults to `None`.
+    ///
+    /// Setting to `None` disables the use of tokens from NEW_TOKEN frames as a client.
+    pub fn token_store(&mut self, store: Option<Arc<dyn TokenStore>>) -> &mut Self {
+        self.token_store = store;
         self
     }
 
@@ -534,6 +548,7 @@ impl fmt::Debug for ClientConfig {
         fmt.debug_struct("ClientConfig")
             .field("transport", &self.transport)
             // crypto not debug
+            // token_store not debug
             .field("version", &self.version)
             .finish_non_exhaustive()
     }

@@ -420,7 +420,10 @@ impl Endpoint {
             now,
             tls,
             config.transport,
-            SideArgs::Client,
+            SideArgs::Client {
+                token_store: config.token_store,
+                server_name: server_name.into(),
+            },
         );
         Ok((ch, conn))
     }
