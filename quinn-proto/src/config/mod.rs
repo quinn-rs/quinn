@@ -17,8 +17,8 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
-    Duration, RandomConnectionIdGenerator, SystemTime, VarInt, VarIntBoundsExceeded,
-    DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
+    Duration, NoneTokenLog, RandomConnectionIdGenerator, SystemTime, TokenLog, VarInt,
+    VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
 };
 
 mod transport;
@@ -209,6 +209,10 @@ pub struct ServerConfig {
     /// rebinding. Enabled by default.
     pub(crate) migration: bool,
 
+    pub(crate) validation_token_lifetime: Duration,
+    pub(crate) validation_token_log: Arc<dyn TokenLog>,
+    pub(crate) validation_tokens_sent: u32,
+
     pub(crate) preferred_address_v4: Option<SocketAddrV4>,
     pub(crate) preferred_address_v6: Option<SocketAddrV6>,
 
@@ -233,6 +237,10 @@ impl ServerConfig {
             retry_token_lifetime: Duration::from_secs(15),
 
             migration: true,
+
+            validation_token_lifetime: Duration::from_secs(2 * 7 * 24 * 60 * 60),
+            validation_token_log: Arc::new(NoneTokenLog),
+            validation_tokens_sent: 0,
 
             preferred_address_v4: None,
             preferred_address_v6: None,
@@ -271,6 +279,35 @@ impl ServerConfig {
     /// rebinding. Enabled by default.
     pub fn migration(&mut self, value: bool) -> &mut Self {
         self.migration = value;
+        self
+    }
+
+    /// Duration after an address validation token was issued for which it's considered valid
+    ///
+    /// This refers only to tokens sent in NEW_TOKEN frames, in contrast to retry tokens.
+    ///
+    /// Defaults to 2 weeks.
+    pub fn validation_token_lifetime(&mut self, value: Duration) -> &mut Self {
+        self.validation_token_lifetime = value;
+        self
+    }
+
+    /// Set a custom [`TokenLog`]
+    ///
+    /// Defaults to [`NoneTokenLog`], which makes the server ignore all address validation tokens
+    /// (that is, tokens originating from NEW_TOKEN frames--retry tokens may still be accepted).
+    pub fn validation_token_log(&mut self, log: Arc<dyn TokenLog>) -> &mut Self {
+        self.validation_token_log = log;
+        self
+    }
+
+    /// Number of address validation tokens sent to a client when its path is validated
+    ///
+    /// This refers only to tokens sent in NEW_TOKEN frames, in contrast to retry tokens.
+    ///
+    /// Defaults to 0.
+    pub fn validation_tokens_sent(&mut self, value: u32) -> &mut Self {
+        self.validation_tokens_sent = value;
         self
     }
 
@@ -392,6 +429,9 @@ impl fmt::Debug for ServerConfig {
             // crypto not debug
             // token not debug
             .field("retry_token_lifetime", &self.retry_token_lifetime)
+            .field("validation_token_lifetime", &self.validation_token_lifetime)
+            // validation_token_log not debug
+            .field("validation_tokens_sent", &self.validation_tokens_sent)
             .field("migration", &self.migration)
             .field("preferred_address_v4", &self.preferred_address_v4)
             .field("preferred_address_v6", &self.preferred_address_v6)
