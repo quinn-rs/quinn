@@ -19,7 +19,7 @@ use crate::{
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     crypto::{self, KeyPair, Keys, PacketKey},
-    frame::{self, Close, Datagram, FrameStruct},
+    frame::{self, Close, Datagram, FrameStruct, NewToken},
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -2849,7 +2849,7 @@ impl Connection {
                         self.update_rem_cid();
                     }
                 }
-                Frame::NewToken { token } => {
+                Frame::NewToken(NewToken { token }) => {
                     if self.side.is_server() {
                         return Err(TransportError::PROTOCOL_VIOLATION("client sent NEW_TOKEN"));
                     }
