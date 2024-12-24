@@ -53,17 +53,19 @@ impl IncomingToken {
         };
 
         // Validate token
-        if retry.address != remote_address {
+        if retry.payload.address != remote_address {
             return Err(InvalidRetryTokenError);
         }
-        if retry.issued + server_config.retry_token_lifetime < server_config.time_source.now() {
+        if retry.payload.issued + server_config.retry_token_lifetime
+            < server_config.time_source.now()
+        {
             return Err(InvalidRetryTokenError);
         }
 
         // Convert token into Self
         Ok(Self {
             retry_src_cid: Some(header.dst_cid),
-            orig_dst_cid: retry.orig_dst_cid,
+            orig_dst_cid: retry.payload.orig_dst_cid,
         })
     }
 }
@@ -75,15 +77,15 @@ pub(crate) struct InvalidRetryTokenError;
 
 /// Retry or validation token
 pub(crate) struct Token {
-    /// The client's address
-    pub(crate) address: SocketAddr,
-    /// The destination connection ID set in the very first packet from the client
-    pub(crate) orig_dst_cid: ConnectionId,
-    /// The time at which this token was issued
-    pub(crate) issued: SystemTime,
+    /// Content that is encrypted from the client
+    pub(crate) payload: TokenPayload,
 }
 
 impl Token {
+    pub(crate) fn new(payload: TokenPayload) -> Self {
+        Self { payload }
+    }
+
     pub(crate) fn encode(
         &self,
         key: &dyn HandshakeTokenKey,
@@ -92,9 +94,9 @@ impl Token {
         let mut buf = Vec::new();
 
         // Encode payload
-        encode_addr(&mut buf, self.address);
-        self.orig_dst_cid.encode_long(&mut buf);
-        encode_unix_secs(&mut buf, self.issued);
+        encode_addr(&mut buf, self.payload.address);
+        self.payload.orig_dst_cid.encode_long(&mut buf);
+        encode_unix_secs(&mut buf, self.payload.issued);
 
         // Encrypt
         let aead_key = key.aead_from_hkdf(&retry_src_cid);
@@ -125,11 +127,23 @@ impl Token {
         }
 
         Some(Self {
-            address,
-            orig_dst_cid,
-            issued,
+            payload: TokenPayload {
+                address,
+                orig_dst_cid,
+                issued,
+            },
         })
     }
+}
+
+/// Content of a [`Token`] that is encrypted from the client
+pub(crate) struct TokenPayload {
+    /// The client's address
+    pub(crate) address: SocketAddr,
+    /// The destination connection ID set in the very first packet from the client
+    pub(crate) orig_dst_cid: ConnectionId,
+    /// The time at which this token was issued
+    pub(crate) issued: SystemTime,
 }
 
 fn encode_addr(buf: &mut Vec<u8>, address: SocketAddr) {
@@ -251,16 +265,18 @@ mod test {
         let address = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
         let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
         let token = Token {
-            address,
-            orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
-            issued: UNIX_EPOCH + Duration::from_secs(42), // Fractional seconds would be lost
+            payload: TokenPayload {
+                address,
+                orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
+                issued: UNIX_EPOCH + Duration::from_secs(42), // Fractional seconds would be lost
+            },
         };
         let encoded = token.encode(&prk, retry_src_cid);
 
         let decoded = Token::decode(&prk, retry_src_cid, &encoded).expect("token didn't validate");
-        assert_eq!(token.address, decoded.address);
-        assert_eq!(token.orig_dst_cid, decoded.orig_dst_cid);
-        assert_eq!(token.issued, decoded.issued);
+        assert_eq!(token.payload.address, decoded.payload.address);
+        assert_eq!(token.payload.orig_dst_cid, decoded.payload.orig_dst_cid);
+        assert_eq!(token.payload.issued, decoded.payload.issued);
     }
 
     #[test]
