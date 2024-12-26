@@ -173,7 +173,7 @@ fn encode_unix_secs(buf: &mut Vec<u8>, time: SystemTime) {
 }
 
 fn decode_unix_secs<B: Buf>(buf: &mut B) -> Option<SystemTime> {
-    Some(UNIX_EPOCH + Duration::new(buf.get::<u64>().ok()?, 0))
+    Some(UNIX_EPOCH + Duration::from_secs(buf.get::<u64>().ok()?))
 }
 
 /// Stateless reset token
@@ -253,7 +253,7 @@ mod test {
         let token = RetryToken {
             address,
             orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
-            issued: UNIX_EPOCH + Duration::new(42, 0), // Fractional seconds would be lost
+            issued: UNIX_EPOCH + Duration::from_secs(42), // Fractional seconds would be lost
         };
         let encoded = token.encode(&prk, retry_src_cid);
 
