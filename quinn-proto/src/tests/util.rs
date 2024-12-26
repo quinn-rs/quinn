@@ -81,7 +81,7 @@ impl Pair {
             epoch: now,
             time: now,
             mtu: DEFAULT_MTU,
-            latency: Duration::new(0, 0),
+            latency: Duration::ZERO,
             spins: 0,
             last_spin: false,
             congestion_experienced: false,
@@ -315,7 +315,7 @@ impl TestEndpoint {
         let socket = if env::var_os("SSLKEYLOGFILE").is_some() {
             let socket = UdpSocket::bind(addr).expect("failed to bind UDP socket");
             socket
-                .set_read_timeout(Some(Duration::new(0, 10_000_000)))
+                .set_read_timeout(Some(Duration::from_millis(10)))
                 .unwrap();
             Some(socket)
         } else {

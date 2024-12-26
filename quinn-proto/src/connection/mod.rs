@@ -1816,7 +1816,7 @@ impl Connection {
     /// Probe Timeout
     fn pto(&self, space: SpaceId) -> Duration {
         let max_ack_delay = match space {
-            SpaceId::Initial | SpaceId::Handshake => Duration::new(0, 0),
+            SpaceId::Initial | SpaceId::Handshake => Duration::ZERO,
             SpaceId::Data => self.ack_frequency.max_ack_delay_for_pto(),
         };
         self.path.rtt.pto_base() + max_ack_delay
@@ -3844,7 +3844,7 @@ fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
     if x > y {
         x - y
     } else {
-        Duration::new(0, 0)
+        Duration::ZERO
     }
 }
 
