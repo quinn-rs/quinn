@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Write},
-    io, mem,
+    mem,
     ops::{Range, RangeInclusive},
 };
 
@@ -526,8 +526,7 @@ impl Crypto {
 }
 
 pub(crate) struct Iter {
-    // TODO: ditch io::Cursor after bytes 0.5
-    bytes: io::Cursor<Bytes>,
+    bytes: Bytes,
     last_ty: Option<FrameType>,
 }
 
@@ -543,7 +542,7 @@ impl Iter {
         }
 
         Ok(Self {
-            bytes: io::Cursor::new(payload),
+            bytes: payload,
             last_ty: None,
         })
     }
@@ -553,9 +552,7 @@ impl Iter {
         if len > self.bytes.remaining() as u64 {
             return Err(UnexpectedEnd);
         }
-        let start = self.bytes.position() as usize;
-        self.bytes.advance(len as usize);
-        Ok(self.bytes.get_ref().slice(start..(start + len as usize)))
+        Ok(self.bytes.split_to(len as usize))
     }
 
     fn try_next(&mut self) -> Result<Frame, IterErr> {
@@ -624,13 +621,11 @@ impl Iter {
                 let largest = self.bytes.get_var()?;
                 let delay = self.bytes.get_var()?;
                 let extra_blocks = self.bytes.get_var()? as usize;
-                let start = self.bytes.position() as usize;
-                scan_ack_blocks(&mut self.bytes, largest, extra_blocks)?;
-                let end = self.bytes.position() as usize;
+                let n = scan_ack_blocks(&self.bytes, largest, extra_blocks)?;
                 Frame::Ack(Ack {
                     delay,
                     largest,
-                    additional: self.bytes.get_ref().slice(start..end),
+                    additional: self.bytes.split_to(n),
                     ecn: if ty != FrameType::ACK_ECN {
                         None
                     } else {
@@ -715,10 +710,7 @@ impl Iter {
     }
 
     fn take_remaining(&mut self) -> Bytes {
-        let mut x = mem::replace(self.bytes.get_mut(), Bytes::new());
-        x.advance(self.bytes.position() as usize);
-        self.bytes.set_position(0);
-        x
+        mem::take(&mut self.bytes)
     }
 }
 
@@ -732,7 +724,7 @@ impl Iterator for Iter {
             Ok(x) => Some(Ok(x)),
             Err(e) => {
                 // Corrupt frame, skip it and everything that follows
-                self.bytes = io::Cursor::new(Bytes::new());
+                self.bytes.clear();
                 Some(Err(InvalidFrame {
                     ty: self.last_ty,
                     reason: e.reason(),
@@ -756,7 +748,9 @@ impl From<InvalidFrame> for TransportError {
     }
 }
 
-fn scan_ack_blocks(buf: &mut io::Cursor<Bytes>, largest: u64, n: usize) -> Result<(), IterErr> {
+/// Validate exactly `n` ACK ranges in `buf` and return the number of bytes they cover
+fn scan_ack_blocks(mut buf: &[u8], largest: u64, n: usize) -> Result<usize, IterErr> {
+    let total_len = buf.remaining();
     let first_block = buf.get_var()?;
     let mut smallest = largest.checked_sub(first_block).ok_or(IterErr::Malformed)?;
     for _ in 0..n {
@@ -765,7 +759,7 @@ fn scan_ack_blocks(buf: &mut io::Cursor<Bytes>, largest: u64, n: usize) -> Resul
         let block = buf.get_var()?;
         smallest = smallest.checked_sub(block).ok_or(IterErr::Malformed)?;
     }
-    Ok(())
+    Ok(total_len - buf.remaining())
 }
 
 enum IterErr {
@@ -794,12 +788,11 @@ impl From<UnexpectedEnd> for IterErr {
 #[derive(Debug, Clone)]
 pub struct AckIter<'a> {
     largest: u64,
-    data: io::Cursor<&'a [u8]>,
+    data: &'a [u8],
 }
 
 impl<'a> AckIter<'a> {
-    fn new(largest: u64, payload: &'a [u8]) -> Self {
-        let data = io::Cursor::new(payload);
+    fn new(largest: u64, data: &'a [u8]) -> Self {
         Self { largest, data }
     }
 }
