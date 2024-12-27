@@ -126,6 +126,8 @@ jobs:
       - run: cargo test --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust }} == "stable"
       - run: cargo test -p quinn-udp --benches
+      - run: cargo test -p quinn-udp --benches --features fast-apple-datapath
+        if: ${{ matrix.os }} == "macos-latest"
 
   test-aws-lc-rs:
     runs-on: ubuntu-latest
