@@ -19,7 +19,7 @@ use crate::{
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     crypto::{self, KeyPair, Keys, PacketKey},
-    frame::{self, Close, Datagram, FrameStruct},
+    frame::{self, Close, Datagram, FrameStruct, NewToken},
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -29,11 +29,11 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
         EndpointEvent, EndpointEventInner,
     },
-    token::ResetToken,
+    token::{ResetToken, Token, TokenPayload},
     transport_parameters::TransportParameters,
-    Dir, Duration, EndpointConfig, Frame, Instant, Side, StreamId, Transmit, TransportError,
-    TransportErrorCode, VarInt, INITIAL_MTU, MAX_CID_SIZE, MAX_STREAM_COUNT, MIN_INITIAL_SIZE,
-    TIMER_GRANULARITY,
+    Dir, Duration, EndpointConfig, Frame, Instant, Side, StreamId, TokenStore, Transmit,
+    TransportError, TransportErrorCode, VarInt, INITIAL_MTU, MAX_CID_SIZE, MAX_STREAM_COUNT,
+    MIN_INITIAL_SIZE, TIMER_GRANULARITY,
 };
 
 mod ack_frequency;
@@ -277,7 +277,7 @@ impl Connection {
                 now,
                 if pref_addr_cid.is_some() { 2 } else { 1 },
             ),
-            path: PathData::new(remote, allow_mtud, None, now, path_validated, &config),
+            path: PathData::new(remote, allow_mtud, None, now, &config),
             allow_mtud,
             local_ip,
             prev_path: None,
@@ -351,6 +351,9 @@ impl Connection {
             stats: ConnectionStats::default(),
             version,
         };
+        if path_validated {
+            this.on_path_validated();
+        }
         if side.is_client() {
             // Kick off the connection
             this.write_crypto();
@@ -2435,7 +2438,7 @@ impl Connection {
                     );
                     return Ok(());
                 }
-                self.path.validated = true;
+                self.on_path_validated();
 
                 self.process_early_payload(now, packet)?;
                 if self.state.is_closed() {
@@ -2849,15 +2852,20 @@ impl Connection {
                         self.update_rem_cid();
                     }
                 }
-                Frame::NewToken { token } => {
-                    if self.side.is_server() {
+                Frame::NewToken(NewToken { token }) => {
+                    let ConnectionSide::Client {
+                        token_store,
+                        server_name,
+                        ..
+                    } = &self.side
+                    else {
                         return Err(TransportError::PROTOCOL_VIOLATION("client sent NEW_TOKEN"));
-                    }
+                    };
                     if token.is_empty() {
                         return Err(TransportError::FRAME_ENCODING_ERROR("empty token"));
                     }
                     trace!("got new token");
-                    // TODO: Cache, or perhaps forward to user?
+                    token_store.insert(server_name, token);
                 }
                 Frame::Datagram(datagram) => {
                     if self
@@ -2965,7 +2973,6 @@ impl Connection {
                 self.allow_mtud,
                 Some(peer_max_udp_payload_size),
                 now,
-                false,
                 &self.config,
             )
         };
@@ -3240,6 +3247,43 @@ impl Connection {
         if self.datagrams.send_blocked && sent_datagrams {
             self.events.push_back(Event::DatagramsUnblocked);
             self.datagrams.send_blocked = false;
+        }
+
+        // NEW_TOKEN
+        while let Some(remote_addr) = space.pending.new_tokens.pop() {
+            debug_assert_eq!(space_id, SpaceId::Data);
+            let ConnectionSide::Server { ref server_config } = self.side else {
+                panic!("NEW_TOKEN frames should not be enqueued by clients");
+            };
+
+            if remote_addr != self.path.remote {
+                // NEW_TOKEN frames contain tokens bound to a client's IP address, and are only
+                // useful if used from the same IP address.  Thus, we abandon enqueued NEW_TOKEN
+                // frames upon an path change. Instead, when the new path becomes validated,
+                // NEW_TOKEN frames may be enqueued for the new path instead.
+                continue;
+            }
+
+            let payload = TokenPayload::Validation {
+                ip: remote_addr.ip(),
+                issued: server_config.time_source.now(),
+            };
+            let token = Token::new(payload, &mut self.rng).encode(&*server_config.token_key);
+            let new_token = NewToken {
+                token: token.into(),
+            };
+
+            if buf.len() + new_token.size() >= max_size {
+                space.pending.new_tokens.push(remote_addr);
+                break;
+            }
+
+            new_token.encode(buf);
+            sent.retransmits
+                .get_or_create()
+                .new_tokens
+                .push(remote_addr);
+            self.stats.frame_tx.new_token += 1;
         }
 
         // STREAM
@@ -3603,6 +3647,18 @@ impl Connection {
         // but that would needlessly prevent sending datagrams during 0-RTT.
         key.map_or(16, |x| x.tag_len())
     }
+
+    /// Mark the path as validated, and enqueue NEW_TOKEN frames to be sent as appropriate
+    fn on_path_validated(&mut self) {
+        self.path.validated = true;
+        if let ConnectionSide::Server { server_config } = &self.side {
+            let new_tokens = &mut self.spaces[SpaceId::Data as usize].pending.new_tokens;
+            new_tokens.clear();
+            for _ in 0..server_config.validation_tokens_sent {
+                new_tokens.push(self.path.remote);
+            }
+        }
+    }
 }
 
 impl fmt::Debug for Connection {
@@ -3618,6 +3674,8 @@ enum ConnectionSide {
     Client {
         /// Sent in every outgoing Initial packet. Always empty after Initial keys are discarded
         token: Bytes,
+        token_store: Arc<dyn TokenStore>,
+        server_name: String,
     },
     Server {
         server_config: Arc<ServerConfig>,
@@ -3651,8 +3709,13 @@ impl ConnectionSide {
 impl From<SideArgs> for ConnectionSide {
     fn from(side: SideArgs) -> Self {
         match side {
-            SideArgs::Client => Self::Client {
-                token: Bytes::new(),
+            SideArgs::Client {
+                token_store,
+                server_name,
+            } => Self::Client {
+                token: token_store.take(&server_name).unwrap_or_default(),
+                token_store,
+                server_name,
             },
             SideArgs::Server {
                 server_config,
@@ -3665,7 +3728,10 @@ impl From<SideArgs> for ConnectionSide {
 
 /// Parameters to `Connection::new` specific to it being client-side or server-side
 pub(crate) enum SideArgs {
-    Client,
+    Client {
+        token_store: Arc<dyn TokenStore>,
+        server_name: String,
+    },
     Server {
         server_config: Arc<ServerConfig>,
         pref_addr_cid: Option<ConnectionId>,
