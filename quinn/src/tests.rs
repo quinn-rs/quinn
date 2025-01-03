@@ -14,6 +14,7 @@ use std::{
 };
 
 use crate::runtime::TokioRuntime;
+use crate::{Duration, Instant};
 use bytes::Bytes;
 use proto::{crypto::rustls::QuicClientConfig, RandomConnectionIdGenerator};
 use rand::{rngs::StdRng, RngCore, SeedableRng};
@@ -21,10 +22,7 @@ use rustls::{
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
     RootCertStore,
 };
-use tokio::{
-    runtime::{Builder, Runtime},
-    time::{Duration, Instant},
-};
+use tokio::runtime::{Builder, Runtime};
 use tracing::{error_span, info};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
