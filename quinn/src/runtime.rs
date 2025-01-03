@@ -6,10 +6,11 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Instant,
 };
 
 use udp::{RecvMeta, Transmit};
+
+use crate::Instant;
 
 /// Abstracts I/O and timer operations for runtime independence
 pub trait Runtime: Send + Sync + Debug + 'static {
@@ -18,6 +19,7 @@ pub trait Runtime: Send + Sync + Debug + 'static {
     /// Drive `future` to completion in the background
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
     /// Convert `t` into the socket type used by this runtime
+    #[cfg(not(wasm_browser))]
     fn wrap_udp_socket(&self, t: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>>;
     /// Look up the current time
     ///

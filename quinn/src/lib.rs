@@ -41,7 +41,7 @@
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 macro_rules! ready {
     ($e:expr $(,)?) => {
@@ -60,6 +60,11 @@ mod recv_stream;
 mod runtime;
 mod send_stream;
 mod work_limiter;
+
+#[cfg(not(wasm_browser))]
+pub(crate) use std::time::{Duration, Instant};
+#[cfg(wasm_browser)]
+pub(crate) use web_time::{Duration, Instant};
 
 pub use proto::{
     congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream,

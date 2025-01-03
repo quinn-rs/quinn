@@ -166,20 +166,21 @@ jobs:
       - name: Install cargo binstall
         uses: cargo-bins/cargo-binstall@main
 
-      - name: build wasm32 tests (quinn-proto)
-        run: cargo test -p quinn-proto --target wasm32-unknown-unknown --no-run
+      - run: cargo test -p quinn-proto --target wasm32-unknown-unknown --no-run
+      - run: cargo check -p quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
+      - run: cargo rustc -p quinn --target wasm32-unknown-unknown --no-default-features --features=log,platform-verifier,rustls-ring --crate-type=cdylib
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
-      - name: Check for 'import "env"' in Wasm
+      - name: Ensure no 'import "env"' in quinn_proto Wasm
         run: |
           ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/deps/quinn_proto-*.wasm | grep 'import "env"'
+      - name: Ensure no 'import "env"' in quinn Wasm
+        run: |
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/quinn.wasm | grep 'import "env"'
 
-      - name: Install wasm-bindgen-test-runner
-        run: cargo binstall wasm-bindgen-cli --locked --no-confirm
-
-      - name: wasm32 test (quinn-proto)
-        run: cargo test -p quinn-proto --target wasm32-unknown-unknown
+      - run: cargo binstall wasm-bindgen-cli --locked --no-confirm
+      - run: cargo test -p quinn-proto --target wasm32-unknown-unknown
 
   msrv:
     runs-on: ubuntu-latest
