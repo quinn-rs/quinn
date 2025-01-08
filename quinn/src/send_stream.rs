@@ -243,6 +243,12 @@ impl SendStream {
     ) -> Poll<Result<usize, WriteError>> {
         self.get_mut().execute_poll(cx, |stream| stream.write(buf))
     }
+
+    /// Returns the maximum amount of data this is allowed to be written on the connection.
+    pub fn write_limit(&self) -> u64 {
+        let mut conn = self.conn.state.lock("SendStream::write_limit");
+        conn.inner.send_stream(self.stream).write_limit()
+    }
 }
 
 #[cfg(feature = "futures-io")]

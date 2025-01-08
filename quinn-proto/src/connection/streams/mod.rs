@@ -233,6 +233,11 @@ impl<'a> SendStream<'a> {
         self.write_source(&mut BytesArray::from_chunks(data))
     }
 
+    /// Returns the maximum amount of data this is allowed to be written on the connection.
+    pub fn write_limit(&self) -> u64 {
+        self.state.write_limit()
+    }
+
     fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
         if self.conn_state.is_closed() {
             trace!(%self.id, "write blocked; connection draining");
