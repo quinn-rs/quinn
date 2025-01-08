@@ -3191,7 +3191,10 @@ fn address_discovery() {
 
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Both,
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -3199,7 +3202,10 @@ fn address_discovery() {
     let mut pair = Pair::new(Default::default(), server);
     let client_config = ClientConfig {
         transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Both,
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
             ..TransportConfig::default()
         }),
         ..client_config()
@@ -3236,7 +3242,10 @@ fn address_discovery_zero_rtt_accepted() {
     let _guard = subscribe();
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Both,
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -3246,16 +3255,16 @@ fn address_discovery_zero_rtt_accepted() {
     pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
     let client_cfg = ClientConfig {
         transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Both,
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
             ..TransportConfig::default()
         }),
         ..client_config()
     };
     let alt_client_cfg = ClientConfig {
-        transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Disabled,
-            ..TransportConfig::default()
-        }),
+        transport: Arc::new(TransportConfig::default()),
         ..client_cfg.clone()
     };
 
@@ -3317,15 +3326,15 @@ fn address_discovery_zero_rtt_accepted() {
 fn address_discovery_zero_rtt_rejection() {
     let _guard = subscribe();
     let server_cfg = ServerConfig {
-        transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Disabled,
-            ..TransportConfig::default()
-        }),
+        transport: Default::default(),
         ..server_config()
     };
     let alt_server_cfg = ServerConfig {
         transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::SendOnly,
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                ..Default::default()
+            },
             ..TransportConfig::default()
         }),
         ..server_cfg.clone()
@@ -3333,7 +3342,10 @@ fn address_discovery_zero_rtt_rejection() {
     let mut pair = Pair::new(Default::default(), server_cfg);
     let client_cfg = ClientConfig {
         transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Both,
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
             ..TransportConfig::default()
         }),
         ..client_config()
@@ -3387,7 +3399,10 @@ fn address_discovery_retransmission() {
 
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Both,
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -3395,7 +3410,10 @@ fn address_discovery_retransmission() {
     let mut pair = Pair::new(Default::default(), server);
     let client_config = ClientConfig {
         transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Both,
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
             ..TransportConfig::default()
         }),
         ..client_config()
@@ -3423,7 +3441,10 @@ fn address_discovery_rebind_retransmission() {
 
     let server = ServerConfig {
         transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Both,
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -3431,7 +3452,10 @@ fn address_discovery_rebind_retransmission() {
     let mut pair = Pair::new(Default::default(), server);
     let client_config = ClientConfig {
         transport: Arc::new(TransportConfig {
-            address_discovery_role: crate::address_discovery::Role::Both,
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
             ..TransportConfig::default()
         }),
         ..client_config()

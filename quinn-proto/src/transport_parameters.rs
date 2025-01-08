@@ -138,7 +138,7 @@ macro_rules! make_struct {
                     grease_transport_parameter: None,
                     write_order: None,
 
-                    address_discovery_role: address_discovery::Role::Disabled,
+                    address_discovery_role: address_discovery::Role::default(),
                 }
             }
         }
@@ -778,7 +778,10 @@ mod test {
             }),
             grease_quic_bit: true,
             min_ack_delay: Some(2_000u32.into()),
-            address_discovery_role: address_discovery::Role::SendOnly,
+            address_discovery_role: address_discovery::Role {
+                send_reports: true,
+                ..Default::default()
+            },
             ..TransportParameters::default()
         };
         params.write(&mut buf);
