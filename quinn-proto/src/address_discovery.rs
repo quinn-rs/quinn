@@ -1,7 +1,8 @@
 //! Address discovery types from
 //! <https://datatracker.ietf.org/doc/draft-seemann-quic-address-discovery/>
 
-use crate::VarInt;
+use crate::coding::BufExt;
+use crate::{transport_parameters::Error, VarInt};
 
 /// The role of each participant.
 ///
@@ -13,7 +14,7 @@ pub(crate) struct Role {
 }
 
 impl TryFrom<VarInt> for Role {
-    type Error = crate::transport_parameters::Error;
+    type Error = Error;
 
     fn try_from(value: VarInt) -> Result<Self, Self::Error> {
         let mut role = Self::default();
@@ -24,7 +25,7 @@ impl TryFrom<VarInt> for Role {
                 role.send_reports = true;
                 role.receive_reports = true;
             }
-            _ => return Err(crate::transport_parameters::Error::IllegalValue),
+            _ => return Err(Error::IllegalValue),
         }
 
         Ok(role)
@@ -32,6 +33,22 @@ impl TryFrom<VarInt> for Role {
 }
 
 impl Role {
+    pub(crate) fn from_transport_parameter(
+        len: usize,
+        role: &Role,
+        r: &mut impl bytes::Buf,
+    ) -> Result<Self, Error> {
+        if !role.is_disabled() {
+            // duplicate parameter
+            return Err(Error::Malformed);
+        }
+        let value: VarInt = r.get()?;
+        if len != value.size() {
+            return Err(Error::Malformed);
+        }
+
+        value.try_into()
+    }
     /// Whether address discovery is disabled.
     pub(crate) fn is_disabled(&self) -> bool {
         !self.receive_reports && !self.send_reports

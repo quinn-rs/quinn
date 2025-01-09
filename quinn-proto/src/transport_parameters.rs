@@ -495,15 +495,9 @@ impl TransportParameters {
                     params.min_ack_delay = Some(r.get().unwrap())
                 }
                 TransportParameterId::ObservedAddr => {
-                    if !params.address_discovery_role.is_disabled() {
-                        // duplicate parameter
-                        return Err(Error::Malformed);
-                    }
-                    let value: VarInt = r.get()?;
-                    if len != value.size() {
-                        return Err(Error::Malformed);
-                    }
-                    params.address_discovery_role = value.try_into()?;
+                    let prev_role = &params.address_discovery_role;
+                    params.address_discovery_role =
+                        address_discovery::Role::from_transport_parameter(len, prev_role, r)?;
                     tracing::debug!(
                         role = ?params.address_discovery_role,
                         "address discovery enabled for peer"
