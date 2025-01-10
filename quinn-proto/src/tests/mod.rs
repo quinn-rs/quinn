@@ -1635,10 +1635,14 @@ fn cid_retirement() {
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(server_ch).is_closed());
-    assert_matches!(
-        pair.client_conn_mut(client_ch).active_rem_cid_seq(),
-        _next_retire_prior_to
-    );
+
+    #[allow(unreachable_patterns)] // https://github.com/rust-lang/rust/issues/135289
+    {
+        assert_matches!(
+            pair.client_conn_mut(client_ch).active_rem_cid_seq(),
+            _next_retire_prior_to
+        );
+    }
 }
 
 #[test]
