@@ -1,6 +1,9 @@
 use std::{fmt, sync::Arc};
 
-use crate::{congestion, Duration, VarInt, VarIntBoundsExceeded, INITIAL_MTU, MAX_UDP_PAYLOAD};
+use crate::{
+    address_discovery, congestion, Duration, VarInt, VarIntBoundsExceeded, INITIAL_MTU,
+    MAX_UDP_PAYLOAD,
+};
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -43,6 +46,8 @@ pub struct TransportConfig {
     pub(crate) congestion_controller_factory: Arc<dyn congestion::ControllerFactory + Send + Sync>,
 
     pub(crate) enable_segmentation_offload: bool,
+
+    pub(crate) address_discovery_role: crate::address_discovery::Role,
 }
 
 impl TransportConfig {
@@ -314,6 +319,26 @@ impl TransportConfig {
         self.enable_segmentation_offload = enabled;
         self
     }
+
+    /// Whether to send observed address reports to peers.
+    ///
+    /// This will aid peers in inferring their reachable address, which in most NATd networks
+    /// will not be easily available to them.
+    pub fn send_observed_address_reports(&mut self, enabled: bool) -> &mut Self {
+        self.address_discovery_role.send_reports = enabled;
+        self
+    }
+
+    /// Whether to receive observed address reports from other peers.
+    ///
+    /// Peers with the address discovery extension enabled that are willing to provide observed
+    /// address reports will do so if this transport parameter is set. In general, observed address
+    /// reports cannot be trusted. This, however, can aid the current endpoint in inferring its
+    /// reachable address, which in most NATd networks will not be easily available.
+    pub fn receive_observed_address_reports(&mut self, enabled: bool) -> &mut Self {
+        self.address_discovery_role.receive_reports = enabled;
+        self
+    }
 }
 
 impl Default for TransportConfig {
@@ -354,6 +379,8 @@ impl Default for TransportConfig {
             congestion_controller_factory: Arc::new(congestion::CubicConfig::default()),
 
             enable_segmentation_offload: true,
+
+            address_discovery_role: address_discovery::Role::default(),
         }
     }
 }
@@ -385,6 +412,7 @@ impl fmt::Debug for TransportConfig {
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
             enable_segmentation_offload,
+            address_discovery_role,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -412,6 +440,7 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             // congestion_controller_factory not debug
             .field("enable_segmentation_offload", enable_segmentation_offload)
+            .field("address_discovery_role", address_discovery_role)
             .finish_non_exhaustive()
     }
 }
