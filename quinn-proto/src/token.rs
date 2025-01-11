@@ -1,9 +1,11 @@
 use std::{
     fmt,
+    mem::size_of,
     net::{IpAddr, SocketAddr},
 };
 
-use bytes::{Buf, BufMut};
+use bytes::{Buf, BufMut, Bytes};
+use rand::Rng;
 
 use crate::{
     coding::{BufExt, BufMutExt},
@@ -13,11 +15,99 @@ use crate::{
     Duration, ServerConfig, SystemTime, RESET_TOKEN_SIZE, UNIX_EPOCH,
 };
 
+/// Responsible for limiting clients' ability to reuse validation tokens
+///
+/// [_RFC 9000 § 8.1.4:_](https://www.rfc-editor.org/rfc/rfc9000.html#section-8.1.4)
+///
+/// > Attackers could replay tokens to use servers as amplifiers in DDoS attacks. To protect
+/// > against such attacks, servers MUST ensure that replay of tokens is prevented or limited.
+/// > Servers SHOULD ensure that tokens sent in Retry packets are only accepted for a short time,
+/// > as they are returned immediately by clients. Tokens that are provided in NEW_TOKEN frames
+/// > (Section 19.7) need to be valid for longer but SHOULD NOT be accepted multiple times.
+/// > Servers are encouraged to allow tokens to be used only once, if possible; tokens MAY include
+/// > additional information about clients to further narrow applicability or reuse.
+///
+/// `TokenLog` pertains only to tokens provided in NEW_TOKEN frames.
+pub trait TokenLog: Send + Sync {
+    /// Record that the token was used and, ideally, return a token reuse error if the token may
+    /// have been already used previously
+    ///
+    /// False negatives and false positives are both permissible. Called when a client uses an
+    /// address validation token.
+    ///
+    /// Parameters:
+    /// - `rand`: A server-generated random unique value for the token.
+    /// - `issued`: The time the server issued the token.
+    /// - `lifetime`: The expiration time of address validation tokens sent via NEW_TOKEN frames,
+    ///   as configured by [`ServerConfig::validation_token_lifetime`][1].
+    ///
+    /// [1]: crate::ServerConfig::validation_token_lifetime
+    ///
+    /// ## Security & Performance
+    ///
+    /// To the extent that it is possible to repeatedly trigger false negatives (returning `Ok` for
+    /// a token which has been reused), an attacker could use the server to perform [amplification
+    /// attacks][2]. The QUIC specification requires that this be limited, if not prevented fully.
+    ///
+    /// A false positive (returning `Err` for a token which has never been used) is not a security
+    /// vulnerability; it is permissible for a `TokenLog` to always return `Err`. A false positive
+    /// causes the token to be ignored, which may cause the transmission of some 0.5-RTT data to be
+    /// delayed until the handshake completes, if a sufficient amount of 0.5-RTT data it sent.
+    ///
+    /// [2]: https://en.wikipedia.org/wiki/Denial-of-service_attack#Amplification
+    fn check_and_insert(
+        &self,
+        rand: u128,
+        issued: SystemTime,
+        lifetime: Duration,
+    ) -> Result<(), TokenReuseError>;
+}
+
+/// Error for when a validation token may have been reused
+pub struct TokenReuseError;
+
+/// Null implementation of [`TokenLog`], which never accepts tokens
+pub struct NoneTokenLog;
+
+impl TokenLog for NoneTokenLog {
+    fn check_and_insert(&self, _: u128, _: SystemTime, _: Duration) -> Result<(), TokenReuseError> {
+        Err(TokenReuseError)
+    }
+}
+
+/// Responsible for storing validation tokens received from servers and retrieving them for use in
+/// subsequent connections
+pub trait TokenStore: Send + Sync {
+    /// Potentially store a token for later one-time use
+    ///
+    /// Called when a NEW_TOKEN frame is received from the server.
+    fn insert(&self, server_name: &str, token: Bytes);
+
+    /// Try to find and take a token that was stored with the given server name
+    ///
+    /// The same token must never be returned from `take` twice, as doing so can be used to
+    /// de-anonymize a client's traffic.
+    ///
+    /// Called when trying to connect to a server. It is always ok for this to return `None`.
+    fn take(&self, server_name: &str) -> Option<Bytes>;
+}
+
+/// Null implementation of [`TokenStore`], which does not store any tokens
+pub struct NoneTokenStore;
+
+impl TokenStore for NoneTokenStore {
+    fn insert(&self, _: &str, _: Bytes) {}
+    fn take(&self, _: &str) -> Option<Bytes> {
+        None
+    }
+}
+
 /// State in an `Incoming` determined by a token or lack thereof
 #[derive(Debug)]
 pub(crate) struct IncomingToken {
     pub(crate) retry_src_cid: Option<ConnectionId>,
     pub(crate) orig_dst_cid: ConnectionId,
+    pub(crate) validated: bool,
 }
 
 impl IncomingToken {
@@ -31,6 +121,7 @@ impl IncomingToken {
         let unvalidated = Self {
             retry_src_cid: None,
             orig_dst_cid: header.dst_cid,
+            validated: false,
         };
 
         // Decode token or short-circuit
@@ -47,25 +138,54 @@ impl IncomingToken {
         //
         // > If the token is invalid, then the server SHOULD proceed as if the client did not have
         // > a validated address, including potentially sending a Retry packet.
-        let Some(retry) =
-            RetryToken::decode(&*server_config.token_key, header.dst_cid, &header.token)
-        else {
+        let Some(retry) = Token::decode(&*server_config.token_key, &header.token) else {
             return Ok(unvalidated);
         };
 
-        // Validate token
-        if retry.address != remote_address {
-            return Err(InvalidRetryTokenError);
-        }
-        if retry.issued + server_config.retry_token_lifetime < server_config.time_source.now() {
-            return Err(InvalidRetryTokenError);
-        }
+        // Validate token, then convert into Self
+        match retry.payload {
+            TokenPayload::Retry {
+                address,
+                orig_dst_cid,
+                issued,
+            } => {
+                if address != remote_address {
+                    return Err(InvalidRetryTokenError);
+                }
+                if issued + server_config.retry_token_lifetime < server_config.time_source.now() {
+                    return Err(InvalidRetryTokenError);
+                }
 
-        // Convert token into Self
-        Ok(Self {
-            retry_src_cid: Some(header.dst_cid),
-            orig_dst_cid: retry.orig_dst_cid,
-        })
+                Ok(Self {
+                    retry_src_cid: Some(header.dst_cid),
+                    orig_dst_cid,
+                    validated: true,
+                })
+            }
+            TokenPayload::Validation { ip, issued } => {
+                if ip != remote_address.ip() {
+                    return Ok(unvalidated);
+                }
+                if issued + server_config.validation_token_lifetime
+                    < server_config.time_source.now()
+                {
+                    return Ok(unvalidated);
+                }
+                if server_config
+                    .validation_token_log
+                    .check_and_insert(retry.rand, issued, server_config.validation_token_lifetime)
+                    .is_err()
+                {
+                    return Ok(unvalidated);
+                }
+
+                Ok(Self {
+                    retry_src_cid: None,
+                    orig_dst_cid: header.dst_cid,
+                    validated: true,
+                })
+            }
+        }
     }
 }
 
@@ -74,62 +194,109 @@ impl IncomingToken {
 /// The connection cannot be established.
 pub(crate) struct InvalidRetryTokenError;
 
-pub(crate) struct RetryToken {
-    /// The client's address
-    pub(crate) address: SocketAddr,
-    /// The destination connection ID set in the very first packet from the client
-    pub(crate) orig_dst_cid: ConnectionId,
-    /// The time at which this token was issued
-    pub(crate) issued: SystemTime,
+/// Retry or validation token
+pub(crate) struct Token {
+    /// Randomly generated value, which must be unique, and is visible to the client
+    rand: u128,
+    /// Content that is encrypted from the client
+    pub(crate) payload: TokenPayload,
 }
 
-impl RetryToken {
-    pub(crate) fn encode(
-        &self,
-        key: &dyn HandshakeTokenKey,
-        retry_src_cid: ConnectionId,
-    ) -> Vec<u8> {
+impl Token {
+    /// Construct with newly sampled randomness
+    pub(crate) fn new<R: Rng>(payload: TokenPayload, rng: &mut R) -> Self {
+        Self {
+            rand: rng.gen(),
+            payload,
+        }
+    }
+
+    /// Encode and encrypt
+    pub(crate) fn encode(&self, key: &dyn HandshakeTokenKey) -> Vec<u8> {
         let mut buf = Vec::new();
 
         // Encode payload
-        encode_addr(&mut buf, self.address);
-        self.orig_dst_cid.encode_long(&mut buf);
-        encode_unix_secs(&mut buf, self.issued);
+        match self.payload {
+            TokenPayload::Retry {
+                address,
+                orig_dst_cid,
+                issued,
+            } => {
+                buf.put_u8(0);
+                encode_addr(&mut buf, address);
+                orig_dst_cid.encode_long(&mut buf);
+                encode_unix_secs(&mut buf, issued);
+            }
+            TokenPayload::Validation { ip, issued } => {
+                buf.put_u8(1);
+                encode_ip(&mut buf, ip);
+                encode_unix_secs(&mut buf, issued);
+            }
+        }
 
         // Encrypt
-        let aead_key = key.aead_from_hkdf(&retry_src_cid);
+        let aead_key = key.aead_from_hkdf(&self.rand.to_le_bytes());
         aead_key.seal(&mut buf, &[]).unwrap();
+        buf.extend(&self.rand.to_le_bytes());
 
         buf
     }
 
-    fn decode(
-        key: &dyn HandshakeTokenKey,
-        retry_src_cid: ConnectionId,
-        raw_token_bytes: &[u8],
-    ) -> Option<Self> {
+    /// Decode and decrypt
+    fn decode(key: &dyn HandshakeTokenKey, raw_token_bytes: &[u8]) -> Option<Self> {
         // Decrypt
-        let aead_key = key.aead_from_hkdf(&retry_src_cid);
-        let mut sealed_token = raw_token_bytes.to_vec();
+
+        let rand_slice_start = raw_token_bytes.len().checked_sub(size_of::<u128>())?;
+        let mut rand_bytes = [0; size_of::<u128>()];
+        rand_bytes.copy_from_slice(&raw_token_bytes[rand_slice_start..]);
+        let rand = u128::from_le_bytes(rand_bytes);
+
+        let aead_key = key.aead_from_hkdf(&rand_bytes);
+        let mut sealed_token = raw_token_bytes[..rand_slice_start].to_vec();
         let data = aead_key.open(&mut sealed_token, &[]).ok()?;
 
         // Decode payload
         let mut reader = &data[..];
-        let address = decode_addr(&mut reader)?;
-        let orig_dst_cid = ConnectionId::decode_long(&mut reader)?;
-        let issued = decode_unix_secs(&mut reader)?;
+        let payload = match (&mut reader).get::<u8>().ok()? {
+            0 => TokenPayload::Retry {
+                address: decode_addr(&mut reader)?,
+                orig_dst_cid: ConnectionId::decode_long(&mut reader)?,
+                issued: decode_unix_secs(&mut reader)?,
+            },
+            1 => TokenPayload::Validation {
+                ip: decode_ip(&mut reader)?,
+                issued: decode_unix_secs(&mut reader)?,
+            },
+            _ => return None,
+        };
 
         if !reader.is_empty() {
             // Consider extra bytes a decoding error (it may be from an incompatible endpoint)
             return None;
         }
 
-        Some(Self {
-            address,
-            orig_dst_cid,
-            issued,
-        })
+        Some(Self { rand, payload })
     }
+}
+
+/// Content of a [`Token`] that is encrypted from the client
+pub(crate) enum TokenPayload {
+    /// Token originating from a Retry packet
+    Retry {
+        /// The client's address
+        address: SocketAddr,
+        /// The destination connection ID set in the very first packet from the client
+        orig_dst_cid: ConnectionId,
+        /// The time at which this token was issued
+        issued: SystemTime,
+    },
+    /// Token originating from a NEW_TOKEN frame
+    Validation {
+        /// The client's IP address (its port is likely to change between sessions)
+        ip: IpAddr,
+        /// The time at which this token was issued
+        issued: SystemTime,
+    },
 }
 
 fn encode_addr(buf: &mut Vec<u8>, address: SocketAddr) {
@@ -226,49 +393,83 @@ impl fmt::Display for ResetToken {
 
 #[cfg(all(test, any(feature = "aws-lc-rs", feature = "ring")))]
 mod test {
+    use super::*;
     #[cfg(all(feature = "aws-lc-rs", not(feature = "ring")))]
     use aws_lc_rs::hkdf;
+    use rand::prelude::*;
     #[cfg(feature = "ring")]
     use ring::hkdf;
 
+    fn token_round_trip(payload: TokenPayload) -> TokenPayload {
+        let rng = &mut rand::thread_rng();
+        let token = Token::new(payload, rng);
+        let mut master_key = [0; 64];
+        rng.fill_bytes(&mut master_key);
+        let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
+        let encoded = token.encode(&prk);
+        let decoded = Token::decode(&prk, &encoded).expect("token didn't decrypt / decode");
+        assert_eq!(token.rand, decoded.rand);
+        decoded.payload
+    }
+
     #[test]
-    fn token_sanity() {
-        use super::*;
+    fn retry_token_sanity() {
         use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
         use crate::MAX_CID_SIZE;
         use crate::{Duration, UNIX_EPOCH};
 
-        use rand::RngCore;
         use std::net::Ipv6Addr;
 
-        let rng = &mut rand::thread_rng();
-
-        let mut master_key = [0; 64];
-        rng.fill_bytes(&mut master_key);
-
-        let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
-
-        let address = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
-        let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
-        let token = RetryToken {
-            address,
-            orig_dst_cid: RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid(),
-            issued: UNIX_EPOCH + Duration::from_secs(42), // Fractional seconds would be lost
+        let address_1 = SocketAddr::new(Ipv6Addr::LOCALHOST.into(), 4433);
+        let orig_dst_cid_1 = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
+        let issued_1 = UNIX_EPOCH + Duration::from_secs(42); // Fractional seconds would be lost
+        let payload_1 = TokenPayload::Retry {
+            address: address_1,
+            orig_dst_cid: orig_dst_cid_1,
+            issued: issued_1,
         };
-        let encoded = token.encode(&prk, retry_src_cid);
+        let TokenPayload::Retry {
+            address: address_2,
+            orig_dst_cid: orig_dst_cid_2,
+            issued: issued_2,
+        } = token_round_trip(payload_1)
+        else {
+            panic!("token decoded as wrong variant");
+        };
 
-        let decoded =
-            RetryToken::decode(&prk, retry_src_cid, &encoded).expect("token didn't validate");
-        assert_eq!(token.address, decoded.address);
-        assert_eq!(token.orig_dst_cid, decoded.orig_dst_cid);
-        assert_eq!(token.issued, decoded.issued);
+        assert_eq!(address_1, address_2);
+        assert_eq!(orig_dst_cid_1, orig_dst_cid_2);
+        assert_eq!(issued_1, issued_2);
+    }
+
+    #[test]
+    fn validation_token_sanity() {
+        use crate::{Duration, UNIX_EPOCH};
+
+        use std::net::Ipv6Addr;
+
+        let ip_1 = Ipv6Addr::LOCALHOST.into();
+        let issued_1 = UNIX_EPOCH + Duration::from_secs(42); // Fractional seconds would be lost
+
+        let payload_1 = TokenPayload::Validation {
+            ip: ip_1,
+            issued: issued_1,
+        };
+        let TokenPayload::Validation {
+            ip: ip_2,
+            issued: issued_2,
+        } = token_round_trip(payload_1)
+        else {
+            panic!("token decoded as wrong variant");
+        };
+
+        assert_eq!(ip_1, ip_2);
+        assert_eq!(issued_1, issued_2);
     }
 
     #[test]
     fn invalid_token_returns_err() {
         use super::*;
-        use crate::cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator};
-        use crate::MAX_CID_SIZE;
         use rand::RngCore;
 
         let rng = &mut rand::thread_rng();
@@ -277,8 +478,6 @@ mod test {
         rng.fill_bytes(&mut master_key);
 
         let prk = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
-
-        let retry_src_cid = RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid();
 
         let mut invalid_token = Vec::new();
 
@@ -287,6 +486,6 @@ mod test {
         invalid_token.put_slice(&random_data);
 
         // Assert: garbage sealed data returns err
-        assert!(RetryToken::decode(&prk, retry_src_cid, &invalid_token).is_none());
+        assert!(Token::decode(&prk, &invalid_token).is_none());
     }
 }

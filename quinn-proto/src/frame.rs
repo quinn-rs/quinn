@@ -147,7 +147,7 @@ pub(crate) enum Frame {
     ResetStream(ResetStream),
     StopSending(StopSending),
     Crypto(Crypto),
-    NewToken { token: Bytes },
+    NewToken(NewToken),
     Stream(Stream),
     MaxData(VarInt),
     MaxStreamData { id: StreamId, offset: u64 },
@@ -200,7 +200,7 @@ impl Frame {
             PathResponse(_) => FrameType::PATH_RESPONSE,
             NewConnectionId { .. } => FrameType::NEW_CONNECTION_ID,
             Crypto(_) => FrameType::CRYPTO,
-            NewToken { .. } => FrameType::NEW_TOKEN,
+            NewToken(_) => FrameType::NEW_TOKEN,
             Datagram(_) => FrameType(*DATAGRAM_TYS.start()),
             AckFrequency(_) => FrameType::ACK_FREQUENCY,
             ImmediateAck => FrameType::IMMEDIATE_ACK,
@@ -525,6 +525,23 @@ impl Crypto {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct NewToken {
+    pub(crate) token: Bytes,
+}
+
+impl NewToken {
+    pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
+        out.write(FrameType::NEW_TOKEN);
+        out.write_var(self.token.len() as u64);
+        out.put_slice(&self.token);
+    }
+
+    pub(crate) fn size(&self) -> usize {
+        1 + VarInt::from_u64(self.token.len() as u64).unwrap().size() + self.token.len()
+    }
+}
+
 pub(crate) struct Iter {
     bytes: Bytes,
     last_ty: Option<FrameType>,
@@ -671,9 +688,9 @@ impl Iter {
                 offset: self.bytes.get_var()?,
                 data: self.take_len()?,
             }),
-            FrameType::NEW_TOKEN => Frame::NewToken {
+            FrameType::NEW_TOKEN => Frame::NewToken(NewToken {
                 token: self.take_len()?,
-            },
+            }),
             FrameType::HANDSHAKE_DONE => Frame::HandshakeDone,
             FrameType::ACK_FREQUENCY => Frame::AckFrequency(AckFrequency {
                 sequence: self.bytes.get()?,
