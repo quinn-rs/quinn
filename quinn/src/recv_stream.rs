@@ -413,7 +413,6 @@ impl<T> From<(Option<T>, Option<proto::ReadError>)> for ReadStatus<T> {
 /// Future produced by [`RecvStream::read_to_end()`].
 ///
 /// [`RecvStream::read_to_end()`]: crate::RecvStream::read_to_end
-#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 struct ReadToEnd<'a> {
     stream: &'a mut RecvStream,
     read: Vec<(Bytes, u64)>,
@@ -597,13 +596,12 @@ impl From<ResetError> for io::Error {
 /// Future produced by [`RecvStream::read()`].
 ///
 /// [`RecvStream::read()`]: crate::RecvStream::read
-#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 struct Read<'a> {
     stream: &'a mut RecvStream,
     buf: ReadBuf<'a>,
 }
 
-impl<'a> Future for Read<'a> {
+impl Future for Read<'_> {
     type Output = Result<Option<usize>, ReadError>;
 
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
@@ -619,13 +617,12 @@ impl<'a> Future for Read<'a> {
 /// Future produced by [`RecvStream::read_exact()`].
 ///
 /// [`RecvStream::read_exact()`]: crate::RecvStream::read_exact
-#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 struct ReadExact<'a> {
     stream: &'a mut RecvStream,
     buf: ReadBuf<'a>,
 }
 
-impl<'a> Future for ReadExact<'a> {
+impl Future for ReadExact<'_> {
     type Output = Result<(), ReadExactError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();
@@ -656,14 +653,13 @@ pub enum ReadExactError {
 /// Future produced by [`RecvStream::read_chunk()`].
 ///
 /// [`RecvStream::read_chunk()`]: crate::RecvStream::read_chunk
-#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 struct ReadChunk<'a> {
     stream: &'a mut RecvStream,
     max_length: usize,
     ordered: bool,
 }
 
-impl<'a> Future for ReadChunk<'a> {
+impl Future for ReadChunk<'_> {
     type Output = Result<Option<Chunk>, ReadError>;
     fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let (max_length, ordered) = (self.max_length, self.ordered);
@@ -674,13 +670,12 @@ impl<'a> Future for ReadChunk<'a> {
 /// Future produced by [`RecvStream::read_chunks()`].
 ///
 /// [`RecvStream::read_chunks()`]: crate::RecvStream::read_chunks
-#[must_use = "futures/streams/sinks do nothing unless you `.await` or poll them"]
 struct ReadChunks<'a> {
     stream: &'a mut RecvStream,
     bufs: &'a mut [Bytes],
 }
 
-impl<'a> Future for ReadChunks<'a> {
+impl Future for ReadChunks<'_> {
     type Output = Result<Option<usize>, ReadError>;
     fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let this = self.get_mut();

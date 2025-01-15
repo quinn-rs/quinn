@@ -1,4 +1,4 @@
-use std::time::Instant;
+use crate::Instant;
 
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq)]
 pub(crate) enum Timer {
@@ -60,6 +60,6 @@ impl TimerTable {
     }
 
     pub(super) fn is_expired(&self, timer: Timer, after: Instant) -> bool {
-        self.data[timer as usize].map_or(false, |x| x <= after)
+        self.data[timer as usize].is_some_and(|x| x <= after)
     }
 }

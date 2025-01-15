@@ -1,6 +1,6 @@
 [package]
 name = "iroh-quinn-udp"
-version = "0.5.5"
+version = "0.5.7"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,14 +10,13 @@ keywords.workspace = true
 categories.workspace = true
 workspace = ".."
 
-[package.metadata.docs.rs]
-all-features = true
-
 [features]
 default = ["tracing", "log"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 log = ["tracing/log"]
 direct-log = ["dep:log"]
+# Use private Apple APIs to send multiple packets in a single syscall.
+fast-apple-datapath = []
 
 [dependencies]
 libc = "0.2.158"
@@ -30,8 +29,19 @@ once_cell = { workspace = true }
 windows-sys = { workspace = true }
 
 [dev-dependencies]
-criterion = "0.5"
+criterion = { version = "0.5", default-features = false, features = ["async_tokio"] }
+tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net"] }
 
-[target.'cfg(any(target_os = "linux", target_os = "windows"))'.bench]
+[build-dependencies]
+cfg_aliases = "0.2"
+
+[lib]
+# See https://github.com/bheisler/criterion.rs/blob/master/book/src/faq.md#cargo-bench-gives-unrecognized-option-errors-for-valid-command-line-options
+bench = false
+
+[[bench]]
 name = "throughput"
 harness = false
+
+[package.metadata.docs.rs]
+all-features = true

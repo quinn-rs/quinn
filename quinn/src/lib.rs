@@ -63,18 +63,21 @@ mod work_limiter;
 
 pub use proto::{
     congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream,
-    ConfigError, ConnectError, ConnectionClose, ConnectionError, ConnectionStats, EndpointConfig,
-    IdleTimeout, MtuDiscoveryConfig, ServerConfig, StreamId, Transmit, TransportConfig, VarInt,
+    ConfigError, ConnectError, ConnectionClose, ConnectionError, ConnectionId,
+    ConnectionIdGenerator, ConnectionStats, Dir, EcnCodepoint, EndpointConfig, FrameStats,
+    FrameType, IdleTimeout, MtuDiscoveryConfig, PathStats, ServerConfig, Side, StdSystemTime,
+    StreamId, TimeSource, Transmit, TransportConfig, TransportErrorCode, UdpStats, VarInt,
+    VarIntBoundsExceeded, Written,
 };
-#[cfg(feature = "rustls")]
+#[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 pub use rustls;
 pub use udp;
 
 pub use crate::connection::{
-    AcceptBi, AcceptUni, Connecting, Connection, OpenBi, OpenUni, ReadDatagram, SendDatagramError,
-    WeakConnectionHandle, ZeroRttAccepted,
+    AcceptBi, AcceptUni, Connecting, Connection, OpenBi, OpenUni, ReadDatagram, SendDatagram,
+    SendDatagramError, WeakConnectionHandle, ZeroRttAccepted,
 };
-pub use crate::endpoint::{Accept, Endpoint};
+pub use crate::endpoint::{Accept, Endpoint, EndpointStats};
 pub use crate::incoming::{Incoming, IncomingFuture, RetryError};
 pub use crate::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError};
 #[cfg(feature = "runtime-async-std")]

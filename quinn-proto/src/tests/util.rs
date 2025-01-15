@@ -8,7 +8,6 @@ use std::{
     ops::RangeFrom,
     str,
     sync::{Arc, Mutex},
-    time::{Duration, Instant},
 };
 
 use assert_matches::assert_matches;
@@ -21,8 +20,9 @@ use rustls::{
 };
 use tracing::{info_span, trace};
 
-use super::crypto::rustls::{QuicClientConfig, QuicServerConfig};
+use super::crypto::rustls::{configured_provider, QuicClientConfig, QuicServerConfig};
 use super::*;
+use crate::{Duration, Instant};
 
 pub(super) const DEFAULT_MTU: usize = 1452;
 
@@ -356,7 +356,7 @@ impl TestEndpoint {
         let buffer_size = self.endpoint.config().get_max_udp_payload_size() as usize;
         let mut buf = Vec::with_capacity(buffer_size);
 
-        while self.inbound.front().map_or(false, |x| x.0 <= now) {
+        while self.inbound.front().is_some_and(|x| x.0 <= now) {
             let (recv_time, ecn, packet) = self.inbound.pop_front().unwrap();
             if let Some(event) = self
                 .endpoint
@@ -415,7 +415,7 @@ impl TestEndpoint {
         loop {
             let mut endpoint_events: Vec<(ConnectionHandle, EndpointEvent)> = vec![];
             for (ch, conn) in self.connections.iter_mut() {
-                if self.timeout.map_or(false, |x| x <= now) {
+                if self.timeout.is_some_and(|x| x <= now) {
                     self.timeout = None;
                     conn.handle_timeout(now);
                 }
@@ -539,11 +539,13 @@ impl ::std::ops::DerefMut for TestEndpoint {
 }
 
 pub(super) fn subscribe() -> tracing::subscriber::DefaultGuard {
-    let sub = tracing_subscriber::FmtSubscriber::builder()
+    let builder = tracing_subscriber::FmtSubscriber::builder()
         .with_max_level(tracing::Level::TRACE)
-        .with_writer(|| TestWriter)
-        .finish();
-    tracing::subscriber::set_default(sub)
+        .with_writer(|| TestWriter);
+    // tracing uses std::time to trace time, which panics in wasm.
+    #[cfg(all(target_family = "wasm", target_os = "unknown"))]
+    let builder = builder.without_time();
+    tracing::subscriber::set_default(builder.finish())
 }
 
 struct TestWriter;
@@ -640,7 +642,7 @@ fn client_crypto_inner(
     }
 
     let mut inner = QuicClientConfig::inner(
-        WebPkiServerVerifier::builder(Arc::new(roots))
+        WebPkiServerVerifier::builder_with_provider(Arc::new(roots), configured_provider())
             .build()
             .unwrap(),
     );

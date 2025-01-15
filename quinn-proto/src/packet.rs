@@ -769,7 +769,7 @@ impl PacketNumber {
         // The following code calculates a candidate value and makes sure it's within the packet
         // number window.
         let candidate = (expected & !mask) | truncated;
-        if expected.checked_sub(hwin).map_or(false, |x| candidate <= x) {
+        if expected.checked_sub(hwin).is_some_and(|x| candidate <= x) {
             candidate + win
         } else if candidate > expected + hwin && candidate > win {
             candidate - win
@@ -898,8 +898,6 @@ impl SpaceId {
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[cfg(feature = "rustls")]
-    use crate::DEFAULT_SUPPORTED_VERSIONS;
     use hex_literal::hex;
     use std::io;
 
@@ -936,11 +934,14 @@ mod tests {
         }
     }
 
-    #[cfg(feature = "rustls")]
+    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
     #[test]
     fn header_encoding() {
         use crate::crypto::rustls::{initial_keys, initial_suite_from_provider};
         use crate::Side;
+        #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
+        use rustls::crypto::aws_lc_rs::default_provider;
+        #[cfg(feature = "rustls-ring")]
         use rustls::crypto::ring::default_provider;
         use rustls::quic::Version;
 
@@ -955,7 +956,7 @@ mod tests {
             src_cid: ConnectionId::new(&[]),
             dst_cid: dcid,
             token: Bytes::new(),
-            version: DEFAULT_SUPPORTED_VERSIONS[0],
+            version: crate::DEFAULT_SUPPORTED_VERSIONS[0],
         });
         let encode = header.encode(&mut buf);
         let header_len = buf.len();
@@ -979,7 +980,7 @@ mod tests {
         );
 
         let server = initial_keys(Version::V1, &dcid, Side::Server, &suite);
-        let supported_versions = DEFAULT_SUPPORTED_VERSIONS.to_vec();
+        let supported_versions = crate::DEFAULT_SUPPORTED_VERSIONS.to_vec();
         let decode = PartialDecode::new(
             buf.as_slice().into(),
             &FixedLengthConnectionIdParser::new(0),

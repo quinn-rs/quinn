@@ -71,7 +71,7 @@ fn main() {
 async fn run(options: Opt) -> Result<()> {
     let (certs, key) = if let (Some(key_path), Some(cert_path)) = (&options.key, &options.cert) {
         let key = fs::read(key_path).context("failed to read private key")?;
-        let key = if key_path.extension().map_or(false, |x| x == "der") {
+        let key = if key_path.extension().is_some_and(|x| x == "der") {
             PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(key))
         } else {
             rustls_pemfile::private_key(&mut &*key)
@@ -79,7 +79,7 @@ async fn run(options: Opt) -> Result<()> {
                 .ok_or_else(|| anyhow::Error::msg("no private keys found"))?
         };
         let cert_chain = fs::read(cert_path).context("failed to read certificate chain")?;
-        let cert_chain = if cert_path.extension().map_or(false, |x| x == "der") {
+        let cert_chain = if cert_path.extension().is_some_and(|x| x == "der") {
             vec![CertificateDer::from(cert_chain)]
         } else {
             rustls_pemfile::certs(&mut &*cert_chain)
@@ -144,7 +144,7 @@ async fn run(options: Opt) -> Result<()> {
     while let Some(conn) = endpoint.accept().await {
         if options
             .connection_limit
-            .map_or(false, |n| endpoint.open_connections() >= n)
+            .is_some_and(|n| endpoint.open_connections() >= n)
         {
             info!("refusing due to open connection limit");
             conn.refuse();

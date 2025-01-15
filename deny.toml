@@ -6,9 +6,9 @@ allow = [
     "ISC",
     "MIT",
     "MPL-2.0",
-    "Unicode-DFS-2016",
+    "OpenSSL",
+    "Unicode-3.0",
 ]
-exceptions = [{ allow = ["ISC", "MIT", "OpenSSL"], name = "ring" }]
 private = { ignore = true }
 
 [[licenses.clarify]]

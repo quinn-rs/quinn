@@ -6,6 +6,7 @@ Cargo.lock
 .idea
 .DS_Store
 .vscode
+.zed
 
 cargo-test-*
 tarpaulin-report.html

@@ -3,8 +3,6 @@
 
 use crate::VarInt;
 
-pub(crate) const TRANSPORT_PARAMETER_CODE: u64 = 0x9f81a176;
-
 /// The role of each participant.
 ///
 /// When enabled, this is reported as a transport parameter.

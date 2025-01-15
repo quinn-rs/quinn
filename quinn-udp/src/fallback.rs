@@ -24,25 +24,32 @@ impl UdpSocketState {
         })
     }
 
+    /// Sends a [`Transmit`] on the given socket.
+    ///
+    /// This function will only ever return errors of kind [`io::ErrorKind::WouldBlock`].
+    /// All other errors will be logged and converted to `Ok`.
+    ///
+    /// UDP transmission errors are considered non-fatal because higher-level protocols must
+    /// employ retransmits and timeouts anyway in order to deal with UDP's unreliable nature.
+    /// Thus, logging is most likely the only thing you can do with these errors.
+    ///
+    /// If you would like to handle these errors yourself, use [`UdpSocketState::try_send`]
+    /// instead.
     pub fn send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-        let Err(e) = socket.0.send_to(
-            transmit.contents,
-            &socket2::SockAddr::from(transmit.destination),
-        ) else {
-            return Ok(());
-        };
-        if e.kind() == io::ErrorKind::WouldBlock {
-            return Err(e);
-        }
+        match send(socket, transmit) {
+            Ok(()) => Ok(()),
+            Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
+            Err(e) => {
+                log_sendmsg_error(&self.last_send_error, e, transmit);
 
-        // Other errors are ignored, since they will usually be handled
-        // by higher level retransmits and timeouts.
-        // - PermissionDenied errors have been observed due to iptable rules.
-        //   Those are not fatal errors, since the
-        //   configuration can be dynamically changed.
-        // - Destination unreachable errors have been observed for other
-        log_sendmsg_error(&self.last_send_error, e, transmit);
-        Ok(())
+                Ok(())
+            }
+        }
+    }
+
+    /// Sends a [`Transmit`] on the given socket without any additional error handling.
+    pub fn try_send(&self, socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
+        send(socket, transmit)
     }
 
     pub fn recv(
@@ -83,6 +90,13 @@ impl UdpSocketState {
     pub fn may_fragment(&self) -> bool {
         true
     }
+}
+
+fn send(socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
+    socket.0.send_to(
+        transmit.contents,
+        &socket2::SockAddr::from(transmit.destination),
+    )
 }
 
 pub(crate) const BATCH_SIZE: usize = 1;

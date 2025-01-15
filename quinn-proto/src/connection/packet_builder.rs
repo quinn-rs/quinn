@@ -1,14 +1,13 @@
-use std::{cmp, time::Instant};
-
 use bytes::Bytes;
 use rand::Rng;
 use tracing::{trace, trace_span};
 
 use super::{spaces::SentPacket, Connection, SentFrames};
 use crate::{
+    connection::ConnectionSide,
     frame::{self, Close},
     packet::{Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
-    ConnectionId, TransportError, TransportErrorCode, INITIAL_MTU,
+    ConnectionId, Instant, TransportError, TransportErrorCode,
 };
 
 pub(super) struct PacketBuilder {
@@ -38,7 +37,7 @@ impl PacketBuilder {
         space_id: SpaceId,
         dst_cid: ConnectionId,
         buffer: &mut Vec<u8>,
-        mut buffer_capacity: usize,
+        buffer_capacity: usize,
         datagram_start: usize,
         ack_eliciting: bool,
         conn: &mut Connection,
@@ -79,13 +78,6 @@ impl PacketBuilder {
         }
 
         let space = &mut conn.spaces[space_id];
-
-        if space.loss_probes != 0 {
-            space.loss_probes -= 1;
-            // Clamp the packet size to at most the minimum MTU to ensure that loss probes can get
-            // through and enable recovery even if the path MTU has shrank unexpectedly.
-            buffer_capacity = cmp::min(buffer_capacity, datagram_start + usize::from(INITIAL_MTU));
-        }
         let exact_number = match space_id {
             SpaceId::Data => conn.packet_number_filter.allocate(&mut conn.rng, space),
             _ => space.get_tx_number(),
@@ -122,7 +114,10 @@ impl PacketBuilder {
             SpaceId::Initial => Header::Initial(InitialHeader {
                 src_cid: conn.handshake_cid,
                 dst_cid,
-                token: conn.retry_token.clone(),
+                token: match &conn.side {
+                    ConnectionSide::Client { token, .. } => token.clone(),
+                    ConnectionSide::Server { .. } => Bytes::new(),
+                },
                 number,
                 version,
             }),
@@ -138,12 +133,10 @@ impl PacketBuilder {
                 crypto.packet.local.tag_len(),
             )
         } else if space_id == SpaceId::Data {
-            let zero_rtt = conn.zero_rtt_crypto.as_ref().expect(
-                "sending packets in the application data space requires known 0-RTT or 1-RTT keys",
-            );
+            let zero_rtt = conn.zero_rtt_crypto.as_ref().unwrap();
             (zero_rtt.header.sample_size(), zero_rtt.packet.tag_len())
         } else {
-            unreachable!("tried to send {:?} packet without keys", space_id);
+            unreachable!();
         };
 
         // Each packet must be large enough for header protection sampling, i.e. the combined
@@ -159,6 +152,7 @@ impl PacketBuilder {
             partial_encode.start + dst_cid.len() + 6,
         );
         let max_size = buffer_capacity - tag_len;
+        debug_assert!(max_size >= min_size);
 
         Some(Self {
             datagram_start,
@@ -174,12 +168,16 @@ impl PacketBuilder {
         })
     }
 
-    /// Append the minimum amount of padding such that, after encryption, the packet will occupy at
-    /// least `min_size` bytes
+    /// Append the minimum amount of padding to the packet such that, after encryption, the
+    /// enclosing datagram will occupy at least `min_size` bytes
     pub(super) fn pad_to(&mut self, min_size: u16) {
-        let prev = self.min_size;
-        self.min_size = self.datagram_start + (min_size as usize) - self.tag_len;
-        debug_assert!(self.min_size >= prev, "padding must not shrink datagram");
+        // The datagram might already have a larger minimum size than the caller is requesting, if
+        // e.g. we're coalescing packets and have populated more than `min_size` bytes with packets
+        // already.
+        self.min_size = Ord::max(
+            self.min_size,
+            self.datagram_start + (min_size as usize) - self.tag_len,
+        );
     }
 
     pub(super) fn finish_and_track(

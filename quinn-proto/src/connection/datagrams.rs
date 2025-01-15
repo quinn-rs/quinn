@@ -15,7 +15,7 @@ pub struct Datagrams<'a> {
     pub(super) conn: &'a mut Connection,
 }
 
-impl<'a> Datagrams<'a> {
+impl Datagrams<'_> {
     /// Queue an unreliable, unordered datagram for immediate transmission
     ///
     /// If `drop` is true, previously queued datagrams which are still unsent may be discarded to
@@ -153,6 +153,7 @@ impl DatagramState {
                     datagram.data.len(),
                     max_payload
                 );
+                self.outgoing_total -= datagram.data.len();
             }
             result
         });

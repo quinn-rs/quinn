@@ -23,11 +23,81 @@ jobs:
             pkg install -y curl
             curl https://sh.rustup.rs -sSf --output rustup.sh
             sh rustup.sh -y --profile minimal --default-toolchain stable
-            echo "~~~~ rustc --version ~~~~"
-            $HOME/.cargo/bin/rustc --version
-            echo "~~~~ freebsd-version ~~~~"
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "===== rustc --version ====="
+            rustc --version
+            echo "===== freebsd-version ====="
             freebsd-version
-          run: $HOME/.cargo/bin/cargo build --all-targets && $HOME/.cargo/bin/cargo test && $HOME/.cargo/bin/cargo test --manifest-path fuzz/Cargo.toml
+
+            cargo build --all-targets && cargo test && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+
+  test-netbsd:
+    name: test on netbsd
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: test on netbsd
+        uses: vmactions/netbsd-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            export PATH="/usr/sbin:/sbin:$PATH"
+            pkg_add curl
+            curl https://sh.rustup.rs -sSf --output rustup.sh
+            sh rustup.sh -y --profile minimal --default-toolchain stable
+          run: |
+            export PATH="$HOME/.cargo/bin:$PATH"
+            echo "===== rustc --version ====="
+            rustc --version
+            echo "===== uname -a        ====="
+            uname -a
+
+            cargo build --all-targets && cargo test && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+
+  test-solaris:
+    name: test on solaris
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: test on Solaris
+        uses: vmactions/solaris-vm@v1
+        with:
+          release: "11.4-gcc"
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            source <(curl -s https://raw.githubusercontent.com/psumbera/solaris-rust/refs/heads/main/sh.rust-web-install)
+            echo "~~~~ rustc --version ~~~~"
+            rustc --version
+            echo "~~~~ Solaris-version ~~~~"
+            uname -a
+          # Unlike others, don't un-ignore stress tests, because they hang on Solaris
+          run: |
+            export PATH=$HOME/.rust_solaris/bin:$PATH
+            cargo build --all-targets && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+
+  test-illumos:
+    name: test on illumos
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: test on Illumos
+        uses: vmactions/omnios-vm@v1
+        with:
+          usesh: true
+          mem: 4096
+          copyback: false
+          prepare: |
+            pkg install gcc14 curl pkg-config glib2
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+          run: |
+            . "$HOME/.cargo/env"
+            cargo build --all-targets && cargo test && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+
   test:
     strategy:
       fail-fast: false
@@ -54,8 +124,62 @@ jobs:
           toolchain: ${{ matrix.rust }}
       - run: cargo build --all-targets
       - run: cargo test
+      - run: cargo test -- --ignored stress
       - run: cargo test --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust }} == "stable"
+      - run: cargo test -p quinn-udp --benches
+
+  test-aws-lc-rs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+      # Prevent feature unification from selecting *ring* as the crypto provider
+      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs
+      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs,runtime-tokio
+      # FIPS
+      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips
+      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips,runtime-tokio
+
+  wasm_test:
+    name: test wasm32-unknown-unknown
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install stable toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Add wasm target
+        run: rustup target add wasm32-unknown-unknown
+
+      - name: Install nodejs v20
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20
+
+      - name: Setup `wasm-tools`
+        uses: bytecodealliance/actions/wasm-tools/setup@v1
+
+      - name: Install cargo binstall
+        uses: cargo-bins/cargo-binstall@main
+
+      - name: build wasm32 tests (quinn-proto)
+        run: cargo test -p quinn-proto --target wasm32-unknown-unknown --no-run
+
+      # If the Wasm file contains any 'import "env"' declarations, then
+      # some non-Wasm-compatible code made it into the final code.
+      - name: Check for 'import "env"' in Wasm
+        run: |
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/deps/quinn_proto-*.wasm | grep 'import "env"'
+
+      - name: Install wasm-bindgen-test-runner
+        run: cargo binstall wasm-bindgen-cli --locked --no-confirm
+
+      - name: wasm32 test (quinn-proto)
+        run: cargo test -p quinn-proto --target wasm32-unknown-unknown
 
   msrv:
     runs-on: ubuntu-latest
@@ -64,9 +188,16 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
     steps:
       - uses: actions/checkout@v4
+<<<<<<< HEAD
       - uses: mozilla-actions/sccache-action@v0.0.4
       - uses: dtolnay/rust-toolchain@1.70.0
       - run: cargo check --lib --all-features -p iroh-quinn-udp -p iroh-quinn-proto -p iroh-quinn
+=======
+      # Note that we must also update the README when changing the MSRV
+      - uses: dtolnay/rust-toolchain@1.71.0
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --lib --all-features -p quinn-udp -p quinn-proto -p quinn
+>>>>>>> 6ee883a2
 
   lint:
     runs-on: ubuntu-latest
@@ -105,17 +236,19 @@ jobs:
 
     strategy:
       matrix:
-        include:
+        target: [x86_64-linux-android, i686-linux-android]
+        emulator-arch: [x86_64, x86]
+        api-level: [26, 25]
+        exclude:
           - target: x86_64-linux-android
-            emulator-arch: x86_64
-            # Note that x86_64 image is only available for API 21+. See
-            # https://github.com/ReactiveCircus/android-emulator-runner?tab=readme-ov-file#configurations.
-            api-level: 26
-          - target: i686-linux-android
             emulator-arch: x86
-            api-level: 26
+          - target: i686-linux-android
+            emulator-arch: x86_64
 
     steps:
+    - name: Set API level environment variable
+      run: echo "API_LEVEL=${{ matrix.api-level }}" >> $GITHUB_ENV
+
     - name: Checkout code
       uses: actions/checkout@v4
 
@@ -167,8 +300,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     env:
       RUSTFLAGS: -Dwarnings
+      # skip FIPS features outside of Linux
+      SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs-fips,aws-lc-rs-fips' || '' }}
     steps:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
-      - run: cargo hack check --feature-powerset --optional-deps --no-dev-deps --ignore-unknown-features --ignore-private --group-features runtime-async-std,async-io,async-std --group-features runtime-smol,async-io,smol
+      - run: cargo hack check --feature-powerset --optional-deps --no-dev-deps --ignore-unknown-features --ignore-private --group-features runtime-async-std,async-io,async-std --group-features runtime-smol,async-io,smol --skip "${{env.SKIP_FEATURES}}"

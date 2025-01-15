@@ -3,7 +3,6 @@ use std::{
     collections::{BTreeMap, VecDeque},
     mem,
     ops::{Bound, Index, IndexMut},
-    time::{Duration, Instant},
 };
 
 use rand::Rng;
@@ -13,7 +12,7 @@ use tracing::trace;
 use super::assembler::Assembler;
 use crate::{
     connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
-    shared::IssuedCid, Dir, StreamId, TransportError, VarInt,
+    shared::IssuedCid, Dir, Duration, Instant, StreamId, TransportError, VarInt,
 };
 
 pub(super) struct PacketSpace {
@@ -105,7 +104,7 @@ impl PacketSpace {
 
     /// Queue data for a tail loss probe (or anti-amplification deadlock prevention) packet
     ///
-    /// Probes are sent similarly to normal packets when an expect ACK has not arrived. We never
+    /// Probes are sent similarly to normal packets when an expected ACK has not arrived. We never
     /// deem a packet lost until we receive an ACK that should have included it, but if a trailing
     /// run of packets (or their ACKs) are lost, this might not happen in a timely fashion. We send
     /// probe packets to force an ACK, and exempt them from congestion control to prevent a deadlock
@@ -857,7 +856,7 @@ impl PacketNumberFilter {
         if space_id == SpaceId::Data
             && self
                 .prev_skipped_packet_number
-                .map_or(false, |x| range.contains(&x))
+                .is_some_and(|x| range.contains(&x))
         {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }

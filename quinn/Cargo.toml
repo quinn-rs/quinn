@@ -1,6 +1,6 @@
 [package]
 name = "iroh-quinn"
-version = "0.12.0"
+version = "0.13.0"
 license.workspace = true
 repository.workspace = true
 description = "Versatile QUIC transport protocol implementation"
@@ -11,16 +11,22 @@ workspace = ".."
 edition.workspace = true
 rust-version.workspace = true
 
-[package.metadata.docs.rs]
-all-features = true
-
 [features]
-default = ["log", "platform-verifier", "ring", "runtime-tokio", "rustls"]
+default = ["log", "platform-verifier", "runtime-tokio", "rustls-ring"]
+# Enables `Endpoint::client` and `Endpoint::server` conveniences
+aws-lc-rs = ["proto/aws-lc-rs"]
+aws-lc-rs-fips = ["proto/aws-lc-rs-fips"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Provides `ClientConfig::with_platform_verifier()` convenience method
 platform-verifier = ["proto/platform-verifier"]
-rustls = ["dep:rustls", "proto/rustls", "proto/ring"]
+# For backwards compatibility, `rustls` forwards to `rustls-ring`
+rustls = ["rustls-ring"]
+# Enable rustls with the `aws-lc-rs` crypto provider
+rustls-aws-lc-rs = ["dep:rustls", "aws-lc-rs", "proto/rustls-aws-lc-rs", "proto/aws-lc-rs"]
+rustls-aws-lc-rs-fips = ["dep:rustls", "aws-lc-rs-fips", "proto/rustls-aws-lc-rs-fips", "proto/aws-lc-rs-fips"]
+# Enable rustls with the `ring` crypto provider
+rustls-ring = ["dep:rustls", "ring", "proto/rustls-ring", "proto/ring"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
@@ -29,6 +35,8 @@ runtime-smol = ["async-io", "smol"]
 
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 log = ["tracing/log", "proto/log", "udp/log"]
+# Enable rustls logging
+rustls-log = ["rustls?/logging"]
 
 [dependencies]
 async-io = { workspace = true, optional = true }
@@ -38,7 +46,7 @@ bytes = { workspace = true }
 futures-io = { workspace = true, optional = true }
 rustc-hash = { workspace = true }
 pin-project-lite = { workspace = true }
-proto = { package = "iroh-quinn-proto", path = "../quinn-proto", version = "0.12.0", default-features = false }
+proto = { package = "iroh-quinn-proto", path = "../quinn-proto", version = "0.13.0", default-features = false }
 rustls = { workspace = true, optional = true }
 smol = { workspace = true, optional = true }
 socket2 = { workspace = true }
@@ -69,25 +77,29 @@ tokio-stream = "0.1.15"
 
 [[example]]
 name = "server"
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
 
 [[example]]
 name = "client"
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
 
 [[example]]
 name = "insecure_connection"
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
 
 [[example]]
 name = "single_socket"
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
 
 [[example]]
 name = "connection"
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
 
 [[bench]]
 name = "bench"
 harness = false
-required-features = ["rustls"]
+required-features = ["rustls-ring"]
+
+[package.metadata.docs.rs]
+# all non-default features except fips (cannot build on docs.rs environment)
+features = ["lock_tracking", "rustls-aws-lc-rs", "rustls-ring", "runtime-tokio", "runtime-async-std", "runtime-smol", "log", "rustls-log"]
