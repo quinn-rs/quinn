@@ -167,7 +167,7 @@ jobs:
         uses: cargo-bins/cargo-binstall@main
 
       - name: build wasm32 tests (quinn-proto)
-        run: cargo test -p quinn-proto --target wasm32-unknown-unknown --no-run
+        run: cargo test -p iroh-quinn-proto --target wasm32-unknown-unknown --no-run
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
@@ -179,7 +179,7 @@ jobs:
         run: cargo binstall wasm-bindgen-cli --locked --no-confirm
 
       - name: wasm32 test (quinn-proto)
-        run: cargo test -p quinn-proto --target wasm32-unknown-unknown
+        run: cargo test -p iroh-quinn-proto --target wasm32-unknown-unknown
 
   msrv:
     runs-on: ubuntu-latest
