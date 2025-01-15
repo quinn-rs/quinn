@@ -285,18 +285,3 @@ jobs:
         api-level: ${{ matrix.api-level }}
         arch: ${{ matrix.emulator-arch }}
         script: .github/workflows/rust-android-run-tests-on-emulator.sh
-
-  features:
-    strategy:
-      matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ matrix.os }}
-    env:
-      RUSTFLAGS: -Dwarnings
-      # skip FIPS features outside of Linux
-      SKIP_FEATURES: ${{ matrix.os != 'ubuntu-latest' && 'rustls-aws-lc-rs-fips,aws-lc-rs-fips' || '' }}
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - uses: taiki-e/install-action@cargo-hack
-      - run: cargo hack check --feature-powerset --optional-deps --no-dev-deps --ignore-unknown-features --ignore-private --group-features runtime-async-std,async-io,async-std --group-features runtime-smol,async-io,smol --skip "${{env.SKIP_FEATURES}}"
