@@ -19,10 +19,11 @@ use crate::{
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
 
+/// A QUIC frame type
 #[derive(Copy, Clone, Eq, PartialEq)]
-pub struct Type(u64);
+pub struct FrameType(u64);
 
-impl Type {
+impl FrameType {
     fn stream(self) -> Option<StreamInfo> {
         if STREAM_TYS.contains(&self.0) {
             Some(StreamInfo(self.0 as u8))
@@ -39,7 +40,7 @@ impl Type {
     }
 }
 
-impl coding::Codec for Type {
+impl coding::Codec for FrameType {
     fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
         Ok(Self(buf.get_var()?))
     }
@@ -55,11 +56,11 @@ pub(crate) trait FrameStruct {
 
 macro_rules! frame_types {
     {$($name:ident = $val:expr,)*} => {
-        impl Type {
-            $(pub const $name: Type = Type($val);)*
+        impl FrameType {
+            $(pub(crate) const $name: FrameType = FrameType($val);)*
         }
 
-        impl fmt::Debug for Type {
+        impl fmt::Debug for FrameType {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
@@ -68,7 +69,7 @@ macro_rules! frame_types {
             }
         }
 
-        impl fmt::Display for Type {
+        impl fmt::Display for FrameType {
             fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
                 match self.0 {
                     $($val => f.write_str(stringify!($name)),)*
@@ -171,25 +172,25 @@ pub(crate) enum Frame {
 }
 
 impl Frame {
-    pub(crate) fn ty(&self) -> Type {
+    pub(crate) fn ty(&self) -> FrameType {
         use self::Frame::*;
         match *self {
-            Padding => Type::PADDING,
-            ResetStream(_) => Type::RESET_STREAM,
-            Close(self::Close::Connection(_)) => Type::CONNECTION_CLOSE,
-            Close(self::Close::Application(_)) => Type::APPLICATION_CLOSE,
-            MaxData(_) => Type::MAX_DATA,
-            MaxStreamData { .. } => Type::MAX_STREAM_DATA,
-            MaxStreams { dir: Dir::Bi, .. } => Type::MAX_STREAMS_BIDI,
-            MaxStreams { dir: Dir::Uni, .. } => Type::MAX_STREAMS_UNI,
-            Ping => Type::PING,
-            DataBlocked { .. } => Type::DATA_BLOCKED,
-            StreamDataBlocked { .. } => Type::STREAM_DATA_BLOCKED,
-            StreamsBlocked { dir: Dir::Bi, .. } => Type::STREAMS_BLOCKED_BIDI,
-            StreamsBlocked { dir: Dir::Uni, .. } => Type::STREAMS_BLOCKED_UNI,
-            StopSending { .. } => Type::STOP_SENDING,
-            RetireConnectionId { .. } => Type::RETIRE_CONNECTION_ID,
-            Ack(_) => Type::ACK,
+            Padding => FrameType::PADDING,
+            ResetStream(_) => FrameType::RESET_STREAM,
+            Close(self::Close::Connection(_)) => FrameType::CONNECTION_CLOSE,
+            Close(self::Close::Application(_)) => FrameType::APPLICATION_CLOSE,
+            MaxData(_) => FrameType::MAX_DATA,
+            MaxStreamData { .. } => FrameType::MAX_STREAM_DATA,
+            MaxStreams { dir: Dir::Bi, .. } => FrameType::MAX_STREAMS_BIDI,
+            MaxStreams { dir: Dir::Uni, .. } => FrameType::MAX_STREAMS_UNI,
+            Ping => FrameType::PING,
+            DataBlocked { .. } => FrameType::DATA_BLOCKED,
+            StreamDataBlocked { .. } => FrameType::STREAM_DATA_BLOCKED,
+            StreamsBlocked { dir: Dir::Bi, .. } => FrameType::STREAMS_BLOCKED_BIDI,
+            StreamsBlocked { dir: Dir::Uni, .. } => FrameType::STREAMS_BLOCKED_UNI,
+            StopSending { .. } => FrameType::STOP_SENDING,
+            RetireConnectionId { .. } => FrameType::RETIRE_CONNECTION_ID,
+            Ack(_) => FrameType::ACK,
             Stream(ref x) => {
                 let mut ty = *STREAM_TYS.start();
                 if x.fin {
@@ -198,17 +199,17 @@ impl Frame {
                 if x.offset != 0 {
                     ty |= 0x04;
                 }
-                Type(ty)
+                FrameType(ty)
             }
-            PathChallenge(_) => Type::PATH_CHALLENGE,
-            PathResponse(_) => Type::PATH_RESPONSE,
-            NewConnectionId { .. } => Type::NEW_CONNECTION_ID,
-            Crypto(_) => Type::CRYPTO,
-            NewToken { .. } => Type::NEW_TOKEN,
-            Datagram(_) => Type(*DATAGRAM_TYS.start()),
-            AckFrequency(_) => Type::ACK_FREQUENCY,
-            ImmediateAck => Type::IMMEDIATE_ACK,
-            HandshakeDone => Type::HANDSHAKE_DONE,
+            PathChallenge(_) => FrameType::PATH_CHALLENGE,
+            PathResponse(_) => FrameType::PATH_RESPONSE,
+            NewConnectionId { .. } => FrameType::NEW_CONNECTION_ID,
+            Crypto(_) => FrameType::CRYPTO,
+            NewToken { .. } => FrameType::NEW_TOKEN,
+            Datagram(_) => FrameType(*DATAGRAM_TYS.start()),
+            AckFrequency(_) => FrameType::ACK_FREQUENCY,
+            ImmediateAck => FrameType::IMMEDIATE_ACK,
+            HandshakeDone => FrameType::HANDSHAKE_DONE,
             ObservedAddr(ref observed) => observed.get_type(),
         }
     }
@@ -259,7 +260,7 @@ pub struct ConnectionClose {
     /// Class of error as encoded in the specification
     pub error_code: TransportErrorCode,
     /// Type of frame that caused the close
-    pub frame_type: Option<Type>,
+    pub frame_type: Option<FrameType>,
     /// Human-readable reason for the close
     pub reason: Bytes,
 }
@@ -291,7 +292,7 @@ impl FrameStruct for ConnectionClose {
 
 impl ConnectionClose {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
-        out.write(Type::CONNECTION_CLOSE); // 1 byte
+        out.write(FrameType::CONNECTION_CLOSE); // 1 byte
         out.write(self.error_code); // <= 8 bytes
         let ty = self.frame_type.map_or(0, |x| x.0);
         out.write_var(ty); // <= 8 bytes
@@ -334,7 +335,7 @@ impl FrameStruct for ApplicationClose {
 
 impl ApplicationClose {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W, max_len: usize) {
-        out.write(Type::APPLICATION_CLOSE); // 1 byte
+        out.write(FrameType::APPLICATION_CLOSE); // 1 byte
         out.write(self.error_code); // <= 8 bytes
         let max_len = max_len - 3 - VarInt::from_u64(self.reason.len() as u64).unwrap().size();
         let actual_len = self.reason.len().min(max_len);
@@ -394,9 +395,9 @@ impl Ack {
         let largest = first.end - 1;
         let first_size = first.end - first.start;
         buf.write(if ecn.is_some() {
-            Type::ACK_ECN
+            FrameType::ACK_ECN
         } else {
-            Type::ACK
+            FrameType::ACK
         });
         buf.write_var(largest);
         buf.write_var(delay);
@@ -523,7 +524,7 @@ impl Crypto {
     pub(crate) const SIZE_BOUND: usize = 17;
 
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
-        out.write(Type::CRYPTO);
+        out.write(FrameType::CRYPTO);
         out.write_var(self.offset);
         out.write_var(self.data.len() as u64);
         out.put_slice(&self.data);
@@ -533,7 +534,7 @@ impl Crypto {
 pub(crate) struct Iter {
     // TODO: ditch io::Cursor after bytes 0.5
     bytes: io::Cursor<Bytes>,
-    last_ty: Option<Type>,
+    last_ty: Option<FrameType>,
 }
 
 impl Iter {
@@ -564,68 +565,68 @@ impl Iter {
     }
 
     fn try_next(&mut self) -> Result<Frame, IterErr> {
-        let ty = self.bytes.get::<Type>()?;
+        let ty = self.bytes.get::<FrameType>()?;
         self.last_ty = Some(ty);
         Ok(match ty {
-            Type::PADDING => Frame::Padding,
-            Type::RESET_STREAM => Frame::ResetStream(ResetStream {
+            FrameType::PADDING => Frame::Padding,
+            FrameType::RESET_STREAM => Frame::ResetStream(ResetStream {
                 id: self.bytes.get()?,
                 error_code: self.bytes.get()?,
                 final_offset: self.bytes.get()?,
             }),
-            Type::CONNECTION_CLOSE => Frame::Close(Close::Connection(ConnectionClose {
+            FrameType::CONNECTION_CLOSE => Frame::Close(Close::Connection(ConnectionClose {
                 error_code: self.bytes.get()?,
                 frame_type: {
                     let x = self.bytes.get_var()?;
                     if x == 0 {
                         None
                     } else {
-                        Some(Type(x))
+                        Some(FrameType(x))
                     }
                 },
                 reason: self.take_len()?,
             })),
-            Type::APPLICATION_CLOSE => Frame::Close(Close::Application(ApplicationClose {
+            FrameType::APPLICATION_CLOSE => Frame::Close(Close::Application(ApplicationClose {
                 error_code: self.bytes.get()?,
                 reason: self.take_len()?,
             })),
-            Type::MAX_DATA => Frame::MaxData(self.bytes.get()?),
-            Type::MAX_STREAM_DATA => Frame::MaxStreamData {
+            FrameType::MAX_DATA => Frame::MaxData(self.bytes.get()?),
+            FrameType::MAX_STREAM_DATA => Frame::MaxStreamData {
                 id: self.bytes.get()?,
                 offset: self.bytes.get_var()?,
             },
-            Type::MAX_STREAMS_BIDI => Frame::MaxStreams {
+            FrameType::MAX_STREAMS_BIDI => Frame::MaxStreams {
                 dir: Dir::Bi,
                 count: self.bytes.get_var()?,
             },
-            Type::MAX_STREAMS_UNI => Frame::MaxStreams {
+            FrameType::MAX_STREAMS_UNI => Frame::MaxStreams {
                 dir: Dir::Uni,
                 count: self.bytes.get_var()?,
             },
-            Type::PING => Frame::Ping,
-            Type::DATA_BLOCKED => Frame::DataBlocked {
+            FrameType::PING => Frame::Ping,
+            FrameType::DATA_BLOCKED => Frame::DataBlocked {
                 offset: self.bytes.get_var()?,
             },
-            Type::STREAM_DATA_BLOCKED => Frame::StreamDataBlocked {
+            FrameType::STREAM_DATA_BLOCKED => Frame::StreamDataBlocked {
                 id: self.bytes.get()?,
                 offset: self.bytes.get_var()?,
             },
-            Type::STREAMS_BLOCKED_BIDI => Frame::StreamsBlocked {
+            FrameType::STREAMS_BLOCKED_BIDI => Frame::StreamsBlocked {
                 dir: Dir::Bi,
                 limit: self.bytes.get_var()?,
             },
-            Type::STREAMS_BLOCKED_UNI => Frame::StreamsBlocked {
+            FrameType::STREAMS_BLOCKED_UNI => Frame::StreamsBlocked {
                 dir: Dir::Uni,
                 limit: self.bytes.get_var()?,
             },
-            Type::STOP_SENDING => Frame::StopSending(StopSending {
+            FrameType::STOP_SENDING => Frame::StopSending(StopSending {
                 id: self.bytes.get()?,
                 error_code: self.bytes.get()?,
             }),
-            Type::RETIRE_CONNECTION_ID => Frame::RetireConnectionId {
+            FrameType::RETIRE_CONNECTION_ID => Frame::RetireConnectionId {
                 sequence: self.bytes.get_var()?,
             },
-            Type::ACK | Type::ACK_ECN => {
+            FrameType::ACK | FrameType::ACK_ECN => {
                 let largest = self.bytes.get_var()?;
                 let delay = self.bytes.get_var()?;
                 let extra_blocks = self.bytes.get_var()? as usize;
@@ -636,7 +637,7 @@ impl Iter {
                     delay,
                     largest,
                     additional: self.bytes.get_ref().slice(start..end),
-                    ecn: if ty != Type::ACK_ECN {
+                    ecn: if ty != FrameType::ACK_ECN {
                         None
                     } else {
                         Some(EcnCounts {
@@ -647,9 +648,9 @@ impl Iter {
                     },
                 })
             }
-            Type::PATH_CHALLENGE => Frame::PathChallenge(self.bytes.get()?),
-            Type::PATH_RESPONSE => Frame::PathResponse(self.bytes.get()?),
-            Type::NEW_CONNECTION_ID => {
+            FrameType::PATH_CHALLENGE => Frame::PathChallenge(self.bytes.get()?),
+            FrameType::PATH_RESPONSE => Frame::PathResponse(self.bytes.get()?),
+            FrameType::NEW_CONNECTION_ID => {
                 let sequence = self.bytes.get_var()?;
                 let retire_prior_to = self.bytes.get_var()?;
                 if retire_prior_to > sequence {
@@ -677,23 +678,23 @@ impl Iter {
                     reset_token: reset_token.into(),
                 })
             }
-            Type::CRYPTO => Frame::Crypto(Crypto {
+            FrameType::CRYPTO => Frame::Crypto(Crypto {
                 offset: self.bytes.get_var()?,
                 data: self.take_len()?,
             }),
-            Type::NEW_TOKEN => Frame::NewToken {
+            FrameType::NEW_TOKEN => Frame::NewToken {
                 token: self.take_len()?,
             },
-            Type::HANDSHAKE_DONE => Frame::HandshakeDone,
-            Type::ACK_FREQUENCY => Frame::AckFrequency(AckFrequency {
+            FrameType::HANDSHAKE_DONE => Frame::HandshakeDone,
+            FrameType::ACK_FREQUENCY => Frame::AckFrequency(AckFrequency {
                 sequence: self.bytes.get()?,
                 ack_eliciting_threshold: self.bytes.get()?,
                 request_max_ack_delay: self.bytes.get()?,
                 reordering_threshold: self.bytes.get()?,
             }),
-            Type::IMMEDIATE_ACK => Frame::ImmediateAck,
-            Type::OBSERVED_IPV4_ADDR | Type::OBSERVED_IPV6_ADDR => {
-                let is_ipv6 = ty == Type::OBSERVED_IPV6_ADDR;
+            FrameType::IMMEDIATE_ACK => Frame::ImmediateAck,
+            FrameType::OBSERVED_IPV4_ADDR | FrameType::OBSERVED_IPV6_ADDR => {
+                let is_ipv6 = ty == FrameType::OBSERVED_IPV6_ADDR;
                 let observed = ObservedAddr::read(&mut self.bytes, is_ipv6)?;
                 Frame::ObservedAddr(observed)
             }
@@ -754,7 +755,7 @@ impl Iterator for Iter {
 
 #[derive(Debug)]
 pub(crate) struct InvalidFrame {
-    pub(crate) ty: Option<Type>,
+    pub(crate) ty: Option<FrameType>,
     pub(crate) reason: &'static str,
 }
 
@@ -814,7 +815,7 @@ impl<'a> AckIter<'a> {
     }
 }
 
-impl<'a> Iterator for AckIter<'a> {
+impl Iterator for AckIter<'_> {
     type Item = RangeInclusive<u64>;
     fn next(&mut self) -> Option<RangeInclusive<u64>> {
         if !self.data.has_remaining() {
@@ -844,7 +845,7 @@ impl FrameStruct for ResetStream {
 
 impl ResetStream {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
-        out.write(Type::RESET_STREAM); // 1 byte
+        out.write(FrameType::RESET_STREAM); // 1 byte
         out.write(self.id); // <= 8 bytes
         out.write(self.error_code); // <= 8 bytes
         out.write(self.final_offset); // <= 8 bytes
@@ -863,7 +864,7 @@ impl FrameStruct for StopSending {
 
 impl StopSending {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
-        out.write(Type::STOP_SENDING); // 1 byte
+        out.write(FrameType::STOP_SENDING); // 1 byte
         out.write(self.id); // <= 8 bytes
         out.write(self.error_code) // <= 8 bytes
     }
@@ -879,7 +880,7 @@ pub(crate) struct NewConnectionId {
 
 impl NewConnectionId {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
-        out.write(Type::NEW_CONNECTION_ID);
+        out.write(FrameType::NEW_CONNECTION_ID);
         out.write_var(self.sequence);
         out.write_var(self.retire_prior_to);
         out.write(self.id.len() as u8);
@@ -904,7 +905,7 @@ impl FrameStruct for Datagram {
 
 impl Datagram {
     pub(crate) fn encode(&self, length: bool, out: &mut Vec<u8>) {
-        out.write(Type(*DATAGRAM_TYS.start() | u64::from(length))); // 1 byte
+        out.write(FrameType(*DATAGRAM_TYS.start() | u64::from(length))); // 1 byte
         if length {
             // Safe to unwrap because we check length sanity before queueing datagrams
             out.write(VarInt::from_u64(self.data.len() as u64).unwrap()); // <= 8 bytes
@@ -931,7 +932,7 @@ pub(crate) struct AckFrequency {
 
 impl AckFrequency {
     pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
-        buf.write(Type::ACK_FREQUENCY);
+        buf.write(FrameType::ACK_FREQUENCY);
         buf.write(self.sequence);
         buf.write(self.ack_eliciting_threshold);
         buf.write(self.request_max_ack_delay);
@@ -942,7 +943,7 @@ impl AckFrequency {
 /* Address Discovery https://datatracker.ietf.org/doc/draft-seemann-quic-address-discovery/ */
 
 /// Conjuction of the information contained in the address discovery frames
-/// ([`Type::OBSERVED_IPV4_ADDR`], [`Type::OBSERVED_IPV6_ADDR`]).
+/// ([`FrameType::OBSERVED_IPV4_ADDR`], [`FrameType::OBSERVED_IPV6_ADDR`]).
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub(crate) struct ObservedAddr {
     /// Monotonically increasing integer within the same connection.
@@ -962,12 +963,12 @@ impl ObservedAddr {
         }
     }
 
-    /// Get the [`Type`] for this frame.
-    pub(crate) fn get_type(&self) -> Type {
+    /// Get the [`FrameType`] for this frame.
+    pub(crate) fn get_type(&self) -> FrameType {
         if self.ip.is_ipv6() {
-            Type::OBSERVED_IPV6_ADDR
+            FrameType::OBSERVED_IPV6_ADDR
         } else {
-            Type::OBSERVED_IPV4_ADDR
+            FrameType::OBSERVED_IPV4_ADDR
         }
     }
 
@@ -998,7 +999,7 @@ impl ObservedAddr {
     /// Reads the frame contents from the buffer.
     ///
     /// Should only be called when the fram type has been identified as
-    /// [`Type::OBSERVED_IPV4_ADDR`] or [`Type::OBSERVED_IPV6_ADDR`].
+    /// [`FrameType::OBSERVED_IPV4_ADDR`] or [`FrameType::OBSERVED_IPV6_ADDR`].
     pub(crate) fn read<R: Buf>(bytes: &mut R, is_ipv6: bool) -> coding::Result<Self> {
         let seq_no = bytes.get()?;
         let ip = if is_ipv6 {
@@ -1079,7 +1080,7 @@ mod test {
     #[test]
     fn immediate_ack_coding() {
         let mut buf = Vec::new();
-        Type::IMMEDIATE_ACK.encode(&mut buf);
+        FrameType::IMMEDIATE_ACK.encode(&mut buf);
         let frames = frames(buf);
         assert_eq!(frames.len(), 1);
         assert_matches!(&frames[0], Frame::ImmediateAck);

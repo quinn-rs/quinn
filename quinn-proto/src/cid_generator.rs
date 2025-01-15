@@ -1,8 +1,9 @@
-use std::{hash::Hasher, time::Duration};
+use std::hash::Hasher;
 
 use rand::{Rng, RngCore};
 
 use crate::shared::ConnectionId;
+use crate::Duration;
 use crate::MAX_CID_SIZE;
 
 /// Generates connection IDs for incoming connections
@@ -171,7 +172,6 @@ mod tests {
     use super::*;
 
     #[test]
-    #[cfg(feature = "ring")]
     fn validate_keyed_cid() {
         let mut generator = HashedConnectionIdGenerator::new();
         let cid = generator.generate_cid();

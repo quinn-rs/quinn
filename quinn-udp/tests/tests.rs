@@ -1,4 +1,4 @@
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::{
     io::IoSliceMut,
@@ -11,11 +11,11 @@ use socket2::Socket;
 
 #[test]
 fn basic() {
-    let send = UdpSocket::bind("[::1]:0")
-        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         .unwrap();
-    let recv = UdpSocket::bind("[::1]:0")
-        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         .unwrap();
     let dst_addr = recv.local_addr().unwrap();
     test_send_recv(
@@ -33,8 +33,8 @@ fn basic() {
 
 #[test]
 fn ecn_v6() {
-    let send = Socket::from(UdpSocket::bind("[::1]:0").unwrap());
-    let recv = Socket::from(UdpSocket::bind("[::1]:0").unwrap());
+    let send = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
+    let recv = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
     for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
         test_send_recv(
             &send,
@@ -51,10 +51,10 @@ fn ecn_v6() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 fn ecn_v4() {
-    let send = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
-    let recv = Socket::from(UdpSocket::bind("127.0.0.1:0").unwrap());
+    let send = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
+    let recv = Socket::from(UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap());
     for codepoint in [EcnCodepoint::Ect0, EcnCodepoint::Ect1] {
         test_send_recv(
             &send,
@@ -71,7 +71,7 @@ fn ecn_v4() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 fn ecn_v6_dualstack() {
     let recv = socket2::Socket::new(
         socket2::Domain::IPV6,
@@ -93,7 +93,10 @@ fn ecn_v6_dualstack() {
         0,
     ));
     let recv_v4 = SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, recv_v6.port()));
-    for (src, dst) in [("[::1]:0", recv_v6), ("127.0.0.1:0", recv_v4)] {
+    for (src, dst) in [
+        (SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), 0), recv_v6),
+        (SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), 0), recv_v4),
+    ] {
         dbg!(src, dst);
         let send = UdpSocket::bind(src).unwrap();
         let send = Socket::from(send);
@@ -114,7 +117,7 @@ fn ecn_v6_dualstack() {
 }
 
 #[test]
-#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", target_os = "solaris")))]
+#[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 fn ecn_v4_mapped_v6() {
     let send = socket2::Socket::new(
         socket2::Domain::IPV6,
@@ -128,7 +131,7 @@ fn ecn_v4_mapped_v6() {
     ))
     .unwrap();
 
-    let recv = UdpSocket::bind("127.0.0.1:0").unwrap();
+    let recv = UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)).unwrap();
     let recv = Socket::from(recv);
     let recv_v4_mapped_v6 = SocketAddr::V6(SocketAddrV6::new(
         Ipv4Addr::LOCALHOST.to_ipv6_mapped(),
@@ -153,13 +156,16 @@ fn ecn_v4_mapped_v6() {
 }
 
 #[test]
-#[cfg_attr(not(any(target_os = "linux", target_os = "windows")), ignore)]
+#[cfg_attr(
+    not(any(target_os = "linux", target_os = "windows", target_os = "android")),
+    ignore
+)]
 fn gso() {
-    let send = UdpSocket::bind("[::1]:0")
-        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         .unwrap();
-    let recv = UdpSocket::bind("[::1]:0")
-        .or_else(|_| UdpSocket::bind("127.0.0.1:0"))
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
         .unwrap();
     let max_segments = UdpSocketState::new((&send).into())
         .unwrap()
@@ -187,7 +193,7 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
     // Reverse non-blocking flag set by `UdpSocketState` to make the test non-racy
     recv.set_nonblocking(false).unwrap();
 
-    send_state.send(send.into(), &transmit).unwrap();
+    send_state.try_send(send.into(), &transmit).unwrap();
 
     let mut buf = [0; u16::MAX as usize];
     let mut meta = RecvMeta::default();
@@ -219,9 +225,12 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         );
         let send_v6 = send.local_addr().unwrap().as_socket().unwrap().is_ipv6();
         let recv_v6 = recv.local_addr().unwrap().as_socket().unwrap().is_ipv6();
-        let src = meta.addr.ip();
-        let dst = meta.dst_ip.unwrap();
-        for addr in [src, dst] {
+        let mut addresses = vec![meta.addr.ip()];
+        // Not populated on every OS. See `RecvMeta::dst_ip` for details.
+        if let Some(addr) = meta.dst_ip {
+            addresses.push(addr);
+        }
+        for addr in addresses {
             match (send_v6, recv_v6) {
                 (_, false) => assert_eq!(addr, Ipv4Addr::LOCALHOST),
                 // Windows gives us real IPv4 addrs, whereas *nix use IPv6-mapped IPv4
@@ -234,7 +243,26 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
                 ),
             }
         }
-        assert_eq!(meta.ecn, transmit.ecn);
+
+        let ipv4_or_ipv4_mapped_ipv6 = match transmit.destination.ip() {
+            IpAddr::V4(_) => true,
+            IpAddr::V6(a) => a.to_ipv4_mapped().is_some(),
+        };
+
+        // On Android API level <= 25 the IPv4 `IP_TOS` control message is
+        // not supported and thus ECN bits can not be received.
+        if ipv4_or_ipv4_mapped_ipv6
+            && cfg!(target_os = "android")
+            && std::env::var("API_LEVEL")
+                .ok()
+                .and_then(|v| v.parse::<u32>().ok())
+                .expect("API_LEVEL environment variable to be set on Android")
+                <= 25
+        {
+            assert_eq!(meta.ecn, None);
+        } else {
+            assert_eq!(meta.ecn, transmit.ecn);
+        }
     }
     assert_eq!(datagrams, expected_datagrams);
 }

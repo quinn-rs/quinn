@@ -1,5 +1,6 @@
 use std::{
     collections::VecDeque,
+    fmt,
     future::Future,
     io,
     io::IoSliceMut,
@@ -12,7 +13,7 @@ use std::{
     time::Instant,
 };
 
-#[cfg(feature = "ring")]
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 use crate::runtime::default_runtime;
 use crate::{
     runtime::{AsyncUdpSocket, Runtime},
@@ -25,7 +26,7 @@ use proto::{
     EndpointEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
-#[cfg(feature = "ring")]
+#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
 use socket2::{Domain, Protocol, Socket, Type};
 use tokio::sync::{futures::Notified, mpsc, Notify};
 use tracing::{Instrument, Span};
@@ -67,7 +68,7 @@ impl Endpoint {
     ///
     /// Some environments may not allow creation of dual-stack sockets, in which case an IPv6
     /// client will only be able to connect to IPv6 servers. An IPv4 client is never dual-stack.
-    #[cfg(feature = "ring")]
+    #[cfg(any(feature = "aws-lc-rs", feature = "ring"))] // `EndpointConfig::default()` is only available with these
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
         if addr.is_ipv6() {
@@ -97,7 +98,7 @@ impl Endpoint {
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
-    #[cfg(feature = "ring")]
+    #[cfg(any(feature = "aws-lc-rs", feature = "ring"))] // `EndpointConfig::default()` is only available with these
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime = default_runtime()
@@ -633,7 +634,7 @@ pin_project! {
     }
 }
 
-impl<'a> Future for Accept<'a> {
+impl Future for Accept<'_> {
     type Output = Option<Incoming>;
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
         let mut this = self.project();
@@ -728,7 +729,6 @@ impl std::ops::Deref for EndpointRef {
 }
 
 /// State directly involved in handling incoming packets
-#[derive(Debug)]
 struct RecvState {
     incoming: VecDeque<proto::Incoming>,
     connections: ConnectionSet,
@@ -847,6 +847,17 @@ impl RecvState {
                 });
             }
         }
+    }
+}
+
+impl fmt::Debug for RecvState {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        f.debug_struct("RecvState")
+            .field("incoming", &self.incoming)
+            .field("connections", &self.connections)
+            // recv_buf too large
+            .field("recv_limiter", &self.recv_limiter)
+            .finish_non_exhaustive()
     }
 }
 

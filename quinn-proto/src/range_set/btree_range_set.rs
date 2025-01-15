@@ -18,7 +18,7 @@ impl RangeSet {
     }
 
     pub fn contains(&self, x: u64) -> bool {
-        self.pred(x).map_or(false, |(_, end)| end > x)
+        self.pred(x).is_some_and(|(_, end)| end > x)
     }
 
     pub fn insert_one(&mut self, x: u64) -> bool {
@@ -212,7 +212,7 @@ impl RangeSet {
 
 pub struct Iter<'a>(btree_map::Iter<'a, u64, u64>);
 
-impl<'a> Iterator for Iter<'a> {
+impl Iterator for Iter<'_> {
     type Item = Range<u64>;
     fn next(&mut self) -> Option<Range<u64>> {
         let (&start, &end) = self.0.next()?;
@@ -220,7 +220,7 @@ impl<'a> Iterator for Iter<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for Iter<'a> {
+impl DoubleEndedIterator for Iter<'_> {
     fn next_back(&mut self) -> Option<Range<u64>> {
         let (&start, &end) = self.0.next_back()?;
         Some(start..end)
@@ -241,7 +241,7 @@ pub struct EltIter<'a> {
     end: u64,
 }
 
-impl<'a> Iterator for EltIter<'a> {
+impl Iterator for EltIter<'_> {
     type Item = u64;
     fn next(&mut self) -> Option<u64> {
         if self.next == self.end {
@@ -255,7 +255,7 @@ impl<'a> Iterator for EltIter<'a> {
     }
 }
 
-impl<'a> DoubleEndedIterator for EltIter<'a> {
+impl DoubleEndedIterator for EltIter<'_> {
     fn next_back(&mut self) -> Option<u64> {
         if self.next == self.end {
             let (&start, &end) = self.inner.next_back()?;

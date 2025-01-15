@@ -5,12 +5,14 @@ use thiserror::Error;
 use tracing::debug;
 
 use super::state::get_or_insert_recv;
-use super::{ClosedStream, Retransmits, ShouldTransmit, StreamHalf, StreamId, StreamsState};
+use super::{ClosedStream, Retransmits, ShouldTransmit, StreamId, StreamsState};
 use crate::connection::assembler::{Assembler, Chunk, IllegalOrderedRead};
+use crate::connection::streams::state::StreamRecv;
 use crate::{frame, TransportError, VarInt};
 
 #[derive(Debug, Default)]
 pub(super) struct Recv {
+    // NB: when adding or removing fields, remember to update `reinit`.
     state: RecvState,
     pub(super) assembler: Assembler,
     sent_max_stream_data: u64,
@@ -27,6 +29,15 @@ impl Recv {
             end: 0,
             stopped: false,
         })
+    }
+
+    /// Reset to the initial state
+    pub(super) fn reinit(&mut self, initial_max_data: u64) {
+        self.state = RecvState::default();
+        self.assembler.reinit();
+        self.sent_max_stream_data = initial_max_data;
+        self.end = 0;
+        self.stopped = false;
     }
 
     /// Process a STREAM frame
@@ -220,7 +231,17 @@ impl Recv {
     }
 }
 
-/// Chunks
+/// Chunks returned from [`RecvStream::read()`][crate::RecvStream::read].
+///
+/// ### Note: Finalization Needed
+/// Bytes read from the stream are not released from the congestion window until
+/// either [`Self::finalize()`] is called, or this type is dropped.
+///
+/// It is recommended that you call [`Self::finalize()`] because it returns a flag
+/// telling you whether reading from the stream has resulted in the need to transmit a packet.
+///
+/// If this type is leaked, the stream will remain blocked on the remote peer until
+/// another read from the stream is done.
 pub struct Chunks<'a> {
     id: StreamId,
     ordered: bool,
@@ -245,7 +266,7 @@ impl<'a> Chunks<'a> {
         let mut recv =
             match get_or_insert_recv(streams.stream_receive_window)(entry.get_mut()).stopped {
                 true => return Err(ReadableError::ClosedStream),
-                false => entry.remove().unwrap(), // this can't fail due to the previous get_or_insert_with
+                false => entry.remove().unwrap().into_inner(), // this can't fail due to the previous get_or_insert_with
             };
 
         recv.assembler.ensure_ordering(ordered)?;
@@ -282,14 +303,24 @@ impl<'a> Chunks<'a> {
         match rs.state {
             RecvState::ResetRecvd { error_code, .. } => {
                 debug_assert_eq!(self.read, 0, "reset streams have empty buffers");
-                self.streams.stream_freed(self.id, StreamHalf::Recv);
-                self.state = ChunksState::Reset(error_code);
+                let state = mem::replace(&mut self.state, ChunksState::Reset(error_code));
+                // At this point if we have `rs` self.state must be `ChunksState::Readable`
+                let recv = match state {
+                    ChunksState::Readable(recv) => StreamRecv::Open(recv),
+                    _ => unreachable!("state must be ChunkState::Readable"),
+                };
+                self.streams.stream_recv_freed(self.id, recv);
                 Err(ReadError::Reset(error_code))
             }
             RecvState::Recv { size } => {
                 if size == Some(rs.end) && rs.assembler.bytes_read() == rs.end {
-                    self.streams.stream_freed(self.id, StreamHalf::Recv);
-                    self.state = ChunksState::Finished;
+                    let state = mem::replace(&mut self.state, ChunksState::Finished);
+                    // At this point if we have `rs` self.state must be `ChunksState::Readable`
+                    let recv = match state {
+                        ChunksState::Readable(recv) => StreamRecv::Open(recv),
+                        _ => unreachable!("state must be ChunkState::Readable"),
+                    };
+                    self.streams.stream_recv_freed(self.id, recv);
                     Ok(None)
                 } else {
                     // We don't need a distinct `ChunksState` variant for a blocked stream because
@@ -302,17 +333,21 @@ impl<'a> Chunks<'a> {
         }
     }
 
-    /// Finalize
+    /// Mark the read data as consumed from the stream.
+    ///
+    /// The number of read bytes will be released from the congestion window,
+    /// allowing the remote peer to send more data if it was previously blocked.
+    ///
+    /// If [`ShouldTransmit::should_transmit()`] returns `true`,
+    /// a packet needs to be sent to the peer informing them that the stream is unblocked.
+    /// This means that you should call [`Connection::poll_transmit()`][crate::Connection::poll_transmit]
+    /// and send the returned packet as soon as is reasonable, to unblock the remote peer.
     pub fn finalize(mut self) -> ShouldTransmit {
-        self.finalize_inner(false)
+        self.finalize_inner()
     }
 
-    fn finalize_inner(&mut self, drop: bool) -> ShouldTransmit {
+    fn finalize_inner(&mut self) -> ShouldTransmit {
         let state = mem::replace(&mut self.state, ChunksState::Finalized);
-        debug_assert!(
-            !drop || matches!(state, ChunksState::Finalized),
-            "finalize must be called before drop"
-        );
         if let ChunksState::Finalized = state {
             // Noop on repeated calls
             return ShouldTransmit(false);
@@ -331,7 +366,9 @@ impl<'a> Chunks<'a> {
                 self.pending.max_stream_data.insert(self.id);
             }
             // Return the stream to storage for future use
-            self.streams.recv.insert(self.id, Some(rs));
+            self.streams
+                .recv
+                .insert(self.id, Some(StreamRecv::Open(rs)));
         }
 
         // Issue connection-level flow control credit for any data we read regardless of state
@@ -342,9 +379,9 @@ impl<'a> Chunks<'a> {
     }
 }
 
-impl<'a> Drop for Chunks<'a> {
+impl Drop for Chunks<'_> {
     fn drop(&mut self) {
-        let _ = self.finalize_inner(true);
+        let _ = self.finalize_inner();
     }
 }
 

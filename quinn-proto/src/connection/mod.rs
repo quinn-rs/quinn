@@ -5,7 +5,6 @@ use std::{
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
     sync::Arc,
-    time::{Duration, Instant},
 };
 
 use bytes::{Bytes, BytesMut};
@@ -20,8 +19,7 @@ use crate::{
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     crypto::{self, KeyPair, Keys, PacketKey},
-    frame,
-    frame::{Close, Datagram, FrameStruct, ObservedAddr},
+    frame::{self, Close, Datagram, FrameStruct, ObservedAddr},
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -33,8 +31,9 @@ use crate::{
     },
     token::ResetToken,
     transport_parameters::TransportParameters,
-    Dir, EndpointConfig, Frame, Side, StreamId, Transmit, TransportError, TransportErrorCode,
-    VarInt, MAX_STREAM_COUNT, MIN_INITIAL_SIZE, TIMER_GRANULARITY,
+    Dir, Duration, EndpointConfig, Frame, Instant, Side, StreamId, Transmit, TransportError,
+    TransportErrorCode, VarInt, INITIAL_MTU, MAX_CID_SIZE, MAX_STREAM_COUNT, MIN_INITIAL_SIZE,
+    TIMER_GRANULARITY,
 };
 
 mod ack_frequency;
@@ -82,7 +81,7 @@ pub use streams::StreamsState;
 use streams::StreamsState;
 pub use streams::{
     BytesSource, Chunks, ClosedStream, FinishError, ReadError, ReadableError, RecvStream,
-    SendStream, StreamEvent, Streams, WriteError, Written,
+    SendStream, ShouldTransmit, StreamEvent, Streams, WriteError, Written,
 };
 
 mod timer;
@@ -130,7 +129,6 @@ use timer::{Timer, TimerTable};
 /// events or timeouts with different instants must not be interleaved.
 pub struct Connection {
     endpoint_config: Arc<EndpointConfig>,
-    server_config: Option<Arc<ServerConfig>>,
     config: Arc<TransportConfig>,
     rng: StdRng,
     crypto: Box<dyn crypto::Session>,
@@ -146,7 +144,7 @@ pub struct Connection {
     allow_mtud: bool,
     prev_path: Option<(ConnectionId, PathData)>,
     state: State,
-    side: Side,
+    side: ConnectionSide,
     /// Whether or not 0-RTT was enabled during the handshake. Does not imply acceptance.
     zero_rtt_enabled: bool,
     /// Set if 0-RTT is supported, then cleared when no longer needed.
@@ -186,15 +184,12 @@ pub struct Connection {
     /// Whether the idle timer should be reset the next time an ack-eliciting packet is transmitted.
     permit_idle_reset: bool,
     /// Negotiated idle timeout
-    idle_timeout: Option<VarInt>,
+    idle_timeout: Option<Duration>,
     timers: TimerTable,
     /// Number of packets received which could not be authenticated
     authentication_failures: u64,
     /// Why the connection was lost, if it has been
     error: Option<ConnectionError>,
-    /// Sent in every outgoing Initial packet. Always empty for servers and after Initial keys are
-    /// discarded.
-    retry_token: Bytes,
     /// Identifies Data-space packet numbers to skip. Not used in earlier spaces.
     packet_number_filter: PacketNumberFilter,
 
@@ -249,12 +244,10 @@ pub struct Connection {
 impl Connection {
     pub(crate) fn new(
         endpoint_config: Arc<EndpointConfig>,
-        server_config: Option<Arc<ServerConfig>>,
         config: Arc<TransportConfig>,
         init_cid: ConnectionId,
         loc_cid: ConnectionId,
         rem_cid: ConnectionId,
-        pref_addr_cid: Option<ConnectionId>,
         remote: SocketAddr,
         local_ip: Option<IpAddr>,
         crypto: Box<dyn crypto::Session>,
@@ -263,13 +256,12 @@ impl Connection {
         version: u32,
         allow_mtud: bool,
         rng_seed: [u8; 32],
-        path_validated: bool,
+        side_args: SideArgs,
     ) -> Self {
-        let side = if server_config.is_some() {
-            Side::Server
-        } else {
-            Side::Client
-        };
+        let pref_addr_cid = side_args.pref_addr_cid();
+        let path_validated = side_args.path_validated();
+        let connection_side = ConnectionSide::from(side_args);
+        let side = connection_side.side();
         let initial_space = PacketSpace {
             crypto: Some(crypto.initial_keys(&init_cid, side)),
             ..PacketSpace::new(now)
@@ -282,7 +274,6 @@ impl Connection {
         let mut rng = StdRng::from_seed(rng_seed);
         let mut this = Self {
             endpoint_config,
-            server_config,
             crypto,
             handshake_cid: loc_cid,
             rem_handshake_cid: rem_cid,
@@ -296,8 +287,8 @@ impl Connection {
             allow_mtud,
             local_ip,
             prev_path: None,
-            side,
             state,
+            side: connection_side,
             zero_rtt_enabled: false,
             zero_rtt_crypto: None,
             key_phase: false,
@@ -323,11 +314,13 @@ impl Connection {
             next_crypto: None,
             accepted_0rtt: false,
             permit_idle_reset: true,
-            idle_timeout: config.max_idle_timeout,
+            idle_timeout: match config.max_idle_timeout {
+                None | Some(VarInt(0)) => None,
+                Some(dur) => Some(Duration::from_millis(dur.0)),
+            },
             timers: TimerTable::default(),
             authentication_failures: 0,
             error: None,
-            retry_token: Bytes::new(),
             #[cfg(test)]
             packet_number_filter: match config.deterministic_packet_numbers {
                 false => PacketNumberFilter::new(&mut rng),
@@ -426,7 +419,7 @@ impl Connection {
     /// Provide control over streams
     #[must_use]
     pub fn recv_stream(&mut self, id: StreamId) -> RecvStream<'_> {
-        assert!(id.dir() == Dir::Bi || id.initiator() != self.side);
+        assert!(id.dir() == Dir::Bi || id.initiator() != self.side.side());
         RecvStream {
             id,
             state: &mut self.streams,
@@ -437,7 +430,7 @@ impl Connection {
     /// Provide control over streams
     #[must_use]
     pub fn send_stream(&mut self, id: StreamId) -> SendStream<'_> {
-        assert!(id.dir() == Dir::Bi || id.initiator() == self.side);
+        assert!(id.dir() == Dir::Bi || id.initiator() == self.side.side());
         SendStream {
             id,
             state: &mut self.streams,
@@ -507,7 +500,7 @@ impl Connection {
                     self,
                 )?;
                 trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
-                buf.write(frame::Type::PATH_CHALLENGE);
+                buf.write(frame::FrameType::PATH_CHALLENGE);
                 buf.write(token);
                 self.stats.frame_tx.path_challenge += 1;
 
@@ -614,7 +607,16 @@ impl Connection {
                 buf.len()
             };
 
-            if !coalesce || buf_capacity - buf_end < MIN_PACKET_SPACE {
+            let tag_len = if let Some(ref crypto) = self.spaces[space_id].crypto {
+                crypto.packet.local.tag_len()
+            } else if space_id == SpaceId::Data {
+                self.zero_rtt_crypto.as_ref().expect(
+                    "sending packets in the application data space requires known 0-RTT or 1-RTT keys",
+                ).packet.tag_len()
+            } else {
+                unreachable!("tried to send {:?} packet without keys", space_id)
+            };
+            if !coalesce || buf_capacity - buf_end < MIN_PACKET_SPACE + tag_len {
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
@@ -689,20 +691,28 @@ impl Connection {
                         // waste large amounts of bandwidth. The exact threshold is a bit arbitrary
                         // and might benefit from further tuning, though there's no universally
                         // optimal value.
+                        //
+                        // Additionally, if this datagram is a loss probe and `segment_size` is
+                        // larger than `INITIAL_MTU`, then padding it to `segment_size` to continue
+                        // the GSO batch would risk failure to recover from a reduction in path
+                        // MTU. Loss probes are the only packets for which we might grow
+                        // `buf_capacity` by less than `segment_size`.
                         const MAX_PADDING: usize = 16;
                         let packet_len_unpadded = cmp::max(builder.min_size, buf.len())
                             - datagram_start
                             + builder.tag_len;
-                        if packet_len_unpadded + MAX_PADDING < segment_size {
+                        if packet_len_unpadded + MAX_PADDING < segment_size
+                            || datagram_start + segment_size > buf_capacity
+                        {
                             trace!(
-                                "GSO truncated by demand for {} padding bytes",
+                                "GSO truncated by demand for {} padding bytes or loss probe",
                                 segment_size - packet_len_unpadded
                             );
                             builder_storage = Some(builder);
                             break;
                         }
 
-                        // Pad the current packet to GSO segment size so it can be included in the
+                        // Pad the current datagram to GSO segment size so it can be included in the
                         // GSO batch.
                         builder.pad_to(segment_size as u16);
                     }
@@ -738,7 +748,17 @@ impl Connection {
                 }
 
                 // Allocate space for another datagram
-                buf_capacity += segment_size;
+                let next_datagram_size_limit = match self.spaces[space_id].loss_probes {
+                    0 => segment_size,
+                    _ => {
+                        self.spaces[space_id].loss_probes -= 1;
+                        // Clamp the datagram to at most the minimum MTU to ensure that loss probes
+                        // can get through and enable recovery even if the path MTU has shrank
+                        // unexpectedly.
+                        usize::from(INITIAL_MTU)
+                    }
+                };
+                buf_capacity += next_datagram_size_limit;
                 if buf.capacity() < buf_capacity {
                     // We reserve the maximum space for sending `max_datagrams` upfront
                     // to avoid any reallocations if more datagrams have to be appended later on.
@@ -792,10 +812,7 @@ impl Connection {
                 "Previous packet must have been finished"
             );
 
-            // This should really be `builder.insert()`, but `Option::insert`
-            // is not stable yet. Since we `debug_assert!(builder.is_none())` it
-            // doesn't make any functional difference.
-            let builder = builder_storage.get_or_insert(PacketBuilder::new(
+            let builder = builder_storage.insert(PacketBuilder::new(
                 now,
                 space_id,
                 self.rem_cids.active(),
@@ -883,7 +900,7 @@ impl Connection {
                     // above.
                     let mut builder = builder_storage.take().unwrap();
                     trace!("PATH_RESPONSE {:08x} (off-path)", token);
-                    buf.write(frame::Type::PATH_RESPONSE);
+                    buf.write(frame::FrameType::PATH_RESPONSE);
                     buf.write(token);
                     self.stats.frame_tx.path_response += 1;
                     builder.pad_to(MIN_INITIAL_SIZE);
@@ -955,14 +972,10 @@ impl Connection {
         // Send MTU probe if necessary
         if buf.is_empty() && self.state.is_established() {
             let space_id = SpaceId::Data;
-            let probe_size = match self
+            let probe_size = self
                 .path
                 .mtud
-                .poll_transmit(now, self.packet_number_filter.peek(&self.spaces[space_id]))
-            {
-                Some(next_probe_size) => next_probe_size,
-                None => return None,
-            };
+                .poll_transmit(now, self.packet_number_filter.peek(&self.spaces[space_id]))?;
 
             let buf_capacity = probe_size as usize;
             buf.reserve(buf_capacity);
@@ -979,12 +992,12 @@ impl Connection {
             )?;
 
             // We implement MTU probes as ping packets padded up to the probe size
-            buf.write(frame::Type::PING);
+            buf.write(frame::FrameType::PING);
             self.stats.frame_tx.ping += 1;
 
             // If supported by the peer, we want no delays to the probe's ACK
             if self.peer_supports_ack_frequency() {
-                buf.write(frame::Type::IMMEDIATE_ACK);
+                buf.write(frame::FrameType::IMMEDIATE_ACK);
                 self.stats.frame_tx.immediate_ack += 1;
             }
 
@@ -1061,9 +1074,7 @@ impl Connection {
                 // If this packet could initiate a migration and we're a client or a server that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
-                if remote != self.path.remote
-                    && self.server_config.as_ref().map_or(true, |x| !x.migration)
-                {
+                if remote != self.path.remote && !self.side.remote_may_migrate() {
                     trace!("discarding packet from unrecognized peer {}", remote);
                     return;
                 }
@@ -1283,7 +1294,7 @@ impl Connection {
 
     /// Look up whether we're the client or server of this Connection
     pub fn side(&self) -> Side {
-        self.side
+        self.side.side()
     }
 
     /// The latest socket address for this connection's peer
@@ -1320,10 +1331,12 @@ impl Connection {
     /// Currently this is the congestion controller, round-trip estimator, and the MTU
     /// discovery.
     ///
-    /// This is useful when it is know the underlying network path has changed and the old
-    /// state of these subsystems is no longer valid.
-    pub fn network_path_changed(&mut self) {
-        self.path.reset(&self.config);
+    /// This is useful when it is known the underlying network path has changed and the old
+    /// state of these subsystems is no longer valid or optimal. In this case it might be
+    /// faster or reduce loss to settle on optimal values by restarting from the initial
+    /// configuration in the [`TransportConfig`].
+    pub fn path_changed(&mut self, now: Instant) {
+        self.path.reset(now, &self.config);
     }
 
     /// Modify the number of remotely initiated streams that may be concurrently open
@@ -1635,7 +1648,7 @@ impl Connection {
                             None if self
                                 .path
                                 .first_packet_after_rtt_sample
-                                .map_or(false, |x| x < (pn_space, packet)) =>
+                                .is_some_and(|x| x < (pn_space, packet)) =>
                             {
                                 persistent_congestion_start = Some(info.time_sent);
                             }
@@ -1865,7 +1878,7 @@ impl Connection {
     fn reset_idle_timeout(&mut self, now: Instant, space: SpaceId) {
         let timeout = match self.idle_timeout {
             None => return,
-            Some(x) => Duration::from_millis(x.0),
+            Some(dur) => dur,
         };
         if self.state.is_closed() {
             self.timers.stop(Timer::Idle);
@@ -2085,7 +2098,9 @@ impl Connection {
         trace!("discarding {:?} keys", space_id);
         if space_id == SpaceId::Initial {
             // No longer needed
-            self.retry_token = Bytes::new();
+            if let ConnectionSide::Client { token, .. } = &mut self.side {
+                *token = Bytes::new();
+            }
         }
         let space = &mut self.spaces[space_id];
         space.crypto = None;
@@ -2210,7 +2225,7 @@ impl Connection {
                 let _guard = span.enter();
 
                 let is_duplicate = |n| self.spaces[packet.header.space()].dedup.insert(n);
-                if number.map_or(false, is_duplicate) {
+                if number.is_some_and(is_duplicate) {
                     debug!("discarding possible duplicate packet");
                     return;
                 } else if self.state.is_handshake() && packet.header.is_short() {
@@ -2382,7 +2397,7 @@ impl Connection {
 
                 self.discard_space(now, SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
                 self.spaces[SpaceId::Initial] = PacketSpace {
-                    crypto: Some(self.crypto.initial_keys(&rem_cid, self.side)),
+                    crypto: Some(self.crypto.initial_keys(&rem_cid, self.side.side())),
                     next_packet_number: self.spaces[SpaceId::Initial].next_packet_number,
                     crypto_offset: client_hello.len() as u64,
                     ..PacketSpace::new(now)
@@ -2404,7 +2419,10 @@ impl Connection {
                 self.streams.retransmit_all_for_0rtt();
 
                 let token_len = packet.payload.len() - 16;
-                self.retry_token = packet.payload.freeze().split_to(token_len);
+                let ConnectionSide::Client { ref mut token, .. } = self.side else {
+                    unreachable!("we already short-circuited if we're server");
+                };
+                *token = packet.payload.freeze().split_to(token_len);
                 self.state = State::Handshake(state::Handshake {
                     expected_token: Bytes::new(),
                     rem_cid_set: false,
@@ -2733,7 +2751,7 @@ impl Connection {
                     debug!(offset, "peer claims to be blocked at connection level");
                 }
                 Frame::StreamDataBlocked { id, offset } => {
-                    if id.initiator() == self.side && id.dir() == Dir::Uni {
+                    if id.initiator() == self.side.side() && id.dir() == Dir::Uni {
                         debug!("got STREAM_DATA_BLOCKED on send-only {}", id);
                         return Err(TransportError::STREAM_STATE_ERROR(
                             "STREAM_DATA_BLOCKED on send-only stream",
@@ -2756,7 +2774,7 @@ impl Connection {
                     );
                 }
                 Frame::StopSending(frame::StopSending { id, error_code }) => {
-                    if id.initiator() != self.side {
+                    if id.initiator() != self.side.side() {
                         if id.dir() == Dir::Uni {
                             debug!("got STOP_SENDING on recv-only {}", id);
                             return Err(TransportError::STREAM_STATE_ERROR(
@@ -2953,11 +2971,11 @@ impl Connection {
             && !is_probing_packet
             && number == self.spaces[SpaceId::Data].rx_packet
         {
+            let ConnectionSide::Server { ref server_config } = self.side else {
+                panic!("packets from unknown remote should be dropped by clients");
+            };
             debug_assert!(
-                self.server_config
-                    .as_ref()
-                    .expect("packets from unknown remote should be dropped by clients")
-                    .migration,
+                server_config.migration,
                 "migration-initiating packets should have been dropped immediately"
             );
             self.migrate(now, remote, migration_observed_addr);
@@ -3072,7 +3090,7 @@ impl Connection {
 
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
-            buf.write(frame::Type::HANDSHAKE_DONE);
+            buf.write(frame::FrameType::HANDSHAKE_DONE);
             sent.retransmits.get_or_create().handshake_done = true;
             // This is just a u8 counter and the frame is typically just sent once
             self.stats.frame_tx.handshake_done =
@@ -3129,7 +3147,7 @@ impl Connection {
         // PING
         if mem::replace(&mut space.ping_pending, false) {
             trace!("PING");
-            buf.write(frame::Type::PING);
+            buf.write(frame::FrameType::PING);
             sent.non_retransmits = true;
             self.stats.frame_tx.ping += 1;
         }
@@ -3137,7 +3155,7 @@ impl Connection {
         // IMMEDIATE_ACK
         if mem::replace(&mut space.immediate_ack_pending, false) {
             trace!("IMMEDIATE_ACK");
-            buf.write(frame::Type::IMMEDIATE_ACK);
+            buf.write(frame::FrameType::IMMEDIATE_ACK);
             sent.non_retransmits = true;
             self.stats.frame_tx.immediate_ack += 1;
         }
@@ -3193,7 +3211,7 @@ impl Connection {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
                 trace!("PATH_CHALLENGE {:08x}", token);
-                buf.write(frame::Type::PATH_CHALLENGE);
+                buf.write(frame::FrameType::PATH_CHALLENGE);
                 buf.write(token);
 
                 send_observed_address(
@@ -3214,7 +3232,7 @@ impl Connection {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
                 trace!("PATH_RESPONSE {:08x}", token);
-                buf.write(frame::Type::PATH_RESPONSE);
+                buf.write(frame::FrameType::PATH_RESPONSE);
                 buf.write(token);
                 self.stats.frame_tx.path_response += 1;
 
@@ -3314,7 +3332,7 @@ impl Connection {
                 None => break,
             };
             trace!(sequence = seq, "RETIRE_CONNECTION_ID");
-            buf.write(frame::Type::RETIRE_CONNECTION_ID);
+            buf.write(frame::FrameType::RETIRE_CONNECTION_ID);
             buf.write_var(seq);
             sent.retransmits.get_or_create().retire_cids.push(seq);
             self.stats.frame_tx.retire_connection_id += 1;
@@ -3339,7 +3357,9 @@ impl Connection {
 
         // STREAM
         if space_id == SpaceId::Data {
-            sent.stream_frames = self.streams.write_stream_frames(buf, max_size);
+            sent.stream_frames =
+                self.streams
+                    .write_stream_frames(buf, max_size, self.config.send_fairness);
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 
@@ -3416,12 +3436,9 @@ impl Connection {
 
     fn set_peer_params(&mut self, params: TransportParameters) {
         self.streams.set_params(&params);
-        self.idle_timeout = match (self.config.max_idle_timeout, params.max_idle_timeout) {
-            (None, VarInt(0)) => None,
-            (None, x) => Some(x),
-            (Some(x), VarInt(0)) => Some(x),
-            (Some(x), y) => Some(cmp::min(x, y)),
-        };
+        self.idle_timeout =
+            negotiate_max_idle_timeout(self.config.max_idle_timeout, Some(params.max_idle_timeout));
+        trace!("negotiated max idle timeout {:?}", self.idle_timeout);
         if let Some(ref info) = params.preferred_address {
             self.rem_cids.insert(frame::NewConnectionId {
                 sequence: 1,
@@ -3631,13 +3648,13 @@ impl Connection {
             || self
                 .prev_path
                 .as_ref()
-                .map_or(false, |(_, x)| x.challenge_pending)
+                .is_some_and(|(_, x)| x.challenge_pending)
             || !self.path_responses.is_empty()
             || self
                 .datagrams
                 .outgoing
                 .front()
-                .map_or(false, |x| x.size(true) <= max_size)
+                .is_some_and(|x| x.size(true) <= max_size)
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
@@ -3706,6 +3723,89 @@ impl fmt::Debug for Connection {
         f.debug_struct("Connection")
             .field("handshake_cid", &self.handshake_cid)
             .finish()
+    }
+}
+
+/// Fields of `Connection` specific to it being client-side or server-side
+enum ConnectionSide {
+    Client {
+        /// Sent in every outgoing Initial packet. Always empty after Initial keys are discarded
+        token: Bytes,
+    },
+    Server {
+        server_config: Arc<ServerConfig>,
+    },
+}
+
+impl ConnectionSide {
+    fn remote_may_migrate(&self) -> bool {
+        match self {
+            Self::Server { server_config } => server_config.migration,
+            Self::Client { .. } => false,
+        }
+    }
+
+    fn is_client(&self) -> bool {
+        self.side().is_client()
+    }
+
+    fn is_server(&self) -> bool {
+        self.side().is_server()
+    }
+
+    fn side(&self) -> Side {
+        match *self {
+            Self::Client { .. } => Side::Client,
+            Self::Server { .. } => Side::Server,
+        }
+    }
+}
+
+impl From<SideArgs> for ConnectionSide {
+    fn from(side: SideArgs) -> Self {
+        match side {
+            SideArgs::Client => Self::Client {
+                token: Bytes::new(),
+            },
+            SideArgs::Server {
+                server_config,
+                pref_addr_cid: _,
+                path_validated: _,
+            } => Self::Server { server_config },
+        }
+    }
+}
+
+/// Parameters to `Connection::new` specific to it being client-side or server-side
+pub(crate) enum SideArgs {
+    Client,
+    Server {
+        server_config: Arc<ServerConfig>,
+        pref_addr_cid: Option<ConnectionId>,
+        path_validated: bool,
+    },
+}
+
+impl SideArgs {
+    pub(crate) fn pref_addr_cid(&self) -> Option<ConnectionId> {
+        match *self {
+            Self::Client { .. } => None,
+            Self::Server { pref_addr_cid, .. } => pref_addr_cid,
+        }
+    }
+
+    pub(crate) fn path_validated(&self) -> bool {
+        match *self {
+            Self::Client { .. } => true,
+            Self::Server { path_validated, .. } => path_validated,
+        }
+    }
+
+    pub(crate) fn side(&self) -> Side {
+        match *self {
+            Self::Client { .. } => Side::Client,
+            Self::Server { .. } => Side::Server,
+        }
     }
 }
 
@@ -3869,8 +3969,24 @@ fn get_max_ack_delay(params: &TransportParameters) -> Duration {
 
 // Prevents overflow and improves behavior in extreme circumstances
 const MAX_BACKOFF_EXPONENT: u32 = 16;
-// Minimal remaining size to allow packet coalescing
-const MIN_PACKET_SPACE: usize = 40;
+
+/// Minimal remaining size to allow packet coalescing, excluding cryptographic tag
+///
+/// This must be at least as large as the header for a well-formed empty packet to be coalesced,
+/// plus some space for frames. We only care about handshake headers because short header packets
+/// necessarily have smaller headers, and initial packets are only ever the first packet in a
+/// datagram (because we coalesce in ascending packet space order and the only reason to split a
+/// packet is when packet space changes).
+const MIN_PACKET_SPACE: usize = MAX_HANDSHAKE_OR_0RTT_HEADER_SIZE + 32;
+
+/// Largest amount of space that could be occupied by a Handshake or 0-RTT packet's header
+///
+/// Excludes packet-type-specific fields such as packet number or Initial token
+// https://www.rfc-editor.org/rfc/rfc9000.html#name-0-rtt: flags + version + dcid len + dcid +
+// scid len + scid + length + pn
+const MAX_HANDSHAKE_OR_0RTT_HEADER_SIZE: usize =
+    1 + 4 + 1 + MAX_CID_SIZE + 1 + MAX_CID_SIZE + VarInt::from_u32(u16::MAX as u32).size() + 4;
+
 /// The maximum amount of datagrams that are sent in a single transmit
 ///
 /// This can be lower than the maximum platform capabilities, to avoid excessive
@@ -3900,5 +4016,51 @@ impl SentFrames {
             && !self.non_retransmits
             && self.stream_frames.is_empty()
             && self.retransmits.is_empty(streams)
+    }
+}
+
+/// Compute the negotiated idle timeout based on local and remote max_idle_timeout transport parameters.
+///
+/// According to the definition of max_idle_timeout, a value of `0` means the timeout is disabled; see <https://www.rfc-editor.org/rfc/rfc9000#section-18.2-4.4.1.>
+///
+/// According to the negotiation procedure, either the minimum of the timeouts or one specified is used as the negotiated value; see <https://www.rfc-editor.org/rfc/rfc9000#section-10.1-2.>
+///
+/// Returns the negotiated idle timeout as a `Duration`, or `None` when both endpoints have opted out of idle timeout.
+fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Duration> {
+    match (x, y) {
+        (Some(VarInt(0)) | None, Some(VarInt(0)) | None) => None,
+        (Some(VarInt(0)) | None, Some(y)) => Some(Duration::from_millis(y.0)),
+        (Some(x), Some(VarInt(0)) | None) => Some(Duration::from_millis(x.0)),
+        (Some(x), Some(y)) => Some(Duration::from_millis(cmp::min(x, y).0)),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn negotiate_max_idle_timeout_commutative() {
+        let test_params = [
+            (None, None, None),
+            (None, Some(VarInt(0)), None),
+            (None, Some(VarInt(2)), Some(Duration::from_millis(2))),
+            (Some(VarInt(0)), Some(VarInt(0)), None),
+            (
+                Some(VarInt(2)),
+                Some(VarInt(0)),
+                Some(Duration::from_millis(2)),
+            ),
+            (
+                Some(VarInt(1)),
+                Some(VarInt(4)),
+                Some(Duration::from_millis(1)),
+            ),
+        ];
+
+        for (left, right, result) in test_params {
+            assert_eq!(negotiate_max_idle_timeout(left, right), result);
+            assert_eq!(negotiate_max_idle_timeout(right, left), result);
+        }
     }
 }

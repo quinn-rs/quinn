@@ -1,6 +1,6 @@
 [package]
 name = "iroh-quinn-proto"
-version = "0.12.0"
+version = "0.13.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
@@ -10,21 +10,29 @@ keywords.workspace = true
 categories.workspace = true
 workspace = ".."
 
-[package.metadata.docs.rs]
-all-features = true
-
 [features]
-default = ["rustls", "log"]
-rustls = ["dep:rustls", "ring"]
+default = ["rustls-ring", "log"]
+aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs?/aws-lc-sys", "aws-lc-rs?/prebuilt-nasm"]
+aws-lc-rs-fips = ["aws-lc-rs", "aws-lc-rs?/fips"]
+# For backwards compatibility, `rustls` forwards to `rustls-ring`
+rustls = ["rustls-ring"]
+# Enable rustls with the `aws-lc-rs` crypto provider
+rustls-aws-lc-rs = ["dep:rustls", "rustls?/aws-lc-rs", "aws-lc-rs"]
+rustls-aws-lc-rs-fips = ["rustls-aws-lc-rs", "aws-lc-rs-fips"]
+# Enable rustls with the `ring` crypto provider
+rustls-ring = ["dep:rustls", "rustls?/ring", "ring"]
 ring = ["dep:ring"]
 # Enable rustls ring provider and direct ring usage
 # Provides `ClientConfig::with_platform_verifier()` convenience method
 platform-verifier = ["dep:rustls-platform-verifier"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 log = ["tracing/log"]
+# Enable rustls logging
+rustls-log = ["rustls?/logging"]
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }
+aws-lc-rs = { workspace = true, optional = true }
 bytes = { workspace = true }
 rustc-hash = { workspace = true }
 rand = { workspace = true }
@@ -32,9 +40,17 @@ ring = { workspace = true, optional = true }
 rustls = { workspace = true, optional = true }
 rustls-platform-verifier = { workspace = true, optional = true }
 slab = { workspace = true }
-thiserror = { workspace= true }
+thiserror = { workspace = true }
 tinyvec = { workspace = true, features = ["alloc"] }
 tracing = { workspace = true }
+
+# Feature flags & dependencies for wasm
+# wasm-bindgen is assumed for a wasm*-*-unknown target
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+ring = { workspace = true, features = ["wasm32_unknown_unknown_js"] }
+getrandom = { workspace = true, features = ["js"] }
+rustls-pki-types = { workspace = true, features = ["web"] } # only added as dependency to enforce the `web` feature for this target
+web-time = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
@@ -42,7 +58,12 @@ hex-literal = { workspace = true  }
 rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
 lazy_static = "1"
+wasm-bindgen-test = { workspace = true }
 
 [lints.rust]
 # https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
+
+[package.metadata.docs.rs]
+# all non-default features except fips (cannot build on docs.rs environment)
+features = ["rustls-aws-lc-rs", "rustls-ring", "platform-verifier", "log", "rustls-log"]

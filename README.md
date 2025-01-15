@@ -3,6 +3,15 @@
 Quinn is a pure-rust, async-compatible implementation of the IETF
 [QUIC][quic] transport protocol.
 
+- Simultaneous client/server operation
+- Ordered and unordered stream reads for improved performance
+- Works on stable Rust, tested on Linux, macOS and Windows
+- Pluggable cryptography, with a standard implementation backed by
+  [rustls][rustls] and [*ring*][ring]
+- Application-layer datagrams for small, unreliable messages
+- Future-based async API
+- Minimum supported Rust version of 1.71
+
 This is a fork incorporating some changes for use in iroh.  The aim is
 to contribute back any generally useful changes into upstream Quinn,
 so it is strongly discouraged to use this fork directly.

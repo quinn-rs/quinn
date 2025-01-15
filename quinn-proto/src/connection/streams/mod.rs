@@ -7,10 +7,11 @@ use bytes::Bytes;
 use thiserror::Error;
 use tracing::trace;
 
-use self::state::get_or_insert_recv;
-
 use super::spaces::{Retransmits, ThinRetransmits};
-use crate::{connection::streams::state::get_or_insert_send, frame, Dir, StreamId, VarInt};
+use crate::{
+    connection::streams::state::{get_or_insert_recv, get_or_insert_send},
+    frame, Dir, StreamId, VarInt,
+};
 
 mod recv;
 use recv::Recv;
@@ -31,6 +32,7 @@ pub struct Streams<'a> {
     pub(super) conn_state: &'a super::State,
 }
 
+#[allow(clippy::needless_lifetimes)] // Needed for cfg(fuzzing)
 impl<'a> Streams<'a> {
     #[cfg(fuzzing)]
     pub fn new(state: &'a mut StreamsState, conn_state: &'a super::State) -> Self {
@@ -105,7 +107,7 @@ pub struct RecvStream<'a> {
     pub(super) pending: &'a mut Retransmits,
 }
 
-impl<'a> RecvStream<'a> {
+impl RecvStream<'_> {
     /// Read from the given recv stream
     ///
     /// `max_length` limits the maximum size of the returned `Bytes` value; passing `usize::MAX`
@@ -149,8 +151,8 @@ impl<'a> RecvStream<'a> {
         // connection-level flow control to account for discarded data. Otherwise, we can discard
         // state immediately.
         if !stream.final_offset_unknown() {
-            entry.remove();
-            self.state.stream_freed(self.id, StreamHalf::Recv);
+            let recv = entry.remove().expect("must have recv when stopping");
+            self.state.stream_recv_freed(self.id, recv);
         }
 
         if self.state.add_read_credits(read_credits).should_transmit() {
@@ -168,7 +170,7 @@ impl<'a> RecvStream<'a> {
         let hash_map::Entry::Occupied(entry) = self.state.recv.entry(self.id) else {
             return Err(ClosedStream { _private: () });
         };
-        let Some(s) = entry.get().as_ref() else {
+        let Some(s) = entry.get().as_ref().and_then(|s| s.as_open_recv()) else {
             return Ok(None);
         };
         if s.stopped {
@@ -180,8 +182,9 @@ impl<'a> RecvStream<'a> {
 
         // Clean up state after application observes the reset, since there's no reason for the
         // application to attempt to read or stop the stream once it knows it's reset
-        entry.remove_entry();
-        self.state.stream_freed(self.id, StreamHalf::Recv);
+        let (_, recv) = entry.remove_entry();
+        self.state
+            .stream_recv_freed(self.id, recv.expect("must have recv on reset"));
         self.state.queue_max_stream_id(self.pending);
 
         Ok(Some(code))
@@ -196,6 +199,7 @@ pub struct SendStream<'a> {
     pub(super) conn_state: &'a super::State,
 }
 
+#[allow(clippy::needless_lifetimes)] // Needed for cfg(fuzzing)
 impl<'a> SendStream<'a> {
     #[cfg(fuzzing)]
     pub fn new(
@@ -365,6 +369,9 @@ impl<'a> SendStream<'a> {
 /// A queue of streams with pending outgoing data, sorted by priority
 struct PendingStreamsQueue {
     streams: BinaryHeap<PendingStream>,
+    /// The next stream to write out. This is `Some` when `TransportConfig::send_fairness(false)` and writing a stream is
+    /// interrupted while the stream still has some pending data. See `reinsert_pending()`.
+    next: Option<PendingStream>,
     /// A monotonically decreasing counter, used to implement round-robin scheduling for streams of the same priority.
     /// Underflowing is not a practical concern, as it is initialized to u64::MAX and only decremented by 1 in `push_pending`
     recency: u64,
@@ -374,12 +381,28 @@ impl PendingStreamsQueue {
     fn new() -> Self {
         Self {
             streams: BinaryHeap::new(),
+            next: None,
             recency: u64::MAX,
         }
     }
 
+    /// Reinsert a stream that was pending and still contains unsent data.
+    fn reinsert_pending(&mut self, id: StreamId, priority: i32) {
+        assert!(self.next.is_none());
+
+        self.next = Some(PendingStream {
+            priority,
+            recency: self.recency, // the value here doesn't really matter
+            id,
+        });
+    }
+
     /// Push a pending stream ID with the given priority, queued after any already-queued streams for the priority
     fn push_pending(&mut self, id: StreamId, priority: i32) {
+        // Note that in the case where fairness is disabled, if we have a reinserted stream we don't
+        // bump it even if priority > next.priority. In order to minimize fragmentation we
+        // always try to complete a stream once part of it has been written.
+
         // As the recency counter is monotonically decreasing, we know that using its value to sort this stream will queue it
         // after all other queued streams of the same priority.
         // This is enough to implement round-robin scheduling for streams that are still pending even after being handled,
@@ -391,10 +414,28 @@ impl PendingStreamsQueue {
             id,
         });
     }
+
+    fn pop(&mut self) -> Option<PendingStream> {
+        self.next.take().or_else(|| self.streams.pop())
+    }
+
+    fn clear(&mut self) {
+        self.next = None;
+        self.streams.clear();
+    }
+
+    fn iter(&self) -> impl Iterator<Item = &PendingStream> {
+        self.next.iter().chain(self.streams.iter())
+    }
+
+    #[cfg(test)]
+    fn len(&self) -> usize {
+        self.streams.len() + self.next.is_some() as usize
+    }
 }
 
 /// The [`StreamId`] of a stream with pending data queued, ordered by its priority and recency
-#[derive(PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Clone, PartialEq, Eq, PartialOrd, Ord)]
 struct PendingStream {
     /// The priority of the stream
     // Note that this field should be kept above the `recency` field, in order for the `Ord` derive to be correct

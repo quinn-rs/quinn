@@ -4,7 +4,7 @@ default-members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf"]
 resolver = "2"
 
 [workspace.package]
-rust-version = "1.70.0"
+rust-version = "1.71"
 edition = "2021"
 license = "MIT OR Apache-2.0"
 repository = "https://github.com/quinn-rs/quinn"
@@ -17,12 +17,14 @@ arbitrary = { version = "1.0.1", features = ["derive"] }
 async-io = "2"
 async-std = "1.12"
 assert_matches = "1.1"
+aws-lc-rs = { version = "1.9", default-features = false }
 bencher = "0.1.5"
 bytes = "1"
 clap = { version = "4.5", features = ["derive"] }
 crc = "3"
 directories-next = "2"
 futures-io = "0.3.19"
+getrandom = { version = "0.2", default-features = false }
 hdrhistogram = { version = "7.2", default-features = false }
 hex-literal = "0.4"
 lazy_static = "1"
@@ -33,22 +35,25 @@ rand = "0.8"
 rcgen = "0.13"
 ring = "0.17"
 rustc-hash = "2"
-rustls = { version = "0.23.5", default-features = false, features = ["ring", "std"] }
+rustls = { version = "0.23.5", default-features = false, features = ["std"] }
 rustls-pemfile = "2"
-rustls-platform-verifier = "0.3"
+rustls-platform-verifier = "0.4"
+rustls-pki-types = "1.7"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1"
 slab = "0.4.9"
 smol = "2"
 socket2 = "0.5"
-thiserror = "1.0.21"
+thiserror = "2.0.3"
 tinyvec = { version = "1.1", features = ["alloc"] }
 tokio = { version = "1.28.1", features = ["sync"] }
 tracing = { version = "0.1.10", default-features = false, features = ["std"] }
 tracing-futures = { version = "0.2.0", default-features = false, features = ["std-future"] }
 tracing-subscriber = { version = "0.3.1", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
 url = "2"
-windows-sys = { version = "0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
+wasm-bindgen-test = { version = "0.3.45" }
+web-time = "1"
+windows-sys = { version = ">=0.52, <=0.59", features = ["Win32_Foundation", "Win32_System_IO", "Win32_Networking_WinSock"] }
 
 # Fix minimal dependencies for indirect deps
 async-global-executor = "2.4.1"
