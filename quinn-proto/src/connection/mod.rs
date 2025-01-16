@@ -59,8 +59,8 @@ mod packet_crypto;
 use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
-pub use paths::RttEstimator;
 use paths::{PathData, PathResponses};
+pub use paths::{PathId, RttEstimator};
 
 mod send_buffer;
 

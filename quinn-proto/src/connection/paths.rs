@@ -8,9 +8,40 @@ use super::{
     spaces::{PacketSpace, SentPacket},
 };
 use crate::{
-    congestion, frame::ObservedAddr, packet::SpaceId, Duration, Instant, TransportConfig,
-    TIMER_GRANULARITY,
+    coding, congestion, frame::ObservedAddr, packet::SpaceId, Duration, Instant, TransportConfig,
+    VarInt, TIMER_GRANULARITY,
 };
+
+/// Id representing different paths when using multipath extension
+// TODO(@divma): improve docs, reconsider access to inner
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default)]
+pub struct PathId(pub(crate) u32);
+
+impl coding::Codec for PathId {
+    fn decode<B: bytes::Buf>(r: &mut B) -> coding::Result<Self> {
+        let v = VarInt::decode(r)?;
+        let v = u32::try_from(v.0).map_err(|_| coding::UnexpectedEnd)?;
+        Ok(Self(v))
+    }
+
+    fn encode<B: bytes::BufMut>(&self, w: &mut B) {
+        VarInt(self.0.into()).encode(w)
+    }
+}
+
+impl PathId {
+    pub const MAX: Self = PathId(u32::MAX);
+
+    pub(crate) fn size(&self) -> usize {
+        VarInt(self.0 as u64).size()
+    }
+}
+
+impl std::fmt::Display for PathId {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 /// Description of a particular network path
 pub(super) struct PathData {

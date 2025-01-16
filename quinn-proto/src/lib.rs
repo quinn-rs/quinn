@@ -40,9 +40,9 @@ pub use varint::{VarInt, VarIntBoundsExceeded};
 mod connection;
 pub use crate::connection::{
     BytesSource, Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats,
-    Datagrams, Event, FinishError, FrameStats, PathStats, ReadError, ReadableError, RecvStream,
-    RttEstimator, SendDatagramError, SendStream, ShouldTransmit, StreamEvent, Streams, UdpStats,
-    WriteError, Written,
+    Datagrams, Event, FinishError, FrameStats, PathId, PathStats, ReadError, ReadableError,
+    RecvStream, RttEstimator, SendDatagramError, SendStream, ShouldTransmit, StreamEvent, Streams,
+    UdpStats, WriteError, Written,
 };
 
 #[cfg(feature = "rustls")]
