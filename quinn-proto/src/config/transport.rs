@@ -1,8 +1,8 @@
 use std::{fmt, sync::Arc};
 
 use crate::{
-    address_discovery, congestion, Duration, VarInt, VarIntBoundsExceeded, INITIAL_MTU,
-    MAX_UDP_PAYLOAD,
+    address_discovery, congestion, connection::PathId, Duration, VarInt, VarIntBoundsExceeded,
+    INITIAL_MTU, MAX_UDP_PAYLOAD,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -48,6 +48,8 @@ pub struct TransportConfig {
     pub(crate) enable_segmentation_offload: bool,
 
     pub(crate) address_discovery_role: address_discovery::Role,
+
+    pub(crate) initial_max_path_id: Option<PathId>,
 }
 
 impl TransportConfig {
@@ -340,6 +342,13 @@ impl TransportConfig {
             .receive_reports_from_peers(enabled);
         self
     }
+
+    /// DOCS :D
+    // TODO(@divma): decent docs, talk about multipath, reference draft.
+    pub fn initial_max_path_id(&mut self, value: Option<PathId>) -> &mut Self {
+        self.initial_max_path_id = value;
+        self
+    }
 }
 
 impl Default for TransportConfig {
@@ -382,6 +391,9 @@ impl Default for TransportConfig {
             enable_segmentation_offload: true,
 
             address_discovery_role: address_discovery::Role::default(),
+
+            // disabled multipath by default
+            initial_max_path_id: None,
         }
     }
 }
@@ -414,6 +426,7 @@ impl fmt::Debug for TransportConfig {
             congestion_controller_factory: _,
             enable_segmentation_offload,
             address_discovery_role,
+            initial_max_path_id,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -442,6 +455,7 @@ impl fmt::Debug for TransportConfig {
             // congestion_controller_factory not debug
             .field("enable_segmentation_offload", enable_segmentation_offload)
             .field("address_discovery_role", address_discovery_role)
+            .field("initial_max_path_id", initial_max_path_id)
             .finish_non_exhaustive()
     }
 }

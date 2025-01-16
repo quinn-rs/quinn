@@ -21,6 +21,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     config::{EndpointConfig, ServerConfig, TransportConfig},
+    connection::PathId,
     shared::ConnectionId,
     ResetToken, Side, TransportError, VarInt, LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT,
     RESET_TOKEN_SIZE, TIMER_GRANULARITY,
@@ -115,6 +116,9 @@ macro_rules! make_struct {
 
             /// The role of this peer in address discovery, if any.
             pub(crate) address_discovery_role: address_discovery::Role,
+
+            // Multipath extension
+            pub(crate) initial_max_path_id: Option<PathId>,
         }
 
         // We deliberately don't implement the `Default` trait, since that would be public, and
@@ -139,6 +143,7 @@ macro_rules! make_struct {
                     grease_transport_parameter: None,
                     write_order: None,
                     address_discovery_role: address_discovery::Role::Disabled,
+                    initial_max_path_id: None,
                 }
             }
         }
@@ -187,6 +192,8 @@ impl TransportParameters {
                 order
             }),
             address_discovery_role: config.address_discovery_role,
+            // TODO(@divma): TransportConfig or..?
+            initial_max_path_id: config.initial_max_path_id,
             ..Self::default()
         }
     }
@@ -209,6 +216,7 @@ impl TransportParameters {
                 "0-RTT accepted with incompatible transport parameters",
             ));
         }
+        // TODO(@divma): multipath validations?
         Ok(())
     }
 
@@ -396,6 +404,13 @@ impl TransportParameters {
                         w.write(varint_role);
                     }
                 }
+                TransportParameterId::InitialMaxPathId => {
+                    if let Some(val) = self.initial_max_path_id {
+                        w.write_var(id as u64);
+                        w.write_var(val.size() as u64);
+                        w.write(val);
+                    }
+                }
                 id => {
                     macro_rules! write_params {
                         {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
@@ -508,6 +523,19 @@ impl TransportParameters {
                         role = ?params.address_discovery_role,
                         "address discovery enabled for peer"
                     );
+                }
+                TransportParameterId::InitialMaxPathId => {
+                    if params.initial_max_path_id.is_some() {
+                        return Err(Error::Malformed);
+                    }
+
+                    let value: PathId = r.get()?;
+                    if len != value.size() {
+                        return Err(Error::Malformed);
+                    }
+
+                    params.initial_max_path_id = Some(value);
+                    tracing::debug!(initial_max_path_id=%value, "multipath enabled");
                 }
                 _ => {
                     macro_rules! parse {
@@ -674,11 +702,14 @@ pub(crate) enum TransportParameterId {
 
     // <https://datatracker.ietf.org/doc/draft-seemann-quic-address-discovery/>
     ObservedAddr = 0x9f81a176,
+
+    // https://datatracker.ietf.org/doc/html/draft-ietf-quic-multipath
+    InitialMaxPathId = 0x0f739bbc1b666d11,
 }
 
 impl TransportParameterId {
     /// Array with all supported transport parameter IDs
-    const SUPPORTED: [Self; 22] = [
+    const SUPPORTED: [Self; 23] = [
         Self::MaxIdleTimeout,
         Self::MaxUdpPayloadSize,
         Self::InitialMaxData,
@@ -701,6 +732,7 @@ impl TransportParameterId {
         Self::GreaseQuicBit,
         Self::MinAckDelayDraft07,
         Self::ObservedAddr,
+        Self::InitialMaxPathId,
     ];
 }
 
@@ -741,6 +773,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::GreaseQuicBit == id => Self::GreaseQuicBit,
             id if Self::MinAckDelayDraft07 == id => Self::MinAckDelayDraft07,
             id if Self::ObservedAddr == id => Self::ObservedAddr,
+            id if Self::InitialMaxPathId == id => Self::InitialMaxPathId,
             _ => return Err(()),
         };
         Ok(param)
@@ -780,6 +813,7 @@ mod test {
             grease_quic_bit: true,
             min_ack_delay: Some(2_000u32.into()),
             address_discovery_role: address_discovery::Role::SendOnly,
+            initial_max_path_id: Some(PathId::MAX),
             ..TransportParameters::default()
         };
         params.write(&mut buf);
