@@ -35,6 +35,14 @@ impl PathId {
     pub(crate) fn size(&self) -> usize {
         VarInt(self.0 as u64).size()
     }
+
+    /// Saturating integer addition. Computes self + rhs, saturating at the numeric bounds instead
+    /// of overflowing.
+    pub fn saturating_add(self, rhs: impl Into<Self>) -> Self {
+        let rhs = rhs.into();
+        let inner = self.0.saturating_add(rhs.0);
+        Self(inner)
+    }
 }
 
 impl std::fmt::Display for PathId {
@@ -43,9 +51,9 @@ impl std::fmt::Display for PathId {
     }
 }
 
-impl From<u32> for PathId {
-    fn from(source: u32) -> Self {
-        Self(source)
+impl<T: Into<u32>> From<T> for PathId {
+    fn from(source: T) -> Self {
+        Self(source.into())
     }
 }
 
@@ -413,5 +421,21 @@ impl InFlight {
     fn remove(&mut self, packet: &SentPacket) {
         self.bytes -= u64::from(packet.size);
         self.ack_eliciting -= u64::from(packet.ack_eliciting);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_path_id_saturating_add() {
+        // add within range behaves normally
+        let large: PathId = u16::MAX.into();
+        let next = u32::from(u16::MAX) + 1;
+        assert_eq!(large.saturating_add(1u8), PathId::from(next));
+
+        // outside range saturates
+        assert_eq!(PathId::MAX.saturating_add(1u8), PathId::MAX)
     }
 }
