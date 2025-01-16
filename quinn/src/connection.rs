@@ -647,6 +647,14 @@ impl Connection {
         let conn = self.0.state.lock("external_addr");
         conn.observed_external_addr.subscribe()
     }
+
+    /// Is multipath enabled?
+    // TODO(flub): not a useful API, once we do real things with multipath we can remove
+    // this again.
+    pub fn is_multipath_enabled(&self) -> bool {
+        let conn = self.0.state.lock("is_multipath_enabled");
+        conn.inner.is_multipath_enabled()
+    }
 }
 
 pin_project! {

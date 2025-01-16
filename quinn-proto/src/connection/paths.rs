@@ -43,6 +43,12 @@ impl std::fmt::Display for PathId {
     }
 }
 
+impl From<u32> for PathId {
+    fn from(source: u32) -> Self {
+        Self(source)
+    }
+}
+
 /// Description of a particular network path
 pub(super) struct PathData {
     pub(super) remote: SocketAddr,

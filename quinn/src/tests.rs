@@ -25,7 +25,7 @@ use tokio::{
     runtime::{Builder, Runtime},
     time::{Duration, Instant},
 };
-use tracing::{error_span, info};
+use tracing::{error_span, info, info_span};
 use tracing_futures::Instrument as _;
 use tracing_subscriber::EnvFilter;
 
@@ -216,10 +216,10 @@ fn export_keying_material() {
 async fn ip_blocking() {
     let _guard = subscribe();
     let endpoint_factory = EndpointFactory::new();
-    let client_1 = endpoint_factory.endpoint();
+    let client_1 = endpoint_factory.endpoint("client_1");
     let client_1_addr = client_1.local_addr().unwrap();
-    let client_2 = endpoint_factory.endpoint();
-    let server = endpoint_factory.endpoint();
+    let client_2 = endpoint_factory.endpoint("client_2");
+    let server = endpoint_factory.endpoint("server");
     let server_addr = server.local_addr().unwrap();
     let server_task = tokio::spawn(async move {
         loop {
@@ -258,11 +258,11 @@ async fn ip_blocking() {
 
 /// Construct an endpoint suitable for connecting to itself
 fn endpoint() -> Endpoint {
-    EndpointFactory::new().endpoint()
+    EndpointFactory::new().endpoint("ep")
 }
 
 fn endpoint_with_config(transport_config: TransportConfig) -> Endpoint {
-    EndpointFactory::new().endpoint_with_config(transport_config)
+    EndpointFactory::new().endpoint_with_config("ep", transport_config)
 }
 
 /// Constructs endpoints suitable for connecting to themselves and each other
@@ -279,11 +279,18 @@ impl EndpointFactory {
         }
     }
 
-    fn endpoint(&self) -> Endpoint {
-        self.endpoint_with_config(TransportConfig::default())
+    fn endpoint(&self, name: impl Into<String>) -> Endpoint {
+        self.endpoint_with_config(name, TransportConfig::default())
     }
 
-    fn endpoint_with_config(&self, transport_config: TransportConfig) -> Endpoint {
+    fn endpoint_with_config(
+        &self,
+        name: impl Into<String>,
+        transport_config: TransportConfig,
+    ) -> Endpoint {
+        let span = info_span!("dummy");
+        span.record("otel.name", name.into());
+        let _guard = span.entered();
         let key = PrivateKeyDer::Pkcs8(self.cert.key_pair.serialize_der().into());
         let transport_config = Arc::new(transport_config);
         let mut server_config =
@@ -820,20 +827,11 @@ async fn multiple_conns_with_zero_length_cids() {
     factory
         .endpoint_config
         .cid_generator(|| Box::new(RandomConnectionIdGenerator::new(0)));
-    let server = {
-        let _guard = error_span!("server").entered();
-        factory.endpoint()
-    };
+    let server = factory.endpoint("server");
     let server_addr = server.local_addr().unwrap();
 
-    let client1 = {
-        let _guard = error_span!("client1").entered();
-        factory.endpoint()
-    };
-    let client2 = {
-        let _guard = error_span!("client2").entered();
-        factory.endpoint()
-    };
+    let client1 = factory.endpoint("client1");
+    let client2 = factory.endpoint("client2");
 
     let client1 = async move {
         let conn = client1
@@ -862,4 +860,37 @@ async fn multiple_conns_with_zero_length_cids() {
     }
     .instrument(error_span!("server"));
     tokio::join!(client1, client2, server);
+}
+
+#[tokio::test]
+async fn test_multipath_negotiated() {
+    let _logging = subscribe();
+    let factory = EndpointFactory::new();
+
+    let mut transport_config = TransportConfig::default();
+    transport_config.initial_max_path_id(Some(0));
+    let server = factory.endpoint_with_config("server", transport_config);
+    let server_addr = server.local_addr().unwrap();
+
+    let server_task = async move {
+        let conn = server.accept().await.unwrap().await.unwrap();
+        conn.closed().await;
+    }
+    .instrument(info_span!("server"));
+
+    let mut transport_config = TransportConfig::default();
+    transport_config.initial_max_path_id(Some(0));
+    let client = factory.endpoint_with_config("client", transport_config);
+
+    let client_task = async move {
+        let conn = client
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+        assert!(conn.is_multipath_enabled());
+    }
+    .instrument(info_span!("client"));
+
+    tokio::join!(server_task, client_task);
 }

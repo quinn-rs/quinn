@@ -1,8 +1,8 @@
 use std::{fmt, sync::Arc};
 
 use crate::{
-    address_discovery, congestion, connection::PathId, Duration, VarInt, VarIntBoundsExceeded,
-    INITIAL_MTU, MAX_UDP_PAYLOAD,
+    address_discovery, congestion, Duration, VarInt, VarIntBoundsExceeded, INITIAL_MTU,
+    MAX_UDP_PAYLOAD,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -49,7 +49,7 @@ pub struct TransportConfig {
 
     pub(crate) address_discovery_role: address_discovery::Role,
 
-    pub(crate) initial_max_path_id: Option<PathId>,
+    pub(crate) initial_max_path_id: Option<u32>,
 }
 
 impl TransportConfig {
@@ -343,9 +343,18 @@ impl TransportConfig {
         self
     }
 
-    /// DOCS :D
-    // TODO(@divma): decent docs, talk about multipath, reference draft.
-    pub fn initial_max_path_id(&mut self, value: Option<PathId>) -> &mut Self {
+    /// Enables the Multipath Extension for QUIC.
+    ///
+    /// Setting this to any `Some` value will enable the Multipath Extension for QUIC,
+    /// <https://datatracker.ietf.org/doc/draft-ietf-quic-multipath/>.
+    ///
+    /// The value provided specifies the number of paths this endpoint is willing to open
+    /// initially.  Setting this to `0` will negotiate multipath but not allow creating any
+    /// extra paths immediately.
+    // TODO(flub): Not sure if this is a nice API.  I think it might be better to specify
+    // this as max_concurrent_multipath_paths a bit like max_concurrent_bidi_streams etc
+    // exist now.  But this will do for now.
+    pub fn initial_max_path_id(&mut self, value: Option<u32>) -> &mut Self {
         self.initial_max_path_id = value;
         self
     }

@@ -1367,6 +1367,13 @@ impl Connection {
         }
     }
 
+    /// Whether the Multipath for QUIC extension is enabled.
+    // TODO(flub): not a useful API, once we do real things with multipath we can remove
+    // this again.
+    pub fn is_multipath_enabled(&self) -> bool {
+        self.config.initial_max_path_id.is_some() && self.peer_params.initial_max_path_id.is_some()
+    }
+
     fn on_ack_received(
         &mut self,
         now: Instant,
