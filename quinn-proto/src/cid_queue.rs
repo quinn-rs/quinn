@@ -139,6 +139,7 @@ mod tests {
 
     fn cid(sequence: u64, retire_prior_to: u64) -> NewConnectionId {
         NewConnectionId {
+            path_id: None,
             sequence,
             id: ConnectionId::new(&[0xAB; 8]),
             reset_token: ResetToken::from([0xCD; crate::RESET_TOKEN_SIZE]),

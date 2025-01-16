@@ -54,6 +54,10 @@ pub struct FrameStats {
     pub stop_sending: u64,
     pub stream: u64,
     pub observed_addr: u64,
+    pub path_abandon: u64,
+    pub path_available: u64,
+    pub max_path_id: u64,
+    pub paths_blocked: u64,
 }
 
 impl FrameStats {
@@ -61,6 +65,7 @@ impl FrameStats {
         match frame {
             Frame::Padding => {}
             Frame::Ping => self.ping += 1,
+            // TODO(@divma): path acks independently?
             Frame::Ack(_) => self.acks += 1,
             Frame::ResetStream(_) => self.reset_stream += 1,
             Frame::StopSending(_) => self.stop_sending += 1,
@@ -87,6 +92,7 @@ impl FrameStats {
                 }
             }
             Frame::NewConnectionId(_) => self.new_connection_id += 1,
+            // TODO(@divma): split stats?
             Frame::RetireConnectionId { .. } => self.retire_connection_id += 1,
             Frame::PathChallenge(_) => self.path_challenge += 1,
             Frame::PathResponse(_) => self.path_response += 1,
@@ -95,6 +101,11 @@ impl FrameStats {
             Frame::ImmediateAck => self.immediate_ack += 1,
             Frame::HandshakeDone => self.handshake_done = self.handshake_done.saturating_add(1),
             Frame::ObservedAddr(_) => self.observed_addr += 1,
+            Frame::PathAbandon(_) => self.path_abandon = self.path_abandon.saturating_add(1),
+            // TODO(@divma): split stats?
+            Frame::PathAvailable(_) => self.path_available = self.path_available.saturating_add(1),
+            Frame::MaxPathId(_) => self.max_path_id = self.max_path_id.saturating_add(1),
+            Frame::PathsBlocked(_) => self.paths_blocked = self.paths_blocked.saturating_add(1),
         }
     }
 }

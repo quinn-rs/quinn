@@ -10,6 +10,7 @@ use tinyvec::TinyVec;
 
 use crate::{
     coding::{self, BufExt, BufMutExt, UnexpectedEnd},
+    connection::PathId,
     range_set::ArrayRangeSet,
     shared::{ConnectionId, EcnCodepoint},
     Dir, ResetToken, StreamId, TransportError, TransportErrorCode, VarInt, MAX_CID_SIZE,
@@ -138,6 +139,16 @@ frame_types! {
     // ADDRESS DISCOVERY REPORT
     OBSERVED_IPV4_ADDR = 0x9f81a6,
     OBSERVED_IPV6_ADDR = 0x9f81a7,
+    // Multipath
+    PATH_ACK = 0x15228c00,
+    PATH_ACK_ECN = 0x15228c01,
+    PATH_ABANDON = 0x15228c05,
+    PATH_BACKUP = 0x15228c07,
+    PATH_AVAILABLE = 0x15228c08,
+    PATH_NEW_CONNECTION_ID = 0x15228c09,
+    PATH_RETIRE_CONNECTION_ID = 0x15228c0a,
+    MAX_PATH_ID = 0x15228c0c,
+    PATHS_BLOCKED = 0x15228c0d,
 }
 
 const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
@@ -160,7 +171,7 @@ pub(crate) enum Frame {
     StreamDataBlocked { id: StreamId, offset: u64 },
     StreamsBlocked { dir: Dir, limit: u64 },
     NewConnectionId(NewConnectionId),
-    RetireConnectionId { sequence: u64 },
+    RetireConnectionId(RetireConnectionId),
     PathChallenge(u64),
     PathResponse(u64),
     Close(Close),
@@ -169,6 +180,10 @@ pub(crate) enum Frame {
     ImmediateAck,
     HandshakeDone,
     ObservedAddr(ObservedAddr),
+    PathAbandon(PathAbandon),
+    PathAvailable(PathAvailable),
+    MaxPathId(PathId),
+    PathsBlocked(PathId),
 }
 
 impl Frame {
@@ -190,6 +205,7 @@ impl Frame {
             StreamsBlocked { dir: Dir::Uni, .. } => FrameType::STREAMS_BLOCKED_UNI,
             StopSending { .. } => FrameType::STOP_SENDING,
             RetireConnectionId { .. } => FrameType::RETIRE_CONNECTION_ID,
+            // TODO(@divma): wth?
             Ack(_) => FrameType::ACK,
             Stream(ref x) => {
                 let mut ty = *STREAM_TYS.start();
@@ -203,7 +219,7 @@ impl Frame {
             }
             PathChallenge(_) => FrameType::PATH_CHALLENGE,
             PathResponse(_) => FrameType::PATH_RESPONSE,
-            NewConnectionId { .. } => FrameType::NEW_CONNECTION_ID,
+            NewConnectionId(cid) => cid.get_type(),
             Crypto(_) => FrameType::CRYPTO,
             NewToken { .. } => FrameType::NEW_TOKEN,
             Datagram(_) => FrameType(*DATAGRAM_TYS.start()),
@@ -211,11 +227,49 @@ impl Frame {
             ImmediateAck => FrameType::IMMEDIATE_ACK,
             HandshakeDone => FrameType::HANDSHAKE_DONE,
             ObservedAddr(ref observed) => observed.get_type(),
+            PathAbandon(_) => FrameType::PATH_ABANDON,
+            PathAvailable(ref path_avaiable) => path_avaiable.get_type(),
+            MaxPathId(_) => FrameType::MAX_PATH_ID,
+            PathsBlocked(_) => FrameType::PATHS_BLOCKED,
         }
     }
 
     pub(crate) fn is_ack_eliciting(&self) -> bool {
         !matches!(*self, Self::Ack(_) | Self::Padding | Self::Close(_))
+    }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct RetireConnectionId {
+    pub(crate) path_id: Option<PathId>,
+    pub(crate) sequence: u64,
+}
+
+impl RetireConnectionId {
+    // TODO(@divma): docs
+    pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
+        buf.write(self.get_type());
+        if let Some(id) = self.path_id {
+            buf.write(id);
+        }
+        buf.write(self.sequence);
+    }
+
+    // TODO(@divma): docs
+    // should only be called after the frame type has been verified
+    pub(crate) fn read<R: Buf>(bytes: &mut R, read_path: bool) -> coding::Result<Self> {
+        Ok(Self {
+            path_id: if read_path { Some(bytes.get()?) } else { None },
+            sequence: bytes.get()?,
+        })
+    }
+
+    fn get_type(&self) -> FrameType {
+        if self.path_id.is_some() {
+            FrameType::PATH_RETIRE_CONNECTION_ID
+        } else {
+            FrameType::RETIRE_CONNECTION_ID
+        }
     }
 }
 
@@ -344,8 +398,10 @@ impl ApplicationClose {
     }
 }
 
+// TODO(@divma): for now reusing the struct, good or bad idea?
 #[derive(Clone, Eq, PartialEq)]
 pub struct Ack {
+    pub path_id: Option<PathId>,
     pub largest: u64,
     pub delay: u64,
     pub additional: Bytes,
@@ -366,6 +422,7 @@ impl fmt::Debug for Ack {
         ranges.push(']');
 
         f.debug_struct("Ack")
+            .field("path_id", &self.path_id)
             .field("largest", &self.largest)
             .field("delay", &self.delay)
             .field("ecn", &self.ecn)
@@ -385,6 +442,7 @@ impl<'a> IntoIterator for &'a Ack {
 
 impl Ack {
     pub fn encode<W: BufMut>(
+        path_id: Option<PathId>,
         delay: u64,
         ranges: &ArrayRangeSet,
         ecn: Option<&EcnCounts>,
@@ -394,11 +452,17 @@ impl Ack {
         let first = rest.next().unwrap();
         let largest = first.end - 1;
         let first_size = first.end - first.start;
-        buf.write(if ecn.is_some() {
-            FrameType::ACK_ECN
-        } else {
-            FrameType::ACK
-        });
+        let kind = match (path_id.is_some(), ecn.is_some()) {
+            (true, true) => FrameType::PATH_ACK_ECN,
+            (true, false) => FrameType::PATH_ACK,
+            (false, true) => FrameType::ACK_ECN,
+            (false, false) => FrameType::ACK,
+        };
+        buf.write(kind);
+        if let Some(id) = path_id {
+            buf.write(id);
+        }
+
         buf.write_var(largest);
         buf.write_var(delay);
         buf.write_var(ranges.len() as u64 - 1);
@@ -564,6 +628,7 @@ impl Iter {
         Ok(self.bytes.get_ref().slice(start..(start + len as usize)))
     }
 
+    #[track_caller]
     fn try_next(&mut self) -> Result<Frame, IterErr> {
         let ty = self.bytes.get::<FrameType>()?;
         self.last_ty = Some(ty);
@@ -623,10 +688,18 @@ impl Iter {
                 id: self.bytes.get()?,
                 error_code: self.bytes.get()?,
             }),
-            FrameType::RETIRE_CONNECTION_ID => Frame::RetireConnectionId {
-                sequence: self.bytes.get_var()?,
-            },
-            FrameType::ACK | FrameType::ACK_ECN => {
+            FrameType::RETIRE_CONNECTION_ID | FrameType::PATH_RETIRE_CONNECTION_ID => {
+                Frame::RetireConnectionId(RetireConnectionId::read(
+                    &mut self.bytes,
+                    ty == FrameType::PATH_RETIRE_CONNECTION_ID,
+                )?)
+            }
+            FrameType::ACK | FrameType::ACK_ECN | FrameType::PATH_ACK | FrameType::PATH_ACK_ECN => {
+                let path_id = if ty == FrameType::PATH_ACK || ty == FrameType::PATH_ACK_ECN {
+                    Some(self.bytes.get()?)
+                } else {
+                    None
+                };
                 let largest = self.bytes.get_var()?;
                 let delay = self.bytes.get_var()?;
                 let extra_blocks = self.bytes.get_var()? as usize;
@@ -634,23 +707,29 @@ impl Iter {
                 scan_ack_blocks(&mut self.bytes, largest, extra_blocks)?;
                 let end = self.bytes.position() as usize;
                 Frame::Ack(Ack {
+                    path_id,
                     delay,
                     largest,
                     additional: self.bytes.get_ref().slice(start..end),
-                    ecn: if ty != FrameType::ACK_ECN {
-                        None
-                    } else {
+                    ecn: if ty == FrameType::ACK_ECN || ty == FrameType::PATH_ACK_ECN {
                         Some(EcnCounts {
                             ect0: self.bytes.get_var()?,
                             ect1: self.bytes.get_var()?,
                             ce: self.bytes.get_var()?,
                         })
+                    } else {
+                        None
                     },
                 })
             }
             FrameType::PATH_CHALLENGE => Frame::PathChallenge(self.bytes.get()?),
             FrameType::PATH_RESPONSE => Frame::PathResponse(self.bytes.get()?),
-            FrameType::NEW_CONNECTION_ID => {
+            FrameType::NEW_CONNECTION_ID | FrameType::PATH_NEW_CONNECTION_ID => {
+                let path_id = if ty == FrameType::PATH_NEW_CONNECTION_ID {
+                    Some(self.bytes.get()?)
+                } else {
+                    None
+                };
                 let sequence = self.bytes.get_var()?;
                 let retire_prior_to = self.bytes.get_var()?;
                 if retire_prior_to > sequence {
@@ -672,6 +751,7 @@ impl Iter {
                 let mut reset_token = [0; RESET_TOKEN_SIZE];
                 self.bytes.copy_to_slice(&mut reset_token);
                 Frame::NewConnectionId(NewConnectionId {
+                    path_id,
                     sequence,
                     retire_prior_to,
                     id,
@@ -698,6 +778,13 @@ impl Iter {
                 let observed = ObservedAddr::read(&mut self.bytes, is_ipv6)?;
                 Frame::ObservedAddr(observed)
             }
+            FrameType::PATH_ABANDON => Frame::PathAbandon(PathAbandon::read(&mut self.bytes)?),
+            FrameType::PATH_BACKUP | FrameType::PATH_AVAILABLE => {
+                let is_backup = ty == FrameType::PATH_BACKUP;
+                Frame::PathAvailable(PathAvailable::read(&mut self.bytes, is_backup)?)
+            }
+            FrameType::MAX_PATH_ID => Frame::MaxPathId(self.bytes.get()?),
+            FrameType::PATHS_BLOCKED => Frame::PathsBlocked(self.bytes.get()?),
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {
@@ -779,6 +866,7 @@ fn scan_ack_blocks(buf: &mut io::Cursor<Bytes>, largest: u64, n: usize) -> Resul
     Ok(())
 }
 
+#[derive(Debug)]
 enum IterErr {
     UnexpectedEnd,
     InvalidFrameId,
@@ -870,8 +958,9 @@ impl StopSending {
     }
 }
 
-#[derive(Debug, Copy, Clone)]
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
 pub(crate) struct NewConnectionId {
+    pub(crate) path_id: Option<PathId>,
     pub(crate) sequence: u64,
     pub(crate) retire_prior_to: u64,
     pub(crate) id: ConnectionId,
@@ -880,16 +969,59 @@ pub(crate) struct NewConnectionId {
 
 impl NewConnectionId {
     pub(crate) fn encode<W: BufMut>(&self, out: &mut W) {
-        out.write(FrameType::NEW_CONNECTION_ID);
+        out.write(self.get_type());
+        if let Some(id) = self.path_id {
+            out.write(id);
+        }
         out.write_var(self.sequence);
         out.write_var(self.retire_prior_to);
         out.write(self.id.len() as u8);
         out.put_slice(&self.id);
         out.put_slice(&self.reset_token);
     }
+
+    pub(crate) fn get_type(&self) -> FrameType {
+        if self.path_id.is_some() {
+            FrameType::PATH_NEW_CONNECTION_ID
+        } else {
+            FrameType::NEW_CONNECTION_ID
+        }
+    }
+
+    fn read<R: Buf>(bytes: &mut R, read_path: bool) -> Result<Self, IterErr> {
+        let path_id = if read_path { Some(bytes.get()?) } else { None };
+        let sequence = bytes.get_var()?;
+        let retire_prior_to = bytes.get_var()?;
+        if retire_prior_to > sequence {
+            return Err(IterErr::Malformed);
+        }
+        let length = bytes.get::<u8>()? as usize;
+        if length > MAX_CID_SIZE || length == 0 {
+            return Err(IterErr::Malformed);
+        }
+        if length > bytes.remaining() {
+            return Err(IterErr::UnexpectedEnd);
+        }
+        let mut stage = [0; MAX_CID_SIZE];
+        bytes.copy_to_slice(&mut stage[0..length]);
+        let id = ConnectionId::new(&stage[..length]);
+        if bytes.remaining() < 16 {
+            return Err(IterErr::UnexpectedEnd);
+        }
+        let mut reset_token = [0; RESET_TOKEN_SIZE];
+        bytes.copy_to_slice(&mut reset_token);
+        Ok(NewConnectionId {
+            path_id,
+            sequence,
+            retire_prior_to,
+            id,
+            reset_token: reset_token.into(),
+        })
+    }
 }
 
 /// Smallest number of bytes this type of frame is guaranteed to fit within.
+// TODO(@divma): probably need to change this
 pub(crate) const RETIRE_CONNECTION_ID_SIZE_BOUND: usize = 9;
 
 /// An unreliable datagram
@@ -1017,13 +1149,78 @@ impl ObservedAddr {
     }
 }
 
+/* Multipath <https://datatracker.ietf.org/doc/draft-ietf-quic-multipath/> */
+
+// TODO(@divma): AbandonPath? PathAbandon is the name in the spec....
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PathAbandon {
+    path_id: PathId,
+    // TODO(@divma): this is TransportErrorCode plus two new errors
+    error_code: TransportErrorCode,
+}
+
+impl PathAbandon {
+    // TODO(@divma): docs
+    pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
+        buf.write(FrameType::PATH_ABANDON);
+        buf.write(self.path_id);
+        buf.write(self.error_code);
+    }
+
+    // TODO(@divma): docs
+    // should only be called after the frame type has been verified
+    pub(crate) fn read<R: Buf>(bytes: &mut R) -> coding::Result<Self> {
+        Ok(Self {
+            path_id: bytes.get()?,
+            error_code: bytes.get()?,
+        })
+    }
+}
+
+// TODO(@divma): split?
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PathAvailable {
+    is_backup: bool,
+    path_id: PathId,
+    status_seq_no: VarInt,
+}
+
+impl PathAvailable {
+    // TODO(@divma): docs
+    pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
+        buf.write(self.get_type());
+        buf.write(self.path_id);
+        buf.write(self.status_seq_no);
+    }
+
+    // TODO(@divma): docs
+    // should only be called after the frame type has been verified
+    pub(crate) fn read<R: Buf>(bytes: &mut R, is_backup: bool) -> coding::Result<Self> {
+        Ok(Self {
+            is_backup,
+            path_id: bytes.get()?,
+            status_seq_no: bytes.get()?,
+        })
+    }
+
+    fn get_type(&self) -> FrameType {
+        if self.is_backup {
+            FrameType::PATH_BACKUP
+        } else {
+            FrameType::PATH_AVAILABLE
+        }
+    }
+}
+
 #[cfg(test)]
 mod test {
+    use std::u32;
 
     use super::*;
     use crate::coding::Codec;
     use assert_matches::assert_matches;
 
+    #[track_caller]
     fn frames(buf: Vec<u8>) -> Vec<Frame> {
         Iter::new(Bytes::from(buf))
             .unwrap()
@@ -1045,11 +1242,41 @@ mod test {
             ect1: 24,
             ce: 12,
         };
-        Ack::encode(42, &ranges, Some(&ECN), &mut buf);
+        Ack::encode(None, 42, &ranges, Some(&ECN), &mut buf);
         let frames = frames(buf);
         assert_eq!(frames.len(), 1);
         match frames[0] {
             Frame::Ack(ref ack) => {
+                let mut packets = ack.iter().flatten().collect::<Vec<_>>();
+                packets.sort_unstable();
+                assert_eq!(&packets[..], PACKETS);
+                assert_eq!(ack.ecn, Some(ECN));
+            }
+            ref x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    #[allow(clippy::range_plus_one)]
+    fn path_ack_coding() {
+        const PACKETS: &[u64] = &[1, 2, 3, 5, 10, 11, 14];
+        let mut ranges = ArrayRangeSet::new();
+        for &packet in PACKETS {
+            ranges.insert(packet..packet + 1);
+        }
+        let mut buf = Vec::new();
+        const ECN: EcnCounts = EcnCounts {
+            ect0: 42,
+            ect1: 24,
+            ce: 12,
+        };
+        const PATH_ID: Option<PathId> = Some(PathId(u32::MAX));
+        Ack::encode(PATH_ID, 42, &ranges, Some(&ECN), &mut buf);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match frames[0] {
+            Frame::Ack(ref ack) => {
+                assert_eq!(ack.path_id, PATH_ID);
                 let mut packets = ack.iter().flatten().collect::<Vec<_>>();
                 packets.sort_unstable();
                 assert_eq!(&packets[..], PACKETS);
@@ -1107,6 +1334,78 @@ mod test {
         assert_eq!(decoded.len(), 1);
         match decoded.pop().expect("non empty") {
             Frame::ObservedAddr(decoded) => assert_eq!(decoded, observed_addr),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn test_path_abandon_roundtrip() {
+        let abandon = PathAbandon {
+            path_id: PathId(42),
+            error_code: TransportErrorCode::NO_ERROR,
+        };
+        let mut buf = Vec::new();
+        abandon.write(&mut buf);
+
+        let mut decoded = frames(buf);
+        assert_eq!(decoded.len(), 1);
+        match decoded.pop().expect("non empty") {
+            Frame::PathAbandon(decoded) => assert_eq!(decoded, abandon),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn test_path_available_roundtrip() {
+        let path_avaiable = PathAvailable {
+            is_backup: true,
+            path_id: PathId(42),
+            status_seq_no: VarInt(73),
+        };
+        let mut buf = Vec::new();
+        path_avaiable.write(&mut buf);
+
+        let mut decoded = frames(buf);
+        assert_eq!(decoded.len(), 1);
+        match decoded.pop().expect("non empty") {
+            Frame::PathAvailable(decoded) => assert_eq!(decoded, path_avaiable),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn test_path_new_connection_id_roundtrip() {
+        let cid = NewConnectionId {
+            path_id: Some(PathId(22)),
+            sequence: 31,
+            retire_prior_to: 13,
+            id: ConnectionId::new(&[0xAB; 8]),
+            reset_token: ResetToken::from([0xCD; crate::RESET_TOKEN_SIZE]),
+        };
+        let mut buf = Vec::new();
+        cid.encode(&mut buf);
+
+        let mut decoded = frames(buf);
+        assert_eq!(decoded.len(), 1);
+        match decoded.pop().expect("non empty") {
+            Frame::NewConnectionId(decoded) => assert_eq!(decoded, cid),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn test_path_retire_connection_id_roundtrip() {
+        let retire_cid = RetireConnectionId {
+            path_id: Some(PathId(22)),
+            sequence: 31,
+        };
+        let mut buf = Vec::new();
+        retire_cid.write(&mut buf);
+
+        let mut decoded = frames(buf);
+        assert_eq!(decoded.len(), 1);
+        match decoded.pop().expect("non empty") {
+            Frame::RetireConnectionId(decoded) => assert_eq!(decoded, retire_cid),
             x => panic!("incorrect frame {x:?}"),
         }
     }

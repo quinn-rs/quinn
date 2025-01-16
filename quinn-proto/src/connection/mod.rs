@@ -1373,6 +1373,7 @@ impl Connection {
         space: SpaceId,
         ack: frame::Ack,
     ) -> Result<(), TransportError> {
+        // TODO(@divma): check path id
         if ack.largest >= self.spaces[space].next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
@@ -2788,7 +2789,11 @@ impl Connection {
                     }
                     self.streams.received_stop_sending(id, error_code);
                 }
-                Frame::RetireConnectionId { sequence } => {
+                Frame::RetireConnectionId(frame::RetireConnectionId {
+                    path_id: _,
+                    sequence,
+                }) => {
+                    // TODO(@divma): use path id
                     let allow_more_cids = self
                         .local_cid_state
                         .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
@@ -2941,6 +2946,18 @@ impl Connection {
                         // include in migration
                         migration_observed_addr = Some(observed)
                     }
+                }
+                Frame::PathAbandon(_) => {
+                    // TODO(@divma): jump ship?
+                }
+                Frame::PathAvailable(_) => {
+                    // TODO(@divma): do stuff
+                }
+                Frame::MaxPathId(_) => {
+                    // TODO(@divma): do stuff
+                }
+                Frame::PathsBlocked(_) => {
+                    // TODO(@divma): do stuff
                 }
             }
         }
@@ -3304,6 +3321,7 @@ impl Connection {
         }
 
         // NEW_CONNECTION_ID
+        // TODO(@divma): need to change this; add a decent size fn
         while buf.len() + 44 < max_size {
             let issued = match space.pending.new_cids.pop() {
                 Some(x) => x,
@@ -3315,6 +3333,7 @@ impl Connection {
                 "NEW_CONNECTION_ID"
             );
             frame::NewConnectionId {
+                path_id: None, // TODO(@divma): multipath!
                 sequence: issued.sequence,
                 retire_prior_to: self.local_cid_state.retire_prior_to(),
                 id: issued.id,
@@ -3326,15 +3345,19 @@ impl Connection {
         }
 
         // RETIRE_CONNECTION_ID
+        // TODO(@divma): buf size bounds are now wrong
         while buf.len() + frame::RETIRE_CONNECTION_ID_SIZE_BOUND < max_size {
-            let seq = match space.pending.retire_cids.pop() {
+            let sequence = match space.pending.retire_cids.pop() {
                 Some(x) => x,
                 None => break,
             };
-            trace!(sequence = seq, "RETIRE_CONNECTION_ID");
-            buf.write(frame::FrameType::RETIRE_CONNECTION_ID);
-            buf.write_var(seq);
-            sent.retransmits.get_or_create().retire_cids.push(seq);
+            trace!(sequence, "RETIRE_CONNECTION_ID");
+            frame::RetireConnectionId {
+                path_id: None, // TODO(@divma): multipath!
+                sequence,
+            }
+            .write(buf);
+            sent.retransmits.get_or_create().retire_cids.push(sequence);
             self.stats.frame_tx.retire_connection_id += 1;
         }
 
@@ -3401,7 +3424,8 @@ impl Connection {
             delay_micros
         );
 
-        frame::Ack::encode(delay as _, space.pending_acks.ranges(), ecn, buf);
+        // TODO(@divma): connect here when path management is ready
+        frame::Ack::encode(None, delay as _, space.pending_acks.ranges(), ecn, buf);
         stats.frame_tx.acks += 1;
     }
 
@@ -3441,6 +3465,7 @@ impl Connection {
         trace!("negotiated max idle timeout {:?}", self.idle_timeout);
         if let Some(ref info) = params.preferred_address {
             self.rem_cids.insert(frame::NewConnectionId {
+                path_id: None, // TODO(@divma): use
                 sequence: 1,
                 id: info.connection_id,
                 reset_token: info.stateless_reset_token,
