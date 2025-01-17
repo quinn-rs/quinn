@@ -6,6 +6,8 @@ license = "MIT OR Apache-2.0"
 publish = false
 
 [features]
+# NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
+# comment in that file for more information.
 default = ["json-output"]
 # Allow for json output from the perf client
 json-output = ["serde", "serde_json"]
