@@ -11,6 +11,8 @@ categories.workspace = true
 workspace = ".."
 
 [features]
+# NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
+# comment in that file for more information.
 default = ["rustls-ring", "log"]
 aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs?/aws-lc-sys", "aws-lc-rs?/prebuilt-nasm"]
 aws-lc-rs-fips = ["aws-lc-rs", "aws-lc-rs?/fips"]

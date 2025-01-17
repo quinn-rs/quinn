@@ -11,6 +11,8 @@ categories.workspace = true
 workspace = ".."
 
 [features]
+# NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
+# comment in that file for more information.
 default = ["tracing", "log"]
 # Configure `tracing` to log events via `log` if no `tracing` subscriber exists.
 log = ["tracing/log"]
