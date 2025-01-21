@@ -1,29 +1,3 @@
-//! Uniform interface to send and receive UDP packets with advanced features useful for QUIC
-//!
-//! This crate exposes kernel UDP stack features available on most modern systems which are required
-//! for an efficient and conformant QUIC implementation. As of this writing, these are not available
-//! in std or major async runtimes, and their niche character and complexity are a barrier to adding
-//! them. Hence, a dedicated crate.
-//!
-//! Exposed features include:
-//!
-//! - Segmentation offload for bulk send and receive operations, reducing CPU load.
-//! - Reporting the exact destination address of received packets and specifying explicit source
-//!   addresses for sent packets, allowing responses to be sent from the address that the peer
-//!   expects when there are multiple possibilities. This is common when bound to a wildcard address
-//!   in IPv6 due to [RFC 8981] temporary addresses.
-//! - [Explicit Congestion Notification], which is required by QUIC to prevent packet loss and reduce
-//!   latency on congested links when supported by the network path.
-//! - Disabled IP-layer fragmentation, which allows the true physical MTU to be detected and reduces
-//!   risk of QUIC packet loss.
-//!
-//! Some features are unavailable in some environments. This can be due to an outdated operating
-//! system or drivers. Some operating systems may not implement desired features at all, or may not
-//! yet be supported by the crate. When support is unavailable, functionality will gracefully
-//! degrade.
-//!
-//! [RFC 8981]: https://www.rfc-editor.org/rfc/rfc8981.html
-//! [Explicit Congestion Notification]: https://www.rfc-editor.org/rfc/rfc3168.html
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
@@ -109,6 +83,8 @@ pub struct RecvMeta {
     /// Populated on platforms: Windows, Linux, Android (API level > 25),
     /// FreeBSD, OpenBSD, NetBSD, macOS, and iOS.
     pub dst_ip: Option<IpAddr>,
+    /// ICMP error message, if any
+    pub icmp_error: Option<IcmpError>,
 }
 
 impl Default for RecvMeta {
@@ -120,6 +96,7 @@ impl Default for RecvMeta {
             stride: 0,
             ecn: None,
             dst_ip: None,
+            icmp_error: None,
         }
     }
 }
@@ -219,4 +196,12 @@ impl EcnCodepoint {
             }
         })
     }
+}
+
+/// Represents an ICMP error message
+pub struct IcmpError {
+    pub code: i32,
+    pub origin: u8,
+    pub type_: u8,
+    pub code_: u8,
 }

@@ -183,6 +183,10 @@ impl UdpSocketState {
                 !set_socket_option_supported(&*io, libc::IPPROTO_IPV6, IPV6_DONTFRAG, OPTION_ON)?;
         }
 
+        // Enable receiving ICMP error messages
+        set_socket_option(&*io, libc::IPPROTO_IP, libc::IP_RECVERR, OPTION_ON)?;
+        set_socket_option(&*io, libc::IPPROTO_IPV6, libc::IPV6_RECVERR, OPTION_ON)?;
+
         let now = Instant::now();
         Ok(Self {
             last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
@@ -227,6 +231,35 @@ impl UdpSocketState {
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
     ) -> io::Result<usize> {
+        let mut cmsg_buffer = [0u8; 1024];
+        let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
+        let mut iov: libc::iovec = unsafe { mem::zeroed() };
+        let mut name = MaybeUninit::<libc::sockaddr_storage>::uninit();
+
+        hdr.msg_name = name.as_mut_ptr() as *mut _;
+        hdr.msg_namelen = mem::size_of::<libc::sockaddr_storage>() as _;
+        hdr.msg_iov = &mut iov;
+        hdr.msg_iovlen = 1;
+        hdr.msg_control = cmsg_buffer.as_mut_ptr() as *mut _;
+        hdr.msg_controllen = cmsg_buffer.len() as _;
+
+        let n = loop {
+            let n = unsafe { libc::recvmsg(socket.0.as_raw_fd(), &mut hdr, 0) };
+            if n == -1 {
+                let e = io::Error::last_os_error();
+                if e.kind() == io::ErrorKind::Interrupted {
+                    continue;
+                }
+                return Err(e);
+            }
+            break n;
+        };
+
+        if let Some(icmp_error) = cmsg::unix::process_icmp_error(&hdr) {
+            // Handle ICMP error message
+            // You can log or process the error as needed
+        }
+
         recv(socket.0, bufs, meta)
     }
 

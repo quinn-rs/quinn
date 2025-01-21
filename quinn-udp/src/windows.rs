@@ -13,7 +13,7 @@ use once_cell::sync::Lazy;
 use windows_sys::Win32::Networking::WinSock;
 
 use crate::{
-    cmsg::{self, CMsgHdr},
+    cmsg::{self, CMsgHdr, decode_icmp_error},
     log::debug,
     log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
 };
@@ -259,6 +259,11 @@ impl UdpSocketState {
                 }
                 _ => {}
             }
+        }
+
+        if let Some(icmp_error) = decode_icmp_error(&wsa_msg) {
+            // Handle ICMP error message
+            // You can log or process the error as needed
         }
 
         meta[0] = RecvMeta {

@@ -144,3 +144,27 @@ pub(crate) trait CMsgHdr {
 
     fn len(&self) -> usize;
 }
+
+/// Decode ICMP error messages from control messages
+pub(crate) fn decode_icmp_error(cmsg: &impl CMsgHdr) -> Option<IcmpError> {
+    match (cmsg.cmsg_level(), cmsg.cmsg_type()) {
+        (libc::IPPROTO_IP, libc::IP_RECVERR) | (libc::IPPROTO_IPV6, libc::IPV6_RECVERR) => {
+            let icmp_err = unsafe { decode::<libc::sock_extended_err, _>(cmsg) };
+            Some(IcmpError {
+                code: icmp_err.ee_errno,
+                origin: icmp_err.ee_origin,
+                type_: icmp_err.ee_type,
+                code_: icmp_err.ee_code,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Represents an ICMP error message
+pub(crate) struct IcmpError {
+    pub code: i32,
+    pub origin: u8,
+    pub type_: u8,
+    pub code_: u8,
+}
