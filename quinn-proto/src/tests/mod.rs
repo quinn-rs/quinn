@@ -3185,6 +3185,306 @@ fn voluntary_ack_with_large_datagrams() {
     );
 }
 
+/// Test the address discovery extension on a normal setup.
+#[test]
+fn address_discovery() {
+    let _guard = subscribe();
+
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let client_config = ClientConfig {
+        transport: Arc::new(TransportConfig {
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
+            ..TransportConfig::default()
+        }),
+        ..client_config()
+    };
+    let conn_handle = pair.begin_connect(client_config);
+
+    // wait for idle connections
+    pair.drive();
+
+    // check that the client received the correct address
+    let expected_addr = pair.client.addr;
+    let conn = pair.client_conn_mut(conn_handle);
+    assert_matches!(conn.poll(), Some(Event::HandshakeDataReady));
+    assert_matches!(conn.poll(), Some(Event::Connected));
+    assert_matches!(conn.poll(), Some(Event::ObservedAddr(addr)) if addr == expected_addr);
+    assert_matches!(conn.poll(), None);
+
+    // check that the server received the correct address
+    let conn_handle = pair.server.assert_accept();
+    let expected_addr = pair.server.addr;
+    let conn = pair.server_conn_mut(conn_handle);
+    assert_matches!(conn.poll(), Some(Event::HandshakeDataReady));
+    assert_matches!(conn.poll(), Some(Event::Connected));
+    assert_matches!(conn.poll(), Some(Event::ObservedAddr(addr)) if addr == expected_addr);
+    assert_matches!(conn.poll(), None);
+}
+
+/// Test that a different address discovery configuration on 0rtt used by the client is accepted by
+/// the server.
+/// NOTE: this test is the same as zero_rtt_happypath, changing client transport parameters on
+/// resumption.
+#[test]
+fn address_discovery_zero_rtt_accepted() {
+    let _guard = subscribe();
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+
+    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
+    let client_cfg = ClientConfig {
+        transport: Arc::new(TransportConfig {
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
+            ..TransportConfig::default()
+        }),
+        ..client_config()
+    };
+    let alt_client_cfg = ClientConfig {
+        transport: Arc::new(TransportConfig::default()),
+        ..client_cfg.clone()
+    };
+
+    // Establish normal connection
+    let client_ch = pair.begin_connect(client_cfg);
+    pair.drive();
+    pair.server.assert_accept();
+    pair.client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .close(pair.time, VarInt(0), [][..].into());
+    pair.drive();
+
+    pair.client.addr = SocketAddr::new(
+        Ipv6Addr::LOCALHOST.into(),
+        CLIENT_PORTS.lock().unwrap().next().unwrap(),
+    );
+    info!("resuming session");
+    let client_ch = pair.begin_connect(alt_client_cfg);
+    assert!(pair.client_conn_mut(client_ch).has_0rtt());
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    const MSG: &[u8] = b"Hello, 0-RTT!";
+    pair.client_send(client_ch, s).write(MSG).unwrap();
+    pair.drive();
+
+    let conn = pair.client_conn_mut(client_ch);
+    assert_matches!(conn.poll(), Some(Event::HandshakeDataReady));
+    assert_matches!(conn.poll(), Some(Event::Connected));
+
+    assert!(pair.client_conn_mut(client_ch).accepted_0rtt());
+    let server_ch = pair.server.assert_accept();
+
+    let conn = pair.server_conn_mut(server_ch);
+    assert_matches!(conn.poll(), Some(Event::HandshakeDataReady));
+    // We don't currently preserve stream event order wrt. connection events
+    assert_matches!(conn.poll(), Some(Event::Connected));
+    assert_matches!(
+        conn.poll(),
+        Some(Event::Stream(StreamEvent::Opened { dir: Dir::Uni }))
+    );
+
+    let mut recv = pair.server_recv(server_ch, s);
+    let mut chunks = recv.read(false).unwrap();
+    assert_matches!(
+        chunks.next(usize::MAX),
+        Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
+    );
+    let _ = chunks.finalize();
+    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
+}
+
+/// Test that a different address discovery configuration on 0rtt used by the server is rejected by
+/// the client.
+/// NOTE: the server MUST not change configuration on resumption. However, there is no designed
+/// behaviour when this is encountered. Quinn chooses to accept and then close the connection,
+/// which is what this test checks.
+#[test]
+fn address_discovery_zero_rtt_rejection() {
+    let _guard = subscribe();
+    let server_cfg = ServerConfig {
+        transport: Default::default(),
+        ..server_config()
+    };
+    let alt_server_cfg = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                ..Default::default()
+            },
+            ..TransportConfig::default()
+        }),
+        ..server_cfg.clone()
+    };
+    let mut pair = Pair::new(Default::default(), server_cfg);
+    let client_cfg = ClientConfig {
+        transport: Arc::new(TransportConfig {
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
+            ..TransportConfig::default()
+        }),
+        ..client_config()
+    };
+
+    // Establish normal connection
+    let client_ch = pair.begin_connect(client_cfg.clone());
+    pair.drive();
+    let server_ch = pair.server.assert_accept();
+    let conn = pair.server_conn_mut(server_ch);
+    assert_matches!(conn.poll(), Some(Event::HandshakeDataReady));
+    assert_matches!(conn.poll(), Some(Event::Connected));
+    assert_matches!(conn.poll(), None);
+    pair.client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .close(pair.time, VarInt(0), [][..].into());
+    pair.drive();
+    assert_matches!(
+        pair.server_conn_mut(server_ch).poll(),
+        Some(Event::ConnectionLost { .. })
+    );
+    assert_matches!(pair.server_conn_mut(server_ch).poll(), None);
+    pair.client.connections.clear();
+    pair.server.connections.clear();
+
+    // Changing address discovery configurations makes the client close the connection
+    pair.server
+        .set_server_config(Some(Arc::new(alt_server_cfg)));
+    info!("resuming session");
+    let client_ch = pair.begin_connect(client_cfg);
+    assert!(pair.client_conn_mut(client_ch).has_0rtt());
+    let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    const MSG: &[u8] = b"Hello, 0-RTT!";
+    pair.client_send(client_ch, s).write(MSG).unwrap();
+    pair.drive();
+    let conn = pair.client_conn_mut(server_ch);
+    assert_matches!(conn.poll(), Some(Event::HandshakeDataReady));
+    assert_matches!(
+        conn.poll(),
+        Some(Event::ConnectionLost {
+            reason: ConnectionError::TransportError(_)
+        })
+    );
+}
+
+#[test]
+fn address_discovery_retransmission() {
+    let _guard = subscribe();
+
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let client_config = ClientConfig {
+        transport: Arc::new(TransportConfig {
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
+            ..TransportConfig::default()
+        }),
+        ..client_config()
+    };
+    let client_ch = pair.begin_connect(client_config);
+    pair.step();
+
+    // lose the last packet
+    pair.client.inbound.pop_back().unwrap();
+    pair.step();
+    let conn = pair.client_conn_mut(client_ch);
+    assert_matches!(conn.poll(), Some(Event::HandshakeDataReady));
+    assert_matches!(conn.poll(), Some(Event::Connected));
+    assert_matches!(conn.poll(), None);
+
+    pair.drive();
+    let conn = pair.client_conn_mut(client_ch);
+    assert_matches!(conn.poll(),
+        Some(Event::ObservedAddr(addr)) if addr == pair.client.addr);
+}
+
+#[test]
+fn address_discovery_rebind_retransmission() {
+    let _guard = subscribe();
+
+    let server = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+    let mut pair = Pair::new(Default::default(), server);
+    let client_config = ClientConfig {
+        transport: Arc::new(TransportConfig {
+            address_discovery_role: crate::address_discovery::Role {
+                send_reports: true,
+                receive_reports: true,
+            },
+            ..TransportConfig::default()
+        }),
+        ..client_config()
+    };
+    let client_ch = pair.begin_connect(client_config);
+    pair.step();
+
+    // lose the last packet
+    pair.client.inbound.pop_back().unwrap();
+    pair.step();
+    let conn = pair.client_conn_mut(client_ch);
+    assert_matches!(conn.poll(), Some(Event::HandshakeDataReady));
+    assert_matches!(conn.poll(), Some(Event::Connected));
+    assert_matches!(conn.poll(), None);
+
+    // simulate a rebind to ensure we will get an updated address instead of retransmitting
+    // outdated info
+    pair.client_conn_mut(client_ch).local_address_changed();
+    pair.client
+        .addr
+        .set_port(pair.client.addr.port().overflowing_add(1).0);
+
+    pair.drive();
+    let conn = pair.client_conn_mut(client_ch);
+    assert_matches!(conn.poll(),
+        Some(Event::ObservedAddr(addr)) if addr == pair.client.addr);
+}
+
 #[test]
 fn reject_short_idcid() {
     let _guard = subscribe();

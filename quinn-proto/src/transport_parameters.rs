@@ -16,6 +16,7 @@ use rand::{seq::SliceRandom as _, Rng as _, RngCore};
 use thiserror::Error;
 
 use crate::{
+    address_discovery,
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
@@ -110,6 +111,9 @@ macro_rules! make_struct {
             /// This field is initialized only for outgoing `TransportParameters` instances and
             /// is set to `None` for `TransportParameters` received from a peer.
             pub(crate) write_order: Option<[u8; TransportParameterId::SUPPORTED.len()]>,
+
+            /// The role of this peer in address discovery, if any.
+            pub(crate) address_discovery_role: address_discovery::Role,
         }
 
         // We deliberately don't implement the `Default` trait, since that would be public, and
@@ -133,6 +137,8 @@ macro_rules! make_struct {
                     preferred_address: None,
                     grease_transport_parameter: None,
                     write_order: None,
+
+                    address_discovery_role: address_discovery::Role::default(),
                 }
             }
         }
@@ -180,6 +186,7 @@ impl TransportParameters {
                 order.shuffle(rng);
                 order
             }),
+            address_discovery_role: config.address_discovery_role,
             ..Self::default()
         }
     }
@@ -196,6 +203,7 @@ impl TransportParameters {
             || cached.initial_max_streams_uni > self.initial_max_streams_uni
             || cached.max_datagram_frame_size > self.max_datagram_frame_size
             || cached.grease_quic_bit && !self.grease_quic_bit
+            || cached.address_discovery_role != self.address_discovery_role
         {
             return Err(TransportError::PROTOCOL_VIOLATION(
                 "0-RTT accepted with incompatible transport parameters",
@@ -380,6 +388,14 @@ impl TransportParameters {
                         w.write(x);
                     }
                 }
+                TransportParameterId::ObservedAddr => {
+                    if let Some(varint_role) = self.address_discovery_role.as_transport_parameter()
+                    {
+                        w.write_var(id as u64);
+                        w.write_var(varint_role.size() as u64);
+                        w.write(varint_role);
+                    }
+                }
                 id => {
                     macro_rules! write_params {
                         {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
@@ -477,6 +493,15 @@ impl TransportParameters {
                 },
                 TransportParameterId::MinAckDelayDraft07 => {
                     params.min_ack_delay = Some(r.get().unwrap())
+                }
+                TransportParameterId::ObservedAddr => {
+                    let prev_role = &params.address_discovery_role;
+                    params.address_discovery_role =
+                        address_discovery::Role::from_transport_parameter(len, prev_role, r)?;
+                    tracing::debug!(
+                        role = ?params.address_discovery_role,
+                        "address discovery enabled for peer"
+                    );
                 }
                 _ => {
                     macro_rules! parse {
@@ -640,11 +665,14 @@ pub(crate) enum TransportParameterId {
 
     // https://datatracker.ietf.org/doc/html/draft-ietf-quic-ack-frequency#section-10.1
     MinAckDelayDraft07 = 0xFF04DE1B,
+
+    // <https://datatracker.ietf.org/doc/draft-seemann-quic-address-discovery/>
+    ObservedAddr = 0x9f81a176,
 }
 
 impl TransportParameterId {
     /// Array with all supported transport parameter IDs
-    const SUPPORTED: [Self; 21] = [
+    const SUPPORTED: [Self; 22] = [
         Self::MaxIdleTimeout,
         Self::MaxUdpPayloadSize,
         Self::InitialMaxData,
@@ -666,6 +694,7 @@ impl TransportParameterId {
         Self::RetrySourceConnectionId,
         Self::GreaseQuicBit,
         Self::MinAckDelayDraft07,
+        Self::ObservedAddr,
     ];
 }
 
@@ -705,6 +734,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::RetrySourceConnectionId == id => Self::RetrySourceConnectionId,
             id if Self::GreaseQuicBit == id => Self::GreaseQuicBit,
             id if Self::MinAckDelayDraft07 == id => Self::MinAckDelayDraft07,
+            id if Self::ObservedAddr == id => Self::ObservedAddr,
             _ => return Err(()),
         };
         Ok(param)
@@ -742,6 +772,10 @@ mod test {
             }),
             grease_quic_bit: true,
             min_ack_delay: Some(2_000u32.into()),
+            address_discovery_role: address_discovery::Role {
+                send_reports: true,
+                ..Default::default()
+            },
             ..TransportParameters::default()
         };
         params.write(&mut buf);
