@@ -2,7 +2,7 @@ use std::{
     convert::TryInto,
     mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use assert_matches::assert_matches;
