@@ -725,38 +725,8 @@ impl Iter {
             FrameType::PATH_CHALLENGE => Frame::PathChallenge(self.bytes.get()?),
             FrameType::PATH_RESPONSE => Frame::PathResponse(self.bytes.get()?),
             FrameType::NEW_CONNECTION_ID | FrameType::PATH_NEW_CONNECTION_ID => {
-                let path_id = if ty == FrameType::PATH_NEW_CONNECTION_ID {
-                    Some(self.bytes.get()?)
-                } else {
-                    None
-                };
-                let sequence = self.bytes.get_var()?;
-                let retire_prior_to = self.bytes.get_var()?;
-                if retire_prior_to > sequence {
-                    return Err(IterErr::Malformed);
-                }
-                let length = self.bytes.get::<u8>()? as usize;
-                if length > MAX_CID_SIZE || length == 0 {
-                    return Err(IterErr::Malformed);
-                }
-                if length > self.bytes.remaining() {
-                    return Err(IterErr::UnexpectedEnd);
-                }
-                let mut stage = [0; MAX_CID_SIZE];
-                self.bytes.copy_to_slice(&mut stage[0..length]);
-                let id = ConnectionId::new(&stage[..length]);
-                if self.bytes.remaining() < 16 {
-                    return Err(IterErr::UnexpectedEnd);
-                }
-                let mut reset_token = [0; RESET_TOKEN_SIZE];
-                self.bytes.copy_to_slice(&mut reset_token);
-                Frame::NewConnectionId(NewConnectionId {
-                    path_id,
-                    sequence,
-                    retire_prior_to,
-                    id,
-                    reset_token: reset_token.into(),
-                })
+                let read_path = ty == FrameType::PATH_NEW_CONNECTION_ID;
+                Frame::NewConnectionId(NewConnectionId::read(&mut self.bytes, read_path)?)
             }
             FrameType::CRYPTO => Frame::Crypto(Crypto {
                 offset: self.bytes.get_var()?,
@@ -1010,7 +980,7 @@ impl NewConnectionId {
         }
         let mut reset_token = [0; RESET_TOKEN_SIZE];
         bytes.copy_to_slice(&mut reset_token);
-        Ok(NewConnectionId {
+        Ok(Self {
             path_id,
             sequence,
             retire_prior_to,
