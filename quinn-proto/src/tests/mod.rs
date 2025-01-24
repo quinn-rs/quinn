@@ -35,6 +35,8 @@ use crate::{
 mod util;
 use util::*;
 
+mod token;
+
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 
@@ -176,24 +178,6 @@ fn draft_version_compat() {
                         ApplicationClose { error_code: VarInt(42), ref reason }
                     )}) if reason == REASON);
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
-    assert_eq!(pair.client.known_connections(), 0);
-    assert_eq!(pair.client.known_cids(), 0);
-    assert_eq!(pair.server.known_connections(), 0);
-    assert_eq!(pair.server.known_cids(), 0);
-}
-
-#[test]
-fn stateless_retry() {
-    let _guard = subscribe();
-    let mut pair = Pair::default();
-    pair.server.handle_incoming = Box::new(validate_incoming);
-    let (client_ch, _server_ch) = pair.connect();
-    pair.client
-        .connections
-        .get_mut(&client_ch)
-        .unwrap()
-        .close(pair.time, VarInt(42), Bytes::new());
-    pair.drive();
     assert_eq!(pair.client.known_connections(), 0);
     assert_eq!(pair.client.known_cids(), 0);
     assert_eq!(pair.server.known_connections(), 0);
