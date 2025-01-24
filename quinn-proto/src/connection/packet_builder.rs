@@ -257,7 +257,7 @@ impl PacketBuilder {
         self.partial_encode.finish(
             packet_buf,
             header_crypto,
-            Some((self.exact_number, packet_crypto)),
+            Some((self.exact_number, conn.path_id, packet_crypto)),
         );
 
         (buffer.len() - encode_start, pad)

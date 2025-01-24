@@ -605,6 +605,8 @@ impl Endpoint {
             .packet
             .remote
             .decrypt(
+                None, // TODO(@divma): this is the initial packet check if we should have the cid
+                // -> path_id association already
                 packet_number,
                 &incoming.packet.header_data,
                 &mut incoming.packet.payload,
@@ -906,7 +908,13 @@ impl Endpoint {
             INITIAL_MTU as usize - partial_encode.header_len - crypto.packet.local.tag_len();
         frame::Close::from(reason).encode(buf, max_len);
         buf.resize(buf.len() + crypto.packet.local.tag_len(), 0);
-        partial_encode.finish(buf, &*crypto.header.local, Some((0, &*crypto.packet.local)));
+        // TODO(@divma): unclear what does here, need to read more about initial close
+        let path_id: Option<crate::PathId> = None;
+        partial_encode.finish(
+            buf,
+            &*crypto.header.local,
+            Some((0, path_id, &*crypto.packet.local)),
+        );
         Transmit {
             destination: addresses.remote,
             ecn: None,

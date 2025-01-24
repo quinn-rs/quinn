@@ -13,7 +13,7 @@ use std::{any::Any, str, sync::Arc};
 use bytes::BytesMut;
 
 use crate::{
-    shared::ConnectionId, transport_parameters::TransportParameters, ConnectError, Side,
+    shared::ConnectionId, transport_parameters::TransportParameters, ConnectError, PathId, Side,
     TransportError,
 };
 
@@ -147,10 +147,11 @@ pub trait ServerConfig: Send + Sync {
 /// Keys used to protect packet payloads
 pub trait PacketKey: Send + Sync {
     /// Encrypt the packet payload with the given packet number
-    fn encrypt(&self, packet: u64, buf: &mut [u8], header_len: usize);
+    fn encrypt(&self, path_id: Option<PathId>, packet: u64, buf: &mut [u8], header_len: usize);
     /// Decrypt the packet payload with the given packet number
     fn decrypt(
         &self,
+        path_id: Option<PathId>,
         packet: u64,
         header: &[u8],
         payload: &mut BytesMut,

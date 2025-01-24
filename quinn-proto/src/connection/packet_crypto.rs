@@ -7,6 +7,8 @@ use crate::token::ResetToken;
 use crate::Instant;
 use crate::{TransportError, RESET_TOKEN_SIZE};
 
+use super::PathId;
+
 /// Removes header protection of a packet, or returns `None` if the packet was dropped
 pub(super) fn unprotect_header(
     partial_decode: PartialDecode,
@@ -68,6 +70,7 @@ pub(super) struct UnprotectHeaderResult {
 /// Decrypts a packet's body in-place
 pub(super) fn decrypt_packet_body(
     packet: &mut Packet,
+    path_id: Option<PathId>,
     spaces: &[PacketSpace; 3],
     zero_rtt_crypto: Option<&ZeroRttCrypto>,
     conn_key_phase: bool,
@@ -110,7 +113,7 @@ pub(super) fn decrypt_packet_body(
     };
 
     crypto
-        .decrypt(number, &packet.header_data, &mut packet.payload)
+        .decrypt(path_id, number, &packet.header_data, &mut packet.payload)
         .map_err(|_| {
             trace!("decryption failed with packet number {}", number);
             None

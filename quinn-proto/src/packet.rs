@@ -5,7 +5,7 @@ use thiserror::Error;
 
 use crate::{
     coding::{self, BufExt, BufMutExt},
-    crypto, ConnectionId,
+    crypto, ConnectionId, PathId,
 };
 
 /// Decodes a QUIC packet's invariant header
@@ -471,7 +471,7 @@ impl PartialEncode {
         self,
         buf: &mut [u8],
         header_crypto: &dyn crypto::HeaderKey,
-        crypto: Option<(u64, &dyn crypto::PacketKey)>,
+        crypto: Option<(u64, Option<PathId>, &dyn crypto::PacketKey)>,
     ) {
         let Self { header_len, pn, .. } = self;
         let (pn_len, write_len) = match pn {
@@ -487,8 +487,8 @@ impl PartialEncode {
             slice.put_u16(len as u16 | 0b01 << 14);
         }
 
-        if let Some((number, crypto)) = crypto {
-            crypto.encrypt(number, buf, header_len);
+        if let Some((packet_number, path_id, crypto)) = crypto {
+            crypto.encrypt(path_id, packet_number, buf, header_len);
         }
 
         debug_assert!(
@@ -964,7 +964,7 @@ mod tests {
         encode.finish(
             &mut buf,
             &*client.header.local,
-            Some((0, &*client.packet.local)),
+            Some((0, None, &*client.packet.local)),
         );
 
         for byte in &buf {
@@ -997,7 +997,7 @@ mod tests {
         server
             .packet
             .remote
-            .decrypt(0, &packet.header_data, &mut packet.payload)
+            .decrypt(None, 0, &packet.header_data, &mut packet.payload)
             .unwrap();
         assert_eq!(packet.payload[..], [0; 16]);
         match packet.header {

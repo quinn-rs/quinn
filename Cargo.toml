@@ -35,7 +35,8 @@ rand = "0.8"
 rcgen = "0.13"
 ring = "0.17"
 rustc-hash = "2"
-rustls = { version = "0.23.5", default-features = false, features = ["std"] }
+# TODO(@divma): swap with version once rustls's changes are merged and published in a release
+rustls = { git = "https://github.com/divagant-martian/rustls", rev = "aee54ff6b34f2d41f85c4632082639e63a04f172", default-features = false, features = ["std"] }
 rustls-pemfile = "2"
 rustls-platform-verifier = "0.4"
 rustls-pki-types = "1.7"
@@ -65,3 +66,7 @@ debug = true
 
 [profile.release]
 debug = true
+
+[patch.crates-io]
+# TODO(@divma): once rustls's changes are merged and published in a release, either swap or re-eval if it's needed at all by then
+rustls = { git = "https://github.com/divagant-martian/rustls", rev = "aee54ff6b34f2d41f85c4632082639e63a04f172"}
