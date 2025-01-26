@@ -27,7 +27,7 @@ jobs:
         #       | paste -sd ',' -
         run: |
           cargo llvm-cov \
-            --features="arbitrary,async-io,async-std,aws-lc-rs,direct-log,fast-apple-datapath,futures-io,json-output,lock_tracking,log,platform-verifier,ring,runtime-async-std,runtime-smol,runtime-tokio,rustls,rustls-aws-lc-rs,rustls-log,rustls-ring,serde,serde_json,smol,tracing" \
+            --features="arbitrary,async-io,async-std,aws-lc-rs,bloom,direct-log,fast-apple-datapath,futures-io,json-output,lock_tracking,log,platform-verifier,ring,runtime-async-std,runtime-smol,runtime-tokio,rustls,rustls-aws-lc-rs,rustls-log,rustls-ring,serde,serde_json,smol,tracing" \
             --workspace --lcov --output-path lcov.info
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v5

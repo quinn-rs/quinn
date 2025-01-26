@@ -37,6 +37,11 @@ mod varint;
 
 pub use varint::{VarInt, VarIntBoundsExceeded};
 
+#[cfg(feature = "bloom")]
+mod bloom_token_log;
+#[cfg(feature = "bloom")]
+pub use bloom_token_log::BloomTokenLog;
+
 mod connection;
 pub use crate::connection::{
     BytesSource, Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats,
