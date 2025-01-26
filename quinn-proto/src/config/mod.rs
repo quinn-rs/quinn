@@ -14,8 +14,8 @@ use thiserror::Error;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use crate::crypto::rustls::{QuicServerConfig, configured_provider};
 use crate::{
-    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, NoneTokenLog, NoneTokenStore,
-    RandomConnectionIdGenerator, SystemTime, TokenLog, TokenStore, VarInt, VarIntBoundsExceeded,
+    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, NoneTokenLog, RandomConnectionIdGenerator,
+    SystemTime, TokenLog, TokenMemoryCache, TokenStore, VarInt, VarIntBoundsExceeded,
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
@@ -553,7 +553,7 @@ impl ClientConfig {
         Self {
             transport: Default::default(),
             crypto,
-            token_store: Arc::new(NoneTokenStore),
+            token_store: Arc::new(TokenMemoryCache::default()),
             initial_dst_cid_provider: Arc::new(|| {
                 RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid()
             }),
@@ -585,8 +585,7 @@ impl ClientConfig {
 
     /// Set a custom [`TokenStore`]
     ///
-    /// Defaults to [`NoneTokenStore`], which disables the use of tokens from NEW_TOKEN frames as a
-    /// client.
+    /// Defaults to [`TokenMemoryCache`], which is suitable for most internet applications.
     pub fn token_store(&mut self, store: Arc<dyn TokenStore>) -> &mut Self {
         self.token_store = store;
         self
