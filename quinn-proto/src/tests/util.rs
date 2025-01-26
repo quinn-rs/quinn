@@ -615,9 +615,7 @@ fn server_crypto_inner(
 }
 
 pub(super) fn client_config() -> ClientConfig {
-    let mut config = ClientConfig::new(Arc::new(client_crypto()));
-    config.token_store(Arc::new(SimpleTokenStore::default()));
-    config
+    ClientConfig::new(Arc::new(client_crypto()))
 }
 
 pub(super) fn client_config_with_deterministic_pns() -> ClientConfig {
@@ -741,27 +739,5 @@ impl TokenLog for SimpleTokenLog {
         } else {
             Err(TokenReuseError)
         }
-    }
-}
-
-#[derive(Default)]
-struct SimpleTokenStore(Mutex<HashMap<String, VecDeque<Bytes>>>);
-
-impl TokenStore for SimpleTokenStore {
-    fn insert(&self, server_name: &str, token: Bytes) {
-        self.0
-            .lock()
-            .unwrap()
-            .entry(server_name.into())
-            .or_default()
-            .push_back(token);
-    }
-
-    fn take(&self, server_name: &str) -> Option<Bytes> {
-        self.0
-            .lock()
-            .unwrap()
-            .get_mut(server_name)
-            .and_then(|queue| queue.pop_front())
     }
 }
