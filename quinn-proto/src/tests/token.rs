@@ -2,6 +2,9 @@
 
 use super::*;
 
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+use wasm_bindgen_test::wasm_bindgen_test as test;
+
 #[test]
 fn stateless_retry() {
     let _guard = subscribe();
