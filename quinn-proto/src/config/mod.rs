@@ -11,10 +11,14 @@ use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
+#[cfg(feature = "bloom")]
+use crate::BloomTokenLog;
+#[cfg(not(feature = "bloom"))]
+use crate::NoneTokenLog;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use crate::crypto::rustls::{QuicServerConfig, configured_provider};
 use crate::{
-    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, NoneTokenLog, NoneTokenStore,
+    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, NoneTokenStore,
     RandomConnectionIdGenerator, SystemTime, TokenLog, TokenStore, VarInt, VarIntBoundsExceeded,
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
@@ -485,10 +489,15 @@ impl ValidationTokenConfig {
         self
     }
 
+    #[allow(rustdoc::redundant_explicit_links)] // which links are redundant depends on features
     /// Set a custom [`TokenLog`]
     ///
-    /// Defaults to [`NoneTokenLog`], which makes the server ignore all address validation tokens
-    /// (that is, tokens originating from NEW_TOKEN frames--retry tokens are not affected).
+    /// If the `bloom` feature is enabled (which it is by default), defaults to a default
+    /// [`BloomTokenLog`][crate::BloomTokenLog], which is suitable for most internet applications.
+    ///
+    /// If the `bloom` feature is disabled, defaults to [`NoneTokenLog`][crate::NoneTokenLog],
+    /// which makes the server ignore all address validation tokens (that is, tokens originating
+    /// from NEW_TOKEN frames--retry tokens are not affected).
     pub fn log(&mut self, log: Arc<dyn TokenLog>) -> &mut Self {
         self.log = log;
         self
@@ -507,9 +516,13 @@ impl ValidationTokenConfig {
 
 impl Default for ValidationTokenConfig {
     fn default() -> Self {
+        #[cfg(feature = "bloom")]
+        let log = Arc::new(BloomTokenLog::default());
+        #[cfg(not(feature = "bloom"))]
+        let log = Arc::new(NoneTokenLog);
         Self {
             lifetime: Duration::from_secs(2 * 7 * 24 * 60 * 60),
-            log: Arc::new(NoneTokenLog),
+            log,
             sent: 0,
         }
     }
