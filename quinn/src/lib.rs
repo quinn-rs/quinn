@@ -62,9 +62,9 @@ pub use proto::{
     ConnectError, ConnectionClose, ConnectionError, ConnectionId, ConnectionIdGenerator,
     ConnectionStats, Dir, EcnCodepoint, EndpointConfig, FrameStats, FrameType, IdleTimeout,
     MtuDiscoveryConfig, NoneTokenLog, NoneTokenStore, PathStats, ServerConfig, Side, StdSystemTime,
-    StreamId, TimeSource, TokenLog, TokenReuseError, TokenStore, Transmit, TransportConfig,
-    TransportErrorCode, UdpStats, ValidationTokenConfig, VarInt, VarIntBoundsExceeded, Written,
-    congestion, crypto,
+    StreamId, TimeSource, TokenLog, TokenMemoryCache, TokenReuseError, TokenStore, Transmit,
+    TransportConfig, TransportErrorCode, UdpStats, ValidationTokenConfig, VarInt,
+    VarIntBoundsExceeded, Written, congestion, crypto,
 };
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 pub use rustls;

@@ -36,6 +36,7 @@ rustls-log = ["rustls?/logging"]
 arbitrary = { workspace = true, optional = true }
 aws-lc-rs = { workspace = true, optional = true }
 bytes = { workspace = true }
+lru-slab = { workspace = true }
 rustc-hash = { workspace = true }
 rand = { workspace = true }
 ring = { workspace = true, optional = true }
@@ -56,6 +57,7 @@ web-time = { workspace = true }
 
 [dev-dependencies]
 assert_matches = { workspace = true }
+rand_pcg = "0.9"
 hex-literal = { workspace = true  }
 rcgen = { workspace = true }
 tracing-subscriber = { workspace = true }
