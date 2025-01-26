@@ -507,7 +507,8 @@ impl ValidationTokenConfig {
     ///
     /// This refers only to tokens sent in NEW_TOKEN frames, in contrast to retry tokens.
     ///
-    /// Defaults to 0.
+    /// If the `fastbloom` feature is enabled (which it is by default), defaults to 2. Otherwise,
+    /// defaults to 0.
     pub fn sent(&mut self, value: u32) -> &mut Self {
         self.sent = value;
         self
@@ -523,7 +524,7 @@ impl Default for ValidationTokenConfig {
         Self {
             lifetime: Duration::from_secs(2 * 7 * 24 * 60 * 60),
             log,
-            sent: 0,
+            sent: if cfg!(feature = "fastbloom") { 2 } else { 0 },
         }
     }
 }
