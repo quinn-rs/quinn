@@ -147,11 +147,11 @@ pub trait ServerConfig: Send + Sync {
 /// Keys used to protect packet payloads
 pub trait PacketKey: Send + Sync {
     /// Encrypt the packet payload with the given packet number
-    fn encrypt(&self, path_id: Option<PathId>, packet: u64, buf: &mut [u8], header_len: usize);
+    fn encrypt(&self, path_id: PathId, packet: u64, buf: &mut [u8], header_len: usize);
     /// Decrypt the packet payload with the given packet number
     fn decrypt(
         &self,
-        path_id: Option<PathId>,
+        path_id: PathId,
         packet: u64,
         header: &[u8],
         payload: &mut BytesMut,

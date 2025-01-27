@@ -171,7 +171,7 @@ impl crypto::ServerConfig for NoProtectionServerConfig {
 
 // forward all calls to inner except those related to packet encryption/decryption
 impl crypto::PacketKey for NoProtectionPacketKey {
-    fn encrypt(&self, _path_id: Option<PathId>, _packet: u64, buf: &mut [u8], header_len: usize) {
+    fn encrypt(&self, _path_id: PathId, _packet: u64, buf: &mut [u8], header_len: usize) {
         let (_header, payload_tag) = buf.split_at_mut(header_len);
         let (_payload, tag_storage) =
             payload_tag.split_at_mut(payload_tag.len() - self.inner.tag_len());
@@ -181,7 +181,7 @@ impl crypto::PacketKey for NoProtectionPacketKey {
 
     fn decrypt(
         &self,
-        _path_id: Option<PathId>,
+        _path_id: PathId,
         _packet: u64,
         _header: &[u8],
         payload: &mut BytesMut,

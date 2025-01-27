@@ -3511,7 +3511,7 @@ impl Connection {
     ) -> Result<Option<u64>, Option<TransportError>> {
         let result = packet_crypto::decrypt_packet_body(
             packet,
-            self.path_id,
+            self.path_id.unwrap_or_default(),
             &self.spaces,
             self.zero_rtt_crypto.as_ref(),
             self.key_phase,
@@ -3608,7 +3608,7 @@ impl Connection {
         let mut packet = decrypted_header.packet?;
         packet_crypto::decrypt_packet_body(
             &mut packet,
-            self.path_id,
+            self.path_id.unwrap_or_default(),
             &self.spaces,
             self.zero_rtt_crypto.as_ref(),
             self.key_phase,

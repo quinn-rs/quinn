@@ -70,7 +70,7 @@ pub(super) struct UnprotectHeaderResult {
 /// Decrypts a packet's body in-place
 pub(super) fn decrypt_packet_body(
     packet: &mut Packet,
-    path_id: Option<PathId>,
+    path_id: PathId,
     spaces: &[PacketSpace; 3],
     zero_rtt_crypto: Option<&ZeroRttCrypto>,
     conn_key_phase: bool,

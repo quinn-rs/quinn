@@ -605,7 +605,7 @@ impl Endpoint {
             .packet
             .remote
             .decrypt(
-                None, // for the first packet multipath has not been negotiated
+                Default::default(), // for the first packet multipath has not been negotiated
                 packet_number,
                 &incoming.packet.header_data,
                 &mut incoming.packet.payload,
@@ -907,14 +907,10 @@ impl Endpoint {
             INITIAL_MTU as usize - partial_encode.header_len - crypto.packet.local.tag_len();
         frame::Close::from(reason).encode(buf, max_len);
         buf.resize(buf.len() + crypto.packet.local.tag_len(), 0);
-        // initial close is done before the handshake is completed. At this point the multipath
-        // extension negotiation has not been finalized.
-        // TODO(@divma): verify
-        let path_id = None;
         partial_encode.finish(
             buf,
             &*crypto.header.local,
-            Some((0, path_id, &*crypto.packet.local)),
+            Some((0, Default::default(), &*crypto.packet.local)),
         );
         Transmit {
             destination: addresses.remote,

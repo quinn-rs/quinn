@@ -254,10 +254,12 @@ impl PacketBuilder {
         buffer.resize(buffer.len() + packet_crypto.tag_len(), 0);
         let encode_start = self.partial_encode.start;
         let packet_buf = &mut buffer[encode_start..];
+        // for packet protection, PathId(0) and no path are equivalent.
+        let path_id = conn.path_id.unwrap_or_default();
         self.partial_encode.finish(
             packet_buf,
             header_crypto,
-            Some((self.exact_number, conn.path_id, packet_crypto)),
+            Some((self.exact_number, path_id, packet_crypto)),
         );
 
         (buffer.len() - encode_start, pad)
