@@ -260,7 +260,6 @@ impl futures_io::AsyncWrite for SendStream {
     }
 }
 
-#[cfg(feature = "runtime-tokio")]
 impl tokio::io::AsyncWrite for SendStream {
     fn poll_write(
         self: Pin<&mut Self>,
