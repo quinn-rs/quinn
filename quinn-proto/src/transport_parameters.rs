@@ -704,7 +704,7 @@ pub(crate) enum TransportParameterId {
     ObservedAddr = 0x9f81a176,
 
     // https://datatracker.ietf.org/doc/html/draft-ietf-quic-multipath
-    InitialMaxPathId = 0x0f739bbc1b666d11,
+    InitialMaxPathId = 0x0f739bbc1b666d0c,
 }
 
 impl TransportParameterId {
