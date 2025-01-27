@@ -216,7 +216,6 @@ impl TransportParameters {
                 "0-RTT accepted with incompatible transport parameters",
             ));
         }
-        // TODO(@divma): multipath validations?
         Ok(())
     }
 
