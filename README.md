@@ -19,7 +19,8 @@ so it is strongly discouraged to use this fork directly.
 
 ## Git branches
 
-The upstream branches are kept unmodified and get occasionally synced.
+The upstream branches are kept unmodified and get occasionally synced
+(e.g. our `main` branch tracks `upstream/main` with a small delay).
 The iroh-specific branches are:
 
 - `iroh-0.10.x` is the branch for quinn@0.10 series.
@@ -51,11 +52,15 @@ branch.  E.g. when upstream is `main` and the current iroh branch is
 
 ### Upstream versions
 
-We only try to merge tagged upstream versions.  To check the current
-matching upstream version run:
+Usually we only try to merge tagged upstream versions. Currently (as
+of the 0.13 iroh-quinn release) we've released work that hasn't been
+released upstream yet.
+
+In the normal case, you'd be able to check the current matching
+upstream version by running:
 
 `git tag --merged`
 
-This will show all the tags which are in the ancestors of HEAD.  Look
-for the highest `quinn`, `quinn-proto` and `quinn-udp` tags which are
+This shows all the tags which are in the ancestors of HEAD.  Look for
+the highest `quinn`, `quinn-proto` and `quinn-udp` tags which are
 found in all the ancestor commits.
