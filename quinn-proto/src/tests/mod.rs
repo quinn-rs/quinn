@@ -188,7 +188,7 @@ fn draft_version_compat() {
 fn server_stateless_reset() {
     let _guard = subscribe();
     let mut key_material = vec![0; 64];
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     rng.fill_bytes(&mut key_material);
     let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &key_material);
     rng.fill_bytes(&mut key_material);
@@ -218,7 +218,7 @@ fn server_stateless_reset() {
 fn client_stateless_reset() {
     let _guard = subscribe();
     let mut key_material = vec![0; 64];
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     rng.fill_bytes(&mut key_material);
     let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &key_material);
     rng.fill_bytes(&mut key_material);

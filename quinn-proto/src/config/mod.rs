@@ -178,7 +178,7 @@ impl Default for EndpointConfig {
         use ring::hmac;
 
         let mut reset_key = [0; 64];
-        rand::thread_rng().fill_bytes(&mut reset_key);
+        rand::rng().fill_bytes(&mut reset_key);
 
         Self::new(Arc::new(hmac::Key::new(hmac::HMAC_SHA256, &reset_key)))
     }
@@ -390,7 +390,7 @@ impl ServerConfig {
         #[cfg(feature = "ring")]
         use ring::hkdf;
 
-        let rng = &mut rand::thread_rng();
+        let rng = &mut rand::rng();
         let mut master_key = [0u8; 64];
         rng.fill_bytes(&mut master_key);
         let master_key = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
