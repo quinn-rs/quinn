@@ -51,7 +51,7 @@ impl TlsSession {
 
 impl crypto::Session for TlsSession {
     fn initial_keys(&self, dst_cid: &ConnectionId, side: Side) -> Keys {
-        initial_keys(self.version, dst_cid, side, &self.suite)
+        initial_keys(self.version, *dst_cid, side, &self.suite)
     }
 
     fn handshake_data(&self) -> Option<Box<dyn Any>> {
@@ -504,7 +504,7 @@ impl crypto::ServerConfig for QuicServerConfig {
         dst_cid: &ConnectionId,
     ) -> Result<Keys, UnsupportedVersion> {
         let version = interpret_version(version)?;
-        Ok(initial_keys(version, dst_cid, Side::Server, &self.initial))
+        Ok(initial_keys(version, *dst_cid, Side::Server, &self.initial))
     }
 
     fn retry_tag(&self, version: u32, orig_dst_cid: &ConnectionId, packet: &[u8]) -> [u8; 16] {
@@ -564,11 +564,11 @@ fn to_vec(params: &TransportParameters) -> Vec<u8> {
 
 pub(crate) fn initial_keys(
     version: Version,
-    dst_cid: &ConnectionId,
+    dst_cid: ConnectionId,
     side: Side,
     suite: &Suite,
 ) -> Keys {
-    let keys = suite.keys(dst_cid, side.into(), version);
+    let keys = suite.keys(&dst_cid, side.into(), version);
     Keys {
         header: KeyPair {
             local: Box::new(keys.local.header),

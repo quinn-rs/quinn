@@ -81,7 +81,12 @@ impl UdpSocketState {
                 WinSock::IP_PKTINFO,
                 OPTION_ON,
             )?;
-            set_socket_option(&*socket.0, WinSock::IPPROTO_IP, WinSock::IP_ECN, OPTION_ON)?;
+            set_socket_option(
+                &*socket.0,
+                WinSock::IPPROTO_IP,
+                WinSock::IP_RECVECN,
+                OPTION_ON,
+            )?;
         }
 
         if is_ipv6 {
@@ -102,7 +107,7 @@ impl UdpSocketState {
             set_socket_option(
                 &*socket.0,
                 WinSock::IPPROTO_IPV6,
-                WinSock::IPV6_ECN,
+                WinSock::IPV6_RECVECN,
                 OPTION_ON,
             )?;
         }

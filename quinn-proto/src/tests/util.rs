@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::{HashMap, VecDeque},
+    collections::{HashMap, HashSet, VecDeque},
     env,
     io::{self, Write},
     mem,
@@ -81,7 +81,7 @@ impl Pair {
             epoch: now,
             time: now,
             mtu: DEFAULT_MTU,
-            latency: Duration::new(0, 0),
+            latency: Duration::ZERO,
             spins: 0,
             last_spin: false,
             congestion_experienced: false,
@@ -297,17 +297,24 @@ pub(super) struct TestEndpoint {
     conn_events: HashMap<ConnectionHandle, VecDeque<ConnectionEvent>>,
     pub(super) captured_packets: Vec<Vec<u8>>,
     pub(super) capture_inbound_packets: bool,
-    pub(super) incoming_connection_behavior: IncomingConnectionBehavior,
+    pub(super) handle_incoming: Box<dyn FnMut(&Incoming) -> IncomingConnectionBehavior>,
     pub(super) waiting_incoming: Vec<Incoming>,
 }
 
 #[derive(Debug, Copy, Clone)]
 pub(super) enum IncomingConnectionBehavior {
-    AcceptAll,
-    RejectAll,
-    Validate,
-    ValidateThenReject,
+    Accept,
+    Reject,
+    Retry,
     Wait,
+}
+
+pub(super) fn validate_incoming(incoming: &Incoming) -> IncomingConnectionBehavior {
+    if incoming.remote_address_validated() {
+        IncomingConnectionBehavior::Accept
+    } else {
+        IncomingConnectionBehavior::Retry
+    }
 }
 
 impl TestEndpoint {
@@ -315,7 +322,7 @@ impl TestEndpoint {
         let socket = if env::var_os("SSLKEYLOGFILE").is_some() {
             let socket = UdpSocket::bind(addr).expect("failed to bind UDP socket");
             socket
-                .set_read_timeout(Some(Duration::new(0, 10_000_000)))
+                .set_read_timeout(Some(Duration::from_millis(10)))
                 .unwrap();
             Some(socket)
         } else {
@@ -334,7 +341,7 @@ impl TestEndpoint {
             conn_events: HashMap::default(),
             captured_packets: Vec::new(),
             capture_inbound_packets: false,
-            incoming_connection_behavior: IncomingConnectionBehavior::AcceptAll,
+            handle_incoming: Box::new(|_| IncomingConnectionBehavior::Accept),
             waiting_incoming: Vec::new(),
         }
     }
@@ -364,26 +371,15 @@ impl TestEndpoint {
             {
                 match event {
                     DatagramEvent::NewConnection(incoming) => {
-                        match self.incoming_connection_behavior {
-                            IncomingConnectionBehavior::AcceptAll => {
+                        match (self.handle_incoming)(&incoming) {
+                            IncomingConnectionBehavior::Accept => {
                                 let _ = self.try_accept(incoming, now);
                             }
-                            IncomingConnectionBehavior::RejectAll => {
+                            IncomingConnectionBehavior::Reject => {
                                 self.reject(incoming);
                             }
-                            IncomingConnectionBehavior::Validate => {
-                                if incoming.remote_address_validated() {
-                                    let _ = self.try_accept(incoming, now);
-                                } else {
-                                    self.retry(incoming);
-                                }
-                            }
-                            IncomingConnectionBehavior::ValidateThenReject => {
-                                if incoming.remote_address_validated() {
-                                    self.reject(incoming);
-                                } else {
-                                    self.retry(incoming);
-                                }
+                            IncomingConnectionBehavior::Retry => {
+                                self.retry(incoming);
                             }
                             IncomingConnectionBehavior::Wait => {
                                 self.waiting_incoming.push(incoming);
@@ -564,14 +560,24 @@ impl Write for TestWriter {
 }
 
 pub(super) fn server_config() -> ServerConfig {
-    ServerConfig::with_crypto(Arc::new(server_crypto()))
+    let mut config = ServerConfig::with_crypto(Arc::new(server_crypto()));
+    config
+        .validation_token
+        .sent(2)
+        .log(Arc::new(SimpleTokenLog::default()));
+    config
 }
 
 pub(super) fn server_config_with_cert(
     cert: CertificateDer<'static>,
     key: PrivateKeyDer<'static>,
 ) -> ServerConfig {
-    ServerConfig::with_crypto(Arc::new(server_crypto_with_cert(cert, key)))
+    let mut config = ServerConfig::with_crypto(Arc::new(server_crypto_with_cert(cert, key)));
+    config
+        .validation_token
+        .sent(2)
+        .log(Arc::new(SimpleTokenLog::default()));
+    config
 }
 
 pub(super) fn server_crypto() -> QuicServerConfig {
@@ -609,7 +615,9 @@ fn server_crypto_inner(
 }
 
 pub(super) fn client_config() -> ClientConfig {
-    ClientConfig::new(Arc::new(client_crypto()))
+    let mut config = ClientConfig::new(Arc::new(client_crypto()));
+    config.token_store(Arc::new(SimpleTokenStore::default()));
+    config
 }
 
 pub(super) fn client_config_with_deterministic_pns() -> ClientConfig {
@@ -716,4 +724,44 @@ lazy_static! {
     pub static ref CLIENT_PORTS: Mutex<RangeFrom<u16>> = Mutex::new(44433..);
     pub(crate) static ref CERTIFIED_KEY: rcgen::CertifiedKey =
         rcgen::generate_simple_self_signed(vec!["localhost".into()]).unwrap();
+}
+
+#[derive(Default)]
+struct SimpleTokenLog(Mutex<HashSet<u128>>);
+
+impl TokenLog for SimpleTokenLog {
+    fn check_and_insert(
+        &self,
+        nonce: u128,
+        _issued: SystemTime,
+        _lifetime: Duration,
+    ) -> Result<(), TokenReuseError> {
+        if self.0.lock().unwrap().insert(nonce) {
+            Ok(())
+        } else {
+            Err(TokenReuseError)
+        }
+    }
+}
+
+#[derive(Default)]
+struct SimpleTokenStore(Mutex<HashMap<String, VecDeque<Bytes>>>);
+
+impl TokenStore for SimpleTokenStore {
+    fn insert(&self, server_name: &str, token: Bytes) {
+        self.0
+            .lock()
+            .unwrap()
+            .entry(server_name.into())
+            .or_default()
+            .push_back(token);
+    }
+
+    fn take(&self, server_name: &str) -> Option<Bytes> {
+        self.0
+            .lock()
+            .unwrap()
+            .get_mut(server_name)
+            .and_then(|queue| queue.pop_front())
+    }
 }

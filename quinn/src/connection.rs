@@ -7,7 +7,6 @@ use std::{
     pin::Pin,
     sync::{Arc, Weak},
     task::{Context, Poll, Waker},
-    time::{Duration, Instant},
 };
 
 use bytes::Bytes;
@@ -22,7 +21,7 @@ use crate::{
     recv_stream::RecvStream,
     runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller},
     send_stream::SendStream,
-    udp_transmit, ConnectionEvent, VarInt,
+    udp_transmit, ConnectionEvent, Duration, Instant, VarInt,
 };
 use proto::{
     congestion::Controller, ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent,
@@ -239,8 +238,7 @@ struct ConnectionDriver(ConnectionRef);
 impl Future for ConnectionDriver {
     type Output = Result<(), io::Error>;
 
-    #[allow(unused_mut)] // MSRV
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.state.lock("poll");
 
         let span = debug_span!("drive", id = conn.handle.0);
@@ -581,14 +579,15 @@ impl Connection {
         self.0.stable_id()
     }
 
-    // Update traffic keys spontaneously for testing purposes.
-    #[doc(hidden)]
+    /// Update traffic keys spontaneously
+    ///
+    /// This primarily exists for testing purposes.
     pub fn force_key_update(&self) {
         self.0
             .state
             .lock("force_key_update")
             .inner
-            .initiate_key_update()
+            .force_key_update()
     }
 
     /// Derive keying material from this connection's TLS session secrets.

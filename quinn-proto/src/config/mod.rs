@@ -17,8 +17,8 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
-    Duration, RandomConnectionIdGenerator, SystemTime, VarInt, VarIntBoundsExceeded,
-    DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
+    Duration, NoneTokenLog, NoneTokenStore, RandomConnectionIdGenerator, SystemTime, TokenLog,
+    TokenStore, VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
 };
 
 mod transport;
@@ -100,15 +100,14 @@ impl EndpointConfig {
         Ok(self)
     }
 
-    /// Get the current value of `max_udp_payload_size`
-    ///
-    /// While most parameters don't need to be readable, this must be exposed to allow higher-level
-    /// layers, e.g. the `quinn` crate, to determine how large a receive buffer to allocate to
-    /// support an externally-defined `EndpointConfig`.
-    ///
-    /// While `get_` accessors are typically unidiomatic in Rust, we favor concision for setters,
-    /// which will be used far more heavily.
-    #[doc(hidden)]
+    /// Get the current value of [`max_udp_payload_size`](Self::max_udp_payload_size)
+    //
+    // While most parameters don't need to be readable, this must be exposed to allow higher-level
+    // layers, e.g. the `quinn` crate, to determine how large a receive buffer to allocate to
+    // support an externally-defined `EndpointConfig`.
+    //
+    // While `get_` accessors are typically unidiomatic in Rust, we favor concision for setters,
+    // which will be used far more heavily.
     pub fn get_max_udp_payload_size(&self) -> u64 {
         self.max_udp_payload_size.into()
     }
@@ -198,6 +197,9 @@ pub struct ServerConfig {
     /// Must be set to use TLS 1.3 only.
     pub crypto: Arc<dyn crypto::ServerConfig>,
 
+    /// Configuration for sending and handling validation tokens
+    pub validation_token: ValidationTokenConfig,
+
     /// Used to generate one-time AEAD keys to protect handshake tokens
     pub(crate) token_key: Arc<dyn HandshakeTokenKey>,
 
@@ -235,6 +237,8 @@ impl ServerConfig {
 
             migration: true,
 
+            validation_token: ValidationTokenConfig::default(),
+
             preferred_address_v4: None,
             preferred_address_v6: None,
 
@@ -249,6 +253,15 @@ impl ServerConfig {
     /// Set a custom [`TransportConfig`]
     pub fn transport_config(&mut self, transport: Arc<TransportConfig>) -> &mut Self {
         self.transport = transport;
+        self
+    }
+
+    /// Set a custom [`ValidationTokenConfig`]
+    pub fn validation_token_config(
+        &mut self,
+        validation_token: ValidationTokenConfig,
+    ) -> &mut Self {
+        self.validation_token = validation_token;
         self
     }
 
@@ -393,6 +406,7 @@ impl fmt::Debug for ServerConfig {
             // crypto not debug
             // token not debug
             .field("retry_token_lifetime", &self.retry_token_lifetime)
+            .field("validation_token", &self.validation_token)
             .field("migration", &self.migration)
             .field("preferred_address_v4", &self.preferred_address_v4)
             .field("preferred_address_v6", &self.preferred_address_v6)
@@ -403,6 +417,110 @@ impl fmt::Debug for ServerConfig {
                 &self.incoming_buffer_size_total,
             )
             // system_time_clock not debug
+            .finish_non_exhaustive()
+    }
+}
+
+/// Configuration for sending and handling validation tokens in incoming connections
+///
+/// Default values should be suitable for most internet applications.
+///
+/// ## QUIC Tokens
+///
+/// The QUIC protocol defines a concept of "[address validation][1]". Essentially, one side of a
+/// QUIC connection may appear to be receiving QUIC packets from a particular remote UDP address,
+/// but it will only consider that remote address "validated" once it has convincing evidence that
+/// the address is not being [spoofed][2].
+///
+/// Validation is important primarily because of QUIC's "anti-amplification limit." This limit
+/// prevents a QUIC server from sending a client more than three times the number of bytes it has
+/// received from the client on a given address until that address is validated. This is designed
+/// to mitigate the ability of attackers to use QUIC-based servers as reflectors in [amplification
+/// attacks][3].
+///
+/// A path may become validated in several ways. The server is always considered validated by the
+/// client. The client usually begins in an unvalidated state upon first connecting or migrating,
+/// but then becomes validated through various mechanisms that usually take one network round trip.
+/// However, in some cases, a client which has previously attempted to connect to a server may have
+/// been given a one-time use cryptographically secured "token" that it can send in a subsequent
+/// connection attempt to be validated immediately.
+///
+/// There are two ways these tokens can originate:
+///
+/// - If the server responds to an incoming connection with `retry`, a "retry token" is minted and
+///   sent to the client, which the client immediately uses to attempt to connect again. Retry
+///   tokens operate on short timescales, such as 15 seconds.
+/// - If a client's path within an active connection is validated, the server may send the client
+///   one or more "validation tokens," which the client may store for use in later connections to
+///   the same server. Validation tokens may be valid for much longer lifetimes than retry token.
+///
+/// The usage of validation tokens is most impactful in situations where 0-RTT data is also being
+/// used--in particular, in situations where the server sends the client more than three times more
+/// 0.5-RTT data than it has received 0-RTT data. Since the successful completion of a connection
+/// handshake implicitly causes the client's address to be validated, transmission of 0.5-RTT data
+/// is the main situation where a server might be sending application data to an address that could
+/// be validated by token usage earlier than it would become validated without token usage.
+///
+/// [1]: https://www.rfc-editor.org/rfc/rfc9000.html#section-8
+/// [2]: https://en.wikipedia.org/wiki/IP_address_spoofing
+/// [3]: https://en.wikipedia.org/wiki/Denial-of-service_attack#Amplification
+///
+/// These tokens should not be confused with "stateless reset tokens," which are similarly named
+/// but entirely unrelated.
+#[derive(Clone)]
+pub struct ValidationTokenConfig {
+    pub(crate) lifetime: Duration,
+    pub(crate) log: Arc<dyn TokenLog>,
+    pub(crate) sent: u32,
+}
+
+impl ValidationTokenConfig {
+    /// Duration after an address validation token was issued for which it's considered valid
+    ///
+    /// This refers only to tokens sent in NEW_TOKEN frames, in contrast to retry tokens.
+    ///
+    /// Defaults to 2 weeks.
+    pub fn lifetime(&mut self, value: Duration) -> &mut Self {
+        self.lifetime = value;
+        self
+    }
+
+    /// Set a custom [`TokenLog`]
+    ///
+    /// Defaults to [`NoneTokenLog`], which makes the server ignore all address validation tokens
+    /// (that is, tokens originating from NEW_TOKEN frames--retry tokens are not affected).
+    pub fn log(&mut self, log: Arc<dyn TokenLog>) -> &mut Self {
+        self.log = log;
+        self
+    }
+
+    /// Number of address validation tokens sent to a client when its path is validated
+    ///
+    /// This refers only to tokens sent in NEW_TOKEN frames, in contrast to retry tokens.
+    ///
+    /// Defaults to 0.
+    pub fn sent(&mut self, value: u32) -> &mut Self {
+        self.sent = value;
+        self
+    }
+}
+
+impl Default for ValidationTokenConfig {
+    fn default() -> Self {
+        Self {
+            lifetime: Duration::from_secs(2 * 7 * 24 * 60 * 60),
+            log: Arc::new(NoneTokenLog),
+            sent: 0,
+        }
+    }
+}
+
+impl fmt::Debug for ValidationTokenConfig {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("ServerValidationTokenConfig")
+            .field("lifetime", &self.lifetime)
+            // log not debug
+            .field("sent", &self.sent)
             .finish_non_exhaustive()
     }
 }
@@ -419,6 +537,9 @@ pub struct ClientConfig {
     /// Cryptographic configuration to use
     pub(crate) crypto: Arc<dyn crypto::ClientConfig>,
 
+    /// Validation token store to use
+    pub(crate) token_store: Arc<dyn TokenStore>,
+
     /// Provider that populates the destination connection ID of Initial Packets
     pub(crate) initial_dst_cid_provider: Arc<dyn Fn() -> ConnectionId + Send + Sync>,
 
@@ -432,6 +553,7 @@ impl ClientConfig {
         Self {
             transport: Default::default(),
             crypto,
+            token_store: Arc::new(NoneTokenStore),
             initial_dst_cid_provider: Arc::new(|| {
                 RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid()
             }),
@@ -458,6 +580,15 @@ impl ClientConfig {
     /// Set a custom [`TransportConfig`]
     pub fn transport_config(&mut self, transport: Arc<TransportConfig>) -> &mut Self {
         self.transport = transport;
+        self
+    }
+
+    /// Set a custom [`TokenStore`]
+    ///
+    /// Defaults to [`NoneTokenStore`], which disables the use of tokens from NEW_TOKEN frames as a
+    /// client.
+    pub fn token_store(&mut self, store: Arc<dyn TokenStore>) -> &mut Self {
+        self.token_store = store;
         self
     }
 
@@ -493,6 +624,7 @@ impl fmt::Debug for ClientConfig {
         fmt.debug_struct("ClientConfig")
             .field("transport", &self.transport)
             // crypto not debug
+            // token_store not debug
             .field("version", &self.version)
             .finish_non_exhaustive()
     }

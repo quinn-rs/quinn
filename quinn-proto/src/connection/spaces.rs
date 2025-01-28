@@ -12,7 +12,7 @@ use tracing::trace;
 use super::assembler::Assembler;
 use crate::{
     connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
-    shared::IssuedCid, Dir, Duration, Instant, StreamId, TransportError, VarInt,
+    shared::IssuedCid, Dir, Duration, Instant, SocketAddr, StreamId, TransportError, VarInt,
 };
 
 pub(super) struct PacketSpace {
@@ -310,6 +310,23 @@ pub struct Retransmits {
     pub(super) ack_frequency: bool,
     pub(super) handshake_done: bool,
     pub(super) observed_addr: bool,
+    /// For each enqueued NEW_TOKEN frame, a copy of the path's remote address
+    ///
+    /// There are 2 reasons this is unusual:
+    ///
+    /// - If the path changes, NEW_TOKEN frames bound for the old path are not retransmitted on the
+    ///   new path. That is why this field stores the remote address: so that ones for old paths
+    ///   can be filtered out.
+    /// - If a token is lost, a new randomly generated token is re-transmitted, rather than the
+    ///   original. This is so that if both transmissions are received, the client won't risk
+    ///   sending the same token twice. That is why this field does _not_ store any actual token.
+    ///
+    /// It is true that a QUIC endpoint will only want to effectively have NEW_TOKEN frames
+    /// enqueued for its current path at a given point in time. Based on that, we could conceivably
+    /// change this from a vector to an `Option<(SocketAddr, usize)>` or just a `usize` or
+    /// something. However, due to the architecture of Quinn, it is considerably simpler to not do
+    /// that; consider what such a change would mean for implementing `BitOrAssign` on Self.
+    pub(super) new_tokens: Vec<SocketAddr>,
 }
 
 impl Retransmits {
@@ -328,6 +345,7 @@ impl Retransmits {
             && !self.ack_frequency
             && !self.handshake_done
             && !self.observed_addr
+            && self.new_tokens.is_empty()
     }
 }
 
@@ -350,6 +368,7 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.ack_frequency |= rhs.ack_frequency;
         self.handshake_done |= rhs.handshake_done;
         self.observed_addr |= rhs.observed_addr;
+        self.new_tokens.extend_from_slice(&rhs.new_tokens);
     }
 }
 

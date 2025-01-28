@@ -128,6 +128,8 @@ jobs:
       - run: cargo test --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust }} == "stable"
       - run: cargo test -p iroh-quinn-udp --benches
+      - run: cargo test -p iroh-quinn-udp --benches --features fast-apple-datapath
+        if: ${{ matrix.os }} == "macos-latest"
 
   test-aws-lc-rs:
     runs-on: ubuntu-latest
@@ -146,40 +148,30 @@ jobs:
     name: test wasm32-unknown-unknown
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout sources
-        uses: actions/checkout@v4
-
-      - name: Install stable toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Add wasm target
-        run: rustup target add wasm32-unknown-unknown
-
-      - name: Install nodejs v20
-        uses: actions/setup-node@v4
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - run: rustup target add wasm32-unknown-unknown
+      - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - uses: bytecodealliance/actions/wasm-tools/setup@v1
+      - uses: cargo-bins/cargo-binstall@main
 
-      - name: Setup `wasm-tools`
-        uses: bytecodealliance/actions/wasm-tools/setup@v1
-
-      - name: Install cargo binstall
-        uses: cargo-bins/cargo-binstall@main
-
-      - name: build wasm32 tests (quinn-proto)
-        run: cargo test -p iroh-quinn-proto --target wasm32-unknown-unknown --no-run
+      - run: cargo test -p iroh-quinn-proto --target wasm32-unknown-unknown --no-run
+      - run: cargo check -p iroh-quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
+      - run: cargo rustc -p iroh-quinn --target wasm32-unknown-unknown --no-default-features --features=log,platform-verifier,rustls-ring --crate-type=cdylib
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
-      - name: Check for 'import "env"' in Wasm
+      - name: Ensure no 'import "env"' in iroh-quinn-proto Wasm
         run: |
           ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/deps/iroh_quinn_proto-*.wasm | grep 'import "env"'
+      - name: Ensure no 'import "env"' in iroh-quinn Wasm
+        run: |
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh_quinn.wasm | grep 'import "env"'
 
-      - name: Install wasm-bindgen-test-runner
-        run: cargo binstall wasm-bindgen-cli --locked --no-confirm
-
-      - name: wasm32 test (quinn-proto)
-        run: cargo test -p iroh-quinn-proto --target wasm32-unknown-unknown
+      - run: cargo binstall wasm-bindgen-cli --locked --no-confirm
+      - run: cargo test -p iroh-quinn-proto --target wasm32-unknown-unknown
 
   msrv:
     runs-on: ubuntu-latest

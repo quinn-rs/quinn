@@ -144,7 +144,7 @@ impl SendStream {
                 conn.wake();
                 Ok(())
             }
-            Err(FinishError::ClosedStream) => Err(ClosedStream::new()),
+            Err(FinishError::ClosedStream) => Err(ClosedStream::default()),
             // Harmless. If the application needs to know about stopped streams at this point, it
             // should call `stopped`.
             Err(FinishError::Stopped(_)) => Ok(()),
@@ -203,8 +203,7 @@ impl SendStream {
         Stopped { stream: self }.await
     }
 
-    #[doc(hidden)]
-    pub fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<Option<VarInt>, StoppedError>> {
+    fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<Option<VarInt>, StoppedError>> {
         let mut conn = self.conn.state.lock("SendStream::poll_stopped");
 
         if self.is_0rtt {
@@ -261,7 +260,6 @@ impl futures_io::AsyncWrite for SendStream {
     }
 }
 
-#[cfg(feature = "runtime-tokio")]
 impl tokio::io::AsyncWrite for SendStream {
     fn poll_write(
         self: Pin<&mut Self>,
@@ -462,7 +460,7 @@ impl From<StoppedError> for WriteError {
 
 impl From<WriteError> for io::Error {
     fn from(x: WriteError) -> Self {
-        use self::WriteError::*;
+        use WriteError::*;
         let kind = match x {
             Stopped(_) | ZeroRttRejected => io::ErrorKind::ConnectionReset,
             ConnectionLost(_) | ClosedStream => io::ErrorKind::NotConnected,

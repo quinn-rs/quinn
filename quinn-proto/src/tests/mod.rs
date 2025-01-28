@@ -2,7 +2,7 @@ use std::{
     convert::TryInto,
     mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use assert_matches::assert_matches;
@@ -34,6 +34,8 @@ use crate::{
 };
 mod util;
 use util::*;
+
+mod token;
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as test;
@@ -176,24 +178,6 @@ fn draft_version_compat() {
                         ApplicationClose { error_code: VarInt(42), ref reason }
                     )}) if reason == REASON);
     assert_matches!(pair.client_conn_mut(client_ch).poll(), None);
-    assert_eq!(pair.client.known_connections(), 0);
-    assert_eq!(pair.client.known_cids(), 0);
-    assert_eq!(pair.server.known_connections(), 0);
-    assert_eq!(pair.server.known_cids(), 0);
-}
-
-#[test]
-fn stateless_retry() {
-    let _guard = subscribe();
-    let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
-    let (client_ch, _server_ch) = pair.connect();
-    pair.client
-        .connections
-        .get_mut(&client_ch)
-        .unwrap()
-        .close(pair.time, VarInt(42), Bytes::new());
-    pair.drive();
     assert_eq!(pair.client.known_connections(), 0);
     assert_eq!(pair.client.known_cids(), 0);
     assert_eq!(pair.server.known_connections(), 0);
@@ -537,7 +521,6 @@ fn congestion() {
     pair.client_send(client_ch, s).write(&[42; 1024]).unwrap();
 }
 
-#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 #[test]
 fn high_latency_handshake() {
     let _guard = subscribe();
@@ -554,7 +537,7 @@ fn high_latency_handshake() {
 fn zero_rtt_happypath() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
+    pair.server.handle_incoming = Box::new(validate_incoming);
     let config = client_config();
 
     // Establish normal connection
@@ -723,7 +706,7 @@ fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: 
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
     info!("resuming session");
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Wait;
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
     let client_ch = pair.begin_connect(config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
@@ -1012,7 +995,7 @@ fn key_update_simple() {
     let _ = chunks.finalize();
 
     info!("initiating key update");
-    pair.client_conn_mut(client_ch).initiate_key_update();
+    pair.client_conn_mut(client_ch).force_key_update();
 
     const MSG2: &[u8] = b"hello2";
     pair.client_send(client_ch, s).write(MSG2).unwrap();
@@ -1052,7 +1035,7 @@ fn key_update_reordered() {
     assert!(!pair.client.outbound.is_empty());
     pair.client.delay_outbound();
 
-    pair.client_conn_mut(client_ch).initiate_key_update();
+    pair.client_conn_mut(client_ch).force_key_update();
     info!("updated keys");
 
     const MSG2: &[u8] = b"two";
@@ -1636,9 +1619,10 @@ fn cid_retirement() {
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(server_ch).is_closed());
-    assert_matches!(
+
+    assert_eq!(
         pair.client_conn_mut(client_ch).active_rem_cid_seq(),
-        _next_retire_prior_to
+        next_retire_prior_to,
     );
 }
 
@@ -2993,7 +2977,7 @@ fn pure_sender_voluntarily_acks() {
 fn reject_manually() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::RejectAll;
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Reject);
 
     // The server should now reject incoming connections.
     let client_ch = pair.begin_connect(client_config());
@@ -3013,7 +2997,20 @@ fn reject_manually() {
 fn validate_then_reject_manually() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::ValidateThenReject;
+    pair.server.handle_incoming = Box::new({
+        let mut i = 0;
+        move |incoming| {
+            if incoming.remote_address_validated() {
+                assert_eq!(i, 1);
+                i += 1;
+                IncomingConnectionBehavior::Reject
+            } else {
+                assert_eq!(i, 0);
+                i += 1;
+                IncomingConnectionBehavior::Retry
+            }
+        }
+    });
 
     // The server should now retry and reject incoming connections.
     let client_ch = pair.begin_connect(client_config());

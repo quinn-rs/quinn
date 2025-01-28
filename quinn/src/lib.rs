@@ -41,7 +41,7 @@
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
-use std::{sync::Arc, time::Duration};
+use std::sync::Arc;
 
 macro_rules! ready {
     ($e:expr $(,)?) => {
@@ -61,12 +61,18 @@ mod runtime;
 mod send_stream;
 mod work_limiter;
 
+#[cfg(not(wasm_browser))]
+pub(crate) use std::time::{Duration, Instant};
+#[cfg(wasm_browser)]
+pub(crate) use web_time::{Duration, Instant};
+
 pub use proto::{
     congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream,
     ConfigError, ConnectError, ConnectionClose, ConnectionError, ConnectionId,
     ConnectionIdGenerator, ConnectionStats, Dir, EcnCodepoint, EndpointConfig, FrameStats,
-    FrameType, IdleTimeout, MtuDiscoveryConfig, PathStats, ServerConfig, Side, StdSystemTime,
-    StreamId, TimeSource, Transmit, TransportConfig, TransportErrorCode, UdpStats, VarInt,
+    FrameType, IdleTimeout, MtuDiscoveryConfig, NoneTokenLog, NoneTokenStore, PathStats,
+    ServerConfig, Side, StdSystemTime, StreamId, TimeSource, TokenLog, TokenReuseError, TokenStore,
+    Transmit, TransportConfig, TransportErrorCode, UdpStats, ValidationTokenConfig, VarInt,
     VarIntBoundsExceeded, Written,
 };
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]

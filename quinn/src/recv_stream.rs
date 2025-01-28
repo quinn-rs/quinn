@@ -556,7 +556,7 @@ impl From<ResetError> for ReadError {
 
 impl From<ReadError> for io::Error {
     fn from(x: ReadError) -> Self {
-        use self::ReadError::*;
+        use ReadError::*;
         let kind = match x {
             Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
             ConnectionLost(_) | ClosedStream => io::ErrorKind::NotConnected,
