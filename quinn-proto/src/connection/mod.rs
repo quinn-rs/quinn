@@ -292,7 +292,7 @@ impl Connection {
             // simultaneous key update by both is just like a regular key update with a really fast
             // response. Inspired by quic-go's similar behavior of performing the first key update
             // at the 100th short-header packet.
-            key_phase_size: rng.gen_range(10..1000),
+            key_phase_size: rng.random_range(10..1000),
             peer_params: TransportParameters::default(),
             orig_rem_cid: rem_cid,
             initial_dst_cid: init_cid,
@@ -300,7 +300,7 @@ impl Connection {
             lost_packets: 0,
             events: VecDeque::new(),
             endpoint_events: VecDeque::new(),
-            spin_enabled: config.allow_spin && rng.gen_ratio(7, 8),
+            spin_enabled: config.allow_spin && rng.random_ratio(7, 8),
             spin: false,
             spaces: [initial_space, PacketSpace::new(now), PacketSpace::new(now)],
             highest_space: SpaceId::Initial,
@@ -2976,14 +2976,14 @@ impl Connection {
                 &self.config,
             )
         };
-        new_path.challenge = Some(self.rng.gen());
+        new_path.challenge = Some(self.rng.random());
         new_path.challenge_pending = true;
         let prev_pto = self.pto(SpaceId::Data);
 
         let mut prev = mem::replace(&mut self.path, new_path);
         // Don't clobber the original path if the previous one hasn't been validated yet
         if prev.challenge.is_none() {
-            prev.challenge = Some(self.rng.gen());
+            prev.challenge = Some(self.rng.random());
             prev.challenge_pending = true;
             // We haven't updated the remote CID yet, this captures the remote CID we were using on
             // the previous path.

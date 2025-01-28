@@ -74,7 +74,7 @@ impl Endpoint {
     ) -> Self {
         let rng_seed = rng_seed.or(config.rng_seed);
         Self {
-            rng: rng_seed.map_or(StdRng::from_entropy(), StdRng::from_seed),
+            rng: rng_seed.map_or(StdRng::from_os_rng(), StdRng::from_seed),
             index: ConnectionIndex::default(),
             connections: Slab::new(),
             local_cid_generator: (config.connection_id_generator_factory.as_ref())(),
@@ -173,7 +173,7 @@ impl Endpoint {
                 trace!("sending version negotiation");
                 // Negotiate versions
                 Header::VersionNegotiate {
-                    random: self.rng.gen::<u8>() | 0x40,
+                    random: self.rng.random::<u8>() | 0x40,
                     src_cid: dst_cid,
                     dst_cid: src_cid,
                 }
@@ -297,7 +297,8 @@ impl Endpoint {
         let padding_len = if max_padding_len <= IDEAL_MIN_PADDING_LEN {
             max_padding_len
         } else {
-            self.rng.gen_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
+            self.rng
+                .random_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
         };
         buf.reserve(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);
