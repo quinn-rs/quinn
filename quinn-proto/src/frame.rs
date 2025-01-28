@@ -1,6 +1,6 @@
 use std::{
     fmt::{self, Write},
-    io, mem, mem,
+    mem,
     net::{IpAddr, SocketAddr},
     ops::{Range, RangeInclusive},
 };
