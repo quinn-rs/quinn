@@ -26,78 +26,24 @@ pub(super) struct PacketSpace {
     /// Packet numbers to acknowledge
     pub(super) pending_acks: PendingAcks,
 
-    /// The packet number of the next packet that will be sent, if any. In the Data space, the
-    /// packet number stored here is sometimes skipped by [`PacketNumberFilter`] logic.
-    pub(super) next_packet_number: u64,
-    /// The largest packet number the remote peer acknowledged in an ACK frame.
-    pub(super) largest_acked_packet: Option<u64>,
-    pub(super) largest_acked_packet_sent: Instant,
-    /// The highest-numbered ACK-eliciting packet we've sent
-    pub(super) largest_ack_eliciting_sent: u64,
-    /// Number of packets in `sent_packets` with numbers above `largest_ack_eliciting_sent`
-    pub(super) unacked_non_ack_eliciting_tail: u64,
-    /// Transmitted but not acked
-    // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
-    pub(super) sent_packets: BTreeMap<u64, SentPacket>,
-    /// Number of explicit congestion notification codepoints seen on incoming packets
-    pub(super) ecn_counters: frame::EcnCounts,
-    /// Recent ECN counters sent by the peer in ACK frames
-    ///
-    /// Updated (and inspected) whenever we receive an ACK with a new highest acked packet
-    /// number. Stored per-space to simplify verification, which would otherwise have difficulty
-    /// distinguishing between ECN bleaching and counts having been updated by a near-simultaneous
-    /// ACK already processed in another space.
-    pub(super) ecn_feedback: frame::EcnCounts,
-
     /// Incoming cryptographic handshake stream
     pub(super) crypto_stream: Assembler,
     /// Current offset of outgoing cryptographic handshake stream
     pub(super) crypto_offset: u64,
-
-    /// The time the most recently sent retransmittable packet was sent.
-    pub(super) time_of_last_ack_eliciting_packet: Option<Instant>,
-    /// The time at which the earliest sent packet in this space will be considered lost based on
-    /// exceeding the reordering window in time. Only set for packets numbered prior to a packet
-    /// that has been acknowledged.
-    pub(super) loss_time: Option<Instant>,
-    /// Number of tail loss probes to send
-    pub(super) loss_probes: u32,
-    pub(super) ping_pending: bool,
-    pub(super) immediate_ack_pending: bool,
-    /// Number of congestion control "in flight" bytes
-    pub(super) in_flight: u64,
     /// Number of packets sent in the current key phase
     pub(super) sent_with_keys: u64,
 }
 
 impl PacketSpace {
-    pub(super) fn new(now: Instant) -> Self {
+    pub(super) fn new() -> Self {
         Self {
             crypto: None,
             dedup: Dedup::new(),
             rx_packet: 0,
-
             pending: Retransmits::default(),
             pending_acks: PendingAcks::new(),
-
-            next_packet_number: 0,
-            largest_acked_packet: None,
-            largest_acked_packet_sent: now,
-            largest_ack_eliciting_sent: 0,
-            unacked_non_ack_eliciting_tail: 0,
-            sent_packets: BTreeMap::new(),
-            ecn_counters: frame::EcnCounts::ZERO,
-            ecn_feedback: frame::EcnCounts::ZERO,
-
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
-
-            time_of_last_ack_eliciting_packet: None,
-            loss_time: None,
-            loss_probes: 0,
-            ping_pending: false,
-            immediate_ack_pending: false,
-            in_flight: 0,
             sent_with_keys: 0,
         }
     }
@@ -163,6 +109,7 @@ impl PacketSpace {
         x
     }
 
+    /// Whether there is anything to send.
     pub(super) fn can_send(&self, streams: &StreamsState) -> SendableFrames {
         let acks = self.pending_acks.can_send();
         let other =
@@ -202,17 +149,6 @@ impl PacketSpace {
         // congestion check obvious.
         self.ecn_feedback = ecn;
         Ok(ce_increase != 0)
-    }
-
-    /// Stop tracking sent packet `number`, and return what we knew about it
-    pub(super) fn take(&mut self, number: u64) -> Option<SentPacket> {
-        let packet = self.sent_packets.remove(&number)?;
-        self.in_flight -= u64::from(packet.size);
-        if !packet.ack_eliciting && number > self.largest_ack_eliciting_sent {
-            self.unacked_non_ack_eliciting_tail =
-                self.unacked_non_ack_eliciting_tail.checked_sub(1).unwrap();
-        }
-        Some(packet)
     }
 
     /// Returns the number of bytes to *remove* from the connection's in-flight count
@@ -269,6 +205,79 @@ impl Index<SpaceId> for [PacketSpace; 3] {
 impl IndexMut<SpaceId> for [PacketSpace; 3] {
     fn index_mut(&mut self, space: SpaceId) -> &mut PacketSpace {
         &mut self.as_mut()[space as usize]
+    }
+}
+
+/// The packet number space to support multipath.
+///
+/// This contains the data specific to a per-path packet number space.
+pub(super) struct PacketNumberSpace {
+    /// The packet number of the next packet that will be sent, if any. In the Data space, the
+    /// packet number stored here is sometimes skipped by [`PacketNumberFilter`] logic.
+    pub(super) next_packet_number: u64,
+    /// The largest packet number the remote peer acknowledged in an ACK frame.
+    pub(super) largest_acked_packet: Option<u64>,
+    pub(super) largest_acked_packet_sent: Instant,
+    /// The highest-numbered ACK-eliciting packet we've sent
+    pub(super) largest_ack_eliciting_sent: u64,
+    /// Number of packets in `sent_packets` with numbers above `largest_ack_eliciting_sent`
+    pub(super) unacked_non_ack_eliciting_tail: u64,
+    /// Transmitted but not acked
+    // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
+    pub(super) sent_packets: BTreeMap<u64, SentPacket>,
+    /// Number of explicit congestion notification codepoints seen on incoming packets
+    pub(super) ecn_counters: frame::EcnCounts,
+    /// Recent ECN counters sent by the peer in ACK frames
+    ///
+    /// Updated (and inspected) whenever we receive an ACK with a new highest acked packet
+    /// number. Stored per-space to simplify verification, which would otherwise have difficulty
+    /// distinguishing between ECN bleaching and counts having been updated by a near-simultaneous
+    /// ACK already processed in another space.
+    pub(super) ecn_feedback: frame::EcnCounts,
+
+    /// The time the most recently sent retransmittable packet was sent.
+    pub(super) time_of_last_ack_eliciting_packet: Option<Instant>,
+    /// The time at which the earliest sent packet in this space will be considered lost based on
+    /// exceeding the reordering window in time. Only set for packets numbered prior to a packet
+    /// that has been acknowledged.
+    pub(super) loss_time: Option<Instant>,
+    /// Number of tail loss probes to send
+    pub(super) loss_probes: u32,
+    pub(super) ping_pending: bool,
+    pub(super) immediate_ack_pending: bool,
+    /// Number of congestion control "in flight" bytes
+    pub(super) in_flight: u64,
+}
+
+impl PacketNumberSpace {
+    pub(super) fn new(now: Instant) -> Self {
+        Self {
+            next_packet_number: 0,
+            largest_acked_packet: None,
+            largest_acked_packet_sent: now,
+            largest_ack_eliciting_sent: 0,
+            unacked_non_ack_eliciting_tail: 0,
+            sent_packets: BTreeMap::new(),
+            ecn_counters: frame::EcnCounts::ZERO,
+            ecn_feedback: frame::EcnCounts::ZERO,
+            time_of_last_ack_eliciting_packet: None,
+            loss_time: None,
+            loss_probes: 0,
+            ping_pending: false,
+            immediate_ack_pending: false,
+            in_flight: 0,
+        }
+    }
+
+    /// Stop tracking sent packet `number`, and return what we knew about it
+    pub(super) fn take(&mut self, number: u64) -> Option<SentPacket> {
+        let packet = self.sent_packets.remove(&number)?;
+        self.in_flight -= u64::from(packet.size);
+        if !packet.ack_eliciting && number > self.largest_ack_eliciting_sent {
+            self.unacked_non_ack_eliciting_tail =
+                self.unacked_non_ack_eliciting_tail.checked_sub(1).unwrap();
+        }
+        Some(packet)
     }
 }
 
