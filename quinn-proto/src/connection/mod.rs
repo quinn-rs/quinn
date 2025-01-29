@@ -191,6 +191,7 @@ pub struct Connection {
     /// Why the connection was lost, if it has been
     error: Option<ConnectionError>,
     /// Identifies Data-space packet numbers to skip. Not used in earlier spaces.
+    // TODO(flub): remove this
     packet_number_filter: PacketNumberFilter,
 
     //

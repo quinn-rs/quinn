@@ -7,9 +7,9 @@ use std::{
 
 use rand::Rng;
 use rustc_hash::FxHashSet;
-use tracing::trace;
+use tracing::{error, trace};
 
-use super::assembler::Assembler;
+use super::{assembler::Assembler, PathId};
 use crate::{
     connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
     shared::IssuedCid, Dir, Duration, Instant, StreamId, TransportError, VarInt,
@@ -30,12 +30,18 @@ pub(super) struct PacketSpace {
     pub(super) crypto_stream: Assembler,
     /// Current offset of outgoing cryptographic handshake stream
     pub(super) crypto_offset: u64,
-    /// Number of packets sent in the current key phase
-    pub(super) sent_with_keys: u64,
+
+    /// Multipath packet number spaces
+    ///
+    /// Each [`PathId`] has it's own [`PacketNumberSpace`].  Only the [`SpaceId::Data`] can
+    /// have multiple packet number spaces, the other spaces only have a number space for
+    /// `PathId(0)`, which is populated at creation.
+    number_spaces: BTreeMap<PathId, PacketNumberSpace>,
 }
 
 impl PacketSpace {
-    pub(super) fn new() -> Self {
+    pub(super) fn new(now: Instant, space: SpaceId, rng: &mut (impl Rng + ?Sized)) -> Self {
+        let number_space_0 = PacketNumberSpace::new(now, space, rng);
         Self {
             crypto: None,
             dedup: Dedup::new(),
@@ -44,154 +50,34 @@ impl PacketSpace {
             pending_acks: PendingAcks::new(),
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
-            sent_with_keys: 0,
+            number_spaces: BTreeMap::from([(PathId(0), number_space_0)]),
         }
     }
 
-    /// Queue data for a tail loss probe (or anti-amplification deadlock prevention) packet
-    ///
-    /// Probes are sent similarly to normal packets when an expected ACK has not arrived. We never
-    /// deem a packet lost until we receive an ACK that should have included it, but if a trailing
-    /// run of packets (or their ACKs) are lost, this might not happen in a timely fashion. We send
-    /// probe packets to force an ACK, and exempt them from congestion control to prevent a deadlock
-    /// when the congestion window is filled with lost tail packets.
-    ///
-    /// We prefer to send new data, to make the most efficient use of bandwidth. If there's no data
-    /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
-    /// in-flight data either, we're probably a client guarding against a handshake
-    /// anti-amplification deadlock and we just make something up.
-    pub(super) fn maybe_queue_probe(
-        &mut self,
-        request_immediate_ack: bool,
-        streams: &StreamsState,
-    ) {
-        if self.loss_probes == 0 {
-            return;
-        }
-
-        if request_immediate_ack {
-            // The probe should be ACKed without delay (should only be used in the Data space and
-            // when the peer supports the acknowledgement frequency extension)
-            self.immediate_ack_pending = true;
-        }
-
-        // Retransmit the data of the oldest in-flight packet
-        if !self.pending.is_empty(streams) {
-            // There's real data to send here, no need to make something up
-            return;
-        }
-
-        for packet in self.sent_packets.values_mut() {
-            if !packet.retransmits.is_empty(streams) {
-                // Remove retransmitted data from the old packet so we don't end up retransmitting
-                // it *again* even if the copy we're sending now gets acknowledged.
-                self.pending |= mem::take(&mut packet.retransmits);
-                return;
-            }
-        }
-
-        // Nothing new to send and nothing to retransmit, so fall back on a ping. This should only
-        // happen in rare cases during the handshake when the server becomes blocked by
-        // anti-amplification.
-        self.ping_pending = true;
-    }
-
-    /// Get the next outgoing packet number in this space
-    ///
-    /// In the Data space, the connection's [`PacketNumberFilter`] must be used rather than calling
-    /// this directly.
-    pub(super) fn get_tx_number(&mut self) -> u64 {
-        // TODO: Handle packet number overflow gracefully
-        assert!(self.next_packet_number < 2u64.pow(62));
-        let x = self.next_packet_number;
-        self.next_packet_number += 1;
-        self.sent_with_keys += 1;
-        x
+    pub(super) fn number_space(&mut self, path: PathId) -> &mut PacketNumberSpace {
+        self.number_spaces
+            .entry(path)
+            .or_insert_with(PacketNumberSpace::new_default)
     }
 
     /// Whether there is anything to send.
     pub(super) fn can_send(&self, streams: &StreamsState) -> SendableFrames {
         let acks = self.pending_acks.can_send();
-        let other =
-            !self.pending.is_empty(streams) || self.ping_pending || self.immediate_ack_pending;
+        let other = !self.pending.is_empty(streams)
+            || self
+                .number_spaces
+                .values()
+                .any(|s| s.ping_pending || s.immediate_ack_pending);
 
         SendableFrames { acks, other }
     }
 
-    /// Verifies sanity of an ECN block and returns whether congestion was encountered.
-    pub(super) fn detect_ecn(
-        &mut self,
-        newly_acked: u64,
-        ecn: frame::EcnCounts,
-    ) -> Result<bool, &'static str> {
-        let ect0_increase = ecn
-            .ect0
-            .checked_sub(self.ecn_feedback.ect0)
-            .ok_or("peer ECT(0) count regression")?;
-        let ect1_increase = ecn
-            .ect1
-            .checked_sub(self.ecn_feedback.ect1)
-            .ok_or("peer ECT(1) count regression")?;
-        let ce_increase = ecn
-            .ce
-            .checked_sub(self.ecn_feedback.ce)
-            .ok_or("peer CE count regression")?;
-        let total_increase = ect0_increase + ect1_increase + ce_increase;
-        if total_increase < newly_acked {
-            return Err("ECN bleaching");
-        }
-        if (ect0_increase + ce_increase) < newly_acked || ect1_increase != 0 {
-            return Err("ECN corruption");
-        }
-        // If total_increase > newly_acked (which happens when ACKs are lost), this is required by
-        // the draft so that long-term drift does not occur. If =, then the only question is whether
-        // to count CE packets as CE or ECT0. Recording them as CE is more consistent and keeps the
-        // congestion check obvious.
-        self.ecn_feedback = ecn;
-        Ok(ce_increase != 0)
-    }
-
-    /// Returns the number of bytes to *remove* from the connection's in-flight count
-    pub(super) fn sent(&mut self, number: u64, packet: SentPacket) -> u64 {
-        // Retain state for at most this many non-ACK-eliciting packets sent after the most recently
-        // sent ACK-eliciting packet. We're never guaranteed to receive an ACK for those, and we
-        // can't judge them as lost without an ACK, so to limit memory in applications which receive
-        // packets but don't send ACK-eliciting data for long periods use we must eventually start
-        // forgetting about them, although it might also be reasonable to just kill the connection
-        // due to weird peer behavior.
-        const MAX_UNACKED_NON_ACK_ELICTING_TAIL: u64 = 1_000;
-
-        let mut forgotten_bytes = 0;
-        if packet.ack_eliciting {
-            self.unacked_non_ack_eliciting_tail = 0;
-            self.largest_ack_eliciting_sent = number;
-        } else if self.unacked_non_ack_eliciting_tail > MAX_UNACKED_NON_ACK_ELICTING_TAIL {
-            let oldest_after_ack_eliciting = *self
-                .sent_packets
-                .range((
-                    Bound::Excluded(self.largest_ack_eliciting_sent),
-                    Bound::Unbounded,
-                ))
-                .next()
-                .unwrap()
-                .0;
-            // Per https://www.rfc-editor.org/rfc/rfc9000.html#name-frames-and-frame-types,
-            // non-ACK-eliciting packets must only contain PADDING, ACK, and CONNECTION_CLOSE
-            // frames, which require no special handling on ACK or loss beyond removal from
-            // in-flight counters if padded.
-            let packet = self
-                .sent_packets
-                .remove(&oldest_after_ack_eliciting)
-                .unwrap();
-            forgotten_bytes = u64::from(packet.size);
-            self.in_flight -= forgotten_bytes;
-        } else {
-            self.unacked_non_ack_eliciting_tail += 1;
-        }
-
-        self.in_flight += u64::from(packet.size);
-        self.sent_packets.insert(number, packet);
-        forgotten_bytes
+    /// The number of packets sent with the current crypto keys.
+    ///
+    /// Used to know if a key update is needed.
+    pub(super) fn sent_with_keys(&self) -> u64 {
+        // TODO(flub): Maybe this only needs to return the highest?
+        self.number_spaces.values().map(|s| s.sent_with_keys).sum()
     }
 }
 
@@ -247,10 +133,18 @@ pub(super) struct PacketNumberSpace {
     pub(super) immediate_ack_pending: bool,
     /// Number of congestion control "in flight" bytes
     pub(super) in_flight: u64,
+    /// Number of packets sent in the current key phase
+    pub(super) sent_with_keys: u64,
+    /// Packet numbers to skip, only used in the data package space.
+    pn_filter: Option<PacketNumberFilter>,
 }
 
 impl PacketNumberSpace {
-    pub(super) fn new(now: Instant) -> Self {
+    fn new(now: Instant, space: SpaceId, rng: &mut (impl Rng + ?Sized)) -> Self {
+        let pn_filter = match space {
+            SpaceId::Initial | SpaceId::Handshake => None,
+            SpaceId::Data => Some(PacketNumberFilter::new(rng)),
+        };
         Self {
             next_packet_number: 0,
             largest_acked_packet: None,
@@ -266,7 +160,145 @@ impl PacketNumberSpace {
             ping_pending: false,
             immediate_ack_pending: false,
             in_flight: 0,
+            sent_with_keys: 0,
+            pn_filter,
         }
+    }
+
+    /// Creates a default PacketNumberSpace
+    ///
+    /// This allows us to be type-safe about always being able to access a
+    /// PacketNumberSpace.  While the space will work it will not skip packet numbers to
+    /// protect against eaget ack attacks.
+    fn new_default() -> Self {
+        error!("PacketNumberSpace created by default");
+        Self {
+            next_packet_number: 0,
+            largest_acked_packet: None,
+            largest_acked_packet_sent: Instant::now(),
+            largest_ack_eliciting_sent: 0,
+            unacked_non_ack_eliciting_tail: 0,
+            sent_packets: BTreeMap::new(),
+            ecn_counters: frame::EcnCounts::ZERO,
+            ecn_feedback: frame::EcnCounts::ZERO,
+            time_of_last_ack_eliciting_packet: None,
+            loss_time: None,
+            loss_probes: 0,
+            ping_pending: false,
+            immediate_ack_pending: false,
+            in_flight: 0,
+            sent_with_keys: 0,
+            pn_filter: None,
+        }
+    }
+
+    /// Queue data for a tail loss probe (or anti-amplification deadlock prevention) packet
+    ///
+    /// Does nothing if no tail loss probe needs to be sent.
+    ///
+    /// Probes are sent similarly to normal packets when an expected ACK has not arrived. We never
+    /// deem a packet lost until we receive an ACK that should have included it, but if a trailing
+    /// run of packets (or their ACKs) are lost, this might not happen in a timely fashion. We send
+    /// probe packets to force an ACK, and exempt them from congestion control to prevent a deadlock
+    /// when the congestion window is filled with lost tail packets.
+    ///
+    /// We prefer to send new data, to make the most efficient use of bandwidth. If there's no data
+    /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
+    /// in-flight data either, we're probably a client guarding against a handshake
+    /// anti-amplification deadlock and we just make something up.
+    pub(super) fn maybe_queue_probe(
+        &mut self,
+        request_immediate_ack: bool,
+        streams: &StreamsState,
+        pending: &mut Retransmits,
+    ) {
+        // TODO(flub): for now this queues a tail-loss probe separately for each path.
+        // There could be other algorithms since packets can be acknowledged from other
+        // paths.
+        if self.loss_probes == 0 {
+            return;
+        }
+
+        if request_immediate_ack {
+            // The probe should be ACKed without delay (should only be used in the Data space and
+            // when the peer supports the acknowledgement frequency extension)
+            self.immediate_ack_pending = true;
+        }
+
+        // Retransmit the data of the oldest in-flight packet
+        if !pending.is_empty(streams) {
+            // There's real data to send here, no need to make something up
+            return;
+        }
+
+        for packet in self.sent_packets.values_mut() {
+            if !packet.retransmits.is_empty(streams) {
+                // Remove retransmitted data from the old packet so we don't end up retransmitting
+                // it *again* even if the copy we're sending now gets acknowledged.
+                *pending |= mem::take(&mut packet.retransmits);
+                return;
+            }
+        }
+
+        // Nothing new to send and nothing to retransmit, so fall back on a ping. This should only
+        // happen in rare cases during the handshake when the server becomes blocked by
+        // anti-amplification.
+        self.ping_pending = true;
+    }
+
+    /// Get the next outgoing packet number in this space
+    ///
+    /// In the Data space, the connection's [`PacketNumberFilter`] must be used rather than calling
+    /// this directly.
+    pub(super) fn get_tx_number(&mut self, rng: &mut (impl Rng + ?Sized)) -> u64 {
+        // TODO: Handle packet number overflow gracefully
+        assert!(self.next_packet_number < 2u64.pow(62));
+        let mut pn = self.next_packet_number;
+        self.next_packet_number += 1;
+        self.sent_with_keys += 1;
+
+        // Skip this number if the filter says so, only enabled in the data space
+        if let Some(ref mut filter) = self.pn_filter {
+            if filter.skip_pn(pn, rng) {
+                pn = self.next_packet_number;
+                self.next_packet_number += 1;
+                self.sent_with_keys += 1;
+            }
+        }
+        pn
+    }
+
+    /// Verifies sanity of an ECN block and returns whether congestion was encountered.
+    pub(super) fn detect_ecn(
+        &mut self,
+        newly_acked: u64,
+        ecn: frame::EcnCounts,
+    ) -> Result<bool, &'static str> {
+        let ect0_increase = ecn
+            .ect0
+            .checked_sub(self.ecn_feedback.ect0)
+            .ok_or("peer ECT(0) count regression")?;
+        let ect1_increase = ecn
+            .ect1
+            .checked_sub(self.ecn_feedback.ect1)
+            .ok_or("peer ECT(1) count regression")?;
+        let ce_increase = ecn
+            .ce
+            .checked_sub(self.ecn_feedback.ce)
+            .ok_or("peer CE count regression")?;
+        let total_increase = ect0_increase + ect1_increase + ce_increase;
+        if total_increase < newly_acked {
+            return Err("ECN bleaching");
+        }
+        if (ect0_increase + ce_increase) < newly_acked || ect1_increase != 0 {
+            return Err("ECN corruption");
+        }
+        // If total_increase > newly_acked (which happens when ACKs are lost), this is required by
+        // the draft so that long-term drift does not occur. If =, then the only question is whether
+        // to count CE packets as CE or ECT0. Recording them as CE is more consistent and keeps the
+        // congestion check obvious.
+        self.ecn_feedback = ecn;
+        Ok(ce_increase != 0)
     }
 
     /// Stop tracking sent packet `number`, and return what we knew about it
@@ -278,6 +310,49 @@ impl PacketNumberSpace {
                 self.unacked_non_ack_eliciting_tail.checked_sub(1).unwrap();
         }
         Some(packet)
+    }
+
+    /// Returns the number of bytes to *remove* from the connection's in-flight count
+    pub(super) fn sent(&mut self, number: u64, packet: SentPacket) -> u64 {
+        // Retain state for at most this many non-ACK-eliciting packets sent after the most recently
+        // sent ACK-eliciting packet. We're never guaranteed to receive an ACK for those, and we
+        // can't judge them as lost without an ACK, so to limit memory in applications which receive
+        // packets but don't send ACK-eliciting data for long periods use we must eventually start
+        // forgetting about them, although it might also be reasonable to just kill the connection
+        // due to weird peer behavior.
+        const MAX_UNACKED_NON_ACK_ELICTING_TAIL: u64 = 1_000;
+
+        let mut forgotten_bytes = 0;
+        if packet.ack_eliciting {
+            self.unacked_non_ack_eliciting_tail = 0;
+            self.largest_ack_eliciting_sent = number;
+        } else if self.unacked_non_ack_eliciting_tail > MAX_UNACKED_NON_ACK_ELICTING_TAIL {
+            let oldest_after_ack_eliciting = *self
+                .sent_packets
+                .range((
+                    Bound::Excluded(self.largest_ack_eliciting_sent),
+                    Bound::Unbounded,
+                ))
+                .next()
+                .unwrap()
+                .0;
+            // Per https://www.rfc-editor.org/rfc/rfc9000.html#name-frames-and-frame-types,
+            // non-ACK-eliciting packets must only contain PADDING, ACK, and CONNECTION_CLOSE
+            // frames, which require no special handling on ACK or loss beyond removal from
+            // in-flight counters if padded.
+            let packet = self
+                .sent_packets
+                .remove(&oldest_after_ack_eliciting)
+                .unwrap();
+            forgotten_bytes = u64::from(packet.size);
+            self.in_flight -= forgotten_bytes;
+        } else {
+            self.unacked_non_ack_eliciting_tail += 1;
+        }
+
+        self.in_flight += u64::from(packet.size);
+        self.sent_packets.insert(number, packet);
+        forgotten_bytes
     }
 }
 
@@ -828,7 +903,7 @@ impl PacketNumberFilter {
         }
     }
 
-    pub(super) fn peek(&self, space: &PacketSpace) -> u64 {
+    pub(super) fn peek(&self, space: &PacketNumberSpace) -> u64 {
         let n = space.next_packet_number;
         if n != self.next_skipped_packet_number {
             return n;
@@ -836,14 +911,10 @@ impl PacketNumberFilter {
         n + 1
     }
 
-    pub(super) fn allocate(
-        &mut self,
-        rng: &mut (impl Rng + ?Sized),
-        space: &mut PacketSpace,
-    ) -> u64 {
-        let n = space.get_tx_number();
+    /// Whether to use the provided packet number (false) or to skip it (true)
+    pub(super) fn skip_pn(&mut self, n: u64, rng: &mut (impl Rng + ?Sized)) -> bool {
         if n != self.next_skipped_packet_number {
-            return n;
+            return false;
         }
 
         trace!("skipping pn {n}");
@@ -853,8 +924,7 @@ impl PacketNumberFilter {
         self.next_skipped_packet_number =
             rng.gen_range(2u64.saturating_pow(self.exponent)..2u64.saturating_pow(next_exponent));
         self.exponent = next_exponent;
-
-        space.get_tx_number()
+        true
     }
 
     pub(super) fn check_ack(
