@@ -60,6 +60,15 @@ impl PacketSpace {
             .or_insert_with(PacketNumberSpace::new_default)
     }
 
+    pub(super) fn iter_mut_number_spaces(
+        &mut self,
+    ) -> impl Iterator<Item = &mut PacketNumberSpace> {
+        self.number_spaces.values_mut()
+    }
+
+    /// If for each path tail loss probes need to be sent make sure we have data to send.
+    pub(super) fn maybe_queue_probes
+
     /// Whether there is anything to send.
     pub(super) fn can_send(&self, streams: &StreamsState) -> SendableFrames {
         let acks = self.pending_acks.can_send();

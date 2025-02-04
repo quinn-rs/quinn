@@ -269,16 +269,18 @@ impl Connection {
         let path_validated = side_args.path_validated();
         let connection_side = ConnectionSide::from(side_args);
         let side = connection_side.side();
+        let mut rng = StdRng::from_seed(rng_seed);
         let initial_space = PacketSpace {
             crypto: Some(crypto.initial_keys(&init_cid, side)),
-            ..PacketSpace::new(now)
+            ..PacketSpace::new(now, SpaceId::Initial, &mut rng)
         };
+        let handshake_space = PacketSpace::new(now, SpaceId::Handshake, &mut rng);
+        let data_space = PacketSpace::new(now, SpaceId::Data, &mut rng);
         let state = State::Handshake(state::Handshake {
             rem_cid_set: side.is_server(),
             expected_token: Bytes::new(),
             client_hello: None,
         });
-        let mut rng = StdRng::from_seed(rng_seed);
 
         let mut this = Self {
             endpoint_config,
@@ -316,7 +318,7 @@ impl Connection {
             endpoint_events: VecDeque::new(),
             spin_enabled: config.allow_spin && rng.gen_ratio(7, 8),
             spin: false,
-            spaces: [initial_space, PacketSpace::new(now), PacketSpace::new(now)],
+            spaces: [initial_space, handshake_space, data_space],
             highest_space: SpaceId::Initial,
             prev_crypto: None,
             next_crypto: None,
@@ -502,6 +504,7 @@ impl Connection {
                 let mut builder = PacketBuilder::new(
                     now,
                     SpaceId::Data,
+                    PathId(0), // TODO(flub): multipath PathId
                     prev_cid,
                     buf,
                     buf_capacity,
@@ -536,7 +539,10 @@ impl Connection {
         for space in SpaceId::iter() {
             let request_immediate_ack =
                 space == SpaceId::Data && self.peer_supports_ack_frequency();
-            self.spaces[space].maybe_queue_probe(request_immediate_ack, &self.streams);
+            // self.spaces[space].maybe_queue_probe(request_immediate_ack, &self.streams);
+            let t = self.spaces[space]
+                .iter_mut_number_spaces()
+                .for_each(|ns| ns.maybe_queue_probe(request_immediate_ack, &self.streams, pending));
         }
 
         // Check whether we need to send a close message

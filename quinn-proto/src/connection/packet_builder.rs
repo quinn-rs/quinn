@@ -217,7 +217,7 @@ impl PacketBuilder {
         };
 
         conn.path
-            .sent(exact_number, packet, &mut conn.spaces[space_id]);
+            .sent(path_id, exact_number, packet, &mut conn.spaces[space_id]);
         conn.stats.path.sent_packets += 1;
         conn.reset_keep_alive(now);
         if size != 0 {

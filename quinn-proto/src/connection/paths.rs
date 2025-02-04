@@ -199,12 +199,18 @@ impl PathData {
     }
 
     /// Account for transmission of `packet` with number `pn` in `space`
-    pub(super) fn sent(&mut self, pn: u64, packet: SentPacket, space: &mut PacketSpace) {
+    pub(super) fn sent(
+        &mut self,
+        path: PathId,
+        pn: u64,
+        packet: SentPacket,
+        space: &mut PacketSpace,
+    ) {
         self.in_flight.insert(&packet);
         if self.first_packet.is_none() {
             self.first_packet = Some(pn);
         }
-        self.in_flight.bytes -= space.sent(pn, packet);
+        self.in_flight.bytes -= space.number_space(path).sent(pn, packet);
     }
 
     /// Remove `packet` with number `pn` from this path's congestion control counters, or return
