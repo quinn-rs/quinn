@@ -73,6 +73,9 @@ impl PacketSpace {
         }
     }
 
+    // TODO(flub): Could potentially call this "for_path" as then it returns the
+    //    path-specific packet number space.  This is because most access is via the space
+    //    as: `self.spaces[space_id].for_path(path_id)`.
     pub(super) fn number_space(&mut self, path: PathId) -> &mut PacketNumberSpace {
         self.number_spaces
             .entry(path)
@@ -104,6 +107,9 @@ impl PacketSpace {
     /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
     /// in-flight data either, we're probably a client guarding against a handshake
     /// anti-amplification deadlock and we just make something up.
+    // TODO(flub): This is still wrong!  The probe needs to be sent for each path
+    //    separately, and ON the path so that it gets a higher packet number than those that
+    //    might be lost.
     pub(super) fn maybe_queue_probe(
         &mut self,
         request_immediate_ack: bool,
@@ -213,20 +219,30 @@ pub(super) struct PacketNumberSpace {
     /// distinguishing between ECN bleaching and counts having been updated by a near-simultaneous
     /// ACK already processed in another space.
     pub(super) ecn_feedback: frame::EcnCounts,
-
-    /// The time the most recently sent retransmittable packet was sent.
-    pub(super) time_of_last_ack_eliciting_packet: Option<Instant>,
-    /// The time at which the earliest sent packet in this space will be considered lost based on
-    /// exceeding the reordering window in time. Only set for packets numbered prior to a packet
-    /// that has been acknowledged.
-    pub(super) loss_time: Option<Instant>,
-    /// Number of tail loss probes to send
-    pub(super) loss_probes: u32,
-    pub(super) ping_pending: bool,
     /// Number of congestion control "in flight" bytes
     pub(super) in_flight: u64,
     /// Number of packets sent in the current key phase
     pub(super) sent_with_keys: u64,
+    pub(super) ping_pending: bool,
+
+    //
+    // Loss Detection
+    //
+    /// The number of times a PTO has been sent without receiving an ack.
+    // TODO(flub): This used to be on the connection itself.  Maybe it should be on the
+    // PathData or somewhere.  Evaluate this again later on when we have more working.
+    pub(super) pto_count: u32,
+    /// The time the most recently sent retransmittable packet was sent.
+    pub(super) time_of_last_ack_eliciting_packet: Option<Instant>,
+    /// Earliest time when we might declare a packet lost.
+    ///
+    /// The time at which the earliest sent packet in this space will be considered lost
+    /// based on exceeding the reordering window in time. Only set for packets numbered
+    /// prior to a packet that has been acknowledged.
+    pub(super) loss_time: Option<Instant>,
+    /// Number of tail loss probes to send
+    pub(super) loss_probes: u32,
+
     /// Packet numbers to skip, only used in the data package space.
     pn_filter: Option<PacketNumberFilter>,
 }
@@ -246,12 +262,13 @@ impl PacketNumberSpace {
             sent_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
+            in_flight: 0,
+            sent_with_keys: 0,
+            ping_pending: false,
+            pto_count: 0,
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
             loss_probes: 0,
-            ping_pending: false,
-            in_flight: 0,
-            sent_with_keys: 0,
             pn_filter,
         }
     }
@@ -271,13 +288,14 @@ impl PacketNumberSpace {
             sent_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
+            in_flight: 0,
+            sent_with_keys: 0,
+            ping_pending: false,
+            pto_count: 0,
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
             loss_probes: 0,
-            ping_pending: false,
-            in_flight: 0,
-            sent_with_keys: 0,
-            pn_filter: None,
+            pn_filter,
         }
     }
 
@@ -297,12 +315,13 @@ impl PacketNumberSpace {
             sent_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
+            in_flight: 0,
+            sent_with_keys: 0,
+            ping_pending: false,
+            pto_count: 0,
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
             loss_probes: 0,
-            ping_pending: false,
-            in_flight: 0,
-            sent_with_keys: 0,
             pn_filter: None,
         }
     }

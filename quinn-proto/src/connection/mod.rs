@@ -202,13 +202,8 @@ pub struct Connection {
     //
     // ACK frequency
     //
+    // TODO(flub): This might also have to be per-path :(
     ack_frequency: AckFrequencyState,
-
-    //
-    // Loss Detection
-    //
-    /// The number of times a PTO has been sent without receiving an ack.
-    pto_count: u32,
 
     //
     // Congestion Control
@@ -341,8 +336,6 @@ impl Connection {
             ack_frequency: AckFrequencyState::new(get_max_ack_delay(
                 &TransportParameters::default(),
             )),
-
-            pto_count: 0,
 
             app_limited: false,
             receiving_ecn: false,
@@ -1506,10 +1499,10 @@ impl Connection {
         }
 
         // Must be called before crypto/pto_count are clobbered
-        self.detect_lost_packets(now, space, true);
+        self.detect_lost_packets(now, space, path, true);
 
-        if self.peer_completed_address_validation() {
-            self.pto_count = 0;
+        if self.peer_completed_address_validation(path) {
+            self.spaces[space].number_space(path).pto_count = 0;
         }
 
         // Explicit congestion notification
@@ -1619,7 +1612,7 @@ impl Connection {
             return;
         }
 
-        let (_, space) = match self.pto_time_and_space(now) {
+        let (_, space, path) = match self.pto_time_and_space(now) {
             Some(x) => x,
             None => {
                 error!("PTO expired while unset");
@@ -1628,7 +1621,7 @@ impl Connection {
         };
         trace!(
             in_flight = self.path.in_flight.bytes,
-            count = self.pto_count,
+            count = self.spaces[space].number_space(path).pto_count,
             ?space,
             "PTO fired"
         );
@@ -1637,14 +1630,20 @@ impl Connection {
             // A PTO when we're not expecting any ACKs must be due to handshake anti-amplification
             // deadlock preventions
             0 => {
-                debug_assert!(!self.peer_completed_address_validation());
+                debug_assert!(!self.peer_completed_address_validation(path));
                 1
             }
             // Conventional loss probe
             _ => 2,
         };
-        self.spaces[space].loss_probes = self.spaces[space].loss_probes.saturating_add(count);
-        self.pto_count = self.pto_count.saturating_add(1);
+        self.spaces[space].number_space(path).loss_probes = self.spaces[space]
+            .number_space(path)
+            .loss_probes
+            .saturating_add(count);
+        self.spaces[space].number_space(path).pto_count = self.spaces[space]
+            .number_space(path)
+            .pto_count
+            .saturating_add(1);
         self.set_loss_detection_timer(now);
     }
 
@@ -1808,58 +1807,76 @@ impl Connection {
         loss_times.into_iter().min_by_key(|&(when, _, _)| when)
     }
 
-    fn pto_time_for_path(&self, space_id: SpaceId, path_id: PathId) -> Option<Instant> {}
-
     /// Returns the earliest next PTO for all paths.
-    fn pto_time_and_space(&self, now: Instant) -> Option<(Instant, SpaceId, PathId)> {
-        let backoff = 2u32.pow(self.pto_count.min(MAX_BACKOFF_EXPONENT));
-        let mut duration = self.path.rtt.pto_base() * backoff;
-
+    fn pto_time_and_space(&mut self, now: Instant) -> Option<(Instant, SpaceId, PathId)> {
+        // TODO(flub): this will need more adjustments once we have multiple paths as well.
+        //    Also ack-frequency needs to be checked.
         if self.path.in_flight.ack_eliciting == 0 {
             debug_assert!(!self.peer_completed_address_validation());
             let space = match self.highest_space {
                 SpaceId::Handshake => SpaceId::Handshake,
                 _ => SpaceId::Initial,
             };
-            return Some((now + duration, space));
+            let path_id = match space {
+                SpaceId::Initial | SpaceId::Handshake => PathId(0),
+                SpaceId::Data => self.spaces[space]
+                    .iter_number_spaces()
+                    .min_by_key(|&(_, s)| s.pto_count)
+                    .map(|(p, _)| *p)
+                    .unwrap_or(PathId(0)),
+            };
+            let pto_count = self.spaces[space].number_space(path_id).pto_count;
+            let backoff = 2u32.pow(pto_count.min(MAX_BACKOFF_EXPONENT));
+            let duration = self.path.rtt.pto_base() * backoff;
+            return Some((now + duration, space, path_id));
         }
 
         let mut result = None;
         for space in SpaceId::iter() {
-            if self.spaces[space].in_flight == 0 {
-                continue;
-            }
-            if space == SpaceId::Data {
-                // Skip ApplicationData until handshake completes.
-                if self.is_handshaking() {
-                    return result;
+            for (path_id, pn_space) in self.spaces[space].iter_number_spaces() {
+                if pn_space.in_flight == 0 {
+                    continue;
                 }
-                // Include max_ack_delay and backoff for ApplicationData.
-                duration += self.ack_frequency.max_ack_delay_for_pto() * backoff;
-            }
-            let last_ack_eliciting = match self.spaces[space].time_of_last_ack_eliciting_packet {
-                Some(time) => time,
-                None => continue,
-            };
-            let pto = last_ack_eliciting + duration;
-            if result.map_or(true, |(earliest_pto, _)| pto < earliest_pto) {
-                result = Some((pto, space));
+                let pto_count = pn_space.pto_count;
+                let backoff = 2u32.pow(pto_count.min(MAX_BACKOFF_EXPONENT));
+                let mut duration = self.path.rtt.pto_base() * backoff;
+                if space == SpaceId::Data {
+                    // Skip ApplicationData until handshake completes.
+                    if self.is_handshaking() {
+                        return result;
+                    }
+                    // Include max_ack_delay and backoff for ApplicationData.
+                    duration += self.ack_frequency.max_ack_delay_for_pto() * backoff;
+                }
+                let last_ack_eliciting = match pn_space.time_of_last_ack_eliciting_packet {
+                    Some(time) => time,
+                    None => continue,
+                };
+                let pto = last_ack_eliciting + duration;
+                if result.map_or(true, |(earliest_pto, _, _)| pto < earliest_pto) {
+                    result = Some((pto, space, *path_id));
+                }
             }
         }
         result
     }
 
     #[allow(clippy::suspicious_operation_groupings)]
-    fn peer_completed_address_validation(&self) -> bool {
+    fn peer_completed_address_validation(&mut self, path: PathId) -> bool {
+        // TODO(flub): This logic needs updating for multipath
         if self.side.is_server() || self.state.is_closed() {
             return true;
         }
         // The server is guaranteed to have validated our address if any of our handshake or 1-RTT
         // packets are acknowledged or we've seen HANDSHAKE_DONE and discarded handshake keys.
         self.spaces[SpaceId::Handshake]
+            .number_space(path)
             .largest_acked_packet
             .is_some()
-            || self.spaces[SpaceId::Data].largest_acked_packet.is_some()
+            || self.spaces[SpaceId::Data]
+                .number_space(path)
+                .largest_acked_packet
+                .is_some()
             || (self.spaces[SpaceId::Data].crypto.is_some()
                 && self.spaces[SpaceId::Handshake].crypto.is_none())
     }
