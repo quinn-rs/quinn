@@ -263,9 +263,10 @@ impl Connection {
         let connection_side = ConnectionSide::from(side_args);
         let side = connection_side.side();
         let mut rng = StdRng::from_seed(rng_seed);
-        let initial_space = PacketSpace {
-            crypto: Some(crypto.initial_keys(&init_cid, side)),
-            ..PacketSpace::new(now, SpaceId::Initial, &mut rng)
+        let initial_space = {
+            let mut space = PacketSpace::new(now, SpaceId::Initial, &mut rng);
+            space.crypto = Some(crypto.initial_keys(&init_cid, side));
+            space
         };
         let handshake_space = PacketSpace::new(now, SpaceId::Handshake, &mut rng);
         #[cfg(test)]
@@ -589,7 +590,7 @@ impl Connection {
             // always spill into the next datagram.
             let pn = self.spaces[space_id].number_space(path_id).peek_tx_number();
             let frame_space_1rtt =
-                segment_size.saturating_sub(self.predict_1rtt_overhead(Some(pn)));
+                segment_size.saturating_sub(self.predict_1rtt_overhead(pn, path_id));
 
             // Is there data or a close message to send in this space?
             let can_send = self.space_can_send(space_id, frame_space_1rtt);
@@ -745,8 +746,8 @@ impl Connection {
                         // that time we haven't determined whether we're going to coalesce with the
                         // first datagram or potentially pad it to `MIN_INITIAL_SIZE`.
                         if space_id == SpaceId::Data {
-                            let frame_space_1rtt =
-                                segment_size.saturating_sub(self.predict_1rtt_overhead(Some(pn)));
+                            let frame_space_1rtt = segment_size
+                                .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
                             if self.space_can_send(space_id, frame_space_1rtt).is_empty() {
                                 break;
                             }
@@ -844,14 +845,19 @@ impl Connection {
                 // especially important with ack delay, since the peer might not
                 // have gotten any other ACK for the data earlier on.
                 if !self.spaces[space_id].pending_acks.ranges().is_empty() {
+                    let path_id = if self.is_multipath_enabled() {
+                        Some(path_id)
+                    } else {
+                        None
+                    };
                     Self::populate_acks(
                         now,
                         self.receiving_ecn,
                         &mut SentFrames::default(),
                         &mut self.spaces[space_id],
+                        path_id,
                         buf,
                         &mut self.stats,
-                        self.path_id,
                     );
                 }
 
@@ -934,8 +940,14 @@ impl Connection {
                 }
             }
 
-            let sent =
-                self.populate_packet(now, space_id, buf, builder.max_size, builder.exact_number);
+            let sent = self.populate_packet(
+                now,
+                space_id,
+                path_id,
+                buf,
+                builder.max_size,
+                builder.exact_number,
+            );
 
             // ACK-only packets should only be sent when explicitly allowed. If we write them due to
             // any other reason, there is a bug which leads to one component announcing write
@@ -1060,7 +1072,7 @@ impl Connection {
             // No keys available for this space
             return SendableFrames::empty();
         }
-        let space = &mut self.spaces[space_id];
+        let space = &self.spaces[space_id];
         let mut can_send = space.can_send(&self.streams, space.immediate_ack_pending);
         if space_id == SpaceId::Data {
             can_send.other |= self.can_send_1rtt(frame_space_1rtt);
@@ -1384,10 +1396,13 @@ impl Connection {
     }
 
     /// Whether the Multipath for QUIC extension is enabled.
-    // TODO(flub): not a useful API, once we do real things with multipath we can remove
-    // this again.
+    ///
+    /// Multipath is only enabled after the handshake is completed and if it was negotiated
+    /// by both peers.
     pub fn is_multipath_enabled(&self) -> bool {
-        self.config.initial_max_path_id.is_some() && self.peer_params.initial_max_path_id.is_some()
+        !self.is_handshaking()
+            && self.config.initial_max_path_id.is_some()
+            && self.peer_params.initial_max_path_id.is_some()
     }
 
     fn on_ack_received(
@@ -1678,14 +1693,10 @@ impl Connection {
         let mut prev_packet = None;
         let mut in_persistent_congestion = false;
 
-        let space = &mut self.spaces[pn_space];
-        space.number_space(path_id).loss_time = None;
+        let space = &mut self.spaces[pn_space].number_space(path_id);
+        space.loss_time = None;
 
-        for (&packet, info) in space
-            .number_space(path_id)
-            .sent_packets
-            .range(0..largest_acked_packet)
-        {
+        for (&packet, info) in space.sent_packets.range(0..largest_acked_packet) {
             if prev_packet != Some(packet.wrapping_sub(1)) {
                 // An intervening packet was acknowledged
                 persistent_congestion_start = None;
@@ -1721,9 +1732,8 @@ impl Connection {
                 }
             } else {
                 let next_loss_time = info.time_sent + loss_delay;
-                space.number_space(path_id).loss_time = Some(
+                space.loss_time = Some(
                     space
-                        .number_space(path_id)
                         .loss_time
                         .map_or(next_loss_time, |x| cmp::min(x, next_loss_time)),
                 );
@@ -1786,7 +1796,11 @@ impl Connection {
 
         // Handle a lost MTU probe
         if let Some(packet) = lost_mtu_probe {
-            let info = self.spaces[SpaceId::Data].take(packet).unwrap(); // safe: lost_mtu_probe is omitted from lost_packets, and therefore must not have been removed yet
+            let info = self.spaces[SpaceId::Data]
+                .number_space(path_id)
+                .take(packet)
+                .unwrap(); // safe: lost_mtu_probe is omitted from lost_packets, and
+                           // therefore must not have been removed yet
             self.remove_in_flight(packet, &info);
             self.path.mtud.on_probe_lost();
             self.stats.path.lost_plpmtud_probes += 1;
@@ -1812,7 +1826,8 @@ impl Connection {
         // TODO(flub): this will need more adjustments once we have multiple paths as well.
         //    Also ack-frequency needs to be checked.
         if self.path.in_flight.ack_eliciting == 0 {
-            debug_assert!(!self.peer_completed_address_validation());
+            // TODO(flub): This uses self.path so effectively PathId(0). Fix for multipath
+            debug_assert!(!self.peer_completed_address_validation(PathId(0)));
             let space = match self.highest_space {
                 SpaceId::Handshake => SpaceId::Handshake,
                 _ => SpaceId::Initial,
@@ -1901,7 +1916,10 @@ impl Connection {
             return;
         }
 
-        if self.path.in_flight.ack_eliciting == 0 && self.peer_completed_address_validation() {
+        // TODO(flub): multipath once we remove self.path
+        if self.path.in_flight.ack_eliciting == 0
+            && self.peer_completed_address_validation(PathId(0))
+        {
             // There is nothing to detect lost, so no timer is set. However, the client needs to arm
             // the timer if the server might be blocked by the anti-amplification limit.
             self.timers.stop(Timer::LossDetection);
@@ -1910,7 +1928,7 @@ impl Connection {
 
         // Determine which PN space to arm PTO for.
         // Calculate PTO duration
-        if let Some((timeout, _)) = self.pto_time_and_space(now) {
+        if let Some((timeout, _, _)) = self.pto_time_and_space(now) {
             self.timers.set(Timer::LossDetection, timeout);
         } else {
             self.timers.stop(Timer::LossDetection);
@@ -1930,6 +1948,7 @@ impl Connection {
         &mut self,
         now: Instant,
         space_id: SpaceId,
+        path_id: PathId,
         ecn: Option<EcnCodepoint>,
         packet: Option<u64>,
         spin: bool,
@@ -1942,7 +1961,7 @@ impl Connection {
         self.receiving_ecn |= ecn.is_some();
         if let Some(x) = ecn {
             let space = &mut self.spaces[space_id];
-            space.ecn_counters += x;
+            space.number_space(path_id).ecn_counters += x;
 
             if x.is_ce() {
                 space.pending_acks.set_immediate_ack_required();
@@ -2025,9 +2044,11 @@ impl Connection {
             _ => unreachable!("first packet must be delivered in Handshake state"),
         }
 
+        // TODO(flub): Here we know it can only be PathId(0) as this is the first packet
         self.on_packet_authenticated(
             now,
             SpaceId::Initial,
+            PathId(0),
             ecn,
             Some(packet_number),
             false,
@@ -2202,10 +2223,12 @@ impl Connection {
         }
         let space = &mut self.spaces[space_id];
         space.crypto = None;
-        space.time_of_last_ack_eliciting_packet = None;
-        space.loss_time = None;
-        space.in_flight = 0;
-        let sent_packets = mem::take(&mut space.sent_packets);
+        space
+            .number_space(PathId(0))
+            .time_of_last_ack_eliciting_packet = None;
+        space.number_space(PathId(0)).loss_time = None;
+        space.number_space(PathId(0)).in_flight = 0;
+        let sent_packets = mem::take(&mut space.number_space(PathId(0)).sent_packets);
         for (pn, packet) in sent_packets.into_iter() {
             self.remove_in_flight(pn, &packet);
         }
@@ -2322,6 +2345,8 @@ impl Connection {
                 };
                 let _guard = span.enter();
 
+                // TODO(flub): This is where we have to match CID to PathId for the data
+                //    space.
                 let is_duplicate = |n| self.spaces[packet.header.space()].dedup.insert(n);
                 if number.is_some_and(is_duplicate) {
                     debug!("discarding possible duplicate packet");
@@ -2351,6 +2376,7 @@ impl Connection {
                         self.on_packet_authenticated(
                             now,
                             packet.header.space(),
+                            PathId(0), // TODO(flub): to be extracted from CID, see todo above
                             ecn,
                             number,
                             spin,
@@ -2489,27 +2515,33 @@ impl Connection {
                 self.rem_handshake_cid = rem_cid;
 
                 let space = &mut self.spaces[SpaceId::Initial];
-                if let Some(info) = space.take(0) {
+                if let Some(info) = space.number_space(PathId(0)).take(0) {
                     self.on_packet_acked(now, 0, info);
                 };
 
-                self.discard_space(now, SpaceId::Initial); // Make sure we clean up after any retransmitted Initials
-                self.spaces[SpaceId::Initial] = PacketSpace {
-                    crypto: Some(self.crypto.initial_keys(&rem_cid, self.side.side())),
-                    next_packet_number: self.spaces[SpaceId::Initial].next_packet_number,
-                    crypto_offset: client_hello.len() as u64,
-                    ..PacketSpace::new(now)
-                };
-                self.spaces[SpaceId::Initial]
-                    .pending
-                    .crypto
-                    .push_back(frame::Crypto {
+                self.discard_space(now, SpaceId::Initial); // Make sure we clean up after
+                                                           // any retransmitted Initials
+                self.spaces[SpaceId::Initial] = {
+                    let mut space = PacketSpace::new(now, SpaceId::Initial, &mut self.rng);
+                    space.crypto = Some(self.crypto.initial_keys(&rem_cid, self.side.side()));
+                    space.crypto_offset = client_hello.len() as u64;
+                    space.number_space(PathId(0)).next_packet_number = self.spaces
+                        [SpaceId::Initial]
+                        .number_space(PathId(0))
+                        .next_packet_number;
+                    space.pending.crypto.push_back(frame::Crypto {
                         offset: 0,
                         data: client_hello,
                     });
+                    space
+                };
 
                 // Retransmit all 0-RTT data
-                let zero_rtt = mem::take(&mut self.spaces[SpaceId::Data].sent_packets);
+                let zero_rtt = mem::take(
+                    &mut self.spaces[SpaceId::Data]
+                        .number_space(PathId(0))
+                        .sent_packets,
+                );
                 for (pn, info) in zero_rtt {
                     self.remove_in_flight(pn, &info);
                     self.spaces[SpaceId::Data].pending |= info.retransmits;
@@ -2574,8 +2606,11 @@ impl Connection {
                             self.spaces[SpaceId::Data].pending = Retransmits::default();
 
                             // Discard 0-RTT packets
-                            let sent_packets =
-                                mem::take(&mut self.spaces[SpaceId::Data].sent_packets);
+                            let sent_packets = mem::take(
+                                &mut self.spaces[SpaceId::Data]
+                                    .number_space(PathId(0))
+                                    .sent_packets,
+                            );
                             for (pn, packet) in sent_packets {
                                 self.remove_in_flight(pn, &packet);
                             }
@@ -2699,7 +2734,7 @@ impl Connection {
                     self.read_crypto(packet.header.space(), &frame, payload_len)?;
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(now, packet.header.space(), ack)?;
+                    self.on_ack_received(now, packet.header.space(), PathId(0), ack)?;
                 }
                 Frame::Close(reason) => {
                     self.error = Some(reason.into());
@@ -2726,6 +2761,7 @@ impl Connection {
         Ok(())
     }
 
+    /// Processes the packet payload, always in the data space.
     fn process_payload(
         &mut self,
         now: Instant,
@@ -2733,6 +2769,8 @@ impl Connection {
         number: u64,
         packet: Packet,
     ) -> Result<(), TransportError> {
+        // TODO(flub): extract the PathId from the packet headers via CID mapping.
+        let path_id = PathId(0);
         let payload = packet.payload.freeze();
         let mut is_probing_packet = true;
         let mut close = None;
@@ -2745,7 +2783,7 @@ impl Connection {
             let frame = result?;
             let span = match frame {
                 Frame::Padding => continue,
-                _ => Some(trace_span!("frame", ty = %frame.ty())),
+                _ => trace_span!("frame", ty = %frame.ty()),
             };
 
             self.stats.frame_rx.record(&frame);
@@ -2766,7 +2804,7 @@ impl Connection {
                 }
             }
 
-            let _guard = span.as_ref().map(|x| x.enter());
+            let _guard = span.enter();
             if packet.header.is_0rtt() {
                 match frame {
                     Frame::Crypto(_) | Frame::Close(Close::Application(_)) => {
@@ -2800,7 +2838,7 @@ impl Connection {
                     }
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(now, SpaceId::Data, ack)?;
+                    self.on_ack_received(now, SpaceId::Data, path_id, ack)?;
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::Close(reason) => {
@@ -3193,11 +3231,13 @@ impl Connection {
         &mut self,
         now: Instant,
         space_id: SpaceId,
+        path_id: PathId,
         buf: &mut Vec<u8>,
         max_size: usize,
         pn: u64,
     ) -> SentFrames {
         let mut sent = SentFrames::default();
+        let is_multipath_enabled = self.is_multipath_enabled();
         let space = &mut self.spaces[space_id];
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         space.pending_acks.maybe_ack_non_eliciting();
@@ -3259,7 +3299,7 @@ impl Connection {
         );
 
         // PING
-        if mem::replace(&mut space.ping_pending, false) {
+        if mem::replace(&mut space.number_space(path_id).ping_pending, false) {
             trace!("PING");
             buf.write(frame::FrameType::PING);
             sent.non_retransmits = true;
@@ -3276,14 +3316,19 @@ impl Connection {
 
         // ACK
         if space.pending_acks.can_send() {
+            let path_id = if is_multipath_enabled {
+                Some(path_id)
+            } else {
+                None
+            };
             Self::populate_acks(
                 now,
                 self.receiving_ecn,
                 &mut sent,
                 space,
+                path_id,
                 buf,
                 &mut self.stats,
-                self.path_id,
             );
         }
 
@@ -3318,7 +3363,7 @@ impl Connection {
         }
 
         // PATH_CHALLENGE
-        if buf.len() + 9 < max_size && space_id == SpaceId::Data {
+        if (buf.len() + 9 < max_size) && space_id == SpaceId::Data {
             // Transmit challenges with every outgoing frame on an unvalidated path
             if let Some(token) = self.path.challenge {
                 // But only send a packet solely for that purpose at most once
@@ -3367,7 +3412,7 @@ impl Connection {
         }
 
         // CRYPTO
-        while buf.len() + frame::Crypto::SIZE_BOUND < max_size && !is_0rtt {
+        while (buf.len() + frame::Crypto::SIZE_BOUND < max_size) && !is_0rtt {
             let mut frame = match space.pending.crypto.pop_front() {
                 Some(x) => x,
                 None => break,
@@ -3444,7 +3489,7 @@ impl Connection {
 
         // RETIRE_CONNECTION_ID
         // TODO(@divma): buf size bounds are now wrong
-        while buf.len() + frame::RETIRE_CONNECTION_ID_SIZE_BOUND < max_size {
+        while (buf.len() + frame::RETIRE_CONNECTION_ID_SIZE_BOUND) < max_size {
             let sequence = match space.pending.retire_cids.pop() {
                 Some(x) => x,
                 None => break,
@@ -3461,7 +3506,7 @@ impl Connection {
 
         // DATAGRAM
         let mut sent_datagrams = false;
-        while buf.len() + Datagram::SIZE_BOUND < max_size && space_id == SpaceId::Data {
+        while (buf.len() + Datagram::SIZE_BOUND < max_size) && space_id == SpaceId::Data {
             match self.datagrams.write(buf, max_size) {
                 true => {
                     sent_datagrams = true;
@@ -3491,21 +3536,30 @@ impl Connection {
     ///
     /// This method assumes ACKs are pending, and should only be called if
     /// `!PendingAcks::ranges().is_empty()` returns `true`.
+    ///
+    /// If *path_id* is `None` ACK frames will be produced, if *path_id* is
+    /// `Some` multipath PATH_ACK frames are used instead.
     fn populate_acks(
         now: Instant,
         receiving_ecn: bool,
         sent: &mut SentFrames,
         space: &mut PacketSpace,
+        path_id: Option<PathId>,
         buf: &mut Vec<u8>,
         stats: &mut ConnectionStats,
-        path_id: Option<PathId>,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
 
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
         let ecn = if receiving_ecn {
-            Some(&space.ecn_counters)
+            // TODO(flub): Cloning because life is too short, would be nice not to.
+            Some(
+                space
+                    .number_space(path_id.unwrap_or(PathId(0)))
+                    .ecn_counters
+                    .clone(),
+            )
         } else {
             None
         };
@@ -3523,7 +3577,13 @@ impl Connection {
             delay_micros
         );
 
-        frame::Ack::encode(path_id, delay as _, space.pending_acks.ranges(), ecn, buf);
+        frame::Ack::encode(
+            path_id,
+            delay as _,
+            space.pending_acks.ranges(),
+            ecn.as_ref(),
+            buf,
+        );
         stats.frame_tx.acks += 1;
     }
 
@@ -3640,7 +3700,9 @@ impl Connection {
                 .packet,
             mem::replace(self.next_crypto.as_mut().unwrap(), new),
         );
-        self.spaces[SpaceId::Data].sent_with_keys = 0;
+        self.spaces[SpaceId::Data]
+            .iter_mut_number_spaces()
+            .for_each(|s| s.sent_with_keys = 0);
         self.prev_crypto = Some(PrevCrypto {
             crypto: old,
             end_packet,
@@ -3822,16 +3884,22 @@ impl Connection {
     /// frames. Changes if the length of the remote connection ID changes, which is expected to be
     /// rare. If `pn` is specified, may additionally change unpredictably due to variations in
     /// latency and packet loss.
-    fn predict_1rtt_overhead(&self, pn: Option<u64>) -> usize {
-        let pn_len = match pn {
-            Some(pn) => PacketNumber::new(
-                pn,
-                self.spaces[SpaceId::Data].largest_acked_packet.unwrap_or(0),
-            )
-            .len(),
-            // Upper bound
-            None => 4,
-        };
+    fn predict_1rtt_overhead(&mut self, pn: u64, path: PathId) -> usize {
+        let pn_len = PacketNumber::new(
+            pn,
+            self.spaces[SpaceId::Data]
+                .number_space(path)
+                .largest_acked_packet
+                .unwrap_or(0),
+        )
+        .len();
+
+        // 1 byte for flags
+        1 + self.rem_cids.active().len() + pn_len + self.tag_len_1rtt()
+    }
+
+    fn predict_1rtt_overhead_no_pn(&self) -> usize {
+        let pn_len = 4;
 
         // 1 byte for flags
         1 + self.rem_cids.active().len() + pn_len + self.tag_len_1rtt()

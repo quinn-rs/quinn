@@ -1009,14 +1009,6 @@ impl PacketNumberFilter {
         }
     }
 
-    pub(super) fn peek(&self, space: &PacketNumberSpace) -> u64 {
-        let n = space.next_packet_number;
-        if n != self.next_skipped_packet_number {
-            return n;
-        }
-        n + 1
-    }
-
     /// Whether to use the provided packet number (false) or to skip it (true)
     pub(super) fn skip_pn(&mut self, n: u64, rng: &mut (impl Rng + ?Sized)) -> bool {
         if n != self.next_skipped_packet_number {
@@ -1031,21 +1023,6 @@ impl PacketNumberFilter {
             rng.gen_range(2u64.saturating_pow(self.exponent)..2u64.saturating_pow(next_exponent));
         self.exponent = next_exponent;
         true
-    }
-
-    pub(super) fn check_ack(
-        &self,
-        space_id: SpaceId,
-        range: std::ops::RangeInclusive<u64>,
-    ) -> Result<(), TransportError> {
-        if space_id == SpaceId::Data
-            && self
-                .prev_skipped_packet_number
-                .is_some_and(|x| range.contains(&x))
-        {
-            return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
-        }
-        Ok(())
     }
 }
 

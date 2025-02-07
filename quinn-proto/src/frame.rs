@@ -162,14 +162,30 @@ pub(crate) enum Frame {
     ResetStream(ResetStream),
     StopSending(StopSending),
     Crypto(Crypto),
-    NewToken { token: Bytes },
+    NewToken {
+        token: Bytes,
+    },
     Stream(Stream),
     MaxData(VarInt),
-    MaxStreamData { id: StreamId, offset: u64 },
-    MaxStreams { dir: Dir, count: u64 },
-    DataBlocked { offset: u64 },
-    StreamDataBlocked { id: StreamId, offset: u64 },
-    StreamsBlocked { dir: Dir, limit: u64 },
+    MaxStreamData {
+        id: StreamId,
+        offset: u64,
+    },
+    MaxStreams {
+        dir: Dir,
+        count: u64,
+    },
+    DataBlocked {
+        offset: u64,
+    },
+    StreamDataBlocked {
+        id: StreamId,
+        offset: u64,
+    },
+    StreamsBlocked {
+        dir: Dir,
+        limit: u64,
+    },
     NewConnectionId(NewConnectionId),
     RetireConnectionId(RetireConnectionId),
     PathChallenge(u64),
@@ -180,9 +196,13 @@ pub(crate) enum Frame {
     ImmediateAck,
     HandshakeDone,
     ObservedAddr(ObservedAddr),
+    #[allow(dead_code)]
     PathAbandon(PathAbandon),
+    #[allow(dead_code)]
     PathAvailable(PathAvailable),
+    #[allow(dead_code)]
     MaxPathId(PathId),
+    #[allow(dead_code)]
     PathsBlocked(PathId),
 }
 
@@ -1129,6 +1149,7 @@ pub(crate) struct PathAbandon {
     error_code: TransportErrorCode,
 }
 
+#[allow(dead_code)]
 impl PathAbandon {
     // TODO(@divma): docs
     pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
@@ -1155,6 +1176,7 @@ pub(crate) struct PathAvailable {
     status_seq_no: VarInt,
 }
 
+#[allow(dead_code)]
 impl PathAvailable {
     // TODO(@divma): docs
     pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
