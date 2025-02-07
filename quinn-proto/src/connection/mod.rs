@@ -588,7 +588,9 @@ impl Connection {
             // handle large fixed-size frames, which only exist in 1-RTT (application datagrams). We
             // don't account for coalesced packets potentially occupying space because frames can
             // always spill into the next datagram.
-            let pn = self.spaces[space_id].number_space(path_id).peek_tx_number();
+            let pn = self.spaces[SpaceId::Data]
+                .number_space(path_id)
+                .peek_tx_number();
             let frame_space_1rtt =
                 segment_size.saturating_sub(self.predict_1rtt_overhead(pn, path_id));
 
