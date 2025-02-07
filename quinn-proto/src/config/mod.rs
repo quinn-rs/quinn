@@ -13,12 +13,16 @@ use thiserror::Error;
 
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use crate::crypto::rustls::{configured_provider, QuicServerConfig};
+#[cfg(feature = "fastbloom")]
+use crate::BloomTokenLog;
+#[cfg(not(feature = "fastbloom"))]
+use crate::NoneTokenLog;
 use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
-    Duration, NoneTokenLog, NoneTokenStore, RandomConnectionIdGenerator, SystemTime, TokenLog,
-    TokenStore, VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
+    Duration, NoneTokenStore, RandomConnectionIdGenerator, SystemTime, TokenLog, TokenStore,
+    VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
 };
 
 mod transport;
@@ -485,10 +489,15 @@ impl ValidationTokenConfig {
         self
     }
 
+    #[allow(rustdoc::redundant_explicit_links)] // which links are redundant depends on features
     /// Set a custom [`TokenLog`]
     ///
-    /// Defaults to [`NoneTokenLog`], which makes the server ignore all address validation tokens
-    /// (that is, tokens originating from NEW_TOKEN frames--retry tokens are not affected).
+    /// If the `fastbloom` feature is enabled (which it is by default), defaults to a default
+    /// [`BloomTokenLog`][crate::BloomTokenLog], which is suitable for most internet applications.
+    ///
+    /// If the `fastbloom` feature is disabled, defaults to [`NoneTokenLog`][crate::NoneTokenLog],
+    /// which makes the server ignore all address validation tokens (that is, tokens originating
+    /// from NEW_TOKEN frames--retry tokens are not affected).
     pub fn log(&mut self, log: Arc<dyn TokenLog>) -> &mut Self {
         self.log = log;
         self
@@ -498,7 +507,8 @@ impl ValidationTokenConfig {
     ///
     /// This refers only to tokens sent in NEW_TOKEN frames, in contrast to retry tokens.
     ///
-    /// Defaults to 0.
+    /// If the `fastbloom` feature is enabled (which it is by default), defaults to 2. Otherwise,
+    /// defaults to 0.
     pub fn sent(&mut self, value: u32) -> &mut Self {
         self.sent = value;
         self
@@ -507,10 +517,14 @@ impl ValidationTokenConfig {
 
 impl Default for ValidationTokenConfig {
     fn default() -> Self {
+        #[cfg(feature = "fastbloom")]
+        let log = Arc::new(BloomTokenLog::default());
+        #[cfg(not(feature = "fastbloom"))]
+        let log = Arc::new(NoneTokenLog);
         Self {
             lifetime: Duration::from_secs(2 * 7 * 24 * 60 * 60),
-            log: Arc::new(NoneTokenLog),
-            sent: 0,
+            log,
+            sent: if cfg!(feature = "fastbloom") { 2 } else { 0 },
         }
     }
 }
