@@ -2,7 +2,7 @@ use bytes::Bytes;
 use rand::Rng;
 use tracing::{trace, trace_span};
 
-use super::{spaces::SentPacket, Connection, SentFrames};
+use super::{spaces::SentPacket, Connection, PathId, SentFrames};
 use crate::{
     connection::ConnectionSide,
     frame::{self, Close},
@@ -13,6 +13,7 @@ use crate::{
 pub(super) struct PacketBuilder {
     pub(super) datagram_start: usize,
     pub(super) space: SpaceId,
+    path: PathId,
     pub(super) partial_encode: PartialEncode,
     pub(super) ack_eliciting: bool,
     pub(super) exact_number: u64,
@@ -35,6 +36,7 @@ impl PacketBuilder {
     pub(super) fn new(
         now: Instant,
         space_id: SpaceId,
+        path_id: PathId,
         dst_cid: ConnectionId,
         buffer: &mut Vec<u8>,
         buffer_capacity: usize,
@@ -44,7 +46,7 @@ impl PacketBuilder {
     ) -> Option<Self> {
         let version = conn.version;
         // Initiate key update if we're approaching the confidentiality limit
-        let sent_with_keys = conn.spaces[space_id].sent_with_keys;
+        let sent_with_keys = conn.spaces[space_id].sent_with_keys();
         if space_id == SpaceId::Data {
             if sent_with_keys >= conn.key_phase_size {
                 conn.initiate_key_update();
@@ -78,14 +80,13 @@ impl PacketBuilder {
         }
 
         let space = &mut conn.spaces[space_id];
-        let exact_number = match space_id {
-            SpaceId::Data => conn.packet_number_filter.allocate(&mut conn.rng, space),
-            _ => space.get_tx_number(),
-        };
-
+        let exact_number = space.for_path(path_id).get_tx_number(&mut conn.rng);
         let span = trace_span!("send", space = ?space_id, pn = exact_number).entered();
 
-        let number = PacketNumber::new(exact_number, space.largest_acked_packet.unwrap_or(0));
+        let number = PacketNumber::new(
+            exact_number,
+            space.for_path(path_id).largest_acked_packet.unwrap_or(0),
+        );
         let header = match space_id {
             SpaceId::Data if space.crypto.is_some() => Header::Short {
                 dst_cid,
@@ -157,6 +158,7 @@ impl PacketBuilder {
         Some(Self {
             datagram_start,
             space: space_id,
+            path: path_id,
             partial_encode,
             exact_number,
             short_header: header.is_short(),
@@ -190,6 +192,7 @@ impl PacketBuilder {
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
+        let path_id = self.path;
         let (size, padded) = self.finish(conn, buffer);
         let sent = match sent {
             Some(sent) => sent,
@@ -211,12 +214,14 @@ impl PacketBuilder {
         };
 
         conn.path
-            .sent(exact_number, packet, &mut conn.spaces[space_id]);
+            .sent(path_id, exact_number, packet, &mut conn.spaces[space_id]);
         conn.stats.path.sent_packets += 1;
         conn.reset_keep_alive(now);
         if size != 0 {
             if ack_eliciting {
-                conn.spaces[space_id].time_of_last_ack_eliciting_packet = Some(now);
+                conn.spaces[space_id]
+                    .for_path(path_id)
+                    .time_of_last_ack_eliciting_packet = Some(now);
                 if conn.permit_idle_reset {
                     conn.reset_idle_timeout(now, space_id);
                 }
@@ -255,11 +260,10 @@ impl PacketBuilder {
         let encode_start = self.partial_encode.start;
         let packet_buf = &mut buffer[encode_start..];
         // for packet protection, PathId(0) and no path are equivalent.
-        let path_id = conn.path_id.unwrap_or_default();
         self.partial_encode.finish(
             packet_buf,
             header_crypto,
-            Some((self.exact_number, path_id, packet_crypto)),
+            Some((self.exact_number, self.path, packet_crypto)),
         );
 
         (buffer.len() - encode_start, pad)
