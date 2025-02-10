@@ -12,6 +12,9 @@ use std::{
     time::Instant,
 };
 
+#[cfg(target_os = "linux")]
+use std::time::Duration;
+
 use socket2::SockRef;
 
 use super::{
@@ -96,6 +99,11 @@ impl UdpSocketState {
                 unsafe { libc::CMSG_SPACE(mem::size_of::<libc::in6_pktinfo>() as _) as usize };
         }
 
+        if cfg!(target_os = "linux") {
+            cmsg_platform_space +=
+                unsafe { libc::CMSG_SPACE(mem::size_of::<libc::timeval>() as _) as usize };
+        }
+
         assert!(
             CMSG_LEN
                 >= unsafe { libc::CMSG_SPACE(mem::size_of::<libc::c_int>() as _) as usize }
@@ -148,6 +156,11 @@ impl UdpSocketState {
                     libc::IPV6_PMTUDISC_PROBE,
                 )?;
             }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            // TODO: Should have a way to opt in to this.
+            set_socket_option(&*io, libc::SOL_SOCKET, libc::SO_TIMESTAMP_NEW, OPTION_ON)?;
         }
         #[cfg(any(target_os = "freebsd", apple))]
         {
@@ -543,7 +556,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     Ok(1)
 }
 
-const CMSG_LEN: usize = 88;
+const CMSG_LEN: usize = 96;
 
 fn prepare_msg(
     transmit: &Transmit<'_>,
@@ -681,6 +694,8 @@ fn decode_recv(
     let mut dst_ip = None;
     #[allow(unused_mut)] // only mutable on Linux
     let mut stride = len;
+    #[allow(unused_mut)]
+    let mut timestamp = None;
 
     let cmsg_iter = unsafe { cmsg::Iter::new(hdr) };
     for cmsg in cmsg_iter {
@@ -725,6 +740,13 @@ fn decode_recv(
             (libc::SOL_UDP, gro::UDP_GRO) => unsafe {
                 stride = cmsg::decode::<libc::c_int, libc::cmsghdr>(cmsg) as usize;
             },
+            #[cfg(target_os = "linux")]
+            (libc::SOL_SOCKET, libc::SCM_TIMESTAMP) => {
+                let timeval = unsafe { cmsg::decode::<libc::timeval, libc::cmsghdr>(cmsg) };
+                let secs = Duration::from_secs(timeval.tv_sec as u64);
+                let usecs = Duration::from_micros(timeval.tv_usec as u64);
+                timestamp = Some(secs + usecs);
+            }
             _ => {}
         }
     }
@@ -759,6 +781,7 @@ fn decode_recv(
         addr,
         ecn: EcnCodepoint::from_bits(ecn_bits),
         dst_ip,
+        timestamp,
     }
 }
 

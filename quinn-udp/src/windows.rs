@@ -267,6 +267,7 @@ impl UdpSocketState {
             addr: addr.unwrap(),
             ecn: EcnCodepoint::from_bits(ecn_bits as u8),
             dst_ip,
+            timestamp: None,
         };
         Ok(1)
     }

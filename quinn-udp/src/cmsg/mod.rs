@@ -83,6 +83,7 @@ impl<M: MsgHdr> Drop for Encoder<'_, M> {
 /// `cmsg` must refer to a native cmsg containing a payload of type `T`
 pub(crate) unsafe fn decode<T: Copy, C: CMsgHdr>(cmsg: &impl CMsgHdr) -> T {
     assert!(mem::align_of::<T>() <= mem::align_of::<C>());
+    // If you're hitting this, you might need to raise the CMSG_LEN constants
     debug_assert_eq!(cmsg.len(), C::cmsg_len(mem::size_of::<T>()));
     ptr::read(cmsg.cmsg_data() as *const T)
 }
