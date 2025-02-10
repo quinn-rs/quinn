@@ -73,10 +73,15 @@ impl PacketSpace {
         }
     }
 
-    // TODO(flub): Could potentially call this "for_path" as then it returns the
-    //    path-specific packet number space.  This is because most access is via the space
-    //    as: `self.spaces[space_id].for_path(path_id)`.
-    pub(super) fn number_space(&mut self, path: PathId) -> &mut PacketNumberSpace {
+    /// Returns the [`PacketNumberSpace`] for a path
+    ///
+    /// When multipath is disabled use `PathId(0)`.
+    // TODO(flub): Note that this only exists as `&mut self` because it creates a new
+    //    [`PacketNumberSpace`] if one is not yet available for a path.  This forces a few
+    //    more `&mut` references to users than strictly needed.  An alternative would be to
+    //    return an Option but that would need to be handled for all callers.  This could be
+    //    worth exploring once we have all the main multipath bits fitted.
+    pub(super) fn for_path(&mut self, path: PathId) -> &mut PacketNumberSpace {
         self.number_spaces
             .entry(path)
             .or_insert_with(PacketNumberSpace::new_default)
@@ -193,9 +198,10 @@ impl IndexMut<SpaceId> for [PacketSpace; 3] {
     }
 }
 
-/// The packet number space to support multipath.
+/// The per-path packet number space to support multipath.
 ///
-/// This contains the data specific to a per-path packet number space.
+/// This contains the data specific to a per-path packet number space.  You should access
+/// this via [`PacketSpace::for_path`].
 pub(super) struct PacketNumberSpace {
     /// The packet number of the next packet that will be sent, if any. In the Data space, the
     /// packet number stored here is sometimes skipped by [`PacketNumberFilter`] logic.

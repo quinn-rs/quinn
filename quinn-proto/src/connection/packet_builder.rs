@@ -80,15 +80,12 @@ impl PacketBuilder {
         }
 
         let space = &mut conn.spaces[space_id];
-        let exact_number = space.number_space(path_id).get_tx_number(&mut conn.rng);
+        let exact_number = space.for_path(path_id).get_tx_number(&mut conn.rng);
         let span = trace_span!("send", space = ?space_id, pn = exact_number).entered();
 
         let number = PacketNumber::new(
             exact_number,
-            space
-                .number_space(path_id)
-                .largest_acked_packet
-                .unwrap_or(0),
+            space.for_path(path_id).largest_acked_packet.unwrap_or(0),
         );
         let header = match space_id {
             SpaceId::Data if space.crypto.is_some() => Header::Short {
@@ -223,7 +220,7 @@ impl PacketBuilder {
         if size != 0 {
             if ack_eliciting {
                 conn.spaces[space_id]
-                    .number_space(path_id)
+                    .for_path(path_id)
                     .time_of_last_ack_eliciting_packet = Some(now);
                 if conn.permit_idle_reset {
                     conn.reset_idle_timeout(now, space_id);

@@ -589,7 +589,7 @@ impl Connection {
             // don't account for coalesced packets potentially occupying space because frames can
             // always spill into the next datagram.
             let pn = self.spaces[SpaceId::Data]
-                .number_space(path_id)
+                .for_path(path_id)
                 .peek_tx_number();
             let frame_space_1rtt =
                 segment_size.saturating_sub(self.predict_1rtt_overhead(pn, path_id));
@@ -602,7 +602,7 @@ impl Connection {
             }
 
             let mut ack_eliciting = !self.spaces[space_id].pending.is_empty(&self.streams)
-                || self.spaces[space_id].number_space(path_id).ping_pending
+                || self.spaces[space_id].for_path(path_id).ping_pending
                 || self.spaces[space_id].immediate_ack_pending;
             if space_id == SpaceId::Data {
                 ack_eliciting |= self.can_send_1rtt(frame_space_1rtt);
@@ -651,7 +651,7 @@ impl Connection {
 
                 // Congestion control and pacing checks
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
-                if ack_eliciting && self.spaces[space_id].number_space(path_id).loss_probes == 0 {
+                if ack_eliciting && self.spaces[space_id].for_path(path_id).loss_probes == 0 {
                     // Assume the current packet will get padded to fill the segment
                     let untracked_bytes = if let Some(builder) = &builder_storage {
                         buf_capacity - builder.partial_encode.start
@@ -759,10 +759,10 @@ impl Connection {
 
                 // Allocate space for another datagram
                 let next_datagram_size_limit =
-                    match self.spaces[space_id].number_space(path_id).loss_probes {
+                    match self.spaces[space_id].for_path(path_id).loss_probes {
                         0 => segment_size,
                         _ => {
-                            self.spaces[space_id].number_space(path_id).loss_probes -= 1;
+                            self.spaces[space_id].for_path(path_id).loss_probes -= 1;
                             // Clamp the datagram to at most the minimum MTU to ensure that loss probes
                             // can get through and enable recovery even if the path MTU has shrank
                             // unexpectedly.
@@ -998,7 +998,7 @@ impl Connection {
             let space_id = SpaceId::Data;
             let probe_size = self.path.mtud.poll_transmit(
                 now,
-                self.spaces[space_id].number_space(path_id).peek_tx_number(),
+                self.spaces[space_id].for_path(path_id).peek_tx_number(),
             )?;
 
             let buf_capacity = probe_size as usize;
@@ -1415,11 +1415,11 @@ impl Connection {
         ack: frame::Ack,
     ) -> Result<(), TransportError> {
         // TODO(@divma): check path id
-        if ack.largest >= self.spaces[space].number_space(path).next_packet_number {
+        if ack.largest >= self.spaces[space].for_path(path).next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
         let new_largest = {
-            let space = &mut self.spaces[space].number_space(path);
+            let space = &mut self.spaces[space].for_path(path);
             if space
                 .largest_acked_packet
                 .map_or(true, |pn| ack.largest > pn)
@@ -1440,14 +1440,8 @@ impl Connection {
         // Avoid DoS from unreasonably huge ack ranges by filtering out just the new acks.
         let mut newly_acked = ArrayRangeSet::new();
         for range in ack.iter() {
-            self.spaces[space]
-                .number_space(path)
-                .check_ack(range.clone())?;
-            for (&pn, _) in self.spaces[space]
-                .number_space(path)
-                .sent_packets
-                .range(range)
-            {
+            self.spaces[space].for_path(path).check_ack(range.clone())?;
+            for (&pn, _) in self.spaces[space].for_path(path).sent_packets.range(range) {
                 newly_acked.insert_one(pn);
             }
         }
@@ -1458,7 +1452,7 @@ impl Connection {
 
         let mut ack_eliciting_acked = false;
         for packet in newly_acked.elts() {
-            if let Some(info) = self.spaces[space].number_space(path).take(packet) {
+            if let Some(info) = self.spaces[space].for_path(path).take(packet) {
                 if let Some(acked) = info.largest_acked {
                     // Assume ACKs for all packets below the largest acknowledged in `packet` have
                     // been received. This can cause the peer to spuriously retransmit if some of
@@ -1488,7 +1482,7 @@ impl Connection {
             now,
             self.path.in_flight.bytes,
             self.app_limited,
-            self.spaces[space].number_space(path).largest_acked_packet,
+            self.spaces[space].for_path(path).largest_acked_packet,
         );
 
         if new_largest && ack_eliciting_acked {
@@ -1502,16 +1496,12 @@ impl Connection {
             };
             let rtt = instant_saturating_sub(
                 now,
-                self.spaces[space]
-                    .number_space(path)
-                    .largest_acked_packet_sent,
+                self.spaces[space].for_path(path).largest_acked_packet_sent,
             );
             self.path.rtt.update(ack_delay, rtt);
             if self.path.first_packet_after_rtt_sample.is_none() {
-                self.path.first_packet_after_rtt_sample = Some((
-                    space,
-                    self.spaces[space].number_space(path).next_packet_number,
-                ));
+                self.path.first_packet_after_rtt_sample =
+                    Some((space, self.spaces[space].for_path(path).next_packet_number));
             }
         }
 
@@ -1519,7 +1509,7 @@ impl Connection {
         self.detect_lost_packets(now, space, path, true);
 
         if self.peer_completed_address_validation(path) {
-            self.spaces[space].number_space(path).pto_count = 0;
+            self.spaces[space].for_path(path).pto_count = 0;
         }
 
         // Explicit congestion notification
@@ -1530,9 +1520,7 @@ impl Connection {
                 // of newly acked packets that remains well-defined in the presence of arbitrary packet
                 // reordering.
                 if new_largest {
-                    let sent = self.spaces[space]
-                        .number_space(path)
-                        .largest_acked_packet_sent;
+                    let sent = self.spaces[space].for_path(path).largest_acked_packet_sent;
                     self.process_ecn(now, space, path, newly_acked.len() as u64, ecn, sent);
                 }
             } else {
@@ -1557,7 +1545,7 @@ impl Connection {
         largest_sent_time: Instant,
     ) {
         match self.spaces[space]
-            .number_space(path)
+            .for_path(path)
             .detect_ecn(newly_acked, ecn)
         {
             Err(e) => {
@@ -1565,7 +1553,7 @@ impl Connection {
                 self.path.sending_ecn = false;
                 // Wipe out the existing value because it might be garbage and could interfere with
                 // future attempts to use ECN on new paths.
-                self.spaces[space].number_space(path).ecn_feedback = frame::EcnCounts::ZERO;
+                self.spaces[space].for_path(path).ecn_feedback = frame::EcnCounts::ZERO;
             }
             Ok(false) => {}
             Ok(true) => {
@@ -1638,7 +1626,7 @@ impl Connection {
         };
         trace!(
             in_flight = self.path.in_flight.bytes,
-            count = self.spaces[space].number_space(path).pto_count,
+            count = self.spaces[space].for_path(path).pto_count,
             ?space,
             "PTO fired"
         );
@@ -1653,12 +1641,12 @@ impl Connection {
             // Conventional loss probe
             _ => 2,
         };
-        self.spaces[space].number_space(path).loss_probes = self.spaces[space]
-            .number_space(path)
+        self.spaces[space].for_path(path).loss_probes = self.spaces[space]
+            .for_path(path)
             .loss_probes
             .saturating_add(count);
-        self.spaces[space].number_space(path).pto_count = self.spaces[space]
-            .number_space(path)
+        self.spaces[space].for_path(path).pto_count = self.spaces[space]
+            .for_path(path)
             .pto_count
             .saturating_add(1);
         self.set_loss_detection_timer(now);
@@ -1680,7 +1668,7 @@ impl Connection {
         // Packets sent before this time are deemed lost.
         let lost_send_time = now.checked_sub(loss_delay).unwrap();
         let largest_acked_packet = self.spaces[pn_space]
-            .number_space(path_id)
+            .for_path(path_id)
             .largest_acked_packet
             .unwrap();
         let packet_threshold = self.config.packet_threshold as u64;
@@ -1695,7 +1683,7 @@ impl Connection {
         let mut prev_packet = None;
         let mut in_persistent_congestion = false;
 
-        let space = &mut self.spaces[pn_space].number_space(path_id);
+        let space = &mut self.spaces[pn_space].for_path(path_id);
         space.loss_time = None;
 
         for (&packet, info) in space.sent_packets.range(0..largest_acked_packet) {
@@ -1749,7 +1737,7 @@ impl Connection {
         if let Some(largest_lost) = lost_packets.last().cloned() {
             let old_bytes_in_flight = self.path.in_flight.bytes;
             let largest_lost_sent =
-                self.spaces[pn_space].number_space(path_id).sent_packets[&largest_lost].time_sent;
+                self.spaces[pn_space].for_path(path_id).sent_packets[&largest_lost].time_sent;
             self.lost_packets += lost_packets.len() as u64;
             self.stats.path.lost_packets += lost_packets.len() as u64;
             self.stats.path.lost_bytes += size_of_lost_packets;
@@ -1761,7 +1749,7 @@ impl Connection {
 
             for &packet in &lost_packets {
                 let info = self.spaces[pn_space]
-                    .number_space(path_id)
+                    .for_path(path_id)
                     .take(packet)
                     .unwrap(); // safe: lost_packets is populated just above
                 self.remove_in_flight(packet, &info);
@@ -1799,7 +1787,7 @@ impl Connection {
         // Handle a lost MTU probe
         if let Some(packet) = lost_mtu_probe {
             let info = self.spaces[SpaceId::Data]
-                .number_space(path_id)
+                .for_path(path_id)
                 .take(packet)
                 .unwrap(); // safe: lost_mtu_probe is omitted from lost_packets, and
                            // therefore must not have been removed yet
@@ -1842,7 +1830,7 @@ impl Connection {
                     .map(|(p, _)| *p)
                     .unwrap_or(PathId(0)),
             };
-            let pto_count = self.spaces[space].number_space(path_id).pto_count;
+            let pto_count = self.spaces[space].for_path(path_id).pto_count;
             let backoff = 2u32.pow(pto_count.min(MAX_BACKOFF_EXPONENT));
             let duration = self.path.rtt.pto_base() * backoff;
             return Some((now + duration, space, path_id));
@@ -1887,11 +1875,11 @@ impl Connection {
         // The server is guaranteed to have validated our address if any of our handshake or 1-RTT
         // packets are acknowledged or we've seen HANDSHAKE_DONE and discarded handshake keys.
         self.spaces[SpaceId::Handshake]
-            .number_space(path)
+            .for_path(path)
             .largest_acked_packet
             .is_some()
             || self.spaces[SpaceId::Data]
-                .number_space(path)
+                .for_path(path)
                 .largest_acked_packet
                 .is_some()
             || (self.spaces[SpaceId::Data].crypto.is_some()
@@ -1963,7 +1951,7 @@ impl Connection {
         self.receiving_ecn |= ecn.is_some();
         if let Some(x) = ecn {
             let space = &mut self.spaces[space_id];
-            space.number_space(path_id).ecn_counters += x;
+            space.for_path(path_id).ecn_counters += x;
 
             if x.is_ce() {
                 space.pending_acks.set_immediate_ack_required();
@@ -2225,12 +2213,10 @@ impl Connection {
         }
         let space = &mut self.spaces[space_id];
         space.crypto = None;
-        space
-            .number_space(PathId(0))
-            .time_of_last_ack_eliciting_packet = None;
-        space.number_space(PathId(0)).loss_time = None;
-        space.number_space(PathId(0)).in_flight = 0;
-        let sent_packets = mem::take(&mut space.number_space(PathId(0)).sent_packets);
+        space.for_path(PathId(0)).time_of_last_ack_eliciting_packet = None;
+        space.for_path(PathId(0)).loss_time = None;
+        space.for_path(PathId(0)).in_flight = 0;
+        let sent_packets = mem::take(&mut space.for_path(PathId(0)).sent_packets);
         for (pn, packet) in sent_packets.into_iter() {
             self.remove_in_flight(pn, &packet);
         }
@@ -2517,7 +2503,7 @@ impl Connection {
                 self.rem_handshake_cid = rem_cid;
 
                 let space = &mut self.spaces[SpaceId::Initial];
-                if let Some(info) = space.number_space(PathId(0)).take(0) {
+                if let Some(info) = space.for_path(PathId(0)).take(0) {
                     self.on_packet_acked(now, 0, info);
                 };
 
@@ -2527,9 +2513,8 @@ impl Connection {
                     let mut space = PacketSpace::new(now, SpaceId::Initial, &mut self.rng);
                     space.crypto = Some(self.crypto.initial_keys(&rem_cid, self.side.side()));
                     space.crypto_offset = client_hello.len() as u64;
-                    space.number_space(PathId(0)).next_packet_number = self.spaces
-                        [SpaceId::Initial]
-                        .number_space(PathId(0))
+                    space.for_path(PathId(0)).next_packet_number = self.spaces[SpaceId::Initial]
+                        .for_path(PathId(0))
                         .next_packet_number;
                     space.pending.crypto.push_back(frame::Crypto {
                         offset: 0,
@@ -2539,11 +2524,8 @@ impl Connection {
                 };
 
                 // Retransmit all 0-RTT data
-                let zero_rtt = mem::take(
-                    &mut self.spaces[SpaceId::Data]
-                        .number_space(PathId(0))
-                        .sent_packets,
-                );
+                let zero_rtt =
+                    mem::take(&mut self.spaces[SpaceId::Data].for_path(PathId(0)).sent_packets);
                 for (pn, info) in zero_rtt {
                     self.remove_in_flight(pn, &info);
                     self.spaces[SpaceId::Data].pending |= info.retransmits;
@@ -2609,9 +2591,7 @@ impl Connection {
 
                             // Discard 0-RTT packets
                             let sent_packets = mem::take(
-                                &mut self.spaces[SpaceId::Data]
-                                    .number_space(PathId(0))
-                                    .sent_packets,
+                                &mut self.spaces[SpaceId::Data].for_path(PathId(0)).sent_packets,
                             );
                             for (pn, packet) in sent_packets {
                                 self.remove_in_flight(pn, &packet);
@@ -3301,7 +3281,7 @@ impl Connection {
         );
 
         // PING
-        if mem::replace(&mut space.number_space(path_id).ping_pending, false) {
+        if mem::replace(&mut space.for_path(path_id).ping_pending, false) {
             trace!("PING");
             buf.write(frame::FrameType::PING);
             sent.non_retransmits = true;
@@ -3558,7 +3538,7 @@ impl Connection {
             // TODO(flub): Cloning because life is too short, would be nice not to.
             Some(
                 space
-                    .number_space(path_id.unwrap_or(PathId(0)))
+                    .for_path(path_id.unwrap_or(PathId(0)))
                     .ecn_counters
                     .clone(),
             )
@@ -3890,7 +3870,7 @@ impl Connection {
         let pn_len = PacketNumber::new(
             pn,
             self.spaces[SpaceId::Data]
-                .number_space(path)
+                .for_path(path)
                 .largest_acked_packet
                 .unwrap_or(0),
         )

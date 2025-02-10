@@ -211,7 +211,7 @@ impl PathData {
         if self.first_packet.is_none() {
             self.first_packet = Some(pn);
         }
-        self.in_flight.bytes -= space.number_space(path).sent(pn, packet);
+        self.in_flight.bytes -= space.for_path(path).sent(pn, packet);
     }
 
     /// Remove `packet` with number `pn` from this path's congestion control counters, or return
