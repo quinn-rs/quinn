@@ -7,7 +7,7 @@ allow = [
     "MIT",
     "MPL-2.0",
     "OpenSSL",
-    "Unicode-3.0",
+    "Unicode-DFS-2016"
 ]
 private = { ignore = true }
 
@@ -15,3 +15,8 @@ private = { ignore = true }
 name = "ring"
 expression = "ISC AND MIT AND OpenSSL"
 license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
+
+[sources]
+allow-git = [
+    "https://github.com/divagant-martian/rustls?rev=aee54ff6b34f2d41f85c4632082639e63a04f172"
+]
