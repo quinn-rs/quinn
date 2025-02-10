@@ -31,7 +31,7 @@ impl coding::Codec for PathId {
 
 impl PathId {
     /// The maximum path ID allowed.
-    pub const MAX: Self = PathId(u32::MAX);
+    pub const MAX: Self = Self(u32::MAX);
 
     pub(crate) fn size(&self) -> usize {
         VarInt(self.0 as u64).size()

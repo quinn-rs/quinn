@@ -190,7 +190,6 @@ pub struct Connection {
     authentication_failures: u64,
     /// Why the connection was lost, if it has been
     error: Option<ConnectionError>,
-    /// Identifies Data-space packet numbers to skip. Not used in earlier spaces.
 
     //
     // Queued non-retransmittable 1-RTT data
@@ -3535,13 +3534,8 @@ impl Connection {
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
         let ecn = if receiving_ecn {
-            // TODO(flub): Cloning because life is too short, would be nice not to.
-            Some(
-                space
-                    .for_path(path_id.unwrap_or(PathId(0)))
-                    .ecn_counters
-                    .clone(),
-            )
+            // TODO(flub): Copying because life is too short, would be nice not to.
+            Some(space.for_path(path_id.unwrap_or(PathId(0))).ecn_counters)
         } else {
             None
         };
