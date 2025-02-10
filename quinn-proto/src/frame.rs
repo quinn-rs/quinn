@@ -1206,8 +1206,6 @@ impl PathAvailable {
 
 #[cfg(test)]
 mod test {
-    use std::u32;
-
     use super::*;
     use crate::coding::Codec;
     use assert_matches::assert_matches;
