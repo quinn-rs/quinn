@@ -6,8 +6,10 @@ allow = [
     "ISC",
     "MIT",
     "MPL-2.0",
+    "NCSA",
     "OpenSSL",
-    "Unicode-DFS-2016"
+    "Unicode-3.0",
+    "Unicode-DFS-2016",
 ]
 private = { ignore = true }
 
