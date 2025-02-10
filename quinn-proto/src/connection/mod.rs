@@ -1264,7 +1264,7 @@ impl Connection {
         // TODO(flub): for now this pings over all the paths, probably should add a path_id
         // parameter to this.
         self.spaces[self.highest_space]
-            .iter_mut_number_spaces()
+            .iter_paths_mut()
             .for_each(|s| s.ping_pending = true);
     }
 
@@ -1802,7 +1802,7 @@ impl Connection {
         let mut loss_times = Vec::new();
         for space_id in SpaceId::iter() {
             let space = &self.spaces[space_id];
-            for (path_id, number_space) in space.iter_number_spaces() {
+            for (path_id, number_space) in space.iter_paths() {
                 if let Some(loss_time) = number_space.loss_time {
                     loss_times.push((loss_time, space_id, *path_id));
                 }
@@ -1825,7 +1825,7 @@ impl Connection {
             let path_id = match space {
                 SpaceId::Initial | SpaceId::Handshake => PathId(0),
                 SpaceId::Data => self.spaces[space]
-                    .iter_number_spaces()
+                    .iter_paths()
                     .min_by_key(|&(_, s)| s.pto_count)
                     .map(|(p, _)| *p)
                     .unwrap_or(PathId(0)),
@@ -1838,7 +1838,7 @@ impl Connection {
 
         let mut result = None;
         for space in SpaceId::iter() {
-            for (path_id, pn_space) in self.spaces[space].iter_number_spaces() {
+            for (path_id, pn_space) in self.spaces[space].iter_paths() {
                 if pn_space.in_flight == 0 {
                     continue;
                 }
@@ -3683,7 +3683,7 @@ impl Connection {
             mem::replace(self.next_crypto.as_mut().unwrap(), new),
         );
         self.spaces[SpaceId::Data]
-            .iter_mut_number_spaces()
+            .iter_paths_mut()
             .for_each(|s| s.sent_with_keys = 0);
         self.prev_crypto = Some(PrevCrypto {
             crypto: old,

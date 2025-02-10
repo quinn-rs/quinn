@@ -87,14 +87,11 @@ impl PacketSpace {
             .or_insert_with(PacketNumberSpace::new_default)
     }
 
-    // TODO(flub): Fix this naming
-    pub(super) fn iter_number_spaces(&self) -> impl Iterator<Item = (&PathId, &PacketNumberSpace)> {
+    pub(super) fn iter_paths(&self) -> impl Iterator<Item = (&PathId, &PacketNumberSpace)> {
         self.number_spaces.iter()
     }
 
-    pub(super) fn iter_mut_number_spaces(
-        &mut self,
-    ) -> impl Iterator<Item = &mut PacketNumberSpace> {
+    pub(super) fn iter_paths_mut(&mut self) -> impl Iterator<Item = &mut PacketNumberSpace> {
         self.number_spaces.values_mut()
     }
 
