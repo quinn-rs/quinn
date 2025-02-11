@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::VecDeque,
+    collections::{BTreeSet, VecDeque},
     convert::TryFrom,
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
@@ -525,11 +525,12 @@ impl Connection {
         }
 
         // If we need to send a probe, make sure we have something to send.
-        for space in SpaceId::iter() {
-            let request_immediate_ack =
-                space == SpaceId::Data && self.peer_supports_ack_frequency();
-            self.spaces[space].maybe_queue_probe(request_immediate_ack, &self.streams);
-        }
+        self.spaces[SpaceId::Initial].maybe_queue_probe(PathId(0), false, &self.streams);
+        self.spaces[SpaceId::Handshake].maybe_queue_probe(PathId(0), false, &self.streams);
+
+        // For the data paths we need to call maybe_queue_probe once for each path.  This
+        // keeps track if it was already done for a path.
+        let mut data_tail_probes: BTreeSet<PathId> = BTreeSet::new();
 
         // Check whether we need to send a close message
         let close = match self.state {
@@ -580,6 +581,13 @@ impl Connection {
         // so we cannot trivially rewrite it to take advantage of `SpaceId::iter()`.
         while space_idx < spaces.len() {
             let space_id = spaces[space_idx];
+
+            // If we need to send a tail-loss probe, make sure there is something to send.
+            if space_id == SpaceId::Data && !data_tail_probes.contains(&path_id) {
+                let immediate_ack = self.peer_supports_ack_frequency();
+                self.spaces[space_id].maybe_queue_probe(path_id, immediate_ack, &self.streams);
+                data_tail_probes.insert(path_id);
+            }
 
             // Number of bytes available for frames if this is a 1-RTT packet. We're guaranteed to
             // be able to send an individual frame at least this large in the next 1-RTT
