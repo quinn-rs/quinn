@@ -114,10 +114,11 @@ impl PacketSpace {
     //    might be lost.
     pub(super) fn maybe_queue_probe(
         &mut self,
+        path_id: PathId,
         request_immediate_ack: bool,
         streams: &StreamsState,
     ) {
-        if self.number_spaces.values().all(|s| s.loss_probes == 0) {
+        if self.for_path(path_id).loss_probes == 0 {
             return;
         }
 
@@ -133,6 +134,7 @@ impl PacketSpace {
             return;
         }
 
+        // We use retransmits from any path.
         for packet in self
             .number_spaces
             .values_mut()
