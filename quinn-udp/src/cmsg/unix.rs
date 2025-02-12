@@ -43,7 +43,18 @@ impl MsgHdr for crate::imp::msghdr_x {
 
     fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
         let selfp = self as *const _ as *mut libc::msghdr;
-        unsafe { libc::CMSG_NXTHDR(selfp, cmsg) }
+        let next = unsafe { libc::CMSG_NXTHDR(selfp, cmsg) };
+
+        // On MacOS < 14 CMSG_NXTHDR might continuously return a zeroed cmsg. In
+        // such case, return a null pointer instead, thus indicating the end of
+        // the cmsghdr chain.
+        if unsafe { next.as_ref() }
+            .is_some_and(|n| (n.cmsg_len as usize) < std::mem::size_of::<libc::cmsghdr>())
+        {
+            return std::ptr::null_mut();
+        }
+
+        next
     }
 
     fn set_control_len(&mut self, len: usize) {
