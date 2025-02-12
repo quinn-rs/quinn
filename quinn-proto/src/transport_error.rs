@@ -129,4 +129,8 @@ errors! {
     KEY_UPDATE_ERROR(0xE) "key update error";
     AEAD_LIMIT_REACHED(0xF) "the endpoint has reached the confidentiality or integrity limit for the AEAD algorithm";
     NO_VIABLE_PATH(0x10) "no viable network path exists";
+    APPLICATION_ABANDON(0x004150504142414e) "Path abandoned at the application's request";
+    RESOURCE_LIMIT_REACHED(0x0052534c494d4954) "Path abandoned due to resource limitations in the transport";
+    UNSTABLE_INTERFACE(0x00554e5f494e5446) "Path abandoned due to unstable interfaces";
+    NO_CID_AVAILABLE(0x004e4f5f4349445f) "Path abandoned due to no available connection IDs for the path";
 }
