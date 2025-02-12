@@ -1,10 +1,6 @@
-use std::{
-    io::{self, IoSliceMut},
-    sync::Mutex,
-    time::Instant,
-};
+use std::io::{self, IoSliceMut};
 
-use super::{log_sendmsg_error, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL};
+use super::{RecvMeta, SendErrorSink, Transmit, UdpSockRef};
 
 /// Fallback UDP socket interface that stubs out all special functionality
 ///
@@ -12,15 +8,14 @@ use super::{log_sendmsg_error, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTE
 /// reduced performance compared to that enabled by some target-specific interfaces.
 #[derive(Debug)]
 pub struct UdpSocketState {
-    last_send_error: Mutex<Instant>,
+    last_send_error: SendErrorSink,
 }
 
 impl UdpSocketState {
     pub fn new(socket: UdpSockRef<'_>) -> io::Result<Self> {
         socket.0.set_nonblocking(true)?;
-        let now = Instant::now();
         Ok(Self {
-            last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
+            last_send_error: SendErrorSink::new(),
         })
     }
 
@@ -40,7 +35,7 @@ impl UdpSocketState {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
             Err(e) => {
-                log_sendmsg_error(&self.last_send_error, e, transmit);
+                self.last_send_error.log_sendmsg_error(e, transmit);
 
                 Ok(())
             }

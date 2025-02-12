@@ -3,7 +3,7 @@ use std::fmt::{Debug, Display, Formatter};
 use super::min_max::MinMax;
 use crate::{Duration, Instant};
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(crate) struct BandwidthEstimation {
     total_acked: u64,
     prev_total_acked: u64,
@@ -11,7 +11,7 @@ pub(crate) struct BandwidthEstimation {
     prev_acked_time: Option<Instant>,
     total_sent: u64,
     prev_total_sent: u64,
-    sent_time: Instant,
+    sent_time: Option<Instant>,
     prev_sent_time: Option<Instant>,
     max_filter: MinMax,
     acked_at_last_window: u64,
@@ -21,8 +21,8 @@ impl BandwidthEstimation {
     pub(crate) fn on_sent(&mut self, now: Instant, bytes: u64) {
         self.prev_total_sent = self.total_sent;
         self.total_sent += bytes;
-        self.prev_sent_time = Some(self.sent_time);
-        self.sent_time = now;
+        self.prev_sent_time = self.sent_time;
+        self.sent_time = Some(now);
     }
 
     pub(crate) fn on_ack(
@@ -43,14 +43,13 @@ impl BandwidthEstimation {
             None => return,
         };
 
-        let send_rate = if self.sent_time > prev_sent_time {
-            Self::bw_from_delta(
+        let send_rate = match self.sent_time {
+            Some(sent_time) if sent_time > prev_sent_time => Self::bw_from_delta(
                 self.total_sent - self.prev_total_sent,
-                self.sent_time - prev_sent_time,
+                sent_time - prev_sent_time,
             )
-            .unwrap_or(0)
-        } else {
-            u64::MAX // will take the min of send and ack, so this is just a skip
+            .unwrap_or(0),
+            _ => u64::MAX, // will take the min of send and ack, so this is just a skip
         };
 
         let ack_rate = match self.prev_acked_time {
@@ -88,25 +87,6 @@ impl BandwidthEstimation {
         let b_ns = bytes * 1_000_000_000;
         let bytes_per_second = b_ns / (window_duration_ns as u64);
         Some(bytes_per_second)
-    }
-}
-
-impl Default for BandwidthEstimation {
-    fn default() -> Self {
-        Self {
-            total_acked: 0,
-            prev_total_acked: 0,
-            acked_time: None,
-            prev_acked_time: None,
-            total_sent: 0,
-            prev_total_sent: 0,
-            // The `sent_time` value set here is ignored; it is used in `on_ack()`, but will
-            // have been reset by `on_sent()` before that method is called.
-            sent_time: Instant::now(),
-            prev_sent_time: None,
-            max_filter: MinMax::default(),
-            acked_at_last_window: 0,
-        }
     }
 }
 
