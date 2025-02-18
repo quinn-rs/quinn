@@ -3847,10 +3847,10 @@ impl Connection {
             .push_back(EndpointEventInner::NeedIdentifiers(now, n));
     }
 
-    /// Check the current active remote CID sequence
+    /// Check the current active remote CID sequence for `PathId(0)`
     #[cfg(test)]
     pub(crate) fn active_rem_cid_seq(&self) -> u64 {
-        self.rem_cids.active_seq()
+        self.rem_cids.get(&PathId(0)).unwrap().active_seq()
     }
 
     /// Returns the detected maximum udp payload size for the current path
