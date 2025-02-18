@@ -2515,8 +2515,8 @@ impl Connection {
                 let client_hello = state.client_hello.take().unwrap();
                 self.retry_src_cid = Some(rem_cid);
                 self.rem_cids
-                    .get(&PathId(0))
-                    .unwrap()
+                    .get_mut(&PathId(0))
+                    .expect("PathId(0) not yet abandoned")
                     .update_initial_cid(rem_cid);
                 self.rem_handshake_cid = rem_cid;
 
@@ -2643,8 +2643,8 @@ impl Connection {
                     trace!("switching remote CID to {}", rem_cid);
                     let mut state = state.clone();
                     self.rem_cids
-                        .get(&PathId(0))
-                        .unwrap()
+                        .get_mut(&PathId(0))
+                        .expect("PathId(0) not yet abandoned")
                         .update_initial_cid(rem_cid);
                     self.rem_handshake_cid = rem_cid;
                     self.orig_rem_cid = rem_cid;
@@ -3934,8 +3934,15 @@ impl Connection {
     fn predict_1rtt_overhead_no_pn(&self) -> usize {
         let pn_len = 4;
 
+        let cid_len = self
+            .rem_cids
+            .values()
+            .map(|cids| cids.active().len())
+            .max()
+            .unwrap_or_default();
+
         // 1 byte for flags
-        1 + self.rem_cids.active().len() + pn_len + self.tag_len_1rtt()
+        1 + cid_len + pn_len + self.tag_len_1rtt()
     }
 
     fn tag_len_1rtt(&self) -> usize {
