@@ -501,7 +501,7 @@ pub struct Retransmits {
     pub(super) max_stream_data: FxHashSet<StreamId>,
     pub(super) crypto: VecDeque<frame::Crypto>,
     pub(super) new_cids: Vec<IssuedCid>,
-    pub(super) retire_cids: Vec<u64>,
+    pub(super) retire_cids: Vec<(PathId, u64)>,
     pub(super) ack_frequency: bool,
     pub(super) handshake_done: bool,
     pub(super) observed_addr: bool,

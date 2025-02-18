@@ -311,7 +311,7 @@ pub struct Transmit {
 // Useful internal constants
 //
 
-/// The maximum number of CIDs we bother to issue per connection
+/// The maximum number of CIDs we bother to issue per path
 const LOC_CID_COUNT: u64 = 8;
 const RESET_TOKEN_SIZE: usize = 16;
 const MAX_CID_SIZE: usize = 20;
