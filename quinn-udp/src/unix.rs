@@ -5,18 +5,12 @@ use std::{
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Mutex,
-    },
-    time::Instant,
+    sync::atomic::{AtomicBool, AtomicUsize, Ordering},
 };
 
 use socket2::SockRef;
 
-use super::{
-    cmsg, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
-};
+use super::{cmsg, EcnCodepoint, RecvMeta, SendErrorSink, Transmit, UdpSockRef};
 
 // Adapted from https://github.com/apple-oss-distributions/xnu/blob/8d741a5de7ff4191bf97d57b9f54c2f6d4a15585/bsd/sys/socket_private.h
 #[cfg(apple_fast)]
@@ -69,7 +63,7 @@ type IpTosTy = libc::c_int;
 /// platforms.
 #[derive(Debug)]
 pub struct UdpSocketState {
-    last_send_error: Mutex<Instant>,
+    last_send_error: SendErrorSink,
     max_gso_segments: AtomicUsize,
     gro_segments: usize,
     may_fragment: bool,
@@ -183,9 +177,8 @@ impl UdpSocketState {
                 !set_socket_option_supported(&*io, libc::IPPROTO_IPV6, IPV6_DONTFRAG, OPTION_ON)?;
         }
 
-        let now = Instant::now();
         Ok(Self {
-            last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
+            last_send_error: SendErrorSink::new(),
             max_gso_segments: AtomicUsize::new(gso::max_gso_segments()),
             gro_segments: gro::gro_segments(),
             may_fragment,
@@ -209,7 +202,7 @@ impl UdpSocketState {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
             Err(e) => {
-                log_sendmsg_error(&self.last_send_error, e, transmit);
+                self.last_send_error.log_sendmsg_error(e, transmit);
 
                 Ok(())
             }

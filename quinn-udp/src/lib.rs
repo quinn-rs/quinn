@@ -32,7 +32,7 @@ use std::net::{IpAddr, Ipv6Addr, SocketAddr};
 use std::os::unix::io::AsFd;
 #[cfg(windows)]
 use std::os::windows::io::AsSocket;
-#[cfg(not(wasm_browser))]
+#[cfg(all(not(wasm_browser), any(feature = "tracing", feature = "direct-log")))]
 use std::{
     sync::Mutex,
     time::{Duration, Instant},
@@ -146,33 +146,47 @@ pub struct Transmit<'a> {
     pub src_ip: Option<IpAddr>,
 }
 
-/// Log at most 1 IO error per minute
-#[cfg(not(wasm_browser))]
-const IO_ERROR_LOG_INTERVAL: Duration = std::time::Duration::from_secs(60);
-
-/// Logs a warning message when sendmsg fails
-///
-/// Logging will only be performed if at least [`IO_ERROR_LOG_INTERVAL`]
-/// has elapsed since the last error was logged.
 #[cfg(all(not(wasm_browser), any(feature = "tracing", feature = "direct-log")))]
-fn log_sendmsg_error(
-    last_send_error: &Mutex<Instant>,
-    err: impl core::fmt::Debug,
-    transmit: &Transmit,
-) {
-    let now = Instant::now();
-    let last_send_error = &mut *last_send_error.lock().expect("poisend lock");
-    if now.saturating_duration_since(*last_send_error) > IO_ERROR_LOG_INTERVAL {
-        *last_send_error = now;
-        log::warn!(
-        "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, ecn: {:?}, len: {:?}, segment_size: {:?} }}",
-            err, transmit.destination, transmit.src_ip, transmit.ecn, transmit.contents.len(), transmit.segment_size);
-    }
+const IO_ERROR_LOG_INTERVAL: Duration = Duration::from_secs(60);
+
+/// Helper for rate-limiting the logging of sendmsg errors.
+#[derive(Debug)]
+struct SendErrorSink {
+    #[cfg(all(not(wasm_browser), any(feature = "tracing", feature = "direct-log")))]
+    last_send_error: Mutex<Instant>,
 }
 
-// No-op
-#[cfg(not(any(wasm_browser, feature = "tracing", feature = "direct-log")))]
-fn log_sendmsg_error(_: &Mutex<Instant>, _: impl core::fmt::Debug, _: &Transmit) {}
+impl SendErrorSink {
+    /// Produces a record the last send error in socket state for error reporting
+    fn new() -> Self {
+        Self {
+            #[cfg(all(not(wasm_browser), any(feature = "tracing", feature = "direct-log")))]
+            last_send_error: {
+                let now = Instant::now();
+                Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now))
+            },
+        }
+    }
+
+    /// Logs a warning message when sendmsg fails
+    ///
+    /// Logging will only be performed if at least [`IO_ERROR_LOG_INTERVAL`]
+    /// has elapsed since the last error was logged.
+    #[allow(unused_variables)]
+    fn log_sendmsg_error(&self, err: impl core::fmt::Debug, transmit: &Transmit) {
+        #[cfg(all(not(wasm_browser), any(feature = "tracing", feature = "direct-log")))]
+        {
+            let now = Instant::now();
+            let last_send_error = &mut *self.last_send_error.lock().expect("poisoned lock");
+            if now.saturating_duration_since(*last_send_error) > IO_ERROR_LOG_INTERVAL {
+                *last_send_error = now;
+                log::warn!(
+                    "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, ecn: {:?}, len: {:?}, segment_size: {:?} }}",
+                    err, transmit.destination, transmit.src_ip, transmit.ecn, transmit.contents.len(), transmit.segment_size);
+            }
+        }
+    }
+}
 
 /// A borrowed UDP socket
 ///

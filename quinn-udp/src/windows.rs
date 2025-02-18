@@ -4,8 +4,6 @@ use std::{
     net::{IpAddr, Ipv4Addr},
     os::windows::io::AsRawSocket,
     ptr,
-    sync::Mutex,
-    time::Instant,
 };
 
 use libc::{c_int, c_uint};
@@ -15,7 +13,7 @@ use windows_sys::Win32::Networking::WinSock;
 use crate::{
     cmsg::{self, CMsgHdr},
     log::debug,
-    log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
+    EcnCodepoint, RecvMeta, SendErrorSink, Transmit, UdpSockRef,
 };
 
 /// QUIC-friendly UDP socket for Windows
@@ -23,7 +21,7 @@ use crate::{
 /// Unlike a standard Windows UDP socket, this allows ECN bits to be read and written.
 #[derive(Debug)]
 pub struct UdpSocketState {
-    last_send_error: Mutex<Instant>,
+    last_send_error: SendErrorSink,
 }
 
 impl UdpSocketState {
@@ -112,9 +110,8 @@ impl UdpSocketState {
             )?;
         }
 
-        let now = Instant::now();
         Ok(Self {
-            last_send_error: Mutex::new(now.checked_sub(2 * IO_ERROR_LOG_INTERVAL).unwrap_or(now)),
+            last_send_error: SendErrorSink::new(),
         })
     }
 
@@ -156,7 +153,7 @@ impl UdpSocketState {
             Ok(()) => Ok(()),
             Err(e) if e.kind() == io::ErrorKind::WouldBlock => Err(e),
             Err(e) => {
-                log_sendmsg_error(&self.last_send_error, e, transmit);
+                self.last_send_error.log_sendmsg_error(e, transmit);
 
                 Ok(())
             }
