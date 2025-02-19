@@ -66,6 +66,8 @@ pub(crate) use std::time::{Duration, Instant};
 #[cfg(wasm_browser)]
 pub(crate) use web_time::{Duration, Instant};
 
+#[cfg(feature = "fastbloom")]
+pub use proto::BloomTokenLog;
 pub use proto::{
     congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream,
     ConfigError, ConnectError, ConnectionClose, ConnectionError, ConnectionId,
