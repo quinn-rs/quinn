@@ -88,6 +88,9 @@ mod token;
 use token::ResetToken;
 pub use token::{NoneTokenLog, NoneTokenStore, TokenLog, TokenReuseError, TokenStore};
 
+mod token_memory_cache;
+pub use token_memory_cache::TokenMemoryCache;
+
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
 

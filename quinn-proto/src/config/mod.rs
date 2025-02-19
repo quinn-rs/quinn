@@ -17,7 +17,7 @@ use crate::{
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
-    Duration, NoneTokenLog, NoneTokenStore, RandomConnectionIdGenerator, SystemTime, TokenLog,
+    Duration, NoneTokenLog, RandomConnectionIdGenerator, SystemTime, TokenLog, TokenMemoryCache,
     TokenStore, VarInt, VarIntBoundsExceeded, DEFAULT_SUPPORTED_VERSIONS, MAX_CID_SIZE,
 };
 
@@ -553,7 +553,7 @@ impl ClientConfig {
         Self {
             transport: Default::default(),
             crypto,
-            token_store: Arc::new(NoneTokenStore),
+            token_store: Arc::new(TokenMemoryCache::<2>::default()),
             initial_dst_cid_provider: Arc::new(|| {
                 RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid()
             }),
@@ -585,8 +585,8 @@ impl ClientConfig {
 
     /// Set a custom [`TokenStore`]
     ///
-    /// Defaults to [`NoneTokenStore`], which disables the use of tokens from NEW_TOKEN frames as a
-    /// client.
+    /// Default to [`TokenMemoryCache`] with 2 tokens per server, which is suitable for most
+    /// internet applications.
     pub fn token_store(&mut self, store: Arc<dyn TokenStore>) -> &mut Self {
         self.token_store = store;
         self
