@@ -2,7 +2,7 @@ use std::{
     future::{Future, poll_fn},
     io,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use bytes::Bytes;

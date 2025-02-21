@@ -3,7 +3,7 @@ use std::{
     io,
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
     time::Instant,
 };
 
