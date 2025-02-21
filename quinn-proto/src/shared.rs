@@ -2,7 +2,7 @@ use std::{fmt, net::SocketAddr};
 
 use bytes::{Buf, BufMut, BytesMut};
 
-use crate::{coding::BufExt, packet::PartialDecode, Instant, ResetToken, MAX_CID_SIZE};
+use crate::{Instant, MAX_CID_SIZE, ResetToken, coding::BufExt, packet::PartialDecode};
 
 /// Events sent from an Endpoint to a Connection
 #[derive(Debug)]

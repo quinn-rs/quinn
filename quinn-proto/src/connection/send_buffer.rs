@@ -2,7 +2,7 @@ use std::{collections::VecDeque, ops::Range};
 
 use bytes::{Buf, Bytes};
 
-use crate::{range_set::RangeSet, VarInt};
+use crate::{VarInt, range_set::RangeSet};
 
 /// Buffer of outgoing retransmittable stream data
 #[derive(Default, Debug)]

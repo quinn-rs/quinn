@@ -9,7 +9,7 @@ use std::{
 
 use tokio::{
     io::Interest,
-    time::{sleep_until, Sleep},
+    time::{Sleep, sleep_until},
 };
 
 use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPollHelper};

@@ -4,8 +4,8 @@ extern crate proto;
 
 use libfuzzer_sys::fuzz_target;
 use proto::{
+    DEFAULT_SUPPORTED_VERSIONS, FixedLengthConnectionIdParser,
     fuzzing::{PacketParams, PartialDecode},
-    FixedLengthConnectionIdParser, DEFAULT_SUPPORTED_VERSIONS,
 };
 
 fuzz_target!(|data: PacketParams| {

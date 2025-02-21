@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map, HashMap},
+    collections::{HashMap, hash_map},
     convert::TryFrom,
     fmt, mem,
     net::{IpAddr, SocketAddr},
@@ -8,13 +8,15 @@ use std::{
 };
 
 use bytes::{BufMut, Bytes, BytesMut};
-use rand::{rngs::StdRng, Rng, RngCore, SeedableRng};
+use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 use rustc_hash::FxHashMap;
 use slab::Slab;
 use thiserror::Error;
 use tracing::{debug, error, trace, warn};
 
 use crate::{
+    Duration, INITIAL_MTU, Instant, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE, ResetToken,
+    Side, Transmit, TransportConfig, TransportError,
     cid_generator::ConnectionIdGenerator,
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
@@ -31,8 +33,6 @@ use crate::{
     },
     token::{IncomingToken, InvalidRetryTokenError, Token, TokenPayload},
     transport_parameters::{PreferredAddress, TransportParameters},
-    Duration, Instant, ResetToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU,
-    MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -282,7 +282,10 @@ impl Endpoint {
         let max_padding_len = match inciting_dgram_len.checked_sub(RESET_TOKEN_SIZE) {
             Some(headroom) if headroom > MIN_PADDING_LEN => headroom - 1,
             _ => {
-                debug!("ignoring unexpected {} byte packet: not larger than minimum stateless reset size", inciting_dgram_len);
+                debug!(
+                    "ignoring unexpected {} byte packet: not larger than minimum stateless reset size",
+                    inciting_dgram_len
+                );
                 return None;
             }
         };
@@ -1221,8 +1224,10 @@ impl IncomingImproperDropWarner {
 
 impl Drop for IncomingImproperDropWarner {
     fn drop(&mut self) {
-        warn!("quinn_proto::Incoming dropped without passing to Endpoint::accept/refuse/retry/ignore \
-               (may cause memory leak and eventual inability to accept new connections)");
+        warn!(
+            "quinn_proto::Incoming dropped without passing to Endpoint::accept/refuse/retry/ignore \
+               (may cause memory leak and eventual inability to accept new connections)"
+        );
     }
 }
 

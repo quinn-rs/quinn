@@ -14,13 +14,13 @@ use assert_matches::assert_matches;
 use bytes::BytesMut;
 use lazy_static::lazy_static;
 use rustls::{
+    KeyLogFile,
     client::WebPkiServerVerifier,
     pki_types::{CertificateDer, PrivateKeyDer},
-    KeyLogFile,
 };
 use tracing::{info_span, trace};
 
-use super::crypto::rustls::{configured_provider, QuicClientConfig, QuicServerConfig};
+use super::crypto::rustls::{QuicClientConfig, QuicServerConfig, configured_provider};
 use super::*;
 use crate::{Duration, Instant};
 

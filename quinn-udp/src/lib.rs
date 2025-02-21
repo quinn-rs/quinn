@@ -165,8 +165,14 @@ fn log_sendmsg_error(
     if now.saturating_duration_since(*last_send_error) > IO_ERROR_LOG_INTERVAL {
         *last_send_error = now;
         log::warn!(
-        "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, ecn: {:?}, len: {:?}, segment_size: {:?} }}",
-            err, transmit.destination, transmit.src_ip, transmit.ecn, transmit.contents.len(), transmit.segment_size);
+            "sendmsg error: {:?}, Transmit: {{ destination: {:?}, src_ip: {:?}, ecn: {:?}, len: {:?}, segment_size: {:?} }}",
+            err,
+            transmit.destination,
+            transmit.src_ip,
+            transmit.ecn,
+            transmit.contents.len(),
+            transmit.segment_size
+        );
     }
 }
 
