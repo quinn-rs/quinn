@@ -2,7 +2,7 @@ use std::any::Any;
 use std::cmp;
 use std::sync::Arc;
 
-use super::{Controller, ControllerFactory, BASE_DATAGRAM_SIZE};
+use super::{BASE_DATAGRAM_SIZE, Controller, ControllerFactory};
 use crate::connection::RttEstimator;
 use crate::{Duration, Instant};
 

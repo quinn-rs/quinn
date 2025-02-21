@@ -90,8 +90,12 @@ impl Stats {
 
         println!("Stream metrics:\n");
 
-        println!("      │ Upload Duration │ Download Duration | FBL        | Upload Throughput | Download Throughput");
-        println!("──────┼─────────────────┼───────────────────┼────────────┼───────────────────┼────────────────────");
+        println!(
+            "      │ Upload Duration │ Download Duration | FBL        | Upload Throughput | Download Throughput"
+        );
+        println!(
+            "──────┼─────────────────┼───────────────────┼────────────┼───────────────────┼────────────────────"
+        );
 
         let print_metric = |label: &'static str, get_metric: fn(&Histogram<u64>) -> u64| {
             println!(
@@ -244,7 +248,7 @@ mod json {
     use crate::stats;
     use crate::stats::{Stats, StreamIntervalStats};
     use quinn::StreamId;
-    use serde::{self, ser::SerializeStruct, Serialize, Serializer};
+    use serde::{self, Serialize, Serializer, ser::SerializeStruct};
     use std::io::Write;
     use std::time::{SystemTime, UNIX_EPOCH};
 

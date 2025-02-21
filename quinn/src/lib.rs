@@ -67,13 +67,13 @@ pub(crate) use std::time::{Duration, Instant};
 pub(crate) use web_time::{Duration, Instant};
 
 pub use proto::{
-    congestion, crypto, AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream,
-    ConfigError, ConnectError, ConnectionClose, ConnectionError, ConnectionId,
-    ConnectionIdGenerator, ConnectionStats, Dir, EcnCodepoint, EndpointConfig, FrameStats,
-    FrameType, IdleTimeout, MtuDiscoveryConfig, NoneTokenLog, NoneTokenStore, PathStats,
-    ServerConfig, Side, StdSystemTime, StreamId, TimeSource, TokenLog, TokenReuseError, TokenStore,
-    Transmit, TransportConfig, TransportErrorCode, UdpStats, ValidationTokenConfig, VarInt,
-    VarIntBoundsExceeded, Written,
+    AckFrequencyConfig, ApplicationClose, Chunk, ClientConfig, ClosedStream, ConfigError,
+    ConnectError, ConnectionClose, ConnectionError, ConnectionId, ConnectionIdGenerator,
+    ConnectionStats, Dir, EcnCodepoint, EndpointConfig, FrameStats, FrameType, IdleTimeout,
+    MtuDiscoveryConfig, NoneTokenLog, NoneTokenStore, PathStats, ServerConfig, Side, StdSystemTime,
+    StreamId, TimeSource, TokenLog, TokenReuseError, TokenStore, Transmit, TransportConfig,
+    TransportErrorCode, UdpStats, ValidationTokenConfig, VarInt, VarIntBoundsExceeded, Written,
+    congestion, crypto,
 };
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 pub use rustls;
@@ -92,7 +92,7 @@ pub use crate::runtime::AsyncStdRuntime;
 pub use crate::runtime::SmolRuntime;
 #[cfg(feature = "runtime-tokio")]
 pub use crate::runtime::TokioRuntime;
-pub use crate::runtime::{default_runtime, AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller};
+pub use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller, default_runtime};
 pub use crate::send_stream::{SendStream, StoppedError, WriteError};
 
 #[cfg(test)]

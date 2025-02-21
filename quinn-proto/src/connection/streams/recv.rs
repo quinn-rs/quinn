@@ -8,7 +8,7 @@ use super::state::get_or_insert_recv;
 use super::{ClosedStream, Retransmits, ShouldTransmit, StreamId, StreamsState};
 use crate::connection::assembler::{Assembler, Chunk, IllegalOrderedRead};
 use crate::connection::streams::state::StreamRecv;
-use crate::{frame, TransportError, VarInt};
+use crate::{TransportError, VarInt, frame};
 
 #[derive(Debug, Default)]
 pub(super) struct Recv {

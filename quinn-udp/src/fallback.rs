@@ -4,7 +4,7 @@ use std::{
     time::Instant,
 };
 
-use super::{log_sendmsg_error, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL};
+use super::{IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, UdpSockRef, log_sendmsg_error};
 
 /// Fallback UDP socket interface that stubs out all special functionality
 ///

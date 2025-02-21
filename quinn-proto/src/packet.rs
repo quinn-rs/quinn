@@ -4,8 +4,9 @@ use bytes::{Buf, BufMut, Bytes, BytesMut};
 use thiserror::Error;
 
 use crate::{
+    ConnectionId,
     coding::{self, BufExt, BufMutExt},
-    crypto, ConnectionId,
+    crypto,
 };
 
 /// Decodes a QUIC packet's invariant header
@@ -937,8 +938,8 @@ mod tests {
     #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
     #[test]
     fn header_encoding() {
-        use crate::crypto::rustls::{initial_keys, initial_suite_from_provider};
         use crate::Side;
+        use crate::crypto::rustls::{initial_keys, initial_suite_from_provider};
         #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
         use rustls::crypto::aws_lc_rs::default_provider;
         #[cfg(feature = "rustls-ring")]

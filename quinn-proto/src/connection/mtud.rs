@@ -1,4 +1,4 @@
-use crate::{packet::SpaceId, Instant, MtuDiscoveryConfig, MAX_UDP_PAYLOAD};
+use crate::{Instant, MAX_UDP_PAYLOAD, MtuDiscoveryConfig, packet::SpaceId};
 use std::cmp;
 use tracing::trace;
 
@@ -518,9 +518,9 @@ const BLACK_HOLE_THRESHOLD: usize = 3;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::packet::SpaceId;
     use crate::Duration;
     use crate::MAX_UDP_PAYLOAD;
+    use crate::packet::SpaceId;
     use assert_matches::assert_matches;
 
     fn default_mtud() -> MtuDiscovery {

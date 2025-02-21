@@ -1,6 +1,6 @@
 use std::ops::Range;
 
-use crate::{frame::NewConnectionId, ConnectionId, ResetToken};
+use crate::{ConnectionId, ResetToken, frame::NewConnectionId};
 
 /// DataType stored in CidQueue buffer
 type CidData = (ConnectionId, Option<ResetToken>);

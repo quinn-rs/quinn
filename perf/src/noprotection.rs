@@ -3,12 +3,12 @@ use std::sync::Arc;
 use bytes::BytesMut;
 
 use quinn_proto::{
+    ConnectionId, Side, TransportError,
     crypto::{
-        self,
+        self, CryptoError,
         rustls::{QuicClientConfig, QuicServerConfig},
-        CryptoError,
     },
-    transport_parameters, ConnectionId, Side, TransportError,
+    transport_parameters,
 };
 
 /// A rustls TLS session which does not perform packet encryption/decryption (for debugging purpose)

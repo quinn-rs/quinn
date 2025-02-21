@@ -13,8 +13,8 @@ use std::{any::Any, str, sync::Arc};
 use bytes::BytesMut;
 
 use crate::{
-    shared::ConnectionId, transport_parameters::TransportParameters, ConnectError, Side,
-    TransportError,
+    ConnectError, Side, TransportError, shared::ConnectionId,
+    transport_parameters::TransportParameters,
 };
 
 /// Cryptography interface based on *ring*

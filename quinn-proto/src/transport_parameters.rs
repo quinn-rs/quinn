@@ -12,17 +12,17 @@ use std::{
 };
 
 use bytes::{Buf, BufMut};
-use rand::{seq::SliceRandom as _, Rng as _, RngCore};
+use rand::{Rng as _, RngCore, seq::SliceRandom as _};
 use thiserror::Error;
 
 use crate::{
+    LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT, RESET_TOKEN_SIZE, ResetToken, Side,
+    TIMER_GRANULARITY, TransportError, VarInt,
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::{BufExt, BufMutExt, UnexpectedEnd},
     config::{EndpointConfig, ServerConfig, TransportConfig},
     shared::ConnectionId,
-    ResetToken, Side, TransportError, VarInt, LOC_CID_COUNT, MAX_CID_SIZE, MAX_STREAM_COUNT,
-    RESET_TOKEN_SIZE, TIMER_GRANULARITY,
 };
 
 // Apply a given macro to a list of all the transport parameters having integer types, along with

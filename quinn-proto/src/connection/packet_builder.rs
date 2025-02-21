@@ -2,12 +2,12 @@ use bytes::Bytes;
 use rand::Rng;
 use tracing::{trace, trace_span};
 
-use super::{spaces::SentPacket, Connection, SentFrames};
+use super::{Connection, SentFrames, spaces::SentPacket};
 use crate::{
+    ConnectionId, Instant, TransportError, TransportErrorCode,
     connection::ConnectionSide,
     frame::{self, Close},
-    packet::{Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
-    ConnectionId, Instant, TransportError, TransportErrorCode,
+    packet::{FIXED_BIT, Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId},
 };
 
 pub(super) struct PacketBuilder {
