@@ -112,7 +112,16 @@ impl RecvStream {
         Poll::Ready(Ok(buf.filled().len()))
     }
 
-    fn poll_read_buf(
+    /// Attempts to read from the stream into buf.
+    ///
+    /// On success, returns Poll::Ready(Ok(())) and places data in
+    /// the buf. If no data was read and the buffer had a non null capacity,
+    /// it implies that EOF has been reached.
+    ///
+    /// If no data is available for reading, the method returns Poll::Pending
+    /// and arranges for the current task (via cx.waker()) to receive a notification
+    /// when the stream becomes readable or is closed.
+    pub fn poll_read_buf(
         &mut self,
         cx: &mut Context,
         buf: &mut ReadBuf<'_>,
