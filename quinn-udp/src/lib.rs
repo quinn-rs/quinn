@@ -115,6 +115,13 @@ pub struct RecvMeta {
     /// Populated on platforms: Windows, Linux, Android (API level > 25),
     /// FreeBSD, OpenBSD, NetBSD, macOS, and iOS.
     pub dst_ip: Option<IpAddr>,
+    /// A timestamp for when the given packet was received by the operating system.
+    /// Controlled by the `set_recv_timestamping` option on the source socket where available.
+    ///
+    /// Populated on platforms with varying clock sources, as follows:
+    /// - Linux: `CLOCK_REALTIME` (see `SO_TIMESTAMPNS` in `man 7 socket` for more information)
+    #[cfg(not(wasm_browser))]
+    pub timestamp: Option<Duration>,
 }
 
 impl Default for RecvMeta {
@@ -126,6 +133,8 @@ impl Default for RecvMeta {
             stride: 0,
             ecn: None,
             dst_ip: None,
+            #[cfg(not(wasm_browser))]
+            timestamp: None,
         }
     }
 }
