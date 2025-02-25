@@ -15,24 +15,13 @@ use thiserror::Error;
 use tracing::{debug, error, trace, warn};
 
 use crate::{
-    cid_generator::ConnectionIdGenerator,
-    coding::BufMutExt,
-    config::{ClientConfig, EndpointConfig, ServerConfig},
-    connection::{Connection, ConnectionError, SideArgs},
-    crypto::{self, Keys, UnsupportedVersion},
-    frame,
-    packet::{
+    cid_generator::ConnectionIdGenerator, coding::BufMutExt, config::{ClientConfig, EndpointConfig, ServerConfig}, connection::{Connection, ConnectionError, SideArgs}, crypto::{self, Keys, UnsupportedVersion}, frame, packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, Packet,
         PacketDecodeError, PacketNumber, PartialDecode, ProtectedInitialHeader,
-    },
-    shared::{
+    }, shared::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
         EndpointEvent, EndpointEventInner, IssuedCid,
-    },
-    token,
-    transport_parameters::{PreferredAddress, TransportParameters},
-    Duration, Instant, ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError,
-    INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    }, token, transport_parameters::{PreferredAddress, TransportParameters}, Duration, Instant, PathId, ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError, INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE
 };
 
 /// The main entry point to the library
@@ -102,8 +91,8 @@ impl Endpoint {
     ) -> Option<ConnectionEvent> {
         use EndpointEventInner::*;
         match event.0 {
-            NeedIdentifiers(now, n) => {
-                return Some(self.send_new_identifiers(now, ch, n));
+            NeedIdentifiers(path_id, now, n) => {
+                return Some(self.send_new_identifiers(path_id, now, ch, n));
             }
             ResetToken(remote, token) => {
                 if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
@@ -113,12 +102,12 @@ impl Endpoint {
                     warn!("duplicate reset token");
                 }
             }
-            RetireConnectionId(now, seq, allow_more_cids) => {
+            RetireConnectionId(path_id, now, seq, allow_more_cids) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
                     trace!("peer retired CID {}: {}", seq, cid);
                     self.index.retire(&cid);
                     if allow_more_cids {
-                        return Some(self.send_new_identifiers(now, ch, 1));
+                        return Some(self.send_new_identifiers(path_id, now, ch, 1));
                     }
                 }
             }
@@ -437,6 +426,7 @@ impl Endpoint {
 
     fn send_new_identifiers(
         &mut self,
+        path_id: PathId,
         now: Instant,
         ch: ConnectionHandle,
         num: u64,
@@ -449,6 +439,7 @@ impl Endpoint {
             meta.cids_issued += 1;
             meta.loc_cids.insert(sequence, id);
             ids.push(IssuedCid {
+                path_id,
                 sequence,
                 id,
                 reset_token: ResetToken::new(&*self.config.reset_key, &id),

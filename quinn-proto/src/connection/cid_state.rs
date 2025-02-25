@@ -53,7 +53,7 @@ impl CidState {
     }
 
     /// Find the next timestamp when previously issued CID should be retired
-    pub(crate) fn next_timeout(&mut self) -> Option<Instant> {
+    pub(crate) fn next_timeout(&self) -> Option<Instant> {
         self.retire_timestamp.front().map(|nc| {
             trace!("CID {} will expire at {:?}", nc.sequence, nc.timestamp);
             nc.timestamp

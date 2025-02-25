@@ -1155,7 +1155,12 @@ impl Connection {
                 }
             }
             NewIdentifiers(ids, now) => {
-                self.local_cid_state.new_cids(&ids, now);
+                let path_id = ids.first().map(|issued| issued.path_id).unwrap_or_default();
+                debug_assert!(ids.iter().all(|issued| issued.path_id == path_id));
+                match self.local_cid_state.get_mut(&path_id) {
+                    Some(cid_state) => cid_state.new_cids(&ids, now),
+                    None => error!(?path_id, "Received new CIDs from endpoint for unknown path"),
+                }
                 ids.into_iter().rev().for_each(|frame| {
                     self.spaces[SpaceId::Data].pending.new_cids.push(frame);
                 });
@@ -1216,15 +1221,30 @@ impl Connection {
                 }
                 Timer::Pacing => trace!("pacing timer expired"),
                 Timer::PushNewCid => {
-                    // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
-                    let num_new_cid = self.local_cid_state.on_cid_timeout().into();
-                    if !self.state.is_closed() {
-                        trace!(
-                            "push a new cid to peer RETIRE_PRIOR_TO field {}",
-                            self.local_cid_state.retire_prior_to()
-                        );
-                        self.endpoint_events
-                            .push_back(EndpointEventInner::NeedIdentifiers(now, num_new_cid));
+                    match self.next_cid_retirement() {
+                        None => error!("Timer::PushNewCid fired without a retired CID"),
+                        Some((path_id, _when)) => {
+                            match self.local_cid_state.get_mut(&path_id) {
+                                None => error!(?path_id, "No local CID state for path"),
+                                Some(cid_state) => {
+                                    // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
+                                    let num_new_cid = cid_state.on_cid_timeout().into();
+                                    if !self.state.is_closed() {
+                                        trace!(
+                                            "push a new CID to peer RETIRE_PRIOR_TO field {}",
+                                            cid_state.retire_prior_to()
+                                        );
+                                        self.endpoint_events.push_back(
+                                            EndpointEventInner::NeedIdentifiers(
+                                                path_id,
+                                                now,
+                                                num_new_cid,
+                                            ),
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
                 Timer::MaxAckDelay => {
@@ -2028,10 +2048,19 @@ impl Connection {
         self.timers.set(Timer::KeepAlive, now + interval);
     }
 
+    /// Sets the timer for when a previously issued CID should be retired next.
     fn reset_cid_retirement(&mut self) {
-        if let Some(t) = self.local_cid_state.next_timeout() {
+        if let Some((_path, t)) = self.next_cid_retirement() {
             self.timers.set(Timer::PushNewCid, t);
         }
+    }
+
+    /// The next time when a previously issued CID should be retired.
+    fn next_cid_retirement(&self) -> Option<(PathId, Instant)> {
+        self.local_cid_state
+            .iter()
+            .filter_map(|(path_id, cid_state)| cid_state.next_timeout().map(|t| (*path_id, t)))
+            .min_by_key(|(_path_id, timeout)| *timeout)
     }
 
     /// Handle the already-decrypted first packet from the client
@@ -2258,10 +2287,16 @@ impl Connection {
     ) {
         self.path.total_recvd = self.path.total_recvd.saturating_add(data.len() as u64);
         let mut remaining = Some(data);
+        let cid_len = self
+            .local_cid_state
+            .values()
+            .map(|cid_state| cid_state.cid_len())
+            .next()
+            .expect("one cid_state must exist");
         while let Some(data) = remaining {
             match PartialDecode::new(
                 data,
-                &FixedLengthConnectionIdParser::new(self.local_cid_state.cid_len()),
+                &FixedLengthConnectionIdParser::new(cid_len),
                 &[self.version],
                 self.endpoint_config.grease_quic_bit,
             ) {
@@ -2950,20 +2985,21 @@ impl Connection {
                     }
                     self.streams.received_stop_sending(id, error_code);
                 }
-                Frame::RetireConnectionId(frame::RetireConnectionId {
-                    path_id: _,
-                    sequence,
-                }) => {
-                    // TODO(@divma): use path id
-                    let allow_more_cids = self
-                        .local_cid_state
-                        .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
-                    self.endpoint_events
-                        .push_back(EndpointEventInner::RetireConnectionId(
-                            now,
-                            sequence,
-                            allow_more_cids,
-                        ));
+                Frame::RetireConnectionId(frame::RetireConnectionId { path_id, sequence }) => {
+                    match self.local_cid_state.get_mut(&path_id.unwrap_or_default()) {
+                        None => error!(?path_id, "RETIRE_CONNECTION_ID for unknown path"),
+                        Some(cid_state) => {
+                            let allow_more_cids = cid_state
+                                .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
+                            self.endpoint_events
+                                .push_back(EndpointEventInner::RetireConnectionId(
+                                    path_id.unwrap_or_default(),
+                                    now,
+                                    sequence,
+                                    allow_more_cids,
+                                ));
+                        }
+                    }
                 }
                 Frame::NewConnectionId(frame) => {
                     trace!(
@@ -3266,14 +3302,20 @@ impl Connection {
 
     /// Issue an initial set of connection IDs to the peer upon connection
     fn issue_first_cids(&mut self, now: Instant) {
-        if self.local_cid_state.cid_len() == 0 {
+        if self
+            .local_cid_state
+            .get(&PathId(0))
+            .expect("PathId(0) exists when the connection is created")
+            .cid_len()
+            == 0
+        {
             return;
         }
 
         // Subtract 1 to account for the CID we supplied while handshaking
         let n = self.peer_params.issue_cids_limit() - 1;
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(now, n));
+            .push_back(EndpointEventInner::NeedIdentifiers(PathId(0), now, n));
     }
 
     fn populate_packet(
@@ -3513,21 +3555,49 @@ impl Connection {
         }
 
         // NEW_CONNECTION_ID
-        // TODO(@divma): need to change this; add a decent size fn
-        while buf.len() + 44 < max_size {
+        let cid_len = self
+            .local_cid_state
+            .values()
+            .map(|cid_state| cid_state.cid_len())
+            .max()
+            .expect("some local CID state must exist");
+        let new_cid_size_bound = frame::NewConnectionId::size_bound(is_multipath_enabled, cid_len);
+        while buf.len() + new_cid_size_bound < max_size {
             let issued = match space.pending.new_cids.pop() {
                 Some(x) => x,
                 None => break,
             };
-            trace!(
-                sequence = issued.sequence,
-                id = %issued.id,
-                "NEW_CONNECTION_ID"
-            );
+            let retire_prior_to = self
+                .local_cid_state
+                .get(&issued.path_id)
+                .map(|cid_state| cid_state.retire_prior_to())
+                .unwrap_or_else(|| {
+                    error!(?path_id, "Missing local CID state");
+                    0
+                });
+            let path_id = match is_multipath_enabled {
+                true => {
+                    trace!(
+                        path_id = ?issued.path_id,
+                        sequence = issued.sequence,
+                        id = %issued.id,
+                        "PATH_NEW_CONNECTION_ID",
+                    );
+                    Some(issued.path_id)
+                }
+                false => {
+                    trace!(
+                        sequence = issued.sequence,
+                        id = %issued.id,
+                        "NEW_CONNECTION_ID"
+                    );
+                    None
+                }
+            };
             frame::NewConnectionId {
-                path_id: None, // TODO(@divma): multipath!
+                path_id,
                 sequence: issued.sequence,
-                retire_prior_to: self.local_cid_state.retire_prior_to(),
+                retire_prior_to,
                 id: issued.id,
                 reset_token: issued.reset_token,
             }
@@ -3537,8 +3607,8 @@ impl Connection {
         }
 
         // RETIRE_CONNECTION_ID
-        // TODO(@divma): buf size bounds are now wrong
-        while (buf.len() + frame::RETIRE_CONNECTION_ID_SIZE_BOUND) < max_size {
+        let retire_cid_bound = frame::RetireConnectionId::size_bound(is_multipath_enabled);
+        while buf.len() + retire_cid_bound < max_size {
             let (path_id, sequence) = match space.pending.retire_cids.pop() {
                 Some((PathId(0), seq)) if !is_multipath_enabled => (None, seq),
                 Some((path_id, seq)) => (Some(path_id), seq),
@@ -3854,16 +3924,16 @@ impl Connection {
 
     #[cfg(test)]
     pub(crate) fn active_local_cid_seq(&self) -> (u64, u64) {
-        self.local_cid_state.active_seq()
+        self.local_cid_state.get(&PathId(0)).unwrap().active_seq()
     }
 
     /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
     /// with updated `retire_prior_to` field set to `v`
     #[cfg(test)]
     pub(crate) fn rotate_local_cid(&mut self, v: u64, now: Instant) {
-        let n = self.local_cid_state.assign_retire_seq(v);
+        let n = self.local_cid_state.get_mut(&PathId(0)).unwrap().assign_retire_seq(v);
         self.endpoint_events
-            .push_back(EndpointEventInner::NeedIdentifiers(now, n));
+            .push_back(EndpointEventInner::NeedIdentifiers(PathId(0), now, n));
     }
 
     /// Check the current active remote CID sequence for `PathId(0)`

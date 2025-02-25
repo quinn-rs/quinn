@@ -291,6 +291,23 @@ impl RetireConnectionId {
             FrameType::RETIRE_CONNECTION_ID
         }
     }
+
+    /// Returns the maximum encoded size on the wire.
+    ///
+    /// This is a rough upper estimate, does not squeeze every last byte out.
+    pub(crate) fn size_bound(path_retire_cid: bool) -> usize {
+        let type_id = match path_retire_cid {
+            true => FrameType::PATH_RETIRE_CONNECTION_ID.0,
+            false => FrameType::RETIRE_CONNECTION_ID.0,
+        };
+        let type_len = VarInt::try_from(type_id).unwrap().size();
+        let path_id_len = match path_retire_cid {
+            true => VarInt::from(u32::MAX).size(),
+            false => 0
+        };
+        let seq_max_len = 8usize;
+        type_len + path_id_len + seq_max_len
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -978,6 +995,26 @@ impl NewConnectionId {
         }
     }
 
+    /// Returns the maximum encoded size on the wire.
+    ///
+    /// This is a rough upper estimate, does not squeeze every last byte out.
+    pub(crate) fn size_bound(path_new_cid: bool, cid_len: usize) -> usize {
+        let type_id = match path_new_cid {
+            true => FrameType::PATH_NEW_CONNECTION_ID.0,
+            false => FrameType::NEW_CONNECTION_ID.0,
+        };
+        let type_len = VarInt::try_from(type_id).unwrap().size();
+        let path_id_len = match path_new_cid {
+            true => VarInt::from(u32::MAX).size(),
+            false => 0
+        };
+        let seq_max_len = 8usize;
+        let retire_prior_to_max_len = 8usize;
+        let cid_len = 1 + cid_len;
+        let reset_token_len = 16;
+        type_len + path_id_len + seq_max_len + retire_prior_to_max_len + cid_len + reset_token_len
+    }
+
     fn read<R: Buf>(bytes: &mut R, read_path: bool) -> Result<Self, IterErr> {
         let path_id = if read_path { Some(bytes.get()?) } else { None };
         let sequence = bytes.get_var()?;
@@ -1009,10 +1046,6 @@ impl NewConnectionId {
         })
     }
 }
-
-/// Smallest number of bytes this type of frame is guaranteed to fit within.
-// TODO(@divma): probably need to change this
-pub(crate) const RETIRE_CONNECTION_ID_SIZE_BOUND: usize = 9;
 
 /// An unreliable datagram
 #[derive(Debug, Clone)]

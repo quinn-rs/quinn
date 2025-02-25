@@ -2,6 +2,7 @@ use std::{fmt, net::SocketAddr};
 
 use bytes::{Buf, BufMut, BytesMut};
 
+use crate::PathId;
 use crate::{coding::BufExt, packet::PartialDecode, Instant, ResetToken, MAX_CID_SIZE};
 
 /// Events sent from an Endpoint to a Connection
@@ -54,10 +55,10 @@ pub(crate) enum EndpointEventInner {
     /// The reset token and/or address eligible for generating resets has been updated
     ResetToken(SocketAddr, ResetToken),
     /// The connection needs connection identifiers
-    NeedIdentifiers(Instant, u64),
+    NeedIdentifiers(PathId, Instant, u64),
     /// Stop routing connection ID for this sequence number to the connection
     /// When `bool == true`, a new connection ID will be issued to peer
-    RetireConnectionId(Instant, u64, bool),
+    RetireConnectionId(PathId, Instant, u64, bool),
 }
 
 /// Protocol-level identifier for a connection.
@@ -174,6 +175,7 @@ impl EcnCodepoint {
 
 #[derive(Debug, Copy, Clone)]
 pub(crate) struct IssuedCid {
+    pub(crate) path_id: PathId,
     pub(crate) sequence: u64,
     pub(crate) id: ConnectionId,
     pub(crate) reset_token: ResetToken,
