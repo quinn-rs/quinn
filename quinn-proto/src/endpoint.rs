@@ -31,8 +31,8 @@ use crate::{
     },
     token,
     transport_parameters::{PreferredAddress, TransportParameters},
-    Duration, Instant, ResetToken, RetryToken, Side, Transmit, TransportConfig, TransportError,
-    INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
+    Duration, Instant, PathId, ResetToken, RetryToken, Side, Transmit, TransportConfig,
+    TransportError, INITIAL_MTU, MAX_CID_SIZE, MIN_INITIAL_SIZE, RESET_TOKEN_SIZE,
 };
 
 /// The main entry point to the library
@@ -102,8 +102,8 @@ impl Endpoint {
     ) -> Option<ConnectionEvent> {
         use EndpointEventInner::*;
         match event.0 {
-            NeedIdentifiers(now, n) => {
-                return Some(self.send_new_identifiers(now, ch, n));
+            NeedIdentifiers(path_id, now, n) => {
+                return Some(self.send_new_identifiers(path_id, now, ch, n));
             }
             ResetToken(remote, token) => {
                 if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
@@ -113,12 +113,12 @@ impl Endpoint {
                     warn!("duplicate reset token");
                 }
             }
-            RetireConnectionId(now, seq, allow_more_cids) => {
+            RetireConnectionId(now, path_id, seq, allow_more_cids) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
                     trace!("peer retired CID {}: {}", seq, cid);
                     self.index.retire(&cid);
                     if allow_more_cids {
-                        return Some(self.send_new_identifiers(now, ch, 1));
+                        return Some(self.send_new_identifiers(path_id, now, ch, 1));
                     }
                 }
             }
@@ -200,9 +200,14 @@ impl Endpoint {
 
         let addresses = FourTuple { remote, local_ip };
         if let Some(route_to) = self.index.get(&addresses, &first_decode) {
+            let path_id = match route_to {
+                RouteDatagramTo::Incoming(_) => PathId(0),
+                RouteDatagramTo::Connection(_, path_id) => path_id,
+            };
             let event = DatagramConnectionEvent {
                 now,
                 remote: addresses.remote,
+                path_id,
                 ecn,
                 first_decode,
                 remaining,
@@ -228,7 +233,7 @@ impl Endpoint {
 
                     return None;
                 }
-                RouteDatagramTo::Connection(ch) => {
+                RouteDatagramTo::Connection(ch, _path_id) => {
                     return Some(DatagramEvent::ConnectionEvent(
                         ch,
                         ConnectionEvent(ConnectionEventInner::Datagram(event)),
@@ -368,7 +373,7 @@ impl Endpoint {
         buf.reserve(padding_len + RESET_TOKEN_SIZE);
         buf.resize(padding_len, 0);
         self.rng.fill_bytes(&mut buf[0..padding_len]);
-        buf[0] = 0b0100_0000 | buf[0] >> 2;
+        buf[0] = 0b0100_0000 | (buf[0] >> 2);
         buf.extend_from_slice(&ResetToken::new(&*self.config.reset_key, dst_cid));
 
         debug_assert!(buf.len() < inciting_dgram_len);
@@ -404,7 +409,7 @@ impl Endpoint {
         trace!(initial_dcid = %remote_id);
 
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(ch);
+        let loc_cid = self.new_cid(ch, PathId(0));
         let params = TransportParameters::new(
             &config.transport,
             &self.config,
@@ -435,20 +440,23 @@ impl Endpoint {
         Ok((ch, conn))
     }
 
+    /// Generates new CIDs and creates message to send to the connection state
     fn send_new_identifiers(
         &mut self,
+        path_id: PathId,
         now: Instant,
         ch: ConnectionHandle,
         num: u64,
     ) -> ConnectionEvent {
         let mut ids = vec![];
         for _ in 0..num {
-            let id = self.new_cid(ch);
+            let id = self.new_cid(ch, path_id);
             let meta = &mut self.connections[ch];
             let sequence = meta.cids_issued;
             meta.cids_issued += 1;
             meta.loc_cids.insert(sequence, id);
             ids.push(IssuedCid {
+                path_id,
                 sequence,
                 id,
                 reset_token: ResetToken::new(&*self.config.reset_key, &id),
@@ -458,7 +466,7 @@ impl Endpoint {
     }
 
     /// Generate a connection ID for `ch`
-    fn new_cid(&mut self, ch: ConnectionHandle) -> ConnectionId {
+    fn new_cid(&mut self, ch: ConnectionHandle, path_id: PathId) -> ConnectionId {
         loop {
             let cid = self.local_cid_generator.generate_cid();
             if cid.len() == 0 {
@@ -467,7 +475,7 @@ impl Endpoint {
                 return cid;
             }
             if let hash_map::Entry::Vacant(e) = self.index.connection_ids.entry(cid) {
-                e.insert(ch);
+                e.insert((ch, path_id));
                 break cid;
             }
         }
@@ -605,7 +613,7 @@ impl Endpoint {
             .packet
             .remote
             .decrypt(
-                Default::default(), // for the first packet multipath has not been negotiated
+                PathId(0),
                 packet_number,
                 &incoming.packet.header_data,
                 &mut incoming.packet.payload,
@@ -621,7 +629,7 @@ impl Endpoint {
         };
 
         let ch = ConnectionHandle(self.connections.vacant_key());
-        let loc_cid = self.new_cid(ch);
+        let loc_cid = self.new_cid(ch, PathId(0));
         let mut params = TransportParameters::new(
             &server_config.transport,
             &self.config,
@@ -637,7 +645,9 @@ impl Endpoint {
         if server_config.preferred_address_v4.is_some()
             || server_config.preferred_address_v6.is_some()
         {
-            let cid = self.new_cid(ch);
+            // QUIC-MULTIPATH 1.2: Use of the "preferred address" is considered as a
+            // migration event that does not change the Path ID.
+            let cid = self.new_cid(ch, PathId(0));
             pref_addr_cid = Some(cid);
             params.preferred_address = Some(PreferredAddress {
                 address_v4: server_config.preferred_address_v4,
@@ -996,7 +1006,7 @@ struct IncomingBuffer {
 #[derive(Copy, Clone, Debug)]
 enum RouteDatagramTo {
     Incoming(usize),
-    Connection(ConnectionHandle),
+    Connection(ConnectionHandle, PathId),
 }
 
 /// Maps packets to existing connections
@@ -1011,7 +1021,7 @@ struct ConnectionIndex {
     /// Identifies connections based on locally created CIDs
     ///
     /// Uses a cheaper hash function since keys are locally created
-    connection_ids: FxHashMap<ConnectionId, ConnectionHandle>,
+    connection_ids: FxHashMap<ConnectionId, (ConnectionHandle, PathId)>,
     /// Identifies incoming connections with zero-length CIDs
     ///
     /// Uses a standard `HashMap` to protect against hash collision attacks.
@@ -1057,7 +1067,7 @@ impl ConnectionIndex {
             return;
         }
         self.connection_ids_initial
-            .insert(dst_cid, RouteDatagramTo::Connection(connection));
+            .insert(dst_cid, RouteDatagramTo::Connection(connection, PathId(0)));
     }
 
     /// Associate a connection with its first locally-chosen destination CID if used, or otherwise
@@ -1081,7 +1091,7 @@ impl ConnectionIndex {
                 }
             },
             _ => {
-                self.connection_ids.insert(dst_cid, connection);
+                self.connection_ids.insert(dst_cid, (connection, PathId(0)));
             }
         }
     }
@@ -1110,8 +1120,8 @@ impl ConnectionIndex {
     /// Find the existing connection that `datagram` should be routed to, if any
     fn get(&self, addresses: &FourTuple, datagram: &PartialDecode) -> Option<RouteDatagramTo> {
         if datagram.dst_cid().len() != 0 {
-            if let Some(&ch) = self.connection_ids.get(datagram.dst_cid()) {
-                return Some(RouteDatagramTo::Connection(ch));
+            if let Some(&(ch, path_id)) = self.connection_ids.get(datagram.dst_cid()) {
+                return Some(RouteDatagramTo::Connection(ch, path_id));
             }
         }
         if datagram.is_initial() || datagram.is_0rtt() {
@@ -1121,20 +1131,25 @@ impl ConnectionIndex {
         }
         if datagram.dst_cid().len() == 0 {
             if let Some(&ch) = self.incoming_connection_remotes.get(addresses) {
-                return Some(RouteDatagramTo::Connection(ch));
+                // Never multipath because QUIC-MULTIPATH 1.1 mandates the use of non-zero
+                // length CIDs.  So this is always PathId(0).
+                return Some(RouteDatagramTo::Connection(ch, PathId(0)));
             }
             if let Some(&ch) = self.outgoing_connection_remotes.get(&addresses.remote) {
-                return Some(RouteDatagramTo::Connection(ch));
+                // Like above, QUIC-MULTIPATH 1.1 mandates the use of non-zero length CIDs.
+                return Some(RouteDatagramTo::Connection(ch, PathId(0)));
             }
         }
         let data = datagram.data();
         if data.len() < RESET_TOKEN_SIZE {
             return None;
         }
+        // For stateless resets the PathId is meaningless since it closes the entire
+        // connection regarldess of path.  So use PathId(0).
         self.connection_reset_tokens
             .get(addresses.remote, &data[data.len() - RESET_TOKEN_SIZE..])
             .cloned()
-            .map(RouteDatagramTo::Connection)
+            .map(|ch| RouteDatagramTo::Connection(ch, PathId(0)))
     }
 }
 
@@ -1142,6 +1157,7 @@ impl ConnectionIndex {
 pub(crate) struct ConnectionMeta {
     init_cid: ConnectionId,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
+    // TODO(flub): This needs to be per-path
     cids_issued: u64,
     loc_cids: FxHashMap<u64, ConnectionId>,
     /// Remote/local addresses the connection began with

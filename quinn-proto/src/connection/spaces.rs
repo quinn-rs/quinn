@@ -643,7 +643,7 @@ impl Dedup {
     pub(super) fn insert(&mut self, packet: u64) -> bool {
         if let Some(diff) = packet.checked_sub(self.next) {
             // Right of window
-            self.window = (self.window << 1 | 1)
+            self.window = ((self.window << 1) | 1)
                 .checked_shl(cmp::min(diff, u64::from(u32::MAX)) as u32)
                 .unwrap_or(0);
             self.next = packet + 1;
