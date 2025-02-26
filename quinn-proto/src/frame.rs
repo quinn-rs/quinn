@@ -303,7 +303,7 @@ impl RetireConnectionId {
         let type_len = VarInt::try_from(type_id).unwrap().size();
         let path_id_len = match path_retire_cid {
             true => VarInt::from(u32::MAX).size(),
-            false => 0
+            false => 0,
         };
         let seq_max_len = 8usize;
         type_len + path_id_len + seq_max_len
@@ -1006,7 +1006,7 @@ impl NewConnectionId {
         let type_len = VarInt::try_from(type_id).unwrap().size();
         let path_id_len = match path_new_cid {
             true => VarInt::from(u32::MAX).size(),
-            false => 0
+            false => 0,
         };
         let seq_max_len = 8usize;
         let retire_prior_to_max_len = 8usize;
