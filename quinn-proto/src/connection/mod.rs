@@ -3849,12 +3849,13 @@ impl Connection {
     /// Decodes a packet, returning its decrypted payload, so it can be inspected in tests
     #[cfg(test)]
     pub(crate) fn decode_packet(&self, event: &ConnectionEvent) -> Option<Vec<u8>> {
-        let (first_decode, remaining) = match &event.0 {
+        let (path_id, first_decode, remaining) = match &event.0 {
             ConnectionEventInner::Datagram(DatagramConnectionEvent {
+                path_id,
                 first_decode,
                 remaining,
                 ..
-            }) => (first_decode, remaining),
+            }) => (path_id, first_decode, remaining),
             _ => return None,
         };
 
@@ -3870,10 +3871,9 @@ impl Connection {
         )?;
 
         let mut packet = decrypted_header.packet?;
-        // TODO(flub): can now use the real PathId here from looking at the dst_cid
         packet_crypto::decrypt_packet_body(
             &mut packet,
-            self.path_id.unwrap_or_default(),
+            *path_id,
             &self.spaces,
             self.zero_rtt_crypto.as_ref(),
             self.key_phase,
