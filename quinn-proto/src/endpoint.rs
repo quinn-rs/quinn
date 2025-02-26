@@ -102,7 +102,7 @@ impl Endpoint {
                     warn!("duplicate reset token");
                 }
             }
-            RetireConnectionId(path_id, now, seq, allow_more_cids) => {
+            RetireConnectionId(now, path_id, seq, allow_more_cids) => {
                 if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
                     trace!("peer retired CID {}: {}", seq, cid);
                     self.index.retire(&cid);
@@ -1146,6 +1146,7 @@ impl ConnectionIndex {
 pub(crate) struct ConnectionMeta {
     init_cid: ConnectionId,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
+    // TODO(flub): This needs to be per-path
     cids_issued: u64,
     loc_cids: FxHashMap<u64, ConnectionId>,
     /// Remote/local addresses the connection began with

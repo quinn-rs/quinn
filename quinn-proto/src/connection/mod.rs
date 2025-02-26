@@ -2999,8 +2999,8 @@ impl Connection {
                                 .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
                             self.endpoint_events
                                 .push_back(EndpointEventInner::RetireConnectionId(
-                                    path_id.unwrap_or_default(),
                                     now,
+                                    path_id.unwrap_or_default(),
                                     sequence,
                                     allow_more_cids,
                                 ));
