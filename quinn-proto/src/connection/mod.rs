@@ -462,59 +462,8 @@ impl Connection {
         let mut datagram_start = 0;
         let mut segment_size = usize::from(self.path.current_mtu());
 
-        // Send PATH_CHALLENGE for a previous path if necessary
-        if let Some((prev_cid, ref mut prev_path)) = self.prev_path {
-            if prev_path.challenge_pending {
-                prev_path.challenge_pending = false;
-                let token = prev_path
-                    .challenge
-                    .expect("previous path challenge pending without token");
-                let destination = prev_path.remote;
-                debug_assert_eq!(
-                    self.highest_space,
-                    SpaceId::Data,
-                    "PATH_CHALLENGE queued without 1-RTT keys"
-                );
-                buf.reserve(MIN_INITIAL_SIZE as usize);
-
-                let buf_capacity = buf.capacity();
-
-                // Use the previous CID to avoid linking the new path with the previous path. We
-                // don't bother accounting for possible retirement of that prev_cid because this is
-                // sent once, immediately after migration, when the CID is known to be valid. Even
-                // if a post-migration packet caused the CID to be retired, it's fair to pretend
-                // this is sent first.
-                let mut builder = PacketBuilder::new(
-                    now,
-                    SpaceId::Data,
-                    prev_cid,
-                    buf,
-                    buf_capacity,
-                    0,
-                    false,
-                    self,
-                )?;
-                trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
-                buf.write(frame::FrameType::PATH_CHALLENGE);
-                buf.write(token);
-                self.stats.frame_tx.path_challenge += 1;
-
-                // An endpoint MUST expand datagrams that contain a PATH_CHALLENGE frame
-                // to at least the smallest allowed maximum datagram size of 1200 bytes,
-                // unless the anti-amplification limit for the path does not permit
-                // sending a datagram of this size
-                builder.pad_to(MIN_INITIAL_SIZE);
-
-                builder.finish(self, buf);
-                self.stats.udp_tx.on_sent(1, buf.len());
-                return Some(Transmit {
-                    destination,
-                    size: buf.len(),
-                    ecn: None,
-                    segment_size: None,
-                    src_ip: self.local_ip,
-                });
-            }
+        if let Some(challenge) = self.send_path_challenge(now, buf) {
+            return Some(challenge);
         }
 
         // If we need to send a probe, make sure we have something to send.
@@ -1030,6 +979,64 @@ impl Connection {
                 1 => None,
                 _ => Some(segment_size),
             },
+            src_ip: self.local_ip,
+        })
+    }
+
+    /// Send PATH_CHALLENGE for a previous path if necessary
+    fn send_path_challenge(&mut self, now: Instant, buf: &mut Vec<u8>) -> Option<Transmit> {
+        let (prev_cid, prev_path) = self.prev_path.as_mut()?;
+        if !prev_path.challenge_pending {
+            return None;
+        }
+        prev_path.challenge_pending = false;
+        let token = prev_path
+            .challenge
+            .expect("previous path challenge pending without token");
+        let destination = prev_path.remote;
+        debug_assert_eq!(
+            self.highest_space,
+            SpaceId::Data,
+            "PATH_CHALLENGE queued without 1-RTT keys"
+        );
+        buf.reserve(MIN_INITIAL_SIZE as usize);
+
+        let buf_capacity = buf.capacity();
+
+        // Use the previous CID to avoid linking the new path with the previous path. We
+        // don't bother accounting for possible retirement of that prev_cid because this is
+        // sent once, immediately after migration, when the CID is known to be valid. Even
+        // if a post-migration packet caused the CID to be retired, it's fair to pretend
+        // this is sent first.
+        let mut builder = PacketBuilder::new(
+            now,
+            SpaceId::Data,
+            *prev_cid,
+            buf,
+            buf_capacity,
+            0,
+            false,
+            self,
+        )?;
+        trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
+        buf.write(frame::FrameType::PATH_CHALLENGE);
+        buf.write(token);
+        self.stats.frame_tx.path_challenge += 1;
+
+        // An endpoint MUST expand datagrams that contain a PATH_CHALLENGE frame
+        // to at least the smallest allowed maximum datagram size of 1200 bytes,
+        // unless the anti-amplification limit for the path does not permit
+        // sending a datagram of this size
+        builder.pad_to(MIN_INITIAL_SIZE);
+
+        builder.finish(self, buf);
+        self.stats.udp_tx.on_sent(1, buf.len());
+
+        Some(Transmit {
+            destination,
+            size: buf.len(),
+            ecn: None,
+            segment_size: None,
             src_ip: self.local_ip,
         })
     }
