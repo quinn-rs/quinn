@@ -245,7 +245,7 @@ impl fmt::Display for StreamId {
 impl StreamId {
     /// Create a new StreamId
     pub fn new(initiator: Side, dir: Dir, index: u64) -> Self {
-        Self(index << 2 | (dir as u64) << 1 | initiator as u64)
+        Self((index << 2) | ((dir as u64) << 1) | initiator as u64)
     }
     /// Which side of a connection initiated the stream
     pub fn initiator(self) -> Side {
