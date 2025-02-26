@@ -22,6 +22,7 @@ pub(crate) enum ConnectionEventInner {
 pub(crate) struct DatagramConnectionEvent {
     pub(crate) now: Instant,
     pub(crate) remote: SocketAddr,
+    pub(crate) path_id: PathId,
     pub(crate) ecn: Option<EcnCodepoint>,
     pub(crate) first_decode: PartialDecode,
     pub(crate) remaining: Option<BytesMut>,
