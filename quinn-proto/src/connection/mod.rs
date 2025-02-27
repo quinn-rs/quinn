@@ -1451,7 +1451,6 @@ impl Connection {
         path: PathId,
         ack: frame::Ack,
     ) -> Result<(), TransportError> {
-        // TODO(@divma): check path id
         if ack.largest >= self.spaces[space].for_path(path).next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
