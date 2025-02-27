@@ -98,6 +98,10 @@ impl ConnectionId {
         res
     }
 
+    pub(crate) fn len(&self) -> usize {
+        self.len as usize
+    }
+
     /// Decode from long header format
     pub(crate) fn decode_long(buf: &mut impl Buf) -> Option<Self> {
         let len = buf.get::<u8>().ok()? as usize;

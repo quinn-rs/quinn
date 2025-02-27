@@ -295,6 +295,7 @@ impl RetireConnectionId {
     /// Returns the maximum encoded size on the wire.
     ///
     /// This is a rough upper estimate, does not squeeze every last byte out.
+    // TODO(flub): This might be overkill and maybe we should just use a const
     pub(crate) fn size_bound(path_retire_cid: bool) -> usize {
         let type_id = match path_retire_cid {
             true => FrameType::PATH_RETIRE_CONNECTION_ID.0,
@@ -998,6 +999,7 @@ impl NewConnectionId {
     /// Returns the maximum encoded size on the wire.
     ///
     /// This is a rough upper estimate, does not squeeze every last byte out.
+    // TODO(flub): This might be overkill and maybe we should just use a const
     pub(crate) fn size_bound(path_new_cid: bool, cid_len: usize) -> usize {
         let type_id = match path_new_cid {
             true => FrameType::PATH_NEW_CONNECTION_ID.0,
