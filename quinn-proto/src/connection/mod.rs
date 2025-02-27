@@ -4024,7 +4024,7 @@ impl Connection {
             .rem_cids
             .get(&path)
             .map(|cids| cids.active().len())
-            .unwrap_or_default()
+            .unwrap_or(20)      // Max CID len in QUIC v1
             + pn_len
             + self.tag_len_1rtt()
     }
@@ -4037,7 +4037,7 @@ impl Connection {
             .values()
             .map(|cids| cids.active().len())
             .max()
-            .unwrap_or_default();
+            .unwrap_or(20);     // Max CID len in QUIC v1
 
         // 1 byte for flags
         1 + cid_len + pn_len + self.tag_len_1rtt()
