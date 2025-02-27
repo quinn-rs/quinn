@@ -2119,7 +2119,6 @@ impl Connection {
                         max_ack_delay: TransportParameters::default().max_ack_delay,
                         ..params
                     };
-                    // TODO(@divma): check if we need to to anything here regarding multipath
                     self.set_peer_params(params);
                 }
                 Err(e) => {
@@ -3744,7 +3743,7 @@ impl Connection {
         trace!("negotiated max idle timeout {:?}", self.idle_timeout);
 
         if let Some(ref info) = params.preferred_address {
-            // This early on PathId(0) must still exist.
+            // During the handshake PathId(0) exists.
             self.rem_cids.get_mut(&PathId(0)).expect("not yet abandoned").insert(frame::NewConnectionId {
                 path_id: None,
                 sequence: 1,
@@ -3755,7 +3754,8 @@ impl Connection {
             .expect(
                 "preferred address CID is the first received, and hence is guaranteed to be legal",
             );
-            // TODO(flub): This works because we only have PathId(0) right now.
+            // TODO(flub): will need fixing for the right multipath remote socket add.  But
+            //    will still be PathId(0).
             self.set_reset_token(self.path.remote, info.stateless_reset_token);
         }
         self.ack_frequency.peer_max_ack_delay = get_max_ack_delay(&params);
