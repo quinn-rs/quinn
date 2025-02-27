@@ -2079,7 +2079,7 @@ impl Connection {
             _ => unreachable!("first packet must be delivered in Handshake state"),
         }
 
-        // TODO(flub): Here we know it can only be PathId(0) as this is the first packet
+        // The first packet is always on PathId(0)
         self.on_packet_authenticated(
             now,
             SpaceId::Initial,
