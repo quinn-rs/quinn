@@ -1148,6 +1148,8 @@ impl Connection {
             NewIdentifiers(ids, now) => {
                 let path_id = ids.first().map(|issued| issued.path_id).unwrap_or_default();
                 debug_assert!(ids.iter().all(|issued| issued.path_id == path_id));
+                // TODO(flub): possibly just create the missing CidState.  We need a little
+                // more information from the event.  Maybe we can add the timeout?
                 match self.local_cid_state.get_mut(&path_id) {
                     Some(cid_state) => cid_state.new_cids(&ids, now),
                     None => error!(?path_id, "Received new CIDs from endpoint for unknown path"),
@@ -3303,7 +3305,11 @@ impl Connection {
     }
 
     /// Issue an initial set of connection IDs to the peer upon connection
+    // Is called before the handshake is completed.  But I think they are only sent on
+    // 1-RTT packets?
     fn issue_first_cids(&mut self, now: Instant) {
+        // TODO(flub): This needs to issue CIDs for several paths!
+        //    Do this.
         if self
             .local_cid_state
             .get(&PathId(0))
@@ -3660,6 +3666,9 @@ impl Connection {
     ///
     /// If *path_id* is `None` ACK frames will be produced, if *path_id* is
     /// `Some` multipath PATH_ACK frames are used instead.
+    // TODO(flub): This is wrong!  We need to produce PATH_ACK frames as soon as multipath
+    //    is enabled.  And ACK frames when multipath is not enabled.  The actual path we're
+    //    put into the ack depends on the path of the packet being acked!
     fn populate_acks(
         now: Instant,
         receiving_ecn: bool,

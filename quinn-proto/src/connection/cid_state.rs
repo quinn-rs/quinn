@@ -52,6 +52,18 @@ impl CidState {
         this
     }
 
+    pub(crate) fn new_empty(cid_len: usize, cid_lifetime: Option<Duration>) -> Self {
+        Self {
+            retire_timestamp: VecDeque::new(),
+            issued: 0,
+            active_seq: FxHashSet::default(),
+            prev_retire_seq: 0,
+            retire_seq: 0,
+            cid_len,
+            cid_lifetime,
+        }
+    }
+
     /// Find the next timestamp when previously issued CID should be retired
     pub(crate) fn next_timeout(&self) -> Option<Instant> {
         self.retire_timestamp.front().map(|nc| {
@@ -132,6 +144,10 @@ impl CidState {
     }
 
     /// Update cid state when `NewIdentifiers` event is received
+    ///
+    /// These are newly generated CIDs which we'll send to the peer in
+    /// (PATH_)NEW_CONNECTION_ID frames in the next packet that is sent.  This records them
+    /// and tracks their lifetime.
     pub(crate) fn new_cids(&mut self, ids: &[IssuedCid], now: Instant) {
         // `ids` could be `None` once active_connection_id_limit is set to 1 by peer
         let last_cid = match ids.last() {
