@@ -1437,9 +1437,9 @@ impl Connection {
     /// Multipath is only enabled after the handshake is completed and if it was negotiated
     /// by both peers.
     pub fn is_multipath_enabled(&self) -> bool {
-        // TODO(flub): Multipath can only be enabled if both sides use non-zero length CIDs.
-        //    Also check that.
         !self.is_handshaking()
+            && self.handshake_cid.len() > 0
+            && self.rem_handshake_cid.len() > 0
             && self.config.initial_max_path_id.is_some()
             && self.peer_params.initial_max_path_id.is_some()
     }
