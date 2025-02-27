@@ -14,7 +14,7 @@ use crate::{
 
 /// Id representing different paths when using multipath extension
 // TODO(@divma): improve docs, reconsider access to inner
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone, Copy, Default, Hash)]
 pub struct PathId(pub(crate) u32);
 
 impl coding::Codec for PathId {
