@@ -2991,9 +2991,6 @@ impl Connection {
                     match self.local_cid_state.get_mut(&path_id.unwrap_or_default()) {
                         None => error!(?path_id, "RETIRE_CONNECTION_ID for unknown path"),
                         Some(cid_state) => {
-                            // TODO(flub): remove from self.path_cids Maybe instead of
-                            // maintaining self.path_cids I can have partial decoded packets
-                            // include the PathId?
                             let allow_more_cids = cid_state
                                 .on_cid_retirement(sequence, self.peer_params.issue_cids_limit())?;
                             self.endpoint_events
