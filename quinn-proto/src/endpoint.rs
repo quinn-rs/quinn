@@ -114,7 +114,11 @@ impl Endpoint {
                 }
             }
             RetireConnectionId(now, path_id, seq, allow_more_cids) => {
-                if let Some(cid) = self.connections[ch].loc_cids.remove(&seq) {
+                if let Some(cid) = self.connections[ch]
+                    .loc_cids
+                    .get_mut(&path_id)
+                    .and_then(|pcid| pcid.cids.remove(&seq))
+                {
                     trace!("peer retired CID {}: {}", seq, cid);
                     self.index.retire(&cid);
                     if allow_more_cids {
@@ -451,10 +455,10 @@ impl Endpoint {
         let mut ids = vec![];
         for _ in 0..num {
             let id = self.new_cid(ch, path_id);
-            let meta = &mut self.connections[ch];
-            let sequence = meta.cids_issued;
-            meta.cids_issued += 1;
-            meta.loc_cids.insert(sequence, id);
+            let cid_meta = self.connections[ch].loc_cids.entry(path_id).or_default();
+            let sequence = cid_meta.issued;
+            cid_meta.issued += 1;
+            cid_meta.cids.insert(sequence, id);
             ids.push(IssuedCid {
                 path_id,
                 sequence,
@@ -863,22 +867,19 @@ impl Endpoint {
             side_args,
         );
 
-        let mut cids_issued = 0;
-        let mut loc_cids = FxHashMap::default();
-
-        loc_cids.insert(cids_issued, loc_cid);
-        cids_issued += 1;
+        let mut path_cids = PathLocalCids::default();
+        path_cids.cids.insert(path_cids.issued, loc_cid);
+        path_cids.issued += 1;
 
         if let Some(cid) = pref_addr_cid {
-            debug_assert_eq!(cids_issued, 1, "preferred address cid seq must be 1");
-            loc_cids.insert(cids_issued, cid);
-            cids_issued += 1;
+            debug_assert_eq!(path_cids.issued, 1, "preferred address cid seq must be 1");
+            path_cids.cids.insert(path_cids.issued, cid);
+            path_cids.issued += 1;
         }
 
         let id = self.connections.insert(ConnectionMeta {
             init_cid,
-            cids_issued,
-            loc_cids,
+            loc_cids: FxHashMap::from_iter([(PathId(0), path_cids)]),
             addresses,
             side,
             reset_token: None,
@@ -1106,7 +1107,7 @@ impl ConnectionIndex {
         if conn.side.is_server() {
             self.remove_initial(conn.init_cid);
         }
-        for cid in conn.loc_cids.values() {
+        for cid in conn.loc_cids.values().flat_map(|pcids| pcids.cids.values()) {
             self.connection_ids.remove(cid);
         }
         self.incoming_connection_remotes.remove(&conn.addresses);
@@ -1156,10 +1157,8 @@ impl ConnectionIndex {
 #[derive(Debug)]
 pub(crate) struct ConnectionMeta {
     init_cid: ConnectionId,
-    /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
-    // TODO(flub): This needs to be per-path
-    cids_issued: u64,
-    loc_cids: FxHashMap<u64, ConnectionId>,
+    /// Locally issues CIDs for each path
+    loc_cids: FxHashMap<PathId, PathLocalCids>,
     /// Remote/local addresses the connection began with
     ///
     /// Only needed to support connections with zero-length CIDs, which cannot migrate, so we don't
@@ -1169,6 +1168,17 @@ pub(crate) struct ConnectionMeta {
     /// Reset token provided by the peer for the CID we're currently sending to, and the address
     /// being sent to
     reset_token: Option<(SocketAddr, ResetToken)>,
+}
+
+/// Local connection IDs for a single path
+#[derive(Debug, Default)]
+struct PathLocalCids {
+    /// Number of connection IDs that have been issued in (PATH_)NEW_CONNECTION_ID frames
+    ///
+    /// Another way of saying this is that this is the next sequence number to be issued.
+    issued: u64,
+    /// Issues CIDs indexed by their sequence number.
+    cids: FxHashMap<u64, ConnectionId>,
 }
 
 /// Internal identifier for a `Connection` currently associated with an endpoint
