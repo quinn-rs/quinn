@@ -1145,13 +1145,15 @@ impl Connection {
                     self.set_loss_detection_timer(now);
                 }
             }
-            NewIdentifiers(ids, now) => {
+            NewIdentifiers(ids, now, cid_len, cid_lifetime) => {
                 let path_id = ids.first().map(|issued| issued.path_id).unwrap_or_default();
                 debug_assert!(ids.iter().all(|issued| issued.path_id == path_id));
-                match self.local_cid_state.get_mut(&path_id) {
-                    Some(cid_state) => cid_state.new_cids(&ids, now),
-                    None => error!(?path_id, "Received new CIDs from endpoint for unknown path"),
-                }
+                let cid_state = self
+                    .local_cid_state
+                    .entry(path_id)
+                    .or_insert_with(|| CidState::new(cid_len, cid_lifetime, now, 0));
+                cid_state.new_cids(&ids, now);
+
                 ids.into_iter().rev().for_each(|frame| {
                     self.spaces[SpaceId::Data].pending.new_cids.push(frame);
                 });
@@ -2692,6 +2694,12 @@ impl Connection {
                 self.events.push_back(Event::Connected);
                 self.state = State::Established;
                 trace!("established");
+
+                // Multipath can only be enabled after the state has reached Established.
+                // So this can not happen any earlier.
+                if self.is_multipath_enabled() {
+                    self.issue_first_path_cids(now);
+                }
                 Ok(())
             }
             Header::Initial(InitialHeader {
@@ -3320,6 +3328,24 @@ impl Connection {
             .push_back(EndpointEventInner::NeedIdentifiers(PathId(0), now, n));
     }
 
+    /// Issues an initial set of CIDs to the peer for PathId > 0
+    // TODO(flub): Whenever we close paths we need to issue new CIDs as well.  Once we do
+    //    that we probably want to re-use this function but with a max_path_id parameter or
+    //    something.
+    fn issue_first_path_cids(&mut self, now: Instant) {
+        debug_assert!(self.is_multipath_enabled());
+        if let Some(max_path_id) = self.config.initial_max_path_id {
+            for n in 1..(max_path_id + 1) {
+                self.endpoint_events
+                    .push_back(EndpointEventInner::NeedIdentifiers(
+                        PathId(n),
+                        now,
+                        self.peer_params.issue_cids_limit(),
+                    ));
+            }
+        }
+    }
+
     fn populate_packet(
         &mut self,
         now: Instant,
@@ -3574,10 +3600,10 @@ impl Connection {
                 .get(&issued.path_id)
                 .map(|cid_state| cid_state.retire_prior_to())
                 .unwrap_or_else(|| {
-                    error!(?path_id, "Missing local CID state");
+                    error!(path_id = ?issued.path_id, "Missing local CID state");
                     0
                 });
-            let path_id = match is_multipath_enabled {
+            let cid_path_id = match is_multipath_enabled {
                 true => {
                     trace!(
                         path_id = ?issued.path_id,
@@ -3593,11 +3619,12 @@ impl Connection {
                         id = %issued.id,
                         "NEW_CONNECTION_ID"
                     );
+                    debug_assert_eq!(issued.path_id, PathId(0));
                     None
                 }
             };
             frame::NewConnectionId {
-                path_id,
+                path_id: cid_path_id,
                 sequence: issued.sequence,
                 retire_prior_to,
                 id: issued.id,
@@ -3660,6 +3687,9 @@ impl Connection {
     ///
     /// If *path_id* is `None` ACK frames will be produced, if *path_id* is
     /// `Some` multipath PATH_ACK frames are used instead.
+    // TODO(flub): This is wrong!  We need to produce PATH_ACK frames as soon as multipath
+    //    is enabled.  And ACK frames when multipath is not enabled.  The actual path we're
+    //    put into the ack depends on the path of the packet being acked!
     fn populate_acks(
         now: Instant,
         receiving_ecn: bool,

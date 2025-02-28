@@ -2,8 +2,9 @@ use std::{fmt, net::SocketAddr};
 
 use bytes::{Buf, BufMut, BytesMut};
 
-use crate::PathId;
-use crate::{coding::BufExt, packet::PartialDecode, Instant, ResetToken, MAX_CID_SIZE};
+use crate::{
+    coding::BufExt, packet::PartialDecode, Duration, Instant, PathId, ResetToken, MAX_CID_SIZE,
+};
 
 /// Events sent from an Endpoint to a Connection
 #[derive(Debug)]
@@ -14,7 +15,7 @@ pub(crate) enum ConnectionEventInner {
     /// A datagram has been received for the Connection
     Datagram(DatagramConnectionEvent),
     /// New connection identifiers have been issued for the Connection
-    NewIdentifiers(Vec<IssuedCid>, Instant),
+    NewIdentifiers(Vec<IssuedCid>, Instant, usize, Option<Duration>),
 }
 
 /// Variant of [`ConnectionEventInner`].

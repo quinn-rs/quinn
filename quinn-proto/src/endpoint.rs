@@ -466,7 +466,12 @@ impl Endpoint {
                 reset_token: ResetToken::new(&*self.config.reset_key, &id),
             });
         }
-        ConnectionEvent(ConnectionEventInner::NewIdentifiers(ids, now))
+        ConnectionEvent(ConnectionEventInner::NewIdentifiers(
+            ids,
+            now,
+            self.local_cid_generator.cid_len(),
+            self.local_cid_generator.cid_lifetime(),
+        ))
     }
 
     /// Generate a connection ID for `ch`
