@@ -3329,6 +3329,9 @@ impl Connection {
     }
 
     /// Issues an initial set of CIDs to the peer for PathId > 0
+    // TODO(flub): Whenever we close paths we need to issue new CIDs as well.  Once we do
+    //    that we probably want to re-use this function but with a max_path_id parameter or
+    //    something.
     fn issue_first_path_cids(&mut self, now: Instant) {
         debug_assert!(self.is_multipath_enabled());
         if let Some(max_path_id) = self.config.initial_max_path_id {
