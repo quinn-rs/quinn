@@ -1145,15 +1145,15 @@ impl Connection {
                     self.set_loss_detection_timer(now);
                 }
             }
-            NewIdentifiers(ids, now) => {
+            NewIdentifiers(ids, now, cid_len, cid_lifetime) => {
                 let path_id = ids.first().map(|issued| issued.path_id).unwrap_or_default();
                 debug_assert!(ids.iter().all(|issued| issued.path_id == path_id));
-                // TODO(flub): possibly just create the missing CidState.  We need a little
-                // more information from the event.  Maybe we can add the timeout?
-                match self.local_cid_state.get_mut(&path_id) {
-                    Some(cid_state) => cid_state.new_cids(&ids, now),
-                    None => error!(?path_id, "Received new CIDs from endpoint for unknown path"),
-                }
+                let cid_state = self
+                    .local_cid_state
+                    .entry(path_id)
+                    .or_insert_with(|| CidState::new(cid_len, cid_lifetime, now, 0));
+                cid_state.new_cids(&ids, now);
+
                 ids.into_iter().rev().for_each(|frame| {
                     self.spaces[SpaceId::Data].pending.new_cids.push(frame);
                 });
@@ -3580,10 +3580,10 @@ impl Connection {
                 .get(&issued.path_id)
                 .map(|cid_state| cid_state.retire_prior_to())
                 .unwrap_or_else(|| {
-                    error!(?path_id, "Missing local CID state");
+                    error!(path_id = ?issued.path_id, "Missing local CID state");
                     0
                 });
-            let path_id = match is_multipath_enabled {
+            let cid_path_id = match is_multipath_enabled {
                 true => {
                     trace!(
                         path_id = ?issued.path_id,
@@ -3599,11 +3599,12 @@ impl Connection {
                         id = %issued.id,
                         "NEW_CONNECTION_ID"
                     );
+                    debug_assert_eq!(issued.path_id, PathId(0));
                     None
                 }
             };
             frame::NewConnectionId {
-                path_id,
+                path_id: cid_path_id,
                 sequence: issued.sequence,
                 retire_prior_to,
                 id: issued.id,

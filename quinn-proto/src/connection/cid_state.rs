@@ -9,8 +9,14 @@ use crate::{shared::IssuedCid, Duration, Instant, TransportError};
 /// Local connection ID management
 pub(super) struct CidState {
     /// Timestamp when issued cids should be retired
+    ///
+    /// Each entry indicates the expiration of all timestamps up to the sequence number in
+    /// the entry.  This means one entry can expire multiple CIDs if the sequence number
+    /// jumps by more than 1 between entries.
     retire_timestamp: VecDeque<CidTimestamp>,
     /// Number of local connection IDs that have been issued in NEW_CONNECTION_ID frames.
+    ///
+    /// This is thus also the sequence number of the next CID to be issued.
     issued: u64,
     /// Sequence numbers of local connection IDs not yet retired by the peer
     active_seq: FxHashSet<u64>,
@@ -20,7 +26,7 @@ pub(super) struct CidState {
     retire_seq: u64,
     /// cid length used to decode short packet
     cid_len: usize,
-    //// cid lifetime
+    /// cid lifetime
     cid_lifetime: Option<Duration>,
 }
 
@@ -52,19 +58,7 @@ impl CidState {
         this
     }
 
-    pub(crate) fn new_empty(cid_len: usize, cid_lifetime: Option<Duration>) -> Self {
-        Self {
-            retire_timestamp: VecDeque::new(),
-            issued: 0,
-            active_seq: FxHashSet::default(),
-            prev_retire_seq: 0,
-            retire_seq: 0,
-            cid_len,
-            cid_lifetime,
-        }
-    }
-
-    /// Find the next timestamp when previously issued CID should be retired
+    /// Find the earliest time when previously issued CID should be retired
     pub(crate) fn next_timeout(&self) -> Option<Instant> {
         self.retire_timestamp.front().map(|nc| {
             trace!("CID {} will expire at {:?}", nc.sequence, nc.timestamp);
@@ -74,15 +68,11 @@ impl CidState {
 
     /// Track the lifetime of issued cids in `retire_timestamp`
     fn track_lifetime(&mut self, new_cid_seq: u64, now: Instant) {
-        let lifetime = match self.cid_lifetime {
-            Some(lifetime) => lifetime,
-            None => return,
+        let Some(lifetime) = self.cid_lifetime else {
+            return;
         };
-
-        let expire_timestamp = now.checked_add(lifetime);
-        let expire_at = match expire_timestamp {
-            Some(expire_at) => expire_at,
-            None => return,
+        let Some(expire_at) = now.checked_add(lifetime) else {
+            return;
         };
 
         let last_record = self.retire_timestamp.back_mut();
