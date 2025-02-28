@@ -2694,6 +2694,12 @@ impl Connection {
                 self.events.push_back(Event::Connected);
                 self.state = State::Established;
                 trace!("established");
+
+                // Multipath can only be enabled after the state has reached Established.
+                // So this can not happen any earlier.
+                if self.is_multipath_enabled() {
+                    self.issue_first_path_cids(now);
+                }
                 Ok(())
             }
             Header::Initial(InitialHeader {
@@ -3305,11 +3311,7 @@ impl Connection {
     }
 
     /// Issue an initial set of connection IDs to the peer upon connection
-    // Is called before the handshake is completed.  But I think they are only sent on
-    // 1-RTT packets?
     fn issue_first_cids(&mut self, now: Instant) {
-        // TODO(flub): This needs to issue CIDs for several paths!
-        //    Do this.
         if self
             .local_cid_state
             .get(&PathId(0))
@@ -3324,6 +3326,21 @@ impl Connection {
         let n = self.peer_params.issue_cids_limit() - 1;
         self.endpoint_events
             .push_back(EndpointEventInner::NeedIdentifiers(PathId(0), now, n));
+    }
+
+    /// Issues an initial set of CIDs to the peer for PathId > 0
+    fn issue_first_path_cids(&mut self, now: Instant) {
+        debug_assert!(self.is_multipath_enabled());
+        if let Some(max_path_id) = self.config.initial_max_path_id {
+            for n in 1..(max_path_id + 1) {
+                self.endpoint_events
+                    .push_back(EndpointEventInner::NeedIdentifiers(
+                        PathId(n),
+                        now,
+                        self.peer_params.issue_cids_limit(),
+                    ));
+            }
+        }
     }
 
     fn populate_packet(
