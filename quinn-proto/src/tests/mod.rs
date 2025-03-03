@@ -1780,6 +1780,55 @@ fn congested_tail_loss() {
     pair.client_send(client_ch, s).write(&[42; 1024]).unwrap();
 }
 
+// Send a tail-loss probe when GSO segment_size is less than INITIAL_MTU
+#[test]
+fn tail_loss_small_segment_size() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    // No datagrams frames received in the handshake.
+    let server_stats = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(server_stats.frame_rx.datagram, 0);
+
+    const DGRAM_LEN: usize = 1000; // Below INITIAL_MTU after packet overhead.
+    const DGRAM_NUM: u64 = 5; // Enough to build a GSO batch.
+
+    info!("Sending an ack-eliciting datagram");
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    // Drop these packets on the server side.
+    assert!(!pair.server.inbound.is_empty());
+    pair.server.inbound.clear();
+
+    // Doing one step makes the client advance time to the PTO fire time.
+    info!("stepping forward to PTO");
+    pair.step();
+
+    // Still no datagrams frames received by the server.
+    let server_stats = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(server_stats.frame_rx.datagram, 0);
+
+    // Now we can send another batch of datagrams, so the PTO can send them instead of
+    // sending a ping.  These are small enough that the segment_size is less than the
+    // INITIAL_MTU.
+    info!("Sending datagram batch");
+    for _ in 0..DGRAM_NUM {
+        pair.client_datagrams(client_ch)
+            .send(vec![0; DGRAM_LEN].into(), false)
+            .unwrap();
+    }
+
+    // If this succeeds the datagrams are received by the server and the client did not
+    // crash.
+    pair.drive();
+
+    // Finally the server should have received some datagrams.
+    let server_stats = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(server_stats.frame_rx.datagram, DGRAM_NUM);
+}
+
 #[test]
 fn datagram_send_recv() {
     let _guard = subscribe();
