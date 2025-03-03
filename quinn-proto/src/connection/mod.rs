@@ -3179,6 +3179,11 @@ impl Connection {
                 Frame::PathsBlocked(_) => {
                     // TODO(@divma): do stuff
                 }
+                Frame::PathCidsBlocked(_) => {
+                    // Nothing to do.  This is recorded in the frame stats, but otherwise we
+                    // always issue all CIDs we're allowed to issue, so either this is an
+                    // impatient peer or a bug on our side.
+                }
             }
         }
 

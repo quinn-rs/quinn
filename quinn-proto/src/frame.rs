@@ -149,6 +149,7 @@ frame_types! {
     PATH_RETIRE_CONNECTION_ID = 0x15228c0a,
     MAX_PATH_ID = 0x15228c0c,
     PATHS_BLOCKED = 0x15228c0d,
+    PATH_CIDS_BLOCKED = 0x15228c0e,
 }
 
 const STREAM_TYS: RangeInclusive<u64> = RangeInclusive::new(0x08, 0x0f);
@@ -204,6 +205,11 @@ pub(crate) enum Frame {
     MaxPathId(PathId),
     #[allow(dead_code)] // TODO(flub)
     PathsBlocked(PathId),
+    // TODO(flub): We should send this to be spec-compliant, but for ourselves we don't
+    // really care because we always issue CIDs.  Perhaps we can get this frame removed
+    // again from the spec: https://github.com/quicwg/multipath/issues/500
+    #[allow(dead_code)]
+    PathCidsBlocked(PathId),
 }
 
 impl Frame {
@@ -251,6 +257,7 @@ impl Frame {
             PathAvailable(ref path_avaiable) => path_avaiable.get_type(),
             MaxPathId(_) => FrameType::MAX_PATH_ID,
             PathsBlocked(_) => FrameType::PATHS_BLOCKED,
+            PathCidsBlocked(_) => FrameType::PATH_CIDS_BLOCKED,
         }
     }
 
