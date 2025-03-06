@@ -251,6 +251,18 @@ impl From<InitialPacket> for Packet {
     }
 }
 
+/// A buffer that can tell how much has been written to it already
+pub(crate) trait BufOffset {
+    /// Returns the number of bytes written into the buffer so far
+    fn offset(&self) -> usize;
+}
+
+impl BufOffset for Vec<u8> {
+    fn offset(&self) -> usize {
+        self.len()
+    }
+}
+
 #[cfg_attr(test, derive(Clone))]
 #[derive(Debug)]
 pub(crate) enum Header {
@@ -281,9 +293,9 @@ pub(crate) enum Header {
 }
 
 impl Header {
-    pub(crate) fn encode(&self, w: &mut Vec<u8>) -> PartialEncode {
+    pub(crate) fn encode<B: BufMut + BufOffset>(&self, w: &mut B) -> PartialEncode {
         use Header::*;
-        let start = w.len();
+        let start = w.offset();
         match *self {
             Initial(InitialHeader {
                 ref dst_cid,
@@ -302,7 +314,7 @@ impl Header {
                 number.encode(w);
                 PartialEncode {
                     start,
-                    header_len: w.len() - start,
+                    header_len: w.offset() - start,
                     pn: Some((number.len(), true)),
                 }
             }
@@ -321,7 +333,7 @@ impl Header {
                 number.encode(w);
                 PartialEncode {
                     start,
-                    header_len: w.len() - start,
+                    header_len: w.offset() - start,
                     pn: Some((number.len(), true)),
                 }
             }
@@ -336,7 +348,7 @@ impl Header {
                 src_cid.encode_long(w);
                 PartialEncode {
                     start,
-                    header_len: w.len() - start,
+                    header_len: w.offset() - start,
                     pn: None,
                 }
             }
@@ -356,7 +368,7 @@ impl Header {
                 number.encode(w);
                 PartialEncode {
                     start,
-                    header_len: w.len() - start,
+                    header_len: w.offset() - start,
                     pn: Some((number.len(), false)),
                 }
             }
@@ -371,7 +383,7 @@ impl Header {
                 src_cid.encode_long(w);
                 PartialEncode {
                     start,
-                    header_len: w.len() - start,
+                    header_len: w.offset() - start,
                     pn: None,
                 }
             }
@@ -460,10 +472,18 @@ impl Header {
     }
 }
 
+/// Information about a partially written QUIC packet
 pub(crate) struct PartialEncode {
+    /// The offset into the backing buffer at which the packet starts
+    ///
+    /// Normally the backing buffer would be a [`TransmitBuf`].
     pub(crate) start: usize,
+    /// The length of the header written
     pub(crate) header_len: usize,
-    // Packet number length, payload length needed
+    /// Packet number length, whether the payload length needs to be known
+    ///
+    /// Some long headers need to include the payload length, see QUIC-TRANSPORT 17.2 Long
+    /// Header Packets.  If the `bool` is true the payload length is still needed.
     pn: Option<(usize, bool)>,
 }
 

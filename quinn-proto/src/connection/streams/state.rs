@@ -17,6 +17,7 @@ use crate::{
     coding::BufMutExt,
     connection::stats::FrameStats,
     frame::{self, FrameStruct, StreamMetaVec},
+    packet::BufOffset,
     transport_parameters::TransportParameters,
 };
 
@@ -409,16 +410,16 @@ impl StreamsState {
             .is_some_and(|s| s.can_send_flow_control())
     }
 
-    pub(in crate::connection) fn write_control_frames(
+    pub(in crate::connection) fn write_control_frames<W: BufMut + BufOffset>(
         &mut self,
-        buf: &mut Vec<u8>,
+        buf: &mut W,
         pending: &mut Retransmits,
         retransmits: &mut ThinRetransmits,
         stats: &mut FrameStats,
         max_size: usize,
     ) {
         // RESET_STREAM
-        while buf.len() + frame::ResetStream::SIZE_BOUND < max_size {
+        while buf.offset() + frame::ResetStream::SIZE_BOUND < max_size {
             let (id, error_code) = match pending.reset_stream.pop() {
                 Some(x) => x,
                 None => break,
@@ -442,7 +443,7 @@ impl StreamsState {
         }
 
         // STOP_SENDING
-        while buf.len() + frame::StopSending::SIZE_BOUND < max_size {
+        while buf.offset() + frame::StopSending::SIZE_BOUND < max_size {
             let frame = match pending.stop_sending.pop() {
                 Some(x) => x,
                 None => break,
@@ -461,7 +462,7 @@ impl StreamsState {
         }
 
         // MAX_DATA
-        if pending.max_data && buf.len() + 9 < max_size {
+        if pending.max_data && buf.offset() + 9 < max_size {
             pending.max_data = false;
 
             // `local_max_data` can grow bigger than `VarInt`.
@@ -484,7 +485,7 @@ impl StreamsState {
         }
 
         // MAX_STREAM_DATA
-        while buf.len() + 17 < max_size {
+        while buf.offset() + 17 < max_size {
             let id = match pending.max_stream_data.iter().next() {
                 Some(x) => *x,
                 None => break,
@@ -516,7 +517,7 @@ impl StreamsState {
 
         // MAX_STREAMS
         for dir in Dir::iter() {
-            if !pending.max_stream_id[dir as usize] || buf.len() + 9 >= max_size {
+            if !pending.max_stream_id[dir as usize] || buf.offset() + 9 >= max_size {
                 continue;
             }
 
@@ -539,16 +540,16 @@ impl StreamsState {
         }
     }
 
-    pub(crate) fn write_stream_frames(
+    pub(crate) fn write_stream_frames<W: BufMut + BufOffset>(
         &mut self,
-        buf: &mut Vec<u8>,
+        buf: &mut W,
         max_buf_size: usize,
         fair: bool,
     ) -> StreamMetaVec {
         let mut stream_frames = StreamMetaVec::new();
-        while buf.len() + frame::Stream::SIZE_BOUND < max_buf_size {
+        while buf.offset() + frame::Stream::SIZE_BOUND < max_buf_size {
             if max_buf_size
-                .checked_sub(buf.len() + frame::Stream::SIZE_BOUND)
+                .checked_sub(buf.offset() + frame::Stream::SIZE_BOUND)
                 .is_none()
             {
                 break;
@@ -577,7 +578,7 @@ impl StreamsState {
 
             // Now that we know the `StreamId`, we can better account for how many bytes
             // are required to encode it.
-            let max_buf_size = max_buf_size - buf.len() - 1 - VarInt::size(id.into());
+            let max_buf_size = max_buf_size - buf.offset() - 1 - VarInt::size(id.into());
             let (offsets, encode_length) = stream.pending.poll_transmit(max_buf_size);
             let fin = offsets.end == stream.pending.offset()
                 && matches!(stream.state, SendState::DataSent { .. });

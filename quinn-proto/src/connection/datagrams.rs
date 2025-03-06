@@ -1,6 +1,6 @@
 use std::collections::VecDeque;
 
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use thiserror::Error;
 use tracing::{debug, trace};
 
@@ -8,6 +8,7 @@ use super::Connection;
 use crate::{
     TransportError,
     frame::{Datagram, FrameStruct},
+    packet::BufOffset,
 };
 
 /// API to control datagram traffic
@@ -163,13 +164,13 @@ impl DatagramState {
     ///
     /// Returns whether a frame was written. At most `max_size` bytes will be written, including
     /// framing.
-    pub(super) fn write(&mut self, buf: &mut Vec<u8>, max_size: usize) -> bool {
+    pub(super) fn write<W: BufMut + BufOffset>(&mut self, buf: &mut W, max_size: usize) -> bool {
         let datagram = match self.outgoing.pop_front() {
             Some(x) => x,
             None => return false,
         };
 
-        if buf.len() + datagram.size(true) > max_size {
+        if buf.offset() + datagram.size(true) > max_size {
             // Future work: we could be more clever about cramming small datagrams into
             // mostly-full packets when a larger one is queued first
             self.outgoing.push_front(datagram);
