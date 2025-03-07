@@ -9,7 +9,7 @@ use rand::Rng;
 use rustc_hash::FxHashSet;
 use tracing::trace;
 
-use super::assembler::Assembler;
+use super::{assembler::Assembler, datagrams::DatagramState};
 use crate::{
     Dir, Duration, Instant, SocketAddr, StreamId, TransportError, VarInt, connection::StreamsState,
     crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet, shared::IssuedCid,
@@ -118,6 +118,7 @@ impl PacketSpace {
         &mut self,
         request_immediate_ack: bool,
         streams: &StreamsState,
+        datagrams: &DatagramState,
     ) {
         if self.loss_probes == 0 {
             return;
@@ -129,12 +130,12 @@ impl PacketSpace {
             self.immediate_ack_pending = true;
         }
 
-        // Retransmit the data of the oldest in-flight packet
-        if !self.pending.is_empty(streams) {
+        if !self.pending.is_empty(streams) || !datagrams.outgoing.is_empty() {
             // There's real data to send here, no need to make something up
             return;
         }
 
+        // Retransmit the data of the oldest in-flight packet
         for packet in self.sent_packets.values_mut() {
             if !packet.retransmits.is_empty(streams) {
                 // Remove retransmitted data from the old packet so we don't end up retransmitting
