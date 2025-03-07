@@ -147,7 +147,9 @@ impl PacketSpace {
         // Nothing new to send and nothing to retransmit, so fall back on a ping. This should only
         // happen in rare cases during the handshake when the server becomes blocked by
         // anti-amplification.
-        self.ping_pending = true;
+        if !self.immediate_ack_pending {
+            self.ping_pending = true;
+        }
     }
 
     /// Get the next outgoing packet number in this space
