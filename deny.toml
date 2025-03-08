@@ -19,7 +19,6 @@ license-files = [{ path = "LICENSE", hash = 0xbd0eed23 }]
 
 [advisories]
 ignore = [
-    "RUSTSEC-2025-0007",
     # `paste` is unmaintained
     "RUSTSEC-2024-0436",
 ]
