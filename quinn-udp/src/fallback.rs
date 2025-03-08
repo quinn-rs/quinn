@@ -72,6 +72,8 @@ impl UdpSocketState {
             addr: addr.as_socket().unwrap(),
             ecn: None,
             dst_ip: None,
+            #[cfg(not(wasm_browser))]
+            timestamp: None,
         };
         Ok(1)
     }

@@ -5,6 +5,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, UdpSocket},
     slice,
 };
+#[cfg(target_os = "linux")]
+use std::{mem::MaybeUninit, time::Duration};
 
 use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
 use socket2::Socket;
@@ -184,6 +186,72 @@ fn gso() {
             src_ip: None,
         },
     );
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn receive_timestamp() {
+    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+    let dst_addr = recv.local_addr().unwrap();
+
+    let send_state = UdpSocketState::new((&send).into()).unwrap();
+    let recv_state = UdpSocketState::new((&recv).into()).unwrap();
+
+    recv_state
+        .set_recv_timestamping((&recv).into(), true)
+        .expect("failed to set sockopt -- unsupported?");
+
+    // Reverse non-blocking flag set by `UdpSocketState` to make the test non-racy
+    recv.set_nonblocking(false).unwrap();
+
+    let mut buf = [0; u16::MAX as usize];
+    let mut meta = RecvMeta::default();
+
+    let mut time_start = MaybeUninit::<libc::timespec>::uninit();
+    let mut time_end = MaybeUninit::<libc::timespec>::uninit();
+
+    // Use the actual CLOCK_REALTIME clock source in linux, rather than relying on SystemTime
+    let errno = unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, time_start.as_mut_ptr()) };
+    assert_eq!(errno, 0, "failed to read CLOCK_REALTIME");
+    let time_start = unsafe { time_start.assume_init() };
+    let time_start = Duration::new(time_start.tv_sec as u64, time_start.tv_nsec as u32);
+
+    send_state
+        .try_send(
+            (&send).into(),
+            &Transmit {
+                destination: dst_addr,
+                ecn: None,
+                contents: b"hello",
+                segment_size: None,
+                src_ip: None,
+            },
+        )
+        .unwrap();
+
+    recv_state
+        .recv(
+            (&recv).into(),
+            &mut [IoSliceMut::new(&mut buf)],
+            slice::from_mut(&mut meta),
+        )
+        .unwrap();
+
+    let errno = unsafe { libc::clock_gettime(libc::CLOCK_REALTIME, time_end.as_mut_ptr()) };
+    assert_eq!(errno, 0, "failed to read CLOCK_REALTIME");
+    let time_end = unsafe { time_end.assume_init() };
+    let time_end = Duration::new(time_end.tv_sec as u64, time_end.tv_nsec as u32);
+
+    // Note: there's a very slim chance that the clock could jump (via ntp, etc.) and throw off
+    // these two checks, but it's still better to validate the timestamp result with that risk
+    let timestamp = meta.timestamp.unwrap();
+    assert!(time_start <= timestamp);
+    assert!(timestamp <= time_end);
 }
 
 fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
