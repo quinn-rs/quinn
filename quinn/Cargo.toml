@@ -42,6 +42,11 @@ log = ["tracing/log", "proto/log", "udp/log"]
 # Enable rustls logging
 rustls-log = ["rustls?/logging"]
 
+# Internal (PRIVATE!) features used to aid testing.
+# Don't rely on these whatsoever. They may disappear at any time.
+
+__rustls-post-quantum-test =  ["dep:rustls-post-quantum", "rustls-aws-lc-rs", "proto/__rustls-post-quantum-test"]
+
 [dependencies]
 async-io = { workspace = true, optional = true }
 async-std = { workspace = true, optional = true }
@@ -52,6 +57,7 @@ rustc-hash = { workspace = true }
 pin-project-lite = { workspace = true }
 proto = { package = "quinn-proto", path = "../quinn-proto", version = "0.11.10", default-features = false }
 rustls = { workspace = true, optional = true }
+rustls-post-quantum = { workspace = true, optional = true }
 smol = { workspace = true, optional = true }
 thiserror = { workspace = true }
 tracing =  { workspace = true }
@@ -100,6 +106,10 @@ required-features = ["rustls-ring"]
 [[example]]
 name = "connection"
 required-features = ["rustls-ring"]
+
+[[test]]
+name = "post_quantum"
+required-features = ["__rustls-post-quantum-test"]
 
 [[bench]]
 name = "bench"
