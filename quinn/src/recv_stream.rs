@@ -94,14 +94,17 @@ impl RecvStream {
         .await
     }
 
-    /// Attempts to read from the stream into buf.
+    /// Attempt to read from the stream into the provided buffer
     ///
-    /// On success, returns Poll::Ready(Ok(num_bytes_read)) and places data in
-    /// the buf. If no data was read, it implies that EOF has been reached.
+    /// On success, returns `Poll::Ready(Ok(num_bytes_read))` and places data into `buf`. If this
+    /// returns zero bytes read (and `buf` has a non-zero length), that indicates that the remote
+    /// side has [`finish`]ed the stream and the local side has already read all bytes.
     ///
-    /// If no data is available for reading, the method returns Poll::Pending
-    /// and arranges for the current task (via cx.waker()) to receive a notification
-    /// when the stream becomes readable or is closed.
+    /// [`finish`]: crate::SendStream::finish
+    ///
+    /// If no data is available for reading, this returns `Poll::Pending` and arranges for the
+    /// current task (via `cx.waker()`) to be notified when the stream becomes readable or is
+    /// closed.
     pub fn poll_read(
         &mut self,
         cx: &mut Context,
@@ -112,15 +115,17 @@ impl RecvStream {
         Poll::Ready(Ok(buf.filled().len()))
     }
 
-    /// Attempts to read from the stream into buf.
+    /// Attempt to read from the stream into the provided buffer, which may be uninitialized
     ///
-    /// On success, returns Poll::Ready(Ok(())) and places data in
-    /// the buf. If no data was read and the buffer had a non null capacity,
-    /// it implies that EOF has been reached.
+    /// On success, returns `Poll::Ready(Ok(num_bytes_read))` and places data into `buf`. If this
+    /// returns zero bytes read (and `buf` has a non-zero length), that indicates that the remote
+    /// side has [`finish`]ed the stream and the local side has already read all bytes.
     ///
-    /// If no data is available for reading, the method returns Poll::Pending
-    /// and arranges for the current task (via cx.waker()) to receive a notification
-    /// when the stream becomes readable or is closed.
+    /// [`finish`]: crate::SendStream::finish
+    ///
+    /// If no data is available for reading, this returns `Poll::Pending` and arranges for the
+    /// current task (via `cx.waker()`) to be notified when the stream becomes readable or is
+    /// closed.
     pub fn poll_read_buf(
         &mut self,
         cx: &mut Context,
