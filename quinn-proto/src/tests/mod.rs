@@ -1792,14 +1792,10 @@ fn tail_loss_small_segment_size() {
     assert_eq!(server_stats.frame_rx.datagram, 0);
 
     const DGRAM_LEN: usize = 1000; // Below INITIAL_MTU after packet overhead.
-    const DGRAM_NUM: usize = 5; // Enough to build a GSO batch.
+    const DGRAM_NUM: u64 = 5; // Enough to build a GSO batch.
 
-    info!("Sending 1st datagram batch");
-    for _ in 0..DGRAM_NUM {
-        pair.client_datagrams(client_ch)
-            .send(vec![0; DGRAM_LEN].into(), false)
-            .unwrap();
-    }
+    info!("Sending an ack-eliciting datagram");
+    pair.client_conn_mut(client_ch).ping();
     pair.drive_client();
 
     // Drop these packets on the server side.
@@ -1817,7 +1813,7 @@ fn tail_loss_small_segment_size() {
     // Now we can send another batch of datagrams, so the PTO can send them instead of
     // sending a ping.  These are small enough that the segment_size is less than the
     // INITIAL_MTU.
-    info!("Sending 2nd datagram batch");
+    info!("Sending datagram batch");
     for _ in 0..DGRAM_NUM {
         pair.client_datagrams(client_ch)
             .send(vec![0; DGRAM_LEN].into(), false)
@@ -1830,7 +1826,7 @@ fn tail_loss_small_segment_size() {
 
     // Finally the server should have received some datagrams.
     let server_stats = pair.server_conn_mut(server_ch).stats();
-    assert_eq!(server_stats.frame_rx.datagram, 5);
+    assert_eq!(server_stats.frame_rx.datagram, DGRAM_NUM);
 }
 
 #[test]
