@@ -759,9 +759,7 @@ impl Connection {
                 now,
                 space_id,
                 self.rem_cids.active(),
-                buf.buf,
-                buf.buf_capacity,
-                buf.datagram_start,
+                &mut buf,
                 ack_eliciting,
                 self,
             )?);
@@ -929,16 +927,9 @@ impl Connection {
             buf.buf_capacity = probe_size as usize;
             buf.buf.reserve(buf.buf_capacity);
 
-            let mut builder = PacketBuilder::new(
-                now,
-                space_id,
-                self.rem_cids.active(),
-                buf.buf,
-                buf.buf_capacity,
-                0,
-                true,
-                self,
-            )?;
+            debug_assert_eq!(buf.datagram_start, 0);
+            let mut builder =
+                PacketBuilder::new(now, space_id, self.rem_cids.active(), &mut buf, true, self)?;
 
             // We implement MTU probes as ping packets padded up to the probe size
             buf.write(frame::FrameType::PING);
@@ -1012,23 +1003,15 @@ impl Connection {
         );
         buf.buf.reserve(MIN_INITIAL_SIZE as usize);
 
-        let buf_capacity = buf.buf.capacity();
+        buf.buf_capacity = buf.buf.capacity();
 
         // Use the previous CID to avoid linking the new path with the previous path. We
         // don't bother accounting for possible retirement of that prev_cid because this is
         // sent once, immediately after migration, when the CID is known to be valid. Even
         // if a post-migration packet caused the CID to be retired, it's fair to pretend
         // this is sent first.
-        let mut builder = PacketBuilder::new(
-            now,
-            SpaceId::Data,
-            *prev_cid,
-            buf.buf,
-            buf_capacity,
-            0,
-            false,
-            self,
-        )?;
+        debug_assert_eq!(buf.datagram_start, 0);
+        let mut builder = PacketBuilder::new(now, SpaceId::Data, *prev_cid, buf, false, self)?;
         trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
         buf.write(frame::FrameType::PATH_CHALLENGE);
         buf.write(token);
