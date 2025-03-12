@@ -761,9 +761,7 @@ impl Connection {
                 now,
                 space_id,
                 self.rem_cids.active(),
-                transmit.buf,
-                transmit.buf_capacity,
-                transmit.datagram_start,
+                &mut transmit,
                 ack_eliciting,
                 self,
             )?);
@@ -931,13 +929,12 @@ impl Connection {
             transmit.buf_capacity = probe_size as usize;
             transmit.buf.reserve(transmit.buf_capacity);
 
+            debug_assert_eq!(transmit.datagram_start, 0);
             let mut builder = PacketBuilder::new(
                 now,
                 space_id,
                 self.rem_cids.active(),
-                transmit.buf,
-                transmit.buf_capacity,
-                0,
+                &mut transmit,
                 true,
                 self,
             )?;
@@ -1018,23 +1015,15 @@ impl Connection {
         );
         buf.buf.reserve(MIN_INITIAL_SIZE as usize);
 
-        let buf_capacity = buf.buf.capacity();
+        buf.buf_capacity = buf.buf.capacity();
 
         // Use the previous CID to avoid linking the new path with the previous path. We
         // don't bother accounting for possible retirement of that prev_cid because this is
         // sent once, immediately after migration, when the CID is known to be valid. Even
         // if a post-migration packet caused the CID to be retired, it's fair to pretend
         // this is sent first.
-        let mut builder = PacketBuilder::new(
-            now,
-            SpaceId::Data,
-            *prev_cid,
-            buf.buf,
-            buf_capacity,
-            0,
-            false,
-            self,
-        )?;
+        debug_assert_eq!(buf.datagram_start, 0);
+        let mut builder = PacketBuilder::new(now, SpaceId::Data, *prev_cid, buf, false, self)?;
         trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
         buf.write(frame::FrameType::PATH_CHALLENGE);
         buf.write(token);
