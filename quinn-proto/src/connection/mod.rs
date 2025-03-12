@@ -661,70 +661,42 @@ impl Connection {
 
                     builder.finish_and_track(now, self, sent_frames.take(), transmit.buf);
 
-                    if transmit.num_datagrams == 1 {
-                        // Set the segment size for this GSO batch to the size of the first UDP
-                        // datagram in the batch. Larger data that cannot be fragmented
-                        // (e.g. application datagrams) will be included in a future batch. When
-                        // sending large enough volumes of data for GSO to be useful, we expect
-                        // packet sizes to usually be consistent, e.g. populated by max-size STREAM
-                        // frames or uniformly sized datagrams.
-                        transmit.segment_size = transmit.len();
-                        // Clip the unused capacity out of the buffer so future packets don't
-                        // overrun
-                        transmit.buf_capacity = transmit.len();
+                    if transmit.num_datagrams == 1 && space_id == SpaceId::Data {
+                        // Now that we know the size of the first datagram, check whether
+                        // the data we planned to send will fit in the next segment.  If
+                        // not, bails out and leave it for the next GSO batch.  We can't
+                        // easily compute the right segment size before the original call to
+                        // `space_can_send`, because at that time we haven't determined
+                        // whether we're going to coalesce with the first datagram or
+                        // potentially pad it to `MIN_INITIAL_SIZE`.
 
-                        // Check whether the data we planned to send will fit in the reduced segment
-                        // size. If not, bail out and leave it for the next GSO batch so we don't
-                        // end up trying to send an empty packet. We can't easily compute the right
-                        // segment size before the original call to `space_can_send`, because at
-                        // that time we haven't determined whether we're going to coalesce with the
-                        // first datagram or potentially pad it to `MIN_INITIAL_SIZE`.
-                        if space_id == SpaceId::Data {
-                            let frame_space_1rtt = transmit
-                                .segment_size
-                                .saturating_sub(self.predict_1rtt_overhead(Some(pn)));
-                            if self.space_can_send(space_id, frame_space_1rtt).is_empty() {
-                                break;
-                            }
+                        transmit.clip_datagram_size();
+
+                        let frame_space_1rtt = transmit
+                            .segment_size
+                            .saturating_sub(self.predict_1rtt_overhead(Some(pn)));
+                        if self.space_can_send(space_id, frame_space_1rtt).is_empty() {
+                            break;
                         }
                     }
                 }
 
-                // Allocate space for another datagram
-                let next_datagram_size_limit = match self.spaces[space_id].loss_probes {
-                    0 => transmit.segment_size,
+                // Start the next datagram
+                match self.spaces[space_id].loss_probes {
+                    0 => transmit.start_new_datagram(),
                     _ => {
                         self.spaces[space_id].loss_probes -= 1;
                         // Clamp the datagram to at most the minimum MTU to ensure that loss probes
                         // can get through and enable recovery even if the path MTU has shrank
                         // unexpectedly.
-                        std::cmp::min(transmit.segment_size, usize::from(INITIAL_MTU))
+                        transmit.start_new_datagram_with_size(std::cmp::min(
+                            usize::from(INITIAL_MTU),
+                            transmit.segment_size,
+                        ));
                     }
                 };
-                transmit.buf_capacity += next_datagram_size_limit;
-                if transmit.buf.capacity() < transmit.buf_capacity {
-                    // We reserve the maximum space for sending `max_datagrams` upfront
-                    // to avoid any reallocations if more datagrams have to be appended later on.
-                    // Benchmarks have shown shown a 5-10% throughput improvement
-                    // compared to continuously resizing the datagram buffer.
-                    // While this will lead to over-allocation for small transmits
-                    // (e.g. purely containing ACKs), modern memory allocators
-                    // (e.g. mimalloc and jemalloc) will pool certain allocation sizes
-                    // and therefore this is still rather efficient.
-                    transmit
-                        .buf
-                        .reserve(transmit.max_datagrams * transmit.segment_size);
-                }
-                transmit.num_datagrams += 1;
                 coalesce = true;
                 pad_datagram = false;
-                transmit.datagram_start = transmit.len();
-
-                debug_assert_eq!(
-                    transmit.datagram_start % transmit.segment_size,
-                    0,
-                    "datagrams in a GSO batch must be aligned to the segment size"
-                );
             } else {
                 // We can append/coalesce the next packet into the current
                 // datagram.
@@ -926,8 +898,8 @@ impl Connection {
                 .mtud
                 .poll_transmit(now, self.packet_number_filter.peek(&self.spaces[space_id]))?;
 
-            transmit.buf_capacity = probe_size as usize;
-            transmit.buf.reserve(transmit.buf_capacity);
+            debug_assert_eq!(transmit.num_datagrams, 0);
+            transmit.start_new_datagram_with_size(probe_size as usize);
 
             debug_assert_eq!(transmit.datagram_start, 0);
             let mut builder = PacketBuilder::new(
@@ -957,7 +929,6 @@ impl Connection {
             builder.finish_and_track(now, self, Some(sent_frames), transmit.buf);
 
             self.stats.path.sent_plpmtud_probes += 1;
-            transmit.num_datagrams = 1;
 
             trace!(?probe_size, "writing MTUD probe");
         }
@@ -1013,9 +984,7 @@ impl Connection {
             SpaceId::Data,
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
-        buf.buf.reserve(MIN_INITIAL_SIZE as usize);
-
-        buf.buf_capacity = buf.buf.capacity();
+        buf.start_new_datagram_with_size(MIN_INITIAL_SIZE as usize);
 
         // Use the previous CID to avoid linking the new path with the previous path. We
         // don't bother accounting for possible retirement of that prev_cid because this is
