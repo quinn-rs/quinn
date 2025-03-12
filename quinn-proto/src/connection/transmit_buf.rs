@@ -30,14 +30,14 @@ pub(super) struct TransmitBuf<'a> {
     ///
     /// Note that when coalescing packets this might be before the start of the current
     /// packet.
-    pub(super) datagram_start: usize,
+    datagram_start: usize,
     /// The maximum offset allowed to be used for the current datagram in the buffer
     ///
     /// The first and last datagram in a batch are allowed to be smaller then the maximum
     /// size. All datagrams in between need to be exactly this size.
-    pub(super) buf_capacity: usize,
+    buf_capacity: usize,
     /// The maximum number of datagrams allowed to write into [`TransmitBuf::buf`]
-    pub(super) max_datagrams: usize,
+    max_datagrams: usize,
     /// The number of datagrams already (partially) written into the buffer
     ///
     /// Incremented by a call to [`TransmitBuf::start_new_datagram`].
@@ -50,7 +50,7 @@ pub(super) struct TransmitBuf<'a> {
     /// For the first datagram this is set to the maximum size a datagram is allowed to be:
     /// the current path MTU. After the first datagram is finished this is reduced to the
     /// size of the first datagram and can no longer change.
-    pub(super) segment_size: usize,
+    segment_size: usize,
 }
 
 impl<'a> TransmitBuf<'a> {
@@ -138,6 +138,42 @@ impl<'a> TransmitBuf<'a> {
         debug_assert_eq!(self.num_datagrams, 1);
         self.segment_size = self.buf.len();
         self.buf_capacity = self.buf.len();
+    }
+
+    /// Returns the GSO segment size
+    ///
+    /// This is also the maximum size datagrams are allowed to be. The first and last
+    /// datagram in a batch are allowed to be smaller however. After the first datagram the
+    /// segment size is clipped to the size of the first datagram.
+    pub(super) fn segment_size(&self) -> usize {
+        self.segment_size
+    }
+
+    /// Returns the number of datagrams written into the buffer
+    ///
+    /// The last datagram is not necessarily finished yet.
+    pub(super) fn num_datagrams(&self) -> usize {
+        self.num_datagrams
+    }
+
+    /// Returns the maximum number of datagrams allowed to be written into the buffer
+    pub(super) fn max_datagrams(&self) -> usize {
+        self.max_datagrams
+    }
+
+    /// Returns the start offset of the current datagram in the buffer
+    ///
+    /// In other words, this offset contains the first byte of the current datagram.
+    pub(super) fn datagram_start_offset(&self) -> usize {
+        self.datagram_start
+    }
+
+    /// Returns the maximum offset in the buffer allowed for the current datagram
+    ///
+    /// The first and last datagram in a batch are allowed to be smaller then the maximum
+    /// size. All datagrams in between need to be exactly this size.
+    pub(super) fn datagram_max_offset(&self) -> usize {
+        self.buf_capacity
     }
 
     /// Returns `true` if the buffer did not have anything written into it
