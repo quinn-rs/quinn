@@ -65,6 +65,81 @@ impl<'a> TransmitBuf<'a> {
         }
     }
 
+    /// Starts a datagram with a custom datagram size
+    ///
+    /// This is a specialized version of [`TransmitBuf::start_new_datagram`] which sets the
+    /// datagram size. Useful for e.g. PATH_CHALLENGE, tail-loss probes or MTU probes.
+    ///
+    /// After the first datagram you can never increase the segment size. If you decrease
+    /// the size of a datagram in a batch, it must be the last datagram of the batch.
+    pub(super) fn start_new_datagram_with_size(&mut self, datagram_size: usize) {
+        // Only reserve space for this datagram, usually it is the last one in the batch.
+        let max_capacity_hint = datagram_size;
+        self.new_datagram_inner(datagram_size, max_capacity_hint)
+    }
+
+    /// Starts a new datagram in the transmit buffer
+    ///
+    /// If this starts the second datagram the segment size will be set to the size of the
+    /// first datagram.
+    ///
+    /// If the underlying buffer does not have enough capacity yet this will allocate enough
+    /// capacity for all the datagrams allowed in a single batch. Use
+    /// [`TransmitBuf::start_new_datagram_with_size`] if you know you will need less.
+    pub(super) fn start_new_datagram(&mut self) {
+        // We reserve the maximum space for sending `max_datagrams` upfront to avoid any
+        // reallocations if more datagrams have to be appended later on.  Benchmarks have
+        // shown a 5-10% throughput improvement compared to continuously resizing the
+        // datagram buffer. While this will lead to over-allocation for small transmits
+        // (e.g. purely containing ACKs), modern memory allocators (e.g. mimalloc and
+        // jemalloc) will pool certain allocation sizes and therefore this is still rather
+        // efficient.
+        let max_capacity_hint = self.max_datagrams * self.segment_size;
+        self.new_datagram_inner(self.segment_size, max_capacity_hint)
+    }
+
+    fn new_datagram_inner(&mut self, datagram_size: usize, max_capacity_hint: usize) {
+        debug_assert!(self.num_datagrams < self.max_datagrams);
+        if self.num_datagrams == 1 {
+            // Set the segment size to the size of the first datagram.
+            self.segment_size = self.buf.len();
+        }
+        if self.num_datagrams >= 1 {
+            debug_assert!(datagram_size <= self.segment_size);
+            if datagram_size < self.segment_size {
+                // If this is a GSO batch and this datagram is smaller than the segment
+                // size, this must be the last datagram in the batch.
+                self.max_datagrams = self.num_datagrams + 1;
+            }
+        }
+        self.datagram_start = self.buf.len();
+        debug_assert_eq!(
+            self.datagram_start % self.segment_size,
+            0,
+            "datagrams in a GSO batch must be aligned to the segment size"
+        );
+        self.buf_capacity = self.datagram_start + datagram_size;
+        if self.buf_capacity > self.buf.capacity() {
+            self.buf
+                .reserve_exact(max_capacity_hint.saturating_sub(self.buf.capacity()));
+        }
+        self.num_datagrams += 1;
+    }
+
+    /// Clips the datagram size to the current size
+    ///
+    /// Only valid for the first datagram, when the datagram might be smaller than the
+    /// segment size. Needed before estimating the available space in the next datagram
+    /// based on [`TransmitBuf::segment_size`].
+    ///
+    /// Use [`TransmitBuf::start_new_datagram_with_size`] if you need to reduce the size of
+    /// the last datagram in a batch.
+    pub(super) fn clip_datagram_size(&mut self) {
+        debug_assert_eq!(self.num_datagrams, 1);
+        self.segment_size = self.buf.len();
+        self.buf_capacity = self.buf.len();
+    }
+
     /// Returns `true` if the buffer did not have anything written into it
     pub(super) fn is_empty(&self) -> bool {
         self.len() == 0
