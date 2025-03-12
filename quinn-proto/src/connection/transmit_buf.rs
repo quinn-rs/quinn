@@ -37,7 +37,7 @@ pub(super) struct TransmitBuf<'a> {
     /// size. All datagrams in between need to be exactly this size.
     buf_capacity: usize,
     /// The maximum number of datagrams allowed to write into [`TransmitBuf::buf`]
-    pub(super) max_datagrams: usize,
+    max_datagrams: usize,
     /// The number of datagrams already (partially) written into the buffer
     ///
     /// Incremented by a call to [`TransmitBuf::start_new_datagram`].
@@ -168,6 +168,12 @@ impl<'a> TransmitBuf<'a> {
     /// size. All datagrams in between need to be exactly this size.
     pub(super) fn datagram_max_offset(&self) -> usize {
         self.buf_capacity
+    }
+
+    /// Whether the buffer has capacity for another datagram after the current one
+    pub(super) fn has_datagram_capacity(&self) -> bool {
+        let max_buffer_size = self.segment_size * self.max_datagrams;
+        self.buf_capacity < max_buffer_size
     }
 
     /// Returns `true` if the buffer did not have anything written into it

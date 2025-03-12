@@ -562,7 +562,7 @@ impl Connection {
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
-                if buf.datagram_max_offset() >= buf.segment_size() * buf.max_datagrams {
+                if !buf.has_datagram_capacity() {
                     // No more datagrams allowed
                     break;
                 }
