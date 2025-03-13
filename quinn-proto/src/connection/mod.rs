@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use frame::StreamMetaVec;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use thiserror::Error;
@@ -757,7 +757,7 @@ impl Connection {
                         self.receiving_ecn,
                         &mut SentFrames::default(),
                         &mut self.spaces[space_id],
-                        buf.buf,
+                        &mut buf,
                         &mut self.stats,
                     );
                 }
@@ -844,7 +844,7 @@ impl Connection {
             let sent = self.populate_packet(
                 now,
                 space_id,
-                buf.buf,
+                &mut buf,
                 builder.max_size,
                 builder.exact_number,
             );
@@ -3022,7 +3022,7 @@ impl Connection {
         &mut self,
         now: Instant,
         space_id: SpaceId,
-        buf: &mut Vec<u8>,
+        buf: &mut (impl BufMut + BufLen),
         max_size: usize,
         pn: u64,
     ) -> SentFrames {
@@ -3288,7 +3288,7 @@ impl Connection {
         receiving_ecn: bool,
         sent: &mut SentFrames,
         space: &mut PacketSpace,
-        buf: &mut Vec<u8>,
+        buf: &mut impl BufMut,
         stats: &mut ConnectionStats,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
@@ -3955,6 +3955,23 @@ fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Du
         (Some(VarInt(0)) | None, Some(y)) => Some(Duration::from_millis(y.0)),
         (Some(x), Some(VarInt(0)) | None) => Some(Duration::from_millis(x.0)),
         (Some(x), Some(y)) => Some(Duration::from_millis(cmp::min(x, y).0)),
+    }
+}
+
+/// A buffer that can tell how much has been written to it already
+///
+/// This is commonly used for when a buffer is passed and the user may not write past a
+/// given size. It allows the user of such a buffer to know the current cursor position in
+/// the buffer. The maximum write size is usually passed in the same unit as
+/// [`BufLen::len`]: bytes since the buffer start.
+pub(crate) trait BufLen {
+    /// Returns the number of bytes written into the buffer so far
+    fn len(&self) -> usize;
+}
+
+impl BufLen for Vec<u8> {
+    fn len(&self) -> usize {
+        self.len()
     }
 }
 
