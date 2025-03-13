@@ -27,7 +27,7 @@ use super::BufLen;
 #[derive(Debug)]
 pub(super) struct TransmitBuilder<'a> {
     /// The buffer itself, packets are written to this buffer
-    pub(super) buf: &'a mut Vec<u8>,
+    buf: &'a mut Vec<u8>,
     /// Offset into the buffer at which the current datagram starts
     ///
     /// Note that when coalescing packets this might be before the start of the current
@@ -140,6 +140,11 @@ impl<'a> TransmitBuilder<'a> {
         debug_assert_eq!(self.num_datagrams, 1);
         self.segment_size = self.buf.len();
         self.buf_capacity = self.buf.len();
+    }
+
+    /// Returns the already written bytes in the buffer
+    pub(super) fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.buf.as_mut_slice()
     }
 
     /// Returns the GSO segment size

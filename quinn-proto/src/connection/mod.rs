@@ -659,7 +659,7 @@ impl Connection {
                         builder.pad_to(transmit.segment_size() as u16);
                     }
 
-                    builder.finish_and_track(now, self, sent_frames.take(), transmit.buf);
+                    builder.finish_and_track(now, self, sent_frames.take(), &mut transmit);
 
                     if transmit.num_datagrams() == 1 {
                         transmit.clip_datagram_size();
@@ -704,7 +704,7 @@ impl Connection {
                 // datagram.
                 // Finish current packet without adding extra padding
                 if let Some(builder) = builder_storage.take() {
-                    builder.finish_and_track(now, self, sent_frames.take(), transmit.buf);
+                    builder.finish_and_track(now, self, sent_frames.take(), &mut transmit);
                 }
             }
 
@@ -828,7 +828,7 @@ impl Connection {
                             non_retransmits: true,
                             ..SentFrames::default()
                         }),
-                        transmit.buf,
+                        &mut transmit,
                     );
                     self.stats.udp_tx.on_sent(1, transmit.len());
                     return Some(Transmit {
@@ -884,7 +884,7 @@ impl Connection {
                 builder.pad_to(MIN_INITIAL_SIZE);
             }
             let last_packet_number = builder.exact_number;
-            builder.finish_and_track(now, self, sent_frames, transmit.buf);
+            builder.finish_and_track(now, self, sent_frames, &mut transmit);
             self.path
                 .congestion
                 .on_sent(now, transmit.len() as u64, last_packet_number);
@@ -928,7 +928,7 @@ impl Connection {
                 non_retransmits: true,
                 ..Default::default()
             };
-            builder.finish_and_track(now, self, Some(sent_frames), transmit.buf);
+            builder.finish_and_track(now, self, Some(sent_frames), &mut transmit);
 
             self.stats.path.sent_plpmtud_probes += 1;
 
@@ -1006,7 +1006,7 @@ impl Connection {
         // sending a datagram of this size
         builder.pad_to(MIN_INITIAL_SIZE);
 
-        builder.finish(self, buf.buf);
+        builder.finish(self, buf);
         self.stats.udp_tx.on_sent(1, buf.len());
 
         Some(Transmit {
