@@ -15,7 +15,7 @@ use super::{
 use crate::{
     Dir, MAX_STREAM_COUNT, Side, StreamId, TransportError, VarInt,
     coding::BufMutExt,
-    connection::stats::FrameStats,
+    connection::{BufLen, stats::FrameStats},
     frame::{self, FrameStruct, StreamMetaVec},
     transport_parameters::TransportParameters,
 };
@@ -411,7 +411,7 @@ impl StreamsState {
 
     pub(in crate::connection) fn write_control_frames(
         &mut self,
-        buf: &mut Vec<u8>,
+        buf: &mut (impl BufMut + BufLen),
         pending: &mut Retransmits,
         retransmits: &mut ThinRetransmits,
         stats: &mut FrameStats,
@@ -541,7 +541,7 @@ impl StreamsState {
 
     pub(crate) fn write_stream_frames(
         &mut self,
-        buf: &mut Vec<u8>,
+        buf: &mut (impl BufMut + BufLen),
         max_buf_size: usize,
         fair: bool,
     ) -> StreamMetaVec {
