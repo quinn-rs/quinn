@@ -27,7 +27,7 @@ use super::BufLen;
 #[derive(Debug)]
 pub(super) struct TransmitBuf<'a> {
     /// The buffer itself, packets are written to this buffer
-    pub(super) buf: &'a mut Vec<u8>,
+    buf: &'a mut Vec<u8>,
     /// Offset into the buffer at which the current datagram starts
     ///
     /// Note that when coalescing packets this might be before the start of the current
@@ -186,6 +186,11 @@ impl<'a> TransmitBuf<'a> {
     /// The number of bytes written into the buffer so far
     pub(super) fn len(&self) -> usize {
         self.buf.len()
+    }
+
+    /// Returns the already written bytes in the buffer
+    pub(super) fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.buf.as_mut_slice()
     }
 }
 
