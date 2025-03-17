@@ -470,11 +470,7 @@ impl Connection {
         for space in SpaceId::iter() {
             let request_immediate_ack =
                 space == SpaceId::Data && self.peer_supports_ack_frequency();
-            self.spaces[space].maybe_queue_probe(
-                request_immediate_ack,
-                &self.streams,
-                &self.datagrams,
-            );
+            self.spaces[space].maybe_queue_probe(request_immediate_ack, &self.streams);
         }
 
         // Check whether we need to send a close message
