@@ -9,7 +9,7 @@ use rand::Rng;
 use rustc_hash::FxHashSet;
 use tracing::trace;
 
-use super::{assembler::Assembler, datagrams::DatagramState};
+use super::assembler::Assembler;
 use crate::{
     Dir, Duration, Instant, SocketAddr, StreamId, TransportError, VarInt, connection::StreamsState,
     crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet, shared::IssuedCid,
@@ -118,7 +118,6 @@ impl PacketSpace {
         &mut self,
         request_immediate_ack: bool,
         streams: &StreamsState,
-        datagrams: &DatagramState,
     ) {
         if self.loss_probes == 0 {
             return;
@@ -130,7 +129,7 @@ impl PacketSpace {
             self.immediate_ack_pending = true;
         }
 
-        if !self.pending.is_empty(streams) || !datagrams.outgoing.is_empty() {
+        if !self.pending.is_empty(streams) {
             // There's real data to send here, no need to make something up
             return;
         }
