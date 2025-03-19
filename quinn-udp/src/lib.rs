@@ -27,7 +27,7 @@
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
-use std::net::{IpAddr, Ipv6Addr, SocketAddr};
+use std::{io::IoSlice, net::{IpAddr, Ipv6Addr, SocketAddr}};
 #[cfg(unix)]
 use std::os::unix::io::AsFd;
 #[cfg(windows)]
@@ -137,13 +137,19 @@ pub struct Transmit<'a> {
     pub destination: SocketAddr,
     /// Explicit congestion notification bits to set on the packet
     pub ecn: Option<EcnCodepoint>,
-    /// Contents of the datagram
-    pub contents: &'a [u8],
+    /// The contents of the datagram, optionally broken into multiple buffers.
+    pub buffers: &'a [IoSlice<'a>],
     /// The segment size if this transmission contains multiple datagrams.
     /// This is `None` if the transmit only contains a single datagram
     pub segment_size: Option<usize>,
     /// Optional source IP address for the datagram
     pub src_ip: Option<IpAddr>,
+}
+
+impl<'a> Transmit<'a> {
+    pub fn size(&self) -> usize {
+        self.buffers.iter().map(|s| s.len()).sum::<usize>()
+    }
 }
 
 /// Log at most 1 IO error per minute
@@ -170,7 +176,7 @@ fn log_sendmsg_error(
             transmit.destination,
             transmit.src_ip,
             transmit.ecn,
-            transmit.contents.len(),
+            transmit.size(),
             transmit.segment_size
         );
     }

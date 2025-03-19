@@ -61,7 +61,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
         let transmit = Transmit {
             destination: dst_addr,
             ecn: None,
-            contents: &msg,
+            buffers: &[IoSlice::new(&msg)],
             segment_size: gso_enabled.then_some(SEGMENT_SIZE),
             src_ip: None,
         };
@@ -90,7 +90,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                             send_state.send((&send_socket).into(), &transmit)
                         })
                         .unwrap();
-                    sent += transmit.contents.len();
+                    sent += transmit.size();
 
                     while received < sent {
                         recv_socket.readable().await.unwrap();

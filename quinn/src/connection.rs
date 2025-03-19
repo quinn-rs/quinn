@@ -2,11 +2,11 @@ use std::{
     any::Any,
     fmt,
     future::Future,
-    io,
+    io::{self, IoSlice},
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
-    task::{Context, Poll, Waker, ready},
+    task::{ready, Context, Poll, Waker},
 };
 
 use bytes::Bytes;
@@ -17,12 +17,7 @@ use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
 use tracing::{Instrument, Span, debug_span};
 
 use crate::{
-    ConnectionEvent, Duration, Instant, VarInt,
-    mutex::Mutex,
-    recv_stream::RecvStream,
-    runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller},
-    send_stream::SendStream,
-    udp_transmit,
+    mutex::Mutex, recv_stream::RecvStream, runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller}, send_stream::SendStream, udp_ecn, ConnectionEvent, Duration, Instant, VarInt
 };
 use proto::{
     ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, StreamEvent, StreamId,
@@ -1013,9 +1008,17 @@ impl State {
             }
 
             let len = t.size;
+            let transmit = udp::Transmit {
+                destination: t.destination,
+                ecn: t.ecn.map(udp_ecn),
+                buffers: &[IoSlice::new(&self.send_buffer[..len])],
+                segment_size: t.segment_size,
+                src_ip: t.src_ip,
+            };
+
             let retry = match self
                 .socket
-                .try_send(&udp_transmit(&t, &self.send_buffer[..len]))
+                .try_send(&transmit)
             {
                 Ok(()) => false,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => true,

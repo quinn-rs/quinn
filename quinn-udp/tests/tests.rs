@@ -1,7 +1,7 @@
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
 use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
 use std::{
-    io::IoSliceMut,
+    io::{IoSlice, IoSliceMut},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, UdpSocket},
     slice,
 };
@@ -24,7 +24,7 @@ fn basic() {
         Transmit {
             destination: dst_addr,
             ecn: None,
-            contents: b"hello",
+            buffers: &[IoSlice::new(b"hello")],
             segment_size: None,
             src_ip: None,
         },
@@ -42,7 +42,7 @@ fn ecn_v6() {
             Transmit {
                 destination: recv.local_addr().unwrap().as_socket().unwrap(),
                 ecn: Some(codepoint),
-                contents: b"hello",
+                buffers: &[IoSlice::new(b"hello")],
                 segment_size: None,
                 src_ip: None,
             },
@@ -62,7 +62,7 @@ fn ecn_v4() {
             Transmit {
                 destination: recv.local_addr().unwrap().as_socket().unwrap(),
                 ecn: Some(codepoint),
-                contents: b"hello",
+                buffers: &[IoSlice::new(b"hello")],
                 segment_size: None,
                 src_ip: None,
             },
@@ -107,7 +107,7 @@ fn ecn_v6_dualstack() {
                 Transmit {
                     destination: dst,
                     ecn: Some(codepoint),
-                    contents: b"hello",
+                    buffers: &[IoSlice::new(b"hello")],
                     segment_size: None,
                     src_ip: None,
                 },
@@ -147,7 +147,7 @@ fn ecn_v4_mapped_v6() {
             Transmit {
                 destination: recv_v4_mapped_v6,
                 ecn: Some(codepoint),
-                contents: b"hello",
+                buffers: &[IoSlice::new(b"hello")],
                 segment_size: None,
                 src_ip: None,
             },
@@ -179,7 +179,48 @@ fn gso() {
         Transmit {
             destination: dst_addr,
             ecn: None,
-            contents: &msg,
+            buffers: &[IoSlice::new(&msg)],
+            segment_size: Some(SEGMENT_SIZE),
+            src_ip: None,
+        },
+    );
+}
+
+// Test a GSO segment that is split into vectored buffers
+#[test]
+fn gso_vectored() {
+    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+    let max_segments = UdpSocketState::new((&send).into())
+        .unwrap()
+        .max_gso_segments();
+    let dst_addr = recv.local_addr().unwrap();
+
+    const SEGMENT_SIZE: usize = 64;
+
+    let mut i = 0;
+    let mut msg = Vec::with_capacity(SEGMENT_SIZE * max_segments);
+    msg.fill_with(|| {
+        i += 1;
+        i as u8
+    });
+
+    // Not evenly divisible by SEGMENT_SIZE on purpose
+    // It's legal to have an iovec that spans packets.
+    const CHUNK_SIZE: usize = 40;
+    let buffers = msg.chunks(CHUNK_SIZE).map(|c| IoSlice::new(c)).collect::<Vec<_>>();
+
+    test_send_recv(
+        &send.into(),
+        &recv.into(),
+        Transmit {
+            destination: dst_addr,
+            ecn: None,
+            buffers: &buffers,
             segment_size: Some(SEGMENT_SIZE),
             src_ip: None,
         },
@@ -197,8 +238,15 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
 
     let mut buf = [0; u16::MAX as usize];
     let mut meta = RecvMeta::default();
-    let segment_size = transmit.segment_size.unwrap_or(transmit.contents.len());
-    let expected_datagrams = transmit.contents.len() / segment_size;
+
+    // Combine any vectored buffers into a single contiguous buffer to make the test simpler
+    let mut contents = Vec::new();
+    for buffer in transmit.buffers.iter() {
+        contents.extend_from_slice(buffer);
+    }
+
+    let segment_size = transmit.segment_size.unwrap_or(contents.len());
+   let expected_datagrams = contents.len() / segment_size;
     let mut datagrams = 0;
     while datagrams < expected_datagrams {
         let n = recv_state
@@ -213,7 +261,7 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         for i in 0..segments {
             assert_eq!(
                 &buf[(i * meta.stride)..((i + 1) * meta.stride)],
-                &transmit.contents
+                &contents
                     [(datagrams + i) * segment_size..(datagrams + i + 1) * segment_size]
             );
         }

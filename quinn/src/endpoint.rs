@@ -2,8 +2,7 @@ use std::{
     collections::VecDeque,
     fmt,
     future::Future,
-    io,
-    io::IoSliceMut,
+    io::{self, IoSlice, IoSliceMut},
     mem,
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
@@ -15,9 +14,7 @@ use std::{
 #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))]
 use crate::runtime::default_runtime;
 use crate::{
-    Instant,
-    runtime::{AsyncUdpSocket, Runtime},
-    udp_transmit,
+    runtime::{AsyncUdpSocket, Runtime}, udp_ecn, Instant
 };
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
@@ -572,7 +569,15 @@ fn respond(transmit: proto::Transmit, response_buffer: &[u8], socket: &dyn Async
     // to transmit. This is morally equivalent to the packet getting
     // lost due to congestion further along the link, which
     // similarly relies on peer retries for recovery.
-    _ = socket.try_send(&udp_transmit(&transmit, &response_buffer[..transmit.size]));
+    let transmit = udp::Transmit {
+        destination: transmit.destination,
+        ecn: transmit.ecn.map(udp_ecn),
+        buffers: &[IoSlice::new(&response_buffer[..transmit.size])],
+        segment_size: transmit.segment_size,
+        src_ip: transmit.src_ip,
+    };
+
+    _ = socket.try_send(&transmit);
 }
 
 #[inline]

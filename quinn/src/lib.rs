@@ -99,16 +99,6 @@ enum ConnectionEvent {
     Rebind(Arc<dyn AsyncUdpSocket>),
 }
 
-fn udp_transmit<'a>(t: &proto::Transmit, buffer: &'a [u8]) -> udp::Transmit<'a> {
-    udp::Transmit {
-        destination: t.destination,
-        ecn: t.ecn.map(udp_ecn),
-        contents: buffer,
-        segment_size: t.segment_size,
-        src_ip: t.src_ip,
-    }
-}
-
 fn udp_ecn(ecn: proto::EcnCodepoint) -> udp::EcnCodepoint {
     match ecn {
         proto::EcnCodepoint::Ect0 => udp::EcnCodepoint::Ect0,
