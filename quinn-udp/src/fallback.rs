@@ -1,5 +1,5 @@
 use std::{
-    io::{self, IoSliceMut},
+    io::{self, IoSlice, IoSliceMut},
     sync::Mutex,
     time::Instant,
 };
@@ -93,8 +93,8 @@ impl UdpSocketState {
 }
 
 fn send(socket: UdpSockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
-    socket.0.send_to(
-        transmit.contents,
+    socket.0.send_to_vectored(
+        transmit.buffers,
         &socket2::SockAddr::from(transmit.destination),
     )
 }
