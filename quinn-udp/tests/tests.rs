@@ -212,7 +212,7 @@ fn gso_vectored() {
     // Not evenly divisible by SEGMENT_SIZE on purpose
     // It's legal to have an iovec that spans packets.
     const CHUNK_SIZE: usize = 40;
-    let buffers = msg.chunks(CHUNK_SIZE).map(|c| IoSlice::new(c)).collect::<Vec<_>>();
+    let buffers = msg.chunks(CHUNK_SIZE).map(IoSlice::new).collect::<Vec<_>>();
 
     test_send_recv(
         &send.into(),
@@ -246,7 +246,7 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
     }
 
     let segment_size = transmit.segment_size.unwrap_or(contents.len());
-   let expected_datagrams = contents.len() / segment_size;
+    let expected_datagrams = contents.len() / segment_size;
     let mut datagrams = 0;
     while datagrams < expected_datagrams {
         let n = recv_state
@@ -261,8 +261,7 @@ fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
         for i in 0..segments {
             assert_eq!(
                 &buf[(i * meta.stride)..((i + 1) * meta.stride)],
-                &contents
-                    [(datagrams + i) * segment_size..(datagrams + i + 1) * segment_size]
+                &contents[(datagrams + i) * segment_size..(datagrams + i + 1) * segment_size]
             );
         }
         datagrams += segments;

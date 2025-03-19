@@ -1,6 +1,6 @@
 use std::{
     cmp::min,
-    io::{ErrorKind, IoSliceMut},
+    io::{ErrorKind, IoSlice, IoSliceMut},
     net::{Ipv4Addr, Ipv6Addr, UdpSocket},
 };
 

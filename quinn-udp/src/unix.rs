@@ -289,14 +289,12 @@ fn send(
         }
     }
     let mut msg_hdr: libc::msghdr = unsafe { mem::zeroed() };
-    let mut iovec: libc::iovec = unsafe { mem::zeroed() };
     let mut cmsgs = cmsg::Aligned([0u8; CMSG_LEN]);
     let dst_addr = socket2::SockAddr::from(transmit.destination);
     prepare_msg(
         transmit,
         &dst_addr,
         &mut msg_hdr,
-        &mut iovec,
         &mut cmsgs,
         encode_src_ip,
         state.sendmsg_einval(),
@@ -338,7 +336,6 @@ fn send(
                             transmit,
                             &dst_addr,
                             &mut msg_hdr,
-                            &mut iovec,
                             &mut cmsgs,
                             encode_src_ip,
                             state.sendmsg_einval(),
@@ -361,7 +358,6 @@ fn send(
 #[cfg(apple_fast)]
 fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
     let mut hdrs = unsafe { mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
-    let mut iovs = unsafe { mem::zeroed::<[libc::iovec; BATCH_SIZE]>() };
     let mut ctrls = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
     let addr = socket2::SockAddr::from(transmit.destination);
     let segment_size = transmit.segment_size.unwrap_or(transmit.contents.len());
@@ -383,7 +379,6 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
             },
             &addr,
             &mut hdrs[i],
-            &mut iovs[i],
             &mut ctrls[i],
             true,
             state.sendmsg_einval(),
@@ -588,7 +583,7 @@ fn prepare_msg(
     // Some network drivers don't like being told to do GSO even if there is effectively only a single segment.
     if let Some(segment_size) = transmit
         .segment_size
-        .filter(|segment_size| *segment_size != transmit.buffers.iter().map(|b| b.len()).sum())
+        .filter(|segment_size| *segment_size != transmit.size())
     {
         gso::set_segment_size(&mut encoder, segment_size as u16);
     }

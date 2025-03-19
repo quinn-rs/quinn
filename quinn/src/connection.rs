@@ -6,7 +6,7 @@ use std::{
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::Arc,
-    task::{ready, Context, Poll, Waker},
+    task::{Context, Poll, Waker, ready},
 };
 
 use bytes::Bytes;
@@ -17,7 +17,12 @@ use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
 use tracing::{Instrument, Span, debug_span};
 
 use crate::{
-    mutex::Mutex, recv_stream::RecvStream, runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller}, send_stream::SendStream, udp_ecn, ConnectionEvent, Duration, Instant, VarInt
+    ConnectionEvent, Duration, Instant, VarInt,
+    mutex::Mutex,
+    recv_stream::RecvStream,
+    runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller},
+    send_stream::SendStream,
+    udp_ecn,
 };
 use proto::{
     ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, StreamEvent, StreamId,
@@ -1016,10 +1021,7 @@ impl State {
                 src_ip: t.src_ip,
             };
 
-            let retry = match self
-                .socket
-                .try_send(&transmit)
-            {
+            let retry = match self.socket.try_send(&transmit) {
                 Ok(()) => false,
                 Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => true,
                 Err(e) => return Err(e),

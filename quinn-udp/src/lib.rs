@@ -27,11 +27,14 @@
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
-use std::{io::IoSlice, net::{IpAddr, Ipv6Addr, SocketAddr}};
 #[cfg(unix)]
 use std::os::unix::io::AsFd;
 #[cfg(windows)]
 use std::os::windows::io::AsSocket;
+use std::{
+    io::IoSlice,
+    net::{IpAddr, Ipv6Addr, SocketAddr},
+};
 #[cfg(not(wasm_browser))]
 use std::{
     sync::Mutex,
@@ -146,7 +149,7 @@ pub struct Transmit<'a> {
     pub src_ip: Option<IpAddr>,
 }
 
-impl<'a> Transmit<'a> {
+impl Transmit<'_> {
     pub fn size(&self) -> usize {
         self.buffers.iter().map(|s| s.len()).sum::<usize>()
     }

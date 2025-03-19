@@ -14,7 +14,9 @@ use std::{
 #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))]
 use crate::runtime::default_runtime;
 use crate::{
-    runtime::{AsyncUdpSocket, Runtime}, udp_ecn, Instant
+    Instant,
+    runtime::{AsyncUdpSocket, Runtime},
+    udp_ecn,
 };
 use bytes::{Bytes, BytesMut};
 use pin_project_lite::pin_project;
