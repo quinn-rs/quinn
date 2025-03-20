@@ -292,6 +292,16 @@ impl UdpSocketState {
         64
     }
 
+    /// Resize the send buffer of `socket` to `bytes`.
+    pub fn set_send_buffer_size(&self, socket: UdpSockRef<'_>, bytes: usize) -> io::Result<()> {
+        socket.0.set_send_buffer_size(bytes)
+    }
+
+    /// Resize the receive buffer of `socket` to `bytes`.
+    pub fn set_recv_buffer_size(&self, socket: UdpSockRef<'_>, bytes: usize) -> io::Result<()> {
+        socket.0.set_recv_buffer_size(bytes)
+    }
+
     #[inline]
     pub fn may_fragment(&self) -> bool {
         false

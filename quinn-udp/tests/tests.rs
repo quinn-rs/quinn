@@ -186,6 +186,36 @@ fn gso() {
     );
 }
 
+#[test]
+fn socket_buffers() {
+    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+    let dst_addr = recv.local_addr().unwrap();
+    UdpSocketState::new((&send).into())
+        .unwrap()
+        .set_send_buffer_size((&send).into(), 1_000_000)
+        .unwrap();
+    UdpSocketState::new((&send).into())
+        .unwrap()
+        .set_recv_buffer_size((&send).into(), 1_000_000)
+        .unwrap();
+    test_send_recv(
+        &send.into(),
+        &recv.into(),
+        Transmit {
+            destination: dst_addr,
+            ecn: None,
+            contents: b"hello",
+            segment_size: None,
+            src_ip: None,
+        },
+    );
+}
+
 fn test_send_recv(send: &Socket, recv: &Socket, transmit: Transmit) {
     let send_state = UdpSocketState::new(send.into()).unwrap();
     let recv_state = UdpSocketState::new(recv.into()).unwrap();
