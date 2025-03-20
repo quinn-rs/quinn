@@ -1,8 +1,8 @@
 #[cfg(not(any(target_os = "openbsd", target_os = "netbsd", solarish)))]
-use std::net::{SocketAddr, SocketAddrV4, SocketAddrV6};
+use std::net::{SocketAddr, SocketAddrV6};
 use std::{
     io::IoSliceMut,
-    net::{IpAddr, Ipv4Addr, Ipv6Addr, UdpSocket},
+    net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddrV4, UdpSocket},
     slice,
 };
 
