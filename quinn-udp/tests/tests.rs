@@ -188,7 +188,7 @@ fn gso() {
 
 #[test]
 fn socket_buffers() {
-    const BUFFER_SIZE: usize = 256 * 1024;
+    const BUFFER_SIZE: usize = 512 * 1024;
 
     let send = socket2::Socket::new(
         socket2::Domain::IPV4,
@@ -202,9 +202,10 @@ fn socket_buffers() {
         Some(socket2::Protocol::UDP),
     )
     .unwrap();
-    recv.bind(&socket2::SockAddr::from(
-        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
-    ))
+    recv.bind(&socket2::SockAddr::from(SocketAddrV4::new(
+        Ipv4Addr::LOCALHOST,
+        0,
+    )))
     .unwrap();
     for sock in [&send, &recv] {
         let sockstate = UdpSocketState::new(sock.into()).unwrap();
