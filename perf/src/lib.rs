@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
+use quinn::udp::UdpSocketState;
 use rustls::crypto::ring::cipher_suite;
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::warn;
@@ -25,27 +26,15 @@ pub fn bind_socket(
     socket
         .bind(&socket2::SockAddr::from(addr))
         .context("binding endpoint")?;
-    socket
-        .set_send_buffer_size(send_buffer_size)
-        .context("send buffer size")?;
-    socket
-        .set_recv_buffer_size(recv_buffer_size)
-        .context("recv buffer size")?;
 
-    let buf_size = socket.send_buffer_size().context("send buffer size")?;
-    if buf_size < send_buffer_size {
-        warn!(
-            "Unable to set desired send buffer size. Desired: {}, Actual: {}",
-            send_buffer_size, buf_size
-        );
+    let socket_state = UdpSocketState::new((&socket).into()).unwrap();
+
+    if let Err(e) = socket_state.set_send_buffer_size((&socket).into(), send_buffer_size) {
+        warn!("Unable to set desired send buffer size {send_buffer_size}: {e}",);
     }
 
-    let buf_size = socket.recv_buffer_size().context("recv buffer size")?;
-    if buf_size < recv_buffer_size {
-        warn!(
-            "Unable to set desired recv buffer size. Desired: {}, Actual: {}",
-            recv_buffer_size, buf_size
-        );
+    if let Err(e) = socket_state.set_recv_buffer_size((&socket).into(), recv_buffer_size) {
+        warn!("Unable to set desired recv buffer size {recv_buffer_size}: {e}",);
     }
 
     Ok(socket.into())

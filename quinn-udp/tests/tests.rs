@@ -188,26 +188,42 @@ fn gso() {
 
 #[test]
 fn socket_buffers() {
-    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
-        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
-        .unwrap();
-    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
-        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
-        .unwrap();
-    let dst_addr = recv.local_addr().unwrap();
-    UdpSocketState::new((&send).into())
-        .unwrap()
-        .set_send_buffer_size((&send).into(), 1_000_000)
-        .unwrap();
-    UdpSocketState::new((&send).into())
-        .unwrap()
-        .set_recv_buffer_size((&send).into(), 1_000_000)
-        .unwrap();
+    const BUFFER_SIZE: usize = 256 * 1024;
+
+    let send = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )
+    .unwrap();
+    let recv = socket2::Socket::new(
+        socket2::Domain::IPV4,
+        socket2::Type::DGRAM,
+        Some(socket2::Protocol::UDP),
+    )
+    .unwrap();
+    recv.bind(&socket2::SockAddr::from(
+        "127.0.0.1:0".parse::<SocketAddr>().unwrap(),
+    ))
+    .unwrap();
+    for sock in [&send, &recv] {
+        UdpSocketState::new(sock.into())
+            .unwrap()
+            .set_send_buffer_size(sock.into(), BUFFER_SIZE)
+            .unwrap();
+        assert_eq!(sock.send_buffer_size().unwrap(), BUFFER_SIZE);
+        UdpSocketState::new(sock.into())
+            .unwrap()
+            .set_recv_buffer_size(sock.into(), BUFFER_SIZE)
+            .unwrap();
+        assert_eq!(sock.recv_buffer_size().unwrap(), BUFFER_SIZE);
+    }
+
     test_send_recv(
-        &send.into(),
-        &recv.into(),
+        &send,
+        &recv,
         Transmit {
-            destination: dst_addr,
+            destination: recv.local_addr().unwrap().as_socket().unwrap(),
             ecn: None,
             contents: b"hello",
             segment_size: None,
