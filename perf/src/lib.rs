@@ -27,7 +27,7 @@ pub fn bind_socket(
         .bind(&socket2::SockAddr::from(addr))
         .context("binding endpoint")?;
 
-    let socket_state = UdpSocketState::new((&socket).into()).unwrap();
+    let socket_state = UdpSocketState::new((&socket).into())?;
     socket_state
         .set_send_buffer_size((&socket).into(), send_buffer_size)
         .context("send buffer size")?;
