@@ -207,13 +207,12 @@ fn socket_buffers() {
     ))
     .unwrap();
     for sock in [&send, &recv] {
-        UdpSocketState::new(sock.into())
-            .unwrap()
+        let sockstate = UdpSocketState::new(sock.into()).unwrap();
+        sockstate
             .set_send_buffer_size(sock.into(), BUFFER_SIZE)
             .unwrap();
         assert_eq!(sock.send_buffer_size().unwrap(), BUFFER_SIZE);
-        UdpSocketState::new(sock.into())
-            .unwrap()
+        sockstate
             .set_recv_buffer_size(sock.into(), BUFFER_SIZE)
             .unwrap();
         assert_eq!(sock.recv_buffer_size().unwrap(), BUFFER_SIZE);
