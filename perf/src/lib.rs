@@ -1,6 +1,7 @@
 use std::net::SocketAddr;
 
 use anyhow::{Context, Result};
+use quinn::udp::UdpSocketState;
 use rustls::crypto::ring::cipher_suite;
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::warn;
@@ -25,11 +26,13 @@ pub fn bind_socket(
     socket
         .bind(&socket2::SockAddr::from(addr))
         .context("binding endpoint")?;
-    socket
-        .set_send_buffer_size(send_buffer_size)
+
+    let socket_state = UdpSocketState::new((&socket).into())?;
+    socket_state
+        .set_send_buffer_size((&socket).into(), send_buffer_size)
         .context("send buffer size")?;
-    socket
-        .set_recv_buffer_size(recv_buffer_size)
+    socket_state
+        .set_recv_buffer_size((&socket).into(), recv_buffer_size)
         .context("recv buffer size")?;
 
     let buf_size = socket.send_buffer_size().context("send buffer size")?;
