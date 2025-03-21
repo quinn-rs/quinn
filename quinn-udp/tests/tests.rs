@@ -209,14 +209,39 @@ fn socket_buffers() {
     .unwrap();
     for sock in [&send, &recv] {
         let sockstate = UdpSocketState::new(sock.into()).unwrap();
+
+        // Change the send buffer size.
+        let buffer_before = sock.send_buffer_size().unwrap();
+        assert_ne!(
+            buffer_before, BUFFER_SIZE,
+            "make sure buffer is not already desired size"
+        );
         sockstate
             .set_send_buffer_size(sock.into(), BUFFER_SIZE)
             .unwrap();
-        assert_eq!(sock.send_buffer_size().unwrap(), BUFFER_SIZE);
+        let buffer_after = sock.send_buffer_size().unwrap();
+        // Different platforms seem to treat the size argument more of an
+        // indication of a desired size than the actual fixed amount they should
+        // set the buffer to. So simply try to assert that the call above
+        // changed the buffer size in the right direction.
+        assert!(
+            (buffer_before < BUFFER_SIZE && buffer_after > buffer_before)
+                || (buffer_before > BUFFER_SIZE && buffer_after < buffer_before),
+            "buffer size change {buffer_before} -> {buffer_after} not in expected direction",
+        );
+
+        // Change the receive buffer size.
+        let buffer_before = sock.recv_buffer_size().unwrap();
         sockstate
             .set_recv_buffer_size(sock.into(), BUFFER_SIZE)
             .unwrap();
-        assert_eq!(sock.recv_buffer_size().unwrap(), BUFFER_SIZE);
+        let buffer_after = sock.recv_buffer_size().unwrap();
+        // See above for the rationale for this check.
+        assert!(
+            (buffer_before < BUFFER_SIZE && buffer_after > buffer_before)
+                || (buffer_before > BUFFER_SIZE && buffer_after < buffer_before),
+            "buffer size change {buffer_before} -> {buffer_after} not in expected direction",
+        );
     }
 
     test_send_recv(
