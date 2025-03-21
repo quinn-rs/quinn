@@ -213,7 +213,7 @@ fn socket_buffers() {
     )))
     .unwrap();
     for sock in [&send, &recv] {
-        let sockstate = UdpSocketState::new(sock.into()).unwrap();
+        let sockstate = UdpSocketState::new(sock.into()).expect("created socket state");
 
         // Change the send buffer size.
         let buffer_before = sock.send_buffer_size().unwrap();
