@@ -9,7 +9,7 @@ on:
     - cron: "21 3 * * 5"
 
 env:
-  RUST_BACKTRACE=1
+  RUST_BACKTRACE: 1
 
 jobs:
   test-freebsd:
