@@ -75,20 +75,23 @@ impl UdpSocketState {
                 WinSock::IPPROTO_IP,
                 WinSock::IP_DONTFRAGMENT,
                 OPTION_ON,
-            ).expect("IP_DONTFRAGMENT");
+            )
+            .expect("IP_DONTFRAGMENT");
 
             set_socket_option(
                 &*socket.0,
                 WinSock::IPPROTO_IP,
                 WinSock::IP_PKTINFO,
                 OPTION_ON,
-            ).expect("IP_PKTINFO");
+            )
+            .expect("IP_PKTINFO");
             set_socket_option(
                 &*socket.0,
                 WinSock::IPPROTO_IP,
                 WinSock::IP_RECVECN,
                 OPTION_ON,
-            ).expect("IP_RECVECN");
+            )
+            .expect("IP_RECVECN");
         }
 
         if is_ipv6 {
@@ -97,21 +100,24 @@ impl UdpSocketState {
                 WinSock::IPPROTO_IPV6,
                 WinSock::IPV6_DONTFRAG,
                 OPTION_ON,
-            ).expect("IPV6_DONTFRAG");
+            )
+            .expect("IPV6_DONTFRAG");
 
             set_socket_option(
                 &*socket.0,
                 WinSock::IPPROTO_IPV6,
                 WinSock::IPV6_PKTINFO,
                 OPTION_ON,
-            ).expect("IPV6_PKTINFO");
+            )
+            .expect("IPV6_PKTINFO");
 
             set_socket_option(
                 &*socket.0,
                 WinSock::IPPROTO_IPV6,
                 WinSock::IPV6_RECVECN,
                 OPTION_ON,
-            ).expect("IPV6_RECVECN");
+            )
+            .expect("IPV6_RECVECN");
         }
 
         let now = Instant::now();
