@@ -189,6 +189,11 @@ fn gso() {
 #[test]
 fn socket_buffers() {
     const BUFFER_SIZE: usize = 128 * 1024;
+    const FACTOR: usize = if cfg!(any(target_os = "linux", target_os = "android")) {
+        2 // Linux and Android set the buffer to double the requested size
+    } else {
+        1 // Everyone else is sane.
+    };
 
     let send = socket2::Socket::new(
         socket2::Domain::IPV4,
@@ -213,20 +218,17 @@ fn socket_buffers() {
         // Change the send buffer size.
         let buffer_before = sock.send_buffer_size().unwrap();
         assert_ne!(
-            buffer_before, BUFFER_SIZE,
+            buffer_before,
+            BUFFER_SIZE * FACTOR,
             "make sure buffer is not already desired size"
         );
         sockstate
             .set_send_buffer_size(sock.into(), BUFFER_SIZE)
             .expect("set send buffer size {buffer_before} -> {BUFFER_SIZE}");
         let buffer_after = sock.send_buffer_size().unwrap();
-        // Different platforms seem to treat the size argument more of an
-        // indication of a desired size than the actual fixed amount they should
-        // set the buffer to. So simply try to assert that the call above
-        // changed the buffer size in the right direction.
-        assert!(
-            (buffer_before < BUFFER_SIZE && buffer_after > buffer_before)
-                || (buffer_before > BUFFER_SIZE && buffer_after < buffer_before),
+        assert_eq!(
+            buffer_after,
+            BUFFER_SIZE * FACTOR,
             "setting send buffer size to {BUFFER_SIZE} resulted in {buffer_before} -> {buffer_after}",
         );
 
@@ -236,10 +238,9 @@ fn socket_buffers() {
             .set_recv_buffer_size(sock.into(), BUFFER_SIZE)
             .expect("set recv buffer size {buffer_before} -> {BUFFER_SIZE}");
         let buffer_after = sock.recv_buffer_size().unwrap();
-        // See above for the rationale for this check.
-        assert!(
-            (buffer_before < BUFFER_SIZE && buffer_after > buffer_before)
-                || (buffer_before > BUFFER_SIZE && buffer_after < buffer_before),
+        assert_eq!(
+            buffer_after,
+            BUFFER_SIZE * FACTOR,
             "setting recv buffer size to {BUFFER_SIZE} resulted in {buffer_before} -> {buffer_after}",
         );
     }
