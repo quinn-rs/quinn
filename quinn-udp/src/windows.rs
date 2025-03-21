@@ -40,8 +40,8 @@ impl UdpSocketState {
             "control message buffers will be misaligned"
         );
 
-        socket.0.set_nonblocking(true).expect("set_nonblocking");
-        let addr = socket.0.local_addr().expect("local_addr");
+        socket.0.set_nonblocking(true)?;
+        let addr = socket.0.local_addr()?;
         let is_ipv6 = addr.as_socket_ipv6().is_some();
         let v6only = unsafe {
             let mut result: u32 = 0;
@@ -54,7 +54,6 @@ impl UdpSocketState {
                 &mut len,
             );
             if rc == -1 {
-                panic!("getsockopt");
                 return Err(io::Error::last_os_error());
             }
             result != 0
@@ -75,23 +74,20 @@ impl UdpSocketState {
                 WinSock::IPPROTO_IP,
                 WinSock::IP_DONTFRAGMENT,
                 OPTION_ON,
-            )
-            .expect("IP_DONTFRAGMENT");
+            )?;
 
             set_socket_option(
                 &*socket.0,
                 WinSock::IPPROTO_IP,
                 WinSock::IP_PKTINFO,
                 OPTION_ON,
-            )
-            .expect("IP_PKTINFO");
+            )?;
             set_socket_option(
                 &*socket.0,
                 WinSock::IPPROTO_IP,
                 WinSock::IP_RECVECN,
                 OPTION_ON,
-            )
-            .expect("IP_RECVECN");
+            )?;
         }
 
         if is_ipv6 {
@@ -100,24 +96,21 @@ impl UdpSocketState {
                 WinSock::IPPROTO_IPV6,
                 WinSock::IPV6_DONTFRAG,
                 OPTION_ON,
-            )
-            .expect("IPV6_DONTFRAG");
+            )?;
 
             set_socket_option(
                 &*socket.0,
                 WinSock::IPPROTO_IPV6,
                 WinSock::IPV6_PKTINFO,
                 OPTION_ON,
-            )
-            .expect("IPV6_PKTINFO");
+            )?;
 
             set_socket_option(
                 &*socket.0,
                 WinSock::IPPROTO_IPV6,
                 WinSock::IPV6_RECVECN,
                 OPTION_ON,
-            )
-            .expect("IPV6_RECVECN");
+            )?;
         }
 
         let now = Instant::now();

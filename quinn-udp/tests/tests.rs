@@ -188,7 +188,7 @@ fn gso() {
 
 #[test]
 fn socket_buffers() {
-    const BUFFER_SIZE: usize = 128 * 1024;
+    const BUFFER_SIZE: usize = 123456;
     const FACTOR: usize = if cfg!(any(target_os = "linux", target_os = "android")) {
         2 // Linux and Android set the buffer to double the requested size
     } else {
