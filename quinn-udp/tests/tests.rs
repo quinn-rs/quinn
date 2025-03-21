@@ -227,7 +227,7 @@ fn socket_buffers() {
         assert!(
             (buffer_before < BUFFER_SIZE && buffer_after > buffer_before)
                 || (buffer_before > BUFFER_SIZE && buffer_after < buffer_before),
-            "buffer size change {buffer_before} -> {buffer_after} not in expected direction",
+            "setting send buffer size to {BUFFER_SIZE} resulted in {buffer_before} -> {buffer_after}",
         );
 
         // Change the receive buffer size.
@@ -240,7 +240,7 @@ fn socket_buffers() {
         assert!(
             (buffer_before < BUFFER_SIZE && buffer_after > buffer_before)
                 || (buffer_before > BUFFER_SIZE && buffer_after < buffer_before),
-            "buffer size change {buffer_before} -> {buffer_after} not in expected direction",
+            "setting recv buffer size to {BUFFER_SIZE} resulted in {buffer_before} -> {buffer_after}",
         );
     }
 
