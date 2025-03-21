@@ -207,12 +207,13 @@ fn socket_buffers() {
         Some(socket2::Protocol::UDP),
     )
     .unwrap();
-    recv.bind(&socket2::SockAddr::from(SocketAddrV4::new(
-        Ipv4Addr::LOCALHOST,
-        0,
-    )))
-    .unwrap();
     for sock in [&send, &recv] {
+        sock.bind(&socket2::SockAddr::from(SocketAddrV4::new(
+            Ipv4Addr::LOCALHOST,
+            0,
+        )))
+        .unwrap();
+
         let sockstate = UdpSocketState::new(sock.into()).expect("created socket state");
 
         // Change the send buffer size.
