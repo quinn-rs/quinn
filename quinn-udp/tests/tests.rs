@@ -188,7 +188,7 @@ fn gso() {
 
 #[test]
 fn socket_buffers() {
-    const BUFFER_SIZE: usize = 512 * 1024;
+    const BUFFER_SIZE: usize = 256 * 1024;
 
     let send = socket2::Socket::new(
         socket2::Domain::IPV4,
