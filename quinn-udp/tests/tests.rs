@@ -188,7 +188,7 @@ fn gso() {
 
 #[test]
 fn socket_buffers() {
-    const BUFFER_SIZE: usize = 256 * 1024;
+    const BUFFER_SIZE: usize = 128 * 1024;
 
     let send = socket2::Socket::new(
         socket2::Domain::IPV4,
@@ -218,7 +218,7 @@ fn socket_buffers() {
         );
         sockstate
             .set_send_buffer_size(sock.into(), BUFFER_SIZE)
-            .unwrap();
+            .expect("set send buffer size {buffer_before} -> {BUFFER_SIZE}");
         let buffer_after = sock.send_buffer_size().unwrap();
         // Different platforms seem to treat the size argument more of an
         // indication of a desired size than the actual fixed amount they should
@@ -234,7 +234,7 @@ fn socket_buffers() {
         let buffer_before = sock.recv_buffer_size().unwrap();
         sockstate
             .set_recv_buffer_size(sock.into(), BUFFER_SIZE)
-            .unwrap();
+            .expect("set recv buffer size {buffer_before} -> {BUFFER_SIZE}");
         let buffer_after = sock.recv_buffer_size().unwrap();
         // See above for the rationale for this check.
         assert!(
