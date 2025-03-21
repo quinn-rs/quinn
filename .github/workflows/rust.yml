@@ -8,9 +8,6 @@ on:
   schedule:
     - cron: "21 3 * * 5"
 
-env:
-  RUST_BACKTRACE: 1
-
 jobs:
   test-freebsd:
   # see https://github.com/actions/runner/issues/385

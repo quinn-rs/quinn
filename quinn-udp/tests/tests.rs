@@ -207,11 +207,6 @@ fn socket_buffers() {
         Some(socket2::Protocol::UDP),
     )
     .unwrap();
-    recv.bind(&socket2::SockAddr::from(SocketAddrV4::new(
-        Ipv4Addr::LOCALHOST,
-        0,
-    )))
-    .unwrap();
     for sock in [&send, &recv] {
         let sockstate = UdpSocketState::new(sock.into()).expect("created socket state");
 
@@ -245,6 +240,11 @@ fn socket_buffers() {
         );
     }
 
+    recv.bind(&socket2::SockAddr::from(SocketAddrV4::new(
+        Ipv4Addr::LOCALHOST,
+        0,
+    )))
+    .unwrap();
     test_send_recv(
         &send,
         &recv,
