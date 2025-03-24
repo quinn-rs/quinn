@@ -211,6 +211,7 @@ impl PathData {
         if self.first_packet.is_none() {
             self.first_packet = Some(pn);
         }
+        // TODO(@divma): why is Path receiving a path_id??
         self.in_flight.bytes -= space.for_path(path).sent(pn, packet);
     }
 
@@ -222,6 +223,30 @@ impl PathData {
         }
         self.in_flight.remove(packet);
         true
+    }
+
+    /// Increment the total size of sent UDP datagrams
+    pub(super) fn inc_total_sent(&mut self, inc: u64) {
+        self.total_sent = self.total_sent.saturating_add(inc);
+    }
+
+    /// Increment the total size of received UDP datagrams
+    pub(super) fn inc_total_recvd(&mut self, inc: u64) {
+        self.total_recvd = self.total_recvd.saturating_add(inc);
+    }
+
+    /// Return how long we need to wait before sending `bytes_to_send`
+    ///
+    /// See [`Pacer::delay`].
+    pub(super) fn pacing_delay(&mut self, bytes_to_send: u64, now: Instant) -> Option<Instant> {
+        let smoothed_rtt = self.rtt.get();
+        self.pacing.delay(
+            smoothed_rtt,
+            bytes_to_send,
+            self.current_mtu(),
+            self.congestion.window(),
+            now,
+        )
     }
 
     /// Updates the last observed address report received on this path.

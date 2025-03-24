@@ -185,5 +185,6 @@ pub struct ConnectionStats {
     /// Statistics about frames received on a connection
     pub frame_rx: FrameStats,
     /// Statistics related to the current transmission path
+    // TODO(@divma): ....?
     pub path: PathStats,
 }

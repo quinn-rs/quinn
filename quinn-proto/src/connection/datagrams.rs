@@ -70,7 +70,8 @@ impl Datagrams<'_> {
         // We use the conservative overhead bound for any packet number, reducing the budget by at
         // most 3 bytes, so that PN size fluctuations don't cause users sending maximum-size
         // datagrams to suffer avoidable packet loss.
-        let max_size = self.conn.path.current_mtu() as usize
+        // // TODO(@divma): wrong call
+        let max_size = self.conn.current_mtu() as usize
             - self.conn.predict_1rtt_overhead_no_pn()
             - Datagram::SIZE_BOUND;
         let limit = self

@@ -186,13 +186,13 @@ impl PacketBuilder {
         self,
         now: Instant,
         conn: &mut Connection,
+        path_id: PathId,
         sent: Option<SentFrames>,
         buffer: &mut Vec<u8>,
     ) {
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
-        let path_id = self.path;
         let (size, padded) = self.finish(conn, buffer);
         let sent = match sent {
             Some(sent) => sent,
@@ -213,8 +213,12 @@ impl PacketBuilder {
             stream_frames: sent.stream_frames,
         };
 
-        conn.path
-            .sent(path_id, exact_number, packet, &mut conn.spaces[space_id]);
+        conn.paths.get_mut(&path_id).unwrap().path.sent(
+            path_id,
+            exact_number,
+            packet,
+            &mut conn.spaces[space_id],
+        );
         conn.stats.path.sent_packets += 1;
         conn.reset_keep_alive(now);
         if size != 0 {
@@ -227,8 +231,8 @@ impl PacketBuilder {
                 }
                 conn.permit_idle_reset = false;
             }
-            conn.set_loss_detection_timer(now);
-            conn.path.pacing.on_transmit(size);
+            conn.set_loss_detection_timer(path_id, now);
+            conn.path_data_mut(path_id).pacing.on_transmit(size);
         }
     }
 
