@@ -289,14 +289,12 @@ fn send(
         }
     }
     let mut msg_hdr: libc::msghdr = unsafe { mem::zeroed() };
-    let mut iovec: libc::iovec = unsafe { mem::zeroed() };
     let mut cmsgs = cmsg::Aligned([0u8; CMSG_LEN]);
     let dst_addr = socket2::SockAddr::from(transmit.destination);
     prepare_msg(
         transmit,
         &dst_addr,
         &mut msg_hdr,
-        &mut iovec,
         &mut cmsgs,
         encode_src_ip,
         state.sendmsg_einval(),
@@ -338,7 +336,6 @@ fn send(
                             transmit,
                             &dst_addr,
                             &mut msg_hdr,
-                            &mut iovec,
                             &mut cmsgs,
                             encode_src_ip,
                             state.sendmsg_einval(),
@@ -361,7 +358,6 @@ fn send(
 #[cfg(apple_fast)]
 fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
     let mut hdrs = unsafe { mem::zeroed::<[msghdr_x; BATCH_SIZE]>() };
-    let mut iovs = unsafe { mem::zeroed::<[libc::iovec; BATCH_SIZE]>() };
     let mut ctrls = [cmsg::Aligned([0u8; CMSG_LEN]); BATCH_SIZE];
     let addr = socket2::SockAddr::from(transmit.destination);
     let segment_size = transmit.segment_size.unwrap_or(transmit.contents.len());
@@ -383,7 +379,6 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
             },
             &addr,
             &mut hdrs[i],
-            &mut iovs[i],
             &mut ctrls[i],
             true,
             state.sendmsg_einval(),
@@ -417,14 +412,12 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
 #[cfg(any(target_os = "openbsd", target_os = "netbsd", apple_slow))]
 fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io::Result<()> {
     let mut hdr: libc::msghdr = unsafe { mem::zeroed() };
-    let mut iov: libc::iovec = unsafe { mem::zeroed() };
     let mut ctrl = cmsg::Aligned([0u8; CMSG_LEN]);
     let addr = socket2::SockAddr::from(transmit.destination);
     prepare_msg(
         transmit,
         &addr,
         &mut hdr,
-        &mut iov,
         &mut ctrl,
         cfg!(apple) || cfg!(target_os = "openbsd") || cfg!(target_os = "netbsd"),
         state.sendmsg_einval(),
@@ -550,15 +543,11 @@ fn prepare_msg(
     dst_addr: &socket2::SockAddr,
     #[cfg(not(apple_fast))] hdr: &mut libc::msghdr,
     #[cfg(apple_fast)] hdr: &mut msghdr_x,
-    iov: &mut libc::iovec,
     ctrl: &mut cmsg::Aligned<[u8; CMSG_LEN]>,
     #[allow(unused_variables)] // only used on FreeBSD & macOS
     encode_src_ip: bool,
     sendmsg_einval: bool,
 ) {
-    iov.iov_base = transmit.contents.as_ptr() as *const _ as *mut _;
-    iov.iov_len = transmit.contents.len();
-
     // SAFETY: Casting the pointer to a mutable one is legal,
     // as sendmsg is guaranteed to not alter the mutable pointer
     // as per the POSIX spec. See the section on the sys/socket.h
@@ -568,8 +557,9 @@ fn prepare_msg(
     let namelen = dst_addr.len();
     hdr.msg_name = name as *mut _;
     hdr.msg_namelen = namelen;
-    hdr.msg_iov = iov;
-    hdr.msg_iovlen = 1;
+
+    hdr.msg_iov = transmit.buffers.as_ptr() as *mut libc::iovec;
+    hdr.msg_iovlen = transmit.buffers.len() as _;
 
     hdr.msg_control = ctrl.0.as_mut_ptr() as _;
     hdr.msg_controllen = CMSG_LEN as _;
@@ -593,7 +583,7 @@ fn prepare_msg(
     // Some network drivers don't like being told to do GSO even if there is effectively only a single segment.
     if let Some(segment_size) = transmit
         .segment_size
-        .filter(|segment_size| *segment_size != transmit.contents.len())
+        .filter(|segment_size| *segment_size != transmit.size())
     {
         gso::set_segment_size(&mut encoder, segment_size as u16);
     }
