@@ -1829,6 +1829,51 @@ fn tail_loss_small_segment_size() {
     assert_eq!(server_stats.frame_rx.datagram, DGRAM_NUM);
 }
 
+// Respect max_datagrams when TLP happens
+#[test]
+fn tail_loss_respect_max_datagrams() {
+    let _guard = subscribe();
+    let client_config = {
+        let mut c_config = client_config();
+        let mut t_config = TransportConfig::default();
+        //Disabling GSO, so only a single segment should be sent per iops
+        t_config.enable_segmentation_offload(false);
+        c_config.transport_config(t_config.into());
+        c_config
+    };
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect_with(client_config);
+
+    const DGRAM_LEN: usize = 1000; // High enough so GSO batch could be built
+    const DGRAM_NUM: u64 = 5; // Enough to build a GSO batch.
+
+    info!("Sending an ack-eliciting datagram");
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    // Drop these packets on the server side.
+    assert!(!pair.server.inbound.is_empty());
+    pair.server.inbound.clear();
+
+    // Doing one step makes the client advance time to the PTO fire time.
+    info!("stepping forward to PTO");
+    pair.step();
+
+    // start sending datagram batches but the first should be a TLP
+    info!("Sending datagram batch");
+    for _ in 0..DGRAM_NUM {
+        pair.client_datagrams(client_ch)
+            .send(vec![0; DGRAM_LEN].into(), false)
+            .unwrap();
+    }
+
+    pair.drive();
+
+    // Finally checking the number of sent udp datagrams match the number of iops
+    let client_stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(client_stats.udp_tx.ios, client_stats.udp_tx.datagrams);
+}
+
 #[test]
 fn datagram_send_recv() {
     let _guard = subscribe();

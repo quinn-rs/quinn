@@ -564,7 +564,7 @@ impl Connection {
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
-                if buf_capacity >= segment_size * max_datagrams {
+                if num_datagrams >= max_datagrams {
                     // No more datagrams allowed
                     break;
                 }
@@ -577,7 +577,7 @@ impl Connection {
                 // (see https://github.com/quinn-rs/quinn/issues/1082)
                 if self
                     .path
-                    .anti_amplification_blocked(segment_size as u64 * num_datagrams + 1)
+                    .anti_amplification_blocked(segment_size as u64 * (num_datagrams as u64) + 1)
                 {
                     trace!("blocked by anti-amplification");
                     break;
@@ -965,7 +965,7 @@ impl Connection {
         trace!("sending {} bytes in {} datagrams", buf.len(), num_datagrams);
         self.path.total_sent = self.path.total_sent.saturating_add(buf.len() as u64);
 
-        self.stats.udp_tx.on_sent(num_datagrams, buf.len());
+        self.stats.udp_tx.on_sent(num_datagrams as u64, buf.len());
 
         Some(Transmit {
             destination: self.path.remote,
