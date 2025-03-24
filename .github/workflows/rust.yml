@@ -33,7 +33,7 @@ jobs:
             echo "===== freebsd-version ====="
             freebsd-version
 
-            cargo build --all-targets && cargo test && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
 
   test-netbsd:
     name: test on netbsd
@@ -58,7 +58,7 @@ jobs:
             echo "===== uname -a        ====="
             uname -a
 
-            cargo build --all-targets && cargo test && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
 
   test-solaris:
     name: test on solaris
@@ -81,7 +81,7 @@ jobs:
           # Unlike others, don't un-ignore stress tests, because they hang on Solaris
           run: |
             export PATH=$HOME/.rust_solaris/bin:$PATH
-            cargo build --all-targets && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+            cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
 
   test-illumos:
     name: test on illumos
@@ -99,7 +99,7 @@ jobs:
             curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
           run: |
             . "$HOME/.cargo/env"
-            cargo build --all-targets && cargo test && cargo test -- --ignored stress && cargo test --manifest-path fuzz/Cargo.toml && cargo test -p quinn-udp --benches
+            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
 
   test:
     strategy:
@@ -120,13 +120,13 @@ jobs:
         with:
           toolchain: ${{ matrix.rust }}
       - uses: Swatinem/rust-cache@v2
-      - run: cargo build --all-targets
-      - run: cargo test
-      - run: cargo test -- --ignored stress
-      - run: cargo test --manifest-path fuzz/Cargo.toml
+      - run: cargo build --locked --all-targets
+      - run: cargo test --locked
+      - run: cargo test --locked -- --ignored stress
+      - run: cargo test --locked --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust }} == "stable"
-      - run: cargo test -p quinn-udp --benches
-      - run: cargo test -p quinn-udp --benches --features fast-apple-datapath
+      - run: cargo test --locked -p quinn-udp --benches
+      - run: cargo test --locked -p quinn-udp --benches --features fast-apple-datapath
         if: ${{ matrix.os }} == "macos-latest"
 
   test-aws-lc-rs:
@@ -136,11 +136,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       # Prevent feature unification from selecting *ring* as the crypto provider
-      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs
-      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs,runtime-tokio
+      - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs
+      - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs,runtime-tokio
       # FIPS
-      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips
-      - run: RUST_BACKTRACE=1 cargo test --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips,runtime-tokio
+      - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn-proto/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips
+      - run: RUST_BACKTRACE=1 cargo test --locked --manifest-path quinn/Cargo.toml --no-default-features --features rustls-aws-lc-rs-fips,runtime-tokio
 
   wasm_test:
     name: test wasm32-unknown-unknown
@@ -155,9 +155,9 @@ jobs:
       - uses: bytecodealliance/actions/wasm-tools/setup@v1
       - uses: cargo-bins/cargo-binstall@main
 
-      - run: cargo test -p quinn-proto --target wasm32-unknown-unknown --no-run
-      - run: cargo check -p quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
-      - run: cargo rustc -p quinn --target wasm32-unknown-unknown --no-default-features --features=log,platform-verifier,rustls-ring --crate-type=cdylib
+      - run: cargo test --locked -p quinn-proto --target wasm32-unknown-unknown --no-run
+      - run: cargo check --locked -p quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
+      - run: cargo rustc --locked -p quinn --target wasm32-unknown-unknown --no-default-features --features=log,platform-verifier,rustls-ring --crate-type=cdylib
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
@@ -169,7 +169,7 @@ jobs:
           ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/quinn.wasm | grep 'import "env"'
 
       - run: cargo binstall wasm-bindgen-cli --locked --no-confirm
-      - run: cargo test -p quinn-proto --target wasm32-unknown-unknown
+      - run: cargo test --locked -p quinn-proto --target wasm32-unknown-unknown
 
   msrv:
     runs-on: ubuntu-latest
@@ -178,7 +178,7 @@ jobs:
       # Note that we must also update the README when changing the MSRV
       - uses: dtolnay/rust-toolchain@1.71.0
       - uses: Swatinem/rust-cache@v2
-      - run: cargo check --lib --all-features -p quinn-udp -p quinn-proto -p quinn
+      - run: cargo check --locked --lib --all-features -p quinn-udp -p quinn-proto -p quinn
 
   lint:
     runs-on: ubuntu-latest
@@ -189,19 +189,19 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo check --manifest-path quinn/Cargo.toml --all-targets --no-default-features
-      - run: cargo clippy --all-targets -- -D warnings
+      - run: cargo check --locked --manifest-path quinn/Cargo.toml --all-targets --no-default-features
+      - run: cargo clippy --locked --all-targets -- -D warnings
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy
       - name: doc
-        run: cargo doc --no-deps --document-private-items
+        run: cargo doc --locked --no-deps --document-private-items
         env:
           RUSTDOCFLAGS: -Dwarnings
       - name: lint fuzz
         run: |
           cd fuzz
-          cargo clippy -- -D warnings
+          cargo clippy --locked -- -D warnings
 
   audit:
     runs-on: ubuntu-latest
