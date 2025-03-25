@@ -249,6 +249,30 @@ impl UdpSocketState {
         self.gro_segments
     }
 
+    /// Resize the send buffer of `socket` to `bytes`
+    #[inline]
+    pub fn set_send_buffer_size(&self, socket: UdpSockRef<'_>, bytes: usize) -> io::Result<()> {
+        socket.0.set_send_buffer_size(bytes)
+    }
+
+    /// Resize the receive buffer of `socket` to `bytes`
+    #[inline]
+    pub fn set_recv_buffer_size(&self, socket: UdpSockRef<'_>, bytes: usize) -> io::Result<()> {
+        socket.0.set_recv_buffer_size(bytes)
+    }
+
+    /// Get the size of the `socket` send buffer
+    #[inline]
+    pub fn send_buffer_size(&self, socket: UdpSockRef<'_>) -> io::Result<usize> {
+        socket.0.send_buffer_size()
+    }
+
+    /// Get the size of the `socket` receive buffer
+    #[inline]
+    pub fn recv_buffer_size(&self, socket: UdpSockRef<'_>) -> io::Result<usize> {
+        socket.0.recv_buffer_size()
+    }
+
     /// Whether transmitted datagrams might get fragmented by the IP layer
     ///
     /// Returns `false` on targets which employ e.g. the `IPV6_DONTFRAG` socket option.
