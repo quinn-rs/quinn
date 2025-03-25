@@ -339,7 +339,7 @@ mod tests {
         buf.ack(4..7);
         assert_eq!(aggregate_unacked(&buf), &MSG[9..]);
         buf.ack(0..MSG_LEN);
-        assert_eq!(aggregate_unacked(&buf), &[]);
+        assert_eq!(aggregate_unacked(&buf), &[] as &[u8]);
     }
 
     #[test]
