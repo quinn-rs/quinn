@@ -2,7 +2,7 @@ use bytes::{BufMut, Bytes};
 use rand::Rng;
 use tracing::{trace, trace_span};
 
-use super::{Connection, SentFrames, TransmitBuf, spaces::SentPacket};
+use super::{BufLen, Connection, SentFrames, TransmitBuf, spaces::SentPacket};
 use crate::{
     ConnectionId, Instant, TransportError, TransportErrorCode,
     connection::ConnectionSide,
@@ -10,7 +10,16 @@ use crate::{
     packet::{FIXED_BIT, Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId},
 };
 
-pub(super) struct PacketBuilder {
+/// QUIC packet builder
+///
+/// This allows building QUIC packets: it takes care of writing the header, allows writing
+/// frames and on [`PacketBuilder::finalize`] (or [`PacketBuilder::finalize_and_track`]) it
+/// encrypts the packet so it is ready to be sent on the wire.
+///
+/// The builder manages the write buffer into which the packet is written, and directly
+/// implements [`BufMut`] to write frames into the packet.
+pub(super) struct PacketBuilder<'a, 'b> {
+    pub(super) buf: &'a mut TransmitBuf<'b>,
     pub(super) datagram_start: usize,
     pub(super) space: SpaceId,
     pub(super) partial_encode: PartialEncode,
@@ -27,7 +36,7 @@ pub(super) struct PacketBuilder {
     pub(super) _span: tracing::span::EnteredSpan,
 }
 
-impl PacketBuilder {
+impl<'a, 'b> PacketBuilder<'a, 'b> {
     /// Write a new packet header to `buffer` and determine the packet's properties
     ///
     /// Marks the connection drained and returns `None` if the confidentiality limit would be
@@ -36,10 +45,13 @@ impl PacketBuilder {
         now: Instant,
         space_id: SpaceId,
         dst_cid: ConnectionId,
-        buffer: &mut TransmitBuf<'_>,
+        buffer: &'a mut TransmitBuf<'b>,
         ack_eliciting: bool,
         conn: &mut Connection,
-    ) -> Option<Self> {
+    ) -> Option<Self>
+    where
+        'b: 'a,
+    {
         let version = conn.version;
         // Initiate key update if we're approaching the confidentiality limit
         let sent_with_keys = conn.spaces[space_id].sent_with_keys;
@@ -152,8 +164,10 @@ impl PacketBuilder {
         let max_size = buffer.datagram_max_offset() - tag_len;
         debug_assert!(max_size >= min_size);
 
+        let datagram_start = buffer.datagram_start_offset();
         Some(Self {
-            datagram_start: buffer.datagram_start_offset(),
+            buf: buffer,
+            datagram_start,
             space: space_id,
             partial_encode,
             exact_number,
@@ -178,17 +192,11 @@ impl PacketBuilder {
         );
     }
 
-    pub(super) fn finish_and_track(
-        self,
-        now: Instant,
-        conn: &mut Connection,
-        sent: SentFrames,
-        buffer: &mut TransmitBuf<'_>,
-    ) {
+    pub(super) fn finish_and_track(self, now: Instant, conn: &mut Connection, sent: SentFrames) {
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
-        let (size, padded) = self.finish(conn, buffer);
+        let (size, padded) = self.finish(conn);
 
         let size = match padded || ack_eliciting {
             true => size as u16,
@@ -222,15 +230,11 @@ impl PacketBuilder {
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
-    pub(super) fn finish(
-        self,
-        conn: &mut Connection,
-        buffer: &mut TransmitBuf<'_>,
-    ) -> (usize, bool) {
-        let pad = buffer.len() < self.min_size;
+    pub(super) fn finish(self, conn: &mut Connection) -> (usize, bool) {
+        let pad = self.buf.len() < self.min_size;
         if pad {
-            trace!("PADDING * {}", self.min_size - buffer.len());
-            buffer.put_bytes(0, self.min_size - buffer.len());
+            trace!("PADDING * {}", self.min_size - self.buf.len());
+            self.buf.put_bytes(0, self.min_size - self.buf.len());
         }
 
         let space = &conn.spaces[self.space];
@@ -249,15 +253,35 @@ impl PacketBuilder {
             "Mismatching crypto tag len"
         );
 
-        buffer.put_bytes(0, packet_crypto.tag_len());
+        self.buf.put_bytes(0, packet_crypto.tag_len());
         let encode_start = self.partial_encode.start;
-        let packet_buf = &mut buffer.as_mut_slice()[encode_start..];
+        let packet_buf = &mut self.buf.as_mut_slice()[encode_start..];
         self.partial_encode.finish(
             packet_buf,
             header_crypto,
             Some((self.exact_number, packet_crypto)),
         );
 
-        (buffer.len() - encode_start, pad)
+        (self.buf.len() - encode_start, pad)
+    }
+}
+
+unsafe impl BufMut for PacketBuilder<'_, '_> {
+    fn remaining_mut(&self) -> usize {
+        self.buf.remaining_mut()
+    }
+
+    unsafe fn advance_mut(&mut self, cnt: usize) {
+        self.buf.advance_mut(cnt);
+    }
+
+    fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
+        self.buf.chunk_mut()
+    }
+}
+
+impl BufLen for PacketBuilder<'_, '_> {
+    fn len(&self) -> usize {
+        self.buf.len()
     }
 }

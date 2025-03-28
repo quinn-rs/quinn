@@ -643,7 +643,7 @@ impl Connection {
                         self.receiving_ecn,
                         &mut sent_frames,
                         &mut self.spaces[space_id],
-                        &mut buf,
+                        &mut builder,
                         &mut self.stats,
                     );
                 }
@@ -652,22 +652,22 @@ impl Connection {
                 // to encode the ConnectionClose frame too. However we still have the
                 // check here to prevent crashes if something changes.
                 debug_assert!(
-                    buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size,
+                    builder.buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size,
                     "ACKs should leave space for ConnectionClose"
                 );
-                if buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size {
-                    let max_frame_size = builder.max_size - buf.len();
+                if builder.buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size {
+                    let max_frame_size = builder.max_size - builder.buf.len();
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
                             if space_id == SpaceId::Data || reason.is_transport_layer() {
-                                reason.encode(&mut buf, max_frame_size)
+                                reason.encode(&mut builder, max_frame_size)
                             } else {
                                 frame::ConnectionClose {
                                     error_code: TransportErrorCode::APPLICATION_ERROR,
                                     frame_type: None,
                                     reason: Bytes::new(),
                                 }
-                                .encode(&mut buf, max_frame_size)
+                                .encode(&mut builder, max_frame_size)
                             }
                         }
                         State::Draining => frame::ConnectionClose {
@@ -675,7 +675,7 @@ impl Connection {
                             frame_type: None,
                             reason: Bytes::new(),
                         }
-                        .encode(&mut buf, max_frame_size),
+                        .encode(&mut builder, max_frame_size),
                         _ => unreachable!(
                             "tried to make a close packet when the connection wasn't closed"
                         ),
@@ -684,7 +684,7 @@ impl Connection {
                 if pad_datagram {
                     builder.pad_to(MIN_INITIAL_SIZE);
                 }
-                builder.finish_and_track(now, self, sent_frames, &mut buf);
+                builder.finish_and_track(now, self, sent_frames);
                 if space_id == self.highest_space {
                     // Don't send another close packet
                     self.close = false;
@@ -701,11 +701,11 @@ impl Connection {
 
             // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
             // validation can occur while the link is saturated.
-            if space_id == SpaceId::Data && buf.num_datagrams() == 1 {
+            if space_id == SpaceId::Data && builder.buf.num_datagrams() == 1 {
                 if let Some((token, remote)) = self.path_responses.pop_off_path(self.path.remote) {
                     trace!("PATH_RESPONSE {:08x} (off-path)", token);
-                    buf.write(frame::FrameType::PATH_RESPONSE);
-                    buf.write(token);
+                    builder.write(frame::FrameType::PATH_RESPONSE);
+                    builder.write(token);
                     self.stats.frame_tx.path_response += 1;
                     builder.pad_to(MIN_INITIAL_SIZE);
                     builder.finish_and_track(
@@ -715,7 +715,6 @@ impl Connection {
                             non_retransmits: true,
                             ..SentFrames::default()
                         },
-                        &mut buf,
                     );
                     self.stats.udp_tx.on_sent(1, buf.len());
                     return Some(Transmit {
@@ -728,13 +727,11 @@ impl Connection {
                 }
             }
 
-            let sent_frames = self.populate_packet(
-                now,
-                space_id,
-                &mut buf,
-                builder.max_size,
-                builder.exact_number,
-            );
+            let sent_frames = {
+                let max_size = builder.max_size;
+                let pn = builder.exact_number;
+                self.populate_packet(now, space_id, &mut builder, max_size, pn)
+            };
 
             // ACK-only packets should only be sent when explicitly allowed. If we write them due to
             // any other reason, there is a bug which leads to one component announcing write
@@ -748,7 +745,8 @@ impl Connection {
                 } else {
                     self.packet_number_filter.peek(&self.spaces[SpaceId::Data])
                 };
-                let frame_space_1rtt = buf
+                let frame_space_1rtt = builder
+                    .buf
                     .segment_size()
                     .saturating_sub(self.predict_1rtt_overhead(Some(pn)));
                 let can_send = self.space_can_send(space_id, frame_space_1rtt);
@@ -756,7 +754,7 @@ impl Connection {
                     !(sent_frames.is_ack_only(&self.streams)
                         && !can_send.acks
                         && can_send.other
-                        && (buf.datagram_max_offset() - builder.datagram_start)
+                        && (builder.buf.datagram_max_offset() - builder.datagram_start)
                             == self.path.current_mtu() as usize
                         && self.datagrams.outgoing.is_empty()),
                     "SendableFrames was {can_send:?}, but only ACKs have been written"
@@ -773,10 +771,10 @@ impl Connection {
             // be coalescing the next packet into this one, or will be ending the datagram
             // as well.  Because if this is the last packet in the datagram more padding
             // might be needed because of the packet type, or to fill the GSO segment size.
-            next_space_id = self.next_send_space(space_id, &buf, close);
+            next_space_id = self.next_send_space(space_id, builder.buf, close);
             if let Some(next_space_id) = next_space_id {
                 // Can we append another packet into the current datagram?
-                let buf_end = buf.len().max(builder.min_size) + builder.tag_len;
+                let buf_end = builder.len().max(builder.min_size) + builder.tag_len;
                 let tag_len = if let Some(ref crypto) = self.spaces[next_space_id].crypto {
                     crypto.packet.local.tag_len()
                 } else if next_space_id == SpaceId::Data {
@@ -789,17 +787,19 @@ impl Connection {
 
                 // Are we allowed to coalesce AND is there enough space for another *packet*
                 // in this datagram?
-                if coalesce && buf.datagram_max_offset() - buf_end > MIN_PACKET_SPACE + tag_len {
+                if coalesce
+                    && builder.buf.datagram_max_offset() - buf_end > MIN_PACKET_SPACE + tag_len
+                {
                     // We can append/coalesce the next packet into the current
                     // datagram. Finish the current packet without adding extra padding.
-                    builder.finish_and_track(now, self, sent_frames, &mut buf);
+                    builder.finish_and_track(now, self, sent_frames);
                 } else {
                     // We need a new datagram for the next packet.  Finish the current
                     // packet with padding.
                     if pad_datagram {
                         builder.pad_to(MIN_INITIAL_SIZE);
                     }
-                    if buf.num_datagrams() > 1 {
+                    if builder.buf.num_datagrams() > 1 {
                         // If too many padding bytes would be required to continue the
                         // GSO batch after this packet, end the GSO batch here. Ensures
                         // that fixed-size frames with heterogeneous sizes
@@ -815,27 +815,27 @@ impl Connection {
                         // are the only packets for which we might grow `buf_capacity`
                         // by less than `segment_size`.
                         const MAX_PADDING: usize = 16;
-                        let packet_len_unpadded = cmp::max(builder.min_size, buf.len())
-                            - buf.datagram_start_offset()
+                        let packet_len_unpadded = cmp::max(builder.min_size, builder.buf.len())
+                            - builder.buf.datagram_start_offset()
                             + builder.tag_len;
-                        if packet_len_unpadded + MAX_PADDING < buf.segment_size()
-                            || buf.datagram_start_offset() + buf.segment_size()
-                                > buf.datagram_max_offset()
+                        if packet_len_unpadded + MAX_PADDING < builder.buf.segment_size()
+                            || builder.buf.datagram_start_offset() + builder.buf.segment_size()
+                                > builder.buf.datagram_max_offset()
                         {
                             trace!(
                                 "GSO truncated by demand for {} padding bytes or loss probe",
-                                buf.segment_size() - packet_len_unpadded
+                                builder.buf.segment_size() - packet_len_unpadded
                             );
-                            builder.finish_and_track(now, self, sent_frames, &mut buf);
+                            builder.finish_and_track(now, self, sent_frames);
                             break;
                         }
 
                         // Pad the current datagram to GSO segment size so it can be
                         // included in the GSO batch.
-                        builder.pad_to(buf.segment_size() as u16);
+                        builder.pad_to(builder.buf.segment_size() as u16);
                     }
 
-                    builder.finish_and_track(now, self, sent_frames, &mut buf);
+                    builder.finish_and_track(now, self, sent_frames);
 
                     if buf.num_datagrams() == 1 {
                         buf.clip_datagram_size();
@@ -865,7 +865,7 @@ impl Connection {
                 if pad_datagram {
                     builder.pad_to(MIN_INITIAL_SIZE);
                 }
-                builder.finish_and_track(now, self, sent_frames, &mut buf);
+                builder.finish_and_track(now, self, sent_frames);
                 break;
             }
         }
@@ -896,12 +896,12 @@ impl Connection {
                 PacketBuilder::new(now, space_id, self.rem_cids.active(), &mut buf, true, self)?;
 
             // We implement MTU probes as ping packets padded up to the probe size
-            buf.write(frame::FrameType::PING);
+            builder.write(frame::FrameType::PING);
             self.stats.frame_tx.ping += 1;
 
             // If supported by the peer, we want no delays to the probe's ACK
             if self.peer_supports_ack_frequency() {
-                buf.write(frame::FrameType::IMMEDIATE_ACK);
+                builder.write(frame::FrameType::IMMEDIATE_ACK);
                 self.stats.frame_tx.immediate_ack += 1;
             }
 
@@ -910,7 +910,7 @@ impl Connection {
                 non_retransmits: true,
                 ..Default::default()
             };
-            builder.finish_and_track(now, self, sent_frames, &mut buf);
+            builder.finish_and_track(now, self, sent_frames);
 
             self.stats.path.sent_plpmtud_probes += 1;
 
@@ -1008,8 +1008,8 @@ impl Connection {
         debug_assert_eq!(buf.datagram_start_offset(), 0);
         let mut builder = PacketBuilder::new(now, SpaceId::Data, *prev_cid, buf, false, self)?;
         trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
-        buf.write(frame::FrameType::PATH_CHALLENGE);
-        buf.write(token);
+        builder.write(frame::FrameType::PATH_CHALLENGE);
+        builder.write(token);
         self.stats.frame_tx.path_challenge += 1;
 
         // An endpoint MUST expand datagrams that contain a PATH_CHALLENGE frame
@@ -1018,7 +1018,7 @@ impl Connection {
         // sending a datagram of this size
         builder.pad_to(MIN_INITIAL_SIZE);
 
-        builder.finish(self, buf);
+        builder.finish(self);
         self.stats.udp_tx.on_sent(1, buf.len());
 
         Some(Transmit {
