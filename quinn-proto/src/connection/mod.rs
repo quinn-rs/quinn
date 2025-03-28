@@ -499,7 +499,6 @@ impl Connection {
         }
 
         let mut coalesce = true;
-        let mut sent_frames = None;
         let mut pad_datagram = false;
         let mut congestion_blocked = false;
         let mut last_packet_number = None;
@@ -616,11 +615,6 @@ impl Connection {
                 prev.update_unacked = false;
             }
 
-            debug_assert!(
-                sent_frames.is_none(),
-                "Previous packet must have been finished"
-            );
-
             let mut builder = PacketBuilder::new(
                 now,
                 space_id,
@@ -734,7 +728,7 @@ impl Connection {
                 }
             }
 
-            let sent = self.populate_packet(
+            let sent_frames = self.populate_packet(
                 now,
                 space_id,
                 &mut buf,
@@ -759,7 +753,7 @@ impl Connection {
                     .saturating_sub(self.predict_1rtt_overhead(Some(pn)));
                 let can_send = self.space_can_send(space_id, frame_space_1rtt);
                 debug_assert!(
-                    !(sent.is_ack_only(&self.streams)
+                    !(sent_frames.is_ack_only(&self.streams)
                         && !can_send.acks
                         && can_send.other
                         && (buf.datagram_max_offset() - builder.datagram_start)
@@ -768,15 +762,12 @@ impl Connection {
                     "SendableFrames was {can_send:?}, but only ACKs have been written"
                 );
             }
-            pad_datagram |= sent.requires_padding;
+            pad_datagram |= sent_frames.requires_padding;
 
-            if sent.largest_acked.is_some() {
+            if sent_frames.largest_acked.is_some() {
                 self.spaces[space_id].pending_acks.acks_sent();
                 self.timers.stop(Timer::MaxAckDelay);
             }
-
-            // Keep information about the packet around until it gets finalized
-            sent_frames = Some(sent);
 
             // Now we need to finish the packet.  Before we do so we need to know if we will
             // be coalescing the next packet into this one, or will be ending the datagram
@@ -801,7 +792,7 @@ impl Connection {
                 if coalesce && buf.datagram_max_offset() - buf_end > MIN_PACKET_SPACE + tag_len {
                     // We can append/coalesce the next packet into the current
                     // datagram. Finish the current packet without adding extra padding.
-                    builder.finish_and_track(now, self, sent_frames.take(), &mut buf);
+                    builder.finish_and_track(now, self, Some(sent_frames), &mut buf);
                 } else {
                     // We need a new datagram for the next packet.  Finish the current
                     // packet with padding.
@@ -835,7 +826,7 @@ impl Connection {
                                 "GSO truncated by demand for {} padding bytes or loss probe",
                                 buf.segment_size() - packet_len_unpadded
                             );
-                            builder.finish_and_track(now, self, sent_frames, &mut buf);
+                            builder.finish_and_track(now, self, Some(sent_frames), &mut buf);
                             break;
                         }
 
@@ -844,7 +835,7 @@ impl Connection {
                         builder.pad_to(buf.segment_size() as u16);
                     }
 
-                    builder.finish_and_track(now, self, sent_frames.take(), &mut buf);
+                    builder.finish_and_track(now, self, Some(sent_frames), &mut buf);
 
                     if buf.num_datagrams() == 1 {
                         buf.clip_datagram_size();
@@ -874,7 +865,7 @@ impl Connection {
                 if pad_datagram {
                     builder.pad_to(MIN_INITIAL_SIZE);
                 }
-                builder.finish_and_track(now, self, sent_frames, &mut buf);
+                builder.finish_and_track(now, self, Some(sent_frames), &mut buf);
                 break;
             }
         }
