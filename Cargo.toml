@@ -1,5 +1,5 @@
 [workspace]
-members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf", "fuzz"]
+members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf", "fuzz", "docs/book"]
 default-members = ["quinn", "quinn-proto", "quinn-udp", "bench", "perf"]
 resolver = "2"
 
