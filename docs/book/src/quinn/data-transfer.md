@@ -34,34 +34,13 @@ For example, from the connection initiator to the peer and the other way around.
 *open bidirectional stream*
 
 ```rust
-async fn open_bidirectional_stream(connection: Connection) -> anyhow::Result<()> {
-    let (mut send, recv) = connection
-        .open_bi()
-        .await?;
-
-    send.write_all(b"test").await?;
-    send.finish().await?;
-    
-    let received = recv.read_to_end(10).await?;
-
-    Ok(())
-}
+{{#include data-transfer.rs:7:13}}
 ```
 
 *iterate incoming bidirectional stream(s)*
 
 ```rust
-async fn receive_bidirectional_stream(connection: Connection) -> anyhow::Result<()> {
-    while let Ok((mut send, recv)) = connection.accept_bi().await {
-        // Because it is a bidirectional stream, we can both send and receive.
-        println!("request: {:?}", recv.read_to_end(50).await?);
-
-        send.write_all(b"response").await?;
-        send.finish().await?;
-    }
-
-    Ok(())
-}
+{{#include data-transfer.rs:15:23}}
 ```
 
 ## Unidirectional Streams 
@@ -72,29 +51,13 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 *open unidirectional stream*
 
 ```rust
-async fn open_unidirectional_stream(connection: Connection)-> anyhow::Result<()> {
-    let mut send = connection
-        .open_uni()
-        .await?;
-
-    send.write_all(b"test").await?;
-    send.finish().await?;
-
-    Ok(())
-}
+{{#include data-transfer.rs:25:30}}
 ```
 
 *iterating incoming unidirectional stream(s)*
 
 ```rust
-async fn receive_unidirectional_stream(connection: Connection) -> anyhow::Result<()> {
-    while let Ok(recv) = connection.accept_uni().await {
-        // Because it is a unidirectional stream, we can only receive not send back.
-        println!("{:?}", recv.read_to_end(50).await?);
-    }
-
-    Ok(())
-}
+{{#include data-transfer.rs:32:38}}
 ```
 
 ## Unreliable Messaging
@@ -105,26 +68,13 @@ This could be useful if data arrival isn't essential or when high throughput is 
 *send datagram*
 
 ```rust
-async fn send_unreliable(connection: Connection)-> anyhow::Result<()> {
-    connection
-        .send_datagram(b"test".into())
-        .await?;
-
-    Ok(())
-}
+{{#include data-transfer.rs:40:43}}
 ```
 
 *iterating datagram stream(s)*
 
 ```rust
-async fn receive_datagram(connection: Connection) -> anyhow::Result<()> {
-    while let Ok(received_bytes) = connection.read_datagram().await {
-        // Because it is a unidirectional stream, we can only receive not send back.
-        println!("request: {:?}", received);
-    }
-
-    Ok(())
-}
+{{#include data-transfer.rs:45:51}}
 ```
 
 [Endpoint]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html

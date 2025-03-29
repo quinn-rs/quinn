@@ -19,41 +19,13 @@ rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 Then, allow the client to skip the certificate validation by implementing [ServerCertVerifier][ServerCertVerifier] and letting it assert verification for any server.
 
 ```rust
-// Implementation of `ServerCertVerifier` that verifies everything as trustworthy.
-struct SkipServerVerification;
-
-impl SkipServerVerification {
-    fn new() -> Arc<Self> {
-        Arc::new(Self)
-    }
-}
-
-impl rustls::client::ServerCertVerifier for SkipServerVerification {
-    fn verify_server_cert(
-        &self,
-        _end_entity: &rustls::Certificate,
-        _intermediates: &[rustls::Certificate],
-        _server_name: &rustls::ServerName,
-        _scts: &mut dyn Iterator<Item = &[u8]>,
-        _ocsp_response: &[u8],
-        _now: std::time::SystemTime,
-    ) -> Result<rustls::client::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::ServerCertVerified::assertion())
-    }
-}
+{{#include certificate-insecure.rs:5:57}}
 ```
 
 After that, modify the [ClientConfig][ClientConfig] to use this [ServerCertVerifier][ServerCertVerifier] implementation.
 
 ```rust
-fn configure_client() -> ClientConfig {
-    let crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
-        .with_no_client_auth();
-
-    ClientConfig::new(Arc::new(crypto))
-}
+{{#include certificate-insecure.rs:59:66}}
 ```
 
 Finally, if you plug this [ClientConfig][ClientConfig] into the [Endpoint::set_default_client_config()][set_default_client_config] your client endpoint should verify all connections as trustworthy.
@@ -73,12 +45,7 @@ This example uses [rcgen][4] to generate a certificate.
 Let's look at an example:
 
 ```rust
-fn generate_self_signed_cert() -> Result<(rustls::Certificate, rustls::PrivateKey), Box<dyn Error>>
-{
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let key = rustls::PrivateKey(cert.serialize_private_key_der());
-    Ok((rustls::Certificate(cert.serialize_der()?), key))
-}
+{{#include certificate-certs.rs:14:19}}
 ```
 
 *Note that [generate_simple_self_signed][generate_simple_self_signed] returns a [Certificate][2] that can be serialized to both `.der` and `.pem` formats.*
@@ -101,27 +68,7 @@ certbot asks for the required data and writes the certificates to `fullchain.pem
 These files can then be referenced in code.
 
 ```rust
-use std::{error::Error, fs::File, io::BufReader};
-
-pub fn read_certs_from_file(
-) -> Result<(Vec<rustls::Certificate>, rustls::PrivateKey), Box<dyn Error>> {
-    let mut cert_chain_reader = BufReader::new(File::open("./fullchain.pem")?);
-    let certs = rustls_pemfile::certs(&mut cert_chain_reader)?
-        .into_iter()
-        .map(rustls::Certificate)
-        .collect();
-
-    let mut key_reader = BufReader::new(File::open("./privkey.pem")?);
-    // if the file starts with "BEGIN RSA PRIVATE KEY"
-    // let mut keys = rustls_pemfile::rsa_private_keys(&mut key_reader)?;
-    // if the file starts with "BEGIN PRIVATE KEY"
-    let mut keys = rustls_pemfile::pkcs8_private_keys(&mut key_reader)?;
-
-    assert_eq!(keys.len(), 1);
-    let key = rustls::PrivateKey(keys.remove(0));
-
-    Ok((certs, key))
-}
+{{#include certificate-certs.rs:5:12}}
 ```
 
 ### Configuring Certificates
@@ -132,7 +79,7 @@ After configuring plug the configuration into the `Endpoint`.
 **Configure Server**
 
 ```rust
-let server_config = ServerConfig::with_single_cert(certs, key)?;
+{{#include certificate-certs.rs:24}}
 ```
 
 This is the only thing you need to do for your server to be secured.
@@ -140,7 +87,7 @@ This is the only thing you need to do for your server to be secured.
 **Configure Client**
 
 ```rust
-let client_config = ClientConfig::with_native_roots();
+{{#include certificate-certs.rs:25}}
 ```
 
 This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority.

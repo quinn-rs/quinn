@@ -1,0 +1,32 @@
+[package]
+name = "book"
+version = "0.1.0"
+rust-version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+anyhow.workspace = true
+quinn = { version = "0.11.7", path = "../../quinn" }
+rcgen.workspace = true
+rustls.workspace = true
+rustls-pemfile.workspace = true
+
+[[bin]]
+name = "certificate-insecure"
+path = "src/quinn/certificate-insecure.rs"
+
+[[bin]]
+name = "certificate-certsr"
+path = "src/quinn/certificate-certs.rs"
+
+[[bin]]
+name = "data-transfer"
+path = "src/quinn/data-transfer.rs"
+
+[[bin]]
+name = "set-up-connection"
+path = "src/quinn/set-up-connection.rs"
