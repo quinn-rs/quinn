@@ -1,6 +1,6 @@
 use std::error::Error;
 
-use rustls::{client, pki_types::pem::PemObject};
+use rustls::pki_types::pem::PemObject;
 
 fn read_certs_from_file() -> Result<
     (
