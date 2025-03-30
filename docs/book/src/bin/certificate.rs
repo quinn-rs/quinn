@@ -4,11 +4,18 @@ use quinn::{
     ClientConfig,
     crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},
 };
-use rustls::pki_types::pem::PemObject;
+use rustls::{
+    DigitallySignedStruct, SignatureScheme,
+    client::danger,
+    crypto::{CryptoProvider, verify_tls12_signature, verify_tls13_signature},
+    pki_types::{
+        CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer, ServerName, UnixTime, pem::PemObject,
+    },
+};
 
 // Implementation of `ServerCertVerifier` that verifies everything as trustworthy.
 #[derive(Debug)]
-struct SkipServerVerification(Arc<rustls::crypto::CryptoProvider>);
+struct SkipServerVerification(Arc<CryptoProvider>);
 
 impl SkipServerVerification {
     fn new() -> Arc<Self> {
@@ -16,24 +23,24 @@ impl SkipServerVerification {
     }
 }
 
-impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+impl danger::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &self,
-        _end_entity: &rustls::pki_types::CertificateDer<'_>,
-        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
-        _server_name: &rustls::pki_types::ServerName<'_>,
+        _end_entity: &CertificateDer<'_>,
+        _intermediates: &[CertificateDer<'_>],
+        _server_name: &ServerName<'_>,
         _ocsp: &[u8],
-        _now: rustls::pki_types::UnixTime,
-    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
-        Ok(rustls::client::danger::ServerCertVerified::assertion())
+        _now: UnixTime,
+    ) -> Result<danger::ServerCertVerified, rustls::Error> {
+        Ok(danger::ServerCertVerified::assertion())
     }
     fn verify_tls12_signature(
         &self,
         message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls12_signature(
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<danger::HandshakeSignatureValid, rustls::Error> {
+        verify_tls12_signature(
             message,
             cert,
             dss,
@@ -44,10 +51,10 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     fn verify_tls13_signature(
         &self,
         message: &[u8],
-        cert: &rustls::pki_types::CertificateDer<'_>,
-        dss: &rustls::DigitallySignedStruct,
-    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
-        rustls::crypto::verify_tls13_signature(
+        cert: &CertificateDer<'_>,
+        dss: &DigitallySignedStruct,
+    ) -> Result<danger::HandshakeSignatureValid, rustls::Error> {
+        verify_tls13_signature(
             message,
             cert,
             dss,
@@ -55,7 +62,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
         )
     }
 
-    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+    fn supported_verify_schemes(&self) -> Vec<SignatureScheme> {
         self.0.signature_verification_algorithms.supported_schemes()
     }
 }
@@ -72,31 +79,21 @@ fn configure_client() -> Result<ClientConfig, NoInitialCipherSuite> {
     )?)))
 }
 
-fn read_certs_from_file() -> Result<
-    (
-        Vec<rustls::pki_types::CertificateDer<'static>>,
-        rustls::pki_types::PrivateKeyDer<'static>,
-    ),
-    Box<dyn Error>,
-> {
-    let certs = rustls::pki_types::CertificateDer::pem_file_iter("./fullchain.pem")
+fn read_certs_from_file()
+-> Result<(Vec<CertificateDer<'static>>, PrivateKeyDer<'static>), Box<dyn Error>> {
+    let certs = CertificateDer::pem_file_iter("./fullchain.pem")
         .unwrap()
         .map(|cert| cert.unwrap())
         .collect();
-    let key = rustls::pki_types::PrivateKeyDer::from_pem_file("./privkey.pem").unwrap();
+    let key = PrivateKeyDer::from_pem_file("./privkey.pem").unwrap();
     Ok((certs, key))
 }
 
-fn generate_self_signed_cert() -> Result<
-    (
-        rustls::pki_types::CertificateDer<'static>,
-        rustls::pki_types::PrivatePkcs8KeyDer<'static>,
-    ),
-    Box<dyn Error>,
-> {
+fn generate_self_signed_cert()
+-> Result<(CertificateDer<'static>, PrivatePkcs8KeyDer<'static>), Box<dyn Error>> {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let cert_der = rustls::pki_types::CertificateDer::from(cert.cert);
-    let key = rustls::pki_types::PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    let cert_der = CertificateDer::from(cert.cert);
+    let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
     Ok((cert_der, key))
 }
 
