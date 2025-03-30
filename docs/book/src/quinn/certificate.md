@@ -19,13 +19,13 @@ rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 Then, allow the client to skip the certificate validation by implementing [ServerCertVerifier][ServerCertVerifier] and letting it assert verification for any server.
 
 ```rust
-{{#include certificate.rs:8:60}}
+{{#include ../bin/certificate.rs:8:60}}
 ```
 
 After that, modify the [ClientConfig][ClientConfig] to use this [ServerCertVerifier][ServerCertVerifier] implementation.
 
 ```rust
-{{#include certificate.rs:63:72}}
+{{#include ../bin/certificate.rs:63:72}}
 ```
 
 Finally, if you plug this [ClientConfig][ClientConfig] into the [Endpoint::set_default_client_config()][set_default_client_config] your client endpoint should verify all connections as trustworthy.
@@ -45,10 +45,10 @@ This example uses [rcgen][4] to generate a certificate.
 Let's look at an example:
 
 ```rust
-{{#include certificate.rs:90:101}}
+{{#include ../bin/certificate.rs:90:101}}
 ```
 
-*Note that [generate_simple_self_signed][generate_simple_self_signed] returns a [Certificate][2] that can be serialized to both `.der` and `.pem` formats.*
+_Note that [generate_simple_self_signed][generate_simple_self_signed] returns a [Certificate][2] that can be serialized to both `.der` and `.pem` formats._
 
 ### Non-self-signed Certificates
 
@@ -68,7 +68,7 @@ certbot asks for the required data and writes the certificates to `fullchain.pem
 These files can then be referenced in code.
 
 ```rust
-{{#include certificate.rs:75:88}}
+{{#include ../bin/certificate.rs:75:88}}
 ```
 
 ### Configuring Certificates
@@ -79,7 +79,7 @@ After configuring plug the configuration into the `Endpoint`.
 **Configure Server**
 
 ```rust
-{{#include certificate.rs:107}}
+{{#include ../bin/certificate.rs:107}}
 ```
 
 This is the only thing you need to do for your server to be secured.
@@ -87,7 +87,7 @@ This is the only thing you need to do for your server to be secured.
 **Configure Client**
 
 ```rust
-{{#include certificate.rs:108}}
+{{#include ../bin/certificate.rs:108}}
 ```
 
 This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority.
@@ -103,7 +103,6 @@ This is the only thing you need to do for your client to trust a server certific
 [5]: https://en.wikipedia.org/wiki/Self-signed_certificate#:~:text=In%20cryptography%20and%20computer%20security,a%20CA%20aim%20to%20provide.
 [6]: https://letsencrypt.org/getting-started/
 [7]: https://certbot.eff.org/instructions
-
 [ClientConfig]: https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html
 [ServerCertVerifier]: https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html
 [set_default_client_config]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.set_default_client_config
