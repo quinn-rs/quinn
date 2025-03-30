@@ -25,7 +25,7 @@ Then, allow the client to skip the certificate validation by implementing [Serve
 After that, modify the [ClientConfig][ClientConfig] to use this [ServerCertVerifier][ServerCertVerifier] implementation.
 
 ```rust
-{{#include certificate-insecure.rs:62:71}}
+{{#include certificate-insecure.rs:63:72}}
 ```
 
 Finally, if you plug this [ClientConfig][ClientConfig] into the [Endpoint::set_default_client_config()][set_default_client_config] your client endpoint should verify all connections as trustworthy.

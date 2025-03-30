@@ -34,13 +34,13 @@ For example, from the connection initiator to the peer and the other way around.
 *open bidirectional stream*
 
 ```rust
-{{#include data-transfer.rs:4:10}}
+{{#include data-transfer.rs:5:11}}
 ```
 
 *iterate incoming bidirectional stream(s)*
 
 ```rust
-{{#include data-transfer.rs:12:20}}
+{{#include data-transfer.rs:14:22}}
 ```
 
 ## Unidirectional Streams
@@ -51,13 +51,13 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 *open unidirectional stream*
 
 ```rust
-{{#include data-transfer.rs:22:27}}
+{{#include data-transfer.rs:25:30}}
 ```
 
 *iterating incoming unidirectional stream(s)*
 
 ```rust
-{{#include data-transfer.rs:29:35}}
+{{#include data-transfer.rs:33:39}}
 ```
 
 ## Unreliable Messaging
@@ -68,13 +68,13 @@ This could be useful if data arrival isn't essential or when high throughput is 
 *send datagram*
 
 ```rust
-{{#include data-transfer.rs:37:40}}
+{{#include data-transfer.rs:42:45}}
 ```
 
 *iterating datagram stream(s)*
 
 ```rust
-{{#include data-transfer.rs:42:48}}
+{{#include data-transfer.rs:48:54}}
 ```
 
 [Endpoint]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html

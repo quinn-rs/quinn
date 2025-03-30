@@ -59,6 +59,7 @@ impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     }
 }
 
+#[allow(dead_code)] // Included in `certificate.md`
 fn configure_client() -> Result<ClientConfig, NoInitialCipherSuite> {
     let crypto = rustls::ClientConfig::builder()
         .dangerous()
@@ -70,6 +71,4 @@ fn configure_client() -> Result<ClientConfig, NoInitialCipherSuite> {
     )?)))
 }
 
-fn main() {
-    let client_config = configure_client().unwrap();
-}
+fn main() {}

@@ -22,7 +22,7 @@ The [server()][server] method, which can be used for this, returns the `Endpoint
 `Endpoint` is used to start outgoing connections and accept incoming connections.
 
 ```rust
-{{#include set-up-connection.rs:15:27}}
+{{#include set-up-connection.rs:16:28}}
 ```
 
 **Client**
@@ -32,7 +32,7 @@ The client needs to connect to the server using the [connect(server_name)][conne
 The `SERVER_NAME` argument is the DNS name, matching the certificate configured in the server.
 
 ```rust
-{{#include set-up-connection.rs:29:39}}
+{{#include set-up-connection.rs:31:41}}
 ```
 <br><hr>
 
