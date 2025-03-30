@@ -45,7 +45,7 @@ This example uses [rcgen][4] to generate a certificate.
 Let's look at an example:
 
 ```rust
-{{#include certificate-certs.rs:20:31}}
+{{#include certificate-insecure.rs:90:101}}
 ```
 
 *Note that [generate_simple_self_signed][generate_simple_self_signed] returns a [Certificate][2] that can be serialized to both `.der` and `.pem` formats.*
@@ -68,7 +68,7 @@ certbot asks for the required data and writes the certificates to `fullchain.pem
 These files can then be referenced in code.
 
 ```rust
-{{#include certificate-certs.rs:5:18}}
+{{#include certificate-insecure.rs:75:88}}
 ```
 
 ### Configuring Certificates
@@ -79,7 +79,7 @@ After configuring plug the configuration into the `Endpoint`.
 **Configure Server**
 
 ```rust
-{{#include certificate-certs.rs:36}}
+{{#include certificate-insecure.rs:107}}
 ```
 
 This is the only thing you need to do for your server to be secured.
@@ -87,7 +87,7 @@ This is the only thing you need to do for your server to be secured.
 **Configure Client**
 
 ```rust
-{{#include certificate-certs.rs:37}}
+{{#include certificate-insecure.rs:108}}
 ```
 
 This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority.
