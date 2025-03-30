@@ -12,7 +12,7 @@ It all starts with the [Endpoint][Endpoint] struct, this is the entry point of t
 Let's start by defining some constants.
 
 ```rust
-{{#include set-up-connection.rs:5:13}}
+{{#include ../bin/set-up-connection.rs:5:13}}
 ```
 
 **Server**
@@ -22,7 +22,7 @@ The [server()][server] method, which can be used for this, returns the `Endpoint
 `Endpoint` is used to start outgoing connections and accept incoming connections.
 
 ```rust
-{{#include set-up-connection.rs:16:28}}
+{{#include ../bin/set-up-connection.rs:16:28}}
 ```
 
 **Client**
@@ -32,12 +32,12 @@ The client needs to connect to the server using the [connect(server_name)][conne
 The `SERVER_NAME` argument is the DNS name, matching the certificate configured in the server.
 
 ```rust
-{{#include set-up-connection.rs:31:41}}
+{{#include ../bin/set-up-connection.rs:31:41}}
 ```
+
 <br><hr>
 
 [Next up](data-transfer.md), let's have a look at sending data over this connection.
-
 
 [Endpoint]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html
 [server]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.server

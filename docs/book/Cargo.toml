@@ -15,15 +15,3 @@ quinn = { version = "0.11.7", path = "../../quinn" }
 rcgen.workspace = true
 rustls.workspace = true
 rustls-pemfile.workspace = true
-
-[[bin]]
-name = "certificate"
-path = "src/quinn/certificate.rs"
-
-[[bin]]
-name = "data-transfer"
-path = "src/quinn/data-transfer.rs"
-
-[[bin]]
-name = "set-up-connection"
-path = "src/quinn/set-up-connection.rs"
