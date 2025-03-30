@@ -13,7 +13,7 @@ Start by adding a [rustls][3] dependency with the `dangerous_configuration` feat
 
 ```toml
 quinn = "*"
-rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
+rustls = "*"
 ```
 
 Then, allow the client to skip the certificate validation by implementing [ServerCertVerifier][ServerCertVerifier] and letting it assert verification for any server.
