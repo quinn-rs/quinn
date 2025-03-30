@@ -17,8 +17,8 @@ rustls.workspace = true
 rustls-pemfile.workspace = true
 
 [[bin]]
-name = "certificate-insecure"
-path = "src/quinn/certificate-insecure.rs"
+name = "certificate"
+path = "src/quinn/certificate.rs"
 
 [[bin]]
 name = "data-transfer"
