@@ -13,6 +13,26 @@ use rustls::{
     },
 };
 
+#[allow(unused_variables)]
+fn main() {
+    let (self_signed_certs, self_signed_key) = generate_self_signed_cert().unwrap();
+    let (certs, key) = read_certs_from_file().unwrap();
+    let server_config = quinn::ServerConfig::with_single_cert(certs, key);
+    let client_config = quinn::ClientConfig::with_platform_verifier();
+}
+
+#[allow(dead_code)] // Included in `certificate.md`
+fn configure_client() -> Result<ClientConfig, NoInitialCipherSuite> {
+    let crypto = rustls::ClientConfig::builder()
+        .dangerous()
+        .with_custom_certificate_verifier(SkipServerVerification::new())
+        .with_no_client_auth();
+
+    Ok(ClientConfig::new(Arc::new(QuicClientConfig::try_from(
+        crypto,
+    )?)))
+}
+
 // Implementation of `ServerCertVerifier` that verifies everything as trustworthy.
 #[derive(Debug)]
 struct SkipServerVerification(Arc<CryptoProvider>);
@@ -67,16 +87,12 @@ impl danger::ServerCertVerifier for SkipServerVerification {
     }
 }
 
-#[allow(dead_code)] // Included in `certificate.md`
-fn configure_client() -> Result<ClientConfig, NoInitialCipherSuite> {
-    let crypto = rustls::ClientConfig::builder()
-        .dangerous()
-        .with_custom_certificate_verifier(SkipServerVerification::new())
-        .with_no_client_auth();
-
-    Ok(ClientConfig::new(Arc::new(QuicClientConfig::try_from(
-        crypto,
-    )?)))
+fn generate_self_signed_cert()
+-> Result<(CertificateDer<'static>, PrivatePkcs8KeyDer<'static>), Box<dyn Error>> {
+    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
+    let cert_der = CertificateDer::from(cert.cert);
+    let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    Ok((cert_der, key))
 }
 
 fn read_certs_from_file()
@@ -87,20 +103,4 @@ fn read_certs_from_file()
         .collect();
     let key = PrivateKeyDer::from_pem_file("./privkey.pem").unwrap();
     Ok((certs, key))
-}
-
-fn generate_self_signed_cert()
--> Result<(CertificateDer<'static>, PrivatePkcs8KeyDer<'static>), Box<dyn Error>> {
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let cert_der = CertificateDer::from(cert.cert);
-    let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
-    Ok((cert_der, key))
-}
-
-#[allow(unused_variables)]
-fn main() {
-    let (self_signed_certs, self_signed_key) = generate_self_signed_cert().unwrap();
-    let (certs, key) = read_certs_from_file().unwrap();
-    let server_config = quinn::ServerConfig::with_single_cert(certs, key);
-    let client_config = quinn::ClientConfig::with_platform_verifier();
 }
