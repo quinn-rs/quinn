@@ -1,6 +1,8 @@
 use bytes::Bytes;
 use quinn::Connection;
 
+fn main() {}
+
 #[allow(dead_code, unused_variables)] // Included in `data-transfer.md`
 async fn open_bidirectional_stream(connection: Connection) -> anyhow::Result<()> {
     let (mut send, mut recv) = connection.open_bi().await?;
@@ -52,5 +54,3 @@ async fn receive_datagram(connection: Connection) -> anyhow::Result<()> {
     }
     Ok(())
 }
-
-fn main() {}
