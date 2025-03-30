@@ -316,40 +316,71 @@ rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 <p>Then, allow the client to skip the certificate validation by implementing <a href="https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html">ServerCertVerifier</a> and letting it assert verification for any server.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>// Implementation of `ServerCertVerifier` that verifies everything as trustworthy.
-struct SkipServerVerification;
+</span>    crypto::rustls::{NoInitialCipherSuite, QuicClientConfig},
+};
+
+// Implementation of `ServerCertVerifier` that verifies everything as trustworthy.
+#[derive(Debug)]
+struct SkipServerVerification(Arc&lt;rustls::crypto::CryptoProvider&gt;);
 
 impl SkipServerVerification {
     fn new() -&gt; Arc&lt;Self&gt; {
-        Arc::new(Self)
+        Arc::new(Self(Arc::new(rustls::crypto::ring::default_provider())))
     }
 }
 
-impl rustls::client::ServerCertVerifier for SkipServerVerification {
+impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
     fn verify_server_cert(
         &amp;self,
-        _end_entity: &amp;rustls::Certificate,
-        _intermediates: &amp;[rustls::Certificate],
-        _server_name: &amp;rustls::ServerName,
-        _scts: &amp;mut dyn Iterator&lt;Item = &amp;[u8]&gt;,
-        _ocsp_response: &amp;[u8],
-        _now: std::time::SystemTime,
-    ) -&gt; Result&lt;rustls::client::ServerCertVerified, rustls::Error&gt; {
-        Ok(rustls::client::ServerCertVerified::assertion())
+        _end_entity: &amp;rustls::pki_types::CertificateDer&lt;'_&gt;,
+        _intermediates: &amp;[rustls::pki_types::CertificateDer&lt;'_&gt;],
+        _server_name: &amp;rustls::pki_types::ServerName&lt;'_&gt;,
+        _ocsp: &amp;[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -&gt; Result&lt;rustls::client::danger::ServerCertVerified, rustls::Error&gt; {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
     }
-}
+    fn verify_tls12_signature(
+        &amp;self,
+        message: &amp;[u8],
+        cert: &amp;rustls::pki_types::CertificateDer&lt;'_&gt;,
+        dss: &amp;rustls::DigitallySignedStruct,
+    ) -&gt; Result&lt;rustls::client::danger::HandshakeSignatureValid, rustls::Error&gt; {
+        rustls::crypto::verify_tls12_signature(
+            message,
+            cert,
+            dss,
+            &amp;self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn verify_tls13_signature(
+        &amp;self,
+        message: &amp;[u8],
+        cert: &amp;rustls::pki_types::CertificateDer&lt;'_&gt;,
+        dss: &amp;rustls::DigitallySignedStruct,
+    ) -&gt; Result&lt;rustls::client::danger::HandshakeSignatureValid, rustls::Error&gt; {
+        rustls::crypto::verify_tls13_signature(
+            message,
+            cert,
+            dss,
+            &amp;self.0.signature_verification_algorithms,
+        )
+    }
+
+    fn supported_verify_schemes(&amp;self) -&gt; Vec&lt;rustls::SignatureScheme&gt; {
 <span class="boring">}</span></code></pre></pre>
 <p>After that, modify the <a href="https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html">ClientConfig</a> to use this <a href="https://docs.rs/rustls/latest/rustls/client/trait.ServerCertVerifier.html">ServerCertVerifier</a> implementation.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>fn configure_client() -&gt; ClientConfig {
+</span>    }
+}
+
+fn configure_client() -&gt; Result&lt;ClientConfig, NoInitialCipherSuite&gt; {
     let crypto = rustls::ClientConfig::builder()
-        .with_safe_defaults()
+        .dangerous()
         .with_custom_certificate_verifier(SkipServerVerification::new())
         .with_no_client_auth();
-
-    ClientConfig::new(Arc::new(crypto))
-}
 <span class="boring">}</span></code></pre></pre>
 <p>Finally, if you plug this <a href="https://docs.rs/quinn/latest/quinn/struct.ClientConfig.html">ClientConfig</a> into the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.set_default_client_config">Endpoint::set_default_client_config()</a> your client endpoint should verify all connections as trustworthy.</p>
 <h2 id="using-certificates"><a class="header" href="#using-certificates">Using Certificates</a></h2>
@@ -363,12 +394,12 @@ This example uses <a href="https://github.com/est31/rcgen">rcgen</a> to generate
 <p>Let's look at an example:</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>fn generate_self_signed_cert() -&gt; Result&lt;(rustls::Certificate, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt;
-{
-    let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
-    let key = rustls::PrivateKey(cert.serialize_private_key_der());
-    Ok((rustls::Certificate(cert.serialize_der()?), key))
+</span>        .map(|cert| cert.unwrap())
+        .collect();
+    let key = rustls::pki_types::PrivateKeyDer::from_pem_file("./privkey.pem").unwrap();
+    Ok((certs, key))
 }
+
 <span class="boring">}</span></code></pre></pre>
 <p><em>Note that <a href="https://docs.rs/rcgen/latest/rcgen/fn.generate_simple_self_signed.html">generate_simple_self_signed</a> returns a <a href="https://en.wikipedia.org/wiki/Public_key_certificate">Certificate</a> that can be serialized to both <code>.der</code> and <code>.pem</code> formats.</em></p>
 <h3 id="non-self-signed-certificates"><a class="header" href="#non-self-signed-certificates">Non-self-signed Certificates</a></h3>
@@ -384,27 +415,14 @@ certbot asks for the required data and writes the certificates to <code>fullchai
 These files can then be referenced in code.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>use std::{error::Error, fs::File, io::BufReader};
-
-pub fn read_certs_from_file(
-) -&gt; Result&lt;(Vec&lt;rustls::Certificate&gt;, rustls::PrivateKey), Box&lt;dyn Error&gt;&gt; {
-    let mut cert_chain_reader = BufReader::new(File::open("./fullchain.pem")?);
-    let certs = rustls_pemfile::certs(&amp;mut cert_chain_reader)?
-        .into_iter()
-        .map(rustls::Certificate)
-        .collect();
-
-    let mut key_reader = BufReader::new(File::open("./privkey.pem")?);
-    // if the file starts with "BEGIN RSA PRIVATE KEY"
-    // let mut keys = rustls_pemfile::rsa_private_keys(&amp;mut key_reader)?;
-    // if the file starts with "BEGIN PRIVATE KEY"
-    let mut keys = rustls_pemfile::pkcs8_private_keys(&amp;mut key_reader)?;
-
-    assert_eq!(keys.len(), 1);
-    let key = rustls::PrivateKey(keys.remove(0));
-
-    Ok((certs, key))
-}
+</span>fn read_certs_from_file() -&gt; Result&lt;
+    (
+        Vec&lt;rustls::pki_types::CertificateDer&lt;'static&gt;&gt;,
+        rustls::pki_types::PrivateKeyDer&lt;'static&gt;,
+    ),
+    Box&lt;dyn Error&gt;,
+&gt; {
+    let certs = rustls::pki_types::CertificateDer::pem_file_iter("./fullchain.pem")
 <span class="boring">}</span></code></pre></pre>
 <h3 id="configuring-certificates"><a class="header" href="#configuring-certificates">Configuring Certificates</a></h3>
 <p>Now that you have a valid certificate, the client and server need to be configured to use it.
@@ -412,13 +430,13 @@ After configuring plug the configuration into the <code>Endpoint</code>.</p>
 <p><strong>Configure Server</strong></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>let server_config = ServerConfig::with_single_cert(certs, key)?;
+</span>    ),
 <span class="boring">}</span></code></pre></pre>
 <p>This is the only thing you need to do for your server to be secured.</p>
 <p><strong>Configure Client</strong></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>let client_config = ClientConfig::with_native_roots();
+</span>    Box&lt;dyn Error&gt;,
 <span class="boring">}</span></code></pre></pre>
 <p>This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority.</p>
 <p><br><hr></p>
@@ -449,8 +467,8 @@ The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.serv
 <code>Endpoint</code> is used to start outgoing connections and accept incoming connections.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>async fn server() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
-    // Bind this endpoint to a UDP socket on the given server address. 
+</span>async fn server(config: ServerConfig) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
+    // Bind this endpoint to a UDP socket on the given server address.
     let endpoint = Endpoint::server(config, server_addr())?;
 
     // Start iterating over incoming connections.
@@ -509,33 +527,26 @@ For example, from the connection initiator to the peer and the other way around.
 <p><em>open bidirectional stream</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>async fn open_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
-    let (mut send, recv) = connection
-        .open_bi()
-        .await?;
-
-    send.write_all(b"test").await?;
-    send.finish().await?;
-    
-    let received = recv.read_to_end(10).await?;
-
+</span>    let received = recv.read_to_end(10).await?;
     Ok(())
 }
+
+async fn receive_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    while let Ok((mut send, recv)) = connection.accept_bi().await {
+        // Because it is a bidirectional stream, we can both send and receive.
 <span class="boring">}</span></code></pre></pre>
 <p><em>iterate incoming bidirectional stream(s)</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>async fn receive_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
-    while let Ok((mut send, recv)) = connection.accept_bi().await {
-        // Because it is a bidirectional stream, we can both send and receive.
-        println!("request: {:?}", recv.read_to_end(50).await?);
-
-        send.write_all(b"response").await?;
+</span>        send.write_all(b"response").await?;
         send.finish().await?;
     }
-
     Ok(())
 }
+
+async fn open_unidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    let mut send = connection.open_uni().await?;
+    send.write_all(b"test").await?;
 <span class="boring">}</span></code></pre></pre>
 <h2 id="unidirectional-streams"><a class="header" href="#unidirectional-streams">Unidirectional Streams</a></h2>
 <p>With unidirectional streams, you can carry data only in one direction: from the initiator of the stream to its peer.
@@ -543,52 +554,39 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 <p><em>open unidirectional stream</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>async fn open_unidirectional_stream(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
-    let mut send = connection
-        .open_uni()
-        .await?;
-
-    send.write_all(b"test").await?;
-    send.finish().await?;
-
-    Ok(())
+</span>    Ok(())
 }
+
+async fn receive_unidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    while let Ok(recv) = connection.accept_uni().await {
+        // Because it is a unidirectional stream, we can only receive not send back.
 <span class="boring">}</span></code></pre></pre>
 <p><em>iterating incoming unidirectional stream(s)</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>async fn receive_unidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
-    while let Ok(recv) = connection.accept_uni().await {
-        // Because it is a unidirectional stream, we can only receive not send back.
-        println!("{:?}", recv.read_to_end(50).await?);
-    }
-
+</span>    }
     Ok(())
 }
+
+async fn send_unreliable(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    connection.send_datagram(b"test".into()).await?;
+    Ok(())
 <span class="boring">}</span></code></pre></pre>
 <h2 id="unreliable-messaging"><a class="header" href="#unreliable-messaging">Unreliable Messaging</a></h2>
 <p>With unreliable messaging, you can transfer data without reliability.
 This could be useful if data arrival isn't essential or when high throughput is important.</p>
 <p><em>send datagram</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span><span class="boring">fn main() {
-</span>async fn send_unreliable(connection: Connection)-&gt; anyhow::Result&lt;()&gt; {
-    connection
-        .send_datagram(b"test".into())
-        .await?;
-
-    Ok(())
-}
+</span>
+<span class="boring">fn main() {
+</span>async fn receive_datagram(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    while let Ok(received_bytes) = connection.read_datagram().await {
+        // Because it is a unidirectional stream, we can only receive not send back.
 <span class="boring">}</span></code></pre></pre>
 <p><em>iterating datagram stream(s)</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>async fn receive_datagram(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
-    while let Ok(received_bytes) = connection.read_datagram().await {
-        // Because it is a unidirectional stream, we can only receive not send back.
-        println!("request: {:?}", received);
-    }
-
+</span>    }
     Ok(())
 }
 <span class="boring">}</span></code></pre></pre>
