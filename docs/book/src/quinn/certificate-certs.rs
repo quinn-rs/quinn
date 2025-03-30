@@ -30,6 +30,7 @@ fn generate_self_signed_cert() -> Result<
     Ok((cert_der, key))
 }
 
+#[allow(unused_variables)]
 fn main() {
     let (self_signed_certs, self_signed_key) = generate_self_signed_cert().unwrap();
     let (certs, key) = read_certs_from_file().unwrap();
