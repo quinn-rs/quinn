@@ -10,6 +10,7 @@ categories.workspace = true
 
 [dependencies]
 anyhow.workspace = true
+bytes = { workspace = true }
 quinn = { version = "0.11.7", path = "../../quinn" }
 rcgen.workspace = true
 rustls.workspace = true

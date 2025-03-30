@@ -28,7 +28,7 @@ async fn server(config: ServerConfig) -> Result<(), Box<dyn Error>> {
 
 async fn client() -> Result<(), Box<dyn Error>> {
     // Bind this endpoint to a UDP socket on the given client address.
-    let mut endpoint = Endpoint::client(client_addr());
+    let mut endpoint = Endpoint::client(client_addr())?;
 
     // Connect to the server passing in the server name which is supposed to be in the server certificate.
     let connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
