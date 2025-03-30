@@ -19,13 +19,13 @@ rustls = { version = "*", features = ["dangerous_configuration", "quic"] }
 Then, allow the client to skip the certificate validation by implementing [ServerCertVerifier][ServerCertVerifier] and letting it assert verification for any server.
 
 ```rust
-{{#include ../bin/certificate.rs:8:60}}
+{{#include ../bin/certificate.rs:16:68}}
 ```
 
 After that, modify the [ClientConfig][ClientConfig] to use this [ServerCertVerifier][ServerCertVerifier] implementation.
 
 ```rust
-{{#include ../bin/certificate.rs:63:72}}
+{{#include ../bin/certificate.rs:71:80}}
 ```
 
 Finally, if you plug this [ClientConfig][ClientConfig] into the [Endpoint::set_default_client_config()][set_default_client_config] your client endpoint should verify all connections as trustworthy.
@@ -45,7 +45,7 @@ This example uses [rcgen][4] to generate a certificate.
 Let's look at an example:
 
 ```rust
-{{#include ../bin/certificate.rs:90:101}}
+{{#include ../bin/certificate.rs:92:98}}
 ```
 
 _Note that [generate_simple_self_signed][generate_simple_self_signed] returns a [Certificate][2] that can be serialized to both `.der` and `.pem` formats._
@@ -68,7 +68,7 @@ certbot asks for the required data and writes the certificates to `fullchain.pem
 These files can then be referenced in code.
 
 ```rust
-{{#include ../bin/certificate.rs:75:88}}
+{{#include ../bin/certificate.rs:82:90}}
 ```
 
 ### Configuring Certificates
@@ -79,7 +79,7 @@ After configuring plug the configuration into the `Endpoint`.
 **Configure Server**
 
 ```rust
-{{#include ../bin/certificate.rs:107}}
+{{#include ../bin/certificate.rs:104}}
 ```
 
 This is the only thing you need to do for your server to be secured.
@@ -87,7 +87,7 @@ This is the only thing you need to do for your server to be secured.
 **Configure Client**
 
 ```rust
-{{#include ../bin/certificate.rs:108}}
+{{#include ../bin/certificate.rs:105}}
 ```
 
 This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority.
