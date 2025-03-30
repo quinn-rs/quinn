@@ -2,10 +2,7 @@ use quinn::{Endpoint, ServerConfig};
 use std::error::Error;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
-const SERVER_NAME: &str = "localhost";
-const LOCALHOST_V4: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
-const CLIENT_ADDR: SocketAddr = SocketAddr::new(LOCALHOST_V4, 5000);
-const SERVER_ADDR: SocketAddr = SocketAddr::new(LOCALHOST_V4, 5001);
+fn main() {}
 
 #[allow(dead_code, unused_variables)] // Included in `set-up-connection.md`
 async fn server(config: ServerConfig) -> Result<(), Box<dyn Error>> {
@@ -35,4 +32,7 @@ async fn client() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-fn main() {}
+const SERVER_NAME: &str = "localhost";
+const LOCALHOST_V4: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+const CLIENT_ADDR: SocketAddr = SocketAddr::new(LOCALHOST_V4, 5000);
+const SERVER_ADDR: SocketAddr = SocketAddr::new(LOCALHOST_V4, 5001);
