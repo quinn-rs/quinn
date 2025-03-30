@@ -178,26 +178,26 @@ For example, from the connection initiator to the peer and the other way around.
 <p><em>open bidirectional stream</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>    let received = recv.read_to_end(10).await?;
+</span>async fn open_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    let (mut send, mut recv) = connection.open_bi().await?;
+    send.write_all(b"test").await?;
+    send.finish()?;
+    let received = recv.read_to_end(10).await?;
     Ok(())
 }
-
-async fn receive_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
-    while let Ok((mut send, recv)) = connection.accept_bi().await {
-        // Because it is a bidirectional stream, we can both send and receive.
 <span class="boring">}</span></code></pre></pre>
 <p><em>iterate incoming bidirectional stream(s)</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>        send.write_all(b"response").await?;
-        send.finish().await?;
+</span>async fn receive_bidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    while let Ok((mut send, mut recv)) = connection.accept_bi().await {
+        // Because it is a bidirectional stream, we can both send and receive.
+        println!("request: {:?}", recv.read_to_end(50).await?);
+        send.write_all(b"response").await?;
+        send.finish()?;
     }
     Ok(())
 }
-
-async fn open_unidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
-    let mut send = connection.open_uni().await?;
-    send.write_all(b"test").await?;
 <span class="boring">}</span></code></pre></pre>
 <h2 id="unidirectional-streams"><a class="header" href="#unidirectional-streams">Unidirectional Streams</a></h2>
 <p>With unidirectional streams, you can carry data only in one direction: from the initiator of the stream to its peer.
@@ -205,39 +205,43 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 <p><em>open unidirectional stream</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>    Ok(())
+</span>async fn open_unidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    let mut send = connection.open_uni().await?;
+    send.write_all(b"test").await?;
+    send.finish()?;
+    Ok(())
 }
-
-async fn receive_unidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
-    while let Ok(recv) = connection.accept_uni().await {
-        // Because it is a unidirectional stream, we can only receive not send back.
 <span class="boring">}</span></code></pre></pre>
 <p><em>iterating incoming unidirectional stream(s)</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>    }
+</span>async fn receive_unidirectional_stream(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    while let Ok(mut recv) = connection.accept_uni().await {
+        // Because it is a unidirectional stream, we can only receive not send back.
+        println!("{:?}", recv.read_to_end(50).await?);
+    }
     Ok(())
 }
-
-async fn send_unreliable(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
-    connection.send_datagram(b"test".into()).await?;
-    Ok(())
 <span class="boring">}</span></code></pre></pre>
 <h2 id="unreliable-messaging"><a class="header" href="#unreliable-messaging">Unreliable Messaging</a></h2>
 <p>With unreliable messaging, you can transfer data without reliability.
 This could be useful if data arrival isn't essential or when high throughput is important.</p>
 <p><em>send datagram</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
-</span>
-<span class="boring">fn main() {
-</span>async fn receive_datagram(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
-    while let Ok(received_bytes) = connection.read_datagram().await {
-        // Because it is a unidirectional stream, we can only receive not send back.
+</span><span class="boring">fn main() {
+</span>async fn send_unreliable(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    connection.send_datagram(Bytes::from(&amp;b"test"[..]))?;
+    Ok(())
+}
 <span class="boring">}</span></code></pre></pre>
 <p><em>iterating datagram stream(s)</em></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>    }
+</span>async fn receive_datagram(connection: Connection) -&gt; anyhow::Result&lt;()&gt; {
+    while let Ok(received_bytes) = connection.read_datagram().await {
+        // Because it is a unidirectional stream, we can only receive not send back.
+        println!("request: {:?}", received_bytes);
+    }
     Ok(())
 }
 <span class="boring">}</span></code></pre></pre>

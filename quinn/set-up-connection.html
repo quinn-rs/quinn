@@ -162,15 +162,10 @@ This chapter explains how to set up a connection and prepare it for data transfe
 <p>Let's start by defining some constants.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>static SERVER_NAME: &amp;str = "localhost";
-
-fn client_addr() -&gt; SocketAddr {
-    "127.0.0.1:5000".parse::&lt;SocketAddr&gt;().unwrap()
-}
-
-fn server_addr() -&gt; SocketAddr {
-    "127.0.0.1:5001".parse::&lt;SocketAddr&gt;().unwrap()
-}
+</span>const SERVER_NAME: &amp;str = "localhost";
+const LOCALHOST_V4: IpAddr = IpAddr::V4(Ipv4Addr::LOCALHOST);
+const CLIENT_ADDR: SocketAddr = SocketAddr::new(LOCALHOST_V4, 5000);
+const SERVER_ADDR: SocketAddr = SocketAddr::new(LOCALHOST_V4, 5001);
 <span class="boring">}</span></code></pre></pre>
 <p><strong>Server</strong></p>
 <p>First, the server endpoint should be bound to a socket.
@@ -180,11 +175,11 @@ The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.serv
 </span><span class="boring">fn main() {
 </span>async fn server(config: ServerConfig) -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     // Bind this endpoint to a UDP socket on the given server address.
-    let endpoint = Endpoint::server(config, server_addr())?;
+    let endpoint = Endpoint::server(config, SERVER_ADDR)?;
 
     // Start iterating over incoming connections.
     while let Some(conn) = endpoint.accept().await {
-        let mut connection = conn.await?;
+        let connection = conn.await?;
 
         // Save connection somewhere, start transferring, receiving data, see DataTransfer tutorial.
     }
@@ -194,16 +189,16 @@ The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.serv
 <span class="boring">}</span></code></pre></pre>
 <p><strong>Client</strong></p>
 <p>The <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.client">client()</a> returns only a <code>Endpoint</code> type.
-The client needs to connect to the server using the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.connect">connect(server_name)</a> method.<br />
+The client needs to connect to the server using the <a href="https://docs.rs/quinn/latest/quinn/struct.Endpoint.html#method.connect">connect(server_name)</a> method.
 The <code>SERVER_NAME</code> argument is the DNS name, matching the certificate configured in the server.</p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
 </span>async fn client() -&gt; Result&lt;(), Box&lt;dyn Error&gt;&gt; {
     // Bind this endpoint to a UDP socket on the given client address.
-    let mut endpoint = Endpoint::client(client_addr());
+    let endpoint = Endpoint::client(CLIENT_ADDR)?;
 
     // Connect to the server passing in the server name which is supposed to be in the server certificate.
-    let connection = endpoint.connect(server_addr(), SERVER_NAME)?.await?;
+    let connection = endpoint.connect(SERVER_ADDR, SERVER_NAME)?.await?;
 
     // Start transferring, receiving data, see data transfer page.
 
