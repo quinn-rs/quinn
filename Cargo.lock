@@ -419,7 +419,6 @@ dependencies = [
  "quinn",
  "rcgen",
  "rustls",
- "rustls-pemfile",
 ]
 
 [[package]]
