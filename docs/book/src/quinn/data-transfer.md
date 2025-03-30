@@ -6,10 +6,10 @@ This chapter continues with the subject of sending data over this connection.
 
 ## Multiplexing
 
-Multiplexing is the act of combining data from multiple streams into a single stream. 
-This can have a significant positive effect on the performance of the application. 
-With QUIC, the programmer is in full control over the stream allocation.  
-  
+Multiplexing is the act of combining data from multiple streams into a single stream.
+This can have a significant positive effect on the performance of the application.
+With QUIC, the programmer is in full control over the stream allocation.
+
 ## Stream Types
 
 QUIC provides support for both stream and message-based communication.
@@ -28,22 +28,22 @@ New streams can be created with [Connection][Connection]'s [open_bi()][open_bi] 
 
 ## Bidirectional Streams
 
-With bidirectional streams, data can be sent in both directions. 
+With bidirectional streams, data can be sent in both directions.
 For example, from the connection initiator to the peer and the other way around.
- 
+
 *open bidirectional stream*
 
 ```rust
-{{#include data-transfer.rs:7:13}}
+{{#include data-transfer.rs:4:10}}
 ```
 
 *iterate incoming bidirectional stream(s)*
 
 ```rust
-{{#include data-transfer.rs:15:23}}
+{{#include data-transfer.rs:12:20}}
 ```
 
-## Unidirectional Streams 
+## Unidirectional Streams
 
 With unidirectional streams, you can carry data only in one direction: from the initiator of the stream to its peer.
 It is possible to get reliability without ordering (so no head-of-line blocking) by opening a new stream for each packet.
@@ -51,30 +51,30 @@ It is possible to get reliability without ordering (so no head-of-line blocking)
 *open unidirectional stream*
 
 ```rust
-{{#include data-transfer.rs:25:30}}
+{{#include data-transfer.rs:22:27}}
 ```
 
 *iterating incoming unidirectional stream(s)*
 
 ```rust
-{{#include data-transfer.rs:32:38}}
+{{#include data-transfer.rs:29:35}}
 ```
 
 ## Unreliable Messaging
 
-With unreliable messaging, you can transfer data without reliability. 
+With unreliable messaging, you can transfer data without reliability.
 This could be useful if data arrival isn't essential or when high throughput is important.
 
 *send datagram*
 
 ```rust
-{{#include data-transfer.rs:40:43}}
+{{#include data-transfer.rs:37:40}}
 ```
 
 *iterating datagram stream(s)*
 
 ```rust
-{{#include data-transfer.rs:45:51}}
+{{#include data-transfer.rs:42:48}}
 ```
 
 [Endpoint]: https://docs.rs/quinn/latest/quinn/struct.Endpoint.html
