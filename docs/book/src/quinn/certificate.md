@@ -12,8 +12,8 @@ When the [rustls][3] `dangerous_configuration` feature flag is enabled, a client
 Start by adding a [rustls][3] dependency with the `dangerous_configuration` feature flag to your `Cargo.toml` file.
 
 ```toml
-quinn = "*"
-rustls = "*"
+quinn = "0.11"
+rustls = "0.23"
 ```
 
 Then, allow the client to skip the certificate validation by implementing [ServerCertVerifier][ServerCertVerifier] and letting it assert verification for any server.
