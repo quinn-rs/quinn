@@ -28,10 +28,6 @@ pub(super) struct PacketBuilder<'a, 'b> {
     /// Smallest absolute position in the associated buffer that must be occupied by this packet's
     /// frames
     pub(super) min_size: usize,
-    /// Largest absolute position in the buffer that may be occupied by this packet's frames
-    ///
-    /// This takes the size of the cryptographic tag into account.
-    pub(super) max_size: usize,
     pub(super) tag_len: usize,
     pub(super) _span: tracing::span::EnteredSpan,
 }
@@ -171,7 +167,6 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
             exact_number,
             short_header: header.is_short(),
             min_size,
-            max_size,
             tag_len,
             ack_eliciting,
             _span: span,
@@ -239,7 +234,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
     /// Encrypt packet, returning the length of the packet and whether padding was added
     pub(super) fn finish(self, conn: &mut Connection) -> (usize, bool) {
         debug_assert!(
-            self.buf.len() <= self.max_size,
+            self.buf.len() <= self.buf.datagram_max_offset() - self.tag_len,
             "packet exceeds maximum size"
         );
         let pad = self.buf.len() < self.min_size;
@@ -289,7 +284,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
     /// This leaves space in the datagram for the cryptographic tag that needs to be written
     /// when the packet is finished.
     pub(super) fn frame_space_remaining(&self) -> usize {
-        debug_assert!(self.max_size >= self.buf.len(), "packet exceeds bounds");
-        self.max_size.saturating_sub(self.buf.len())
+        let max_offset = self.buf.datagram_max_offset() - self.tag_len;
+        max_offset.saturating_sub(self.buf.len())
     }
 }
