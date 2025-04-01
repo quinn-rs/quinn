@@ -643,7 +643,7 @@ impl Connection {
                         self.receiving_ecn,
                         &mut sent_frames,
                         &mut self.spaces[space_id],
-                        &mut builder,
+                        &mut builder.frame_space_mut(),
                         &mut self.stats,
                     );
                 }
@@ -660,14 +660,14 @@ impl Connection {
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
                             if space_id == SpaceId::Data || reason.is_transport_layer() {
-                                reason.encode(&mut builder, max_frame_size)
+                                reason.encode(&mut builder.frame_space_mut(), max_frame_size)
                             } else {
                                 frame::ConnectionClose {
                                     error_code: TransportErrorCode::APPLICATION_ERROR,
                                     frame_type: None,
                                     reason: Bytes::new(),
                                 }
-                                .encode(&mut builder, max_frame_size)
+                                .encode(&mut builder.frame_space_mut(), max_frame_size)
                             }
                         }
                         State::Draining => frame::ConnectionClose {
@@ -675,7 +675,7 @@ impl Connection {
                             frame_type: None,
                             reason: Bytes::new(),
                         }
-                        .encode(&mut builder, max_frame_size),
+                        .encode(&mut builder.frame_space_mut(), max_frame_size),
                         _ => unreachable!(
                             "tried to make a close packet when the connection wasn't closed"
                         ),
@@ -704,8 +704,10 @@ impl Connection {
             if space_id == SpaceId::Data && builder.buf.num_datagrams() == 1 {
                 if let Some((token, remote)) = self.path_responses.pop_off_path(self.path.remote) {
                     trace!("PATH_RESPONSE {:08x} (off-path)", token);
-                    builder.write(frame::FrameType::PATH_RESPONSE);
-                    builder.write(token);
+                    builder
+                        .frame_space_mut()
+                        .write(frame::FrameType::PATH_RESPONSE);
+                    builder.frame_space_mut().write(token);
                     self.stats.frame_tx.path_response += 1;
                     builder.pad_to(MIN_INITIAL_SIZE);
                     builder.finish_and_track(
@@ -772,22 +774,10 @@ impl Connection {
             // might be needed because of the packet type, or to fill the GSO segment size.
             next_space_id = self.next_send_space(space_id, builder.buf, close);
             if let Some(next_space_id) = next_space_id {
-                // Can we append another packet into the current datagram?
-                let buf_end = builder.len().max(builder.min_size) + builder.tag_len;
-                let tag_len = if let Some(ref crypto) = self.spaces[next_space_id].crypto {
-                    crypto.packet.local.tag_len()
-                } else if next_space_id == SpaceId::Data {
-                    self.zero_rtt_crypto.as_ref().expect(
-                        "sending packets in the application data space requires known 0-RTT or 1-RTT keys",
-                    ).packet.tag_len()
-                } else {
-                    unreachable!("tried to send {:?} packet without keys", next_space_id);
-                };
-
                 // Are we allowed to coalesce AND is there enough space for another *packet*
                 // in this datagram?
                 if coalesce
-                    && builder.buf.datagram_max_offset() - buf_end > MIN_PACKET_SPACE + tag_len
+                    && builder.buf.segment_size() - builder.predict_packet_size() > MIN_PACKET_SPACE
                 {
                     // We can append/coalesce the next packet into the current
                     // datagram. Finish the current packet without adding extra padding.
@@ -895,12 +885,14 @@ impl Connection {
                 PacketBuilder::new(now, space_id, self.rem_cids.active(), &mut buf, true, self)?;
 
             // We implement MTU probes as ping packets padded up to the probe size
-            builder.write(frame::FrameType::PING);
+            builder.frame_space_mut().write(frame::FrameType::PING);
             self.stats.frame_tx.ping += 1;
 
             // If supported by the peer, we want no delays to the probe's ACK
             if self.peer_supports_ack_frequency() {
-                builder.write(frame::FrameType::IMMEDIATE_ACK);
+                builder
+                    .frame_space_mut()
+                    .write(frame::FrameType::IMMEDIATE_ACK);
                 self.stats.frame_tx.immediate_ack += 1;
             }
 
@@ -1007,8 +999,10 @@ impl Connection {
         debug_assert_eq!(buf.datagram_start_offset(), 0);
         let mut builder = PacketBuilder::new(now, SpaceId::Data, *prev_cid, buf, false, self)?;
         trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
-        builder.write(frame::FrameType::PATH_CHALLENGE);
-        builder.write(token);
+        builder
+            .frame_space_mut()
+            .write(frame::FrameType::PATH_CHALLENGE);
+        builder.frame_space_mut().write(token);
         self.stats.frame_tx.path_challenge += 1;
 
         // An endpoint MUST expand datagrams that contain a PATH_CHALLENGE frame
