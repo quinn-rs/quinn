@@ -652,11 +652,11 @@ impl Connection {
                 // to encode the ConnectionClose frame too. However we still have the
                 // check here to prevent crashes if something changes.
                 debug_assert!(
-                    builder.buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size,
+                    builder.frame_space_remaining() > frame::ConnectionClose::SIZE_BOUND,
                     "ACKs should leave space for ConnectionClose"
                 );
-                if builder.buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size {
-                    let max_frame_size = builder.max_size - builder.buf.len();
+                if frame::ConnectionClose::SIZE_BOUND < builder.frame_space_remaining() {
+                    let max_frame_size = builder.frame_space_remaining();
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
                             if space_id == SpaceId::Data || reason.is_transport_layer() {
@@ -728,9 +728,8 @@ impl Connection {
             }
 
             let sent_frames = {
-                let max_size = builder.max_size;
                 let pn = builder.exact_number;
-                self.populate_packet(now, space_id, &mut builder, max_size, pn)
+                self.populate_packet(now, space_id, &mut builder.frame_space_mut(), pn)
             };
 
             // ACK-only packets should only be sent when explicitly allowed. If we write them due to
@@ -3044,8 +3043,7 @@ impl Connection {
         &mut self,
         now: Instant,
         space_id: SpaceId,
-        buf: &mut (impl BufMut + BufLen),
-        max_size: usize,
+        buf: &mut impl BufMut,
         pn: u64,
     ) -> SentFrames {
         let mut sent = SentFrames::default();
@@ -3121,7 +3119,7 @@ impl Connection {
         }
 
         // PATH_CHALLENGE
-        if buf.len() + 9 < max_size && space_id == SpaceId::Data {
+        if buf.remaining_mut() > 9 && space_id == SpaceId::Data {
             // Transmit challenges with every outgoing frame on an unvalidated path
             if let Some(token) = self.path.challenge {
                 // But only send a packet solely for that purpose at most once
@@ -3136,7 +3134,7 @@ impl Connection {
         }
 
         // PATH_RESPONSE
-        if buf.len() + 9 < max_size && space_id == SpaceId::Data {
+        if buf.remaining_mut() > 9 && space_id == SpaceId::Data {
             if let Some(token) = self.path_responses.pop_on_path(self.path.remote) {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
@@ -3148,7 +3146,7 @@ impl Connection {
         }
 
         // CRYPTO
-        while buf.len() + frame::Crypto::SIZE_BOUND < max_size && !is_0rtt {
+        while buf.remaining_mut() > frame::Crypto::SIZE_BOUND && !is_0rtt {
             let mut frame = match space.pending.crypto.pop_front() {
                 Some(x) => x,
                 None => break,
@@ -3158,8 +3156,7 @@ impl Connection {
             // Since the offset is known, we can reserve the exact size required to encode it.
             // For length we reserve 2bytes which allows to encode up to 2^14,
             // which is more than what fits into normally sized QUIC frames.
-            let max_crypto_data_size = max_size
-                - buf.len()
+            let max_crypto_data_size = buf.remaining_mut()
                 - 1 // Frame Type
                 - VarInt::size(unsafe { VarInt::from_u64_unchecked(frame.offset) })
                 - 2; // Maximum encoded length for frame size, given we send less than 2^14 bytes
@@ -3195,12 +3192,11 @@ impl Connection {
                 &mut space.pending,
                 &mut sent.retransmits,
                 &mut self.stats.frame_tx,
-                max_size,
             );
         }
 
         // NEW_CONNECTION_ID
-        while buf.len() + 44 < max_size {
+        while buf.remaining_mut() > 44 {
             let issued = match space.pending.new_cids.pop() {
                 Some(x) => x,
                 None => break,
@@ -3222,7 +3218,7 @@ impl Connection {
         }
 
         // RETIRE_CONNECTION_ID
-        while buf.len() + frame::RETIRE_CONNECTION_ID_SIZE_BOUND < max_size {
+        while buf.remaining_mut() > frame::RETIRE_CONNECTION_ID_SIZE_BOUND {
             let seq = match space.pending.retire_cids.pop() {
                 Some(x) => x,
                 None => break,
@@ -3236,8 +3232,8 @@ impl Connection {
 
         // DATAGRAM
         let mut sent_datagrams = false;
-        while buf.len() + Datagram::SIZE_BOUND < max_size && space_id == SpaceId::Data {
-            match self.datagrams.write(buf, max_size) {
+        while buf.remaining_mut() > Datagram::SIZE_BOUND && space_id == SpaceId::Data {
+            match self.datagrams.write(buf) {
                 true => {
                     sent_datagrams = true;
                     sent.non_retransmits = true;
@@ -3277,7 +3273,7 @@ impl Connection {
                 token: token.encode(&*server_config.token_key).into(),
             };
 
-            if buf.len() + new_token.size() >= max_size {
+            if buf.remaining_mut() < new_token.size() {
                 space.pending.new_tokens.push(remote_addr);
                 break;
             }
@@ -3292,9 +3288,9 @@ impl Connection {
 
         // STREAM
         if space_id == SpaceId::Data {
-            sent.stream_frames =
-                self.streams
-                    .write_stream_frames(buf, max_size, self.config.send_fairness);
+            sent.stream_frames = self
+                .streams
+                .write_stream_frames(buf, self.config.send_fairness);
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 
