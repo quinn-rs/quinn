@@ -6,7 +6,6 @@ use thiserror::Error;
 use crate::{
     ConnectionId,
     coding::{self, BufExt, BufMutExt},
-    connection::BufLen,
     crypto,
 };
 
@@ -217,6 +216,23 @@ impl PartialDecode {
 
         let len = PacketNumber::decode_len(buf.get_ref()[0]);
         PacketNumber::decode(len, buf)
+    }
+}
+
+/// A buffer that can tell how much has been written to it already
+///
+/// This is commonly used for when a buffer is passed and the user may not write past a
+/// given size. It allows the user of such a buffer to know the current cursor position in
+/// the buffer. The maximum write size is usually passed in the same unit as
+/// [`BufLen::len`]: bytes since the buffer start.
+pub(crate) trait BufLen {
+    /// Returns the number of bytes written into the buffer so far
+    fn len(&self) -> usize;
+}
+
+impl BufLen for Vec<u8> {
+    fn len(&self) -> usize {
+        self.len()
     }
 }
 

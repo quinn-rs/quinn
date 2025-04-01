@@ -1,6 +1,6 @@
 use bytes::BufMut;
 
-use super::BufLen;
+use crate::packet::BufLen;
 
 /// The buffer in which to write datagrams for [`Connection::poll_transmit`]
 ///
