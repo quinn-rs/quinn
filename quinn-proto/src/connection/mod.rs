@@ -803,9 +803,7 @@ impl Connection {
                         // are the only packets for which we might grow `buf_capacity`
                         // by less than `segment_size`.
                         const MAX_PADDING: usize = 16;
-                        let packet_len_unpadded = cmp::max(builder.min_size, builder.buf.len())
-                            - builder.buf.datagram_start_offset()
-                            + builder.tag_len;
+                        let packet_len_unpadded = builder.predict_packet_size();
                         if packet_len_unpadded + MAX_PADDING < builder.buf.segment_size()
                             || builder.buf.datagram_start_offset() + builder.buf.segment_size()
                                 > builder.buf.datagram_max_offset()
