@@ -498,15 +498,25 @@ impl Connection {
                 && self.peer_supports_ack_frequency();
         }
 
+        // Whether this packet can be coalesced with another one in the same datagram.
         let mut coalesce = true;
+
+        // Whether the last packet in the datagram must be padded to at least
+        // MIN_INITIAL_SIZE.
         let mut pad_datagram = false;
+
+        // Whether congestion control stopped the next packet from being sent. Further
+        // packets could still be built, as e.g. tail-loss probes are not congestion
+        // limited.
         let mut congestion_blocked = false;
+
+        // The packet number of the last built packet.
         let mut last_packet_number = None;
 
         // Iterate over all spaces and find data to send
         //
-        // Each loop builds one packet.  When packets are coalesced a datagram is filled
-        // over multiple loops.
+        // Each loop builds one packet, which is finished before the next iteration of the
+        // loop.  When packets are coalesced a datagram is filled over multiple loops.
         let mut next_space_id = self.next_send_space(SpaceId::Initial, &buf, close);
         while let Some(space_id) = next_space_id {
             // Whether the next packet will contain ack-eliciting frames.
