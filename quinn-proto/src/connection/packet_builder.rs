@@ -268,15 +268,17 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
             Some((self.exact_number, packet_crypto)),
         );
 
-        (self.buf.len() - encode_start, pad)
+        let packet_len = self.buf.len() - encode_start;
+        trace!(size = %packet_len, short_header = %self.short_header, "wrote packet");
+        (packet_len, pad)
     }
 
-    /// Predicts the size of the packet if it were finished now without additional padding
+    /// The number of additional bytes the current packet would take up if it was finished now
     ///
     /// This will include any padding which is required to make the size large enough to be
     /// encrypted correctly.
-    pub(super) fn predict_packet_size(&self) -> usize {
-        self.buf.len().max(self.min_size) - self.buf.datagram_start_offset() + self.tag_len
+    pub(super) fn predict_packet_end(&self) -> usize {
+        self.buf.len().max(self.min_size) + self.tag_len - self.buf.len()
     }
 
     /// Returns the remaining space in the packet that can be taken up by QUIC frames
