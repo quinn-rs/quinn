@@ -4,7 +4,7 @@ use tracing::{trace, trace_span};
 
 use super::{Connection, SentFrames, TransmitBuf, spaces::SentPacket};
 use crate::{
-    ConnectionId, Instant, TransportError, TransportErrorCode,
+    ConnectionId, Instant, MIN_INITIAL_SIZE, TransportError, TransportErrorCode,
     connection::ConnectionSide,
     frame::{self, Close},
     packet::{FIXED_BIT, Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId},
@@ -194,7 +194,16 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
         self.buf.limit(self.frame_space_remaining())
     }
 
-    pub(super) fn finish_and_track(self, now: Instant, conn: &mut Connection, sent: SentFrames) {
+    pub(super) fn finish_and_track(
+        mut self,
+        now: Instant,
+        conn: &mut Connection,
+        sent: SentFrames,
+        pad_datagram: bool,
+    ) {
+        if pad_datagram {
+            self.pad_to(MIN_INITIAL_SIZE);
+        }
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
