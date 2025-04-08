@@ -6,27 +6,27 @@ use std::{
     net::{IpAddr, SocketAddr},
     pin::Pin,
     sync::{Arc, Weak},
-    task::{Context, Poll, Waker},
-    time::{Duration, Instant},
+    task::{Context, Poll, Waker, ready},
 };
 
 use bytes::Bytes;
 use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
 use thiserror::Error;
-use tokio::sync::{futures::Notified, mpsc, oneshot, watch, Notify};
-use tracing::{debug_span, Instrument, Span};
+use tokio::sync::{Notify, futures::Notified, mpsc, oneshot, watch};
+use tracing::{Instrument, Span, debug_span};
 
 use crate::{
+    ConnectionEvent, Duration, Instant, VarInt,
     mutex::Mutex,
     recv_stream::RecvStream,
     runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller},
     send_stream::SendStream,
-    udp_transmit, ConnectionEvent, VarInt,
+    udp_transmit,
 };
 use proto::{
-    congestion::Controller, ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent,
-    StreamEvent, StreamId,
+    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, StreamEvent, StreamId,
+    congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -239,8 +239,7 @@ struct ConnectionDriver(ConnectionRef);
 impl Future for ConnectionDriver {
     type Output = Result<(), io::Error>;
 
-    #[allow(unused_mut)] // MSRV
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let conn = &mut *self.0.state.lock("poll");
 
         let span = debug_span!("drive", id = conn.handle.0);
@@ -294,7 +293,7 @@ pub struct Connection(ConnectionRef);
 impl Connection {
     /// Returns a weak reference to the inner connection struct.
     pub fn weak_handle(&self) -> WeakConnectionHandle {
-        WeakConnectionHandle(Arc::downgrade(&self.0 .0))
+        WeakConnectionHandle(Arc::downgrade(&self.0.0))
     }
 
     /// Initiate a new outgoing unidirectional stream.
@@ -581,14 +580,15 @@ impl Connection {
         self.0.stable_id()
     }
 
-    // Update traffic keys spontaneously for testing purposes.
-    #[doc(hidden)]
+    /// Update traffic keys spontaneously
+    ///
+    /// This primarily exists for testing purposes.
     pub fn force_key_update(&self) {
         self.0
             .state
             .lock("force_key_update")
             .inner
-            .initiate_key_update()
+            .force_key_update()
     }
 
     /// Derive keying material from this connection's TLS session secrets.
@@ -1041,7 +1041,10 @@ impl State {
         let now = self.runtime.now();
         let mut transmits = 0;
 
-        let max_datagrams = self.socket.max_transmit_segments();
+        let max_datagrams = self
+            .socket
+            .max_transmit_segments()
+            .min(MAX_TRANSMIT_SEGMENTS);
 
         loop {
             // Retry the last transmit, or get a new one.
@@ -1354,3 +1357,10 @@ pub enum SendDatagramError {
 /// This limits the amount of CPU resources consumed by datagram generation,
 /// and allows other tasks (like receiving ACKs) to run in between.
 const MAX_TRANSMIT_DATAGRAMS: usize = 20;
+
+/// The maximum amount of datagrams that are sent in a single transmit
+///
+/// This can be lower than the maximum platform capabilities, to avoid excessive
+/// memory allocations when calling `poll_transmit()`. Benchmarks have shown
+/// that numbers around 10 are a good compromise.
+const MAX_TRANSMIT_SEGMENTS: usize = 10;

@@ -3,11 +3,11 @@ use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 use anyhow::{Context, Result};
 use bytes::Bytes;
 use clap::Parser;
-use quinn::{crypto::rustls::QuicServerConfig, TokioRuntime};
+use quinn::{TokioRuntime, crypto::rustls::QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tracing::{debug, error, info};
 
-use perf::{bind_socket, noprotection::NoProtectionServerConfig, PERF_CIPHER_SUITES};
+use perf::{PERF_CIPHER_SUITES, bind_socket, noprotection::NoProtectionServerConfig};
 
 #[derive(Parser)]
 #[clap(name = "server")]

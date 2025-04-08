@@ -6,10 +6,11 @@ use std::{
     pin::Pin,
     sync::Arc,
     task::{Context, Poll},
-    time::Instant,
 };
 
 use udp::{RecvMeta, Transmit};
+
+use crate::Instant;
 
 /// Abstracts I/O and timer operations for runtime independence
 pub trait Runtime: Send + Sync + Debug + 'static {
@@ -18,6 +19,7 @@ pub trait Runtime: Send + Sync + Debug + 'static {
     /// Drive `future` to completion in the background
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
     /// Convert `t` into the socket type used by this runtime
+    #[cfg(not(wasm_browser))]
     fn wrap_udp_socket(&self, t: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>>;
     /// Look up the current time
     ///
@@ -187,10 +189,12 @@ pub fn default_runtime() -> Option<Arc<dyn Runtime>> {
 
 #[cfg(feature = "runtime-tokio")]
 mod tokio;
+// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 #[cfg(feature = "runtime-tokio")]
 pub use self::tokio::TokioRuntime;
 
 #[cfg(feature = "async-io")]
 mod async_io;
+// Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 #[cfg(feature = "async-io")]
 pub use self::async_io::*;

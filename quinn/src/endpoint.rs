@@ -10,12 +10,12 @@ use std::{
     str,
     sync::{Arc, Mutex},
     task::{Context, Poll, Waker},
-    time::Instant,
 };
 
-#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+#[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))]
 use crate::runtime::default_runtime;
 use crate::{
+    Instant,
     runtime::{AsyncUdpSocket, Runtime},
     udp_transmit,
 };
@@ -26,15 +26,15 @@ use proto::{
     EndpointEvent, ServerConfig,
 };
 use rustc_hash::FxHashMap;
-#[cfg(any(feature = "aws-lc-rs", feature = "ring"))]
+#[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring"),))]
 use socket2::{Domain, Protocol, Socket, Type};
-use tokio::sync::{futures::Notified, mpsc, Notify};
+use tokio::sync::{Notify, futures::Notified, mpsc};
 use tracing::{Instrument, Span};
-use udp::{RecvMeta, BATCH_SIZE};
+use udp::{BATCH_SIZE, RecvMeta};
 
 use crate::{
-    connection::Connecting, incoming::Incoming, work_limiter::WorkLimiter, ConnectionEvent,
-    EndpointConfig, VarInt, IO_LOOP_BOUND, RECV_TIME_BOUND,
+    ConnectionEvent, EndpointConfig, IO_LOOP_BOUND, RECV_TIME_BOUND, VarInt,
+    connection::Connecting, incoming::Incoming, work_limiter::WorkLimiter,
 };
 
 /// A QUIC endpoint.
@@ -68,7 +68,7 @@ impl Endpoint {
     ///
     /// Some environments may not allow creation of dual-stack sockets, in which case an IPv6
     /// client will only be able to connect to IPv6 servers. An IPv4 client is never dual-stack.
-    #[cfg(any(feature = "aws-lc-rs", feature = "ring"))] // `EndpointConfig::default()` is only available with these
+    #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))] // `EndpointConfig::default()` is only available with these
     pub fn client(addr: SocketAddr) -> io::Result<Self> {
         let socket = Socket::new(Domain::for_address(addr), Type::DGRAM, Some(Protocol::UDP))?;
         if addr.is_ipv6() {
@@ -98,7 +98,7 @@ impl Endpoint {
     /// IPv6 address on Windows will not by default be able to communicate with IPv4
     /// addresses. Portable applications should bind an address that matches the family they wish to
     /// communicate within.
-    #[cfg(any(feature = "aws-lc-rs", feature = "ring"))] // `EndpointConfig::default()` is only available with these
+    #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))] // `EndpointConfig::default()` is only available with these
     pub fn server(config: ServerConfig, addr: SocketAddr) -> io::Result<Self> {
         let socket = std::net::UdpSocket::bind(addr)?;
         let runtime = default_runtime()
@@ -112,6 +112,7 @@ impl Endpoint {
     }
 
     /// Construct an endpoint with arbitrary configuration and socket
+    #[cfg(not(wasm_browser))]
     pub fn new(
         config: EndpointConfig,
         server_config: Option<ServerConfig>,
@@ -235,6 +236,7 @@ impl Endpoint {
     /// Switch to a new UDP socket
     ///
     /// See [`Endpoint::rebind_abstract()`] for details.
+    #[cfg(not(wasm_browser))]
     pub fn rebind(&self, socket: std::net::UdpSocket) -> io::Result<()> {
         self.rebind_abstract(self.runtime.wrap_udp_socket(socket)?)
     }
@@ -357,8 +359,7 @@ pub(crate) struct EndpointDriver(pub(crate) EndpointRef);
 impl Future for EndpointDriver {
     type Output = Result<(), io::Error>;
 
-    #[allow(unused_mut)] // MSRV
-    fn poll(mut self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
+    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
         let mut endpoint = self.0.state.lock().unwrap();
         if endpoint.driver.is_none() {
             endpoint.driver = Some(cx.waker().clone());

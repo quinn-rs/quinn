@@ -1,5 +1,5 @@
 use std::{
-    collections::{hash_map, BinaryHeap},
+    collections::{BinaryHeap, hash_map},
     io,
 };
 
@@ -9,8 +9,9 @@ use tracing::trace;
 
 use super::spaces::{Retransmits, ThinRetransmits};
 use crate::{
+    Dir, StreamId, VarInt,
     connection::streams::state::{get_or_insert_recv, get_or_insert_send},
-    frame, Dir, StreamId, VarInt,
+    frame,
 };
 
 mod recv;
@@ -508,17 +509,10 @@ impl ShouldTransmit {
 }
 
 /// Error indicating that a stream has not been opened or has already been finished or reset
-#[derive(Debug, Error, Clone, PartialEq, Eq)]
+#[derive(Debug, Default, Error, Clone, PartialEq, Eq)]
 #[error("closed stream")]
 pub struct ClosedStream {
     _private: (),
-}
-
-impl ClosedStream {
-    #[doc(hidden)] // For use in quinn only
-    pub fn new() -> Self {
-        Self { _private: () }
-    }
 }
 
 impl From<ClosedStream> for io::Error {

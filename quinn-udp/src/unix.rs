@@ -6,8 +6,8 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
     sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
         Mutex,
+        atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Instant,
 };
@@ -15,7 +15,7 @@ use std::{
 use socket2::SockRef;
 
 use super::{
-    cmsg, log_sendmsg_error, EcnCodepoint, RecvMeta, Transmit, UdpSockRef, IO_ERROR_LOG_INTERVAL,
+    EcnCodepoint, IO_ERROR_LOG_INTERVAL, RecvMeta, Transmit, UdpSockRef, cmsg, log_sendmsg_error,
 };
 
 // Adapted from https://github.com/apple-oss-distributions/xnu/blob/8d741a5de7ff4191bf97d57b9f54c2f6d4a15585/bsd/sys/socket_private.h
@@ -247,6 +247,30 @@ impl UdpSocketState {
     #[inline]
     pub fn gro_segments(&self) -> usize {
         self.gro_segments
+    }
+
+    /// Resize the send buffer of `socket` to `bytes`
+    #[inline]
+    pub fn set_send_buffer_size(&self, socket: UdpSockRef<'_>, bytes: usize) -> io::Result<()> {
+        socket.0.set_send_buffer_size(bytes)
+    }
+
+    /// Resize the receive buffer of `socket` to `bytes`
+    #[inline]
+    pub fn set_recv_buffer_size(&self, socket: UdpSockRef<'_>, bytes: usize) -> io::Result<()> {
+        socket.0.set_recv_buffer_size(bytes)
+    }
+
+    /// Get the size of the `socket` send buffer
+    #[inline]
+    pub fn send_buffer_size(&self, socket: UdpSockRef<'_>) -> io::Result<usize> {
+        socket.0.send_buffer_size()
+    }
+
+    /// Get the size of the `socket` receive buffer
+    #[inline]
+    pub fn recv_buffer_size(&self, socket: UdpSockRef<'_>) -> io::Result<usize> {
+        socket.0.recv_buffer_size()
     }
 
     /// Whether transmitted datagrams might get fragmented by the IP layer

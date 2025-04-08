@@ -10,7 +10,7 @@ use std::{
     sync::Arc,
 };
 
-use anyhow::{anyhow, bail, Context, Result};
+use anyhow::{Context, Result, anyhow, bail};
 use clap::Parser;
 use iroh_quinn as quinn;
 use proto::crypto::rustls::QuicServerConfig;

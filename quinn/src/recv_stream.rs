@@ -1,8 +1,8 @@
 use std::{
-    future::{poll_fn, Future},
+    future::{Future, poll_fn},
     io,
     pin::Pin,
-    task::{Context, Poll},
+    task::{Context, Poll, ready},
 };
 
 use bytes::Bytes;
@@ -10,7 +10,7 @@ use proto::{Chunk, Chunks, ClosedStream, ConnectionError, ReadableError, StreamI
 use thiserror::Error;
 use tokio::io::ReadBuf;
 
-use crate::{connection::ConnectionRef, VarInt};
+use crate::{VarInt, connection::ConnectionRef};
 
 /// A stream that can only be used to receive data
 ///
@@ -112,7 +112,16 @@ impl RecvStream {
         Poll::Ready(Ok(buf.filled().len()))
     }
 
-    fn poll_read_buf(
+    /// Attempts to read from the stream into buf.
+    ///
+    /// On success, returns Poll::Ready(Ok(())) and places data in
+    /// the buf. If no data was read and the buffer had a non null capacity,
+    /// it implies that EOF has been reached.
+    ///
+    /// If no data is available for reading, the method returns Poll::Pending
+    /// and arranges for the current task (via cx.waker()) to receive a notification
+    /// when the stream becomes readable or is closed.
+    pub fn poll_read_buf(
         &mut self,
         cx: &mut Context,
         buf: &mut ReadBuf<'_>,
@@ -556,7 +565,7 @@ impl From<ResetError> for ReadError {
 
 impl From<ReadError> for io::Error {
     fn from(x: ReadError) -> Self {
-        use self::ReadError::*;
+        use ReadError::*;
         let kind = match x {
             Reset { .. } | ZeroRttRejected => io::ErrorKind::ConnectionReset,
             ConnectionLost(_) | ClosedStream => io::ErrorKind::NotConnected,

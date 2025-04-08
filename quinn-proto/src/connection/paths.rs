@@ -8,8 +8,8 @@ use super::{
     spaces::{PacketSpace, SentPacket},
 };
 use crate::{
-    coding, congestion, frame::ObservedAddr, packet::SpaceId, Duration, Instant, TransportConfig,
-    VarInt, TIMER_GRANULARITY,
+    Duration, Instant, TIMER_GRANULARITY, TransportConfig, VarInt, coding, congestion,
+    frame::ObservedAddr, packet::SpaceId,
 };
 
 /// Id representing different paths when using multipath extension
@@ -104,7 +104,6 @@ impl PathData {
         allow_mtud: bool,
         peer_max_udp_payload_size: Option<u16>,
         now: Instant,
-        validated: bool,
         config: &TransportConfig,
     ) -> Self {
         let congestion = config
@@ -124,7 +123,7 @@ impl PathData {
             congestion,
             challenge: None,
             challenge_pending: false,
-            validated,
+            validated: false,
             total_sent: 0,
             total_recvd: 0,
             mtud: config
@@ -384,9 +383,9 @@ impl PathResponses {
         }
     }
 
-    pub(crate) fn pop_off_path(&mut self, remote: &SocketAddr) -> Option<(u64, SocketAddr)> {
+    pub(crate) fn pop_off_path(&mut self, remote: SocketAddr) -> Option<(u64, SocketAddr)> {
         let response = *self.pending.last()?;
-        if response.remote == *remote {
+        if response.remote == remote {
             // We don't bother searching further because we expect that the on-path response will
             // get drained in the immediate future by a call to `pop_on_path`
             return None;
@@ -395,9 +394,9 @@ impl PathResponses {
         Some((response.token, response.remote))
     }
 
-    pub(crate) fn pop_on_path(&mut self, remote: &SocketAddr) -> Option<u64> {
+    pub(crate) fn pop_on_path(&mut self, remote: SocketAddr) -> Option<u64> {
         let response = *self.pending.last()?;
-        if response.remote != *remote {
+        if response.remote != remote {
             // We don't bother searching further because we expect that the off-path response will
             // get drained in the immediate future by a call to `pop_off_path`
             return None;

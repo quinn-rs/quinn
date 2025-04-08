@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use thiserror::Error;
 
-use crate::{connection::send_buffer::SendBuffer, frame, VarInt};
+use crate::{VarInt, connection::send_buffer::SendBuffer, frame};
 
 #[derive(Debug)]
 pub(super) struct Send {
