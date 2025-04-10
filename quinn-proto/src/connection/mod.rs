@@ -1520,8 +1520,8 @@ impl Connection {
     /// by both peers.
     pub fn is_multipath_enabled(&self) -> bool {
         !self.is_handshaking()
-            && self.handshake_cid.len() > 0
-            && self.rem_handshake_cid.len() > 0
+            && !self.handshake_cid.is_empty()
+            && !self.rem_handshake_cid.is_empty()
             && self.config.initial_max_path_id.is_some()
             && self.peer_params.initial_max_path_id.is_some()
     }
