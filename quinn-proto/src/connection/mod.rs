@@ -22,6 +22,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
+    congestion::Controller,
     crypto::{self, KeyPair, Keys, PacketKey},
     frame::{self, Close, Datagram, FrameStruct, NewToken, ObservedAddr},
     packet::{
@@ -86,8 +87,10 @@ pub use streams::{
 };
 
 mod timer;
-use crate::congestion::Controller;
 use timer::{Timer, TimerTable};
+
+mod transmit_buf;
+use transmit_buf::TransmitBuf;
 
 /// Protocol state and logic for a single QUIC connection
 ///
@@ -496,13 +499,13 @@ impl Connection {
         //    out which path we want to send the packet on before we start building it.
         let path_id = PathId(0);
 
-        let mut num_datagrams = 0;
-        // Position in `buf` of the first byte of the current UDP datagram. When coalescing QUIC
-        // packets, this can be earlier than the start of the current QUIC packet.
-        let mut datagram_start = 0;
-        let mut segment_size = usize::from(self.path_data(path_id).current_mtu());
+        let mut buf = TransmitBuf::new(
+            buf,
+            max_datagrams,
+            self.path_data(path_id).current_mtu().into(),
+        );
 
-        if let Some(challenge) = self.send_path_challenge(now, buf, PathId::default()) {
+        if let Some(challenge) = self.send_path_challenge(now, &mut buf, path_id) {
             return Some(challenge);
         }
 
@@ -544,11 +547,6 @@ impl Connection {
                 && self.peer_supports_ack_frequency();
         }
 
-        // Reserving capacity can provide more capacity than we asked for. However, we are not
-        // allowed to write more than `segment_size`. Therefore the maximum capacity is tracked
-        // separately.
-        let mut buf_capacity = 0;
-
         let mut coalesce = true;
         let mut builder_storage: Option<PacketBuilder> = None;
         let mut sent_frames = None;
@@ -579,8 +577,9 @@ impl Connection {
             let pn = self.spaces[SpaceId::Data]
                 .for_path(path_id)
                 .peek_tx_number();
-            let frame_space_1rtt =
-                segment_size.saturating_sub(self.predict_1rtt_overhead(pn, path_id));
+            let frame_space_1rtt = buf
+                .segment_size
+                .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
 
             // Is there data or a close message to send in this space?
             let can_send = self.space_can_send(space_id, frame_space_1rtt);
@@ -614,11 +613,15 @@ impl Connection {
             } else {
                 unreachable!("tried to send {:?} packet without keys", space_id)
             };
-            if !coalesce || buf_capacity - buf_end < MIN_PACKET_SPACE + tag_len {
+
+            // We are NOT coalescing (the default is we are, so this was turned off in an
+            // earlier iteration) OR there is not enough space for another *packet* in this
+            // datagram (buf_capacity - buf_end == unused space in datagram).
+            if !coalesce || buf.buf_capacity - buf_end < MIN_PACKET_SPACE + tag_len {
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
-                if num_datagrams >= max_datagrams {
+                if buf.num_datagrams >= buf.max_datagrams {
                     // No more datagrams allowed
                     break;
                 }
@@ -631,7 +634,7 @@ impl Connection {
                 // (see https://github.com/quinn-rs/quinn/issues/1082)
                 if self
                     .path_data(path_id)
-                    .anti_amplification_blocked(segment_size as u64 * (num_datagrams as u64) + 1)
+                    .anti_amplification_blocked((buf.segment_size * buf.num_datagrams) as u64 + 1)
                 {
                     trace!("blocked by anti-amplification");
                     break;
@@ -642,13 +645,13 @@ impl Connection {
                 if ack_eliciting && self.spaces[space_id].for_path(path_id).loss_probes == 0 {
                     // Assume the current packet will get padded to fill the segment
                     let untracked_bytes = if let Some(builder) = &builder_storage {
-                        buf_capacity - builder.partial_encode.start
+                        buf.buf_capacity - builder.partial_encode.start
                     } else {
                         0
                     } as u64;
-                    debug_assert!(untracked_bytes <= segment_size as u64);
+                    debug_assert!(untracked_bytes <= buf.segment_size as u64);
 
-                    let bytes_to_send = segment_size as u64 + untracked_bytes;
+                    let bytes_to_send = buf.segment_size as u64 + untracked_bytes;
                     // TODO(@divma): move to method of path
                     if self.path_data(path_id).in_flight.bytes + bytes_to_send
                         >= self.path_data(path_id).congestion.window()
@@ -681,7 +684,7 @@ impl Connection {
                         builder.pad_to(MIN_INITIAL_SIZE);
                     }
 
-                    if num_datagrams > 1 {
+                    if buf.num_datagrams > 1 {
                         // If too many padding bytes would be required to continue the GSO batch
                         // after this packet, end the GSO batch here. Ensures that fixed-size frames
                         // with heterogeneous sizes (e.g. application datagrams) won't inadvertently
@@ -696,14 +699,14 @@ impl Connection {
                         // `buf_capacity` by less than `segment_size`.
                         const MAX_PADDING: usize = 16;
                         let packet_len_unpadded = cmp::max(builder.min_size, buf.len())
-                            - datagram_start
+                            - buf.datagram_start
                             + builder.tag_len;
-                        if packet_len_unpadded + MAX_PADDING < segment_size
-                            || datagram_start + segment_size > buf_capacity
+                        if packet_len_unpadded + MAX_PADDING < buf.segment_size
+                            || buf.datagram_start + buf.segment_size > buf.buf_capacity
                         {
                             trace!(
                                 "GSO truncated by demand for {} padding bytes or loss probe",
-                                segment_size - packet_len_unpadded
+                                buf.segment_size - packet_len_unpadded
                             );
                             builder_storage = Some(builder);
                             break;
@@ -711,22 +714,22 @@ impl Connection {
 
                         // Pad the current datagram to GSO segment size so it can be included in the
                         // GSO batch.
-                        builder.pad_to(segment_size as u16);
+                        builder.pad_to(buf.segment_size as u16);
                     }
 
-                    builder.finish_and_track(now, self, path_id, sent_frames.take(), buf);
+                    builder.finish_and_track(now, self, path_id, sent_frames.take(), buf.buf);
 
-                    if num_datagrams == 1 {
+                    if buf.num_datagrams == 1 {
                         // Set the segment size for this GSO batch to the size of the first UDP
                         // datagram in the batch. Larger data that cannot be fragmented
                         // (e.g. application datagrams) will be included in a future batch. When
                         // sending large enough volumes of data for GSO to be useful, we expect
                         // packet sizes to usually be consistent, e.g. populated by max-size STREAM
                         // frames or uniformly sized datagrams.
-                        segment_size = buf.len();
+                        buf.segment_size = buf.len();
                         // Clip the unused capacity out of the buffer so future packets don't
                         // overrun
-                        buf_capacity = buf.len();
+                        buf.buf_capacity = buf.len();
 
                         // Check whether the data we planned to send will fit in the reduced segment
                         // size. If not, bail out and leave it for the next GSO batch so we don't
@@ -735,7 +738,8 @@ impl Connection {
                         // that time we haven't determined whether we're going to coalesce with the
                         // first datagram or potentially pad it to `MIN_INITIAL_SIZE`.
                         if space_id == SpaceId::Data {
-                            let frame_space_1rtt = segment_size
+                            let frame_space_1rtt = buf
+                                .segment_size
                                 .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
                             if self.space_can_send(space_id, frame_space_1rtt).is_empty() {
                                 break;
@@ -747,17 +751,17 @@ impl Connection {
                 // Allocate space for another datagram
                 let next_datagram_size_limit =
                     match self.spaces[space_id].for_path(path_id).loss_probes {
-                        0 => segment_size,
+                        0 => buf.segment_size,
                         _ => {
                             self.spaces[space_id].for_path(path_id).loss_probes -= 1;
                             // Clamp the datagram to at most the minimum MTU to ensure that loss probes
                             // can get through and enable recovery even if the path MTU has shrank
                             // unexpectedly.
-                            std::cmp::min(segment_size, usize::from(INITIAL_MTU))
+                            std::cmp::min(buf.segment_size, usize::from(INITIAL_MTU))
                         }
                     };
-                buf_capacity += next_datagram_size_limit;
-                if buf.capacity() < buf_capacity {
+                buf.buf_capacity += next_datagram_size_limit;
+                if buf.buf.capacity() < buf.buf_capacity {
                     // We reserve the maximum space for sending `max_datagrams` upfront
                     // to avoid any reallocations if more datagrams have to be appended later on.
                     // Benchmarks have shown shown a 5-10% throughput improvement
@@ -766,15 +770,15 @@ impl Connection {
                     // (e.g. purely containing ACKs), modern memory allocators
                     // (e.g. mimalloc and jemalloc) will pool certain allocation sizes
                     // and therefore this is still rather efficient.
-                    buf.reserve(max_datagrams * segment_size);
+                    buf.buf.reserve(buf.max_datagrams * buf.segment_size);
                 }
-                num_datagrams += 1;
+                buf.num_datagrams += 1;
                 coalesce = true;
                 pad_datagram = false;
-                datagram_start = buf.len();
+                buf.datagram_start = buf.len();
 
                 debug_assert_eq!(
-                    datagram_start % segment_size,
+                    buf.datagram_start % buf.segment_size,
                     0,
                     "datagrams in a GSO batch must be aligned to the segment size"
                 );
@@ -783,11 +787,11 @@ impl Connection {
                 // datagram.
                 // Finish current packet without adding extra padding
                 if let Some(builder) = builder_storage.take() {
-                    builder.finish_and_track(now, self, path_id, sent_frames.take(), buf);
+                    builder.finish_and_track(now, self, path_id, sent_frames.take(), buf.buf);
                 }
             }
 
-            debug_assert!(buf_capacity - buf.len() >= MIN_PACKET_SPACE);
+            debug_assert!(buf.buf_capacity - buf.len() >= MIN_PACKET_SPACE);
 
             //
             // From here on, we've determined that a packet will definitely be sent.
@@ -818,9 +822,9 @@ impl Connection {
                 space_id,
                 path_id,
                 self.rem_cids.get(&path_id).unwrap().active(),
-                buf,
-                buf_capacity,
-                datagram_start,
+                buf.buf,
+                buf.buf_capacity,
+                buf.datagram_start,
                 ack_eliciting,
                 self,
             )?);
@@ -848,7 +852,7 @@ impl Connection {
                         &mut SentFrames::default(),
                         &mut self.spaces[space_id],
                         path_id,
-                        buf,
+                        buf.buf,
                         &mut self.stats,
                     );
                 }
@@ -865,14 +869,14 @@ impl Connection {
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
                             if space_id == SpaceId::Data || reason.is_transport_layer() {
-                                reason.encode(buf, max_frame_size)
+                                reason.encode(&mut buf, max_frame_size)
                             } else {
                                 frame::ConnectionClose {
                                     error_code: TransportErrorCode::APPLICATION_ERROR,
                                     frame_type: None,
                                     reason: Bytes::new(),
                                 }
-                                .encode(buf, max_frame_size)
+                                .encode(&mut buf, max_frame_size)
                             }
                         }
                         State::Draining => frame::ConnectionClose {
@@ -880,7 +884,7 @@ impl Connection {
                             frame_type: None,
                             reason: Bytes::new(),
                         }
-                        .encode(buf, max_frame_size),
+                        .encode(&mut buf, max_frame_size),
                         _ => unreachable!(
                             "tried to make a close packet when the connection wasn't closed"
                         ),
@@ -902,7 +906,7 @@ impl Connection {
 
             // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
             // validation can occur while the link is saturated.
-            if space_id == SpaceId::Data && num_datagrams == 1 {
+            if space_id == SpaceId::Data && buf.num_datagrams == 1 {
                 let remote = self.path_data(path_id).remote;
                 if let Some((token, remote)) = self.path_responses.pop_off_path(remote) {
                     // `unwrap` guaranteed to succeed because `builder_storage` was populated just
@@ -921,7 +925,7 @@ impl Connection {
                             non_retransmits: true,
                             ..SentFrames::default()
                         }),
-                        buf,
+                        buf.buf,
                     );
                     self.stats.udp_tx.on_sent(1, buf.len());
                     return Some(Transmit {
@@ -938,7 +942,7 @@ impl Connection {
                 now,
                 space_id,
                 path_id,
-                buf,
+                buf.buf,
                 builder.max_size,
                 builder.exact_number,
             );
@@ -953,7 +957,7 @@ impl Connection {
                 !(sent.is_ack_only(&self.streams)
                     && !can_send.acks
                     && can_send.other
-                    && (buf_capacity - builder.datagram_start)
+                    && (buf.buf_capacity - builder.datagram_start)
                         == self.path_data(path_id).current_mtu() as usize
                     && self.datagrams.outgoing.is_empty()),
                 "SendableFrames was {can_send:?}, but only ACKs have been written"
@@ -978,7 +982,7 @@ impl Connection {
                 builder.pad_to(MIN_INITIAL_SIZE);
             }
             let last_packet_number = builder.exact_number;
-            builder.finish_and_track(now, self, path_id, sent_frames, buf);
+            builder.finish_and_track(now, self, path_id, sent_frames, buf.buf);
             self.path_data_mut(path_id).congestion.on_sent(
                 now,
                 buf.len() as u64,
@@ -997,8 +1001,8 @@ impl Connection {
                 .mtud
                 .poll_transmit(now, next_pn)?;
 
-            let buf_capacity = probe_size as usize;
-            buf.reserve(buf_capacity);
+            buf.buf_capacity = probe_size as usize;
+            buf.buf.reserve(buf.buf_capacity);
 
             // TODO(flub): I'm not particularly happy about this unwrap.  But let's leave it
             //    for now until more stuff is settled.  We probably should check earlier on
@@ -1008,8 +1012,8 @@ impl Connection {
                 space_id,
                 path_id,
                 self.rem_cids.get(&path_id).unwrap().active(),
-                buf,
-                buf_capacity,
+                buf.buf,
+                buf.buf_capacity,
                 0,
                 true,
                 self,
@@ -1030,10 +1034,10 @@ impl Connection {
                 non_retransmits: true,
                 ..Default::default()
             };
-            builder.finish_and_track(now, self, path_id, Some(sent_frames), buf);
+            builder.finish_and_track(now, self, path_id, Some(sent_frames), buf.buf);
 
             self.stats.path.sent_plpmtud_probes += 1;
-            num_datagrams = 1;
+            buf.num_datagrams = 1;
 
             trace!(?probe_size, "writing MTUD probe");
         }
@@ -1042,10 +1046,16 @@ impl Connection {
             return None;
         }
 
-        trace!("sending {} bytes in {} datagrams", buf.len(), num_datagrams);
+        trace!(
+            "sending {} bytes in {} datagrams",
+            buf.len(),
+            buf.num_datagrams
+        );
         self.path_data_mut(path_id).inc_total_sent(buf.len() as u64);
 
-        self.stats.udp_tx.on_sent(num_datagrams as u64, buf.len());
+        self.stats
+            .udp_tx
+            .on_sent(buf.num_datagrams as u64, buf.len());
 
         Some(Transmit {
             destination: self.path_data(path_id).remote,
@@ -1055,9 +1065,9 @@ impl Connection {
             } else {
                 None
             },
-            segment_size: match num_datagrams {
+            segment_size: match buf.num_datagrams {
                 1 => None,
-                _ => Some(segment_size),
+                _ => Some(buf.segment_size),
             },
             src_ip: self.local_ip,
         })
@@ -1067,7 +1077,7 @@ impl Connection {
     fn send_path_challenge(
         &mut self,
         now: Instant,
-        buf: &mut Vec<u8>,
+        buf: &mut TransmitBuf<'_>,
         path_id: PathId,
     ) -> Option<Transmit> {
         let (prev_cid, prev_path) = self.paths.get_mut(&path_id)?.prev_path.as_mut()?;
@@ -1084,9 +1094,9 @@ impl Connection {
             SpaceId::Data,
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
-        buf.reserve(MIN_INITIAL_SIZE as usize);
+        buf.buf.reserve(MIN_INITIAL_SIZE as usize);
 
-        let buf_capacity = buf.capacity();
+        let buf_capacity = buf.buf.capacity();
 
         // Use the previous CID to avoid linking the new path with the previous path. We
         // don't bother accounting for possible retirement of that prev_cid because this is
@@ -1098,7 +1108,7 @@ impl Connection {
             SpaceId::Data,
             path_id,
             *prev_cid,
-            buf,
+            buf.buf,
             buf_capacity,
             0,
             false,
@@ -1115,7 +1125,7 @@ impl Connection {
         // sending a datagram of this size
         builder.pad_to(MIN_INITIAL_SIZE);
 
-        builder.finish(self, buf);
+        builder.finish(self, buf.buf);
         self.stats.udp_tx.on_sent(1, buf.len());
 
         Some(Transmit {
