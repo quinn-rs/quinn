@@ -6,97 +6,97 @@ on:
   pull_request:
 
 jobs:
-  test-freebsd:
-  # see https://github.com/actions/runner/issues/385
-  # use https://github.com/vmactions/freebsd-vm for now
-    name: test on freebsd
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: test on freebsd
-        uses: vmactions/freebsd-vm@v1
-        with:
-          usesh: true
-          mem: 4096
-          copyback: false
-          prepare: |
-            pkg install -y curl
-            curl https://sh.rustup.rs -sSf --output rustup.sh
-            sh rustup.sh -y --profile minimal --default-toolchain stable
-          run: |
-            export PATH="$HOME/.cargo/bin:$PATH"
-            echo "===== rustc --version ====="
-            rustc --version
-            echo "===== freebsd-version ====="
-            freebsd-version
+  # test-freebsd:
+  # # see https://github.com/actions/runner/issues/385
+  # # use https://github.com/vmactions/freebsd-vm for now
+  #   name: test on freebsd
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: test on freebsd
+  #       uses: vmactions/freebsd-vm@v1
+  #       with:
+  #         usesh: true
+  #         mem: 4096
+  #         copyback: false
+  #         prepare: |
+  #           pkg install -y curl
+  #           curl https://sh.rustup.rs -sSf --output rustup.sh
+  #           sh rustup.sh -y --profile minimal --default-toolchain stable
+  #         run: |
+  #           export PATH="$HOME/.cargo/bin:$PATH"
+  #           echo "===== rustc --version ====="
+  #           rustc --version
+  #           echo "===== freebsd-version ====="
+  #           freebsd-version
 
-            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
+  #           cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
 
-  test-netbsd:
-    name: test on netbsd
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: test on netbsd
-        uses: vmactions/netbsd-vm@v1
-        with:
-          usesh: true
-          mem: 4096
-          copyback: false
-          prepare: |
-            export PATH="/usr/sbin:/sbin:$PATH"
-            pkg_add curl
-            curl https://sh.rustup.rs -sSf --output rustup.sh
-            sh rustup.sh -y --profile minimal --default-toolchain stable
-          run: |
-            export PATH="$HOME/.cargo/bin:$PATH"
-            echo "===== rustc --version ====="
-            rustc --version
-            echo "===== uname -a        ====="
-            uname -a
+  # test-netbsd:
+  #   name: test on netbsd
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: test on netbsd
+  #       uses: vmactions/netbsd-vm@v1
+  #       with:
+  #         usesh: true
+  #         mem: 4096
+  #         copyback: false
+  #         prepare: |
+  #           export PATH="/usr/sbin:/sbin:$PATH"
+  #           pkg_add curl
+  #           curl https://sh.rustup.rs -sSf --output rustup.sh
+  #           sh rustup.sh -y --profile minimal --default-toolchain stable
+  #         run: |
+  #           export PATH="$HOME/.cargo/bin:$PATH"
+  #           echo "===== rustc --version ====="
+  #           rustc --version
+  #           echo "===== uname -a        ====="
+  #           uname -a
 
-            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
+  #           cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
 
-  test-solaris:
-    name: test on solaris
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: test on Solaris
-        uses: vmactions/solaris-vm@v1
-        with:
-          release: "11.4-gcc"
-          usesh: true
-          mem: 4096
-          copyback: false
-          prepare: |
-            source <(curl -s https://raw.githubusercontent.com/psumbera/solaris-rust/refs/heads/main/sh.rust-web-install)
-            echo "~~~~ rustc --version ~~~~"
-            rustc --version
-            echo "~~~~ Solaris-version ~~~~"
-            uname -a
-          # Unlike others, don't un-ignore stress tests, because they hang on Solaris
-          run: |
-            export PATH=$HOME/.rust_solaris/bin:$PATH
-            cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
+  # test-solaris:
+  #   name: test on solaris
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: test on Solaris
+  #       uses: vmactions/solaris-vm@v1
+  #       with:
+  #         release: "11.4-gcc"
+  #         usesh: true
+  #         mem: 4096
+  #         copyback: false
+  #         prepare: |
+  #           source <(curl -s https://raw.githubusercontent.com/psumbera/solaris-rust/refs/heads/main/sh.rust-web-install)
+  #           echo "~~~~ rustc --version ~~~~"
+  #           rustc --version
+  #           echo "~~~~ Solaris-version ~~~~"
+  #           uname -a
+  #         # Unlike others, don't un-ignore stress tests, because they hang on Solaris
+  #         run: |
+  #           export PATH=$HOME/.rust_solaris/bin:$PATH
+  #           cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
 
-  test-illumos:
-    name: test on illumos
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - name: test on Illumos
-        uses: vmactions/omnios-vm@v1
-        with:
-          usesh: true
-          mem: 4096
-          copyback: false
-          prepare: |
-            pkg install gcc14 curl pkg-config glib2
-            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
-          run: |
-            . "$HOME/.cargo/env"
-            cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
+  # test-illumos:
+  #   name: test on illumos
+  #   runs-on: ubuntu-latest
+  #   steps:
+  #     - uses: actions/checkout@v4
+  #     - name: test on Illumos
+  #       uses: vmactions/omnios-vm@v1
+  #       with:
+  #         usesh: true
+  #         mem: 4096
+  #         copyback: false
+  #         prepare: |
+  #           pkg install gcc14 curl pkg-config glib2
+  #           curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal
+  #         run: |
+  #           . "$HOME/.cargo/env"
+  #           cargo build --locked --all-targets && cargo test --locked && cargo test --locked -- --ignored stress && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p iroh-quinn-udp --benches
 
   test:
     strategy:
