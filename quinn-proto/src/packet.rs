@@ -6,6 +6,7 @@ use thiserror::Error;
 use crate::{
     ConnectionId, PathId,
     coding::{self, BufExt, BufMutExt},
+    connection::BufLen,
     crypto,
 };
 
@@ -281,7 +282,7 @@ pub(crate) enum Header {
 }
 
 impl Header {
-    pub(crate) fn encode(&self, w: &mut Vec<u8>) -> PartialEncode {
+    pub(crate) fn encode(&self, w: &mut (impl BufMut + BufLen)) -> PartialEncode {
         use Header::*;
         let start = w.len();
         match *self {

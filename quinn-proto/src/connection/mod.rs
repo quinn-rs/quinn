@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use frame::StreamMetaVec;
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use rustc_hash::FxHashMap;
@@ -825,7 +825,7 @@ impl Connection {
                         &mut SentFrames::default(),
                         &mut self.spaces[space_id],
                         path_id,
-                        buf.buf,
+                        &mut buf,
                         &mut self.stats,
                     );
                 }
@@ -915,7 +915,7 @@ impl Connection {
                 now,
                 space_id,
                 path_id,
-                buf.buf,
+                &mut buf,
                 builder.max_size,
                 builder.exact_number,
             );
@@ -3459,7 +3459,7 @@ impl Connection {
         now: Instant,
         space_id: SpaceId,
         path_id: PathId,
-        buf: &mut Vec<u8>,
+        buf: &mut (impl BufMut + BufLen),
         max_size: usize,
         pn: u64,
     ) -> SentFrames {
@@ -3467,6 +3467,7 @@ impl Connection {
         let is_multipath_enabled = self.is_multipath_enabled();
         let path_data_remote = self.path_data(path_id).remote;
         let space = &mut self.spaces[space_id];
+        let path = &mut self.paths.get_mut(&path_id).expect("known path").path;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         space.pending_acks.maybe_ack_non_eliciting();
 
@@ -3480,54 +3481,25 @@ impl Connection {
         }
 
         // OBSERVED_ADDR
-        let mut send_observed_address =
-            |space_id: SpaceId,
-             buf: &mut Vec<u8>,
-             max_size: usize,
-             space: &mut PacketSpace,
-             sent: &mut SentFrames,
-             stats: &mut ConnectionStats,
-             path: &mut PathData,
-             skip_sent_check: bool| {
-                // should only be sent within Data space and only if allowed by extension
-                // negotiation
-                // send is also skipped if the path has already sent an observed address
-                let send_allowed = self
-                    .config
-                    .address_discovery_role
-                    .should_report(&self.peer_params.address_discovery_role);
-                let send_required =
-                    space.pending.observed_addr || !path.observed_addr_sent || skip_sent_check;
-                if space_id != SpaceId::Data || !send_allowed || !send_required {
-                    return;
-                }
+        if space_id == SpaceId::Data
+            && self
+                .config
+                .address_discovery_role
+                .should_report(&self.peer_params.address_discovery_role)
+            && (!path.observed_addr_sent || space.pending.observed_addr)
+        {
+            let frame = frame::ObservedAddr::new(path.remote, self.next_observed_addr_seq_no);
+            if buf.len() + frame.size() < max_size {
+                frame.write(buf);
 
-                let observed =
-                    frame::ObservedAddr::new(path.remote, self.next_observed_addr_seq_no);
+                self.next_observed_addr_seq_no = self.next_observed_addr_seq_no.saturating_add(1u8);
+                path.observed_addr_sent = true;
 
-                if buf.len() + observed.size() < max_size {
-                    observed.write(buf);
-
-                    self.next_observed_addr_seq_no =
-                        self.next_observed_addr_seq_no.saturating_add(1u8);
-                    path.observed_addr_sent = true;
-
-                    stats.frame_tx.observed_addr += 1;
-                    sent.retransmits.get_or_create().observed_addr = true;
-                    space.pending.observed_addr = false;
-                }
-            };
-        let path = &mut self.paths.get_mut(&path_id).expect("known path").path;
-        send_observed_address(
-            space_id,
-            buf,
-            max_size,
-            space,
-            &mut sent,
-            &mut self.stats,
-            path,
-            false,
-        );
+                self.stats.frame_tx.observed_addr += 1;
+                sent.retransmits.get_or_create().observed_addr = true;
+                space.pending.observed_addr = false;
+            }
+        }
 
         // PING
         if mem::replace(&mut space.for_path(path_id).ping_pending, false) {
@@ -3606,16 +3578,28 @@ impl Connection {
                 buf.write(frame::FrameType::PATH_CHALLENGE);
                 buf.write(token);
 
-                send_observed_address(
-                    space_id,
-                    buf,
-                    max_size,
-                    space,
-                    &mut sent,
-                    &mut self.stats,
-                    path,
-                    true,
-                );
+                // Always include an OBSERVED_ADDR frame with a PATH_CHALLENGE, regardless
+                // of whether one has already been sent on this path.
+                if space_id == SpaceId::Data
+                    && self
+                        .config
+                        .address_discovery_role
+                        .should_report(&self.peer_params.address_discovery_role)
+                {
+                    let frame =
+                        frame::ObservedAddr::new(path.remote, self.next_observed_addr_seq_no);
+                    if buf.len() + frame.size() < max_size {
+                        frame.write(buf);
+
+                        self.next_observed_addr_seq_no =
+                            self.next_observed_addr_seq_no.saturating_add(1u8);
+                        path.observed_addr_sent = true;
+
+                        self.stats.frame_tx.observed_addr += 1;
+                        sent.retransmits.get_or_create().observed_addr = true;
+                        space.pending.observed_addr = false;
+                    }
+                }
             }
         }
 
@@ -3633,16 +3617,26 @@ impl Connection {
                 // NOTE: this is technically not required but might be useful to ride the
                 // request/response nature of path challenges to refresh an observation
                 // Since PATH_RESPONSE is a probing frame, this is allowed by the spec.
-                send_observed_address(
-                    space_id,
-                    buf,
-                    max_size,
-                    space,
-                    &mut sent,
-                    &mut self.stats,
-                    path,
-                    true,
-                );
+                if space_id == SpaceId::Data
+                    && self
+                        .config
+                        .address_discovery_role
+                        .should_report(&self.peer_params.address_discovery_role)
+                {
+                    let frame =
+                        frame::ObservedAddr::new(path.remote, self.next_observed_addr_seq_no);
+                    if buf.len() + frame.size() < max_size {
+                        frame.write(buf);
+
+                        self.next_observed_addr_seq_no =
+                            self.next_observed_addr_seq_no.saturating_add(1u8);
+                        path.observed_addr_sent = true;
+
+                        self.stats.frame_tx.observed_addr += 1;
+                        sent.retransmits.get_or_create().observed_addr = true;
+                        space.pending.observed_addr = false;
+                    }
+                }
             }
         }
 
@@ -3851,7 +3845,7 @@ impl Connection {
         sent: &mut SentFrames,
         space: &mut PacketSpace,
         path_id: Option<PathId>,
-        buf: &mut Vec<u8>,
+        buf: &mut impl BufMut,
         stats: &mut ConnectionStats,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());
@@ -4579,6 +4573,23 @@ fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Du
         (Some(VarInt(0)) | None, Some(y)) => Some(Duration::from_millis(y.0)),
         (Some(x), Some(VarInt(0)) | None) => Some(Duration::from_millis(x.0)),
         (Some(x), Some(y)) => Some(Duration::from_millis(cmp::min(x, y).0)),
+    }
+}
+
+/// A buffer that can tell how much has been written to it already
+///
+/// This is commonly used for when a buffer is passed and the user may not write past a
+/// given size. It allows the user of such a buffer to know the current cursor position in
+/// the buffer. The maximum write size is usually passed in the same unit as
+/// [`BufLen::len`]: bytes since the buffer start.
+pub(crate) trait BufLen {
+    /// Returns the number of bytes written into the buffer so far
+    fn len(&self) -> usize;
+}
+
+impl BufLen for Vec<u8> {
+    fn len(&self) -> usize {
+        self.len()
     }
 }
 

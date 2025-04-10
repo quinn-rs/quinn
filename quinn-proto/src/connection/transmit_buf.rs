@@ -1,5 +1,7 @@
 use bytes::BufMut;
 
+use super::BufLen;
+
 /// The buffer in which to write datagrams for [`Connection::poll_transmit`]
 ///
 /// The `poll_transmit` function writes zero or more datagrams to a buffer. Multiple
@@ -198,5 +200,11 @@ unsafe impl BufMut for TransmitBuf<'_> {
 
     fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
         self.buf.chunk_mut()
+    }
+}
+
+impl BufLen for TransmitBuf<'_> {
+    fn len(&self) -> usize {
+        self.len()
     }
 }
