@@ -2,7 +2,7 @@ use bytes::Bytes;
 use rand::Rng;
 use tracing::{trace, trace_span};
 
-use super::{Connection, PathId, SentFrames, spaces::SentPacket};
+use super::{Connection, PathId, SentFrames, TransmitBuf, spaces::SentPacket};
 use crate::{
     ConnectionId, Instant, TransportError, TransportErrorCode,
     connection::ConnectionSide,
@@ -38,9 +38,7 @@ impl PacketBuilder {
         space_id: SpaceId,
         path_id: PathId,
         dst_cid: ConnectionId,
-        buffer: &mut Vec<u8>,
-        buffer_capacity: usize,
-        datagram_start: usize,
+        buffer: &mut TransmitBuf<'_>,
         ack_eliciting: bool,
         conn: &mut Connection,
     ) -> Option<Self> {
@@ -123,9 +121,9 @@ impl PacketBuilder {
                 version,
             }),
         };
-        let partial_encode = header.encode(buffer);
+        let partial_encode = header.encode(buffer.buf);
         if conn.peer_params.grease_quic_bit && conn.rng.random() {
-            buffer[partial_encode.start] ^= FIXED_BIT;
+            buffer.buf[partial_encode.start] ^= FIXED_BIT;
         }
 
         let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
@@ -152,11 +150,11 @@ impl PacketBuilder {
             buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
             partial_encode.start + dst_cid.len() + 6,
         );
-        let max_size = buffer_capacity - tag_len;
+        let max_size = buffer.buf_capacity - tag_len;
         debug_assert!(max_size >= min_size);
 
         Some(Self {
-            datagram_start,
+            datagram_start: buffer.datagram_start,
             space: space_id,
             path: path_id,
             partial_encode,

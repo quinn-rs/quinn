@@ -822,9 +822,7 @@ impl Connection {
                 space_id,
                 path_id,
                 self.rem_cids.get(&path_id).unwrap().active(),
-                buf.buf,
-                buf.buf_capacity,
-                buf.datagram_start,
+                &mut buf,
                 ack_eliciting,
                 self,
             )?);
@@ -1004,6 +1002,7 @@ impl Connection {
             buf.buf_capacity = probe_size as usize;
             buf.buf.reserve(buf.buf_capacity);
 
+            debug_assert_eq!(buf.datagram_start, 0);
             // TODO(flub): I'm not particularly happy about this unwrap.  But let's leave it
             //    for now until more stuff is settled.  We probably should check earlier on
             //    in poll_transmit that we have a valid CID to use.
@@ -1012,9 +1011,7 @@ impl Connection {
                 space_id,
                 path_id,
                 self.rem_cids.get(&path_id).unwrap().active(),
-                buf.buf,
-                buf.buf_capacity,
-                0,
+                &mut buf,
                 true,
                 self,
             )?;
@@ -1096,24 +1093,16 @@ impl Connection {
         );
         buf.buf.reserve(MIN_INITIAL_SIZE as usize);
 
-        let buf_capacity = buf.buf.capacity();
+        buf.buf_capacity = buf.buf.capacity();
 
         // Use the previous CID to avoid linking the new path with the previous path. We
         // don't bother accounting for possible retirement of that prev_cid because this is
         // sent once, immediately after migration, when the CID is known to be valid. Even
         // if a post-migration packet caused the CID to be retired, it's fair to pretend
         // this is sent first.
-        let mut builder = PacketBuilder::new(
-            now,
-            SpaceId::Data,
-            path_id,
-            *prev_cid,
-            buf.buf,
-            buf_capacity,
-            0,
-            false,
-            self,
-        )?;
+        debug_assert_eq!(buf.datagram_start, 0);
+        let mut builder =
+            PacketBuilder::new(now, SpaceId::Data, path_id, *prev_cid, buf, false, self)?;
         trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
         buf.write(frame::FrameType::PATH_CHALLENGE);
         buf.write(token);
