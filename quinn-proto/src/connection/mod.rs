@@ -578,7 +578,7 @@ impl Connection {
                 .for_path(path_id)
                 .peek_tx_number();
             let frame_space_1rtt = buf
-                .segment_size
+                .segment_size()
                 .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
 
             // Is there data or a close message to send in this space?
@@ -617,11 +617,11 @@ impl Connection {
             // We are NOT coalescing (the default is we are, so this was turned off in an
             // earlier iteration) OR there is not enough space for another *packet* in this
             // datagram (buf_capacity - buf_end == unused space in datagram).
-            if !coalesce || buf.buf_capacity - buf_end < MIN_PACKET_SPACE + tag_len {
+            if !coalesce || buf.datagram_max_offset() - buf_end < MIN_PACKET_SPACE + tag_len {
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
-                if buf.num_datagrams >= buf.max_datagrams {
+                if buf.num_datagrams() >= buf.max_datagrams() {
                     // No more datagrams allowed
                     break;
                 }
@@ -632,10 +632,9 @@ impl Connection {
                 // for starting another datagram. If there is any anti-amplification
                 // budget left, we always allow a full MTU to be sent
                 // (see https://github.com/quinn-rs/quinn/issues/1082)
-                if self
-                    .path_data(path_id)
-                    .anti_amplification_blocked((buf.segment_size * buf.num_datagrams) as u64 + 1)
-                {
+                if self.path_data(path_id).anti_amplification_blocked(
+                    (buf.segment_size() * buf.num_datagrams()) as u64 + 1,
+                ) {
                     trace!("blocked by anti-amplification");
                     break;
                 }
@@ -645,13 +644,13 @@ impl Connection {
                 if ack_eliciting && self.spaces[space_id].for_path(path_id).loss_probes == 0 {
                     // Assume the current packet will get padded to fill the segment
                     let untracked_bytes = if let Some(builder) = &builder_storage {
-                        buf.buf_capacity - builder.partial_encode.start
+                        buf.datagram_max_offset() - builder.partial_encode.start
                     } else {
                         0
                     } as u64;
-                    debug_assert!(untracked_bytes <= buf.segment_size as u64);
+                    debug_assert!(untracked_bytes <= buf.segment_size() as u64);
 
-                    let bytes_to_send = buf.segment_size as u64 + untracked_bytes;
+                    let bytes_to_send = buf.segment_size() as u64 + untracked_bytes;
                     // TODO(@divma): move to method of path
                     if self.path_data(path_id).in_flight.bytes + bytes_to_send
                         >= self.path_data(path_id).congestion.window()
@@ -684,7 +683,7 @@ impl Connection {
                         builder.pad_to(MIN_INITIAL_SIZE);
                     }
 
-                    if buf.num_datagrams > 1 {
+                    if buf.num_datagrams() > 1 {
                         // If too many padding bytes would be required to continue the GSO batch
                         // after this packet, end the GSO batch here. Ensures that fixed-size frames
                         // with heterogeneous sizes (e.g. application datagrams) won't inadvertently
@@ -699,14 +698,15 @@ impl Connection {
                         // `buf_capacity` by less than `segment_size`.
                         const MAX_PADDING: usize = 16;
                         let packet_len_unpadded = cmp::max(builder.min_size, buf.len())
-                            - buf.datagram_start
+                            - buf.datagram_start_offset()
                             + builder.tag_len;
-                        if packet_len_unpadded + MAX_PADDING < buf.segment_size
-                            || buf.datagram_start + buf.segment_size > buf.buf_capacity
+                        if packet_len_unpadded + MAX_PADDING < buf.segment_size()
+                            || buf.datagram_start_offset() + buf.segment_size()
+                                > buf.datagram_max_offset()
                         {
                             trace!(
                                 "GSO truncated by demand for {} padding bytes or loss probe",
-                                buf.segment_size - packet_len_unpadded
+                                buf.segment_size() - packet_len_unpadded
                             );
                             builder_storage = Some(builder);
                             break;
@@ -714,27 +714,29 @@ impl Connection {
 
                         // Pad the current datagram to GSO segment size so it can be included in the
                         // GSO batch.
-                        builder.pad_to(buf.segment_size as u16);
+                        builder.pad_to(buf.segment_size() as u16);
                     }
 
                     builder.finish_and_track(now, self, path_id, sent_frames.take(), buf.buf);
 
-                    if buf.num_datagrams == 1 && space_id == SpaceId::Data {
-                        // Now that we know the size of the first datagram, check whether
-                        // the data we planned to send will fit in the next segment.  If
-                        // not, bails out and leave it for the next GSO batch.  We can't
-                        // easily compute the right segment size before the original call to
-                        // `space_can_send`, because at that time we haven't determined
-                        // whether we're going to coalesce with the first datagram or
-                        // potentially pad it to `MIN_INITIAL_SIZE`.
-
+                    if buf.num_datagrams() == 1 {
                         buf.clip_datagram_size();
+                        if space_id == SpaceId::Data {
+                            // Now that we know the size of the first datagram, check
+                            // whether the data we planned to send will fit in the next
+                            // segment.  If not, bails out and leave it for the next GSO
+                            // batch.  We can't easily compute the right segment size before
+                            // the original call to `space_can_send`, because at that time
+                            // we haven't determined whether we're going to coalesce with
+                            // the first datagram or potentially pad it to
+                            // `MIN_INITIAL_SIZE`.
 
-                        let frame_space_1rtt = buf
-                            .segment_size
-                            .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
-                        if self.space_can_send(space_id, frame_space_1rtt).is_empty() {
-                            break;
+                            let frame_space_1rtt = buf
+                                .segment_size()
+                                .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
+                            if self.space_can_send(space_id, frame_space_1rtt).is_empty() {
+                                break;
+                            }
                         }
                     }
                 }
@@ -749,7 +751,7 @@ impl Connection {
                         // unexpectedly.
                         buf.start_new_datagram_with_size(std::cmp::min(
                             usize::from(INITIAL_MTU),
-                            buf.segment_size,
+                            buf.segment_size(),
                         ));
                     }
                 };
@@ -764,7 +766,7 @@ impl Connection {
                 }
             }
 
-            debug_assert!(buf.buf_capacity - buf.len() >= MIN_PACKET_SPACE);
+            debug_assert!(buf.datagram_max_offset() - buf.len() >= MIN_PACKET_SPACE);
 
             //
             // From here on, we've determined that a packet will definitely be sent.
@@ -877,7 +879,7 @@ impl Connection {
 
             // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
             // validation can occur while the link is saturated.
-            if space_id == SpaceId::Data && buf.num_datagrams == 1 {
+            if space_id == SpaceId::Data && buf.num_datagrams() == 1 {
                 let remote = self.path_data(path_id).remote;
                 if let Some((token, remote)) = self.path_responses.pop_off_path(remote) {
                     // `unwrap` guaranteed to succeed because `builder_storage` was populated just
@@ -928,7 +930,7 @@ impl Connection {
                 !(sent.is_ack_only(&self.streams)
                     && !can_send.acks
                     && can_send.other
-                    && (buf.buf_capacity - builder.datagram_start)
+                    && (buf.datagram_max_offset() - builder.datagram_start)
                         == self.path_data(path_id).current_mtu() as usize
                     && self.datagrams.outgoing.is_empty()),
                 "SendableFrames was {can_send:?}, but only ACKs have been written"
@@ -972,10 +974,10 @@ impl Connection {
                 .mtud
                 .poll_transmit(now, next_pn)?;
 
-            debug_assert_eq!(buf.num_datagrams, 0);
+            debug_assert_eq!(buf.num_datagrams(), 0);
             buf.start_new_datagram_with_size(probe_size as usize);
 
-            debug_assert_eq!(buf.datagram_start, 0);
+            debug_assert_eq!(buf.datagram_start_offset(), 0);
             // TODO(flub): I'm not particularly happy about this unwrap.  But let's leave it
             //    for now until more stuff is settled.  We probably should check earlier on
             //    in poll_transmit that we have a valid CID to use.
@@ -1018,13 +1020,13 @@ impl Connection {
         trace!(
             "sending {} bytes in {} datagrams",
             buf.len(),
-            buf.num_datagrams
+            buf.num_datagrams()
         );
         self.path_data_mut(path_id).inc_total_sent(buf.len() as u64);
 
         self.stats
             .udp_tx
-            .on_sent(buf.num_datagrams as u64, buf.len());
+            .on_sent(buf.num_datagrams() as u64, buf.len());
 
         Some(Transmit {
             destination: self.path_data(path_id).remote,
@@ -1034,9 +1036,9 @@ impl Connection {
             } else {
                 None
             },
-            segment_size: match buf.num_datagrams {
+            segment_size: match buf.num_datagrams() {
                 1 => None,
-                _ => Some(buf.segment_size),
+                _ => Some(buf.segment_size()),
             },
             src_ip: self.local_ip,
         })
@@ -1070,7 +1072,7 @@ impl Connection {
         // sent once, immediately after migration, when the CID is known to be valid. Even
         // if a post-migration packet caused the CID to be retired, it's fair to pretend
         // this is sent first.
-        debug_assert_eq!(buf.datagram_start, 0);
+        debug_assert_eq!(buf.datagram_start_offset(), 0);
         let mut builder =
             PacketBuilder::new(now, SpaceId::Data, path_id, *prev_cid, buf, false, self)?;
         trace!("validating previous path with PATH_CHALLENGE {:08x}", token);

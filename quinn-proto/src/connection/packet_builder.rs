@@ -150,11 +150,11 @@ impl PacketBuilder {
             buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
             partial_encode.start + dst_cid.len() + 6,
         );
-        let max_size = buffer.buf_capacity - tag_len;
+        let max_size = buffer.datagram_max_offset() - tag_len;
         debug_assert!(max_size >= min_size);
 
         Some(Self {
-            datagram_start: buffer.datagram_start,
+            datagram_start: buffer.datagram_start_offset(),
             space: space_id,
             path: path_id,
             partial_encode,
