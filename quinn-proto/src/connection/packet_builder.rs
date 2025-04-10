@@ -1,4 +1,4 @@
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use rand::Rng;
 use tracing::{trace, trace_span};
 
@@ -121,9 +121,9 @@ impl PacketBuilder {
                 version,
             }),
         };
-        let partial_encode = header.encode(buffer.buf);
+        let partial_encode = header.encode(buffer);
         if conn.peer_params.grease_quic_bit && conn.rng.random() {
-            buffer.buf[partial_encode.start] ^= FIXED_BIT;
+            buffer.as_mut_slice()[partial_encode.start] ^= FIXED_BIT;
         }
 
         let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
@@ -186,7 +186,7 @@ impl PacketBuilder {
         conn: &mut Connection,
         path_id: PathId,
         sent: Option<SentFrames>,
-        buffer: &mut Vec<u8>,
+        buffer: &mut TransmitBuf<'_>,
     ) {
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
@@ -235,11 +235,15 @@ impl PacketBuilder {
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
-    pub(super) fn finish(self, conn: &mut Connection, buffer: &mut Vec<u8>) -> (usize, bool) {
+    pub(super) fn finish(
+        self,
+        conn: &mut Connection,
+        buffer: &mut TransmitBuf<'_>,
+    ) -> (usize, bool) {
         let pad = buffer.len() < self.min_size;
         if pad {
             trace!("PADDING * {}", self.min_size - buffer.len());
-            buffer.resize(self.min_size, 0);
+            buffer.put_bytes(0, self.min_size - buffer.len());
         }
 
         let space = &conn.spaces[self.space];
@@ -258,9 +262,9 @@ impl PacketBuilder {
             "Mismatching crypto tag len"
         );
 
-        buffer.resize(buffer.len() + packet_crypto.tag_len(), 0);
+        buffer.put_bytes(0, packet_crypto.tag_len());
         let encode_start = self.partial_encode.start;
-        let packet_buf = &mut buffer[encode_start..];
+        let packet_buf = &mut buffer.as_mut_slice()[encode_start..];
         // for packet protection, PathId(0) and no path are equivalent.
         self.partial_encode.finish(
             packet_buf,
