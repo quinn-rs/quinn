@@ -2,12 +2,12 @@ use bytes::Bytes;
 use rand::Rng;
 use tracing::{trace, trace_span};
 
-use super::{spaces::SentPacket, Connection, PathId, SentFrames};
+use super::{Connection, PathId, SentFrames, spaces::SentPacket};
 use crate::{
+    ConnectionId, Instant, TransportError, TransportErrorCode,
     connection::ConnectionSide,
     frame::{self, Close},
-    packet::{Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId, FIXED_BIT},
-    ConnectionId, Instant, TransportError, TransportErrorCode,
+    packet::{FIXED_BIT, Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId},
 };
 
 pub(super) struct PacketBuilder {
@@ -49,7 +49,7 @@ impl PacketBuilder {
         let sent_with_keys = conn.spaces[space_id].sent_with_keys();
         if space_id == SpaceId::Data {
             if sent_with_keys >= conn.key_phase_size {
-                conn.initiate_key_update();
+                conn.force_key_update();
             }
         } else {
             let confidentiality_limit = conn.spaces[space_id]
@@ -94,7 +94,7 @@ impl PacketBuilder {
                 spin: if conn.spin_enabled {
                     conn.spin
                 } else {
-                    conn.rng.gen()
+                    conn.rng.random()
                 },
                 key_phase: conn.key_phase,
             },
@@ -124,7 +124,7 @@ impl PacketBuilder {
             }),
         };
         let partial_encode = header.encode(buffer);
-        if conn.peer_params.grease_quic_bit && conn.rng.gen() {
+        if conn.peer_params.grease_quic_bit && conn.rng.random() {
             buffer[partial_encode.start] ^= FIXED_BIT;
         }
 

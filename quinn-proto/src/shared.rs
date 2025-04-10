@@ -2,9 +2,8 @@ use std::{fmt, net::SocketAddr};
 
 use bytes::{Buf, BufMut, BytesMut};
 
-use crate::{
-    coding::BufExt, packet::PartialDecode, Duration, Instant, PathId, ResetToken, MAX_CID_SIZE,
-};
+use crate::PathId;
+use crate::{Duration, Instant, MAX_CID_SIZE, ResetToken, coding::BufExt, packet::PartialDecode};
 
 /// Events sent from an Endpoint to a Connection
 #[derive(Debug)]
@@ -151,18 +150,18 @@ impl fmt::Display for ConnectionId {
 #[repr(u8)]
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub enum EcnCodepoint {
-    #[doc(hidden)]
+    /// The ECT(0) codepoint, indicating that an endpoint is ECN-capable
     Ect0 = 0b10,
-    #[doc(hidden)]
+    /// The ECT(1) codepoint, indicating that an endpoint is ECN-capable
     Ect1 = 0b01,
-    #[doc(hidden)]
+    /// The CE codepoint, signalling that congestion was experienced
     Ce = 0b11,
 }
 
 impl EcnCodepoint {
     /// Create new object from the given bits
     pub fn from_bits(x: u8) -> Option<Self> {
-        use self::EcnCodepoint::*;
+        use EcnCodepoint::*;
         Some(match x & 0b11 {
             0b10 => Ect0,
             0b01 => Ect1,

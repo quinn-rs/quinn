@@ -9,18 +9,21 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use frame::StreamMetaVec;
-use rand::{rngs::StdRng, Rng, SeedableRng};
+use rand::{Rng, SeedableRng, rngs::StdRng};
 use rustc_hash::FxHashMap;
 use thiserror::Error;
 use tracing::{debug, error, trace, trace_span, warn};
 
 use crate::{
+    Dir, Duration, EndpointConfig, Frame, INITIAL_MTU, Instant, MAX_CID_SIZE, MAX_STREAM_COUNT,
+    MIN_INITIAL_SIZE, Side, StreamId, TIMER_GRANULARITY, TokenStore, Transmit, TransportError,
+    TransportErrorCode, VarInt,
     cid_generator::ConnectionIdGenerator,
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
     crypto::{self, KeyPair, Keys, PacketKey},
-    frame::{self, Close, Datagram, FrameStruct, ObservedAddr},
+    frame::{self, Close, Datagram, FrameStruct, NewToken, ObservedAddr},
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -30,11 +33,8 @@ use crate::{
         ConnectionEvent, ConnectionEventInner, ConnectionId, DatagramConnectionEvent, EcnCodepoint,
         EndpointEvent, EndpointEventInner,
     },
-    token::ResetToken,
+    token::{ResetToken, Token, TokenPayload},
     transport_parameters::TransportParameters,
-    Dir, Duration, EndpointConfig, Frame, Instant, Side, StreamId, Transmit, TransportError,
-    TransportErrorCode, VarInt, INITIAL_MTU, MAX_CID_SIZE, MAX_STREAM_COUNT, MIN_INITIAL_SIZE,
-    TIMER_GRANULARITY,
 };
 
 mod ack_frequency;
@@ -293,7 +293,7 @@ impl Connection {
             ),
         )]);
 
-        let path = PathData::new(remote, allow_mtud, None, now, path_validated, &config);
+        let path = PathData::new(remote, allow_mtud, None, now, &config);
         let mut this = Self {
             endpoint_config,
             crypto,
@@ -320,7 +320,7 @@ impl Connection {
             // simultaneous key update by both is just like a regular key update with a really fast
             // response. Inspired by quic-go's similar behavior of performing the first key update
             // at the 100th short-header packet.
-            key_phase_size: rng.gen_range(10..1000),
+            key_phase_size: rng.random_range(10..1000),
             peer_params: TransportParameters::default(),
             orig_rem_cid: rem_cid,
             initial_dst_cid: init_cid,
@@ -328,7 +328,7 @@ impl Connection {
             lost_packets: 0,
             events: VecDeque::new(),
             endpoint_events: VecDeque::new(),
-            spin_enabled: config.allow_spin && rng.gen_ratio(7, 8),
+            spin_enabled: config.allow_spin && rng.random_ratio(7, 8),
             spin: false,
             spaces: [initial_space, handshake_space, data_space],
             highest_space: SpaceId::Initial,
@@ -371,6 +371,9 @@ impl Connection {
             stats: ConnectionStats::default(),
             version,
         };
+        if path_validated {
+            this.on_path_validated(PathId(0));
+        }
         if side.is_client() {
             // Kick off the connection
             this.write_crypto();
@@ -486,7 +489,7 @@ impl Connection {
         assert!(max_datagrams != 0);
         let max_datagrams = match self.config.enable_segmentation_offload {
             false => 1,
-            true => max_datagrams.min(MAX_TRANSMIT_SEGMENTS),
+            true => max_datagrams,
         };
 
         // TODO(flub): We only have PathId(0) for now.  For multipath we need to figure
@@ -615,7 +618,7 @@ impl Connection {
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
-                if buf_capacity >= segment_size * max_datagrams {
+                if num_datagrams >= max_datagrams {
                     // No more datagrams allowed
                     break;
                 }
@@ -628,7 +631,7 @@ impl Connection {
                 // (see https://github.com/quinn-rs/quinn/issues/1082)
                 if self
                     .path_data(path_id)
-                    .anti_amplification_blocked(segment_size as u64 * num_datagrams + 1)
+                    .anti_amplification_blocked(segment_size as u64 * (num_datagrams as u64) + 1)
                 {
                     trace!("blocked by anti-amplification");
                     break;
@@ -750,7 +753,7 @@ impl Connection {
                             // Clamp the datagram to at most the minimum MTU to ensure that loss probes
                             // can get through and enable recovery even if the path MTU has shrank
                             // unexpectedly.
-                            usize::from(INITIAL_MTU)
+                            std::cmp::min(segment_size, usize::from(INITIAL_MTU))
                         }
                     };
                 buf_capacity += next_datagram_size_limit;
@@ -901,7 +904,7 @@ impl Connection {
             // validation can occur while the link is saturated.
             if space_id == SpaceId::Data && num_datagrams == 1 {
                 let remote = self.path_data(path_id).remote;
-                if let Some((token, remote)) = self.path_responses.pop_off_path(&remote) {
+                if let Some((token, remote)) = self.path_responses.pop_off_path(remote) {
                     // `unwrap` guaranteed to succeed because `builder_storage` was populated just
                     // above.
                     let mut builder = builder_storage.take().unwrap();
@@ -1042,7 +1045,7 @@ impl Connection {
         trace!("sending {} bytes in {} datagrams", buf.len(), num_datagrams);
         self.path_data_mut(path_id).inc_total_sent(buf.len() as u64);
 
-        self.stats.udp_tx.on_sent(num_datagrams, buf.len());
+        self.stats.udp_tx.on_sent(num_datagrams as u64, buf.len());
 
         Some(Transmit {
             destination: self.path_data(path_id).remote,
@@ -1148,7 +1151,7 @@ impl Connection {
     /// (including application `Event`s, `EndpointEvent`s and outgoing datagrams) that should be
     /// extracted through the relevant methods.
     pub fn handle_event(&mut self, event: ConnectionEvent) {
-        use self::ConnectionEventInner::*;
+        use ConnectionEventInner::*;
         match event.0 {
             Datagram(DatagramConnectionEvent {
                 now,
@@ -1360,9 +1363,18 @@ impl Connection {
             .for_each(|s| s.ping_pending = true);
     }
 
-    #[doc(hidden)]
-    pub fn initiate_key_update(&mut self) {
+    /// Update traffic keys spontaneously
+    ///
+    /// This can be useful for testing key updates, as they otherwise only happen infrequently.
+    pub fn force_key_update(&mut self) {
         self.update_keys(None, false);
+    }
+
+    // Compatibility wrapper for quinn < 0.11.7. Remove for 0.12.
+    #[doc(hidden)]
+    #[deprecated]
+    pub fn initiate_key_update(&mut self) {
+        self.force_key_update();
     }
 
     /// Get a session reference
@@ -1508,8 +1520,8 @@ impl Connection {
     /// by both peers.
     pub fn is_multipath_enabled(&self) -> bool {
         !self.is_handshaking()
-            && self.handshake_cid.len() > 0
-            && self.rem_handshake_cid.len() > 0
+            && !self.handshake_cid.is_empty()
+            && !self.rem_handshake_cid.is_empty()
             && self.config.initial_max_path_id.is_some()
             && self.peer_params.initial_max_path_id.is_some()
     }
@@ -1869,8 +1881,7 @@ impl Connection {
             self.stats.path.lost_bytes += size_of_lost_packets;
             trace!(
                 "packets lost: {:?}, bytes lost: {}",
-                lost_packets,
-                size_of_lost_packets
+                lost_packets, size_of_lost_packets
             );
 
             for &packet in &lost_packets {
@@ -1919,7 +1930,7 @@ impl Connection {
                 .for_path(path_id)
                 .take(packet)
                 .unwrap(); // safe: lost_mtu_probe is omitted from lost_packets, and
-                           // therefore must not have been removed yet
+            // therefore must not have been removed yet
             self.remove_in_flight(path_id, packet, &info);
             self.path_data_mut(path_id).mtud.on_probe_lost();
             self.stats.path.lost_plpmtud_probes += 1;
@@ -1997,7 +2008,6 @@ impl Connection {
         result
     }
 
-    #[allow(clippy::suspicious_operation_groupings)]
     fn peer_completed_address_validation(&mut self, path: PathId) -> bool {
         // TODO(flub): This logic needs updating for multipath
         if self.side.is_server() || self.state.is_closed() {
@@ -2064,7 +2074,7 @@ impl Connection {
     /// Probe Timeout
     fn pto(&self, space: SpaceId) -> Duration {
         let max_ack_delay = match space {
-            SpaceId::Initial | SpaceId::Handshake => Duration::new(0, 0),
+            SpaceId::Initial | SpaceId::Handshake => Duration::ZERO,
             SpaceId::Data => self.ack_frequency.max_ack_delay_for_pto(),
         };
         // TODO(@divma): fix
@@ -2689,7 +2699,7 @@ impl Connection {
                 };
 
                 self.discard_space(now, SpaceId::Initial); // Make sure we clean up after
-                                                           // any retransmitted Initials
+                // any retransmitted Initials
                 self.spaces[SpaceId::Initial] = {
                     let mut space = PacketSpace::new(now, SpaceId::Initial, &mut self.rng);
                     space.crypto = Some(self.crypto.initial_keys(&rem_cid, self.side.side()));
@@ -2738,7 +2748,7 @@ impl Connection {
                     );
                     return Ok(());
                 }
-                self.path_data_mut(path_id).validated = true;
+                self.on_path_validated(path_id);
 
                 self.process_early_payload(now, path_id, packet)?;
                 if self.state.is_closed() {
@@ -3192,15 +3202,20 @@ impl Connection {
                         self.update_rem_cid(PathId(0));
                     }
                 }
-                Frame::NewToken { token } => {
-                    if self.side.is_server() {
+                Frame::NewToken(NewToken { token }) => {
+                    let ConnectionSide::Client {
+                        token_store,
+                        server_name,
+                        ..
+                    } = &self.side
+                    else {
                         return Err(TransportError::PROTOCOL_VIOLATION("client sent NEW_TOKEN"));
-                    }
+                    };
                     if token.is_empty() {
                         return Err(TransportError::FRAME_ENCODING_ERROR("empty token"));
                     }
                     trace!("got new token");
-                    // TODO: Cache, or perhaps forward to user?
+                    token_store.insert(server_name, token);
                 }
                 Frame::Datagram(datagram) => {
                     if self
@@ -3365,7 +3380,6 @@ impl Connection {
                 self.allow_mtud,
                 Some(peer_max_udp_payload_size),
                 now,
-                false,
                 &self.config,
             )
         };
@@ -3375,13 +3389,13 @@ impl Connection {
                 self.events.push_back(Event::ObservedAddr(updated));
             }
         }
-        new_path.challenge = Some(self.rng.gen());
+        new_path.challenge = Some(self.rng.random());
         new_path.challenge_pending = true;
 
         let mut prev = mem::replace(path, new_path);
         // Don't clobber the original path if the previous one hasn't been validated yet
         if prev.challenge.is_none() {
-            prev.challenge = Some(self.rng.gen());
+            prev.challenge = Some(self.rng.random());
             prev.challenge_pending = true;
             // We haven't updated the remote CID yet, this captures the remote CID we were using on
             // the previous path.
@@ -3480,6 +3494,7 @@ impl Connection {
     ) -> SentFrames {
         let mut sent = SentFrames::default();
         let is_multipath_enabled = self.is_multipath_enabled();
+        let path_data_remote = self.path_data(path_id).remote;
         let space = &mut self.spaces[space_id];
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         space.pending_acks.maybe_ack_non_eliciting();
@@ -3636,7 +3651,7 @@ impl Connection {
         // PATH_RESPONSE
         if buf.len() + 9 < max_size && space_id == SpaceId::Data {
             let path = &mut self.paths.get_mut(&path_id).expect("known path").path;
-            if let Some(token) = self.path_responses.pop_on_path(&path.remote) {
+            if let Some(token) = self.path_responses.pop_on_path(path.remote) {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
                 trace!("PATH_RESPONSE {:08x}", token);
@@ -3797,6 +3812,45 @@ impl Connection {
         if self.datagrams.send_blocked && sent_datagrams {
             self.events.push_back(Event::DatagramsUnblocked);
             self.datagrams.send_blocked = false;
+        }
+
+        // NEW_TOKEN
+        while let Some(remote_addr) = space.pending.new_tokens.pop() {
+            debug_assert_eq!(space_id, SpaceId::Data);
+            let ConnectionSide::Server { server_config } = &self.side else {
+                panic!("NEW_TOKEN frames should not be enqueued by clients");
+            };
+
+            if remote_addr != path_data_remote {
+                // NEW_TOKEN frames contain tokens bound to a client's IP address, and are only
+                // useful if used from the same IP address.  Thus, we abandon enqueued NEW_TOKEN
+                // frames upon an path change. Instead, when the new path becomes validated,
+                // NEW_TOKEN frames may be enqueued for the new path instead.
+                continue;
+            }
+
+            let token = Token::new(
+                TokenPayload::Validation {
+                    ip: remote_addr.ip(),
+                    issued: server_config.time_source.now(),
+                },
+                &mut self.rng,
+            );
+            let new_token = NewToken {
+                token: token.encode(&*server_config.token_key).into(),
+            };
+
+            if buf.len() + new_token.size() >= max_size {
+                space.pending.new_tokens.push(remote_addr);
+                break;
+            }
+
+            new_token.encode(buf);
+            sent.retransmits
+                .get_or_create()
+                .new_tokens
+                .push(remote_addr);
+            self.stats.frame_tx.new_token += 1;
         }
 
         // STREAM
@@ -4061,12 +4115,12 @@ impl Connection {
             .saturating_sub(path.in_flight.bytes)
     }
 
-    /// Whether no timers but keepalive, idle, rtt and pushnewcid are running
+    /// Whether no timers but keepalive, idle, rtt, pushnewcid, and key discard are running
     #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
         Timer::VALUES
             .iter()
-            .filter(|&&t| t != Timer::KeepAlive && t != Timer::PushNewCid)
+            .filter(|&&t| !matches!(t, Timer::KeepAlive | Timer::PushNewCid | Timer::KeyDiscard))
             // TODO(@divma): will need fixing
             .filter_map(|&t| Some((t, self.timers.get(t)?)))
             .min_by_key(|&(_, time)| time)
@@ -4225,6 +4279,20 @@ impl Connection {
         // but that would needlessly prevent sending datagrams during 0-RTT.
         key.map_or(16, |x| x.tag_len())
     }
+
+    /// Mark the path as validated, and enqueue NEW_TOKEN frames to be sent as appropriate
+    fn on_path_validated(&mut self, path_id: PathId) {
+        self.path_data_mut(path_id).validated = true;
+        let ConnectionSide::Server { server_config } = &self.side else {
+            return;
+        };
+        let remote_addr = self.path_data(path_id).remote;
+        let new_tokens = &mut self.spaces[SpaceId::Data as usize].pending.new_tokens;
+        new_tokens.clear();
+        for _ in 0..server_config.validation_token.sent {
+            new_tokens.push(remote_addr);
+        }
+    }
 }
 
 impl fmt::Debug for Connection {
@@ -4240,6 +4308,8 @@ enum ConnectionSide {
     Client {
         /// Sent in every outgoing Initial packet. Always empty after Initial keys are discarded
         token: Bytes,
+        token_store: Arc<dyn TokenStore>,
+        server_name: String,
     },
     Server {
         server_config: Arc<ServerConfig>,
@@ -4273,8 +4343,13 @@ impl ConnectionSide {
 impl From<SideArgs> for ConnectionSide {
     fn from(side: SideArgs) -> Self {
         match side {
-            SideArgs::Client => Self::Client {
-                token: Bytes::new(),
+            SideArgs::Client {
+                token_store,
+                server_name,
+            } => Self::Client {
+                token: token_store.take(&server_name).unwrap_or_default(),
+                token_store,
+                server_name,
             },
             SideArgs::Server {
                 server_config,
@@ -4287,7 +4362,10 @@ impl From<SideArgs> for ConnectionSide {
 
 /// Parameters to `Connection::new` specific to it being client-side or server-side
 pub(crate) enum SideArgs {
-    Client,
+    Client {
+        token_store: Arc<dyn TokenStore>,
+        server_name: String,
+    },
     Server {
         server_config: Arc<ServerConfig>,
         pref_addr_cid: Option<ConnectionId>,
@@ -4365,7 +4443,7 @@ impl From<Close> for ConnectionError {
 // For compatibility with API consumers
 impl From<ConnectionError> for io::Error {
     fn from(x: ConnectionError) -> Self {
-        use self::ConnectionError::*;
+        use ConnectionError::*;
         let kind = match x {
             TimedOut => io::ErrorKind::TimedOut,
             Reset => io::ErrorKind::ConnectionReset,
@@ -4465,11 +4543,7 @@ pub enum Event {
 }
 
 fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
-    if x > y {
-        x - y
-    } else {
-        Duration::new(0, 0)
-    }
+    if x > y { x - y } else { Duration::ZERO }
 }
 
 fn get_max_ack_delay(params: &TransportParameters) -> Duration {
@@ -4495,13 +4569,6 @@ const MIN_PACKET_SPACE: usize = MAX_HANDSHAKE_OR_0RTT_HEADER_SIZE + 32;
 // scid len + scid + length + pn
 const MAX_HANDSHAKE_OR_0RTT_HEADER_SIZE: usize =
     1 + 4 + 1 + MAX_CID_SIZE + 1 + MAX_CID_SIZE + VarInt::from_u32(u16::MAX as u32).size() + 4;
-
-/// The maximum amount of datagrams that are sent in a single transmit
-///
-/// This can be lower than the maximum platform capabilities, to avoid excessive
-/// memory allocations when calling `poll_transmit()`. Benchmarks have shown
-/// that numbers around 10 are a good compromise.
-const MAX_TRANSMIT_SEGMENTS: usize = 10;
 
 /// Perform key updates this many packets before the AEAD confidentiality limit.
 ///

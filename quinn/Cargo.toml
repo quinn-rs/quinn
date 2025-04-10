@@ -11,7 +11,10 @@ workspace = ".."
 edition.workspace = true
 rust-version.workspace = true
 
+
 [features]
+# NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
+# comment in that file for more information.
 default = ["log", "platform-verifier", "runtime-tokio", "rustls-ring"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 aws-lc-rs = ["proto/aws-lc-rs"]
@@ -27,7 +30,8 @@ rustls-aws-lc-rs = ["dep:rustls", "aws-lc-rs", "proto/rustls-aws-lc-rs", "proto/
 rustls-aws-lc-rs-fips = ["dep:rustls", "aws-lc-rs-fips", "proto/rustls-aws-lc-rs-fips", "proto/aws-lc-rs-fips"]
 # Enable rustls with the `ring` crypto provider
 rustls-ring = ["dep:rustls", "ring", "proto/rustls-ring", "proto/ring"]
-# Enables `Endpoint::client` and `Endpoint::server` conveniences
+# Enable the `ring` crypto provider.
+# Outside wasm*-unknown-unknown targets, this enables `Endpoint::client` and `Endpoint::server` conveniences.
 ring = ["proto/ring"]
 runtime-tokio = ["tokio/time", "tokio/rt", "tokio/net"]
 runtime-async-std = ["async-io", "async-std"]
@@ -49,7 +53,6 @@ pin-project-lite = { workspace = true }
 proto = { package = "iroh-quinn-proto", path = "../quinn-proto", version = "0.13.0", default-features = false }
 rustls = { workspace = true, optional = true }
 smol = { workspace = true, optional = true }
-socket2 = { workspace = true }
 thiserror = { workspace = true }
 tracing =  { workspace = true }
 tokio = { workspace = true }
@@ -59,6 +62,12 @@ udp = { package = "iroh-quinn-udp", path = "../quinn-udp", version = "0.5", defa
 async-global-executor = { workspace = true, optional = true }
 async-fs = { workspace = true, optional = true }
 async-executor = { workspace = true, optional = true }
+
+[target.'cfg(not(all(target_family = "wasm", target_os = "unknown")))'.dependencies]
+socket2 = { workspace = true }
+
+[target.'cfg(all(target_family = "wasm", target_os = "unknown"))'.dependencies]
+web-time = { workspace = true }
 
 [dev-dependencies]
 anyhow = { workspace = true }
@@ -74,6 +83,9 @@ tracing-subscriber = { workspace = true }
 tracing-futures = { workspace = true }
 url = { workspace = true }
 tokio-stream = "0.1.15"
+
+[build-dependencies]
+cfg_aliases = { workspace = true }
 
 [[example]]
 name = "server"

@@ -2,7 +2,7 @@ use std::{collections::VecDeque, ops::Range};
 
 use bytes::{Buf, Bytes};
 
-use crate::{range_set::RangeSet, VarInt};
+use crate::{VarInt, range_set::RangeSet};
 
 /// Buffer of outgoing retransmittable stream data
 #[derive(Default, Debug)]
@@ -339,7 +339,7 @@ mod tests {
         buf.ack(4..7);
         assert_eq!(aggregate_unacked(&buf), &MSG[9..]);
         buf.ack(0..MSG_LEN);
-        assert_eq!(aggregate_unacked(&buf), &[]);
+        assert_eq!(aggregate_unacked(&buf), &[] as &[u8]);
     }
 
     #[test]

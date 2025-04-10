@@ -8,7 +8,7 @@ use super::state::get_or_insert_recv;
 use super::{ClosedStream, Retransmits, ShouldTransmit, StreamId, StreamsState};
 use crate::connection::assembler::{Assembler, Chunk, IllegalOrderedRead};
 use crate::connection::streams::state::StreamRecv;
-use crate::{frame, TransportError, VarInt};
+use crate::{TransportError, VarInt, frame};
 
 #[derive(Debug, Default)]
 pub(super) struct Recv {
@@ -176,7 +176,7 @@ impl Recv {
             if offset != final_offset.into_inner() {
                 return Err(TransportError::FINAL_SIZE_ERROR("inconsistent value"));
             }
-        } else if self.end > final_offset.into() {
+        } else if self.end > u64::from(final_offset) {
             return Err(TransportError::FINAL_SIZE_ERROR(
                 "lower than high water mark",
             ));

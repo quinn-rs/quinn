@@ -1,7 +1,7 @@
 use bytes::Bytes;
 use thiserror::Error;
 
-use crate::{connection::send_buffer::SendBuffer, frame, VarInt};
+use crate::{VarInt, connection::send_buffer::SendBuffer, frame};
 
 #[derive(Debug)]
 pub(super) struct Send {
@@ -32,7 +32,7 @@ impl Send {
 
     /// Whether the stream has been reset
     pub(super) fn is_reset(&self) -> bool {
-        matches!(self.state, SendState::ResetSent { .. })
+        matches!(self.state, SendState::ResetSent)
     }
 
     pub(super) fn finish(&mut self) -> Result<(), FinishError> {

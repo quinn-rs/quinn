@@ -11,10 +11,9 @@ use tokio::sync::Semaphore;
 use tracing::{info, trace};
 
 use bench::{
-    configure_tracing_subscriber, connect_client, drain_stream, rt, send_data_on_stream,
+    Opt, configure_tracing_subscriber, connect_client, drain_stream, rt, send_data_on_stream,
     server_endpoint,
     stats::{Stats, TransferResult},
-    Opt,
 };
 
 fn main() {

@@ -2,7 +2,7 @@ use std::{
     convert::TryInto,
     mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    sync::Arc,
+    sync::{Arc, Mutex},
 };
 
 use assert_matches::assert_matches;
@@ -18,22 +18,24 @@ use rustls::crypto::aws_lc_rs::default_provider;
 #[cfg(feature = "rustls-ring")]
 use rustls::crypto::ring::default_provider;
 use rustls::{
+    AlertDescription, RootCertStore,
     pki_types::{CertificateDer, PrivateKeyDer, PrivatePkcs8KeyDer},
     server::WebPkiClientVerifier,
-    AlertDescription, RootCertStore,
 };
 use tracing::info;
 
 use super::*;
 use crate::{
+    Duration, Instant,
     cid_generator::{ConnectionIdGenerator, RandomConnectionIdGenerator},
     crypto::rustls::QuicServerConfig,
     frame::FrameStruct,
     transport_parameters::TransportParameters,
-    Duration, Instant,
 };
 mod util;
 use util::*;
+
+mod token;
 
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as test;
@@ -183,28 +185,10 @@ fn draft_version_compat() {
 }
 
 #[test]
-fn stateless_retry() {
-    let _guard = subscribe();
-    let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
-    let (client_ch, _server_ch) = pair.connect();
-    pair.client
-        .connections
-        .get_mut(&client_ch)
-        .unwrap()
-        .close(pair.time, VarInt(42), Bytes::new());
-    pair.drive();
-    assert_eq!(pair.client.known_connections(), 0);
-    assert_eq!(pair.client.known_cids(), 0);
-    assert_eq!(pair.server.known_connections(), 0);
-    assert_eq!(pair.server.known_cids(), 0);
-}
-
-#[test]
 fn server_stateless_reset() {
     let _guard = subscribe();
     let mut key_material = vec![0; 64];
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     rng.fill_bytes(&mut key_material);
     let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &key_material);
     rng.fill_bytes(&mut key_material);
@@ -234,7 +218,7 @@ fn server_stateless_reset() {
 fn client_stateless_reset() {
     let _guard = subscribe();
     let mut key_material = vec![0; 64];
-    let mut rng = rand::thread_rng();
+    let mut rng = rand::rng();
     rng.fill_bytes(&mut key_material);
     let reset_key = hmac::Key::new(hmac::HMAC_SHA256, &key_material);
     rng.fill_bytes(&mut key_material);
@@ -537,7 +521,6 @@ fn congestion() {
     pair.client_send(client_ch, s).write(&[42; 1024]).unwrap();
 }
 
-#[allow(clippy::field_reassign_with_default)] // https://github.com/rust-lang/rust-clippy/issues/6527
 #[test]
 fn high_latency_handshake() {
     let _guard = subscribe();
@@ -554,7 +537,7 @@ fn high_latency_handshake() {
 fn zero_rtt_happypath() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
+    pair.server.handle_incoming = Box::new(validate_incoming);
     let config = client_config();
 
     // Establish normal connection
@@ -723,7 +706,7 @@ fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: 
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
     info!("resuming session");
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Wait;
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Wait);
     let client_ch = pair.begin_connect(config);
     assert!(pair.client_conn_mut(client_ch).has_0rtt());
     let s = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
@@ -1012,7 +995,7 @@ fn key_update_simple() {
     let _ = chunks.finalize();
 
     info!("initiating key update");
-    pair.client_conn_mut(client_ch).initiate_key_update();
+    pair.client_conn_mut(client_ch).force_key_update();
 
     const MSG2: &[u8] = b"hello2";
     pair.client_send(client_ch, s).write(MSG2).unwrap();
@@ -1052,7 +1035,7 @@ fn key_update_reordered() {
     assert!(!pair.client.outbound.is_empty());
     pair.client.delay_outbound();
 
-    pair.client_conn_mut(client_ch).initiate_key_update();
+    pair.client_conn_mut(client_ch).force_key_update();
     info!("updated keys");
 
     const MSG2: &[u8] = b"two";
@@ -1094,7 +1077,7 @@ fn initial_retransmit() {
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
 }
 
@@ -1262,7 +1245,7 @@ fn server_hs_retransmit() {
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
 }
 
@@ -1575,8 +1558,8 @@ fn cid_rotation() {
     let mut stop = pair.time;
     let end = pair.time + 5 * CID_TIMEOUT;
 
-    use crate::cid_queue::CidQueue;
     use crate::LOC_CID_COUNT;
+    use crate::cid_queue::CidQueue;
     let mut active_cid_num = CidQueue::LEN as u64 + 1;
     active_cid_num = active_cid_num.min(LOC_CID_COUNT);
     let mut left_bound = 0;
@@ -1623,8 +1606,8 @@ fn cid_retirement() {
     assert!(!pair.server_conn_mut(server_ch).is_closed());
     assert_matches!(pair.client_conn_mut(client_ch).active_rem_cid_seq(), 1);
 
-    use crate::cid_queue::CidQueue;
     use crate::LOC_CID_COUNT;
+    use crate::cid_queue::CidQueue;
     let mut active_cid_num = CidQueue::LEN as u64;
     active_cid_num = active_cid_num.min(LOC_CID_COUNT);
 
@@ -1636,9 +1619,10 @@ fn cid_retirement() {
     pair.drive();
     assert!(!pair.client_conn_mut(client_ch).is_closed());
     assert!(!pair.server_conn_mut(server_ch).is_closed());
-    assert_matches!(
+
+    assert_eq!(
         pair.client_conn_mut(client_ch).active_rem_cid_seq(),
-        _next_retire_prior_to
+        next_retire_prior_to,
     );
 }
 
@@ -1796,6 +1780,100 @@ fn congested_tail_loss() {
     pair.client_send(client_ch, s).write(&[42; 1024]).unwrap();
 }
 
+// Send a tail-loss probe when GSO segment_size is less than INITIAL_MTU
+#[test]
+fn tail_loss_small_segment_size() {
+    let _guard = subscribe();
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect();
+
+    // No datagrams frames received in the handshake.
+    let server_stats = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(server_stats.frame_rx.datagram, 0);
+
+    const DGRAM_LEN: usize = 1000; // Below INITIAL_MTU after packet overhead.
+    const DGRAM_NUM: u64 = 5; // Enough to build a GSO batch.
+
+    info!("Sending an ack-eliciting datagram");
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    // Drop these packets on the server side.
+    assert!(!pair.server.inbound.is_empty());
+    pair.server.inbound.clear();
+
+    // Doing one step makes the client advance time to the PTO fire time.
+    info!("stepping forward to PTO");
+    pair.step();
+
+    // Still no datagrams frames received by the server.
+    let server_stats = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(server_stats.frame_rx.datagram, 0);
+
+    // Now we can send another batch of datagrams, so the PTO can send them instead of
+    // sending a ping.  These are small enough that the segment_size is less than the
+    // INITIAL_MTU.
+    info!("Sending datagram batch");
+    for _ in 0..DGRAM_NUM {
+        pair.client_datagrams(client_ch)
+            .send(vec![0; DGRAM_LEN].into(), false)
+            .unwrap();
+    }
+
+    // If this succeeds the datagrams are received by the server and the client did not
+    // crash.
+    pair.drive();
+
+    // Finally the server should have received some datagrams.
+    let server_stats = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(server_stats.frame_rx.datagram, DGRAM_NUM);
+}
+
+// Respect max_datagrams when TLP happens
+#[test]
+fn tail_loss_respect_max_datagrams() {
+    let _guard = subscribe();
+    let client_config = {
+        let mut c_config = client_config();
+        let mut t_config = TransportConfig::default();
+        //Disabling GSO, so only a single segment should be sent per iops
+        t_config.enable_segmentation_offload(false);
+        c_config.transport_config(t_config.into());
+        c_config
+    };
+    let mut pair = Pair::default();
+    let (client_ch, _) = pair.connect_with(client_config);
+
+    const DGRAM_LEN: usize = 1000; // High enough so GSO batch could be built
+    const DGRAM_NUM: u64 = 5; // Enough to build a GSO batch.
+
+    info!("Sending an ack-eliciting datagram");
+    pair.client_conn_mut(client_ch).ping();
+    pair.drive_client();
+
+    // Drop these packets on the server side.
+    assert!(!pair.server.inbound.is_empty());
+    pair.server.inbound.clear();
+
+    // Doing one step makes the client advance time to the PTO fire time.
+    info!("stepping forward to PTO");
+    pair.step();
+
+    // start sending datagram batches but the first should be a TLP
+    info!("Sending datagram batch");
+    for _ in 0..DGRAM_NUM {
+        pair.client_datagrams(client_ch)
+            .send(vec![0; DGRAM_LEN].into(), false)
+            .unwrap();
+    }
+
+    pair.drive();
+
+    // Finally checking the number of sent udp datagrams match the number of iops
+    let client_stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(client_stats.udp_tx.ios, client_stats.udp_tx.datagrams);
+}
+
 #[test]
 fn datagram_send_recv() {
     let _guard = subscribe();
@@ -1906,7 +1984,7 @@ fn large_initial() {
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -1914,7 +1992,7 @@ fn large_initial() {
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
 }
 
@@ -2098,7 +2176,7 @@ fn handshake_anti_deadlock_probe() {
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
 }
 
@@ -2128,7 +2206,7 @@ fn server_can_send_3_inital_packets() {
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
 }
 
@@ -2993,7 +3071,7 @@ fn pure_sender_voluntarily_acks() {
 fn reject_manually() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::RejectAll;
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Reject);
 
     // The server should now reject incoming connections.
     let client_ch = pair.begin_connect(client_config());
@@ -3013,7 +3091,20 @@ fn reject_manually() {
 fn validate_then_reject_manually() {
     let _guard = subscribe();
     let mut pair = Pair::default();
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::ValidateThenReject;
+    pair.server.handle_incoming = Box::new({
+        let mut i = 0;
+        move |incoming| {
+            if incoming.remote_address_validated() {
+                assert_eq!(i, 1);
+                i += 1;
+                IncomingConnectionBehavior::Reject
+            } else {
+                assert_eq!(i, 0);
+                i += 1;
+                IncomingConnectionBehavior::Retry
+            }
+        }
+    });
 
     // The server should now retry and reject incoming connections.
     let client_ch = pair.begin_connect(client_config());
@@ -3244,7 +3335,6 @@ fn address_discovery_zero_rtt_accepted() {
     };
     let mut pair = Pair::new(Default::default(), server);
 
-    pair.server.incoming_connection_behavior = IncomingConnectionBehavior::Validate;
     let client_cfg = ClientConfig {
         transport: Arc::new(TransportConfig {
             address_discovery_role: crate::address_discovery::Role::Both,
