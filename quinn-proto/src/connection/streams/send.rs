@@ -32,7 +32,7 @@ impl Send {
 
     /// Whether the stream has been reset
     pub(super) fn is_reset(&self) -> bool {
-        matches!(self.state, SendState::ResetSent { .. })
+        matches!(self.state, SendState::ResetSent)
     }
 
     pub(super) fn finish(&mut self) -> Result<(), FinishError> {

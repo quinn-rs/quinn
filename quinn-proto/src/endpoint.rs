@@ -418,7 +418,7 @@ impl Endpoint {
     fn new_cid(&mut self, ch: ConnectionHandle, path_id: PathId) -> ConnectionId {
         loop {
             let cid = self.local_cid_generator.generate_cid();
-            if cid.len() == 0 {
+            if cid.is_empty() {
                 // Zero-length CID; nothing to track
                 debug_assert_eq!(self.local_cid_generator.cid_len(), 0);
                 return cid;
@@ -1016,7 +1016,7 @@ struct ConnectionIndex {
 impl ConnectionIndex {
     /// Associate an incoming connection with its initial destination CID
     fn insert_initial_incoming(&mut self, dst_cid: ConnectionId, incoming_key: usize) {
-        if dst_cid.len() == 0 {
+        if dst_cid.is_empty() {
             return;
         }
         self.connection_ids_initial
@@ -1025,7 +1025,7 @@ impl ConnectionIndex {
 
     /// Remove an association with an initial destination CID
     fn remove_initial(&mut self, dst_cid: ConnectionId) {
-        if dst_cid.len() == 0 {
+        if dst_cid.is_empty() {
             return;
         }
         let removed = self.connection_ids_initial.remove(&dst_cid);
@@ -1034,7 +1034,7 @@ impl ConnectionIndex {
 
     /// Associate a connection with its initial destination CID
     fn insert_initial(&mut self, dst_cid: ConnectionId, connection: ConnectionHandle) {
-        if dst_cid.len() == 0 {
+        if dst_cid.is_empty() {
             return;
         }
         self.connection_ids_initial
@@ -1090,7 +1090,7 @@ impl ConnectionIndex {
 
     /// Find the existing connection that `datagram` should be routed to, if any
     fn get(&self, addresses: &FourTuple, datagram: &PartialDecode) -> Option<RouteDatagramTo> {
-        if datagram.dst_cid().len() != 0 {
+        if !datagram.dst_cid().is_empty() {
             if let Some(&(ch, path_id)) = self.connection_ids.get(datagram.dst_cid()) {
                 return Some(RouteDatagramTo::Connection(ch, path_id));
             }
@@ -1100,7 +1100,7 @@ impl ConnectionIndex {
                 return Some(ch);
             }
         }
-        if datagram.dst_cid().len() == 0 {
+        if datagram.dst_cid().is_empty() {
             if let Some(&ch) = self.incoming_connection_remotes.get(addresses) {
                 // Never multipath because QUIC-MULTIPATH 1.1 mandates the use of non-zero
                 // length CIDs.  So this is always PathId(0).

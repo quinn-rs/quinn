@@ -1077,7 +1077,7 @@ fn initial_retransmit() {
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
 }
 
@@ -1245,7 +1245,7 @@ fn server_hs_retransmit() {
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
 }
 
@@ -1984,7 +1984,7 @@ fn large_initial() {
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
@@ -1992,7 +1992,7 @@ fn large_initial() {
     );
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
 }
 
@@ -2176,7 +2176,7 @@ fn handshake_anti_deadlock_probe() {
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
 }
 
@@ -2206,7 +2206,7 @@ fn server_can_send_3_inital_packets() {
     );
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
-        Some(Event::Connected { .. })
+        Some(Event::Connected)
     );
 }
 
