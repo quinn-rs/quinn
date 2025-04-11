@@ -411,14 +411,13 @@ impl StreamsState {
 
     pub(in crate::connection) fn write_control_frames(
         &mut self,
-        buf: &mut Vec<u8>,
+        buf: &mut impl BufMut,
         pending: &mut Retransmits,
         retransmits: &mut ThinRetransmits,
         stats: &mut FrameStats,
-        max_size: usize,
     ) {
         // RESET_STREAM
-        while buf.len() + frame::ResetStream::SIZE_BOUND < max_size {
+        while buf.remaining_mut() > frame::ResetStream::SIZE_BOUND {
             let (id, error_code) = match pending.reset_stream.pop() {
                 Some(x) => x,
                 None => break,
@@ -442,7 +441,7 @@ impl StreamsState {
         }
 
         // STOP_SENDING
-        while buf.len() + frame::StopSending::SIZE_BOUND < max_size {
+        while buf.remaining_mut() > frame::StopSending::SIZE_BOUND {
             let frame = match pending.stop_sending.pop() {
                 Some(x) => x,
                 None => break,
@@ -461,7 +460,7 @@ impl StreamsState {
         }
 
         // MAX_DATA
-        if pending.max_data && buf.len() + 9 < max_size {
+        if pending.max_data && buf.remaining_mut() > 9 {
             pending.max_data = false;
 
             // `local_max_data` can grow bigger than `VarInt`.
@@ -484,7 +483,7 @@ impl StreamsState {
         }
 
         // MAX_STREAM_DATA
-        while buf.len() + 17 < max_size {
+        while buf.remaining_mut() > 17 {
             let id = match pending.max_stream_data.iter().next() {
                 Some(x) => *x,
                 None => break,
@@ -516,7 +515,7 @@ impl StreamsState {
 
         // MAX_STREAMS
         for dir in Dir::iter() {
-            if !pending.max_stream_id[dir as usize] || buf.len() + 9 >= max_size {
+            if !pending.max_stream_id[dir as usize] || buf.remaining_mut() <= 9 {
                 continue;
             }
 
@@ -541,21 +540,14 @@ impl StreamsState {
 
     pub(crate) fn write_stream_frames(
         &mut self,
-        buf: &mut Vec<u8>,
-        max_buf_size: usize,
+        buf: &mut impl BufMut,
         fair: bool,
     ) -> StreamMetaVec {
         let mut stream_frames = StreamMetaVec::new();
-        while buf.len() + frame::Stream::SIZE_BOUND < max_buf_size {
-            if max_buf_size
-                .checked_sub(buf.len() + frame::Stream::SIZE_BOUND)
-                .is_none()
-            {
-                break;
-            }
-
-            // Pop the stream of the highest priority that currently has pending data
-            // If the stream still has some pending data left after writing, it will be reinserted, otherwise not
+        while buf.remaining_mut() > frame::Stream::SIZE_BOUND {
+            // Pop the stream of the highest priority that currently has pending data. If
+            // the stream still has some pending data left after writing, it will be
+            // reinserted, otherwise not
             let Some(stream) = self.pending.pop() else {
                 break;
             };
@@ -577,7 +569,7 @@ impl StreamsState {
 
             // Now that we know the `StreamId`, we can better account for how many bytes
             // are required to encode it.
-            let max_buf_size = max_buf_size - buf.len() - 1 - VarInt::size(id.into());
+            let max_buf_size = buf.remaining_mut() - 1 - VarInt::size(id.into());
             let (offsets, encode_length) = stream.pending.poll_transmit(max_buf_size);
             let fin = offsets.end == stream.pending.offset()
                 && matches!(stream.state, SendState::DataSent { .. });
@@ -1380,7 +1372,7 @@ mod tests {
         high.write(b"high").unwrap();
 
         let mut buf = Vec::with_capacity(40);
-        let meta = server.write_stream_frames(&mut buf, 40, true);
+        let meta = server.write_stream_frames(&mut buf, true);
         assert_eq!(meta[0].id, id_high);
         assert_eq!(meta[1].id, id_mid);
         assert_eq!(meta[2].id, id_low);
@@ -1438,16 +1430,18 @@ mod tests {
         };
         high.set_priority(-1).unwrap();
 
-        let mut buf = Vec::with_capacity(1000);
-        let meta = server.write_stream_frames(&mut buf, 40, true);
+        let mut buf = Vec::with_capacity(1000).limit(40);
+        let meta = server.write_stream_frames(&mut buf, true);
         assert_eq!(meta.len(), 1);
         assert_eq!(meta[0].id, id_high);
 
         // After requeuing we should end up with 2 priorities - not 3
         assert_eq!(server.pending.len(), 2);
 
+        let mut buf = buf.into_inner();
+
         // Send the remaining data. The initial mid priority one should go first now
-        let meta = server.write_stream_frames(&mut buf, 1000, true);
+        let meta = server.write_stream_frames(&mut buf, true);
         assert_eq!(meta.len(), 2);
         assert_eq!(meta[0].id, id_mid);
         assert_eq!(meta[1].id, id_high);
@@ -1507,12 +1501,13 @@ mod tests {
 
             // loop until all the streams are written
             loop {
-                let buf_len = buf.len();
-                let meta = server.write_stream_frames(&mut buf, buf_len + 40, fair);
+                let mut chunk_buf = buf.limit(40);
+                let meta = server.write_stream_frames(&mut chunk_buf, fair);
                 if meta.is_empty() {
                     break;
                 }
                 metas.extend(meta);
+                buf = chunk_buf.into_inner();
             }
 
             assert!(!server.can_send_stream_data());
@@ -1575,11 +1570,12 @@ mod tests {
         stream_b.write(&[b'b'; 100]).unwrap();
 
         let mut metas = vec![];
-        let mut buf = Vec::with_capacity(1024);
+        let buf = Vec::with_capacity(1024);
 
         // Write the first chunk of stream_a
-        let buf_len = buf.len();
-        let meta = server.write_stream_frames(&mut buf, buf_len + 40, false);
+        let mut chunk_buf = buf.limit(40);
+        let meta = server.write_stream_frames(&mut chunk_buf, false);
+        let mut buf = chunk_buf.into_inner();
         assert!(!meta.is_empty());
         metas.extend(meta);
 
@@ -1595,8 +1591,9 @@ mod tests {
 
         // loop until all the streams are written
         loop {
-            let buf_len = buf.len();
-            let meta = server.write_stream_frames(&mut buf, buf_len + 40, false);
+            let mut chunk_buf = buf.limit(40);
+            let meta = server.write_stream_frames(&mut chunk_buf, false);
+            buf = chunk_buf.into_inner();
             if meta.is_empty() {
                 break;
             }

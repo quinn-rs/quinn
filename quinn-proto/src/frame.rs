@@ -1072,13 +1072,13 @@ impl FrameStruct for Datagram {
 }
 
 impl Datagram {
-    pub(crate) fn encode(&self, length: bool, out: &mut Vec<u8>) {
+    pub(crate) fn encode(&self, length: bool, out: &mut impl BufMut) {
         out.write(FrameType(*DATAGRAM_TYS.start() | u64::from(length))); // 1 byte
         if length {
             // Safe to unwrap because we check length sanity before queueing datagrams
             out.write(VarInt::from_u64(self.data.len() as u64).unwrap()); // <= 8 bytes
         }
-        out.extend_from_slice(&self.data);
+        out.put_slice(&self.data);
     }
 
     pub(crate) fn size(&self, length: bool) -> usize {
