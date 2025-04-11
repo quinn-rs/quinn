@@ -743,7 +743,7 @@ impl Connection {
                 if pad_datagram {
                     builder.pad_to(MIN_INITIAL_SIZE);
                 }
-                builder.finish_and_track(now, self, path_id, Some(sent_frames), &mut buf);
+                builder.finish_and_track(now, self, path_id, sent_frames, &mut buf);
                 if space_id == self.highest_space {
                     // Don't send another close packet
                     self.close = false;
@@ -772,10 +772,10 @@ impl Connection {
                         now,
                         self,
                         path_id,
-                        Some(SentFrames {
+                        SentFrames {
                             non_retransmits: true,
                             ..SentFrames::default()
-                        }),
+                        },
                         &mut buf,
                     );
                     self.stats.udp_tx.on_sent(1, buf.len());
@@ -856,7 +856,7 @@ impl Connection {
                 if coalesce && buf.datagram_max_offset() - buf_end > MIN_PACKET_SPACE + tag_len {
                     // We can append/coalesce the next packet into the current
                     // datagram. Finish the current packet without adding extra padding.
-                    builder.finish_and_track(now, self, path_id, Some(sent_frames), &mut buf);
+                    builder.finish_and_track(now, self, path_id, sent_frames, &mut buf);
                 } else {
                     // We need a new datagram for the next packet.  Finish the current
                     // packet with padding.
@@ -890,13 +890,7 @@ impl Connection {
                                 "GSO truncated by demand for {} padding bytes or loss probe",
                                 buf.segment_size() - packet_len_unpadded
                             );
-                            builder.finish_and_track(
-                                now,
-                                self,
-                                path_id,
-                                Some(sent_frames),
-                                &mut buf,
-                            );
+                            builder.finish_and_track(now, self, path_id, sent_frames, &mut buf);
                             break;
                         }
 
@@ -905,7 +899,7 @@ impl Connection {
                         builder.pad_to(buf.segment_size() as u16);
                     }
 
-                    builder.finish_and_track(now, self, path_id, Some(sent_frames), &mut buf);
+                    builder.finish_and_track(now, self, path_id, sent_frames, &mut buf);
 
                     if buf.num_datagrams() == 1 {
                         buf.clip_datagram_size();
@@ -937,7 +931,7 @@ impl Connection {
                 if pad_datagram {
                     builder.pad_to(MIN_INITIAL_SIZE);
                 }
-                builder.finish_and_track(now, self, path_id, Some(sent_frames), &mut buf);
+                builder.finish_and_track(now, self, path_id, sent_frames, &mut buf);
                 break;
             }
         }
@@ -995,7 +989,7 @@ impl Connection {
                 non_retransmits: true,
                 ..Default::default()
             };
-            builder.finish_and_track(now, self, path_id, Some(sent_frames), &mut buf);
+            builder.finish_and_track(now, self, path_id, sent_frames, &mut buf);
 
             self.stats.path.sent_plpmtud_probes += 1;
 

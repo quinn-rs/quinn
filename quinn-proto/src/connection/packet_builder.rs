@@ -185,17 +185,13 @@ impl PacketBuilder {
         now: Instant,
         conn: &mut Connection,
         path_id: PathId,
-        sent: Option<SentFrames>,
+        sent: SentFrames,
         buffer: &mut TransmitBuf<'_>,
     ) {
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
         let (size, padded) = self.finish(conn, buffer);
-        let sent = match sent {
-            Some(sent) => sent,
-            None => return,
-        };
 
         let size = match padded || ack_eliciting {
             true => size as u16,
