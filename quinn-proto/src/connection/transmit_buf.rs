@@ -1,4 +1,5 @@
 use bytes::BufMut;
+use tracing::trace;
 
 use crate::packet::BufLen;
 
@@ -138,6 +139,13 @@ impl<'a> TransmitBuf<'a> {
     /// the last datagram in a batch.
     pub(super) fn clip_datagram_size(&mut self) {
         debug_assert_eq!(self.num_datagrams, 1);
+        if self.buf.len() < self.segment_size {
+            trace!(
+                segment_size = self.buf.len(),
+                prev_segment_size = self.segment_size,
+                "clipped datagram size"
+            );
+        }
         self.segment_size = self.buf.len();
         self.buf_capacity = self.buf.len();
     }
@@ -147,6 +155,11 @@ impl<'a> TransmitBuf<'a> {
     /// This is also the maximum size datagrams are allowed to be. The first and last
     /// datagram in a batch are allowed to be smaller however. After the first datagram the
     /// segment size is clipped to the size of the first datagram.
+    ///
+    /// If the last datagram was created using [`TransmitBuf::start_new_datagram_with_size`]
+    /// the the segment size will be greater than the current datagram is allowed to be.
+    /// Thus [`TransmitBuf::datagram_remaining_mut`] should be used if you need to know the
+    /// amount of data that can be written into the datagram.
     pub(super) fn segment_size(&self) -> usize {
         self.segment_size
     }
@@ -176,6 +189,11 @@ impl<'a> TransmitBuf<'a> {
     /// size. All datagrams in between need to be exactly this size.
     pub(super) fn datagram_max_offset(&self) -> usize {
         self.buf_capacity
+    }
+
+    /// Returns the number of bytes that may still be written into this datagram
+    pub(super) fn datagram_remaining_mut(&self) -> usize {
+        self.buf_capacity.saturating_sub(self.buf.len())
     }
 
     /// Returns `true` if the buffer did not have anything written into it

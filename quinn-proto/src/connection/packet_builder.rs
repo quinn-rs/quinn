@@ -4,7 +4,7 @@ use tracing::{trace, trace_span};
 
 use super::{Connection, PathId, SentFrames, TransmitBuf, spaces::SentPacket};
 use crate::{
-    ConnectionId, Instant, TransportError, TransportErrorCode,
+    ConnectionId, Instant, MIN_INITIAL_SIZE, TransportError, TransportErrorCode,
     connection::ConnectionSide,
     frame::{self, Close},
     packet::{FIXED_BIT, Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId},
@@ -197,12 +197,16 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
     }
 
     pub(super) fn finish_and_track(
-        self,
+        mut self,
         now: Instant,
         conn: &mut Connection,
         path_id: PathId,
         sent: SentFrames,
+        pad_datagram: bool,
     ) {
+        if pad_datagram {
+            self.pad_to(MIN_INITIAL_SIZE);
+        }
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
@@ -283,15 +287,17 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
             Some((self.exact_number, self.path, packet_crypto)),
         );
 
-        (self.buf.len() - encode_start, pad)
+        let packet_len = self.buf.len() - encode_start;
+        trace!(size = %packet_len, short_header = %self.short_header, "wrote packet");
+        (packet_len, pad)
     }
 
-    /// Predicts the size of the packet if it were finished now without additional padding
+    /// The number of additional bytes the current packet would take up if it was finished now
     ///
     /// This will include any padding which is required to make the size large enough to be
     /// encrypted correctly.
-    pub(super) fn predict_packet_size(&self) -> usize {
-        self.buf.len().max(self.min_size) - self.buf.datagram_start_offset() + self.tag_len
+    pub(super) fn predict_packet_end(&self) -> usize {
+        self.buf.len().max(self.min_size) + self.tag_len - self.buf.len()
     }
 
     /// Returns the remaining space in the packet that can be taken up by QUIC frames

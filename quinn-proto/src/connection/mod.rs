@@ -583,7 +583,7 @@ impl Connection {
             }
 
             // If the datagram is full, we need to start a new one.
-            if buf.len() == buf.datagram_max_offset() {
+            if buf.datagram_remaining_mut() == 0 {
                 // Is 1 more datagram allowed?
                 if buf.num_datagrams() >= buf.max_datagrams() {
                     // No more datagrams allowed
@@ -656,7 +656,7 @@ impl Connection {
                 pad_datagram = false;
             }
 
-            debug_assert!(buf.datagram_max_offset() - buf.len() >= MIN_PACKET_SPACE);
+            debug_assert!(buf.datagram_remaining_mut() >= MIN_PACKET_SPACE);
 
             //
             // From here on, we've determined that a packet will definitely be sent.
@@ -750,10 +750,7 @@ impl Connection {
                         ),
                     }
                 }
-                if pad_datagram {
-                    builder.pad_to(MIN_INITIAL_SIZE);
-                }
-                builder.finish_and_track(now, self, path_id, sent_frames);
+                builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
                 if space_id == self.highest_space {
                     // Don't send another close packet
                     self.close = false;
@@ -788,6 +785,7 @@ impl Connection {
                             non_retransmits: true,
                             ..SentFrames::default()
                         },
+                        false,
                     );
                     self.stats.udp_tx.on_sent(1, buf.len());
                     return Some(Transmit {
@@ -850,17 +848,18 @@ impl Connection {
                 // Are we allowed to coalesce AND is there enough space for another *packet*
                 // in this datagram?
                 if coalesce
-                    && builder.buf.segment_size() - builder.predict_packet_size() > MIN_PACKET_SPACE
+                    && builder
+                        .buf
+                        .datagram_remaining_mut()
+                        .saturating_sub(builder.predict_packet_end())
+                        > MIN_PACKET_SPACE
                 {
                     // We can append/coalesce the next packet into the current
                     // datagram. Finish the current packet without adding extra padding.
-                    builder.finish_and_track(now, self, path_id, sent_frames);
+                    builder.finish_and_track(now, self, path_id, sent_frames, false);
                 } else {
                     // We need a new datagram for the next packet.  Finish the current
                     // packet with padding.
-                    if pad_datagram {
-                        builder.pad_to(MIN_INITIAL_SIZE);
-                    }
                     if builder.buf.num_datagrams() > 1 {
                         // If too many padding bytes would be required to continue the
                         // GSO batch after this packet, end the GSO batch here. Ensures
@@ -877,16 +876,14 @@ impl Connection {
                         // are the only packets for which we might grow `buf_capacity`
                         // by less than `segment_size`.
                         const MAX_PADDING: usize = 16;
-                        let packet_len_unpadded = builder.predict_packet_size();
-                        if packet_len_unpadded + MAX_PADDING < builder.buf.segment_size()
-                            || builder.buf.datagram_start_offset() + builder.buf.segment_size()
-                                > builder.buf.datagram_max_offset()
+                        if builder.buf.datagram_remaining_mut()
+                            > builder.predict_packet_end() + MAX_PADDING
                         {
                             trace!(
-                                "GSO truncated by demand for {} padding bytes or loss probe",
-                                builder.buf.segment_size() - packet_len_unpadded
+                                "GSO truncated by demand for {} padding bytes",
+                                builder.buf.datagram_remaining_mut() - builder.predict_packet_end()
                             );
-                            builder.finish_and_track(now, self, path_id, sent_frames);
+                            builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
                             break;
                         }
 
@@ -895,7 +892,7 @@ impl Connection {
                         builder.pad_to(builder.buf.segment_size() as u16);
                     }
 
-                    builder.finish_and_track(now, self, path_id, sent_frames);
+                    builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
 
                     if buf.num_datagrams() == 1 {
                         buf.clip_datagram_size();
@@ -924,10 +921,7 @@ impl Connection {
                 }
             } else {
                 // Nothing more to send.  This was the last packet.
-                if pad_datagram {
-                    builder.pad_to(MIN_INITIAL_SIZE);
-                }
-                builder.finish_and_track(now, self, path_id, sent_frames);
+                builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
                 break;
             }
         }
@@ -987,7 +981,7 @@ impl Connection {
                 non_retransmits: true,
                 ..Default::default()
             };
-            builder.finish_and_track(now, self, path_id, sent_frames);
+            builder.finish_and_track(now, self, path_id, sent_frames, false);
 
             self.stats.path.sent_plpmtud_probes += 1;
 
