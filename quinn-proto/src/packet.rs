@@ -895,6 +895,17 @@ impl SpaceId {
     pub fn iter() -> impl Iterator<Item = Self> {
         [Self::Initial, Self::Handshake, Self::Data].iter().cloned()
     }
+
+    /// Returns the next higher packet space.
+    ///
+    /// Keeps returning [`SpaceId::Data`] as the highest space.
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Initial => Self::Handshake,
+            Self::Handshake => Self::Data,
+            Self::Data => Self::Data,
+        }
+    }
 }
 
 #[cfg(test)]
