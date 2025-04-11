@@ -20,7 +20,6 @@ use crate::{
 /// implements [`BufMut`] to write frames into the packet.
 pub(super) struct PacketBuilder<'a, 'b> {
     pub(super) buf: &'a mut TransmitBuf<'b>,
-    pub(super) datagram_start: usize,
     pub(super) space: SpaceId,
     path: PathId,
     pub(super) partial_encode: PartialEncode,
@@ -166,10 +165,8 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
         let max_size = buffer.datagram_max_offset() - tag_len;
         debug_assert!(max_size >= min_size);
 
-        let datagram_start = buffer.datagram_start_offset();
         Some(Self {
             buf: buffer,
-            datagram_start,
             space: space_id,
             path: path_id,
             partial_encode,
@@ -191,7 +188,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
         // already.
         self.min_size = Ord::max(
             self.min_size,
-            self.datagram_start + (min_size as usize) - self.tag_len,
+            self.buf.datagram_start_offset() + (min_size as usize) - self.tag_len,
         );
     }
 
