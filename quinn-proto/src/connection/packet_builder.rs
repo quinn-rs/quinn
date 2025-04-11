@@ -2,7 +2,7 @@ use bytes::{BufMut, Bytes};
 use rand::Rng;
 use tracing::{trace, trace_span};
 
-use super::{BufLen, Connection, PathId, SentFrames, TransmitBuf, spaces::SentPacket};
+use super::{Connection, PathId, SentFrames, TransmitBuf, spaces::SentPacket};
 use crate::{
     ConnectionId, Instant, TransportError, TransportErrorCode,
     connection::ConnectionSide,
@@ -200,8 +200,8 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
     /// The [`BufMut::remaining_mut`] call on the returned buffer indicates the amount of
     /// space available to write QUIC frames into.
     // In rust 1.82 we can use `-> impl BufMut + use<'_, 'a, 'b>`
-    pub(super) fn frame_space_mut(&mut self) -> bytes::buf::Limit<&mut Self> {
-        self.limit(self.frame_space_remaining())
+    pub(super) fn frame_space_mut(&mut self) -> bytes::buf::Limit<&mut TransmitBuf<'b>> {
+        self.buf.limit(self.frame_space_remaining())
     }
 
     pub(super) fn finish_and_track(
@@ -294,6 +294,14 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
         (self.buf.len() - encode_start, pad)
     }
 
+    /// Predicts the size of the packet if it were finished now without additional padding
+    ///
+    /// This will include any padding which is required to make the size large enough to be
+    /// encrypted correctly.
+    pub(super) fn predict_packet_size(&self) -> usize {
+        self.buf.len().max(self.min_size) - self.buf.datagram_start_offset() + self.tag_len
+    }
+
     /// Returns the remaining space in the packet that can be taken up by QUIC frames
     ///
     /// This leaves space in the datagram for the cryptographic tag that needs to be written
@@ -301,25 +309,5 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
     pub(super) fn frame_space_remaining(&self) -> usize {
         debug_assert!(self.max_size >= self.buf.len(), "packet exceeds bounds");
         self.max_size.saturating_sub(self.buf.len())
-    }
-}
-
-unsafe impl BufMut for PacketBuilder<'_, '_> {
-    fn remaining_mut(&self) -> usize {
-        self.buf.remaining_mut()
-    }
-
-    unsafe fn advance_mut(&mut self, cnt: usize) {
-        self.buf.advance_mut(cnt);
-    }
-
-    fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
-        self.buf.chunk_mut()
-    }
-}
-
-impl BufLen for PacketBuilder<'_, '_> {
-    fn len(&self) -> usize {
-        self.buf.len()
     }
 }
