@@ -425,7 +425,6 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
         match e.kind() {
             // Retry the transmission
             io::ErrorKind::Interrupted => continue,
-            io::ErrorKind::WouldBlock => return Err(e),
             _ => return Err(e),
         }
     }
@@ -457,7 +456,6 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
         match e.kind() {
             // Retry the transmission
             io::ErrorKind::Interrupted => continue,
-            io::ErrorKind::WouldBlock => return Err(e),
             _ => return Err(e),
         }
     }
