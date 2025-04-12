@@ -331,53 +331,55 @@ fn send(
 
     loop {
         let n = unsafe { libc::sendmsg(io.as_raw_fd(), &msg_hdr, 0) };
-        if n == -1 {
-            let e = io::Error::last_os_error();
-            match e.kind() {
-                io::ErrorKind::Interrupted => {
-                    // Retry the transmission
+
+        if n >= 0 {
+            return Ok(());
+        }
+
+        let e = io::Error::last_os_error();
+        match e.kind() {
+            io::ErrorKind::Interrupted => {
+                // Retry the transmission
+                continue;
+            }
+            io::ErrorKind::WouldBlock => return Err(e),
+            _ => {
+                // Some network adapters and drivers do not support GSO. Unfortunately, Linux
+                // offers no easy way for us to detect this short of an EIO or sometimes EINVAL
+                // when we try to actually send datagrams using it.
+                #[cfg(any(target_os = "linux", target_os = "android"))]
+                if let Some(libc::EIO) | Some(libc::EINVAL) = e.raw_os_error() {
+                    // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
+                    // may already be in the pipeline, so we need to tolerate additional failures.
+                    if state.max_gso_segments() > 1 {
+                        crate::log::info!(
+                            "`libc::sendmsg` failed with {e}; halting segmentation offload"
+                        );
+                        state
+                            .max_gso_segments
+                            .store(1, std::sync::atomic::Ordering::Relaxed);
+                    }
+                }
+
+                // Some arguments to `sendmsg` are not supported. Switch to
+                // fallback mode and retry if we haven't already.
+                if e.raw_os_error() == Some(libc::EINVAL) && !state.sendmsg_einval() {
+                    state.set_sendmsg_einval();
+                    prepare_msg(
+                        transmit,
+                        &dst_addr,
+                        &mut msg_hdr,
+                        &mut iovec,
+                        &mut cmsgs,
+                        encode_src_ip,
+                        state.sendmsg_einval(),
+                    );
                     continue;
                 }
-                io::ErrorKind::WouldBlock => return Err(e),
-                _ => {
-                    // Some network adapters and drivers do not support GSO. Unfortunately, Linux
-                    // offers no easy way for us to detect this short of an EIO or sometimes EINVAL
-                    // when we try to actually send datagrams using it.
-                    #[cfg(any(target_os = "linux", target_os = "android"))]
-                    if let Some(libc::EIO) | Some(libc::EINVAL) = e.raw_os_error() {
-                        // Prevent new transmits from being scheduled using GSO. Existing GSO transmits
-                        // may already be in the pipeline, so we need to tolerate additional failures.
-                        if state.max_gso_segments() > 1 {
-                            crate::log::info!(
-                                "`libc::sendmsg` failed with {e}; halting segmentation offload"
-                            );
-                            state
-                                .max_gso_segments
-                                .store(1, std::sync::atomic::Ordering::Relaxed);
-                        }
-                    }
 
-                    // Some arguments to `sendmsg` are not supported. Switch to
-                    // fallback mode and retry if we haven't already.
-                    if e.raw_os_error() == Some(libc::EINVAL) && !state.sendmsg_einval() {
-                        state.set_sendmsg_einval();
-                        prepare_msg(
-                            transmit,
-                            &dst_addr,
-                            &mut msg_hdr,
-                            &mut iovec,
-                            &mut cmsgs,
-                            encode_src_ip,
-                            state.sendmsg_einval(),
-                        );
-                        continue;
-                    }
-
-                    return Err(e);
-                }
+                return Err(e);
             }
         }
-        return Ok(());
     }
 }
 
@@ -416,18 +418,20 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
     }
     loop {
         let n = unsafe { sendmsg_x(io.as_raw_fd(), hdrs.as_ptr(), cnt as u32, 0) };
-        if n == -1 {
-            let e = io::Error::last_os_error();
-            match e.kind() {
-                io::ErrorKind::Interrupted => {
-                    // Retry the transmission
-                    continue;
-                }
-                io::ErrorKind::WouldBlock => return Err(e),
-                _ => return Err(e),
-            }
+
+        if n >= 0 {
+            return Ok(());
         }
-        return Ok(());
+
+        let e = io::Error::last_os_error();
+        match e.kind() {
+            io::ErrorKind::Interrupted => {
+                // Retry the transmission
+                continue;
+            }
+            io::ErrorKind::WouldBlock => return Err(e),
+            _ => return Err(e),
+        }
     }
 }
 
@@ -448,18 +452,20 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
     );
     loop {
         let n = unsafe { libc::sendmsg(io.as_raw_fd(), &hdr, 0) };
-        if n == -1 {
-            let e = io::Error::last_os_error();
-            match e.kind() {
-                io::ErrorKind::Interrupted => {
-                    // Retry the transmission
-                    continue;
-                }
-                io::ErrorKind::WouldBlock => return Err(e),
-                _ => return Err(e),
-            }
+
+        if n >= 0 {
+            return Ok(());
         }
-        return Ok(());
+
+        let e = io::Error::last_os_error();
+        match e.kind() {
+            io::ErrorKind::Interrupted => {
+                // Retry the transmission
+                continue;
+            }
+            io::ErrorKind::WouldBlock => return Err(e),
+            _ => return Err(e),
+        }
     }
 }
 
