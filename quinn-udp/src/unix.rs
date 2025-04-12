@@ -338,10 +338,8 @@ fn send(
 
         let e = io::Error::last_os_error();
         match e.kind() {
-            io::ErrorKind::Interrupted => {
-                // Retry the transmission
-                continue;
-            }
+            // Retry the transmission
+            io::ErrorKind::Interrupted => continue,
             io::ErrorKind::WouldBlock => return Err(e),
             _ => {
                 // Some network adapters and drivers do not support GSO. Unfortunately, Linux
@@ -425,10 +423,8 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
 
         let e = io::Error::last_os_error();
         match e.kind() {
-            io::ErrorKind::Interrupted => {
-                // Retry the transmission
-                continue;
-            }
+            // Retry the transmission
+            io::ErrorKind::Interrupted => continue,
             io::ErrorKind::WouldBlock => return Err(e),
             _ => return Err(e),
         }
@@ -459,10 +455,8 @@ fn send(state: &UdpSocketState, io: SockRef<'_>, transmit: &Transmit<'_>) -> io:
 
         let e = io::Error::last_os_error();
         match e.kind() {
-            io::ErrorKind::Interrupted => {
-                // Retry the transmission
-                continue;
-            }
+            // Retry the transmission
+            io::ErrorKind::Interrupted => continue,
             io::ErrorKind::WouldBlock => return Err(e),
             _ => return Err(e),
         }
