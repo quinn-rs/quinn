@@ -493,14 +493,17 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
                 ptr::null_mut::<libc::timespec>(),
             )
         };
-        if n == -1 {
-            let e = io::Error::last_os_error();
-            if e.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(e);
+
+        if n >= 0 {
+            break n;
         }
-        break n;
+
+        let e = io::Error::last_os_error();
+        if e.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+
+        return Err(e);
     };
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize);
@@ -519,16 +522,17 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     }
     let msg_count = loop {
         let n = unsafe { recvmsg_x(io.as_raw_fd(), hdrs.as_mut_ptr(), max_msg_count as _, 0) };
-        match n {
-            -1 => {
-                let e = io::Error::last_os_error();
-                if e.kind() == io::ErrorKind::Interrupted {
-                    continue;
-                }
-                return Err(e);
-            }
-            n => break n,
+
+        if n >= 0 {
+            break n;
         }
+
+        let e = io::Error::last_os_error();
+        if e.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+
+        return Err(e);
     };
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i], hdrs[i].msg_datalen as usize);
@@ -544,17 +548,21 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     prepare_recv(&mut bufs[0], &mut name, &mut ctrl, &mut hdr);
     let n = loop {
         let n = unsafe { libc::recvmsg(io.as_raw_fd(), &mut hdr, 0) };
-        if n == -1 {
-            let e = io::Error::last_os_error();
-            if e.kind() == io::ErrorKind::Interrupted {
-                continue;
-            }
-            return Err(e);
-        }
+
         if hdr.msg_flags & libc::MSG_TRUNC != 0 {
             continue;
         }
-        break n;
+
+        if n >= 0 {
+            break n;
+        }
+
+        let e = io::Error::last_os_error();
+        if e.kind() == io::ErrorKind::Interrupted {
+            continue;
+        }
+
+        return Err(e);
     };
     meta[0] = decode_recv(&name, &hdr, n as usize);
     Ok(1)
