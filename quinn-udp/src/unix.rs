@@ -491,11 +491,11 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
         }
 
         let e = io::Error::last_os_error();
-        if e.kind() == io::ErrorKind::Interrupted {
-            continue;
+        match e.kind() {
+            // Retry receiving
+            io::ErrorKind::Interrupted => continue,
+            _ => return Err(e),
         }
-
-        return Err(e);
     };
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i].msg_hdr, hdrs[i].msg_len as usize);
@@ -520,11 +520,11 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
         }
 
         let e = io::Error::last_os_error();
-        if e.kind() == io::ErrorKind::Interrupted {
-            continue;
+        match e.kind() {
+            // Retry receiving
+            io::ErrorKind::Interrupted => continue,
+            _ => return Err(e),
         }
-
-        return Err(e);
     };
     for i in 0..(msg_count as usize) {
         meta[i] = decode_recv(&names[i], &hdrs[i], hdrs[i].msg_datalen as usize);
@@ -550,11 +550,11 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
         }
 
         let e = io::Error::last_os_error();
-        if e.kind() == io::ErrorKind::Interrupted {
-            continue;
+        match e.kind() {
+            // Retry receiving
+            io::ErrorKind::Interrupted => continue,
+            _ => return Err(e),
         }
-
-        return Err(e);
     };
     meta[0] = decode_recv(&name, &hdr, n as usize);
     Ok(1)
