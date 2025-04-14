@@ -31,8 +31,6 @@ pub(super) struct PacketSpace {
     /// Current offset of outgoing cryptographic handshake stream
     pub(super) crypto_offset: u64,
 
-    pub(super) immediate_ack_pending: bool,
-
     /// Multipath packet number spaces
     ///
     /// Each [`PathId`] has it's own [`PacketNumberSpace`].  Only the [`SpaceId::Data`] can
@@ -52,7 +50,6 @@ impl PacketSpace {
             pending_acks: PendingAcks::new(),
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
-            immediate_ack_pending: false,
             number_spaces: BTreeMap::from([(PathId(0), number_space_0)]),
         }
     }
@@ -68,7 +65,6 @@ impl PacketSpace {
             pending_acks: PendingAcks::new(),
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
-            immediate_ack_pending: false,
             number_spaces: BTreeMap::from([(PathId(0), number_space_0)]),
         }
     }
@@ -125,7 +121,7 @@ impl PacketSpace {
         if request_immediate_ack {
             // The probe should be ACKed without delay (should only be used in the Data space and
             // when the peer supports the acknowledgement frequency extension)
-            self.immediate_ack_pending = true;
+            self.for_path(path_id).immediate_ack_pending = true;
         }
 
         // Retransmit the data of the oldest in-flight packet
@@ -154,7 +150,7 @@ impl PacketSpace {
         // TODO(flub): Sending a ping on all paths is wasteful, but we also need per-path
         //   pings so doing this is easier for now.  Maybe later introduce a
         //   connection-level ping again.
-        if !self.immediate_ack_pending {
+        if !self.for_path(path_id).immediate_ack_pending {
             self.number_spaces
                 .values_mut()
                 .for_each(|s| s.ping_pending = true);
@@ -162,11 +158,12 @@ impl PacketSpace {
     }
 
     /// Whether there is anything to send.
-    pub(super) fn can_send(
-        &self,
-        streams: &StreamsState,
-        immediate_ack_pending: bool,
-    ) -> SendableFrames {
+    pub(super) fn can_send(&self, path_id: PathId, streams: &StreamsState) -> SendableFrames {
+        let immediate_ack_pending = self
+            .number_spaces
+            .get(&path_id)
+            .map(|pns| pns.immediate_ack_pending)
+            .unwrap_or_default();
         let acks = self.pending_acks.can_send();
         let other = !self.pending.is_empty(streams)
             || self
@@ -230,7 +227,10 @@ pub(super) struct PacketNumberSpace {
     pub(super) in_flight: u64,
     /// Number of packets sent in the current key phase
     pub(super) sent_with_keys: u64,
+    /// A PING frame needs to be sent on this path
     pub(super) ping_pending: bool,
+    /// An IMMEDIATE_ACK (draft-ietf-quic-ack-frequency) frame needs to be sent on this path
+    pub(super) immediate_ack_pending: bool,
 
     //
     // Loss Detection
@@ -272,6 +272,7 @@ impl PacketNumberSpace {
             in_flight: 0,
             sent_with_keys: 0,
             ping_pending: false,
+            immediate_ack_pending: false,
             pto_count: 0,
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
@@ -298,6 +299,7 @@ impl PacketNumberSpace {
             in_flight: 0,
             sent_with_keys: 0,
             ping_pending: false,
+            immediate_ack_pending: false,
             pto_count: 0,
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
@@ -325,6 +327,7 @@ impl PacketNumberSpace {
             in_flight: 0,
             sent_with_keys: 0,
             ping_pending: false,
+            immediate_ack_pending: false,
             pto_count: 0,
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
