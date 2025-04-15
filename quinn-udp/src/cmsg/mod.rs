@@ -45,12 +45,19 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
     pub(crate) fn push<T: Copy>(&mut self, level: c_int, ty: c_int, value: T) {
         assert!(mem::align_of::<T>() <= mem::align_of::<M::ControlMessage>());
         let space = M::ControlMessage::cmsg_space(mem::size_of_val(&value));
+        let len = self.len;
+        let hdr_len = self.hdr.control_len();
+        let required = len + space;
+
         assert!(
-            self.hdr.control_len() >= self.len + space,
-            "control message buffer too small. Required: {}, Available: {}",
-            self.len + space,
-            self.hdr.control_len()
+            hdr_len >= required,
+            "control message buffer too small. Required: {required}, Available: {hdr_len}",
         );
+
+        crate::log::trace!(
+            "Pushing cmsg: level = {level}, type = {ty}, space = {space}, len = {len}, hdr_len = {hdr_len}"
+        );
+
         let cmsg = self.cmsg.take().expect("no control buffer space remaining");
         cmsg.set(
             level,
