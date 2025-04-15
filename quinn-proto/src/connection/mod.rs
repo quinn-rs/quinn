@@ -571,7 +571,9 @@ impl Connection {
             // Whether the next packet will contain ack-eliciting frames.
             let mut ack_eliciting = !self.spaces[space_id].pending.is_empty(&self.streams)
                 || self.spaces[space_id].for_path(path_id).ping_pending
-                || self.spaces[space_id].immediate_ack_pending;
+                || self.spaces[space_id]
+                    .for_path(path_id)
+                    .immediate_ack_pending;
             if space_id == SpaceId::Data {
                 let pn = self.spaces[SpaceId::Data]
                     .for_path(path_id)
@@ -821,7 +823,7 @@ impl Connection {
                     .buf
                     .segment_size()
                     .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
-                let can_send = self.space_can_send(space_id, frame_space_1rtt);
+                let can_send = self.space_can_send(space_id, path_id, frame_space_1rtt);
                 debug_assert!(
                     !(sent_frames.is_ack_only(&self.streams)
                         && !can_send.acks
@@ -911,7 +913,7 @@ impl Connection {
                                 .segment_size()
                                 .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
                             if self
-                                .space_can_send(next_space_id, frame_space_1rtt)
+                                .space_can_send(next_space_id, path_id, frame_space_1rtt)
                                 .is_empty()
                             {
                                 break;
@@ -1043,7 +1045,7 @@ impl Connection {
             .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
         let mut space_id = current_space_id;
         loop {
-            let can_send = self.space_can_send(space_id, frame_space_1rtt);
+            let can_send = self.space_can_send(space_id, path_id, frame_space_1rtt);
             if !can_send.is_empty() || (close && self.spaces[space_id].crypto.is_some()) {
                 return Some(space_id);
             }
@@ -1113,7 +1115,12 @@ impl Connection {
     }
 
     /// Indicate what types of frames are ready to send for the given space
-    fn space_can_send(&self, space_id: SpaceId, frame_space_1rtt: usize) -> SendableFrames {
+    fn space_can_send(
+        &self,
+        space_id: SpaceId,
+        path_id: PathId,
+        frame_space_1rtt: usize,
+    ) -> SendableFrames {
         if self.spaces[space_id].crypto.is_none()
             && (space_id != SpaceId::Data
                 || self.zero_rtt_crypto.is_none()
@@ -1122,8 +1129,7 @@ impl Connection {
             // No keys available for this space
             return SendableFrames::empty();
         }
-        let space = &self.spaces[space_id];
-        let mut can_send = space.can_send(&self.streams, space.immediate_ack_pending);
+        let mut can_send = self.spaces[space_id].can_send(path_id, &self.streams);
         if space_id == SpaceId::Data {
             can_send.other |= self.can_send_1rtt(frame_space_1rtt);
         }
@@ -3021,7 +3027,7 @@ impl Connection {
                         // PATH_CHALLENGE on active path, possible off-path packet forwarding
                         // attack. Send a non-probing packet to recover the active path.
                         match self.peer_supports_ack_frequency() {
-                            true => self.immediate_ack(),
+                            true => self.immediate_ack(path_id),
                             false => self.ping(),
                         }
                     }
@@ -3523,7 +3529,7 @@ impl Connection {
         }
 
         // IMMEDIATE_ACK
-        if mem::replace(&mut space.immediate_ack_pending, false) {
+        if mem::replace(&mut space.for_path(path_id).immediate_ack_pending, false) {
             trace!("IMMEDIATE_ACK");
             buf.write(frame::FrameType::IMMEDIATE_ACK);
             sent.non_retransmits = true;
@@ -4029,8 +4035,10 @@ impl Connection {
     ///
     /// According to the spec, this will result in an error if the remote endpoint does not support
     /// the Acknowledgement Frequency extension
-    pub(crate) fn immediate_ack(&mut self) {
-        self.spaces[self.highest_space].immediate_ack_pending = true;
+    pub(crate) fn immediate_ack(&mut self, path_id: PathId) {
+        self.spaces[self.highest_space]
+            .for_path(path_id)
+            .immediate_ack_pending = true;
     }
 
     /// Decodes a packet, returning its decrypted payload, so it can be inspected in tests
