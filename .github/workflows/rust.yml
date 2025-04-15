@@ -104,10 +104,12 @@ jobs:
   test:
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-latest, macos-15, windows-latest]
         rust: [stable, beta]
         exclude:
           - os: macos-latest
+            rust: beta
+          - os: macos-15
             rust: beta
           - os: windows-latest
             rust: beta
