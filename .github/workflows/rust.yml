@@ -103,6 +103,7 @@ jobs:
 
   test:
     strategy:
+      fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, macos-15, windows-latest]
         rust: [stable, beta]
