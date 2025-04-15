@@ -14,7 +14,11 @@ impl MsgHdr for libc::msghdr {
         unsafe { libc::CMSG_FIRSTHDR(self) }
     }
 
-    fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
+    fn decode_cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
+        unsafe { libc::CMSG_NXTHDR(self, cmsg) }
+    }
+
+    fn reserve_cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
         unsafe { libc::CMSG_NXTHDR(self, cmsg) }
     }
 
@@ -41,7 +45,7 @@ impl MsgHdr for crate::imp::msghdr_x {
         unsafe { libc::CMSG_FIRSTHDR(selfp) }
     }
 
-    fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
+    fn decode_cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
         let selfp = self as *const _ as *mut libc::msghdr;
         let next = unsafe { libc::CMSG_NXTHDR(selfp, cmsg) };
 
@@ -55,6 +59,12 @@ impl MsgHdr for crate::imp::msghdr_x {
         }
 
         next
+    }
+
+    fn reserve_cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
+        let selfp = self as *const _ as *mut libc::msghdr;
+
+        unsafe { libc::CMSG_NXTHDR(selfp, cmsg) }
     }
 
     fn set_control_len(&mut self, len: usize) {

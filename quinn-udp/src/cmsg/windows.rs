@@ -25,7 +25,18 @@ impl MsgHdr for WinSock::WSAMSG {
         }
     }
 
-    fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
+    fn decode_cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
+        let next =
+            (cmsg as *const _ as usize + cmsghdr_align(cmsg.cmsg_len)) as *mut WinSock::CMSGHDR;
+        let max = self.Control.buf as usize + self.Control.len as usize;
+        if unsafe { next.offset(1) } as usize > max {
+            ptr::null_mut()
+        } else {
+            next
+        }
+    }
+
+    fn reserve_cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage {
         let next =
             (cmsg as *const _ as usize + cmsghdr_align(cmsg.cmsg_len)) as *mut WinSock::CMSGHDR;
         let max = self.Control.buf as usize + self.Control.len as usize;
