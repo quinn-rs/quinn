@@ -68,7 +68,7 @@ impl<'a, M: MsgHdr> Encoder<'a, M> {
             ptr::write(cmsg.cmsg_data() as *const T as *mut T, value);
         }
         self.len += space;
-        self.cmsg = unsafe { self.hdr.cmsg_nxt_hdr(cmsg).as_mut() };
+        self.cmsg = unsafe { self.hdr.reserve_cmsg_nxt_hdr(cmsg).as_mut() };
     }
 
     /// Finishes appending control messages to the buffer
@@ -118,7 +118,7 @@ impl<'a, M: MsgHdr> Iterator for Iter<'a, M> {
 
     fn next(&mut self) -> Option<Self::Item> {
         let current = self.cmsg.take()?;
-        self.cmsg = unsafe { self.hdr.cmsg_nxt_hdr(current).as_ref() };
+        self.cmsg = unsafe { self.hdr.decode_cmsg_nxt_hdr(current).as_ref() };
         Some(current)
     }
 }
@@ -129,7 +129,9 @@ pub(crate) trait MsgHdr {
 
     fn cmsg_first_hdr(&self) -> *mut Self::ControlMessage;
 
-    fn cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage;
+    fn decode_cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage;
+
+    fn reserve_cmsg_nxt_hdr(&self, cmsg: &Self::ControlMessage) -> *mut Self::ControlMessage;
 
     /// Sets the number of control messages added to this `struct msghdr`.
     ///
