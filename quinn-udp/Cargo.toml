@@ -35,6 +35,7 @@ windows-sys = { workspace = true }
 [dev-dependencies]
 criterion = { version = "0.5", default-features = false, features = ["async_tokio"] }
 tokio = { workspace = true, features = ["rt", "rt-multi-thread", "net"] }
+tracing-subscriber = { workspace = true }
 
 [build-dependencies]
 cfg_aliases = { workspace = true }

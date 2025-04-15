@@ -8,6 +8,8 @@ use std::{
 
 use quinn_udp::{EcnCodepoint, RecvMeta, Transmit, UdpSocketState};
 use socket2::Socket;
+use tracing::subscriber::DefaultGuard;
+use tracing_subscriber::util::SubscriberInitExt;
 
 #[test]
 fn basic() {
@@ -33,6 +35,8 @@ fn basic() {
 
 #[test]
 fn basic_src_ip_ipv6() {
+    let _guard = logger();
+
     let Ok(send) = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)) else {
         eprintln!("Unable to bind to IPv6 socket; skipping test");
         return;
@@ -367,4 +371,11 @@ fn ip_to_v6_mapped(x: IpAddr) -> IpAddr {
         IpAddr::V4(x) => IpAddr::V6(x.to_ipv6_mapped()),
         IpAddr::V6(_) => x,
     }
+}
+
+fn logger() -> DefaultGuard {
+    tracing_subscriber::fmt()
+        .with_test_writer()
+        .with_env_filter("trace")
+        .set_default()
 }

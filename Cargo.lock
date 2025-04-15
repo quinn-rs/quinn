@@ -1618,6 +1618,7 @@ dependencies = [
  "socket2",
  "tokio",
  "tracing",
+ "tracing-subscriber",
  "windows-sys 0.59.0",
 ]
 
