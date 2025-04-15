@@ -536,9 +536,12 @@ impl Connection {
         };
 
         // Check whether we need to send an ACK_FREQUENCY frame
-        // TODO(@divma): decide if we take the min/max/avg something else over all paths because
-        // this looks wrong for the multipath case
-        let rtt = self.path_data(path_id).rtt.get();
+        let rtt = self
+            .paths
+            .values()
+            .map(|p| p.path.rtt.get())
+            .min()
+            .expect("one path exists");
         if let Some(config) = &self.config.ack_frequency_config {
             self.spaces[SpaceId::Data].pending.ack_frequency = self
                 .ack_frequency
