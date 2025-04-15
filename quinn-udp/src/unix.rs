@@ -560,7 +560,7 @@ fn recv(io: SockRef<'_>, bufs: &mut [IoSliceMut<'_>], meta: &mut [RecvMeta]) -> 
     Ok(1)
 }
 
-const CMSG_LEN: usize = 88;
+const CMSG_LEN: usize = 200;
 
 fn prepare_msg(
     transmit: &Transmit<'_>,
