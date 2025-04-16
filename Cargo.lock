@@ -1581,7 +1581,7 @@ dependencies = [
 
 [[package]]
 name = "quinn-proto"
-version = "0.11.10"
+version = "0.11.11"
 dependencies = [
  "arbitrary",
  "assert_matches",
