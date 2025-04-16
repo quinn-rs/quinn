@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::VecDeque,
+    collections::{BTreeMap, VecDeque},
     convert::TryFrom,
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
@@ -61,7 +61,7 @@ mod packet_crypto;
 use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
-use paths::{PathData, PathResponses};
+use paths::PathData;
 pub use paths::{PathId, RttEstimator};
 
 mod send_buffer;
@@ -143,7 +143,13 @@ pub struct Connection {
     /// The "real" local IP address which was was used to receive the initial packet.
     /// This is only populated for the server case, and if known
     local_ip: Option<IpAddr>,
-    paths: FxHashMap<PathId, PathMigrationData>,
+    /// The [`PathData`] for each path
+    ///
+    /// This needs to be ordered because [`Connection::poll_transmit`] needs to
+    /// deterministically select the next PathId to send on.
+    ///
+    /// TODO(flub): well does it really? But deterministic is nice for now.
+    paths: BTreeMap<PathId, PathMigrationData>,
     /// Whether MTU detection is supported in this environment
     allow_mtud: bool,
     state: State,
@@ -197,8 +203,7 @@ pub struct Connection {
     //
     // Queued non-retransmittable 1-RTT data
     //
-    /// Responses to PATH_CHALLENGE frames
-    path_responses: PathResponses,
+    /// If the CONNECTION_CLOSE frame needs to be sent
     close: bool,
 
     //
@@ -303,8 +308,8 @@ impl Connection {
             handshake_cid: loc_cid,
             rem_handshake_cid: rem_cid,
             local_cid_state,
-            paths: FxHashMap::from_iter([(
-                PathId::default(),
+            paths: BTreeMap::from_iter([(
+                PathId(0),
                 PathMigrationData {
                     path,
                     prev_path: None,
@@ -346,7 +351,6 @@ impl Connection {
             timers: TimerTable::default(),
             authentication_failures: 0,
             error: None,
-            path_responses: PathResponses::default(),
             close: false,
 
             ack_frequency: AckFrequencyState::new(get_max_ack_delay(
@@ -495,9 +499,40 @@ impl Connection {
             true => max_datagrams,
         };
 
+        // Each call to poll_transmit can only send datagrams to one destination, because
+        // all datagrams in a GSO batch are for the same destination.  Therefore only
+        // datagrams for one Path ID are produced for each poll_transmit call.
+
+        // First all paths that have a PATH_CHALLENGE or PATH_RESPONSE pending.
+
+        // For all AVAILABLE paths:
+        // - Is the path congestion blocked or pacing blocked?
+        // - call maybe_queue_ to ensure a tail-loss probe would be sent?
+        // - do we need to send a close message?
+        // - call can_send
+        // Once there's nothing more to send on the AVAILABLE paths, do the same for BACKUP paths
+
+        // What about PATH_CHALLENGE or PATH_RESPONSE?  We need to check if we need to send
+        // any of those.
+
         // TODO(flub): We only have PathId(0) for now.  For multipath we need to figure
         //    out which path we want to send the packet on before we start building it.
         let path_id = PathId(0);
+
+        for space in SpaceId::iter() {
+            let request_immediate_ack =
+                space == SpaceId::Data && self.peer_supports_ack_frequency();
+            for (path_id, pns) in self.spaces[space].iter_paths() {
+                if self.spaces[space].for_path(*path_id).loss_probes > 0 {
+                    self.spaces[space].maybe_queue_probe(
+                        *path_id,
+                        request_immediate_ack,
+                        &self.streams,
+                    );
+                    break;
+                }
+            }
+        }
 
         let mut buf = TransmitBuf::new(
             buf,
@@ -505,12 +540,17 @@ impl Connection {
             self.path_data(path_id).current_mtu().into(),
         );
 
-        if let Some(challenge) = self.send_path_challenge(now, &mut buf, path_id) {
+        for (path_id, path) in self.paths.iter() {
+            let path = &path.path;
+            todo!();
+        }
+
+        if let Some(challenge) = self.send_prev_path_challenge(now, &mut buf, path_id) {
             return Some(challenge);
         }
 
         // If we need to send a probe, make sure we have something to send.
-        // TODO(flub): We need to populate each path_id.
+        // TODO(flub): When we select the PathId we need this.
         for space in SpaceId::iter() {
             let request_immediate_ack =
                 space == SpaceId::Data && self.peer_supports_ack_frequency();
@@ -764,6 +804,10 @@ impl Connection {
                     // Send a close frame in every possible space for robustness, per RFC9000
                     // "Immediate Close during the Handshake". Don't bother trying to send anything
                     // else.
+                    // TODO(flub): Pretty sure with GSO disabled this doesn't work if
+                    //    closing during the handshake. The next datagram would not be
+                    //    allowed, on the next call to poll_transmit you would send
+                    //    CONNECTION_CLOSE in the initial or handshake space again.
                     next_space_id = self.next_send_space(space_id.next(), path_id, &buf, close);
                     continue;
                 }
@@ -772,8 +816,12 @@ impl Connection {
             // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
             // validation can occur while the link is saturated.
             if space_id == SpaceId::Data && builder.buf.num_datagrams() == 1 {
-                let remote = self.path_data(path_id).remote;
-                if let Some((token, remote)) = self.path_responses.pop_off_path(remote) {
+                let path = self.path_data_mut(path_id);
+                let remote = path.remote;
+                if let Some((token, remote)) = path.path_responses.pop_off_path(remote) {
+                    // TODO(flub): We need to use the right CID!  We shouldn't use the same
+                    //    CID as the current active one for the path.  Though see also
+                    //    https://github.com/quinn-rs/quinn/issues/2184
                     trace!("PATH_RESPONSE {:08x} (off-path)", token);
                     builder
                         .frame_space_mut()
@@ -1061,7 +1109,10 @@ impl Connection {
     }
 
     /// Send PATH_CHALLENGE for a previous path if necessary
-    fn send_path_challenge(
+    ///
+    /// QUIC-TRANSPORT section 9.3.3
+    /// https://www.rfc-editor.org/rfc/rfc9000.html#name-off-path-packet-forwarding
+    fn send_prev_path_challenge(
         &mut self,
         now: Instant,
         buf: &mut TransmitBuf<'_>,
@@ -1507,6 +1558,8 @@ impl Connection {
     /// Multipath is only enabled after the handshake is completed and if it was negotiated
     /// by both peers.
     pub fn is_multipath_enabled(&self) -> bool {
+        // TODO(flub): I believe it might be a TRANSPORT_ERROR if multipath is enabled but
+        // there's a zero-lenth CID.
         !self.is_handshaking()
             && !self.handshake_cid.is_empty()
             && !self.rem_handshake_cid.is_empty()
@@ -2065,6 +2118,7 @@ impl Connection {
     }
 
     /// Probe Timeout
+    // TODO(flub): This needs a PathId parameter
     fn pto(&self, space: SpaceId) -> Duration {
         let max_ack_delay = match space {
             SpaceId::Initial | SpaceId::Handshake => Duration::ZERO,
@@ -3024,8 +3078,29 @@ impl Connection {
                     close = Some(reason);
                 }
                 Frame::PathChallenge(token) => {
-                    self.path_responses.push(number, token, remote);
-                    if remote == self.path_data(path_id).remote {
+                    // A PATH_CHALLENGE can create a new path.
+                    let path = &mut self
+                        .paths
+                        .entry(path_id)
+                        .or_insert_with(|| {
+                            let peer_max_udp_payload_size =
+                                u16::try_from(self.peer_params.max_udp_payload_size.into_inner())
+                                    .unwrap_or(u16::MAX);
+                            let data = PathData::new(
+                                remote,
+                                self.allow_mtud,
+                                Some(peer_max_udp_payload_size),
+                                now,
+                                &self.config,
+                            );
+                            PathMigrationData {
+                                path: data,
+                                prev_path: None,
+                            }
+                        })
+                        .path;
+                    path.path_responses.push(number, token, remote);
+                    if remote == path.remote {
                         // PATH_CHALLENGE on active path, possible off-path packet forwarding
                         // attack. Send a non-probing packet to recover the active path.
                         match self.peer_supports_ack_frequency() {
@@ -3035,7 +3110,7 @@ impl Connection {
                     }
                 }
                 Frame::PathResponse(token) => {
-                    // TODO(@divma): make an effort ot move to path
+                    // TODO(@divma): make an effort to move to path
                     let path_data = self.paths.get_mut(&path_id).expect("known path");
                     if path_data.path.challenge == Some(token) && remote == path_data.path.remote {
                         trace!("new path validated");
@@ -3487,7 +3562,6 @@ impl Connection {
     ) -> SentFrames {
         let mut sent = SentFrames::default();
         let is_multipath_enabled = self.is_multipath_enabled();
-        let path_data_remote = self.path_data(path_id).remote;
         let space = &mut self.spaces[space_id];
         let path = &mut self.paths.get_mut(&path_id).expect("known path").path;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
@@ -3626,7 +3700,7 @@ impl Connection {
 
         // PATH_RESPONSE
         if buf.remaining_mut() > 9 && space_id == SpaceId::Data {
-            if let Some(token) = self.path_responses.pop_on_path(path.remote) {
+            if let Some(token) = path.path_responses.pop_on_path(path.remote) {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
                 trace!("PATH_RESPONSE {:08x}", token);
@@ -3804,7 +3878,7 @@ impl Connection {
                 panic!("NEW_TOKEN frames should not be enqueued by clients");
             };
 
-            if remote_addr != path_data_remote {
+            if remote_addr != path.remote {
                 // NEW_TOKEN frames contain tokens bound to a client's IP address, and are only
                 // useful if used from the same IP address.  Thus, we abandon enqueued NEW_TOKEN
                 // frames upon an path change. Instead, when the new path becomes validated,
@@ -4162,21 +4236,59 @@ impl Connection {
         self.path_data(PathId(0)).current_mtu()
     }
 
+    fn next_send_path(&self) -> Option<PathId> {
+        if !self.is_multipath_enabled() {
+            return Some(PathId(0));
+        }
+
+        // If we still have initial or handshake spaces we first check those.
+        if self.highest_space < SpaceId::Data {
+            todo!();
+        }
+
+        // First look for pending PATH_CHALLENGE or PATH_RESPONSE frames.
+        for space in SpaceId::iter() {
+            for (path_id, pns) in self.spaces[space].iter_paths() {
+                let challenge_pending = self.paths.get(path_id).is_some_and(|p| {
+                    p.path.challenge_pending
+                        || p.prev_path
+                            .as_ref()
+                            .is_some_and(|(_, path_data)| path_data.challenge_pending)
+                });
+                let response_pending = self
+                    .paths
+                    .get(path_id)
+                    .is_some_and(|p| !p.path.path_responses.is_empty());
+                if challenge_pending || response_pending {
+                    return Some(*path_id);
+                }
+            }
+        }
+
+        //
+
+        todo!();
+        None
+    }
+
     /// Whether we have 1-RTT data to send
     ///
-    /// See also `self.space(SpaceId::Data).can_send()`
-    fn can_send_1rtt(&self, max_size: usize) -> bool {
-        // TODO(@divma): needs work for multipath
-        let chanllenge_pending = {
-            let path_mig_data = self.paths.get(&PathId(0)).expect("known path");
-            path_mig_data.path.challenge_pending
-                || path_mig_data
-                    .prev_path
+    /// This checks for frames that can only be sent in the data space (1-RTT):
+    /// - Pending PATH_CHALLENGE frames on the active and previous path if just migrated.
+    /// - Pending data to send in STREAM frames.
+    /// - Pending DATAGRAM frames to send.
+    ///
+    /// See also [`PacketSpace::can_send`] which keeps track of all other frame types that
+    /// may need to be sent.
+    fn can_send_1rtt(&self, path_id: PathId, max_size: usize) -> bool {
+        let challenge_pending = self.paths.get(&path_id).is_some_and(|p| {
+            p.path.challenge_pending
+                || p.prev_path
                     .as_ref()
-                    .is_some_and(|(_, x)| x.challenge_pending)
-        };
+                    .is_some_and(|(_, path)| path.challenge_pending)
+        });
         self.streams.can_send_stream_data()
-            || chanllenge_pending
+            || challenge_pending
             || !self.path_responses.is_empty()
             || self
                 .datagrams

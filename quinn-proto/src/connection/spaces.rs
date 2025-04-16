@@ -157,24 +157,21 @@ impl PacketSpace {
         }
     }
 
-    /// Whether there is anything to send.
+    /// Whether there is anything to send in this space
+    ///
+    /// For the data space [`Connection::can_send_1rtt`] also needs to be consulted.
     pub(super) fn can_send(&self, path_id: PathId, streams: &StreamsState) -> SendableFrames {
-        let immediate_ack_pending = self
-            .number_spaces
-            .get(&path_id)
-            .map(|pns| pns.immediate_ack_pending)
-            .unwrap_or_default();
         let acks = self.pending_acks.can_send();
         let other = !self.pending.is_empty(streams)
             || self
                 .number_spaces
-                .values()
-                .any(|s| s.ping_pending || immediate_ack_pending);
+                .get(&path_id)
+                .is_some_and(|s| s.ping_pending || s.immediate_ack_pending);
 
         SendableFrames { acks, other }
     }
 
-    /// The number of packets sent with the current crypto keys.
+    /// The number of packets sent with the current crypto keys
     ///
     /// Used to know if a key update is needed.
     pub(super) fn sent_with_keys(&self) -> u64 {
