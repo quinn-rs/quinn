@@ -127,7 +127,7 @@ jobs:
         if: ${{ matrix.rust }} == "stable"
       - run: cargo test --locked -p quinn-udp --benches
       - run: cargo test --locked -p quinn-udp --benches --features fast-apple-datapath
-        if: ${{ matrix.os }} == "macos-latest"
+        if: ${{ runner.os }} == "macOS"
 
   test-aws-lc-rs:
     runs-on: ubuntu-latest
