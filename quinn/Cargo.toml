@@ -15,10 +15,12 @@ rust-version.workspace = true
 [features]
 # NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
 # comment in that file for more information.
-default = ["log", "platform-verifier", "runtime-tokio", "rustls-ring"]
+default = ["log", "platform-verifier", "runtime-tokio", "rustls-ring", "bloom"]
 # Enables `Endpoint::client` and `Endpoint::server` conveniences
 aws-lc-rs = ["proto/aws-lc-rs"]
 aws-lc-rs-fips = ["proto/aws-lc-rs-fips"]
+# Enables BloomTokenLog, and uses it by default
+bloom = ["proto/bloom"]
 # Records how long locks are held, and warns if they are held >= 1ms
 lock_tracking = []
 # Provides `ClientConfig::with_platform_verifier()` convenience method
