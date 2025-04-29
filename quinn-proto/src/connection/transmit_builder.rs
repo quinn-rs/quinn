@@ -6,7 +6,7 @@ use bytes::BufMut;
 /// datagrams are possible in case GSO (Generic Segmentation Offload) is supported.
 ///
 /// This buffer tracks datagrams being written to it. There is always a "current" datagram,
-/// which is started by calling [`TransmitBuf::start_new_datagram`]. Writing to the buffer
+/// which is started by calling [`TransmitBuilder::start_new_datagram`]. Writing to the buffer
 /// is done through the [`BufMut`] interface.
 ///
 /// Usually a datagram contains one QUIC packet, though QUIC-TRANSPORT 12.2 Coalescing
@@ -23,7 +23,7 @@ use bytes::BufMut;
 ///
 /// [`Connection::poll_transmit`]: super::Connection::poll_transmit
 #[derive(Debug)]
-pub(super) struct TransmitBuf<'a> {
+pub(super) struct TransmitBuilder<'a> {
     /// The buffer itself, packets are written to this buffer
     buf: &'a mut Vec<u8>,
     /// Offset into the buffer at which the current datagram starts
@@ -36,11 +36,11 @@ pub(super) struct TransmitBuf<'a> {
     /// The first and last datagram in a batch are allowed to be smaller then the maximum
     /// size. All datagrams in between need to be exactly this size.
     buf_capacity: usize,
-    /// The maximum number of datagrams allowed to write into [`TransmitBuf::buf`]
+    /// The maximum number of datagrams allowed to write into [`TransmitBuilder::buf`]
     max_datagrams: usize,
     /// The number of datagrams already (partially) written into the buffer
     ///
-    /// Incremented by a call to [`TransmitBuf::start_new_datagram`].
+    /// Incremented by a call to [`TransmitBuilder::start_new_datagram`].
     pub(super) num_datagrams: usize,
     /// The segment size of this GSO batch
     ///
@@ -53,7 +53,7 @@ pub(super) struct TransmitBuf<'a> {
     segment_size: usize,
 }
 
-impl<'a> TransmitBuf<'a> {
+impl<'a> TransmitBuilder<'a> {
     pub(super) fn new(buf: &'a mut Vec<u8>, max_datagrams: usize, mtu: usize) -> Self {
         Self {
             buf,
@@ -67,8 +67,8 @@ impl<'a> TransmitBuf<'a> {
 
     /// Starts a datagram with a custom datagram size
     ///
-    /// This is a specialized version of [`TransmitBuf::start_new_datagram`] which sets the
-    /// datagram size. Useful for e.g. PATH_CHALLENGE, tail-loss probes or MTU probes.
+    /// This is a specialized version of [`TransmitBuilder::start_new_datagram`] which sets
+    /// the datagram size. Useful for e.g. PATH_CHALLENGE, tail-loss probes or MTU probes.
     ///
     /// After the first datagram you can never increase the segment size. If you decrease
     /// the size of a datagram in a batch, it must be the last datagram of the batch.
@@ -85,7 +85,7 @@ impl<'a> TransmitBuf<'a> {
     ///
     /// If the underlying buffer does not have enough capacity yet this will allocate enough
     /// capacity for all the datagrams allowed in a single batch. Use
-    /// [`TransmitBuf::start_new_datagram_with_size`] if you know you will need less.
+    /// [`TransmitBuilder::start_new_datagram_with_size`] if you know you will need less.
     pub(super) fn start_new_datagram(&mut self) {
         // We reserve the maximum space for sending `max_datagrams` upfront to avoid any
         // reallocations if more datagrams have to be appended later on.  Benchmarks have
@@ -130,10 +130,10 @@ impl<'a> TransmitBuf<'a> {
     ///
     /// Only valid for the first datagram, when the datagram might be smaller than the
     /// segment size. Needed before estimating the available space in the next datagram
-    /// based on [`TransmitBuf::segment_size`].
+    /// based on [`TransmitBuilder::segment_size`].
     ///
-    /// Use [`TransmitBuf::start_new_datagram_with_size`] if you need to reduce the size of
-    /// the last datagram in a batch.
+    /// Use [`TransmitBuilder::start_new_datagram_with_size`] if you need to reduce the size
+    /// of the last datagram in a batch.
     pub(super) fn clip_datagram_size(&mut self) {
         debug_assert_eq!(self.num_datagrams, 1);
         self.segment_size = self.buf.len();
