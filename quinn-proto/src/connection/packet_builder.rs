@@ -120,7 +120,7 @@ impl PacketBuilder {
                 version,
             }),
         };
-        let partial_encode = header.encode(buffer);
+        let partial_encode = header.encode(&mut buffer.datagram_mut());
         if conn.peer_params.grease_quic_bit && conn.rng.random() {
             buffer.as_mut_slice()[partial_encode.start] ^= FIXED_BIT;
         }
@@ -233,8 +233,9 @@ impl PacketBuilder {
     ) -> (usize, bool) {
         let pad = buffer.len() < self.min_size;
         if pad {
-            trace!("PADDING * {}", self.min_size - buffer.len());
-            buffer.put_bytes(0, self.min_size - buffer.len());
+            let padding_bytes = self.min_size - buffer.len();
+            trace!("PADDING * {padding_bytes}");
+            buffer.datagram_mut().put_bytes(0, padding_bytes);
         }
 
         let space = &conn.spaces[self.space];
@@ -253,7 +254,7 @@ impl PacketBuilder {
             "Mismatching crypto tag len"
         );
 
-        buffer.put_bytes(0, packet_crypto.tag_len());
+        buffer.datagram_mut().put_bytes(0, packet_crypto.tag_len());
         let encode_start = self.partial_encode.start;
         let packet_buf = &mut buffer.as_mut_slice()[encode_start..];
         self.partial_encode.finish(
