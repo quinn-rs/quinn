@@ -757,7 +757,7 @@ impl Connection {
                         self.receiving_ecn,
                         &mut SentFrames::default(),
                         &mut self.spaces[space_id],
-                        &mut transmit,
+                        &mut transmit.datagram_mut(),
                         &mut self.stats,
                     );
                 }
@@ -774,14 +774,14 @@ impl Connection {
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
                             if space_id == SpaceId::Data || reason.is_transport_layer() {
-                                reason.encode(&mut transmit, max_frame_size)
+                                reason.encode(&mut transmit.datagram_mut(), max_frame_size)
                             } else {
                                 frame::ConnectionClose {
                                     error_code: TransportErrorCode::APPLICATION_ERROR,
                                     frame_type: None,
                                     reason: Bytes::new(),
                                 }
-                                .encode(&mut transmit, max_frame_size)
+                                .encode(&mut transmit.datagram_mut(), max_frame_size)
                             }
                         }
                         State::Draining => frame::ConnectionClose {
@@ -789,7 +789,7 @@ impl Connection {
                             frame_type: None,
                             reason: Bytes::new(),
                         }
-                        .encode(&mut transmit, max_frame_size),
+                        .encode(&mut transmit.datagram_mut(), max_frame_size),
                         _ => unreachable!(
                             "tried to make a close packet when the connection wasn't closed"
                         ),
@@ -817,8 +817,10 @@ impl Connection {
                     // above.
                     let mut builder = builder_storage.take().unwrap();
                     trace!("PATH_RESPONSE {:08x} (off-path)", token);
-                    transmit.write(frame::FrameType::PATH_RESPONSE);
-                    transmit.write(token);
+                    transmit
+                        .datagram_mut()
+                        .write(frame::FrameType::PATH_RESPONSE);
+                    transmit.datagram_mut().write(token);
                     self.stats.frame_tx.path_response += 1;
                     builder.pad_to(MIN_INITIAL_SIZE);
                     builder.finish_and_track(
@@ -844,7 +846,7 @@ impl Connection {
             let sent = self.populate_packet(
                 now,
                 space_id,
-                &mut transmit,
+                &mut transmit.datagram_mut(),
                 builder.max_size,
                 builder.exact_number,
             );
@@ -914,12 +916,14 @@ impl Connection {
             )?;
 
             // We implement MTU probes as ping packets padded up to the probe size
-            transmit.write(frame::FrameType::PING);
+            transmit.datagram_mut().write(frame::FrameType::PING);
             self.stats.frame_tx.ping += 1;
 
             // If supported by the peer, we want no delays to the probe's ACK
             if self.peer_supports_ack_frequency() {
-                transmit.write(frame::FrameType::IMMEDIATE_ACK);
+                transmit
+                    .datagram_mut()
+                    .write(frame::FrameType::IMMEDIATE_ACK);
                 self.stats.frame_tx.immediate_ack += 1;
             }
 
@@ -996,8 +1000,8 @@ impl Connection {
         debug_assert_eq!(buf.datagram_start_offset(), 0);
         let mut builder = PacketBuilder::new(now, SpaceId::Data, *prev_cid, buf, false, self)?;
         trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
-        buf.write(frame::FrameType::PATH_CHALLENGE);
-        buf.write(token);
+        buf.datagram_mut().write(frame::FrameType::PATH_CHALLENGE);
+        buf.datagram_mut().write(token);
         self.stats.frame_tx.path_challenge += 1;
 
         // An endpoint MUST expand datagrams that contain a PATH_CHALLENGE frame
@@ -3982,6 +3986,12 @@ pub(crate) trait BufLen {
 impl BufLen for Vec<u8> {
     fn len(&self) -> usize {
         self.len()
+    }
+}
+
+impl BufLen for bytes::buf::Limit<&mut Vec<u8>> {
+    fn len(&self) -> usize {
+        self.get_ref().len()
     }
 }
 
