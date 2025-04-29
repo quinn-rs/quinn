@@ -1,7 +1,5 @@
 use bytes::BufMut;
 
-use super::BufLen;
-
 /// The buffer in which to write datagrams for [`Connection::poll_transmit`]
 ///
 /// The `poll_transmit` function writes zero or more datagrams to a buffer. Multiple
@@ -142,6 +140,11 @@ impl<'a> TransmitBuf<'a> {
         self.buf_capacity = self.buf.len();
     }
 
+    /// Returns a buffer into which the current datagram can be written
+    pub(super) fn datagram_mut(&mut self) -> bytes::buf::Limit<&mut Vec<u8>> {
+        self.buf.limit(self.buf_capacity)
+    }
+
     /// Returns the GSO segment size
     ///
     /// This is also the maximum size datagrams are allowed to be. The first and last
@@ -191,25 +194,5 @@ impl<'a> TransmitBuf<'a> {
     /// Returns the already written bytes in the buffer
     pub(super) fn as_mut_slice(&mut self) -> &mut [u8] {
         self.buf.as_mut_slice()
-    }
-}
-
-unsafe impl BufMut for TransmitBuf<'_> {
-    fn remaining_mut(&self) -> usize {
-        self.buf.remaining_mut()
-    }
-
-    unsafe fn advance_mut(&mut self, cnt: usize) {
-        self.buf.advance_mut(cnt);
-    }
-
-    fn chunk_mut(&mut self) -> &mut bytes::buf::UninitSlice {
-        self.buf.chunk_mut()
-    }
-}
-
-impl BufLen for TransmitBuf<'_> {
-    fn len(&self) -> usize {
-        self.len()
     }
 }
