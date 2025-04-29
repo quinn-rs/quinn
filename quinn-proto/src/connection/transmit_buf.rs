@@ -145,6 +145,11 @@ impl<'a> TransmitBuf<'a> {
         self.buf.limit(self.buf_capacity)
     }
 
+    /// Returns the already written bytes in the buffer
+    pub(super) fn as_mut_slice(&mut self) -> &mut [u8] {
+        self.buf.as_mut_slice()
+    }
+
     /// Returns the GSO segment size
     ///
     /// This is also the maximum size datagrams are allowed to be. The first and last
@@ -189,10 +194,5 @@ impl<'a> TransmitBuf<'a> {
     /// The number of bytes written into the buffer so far
     pub(super) fn len(&self) -> usize {
         self.buf.len()
-    }
-
-    /// Returns the already written bytes in the buffer
-    pub(super) fn as_mut_slice(&mut self) -> &mut [u8] {
-        self.buf.as_mut_slice()
     }
 }
