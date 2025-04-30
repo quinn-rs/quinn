@@ -606,11 +606,13 @@ fn prepare_msg(
         encoder.push(libc::IPPROTO_IPV6, libc::IPV6_TCLASS, ecn);
     }
 
-    // Only set the segment size if it is different from the size of the contents.
-    // Some network drivers don't like being told to do GSO even if there is effectively only a single segment.
+    // Only set the segment size if it is less than the size of the contents.
+    // Some network drivers don't like being told to do GSO even if there is effectively only a single segment (i.e. `segment_size == transmit.contents.len()`)
+    // Additionally, a `segment_size` that is greater than the content also means there is effectively only a single segment.
+    // This case is actually quite common when splitting up a prepared GSO batch again after GSO has been disabled because the last datagram in a GSO batch is allowed to be smaller than the segment size.
     if let Some(segment_size) = transmit
         .segment_size
-        .filter(|segment_size| *segment_size != transmit.contents.len())
+        .filter(|segment_size| *segment_size < transmit.contents.len())
     {
         gso::set_segment_size(&mut encoder, segment_size as u16);
     }
