@@ -647,8 +647,7 @@ impl Connection {
                                 - builder.partial_encode.start
                                 + builder.tag_len;
                         if packet_len_unpadded + MAX_PADDING < transmit.segment_size()
-                            || transmit.datagram_start_offset() + transmit.segment_size()
-                                > transmit.datagram_max_offset()
+                            || transmit.datagram_mut().capacity() < transmit.segment_size()
                         {
                             trace!(
                                 "GSO truncated by demand for {} padding bytes or loss probe",
@@ -712,7 +711,7 @@ impl Connection {
                 }
             }
 
-            debug_assert!(transmit.datagram_max_offset() - transmit.len() >= MIN_PACKET_SPACE);
+            debug_assert!(transmit.datagram_mut().remaining_mut() >= MIN_PACKET_SPACE);
 
             //
             // From here on, we've determined that a packet will definitely be sent.
@@ -867,8 +866,7 @@ impl Connection {
                 !(sent.is_ack_only(&self.streams)
                     && !can_send.acks
                     && can_send.other
-                    && (transmit.datagram_max_offset() - builder.datagram_start)
-                        == self.path.current_mtu() as usize
+                    && transmit.datagram_mut().capacity() == self.path.current_mtu() as usize
                     && self.datagrams.outgoing.is_empty()),
                 "SendableFrames was {can_send:?}, but only ACKs have been written"
             );
@@ -911,7 +909,7 @@ impl Connection {
             debug_assert_eq!(transmit.num_datagrams(), 0);
             transmit.start_new_datagram_with_size(probe_size as usize);
 
-            debug_assert_eq!(transmit.datagram_start_offset(), 0);
+            debug_assert!(transmit.datagram().is_empty());
             let mut builder = PacketBuilder::new(
                 now,
                 space_id,
@@ -1003,7 +1001,7 @@ impl Connection {
         // sent once, immediately after migration, when the CID is known to be valid. Even
         // if a post-migration packet caused the CID to be retired, it's fair to pretend
         // this is sent first.
-        debug_assert_eq!(buf.datagram_start_offset(), 0);
+        debug_assert!(buf.datagram().is_empty());
         let mut builder = PacketBuilder::new(now, SpaceId::Data, *prev_cid, buf, false, self)?;
         trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
         buf.datagram_mut().write(frame::FrameType::PATH_CHALLENGE);
