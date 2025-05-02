@@ -89,6 +89,7 @@ mod timer;
 use timer::{Timer, TimerTable};
 
 mod transmit_builder;
+pub(crate) use transmit_builder::BufSlice;
 use transmit_builder::TransmitBuilder;
 
 /// Protocol state and logic for a single QUIC connection
@@ -536,13 +537,13 @@ impl Connection {
                 ack_eliciting |= self.can_send_1rtt(frame_space_1rtt);
             }
 
-            // Can we append more data into the current buffer?
-            // It is not safe to assume that `buf.len()` is the end of the data,
-            // since the last packet might not have been finished.
+            // Can we append more data into the current datagram?
+            // It is not safe to assume that `transmits.datagram().len()` is the end of the
+            // data, since the last packet might not have been finished.
             let buf_end = if let Some(builder) = &builder_storage {
-                transmit.len().max(builder.min_size) + builder.tag_len
+                transmit.datagram().len().max(builder.min_size) + builder.tag_len
             } else {
-                transmit.len()
+                transmit.datagram().len()
             };
 
             let tag_len = if let Some(ref crypto) = self.spaces[space_id].crypto {
@@ -558,7 +559,9 @@ impl Connection {
             // We are NOT coalescing (the default is we are, so this was turned off in an
             // earlier iteration) OR there is not enough space for another *packet* in this
             // datagram (buf_capacity - buf_end == unused space in datagram).
-            if !coalesce || transmit.datagram_max_offset() - buf_end < MIN_PACKET_SPACE + tag_len {
+            if !coalesce
+                || transmit.datagram_mut().capacity() - buf_end < MIN_PACKET_SPACE + tag_len
+            {
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
@@ -585,7 +588,7 @@ impl Connection {
                 if ack_eliciting && self.spaces[space_id].loss_probes == 0 {
                     // Assume the current packet will get padded to fill the segment
                     let untracked_bytes = if let Some(builder) = &builder_storage {
-                        transmit.datagram_max_offset() - builder.partial_encode.start
+                        transmit.datagram().len() - builder.partial_encode.start
                     } else {
                         0
                     } as u64;
@@ -639,9 +642,10 @@ impl Connection {
                         // MTU. Loss probes are the only packets for which we might grow
                         // `buf_capacity` by less than `segment_size`.
                         const MAX_PADDING: usize = 16;
-                        let packet_len_unpadded = cmp::max(builder.min_size, transmit.len())
-                            - transmit.datagram_start_offset()
-                            + builder.tag_len;
+                        let packet_len_unpadded =
+                            cmp::max(builder.min_size, transmit.datagram().len())
+                                - builder.partial_encode.start
+                                + builder.tag_len;
                         if packet_len_unpadded + MAX_PADDING < transmit.segment_size()
                             || transmit.datagram_start_offset() + transmit.segment_size()
                                 > transmit.datagram_max_offset()
@@ -766,11 +770,13 @@ impl Connection {
                 // to encode the ConnectionClose frame too. However we still have the
                 // check here to prevent crashes if something changes.
                 debug_assert!(
-                    transmit.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size,
-                    "ACKs should leave space for ConnectionClose"
+                    transmit.datagram().len() + frame::ConnectionClose::SIZE_BOUND
+                        < builder.max_size,
+                    "ACKS should leave space for ConnectionClose"
                 );
-                if transmit.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size {
-                    let max_frame_size = builder.max_size - transmit.len();
+                if transmit.datagram().len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size
+                {
+                    let max_frame_size = builder.max_size - transmit.datagram().len();
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
                             if space_id == SpaceId::Data || reason.is_transport_layer() {

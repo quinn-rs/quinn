@@ -5,7 +5,7 @@ use tracing::{trace, trace_span};
 use super::{Connection, SentFrames, TransmitBuilder, spaces::SentPacket};
 use crate::{
     ConnectionId, Instant, TransportError, TransportErrorCode,
-    connection::ConnectionSide,
+    connection::{BufSlice, ConnectionSide},
     frame::{self, Close},
     packet::{FIXED_BIT, Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId},
 };
@@ -17,11 +17,12 @@ pub(super) struct PacketBuilder {
     pub(super) ack_eliciting: bool,
     pub(super) exact_number: u64,
     pub(super) short_header: bool,
-    /// Smallest absolute position in the associated buffer that must be occupied by this packet's
-    /// frames
+    /// The smallest datagram offset that must be occupied by this packet's frames
+    ///
+    /// This is the smallest offset into the datagram this packet is being written into,
+    /// that must contain frames for this packet.
     pub(super) min_size: usize,
-    /// Largest absolute position in the associated buffer that may be occupied by this packet's
-    /// frames
+    /// The largest datagram offset that may be occupied by this packet's frames
     pub(super) max_size: usize,
     pub(super) tag_len: usize,
     pub(super) _span: tracing::span::EnteredSpan,
@@ -122,7 +123,7 @@ impl PacketBuilder {
         };
         let partial_encode = header.encode(&mut buffer.datagram_mut());
         if conn.peer_params.grease_quic_bit && conn.rng.random() {
-            buffer.as_mut_slice()[partial_encode.start] ^= FIXED_BIT;
+            buffer.datagram_mut()[partial_encode.start] ^= FIXED_BIT;
         }
 
         let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
@@ -146,10 +147,10 @@ impl PacketBuilder {
         // pn_len + payload_len + tag_len >= sample_size + 4
         // payload_len >= sample_size + 4 - pn_len - tag_len
         let min_size = Ord::max(
-            buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
+            buffer.datagram().len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
             partial_encode.start + dst_cid.len() + 6,
         );
-        let max_size = buffer.datagram_max_offset() - tag_len;
+        let max_size = buffer.datagram_mut().capacity() - tag_len;
         debug_assert!(max_size >= min_size);
 
         Some(Self {
@@ -172,10 +173,7 @@ impl PacketBuilder {
         // The datagram might already have a larger minimum size than the caller is requesting, if
         // e.g. we're coalescing packets and have populated more than `min_size` bytes with packets
         // already.
-        self.min_size = Ord::max(
-            self.min_size,
-            self.datagram_start + (min_size as usize) - self.tag_len,
-        );
+        self.min_size = Ord::max(self.min_size, (min_size as usize) - self.tag_len);
     }
 
     pub(super) fn finish_and_track(
@@ -231,9 +229,9 @@ impl PacketBuilder {
         conn: &mut Connection,
         buffer: &mut TransmitBuilder<'_>,
     ) -> (usize, bool) {
-        let pad = buffer.len() < self.min_size;
+        let pad = self.min_size > buffer.datagram().len();
         if pad {
-            let padding_bytes = self.min_size - buffer.len();
+            let padding_bytes = self.min_size - buffer.datagram().len();
             trace!("PADDING * {padding_bytes}");
             buffer.datagram_mut().put_bytes(0, padding_bytes);
         }
@@ -256,13 +254,14 @@ impl PacketBuilder {
 
         buffer.datagram_mut().put_bytes(0, packet_crypto.tag_len());
         let encode_start = self.partial_encode.start;
-        let packet_buf = &mut buffer.as_mut_slice()[encode_start..];
+        let mut datagram_buf = buffer.datagram_mut();
+        let packet_buf = &mut datagram_buf[encode_start..];
         self.partial_encode.finish(
             packet_buf,
             header_crypto,
             Some((self.exact_number, packet_crypto)),
         );
 
-        (buffer.len() - encode_start, pad)
+        (buffer.datagram().len() - encode_start, pad)
     }
 }
