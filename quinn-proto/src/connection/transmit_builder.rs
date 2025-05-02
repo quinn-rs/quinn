@@ -185,27 +185,12 @@ impl<'a> TransmitBuilder<'a> {
         self.max_datagrams
     }
 
-    /// Returns the start offset of the current datagram in the buffer
-    ///
-    /// In other words, this offset contains the first byte of the current datagram.
-    pub(super) fn datagram_start_offset(&self) -> usize {
-        self.datagram_start
-    }
-
-    /// Returns the maximum offset in the buffer allowed for the current datagram
-    ///
-    /// The first and last datagram in a batch are allowed to be smaller then the maximum
-    /// size. All datagrams in between need to be exactly this size.
-    pub(super) fn datagram_max_offset(&self) -> usize {
-        self.buf_capacity
-    }
-
-    /// Returns `true` if the buffer did not have anything written into it
+    /// Returns `true` if there are no datagrams in this transmit
     pub(super) fn is_empty(&self) -> bool {
         self.len() == 0
     }
 
-    /// The number of bytes written into the buffer so far
+    /// Returns the sum of the bytes for all datagrams in the builder
     pub(super) fn len(&self) -> usize {
         self.buf.len()
     }
