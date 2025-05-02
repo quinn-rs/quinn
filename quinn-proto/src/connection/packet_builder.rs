@@ -11,7 +11,6 @@ use crate::{
 };
 
 pub(super) struct PacketBuilder {
-    pub(super) datagram_start: usize,
     pub(super) space: SpaceId,
     pub(super) partial_encode: PartialEncode,
     pub(super) ack_eliciting: bool,
@@ -154,7 +153,6 @@ impl PacketBuilder {
         debug_assert!(max_size >= min_size);
 
         Some(Self {
-            datagram_start: transmits.datagram_start_offset(),
             space: space_id,
             partial_encode,
             exact_number,
