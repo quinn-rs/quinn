@@ -105,9 +105,6 @@ impl PacketSpace {
     /// waiting to be sent, then we retransmit in-flight data to reduce odds of loss. If there's no
     /// in-flight data either, we're probably a client guarding against a handshake
     /// anti-amplification deadlock and we just make something up.
-    // TODO(flub): This is still wrong!  The probe needs to be sent for each path
-    //    separately, and ON the path so that it gets a higher packet number than those that
-    //    might be lost.
     pub(super) fn maybe_queue_probe(
         &mut self,
         path_id: PathId,
@@ -147,13 +144,8 @@ impl PacketSpace {
         // Nothing new to send and nothing to retransmit, so fall back on a ping. This should only
         // happen in rare cases during the handshake when the server becomes blocked by
         // anti-amplification.
-        // TODO(flub): Sending a ping on all paths is wasteful, but we also need per-path
-        //   pings so doing this is easier for now.  Maybe later introduce a
-        //   connection-level ping again.
         if !self.for_path(path_id).immediate_ack_pending {
-            self.number_spaces
-                .values_mut()
-                .for_each(|s| s.ping_pending = true);
+            self.for_path(path_id).ping_pending = true;
         }
     }
 
@@ -167,8 +159,11 @@ impl PacketSpace {
                 .number_spaces
                 .get(&path_id)
                 .is_some_and(|s| s.ping_pending || s.immediate_ack_pending);
-
-        SendableFrames { acks, other }
+        SendableFrames {
+            acks,
+            other,
+            close: false,
+        }
     }
 
     /// The number of packets sent with the current crypto keys
@@ -752,8 +747,12 @@ impl Dedup {
 /// Indicates which data is available for sending
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct SendableFrames {
+    /// Whether there ACK frames to send
     pub(super) acks: bool,
+    /// Whether there are any other frames to send, these are ack-eliciting
     pub(super) other: bool,
+    /// Whether there is a CONNECTION_CLOSE to send
+    pub(super) close: bool,
 }
 
 impl SendableFrames {
@@ -762,12 +761,13 @@ impl SendableFrames {
         Self {
             acks: false,
             other: false,
+            close: false,
         }
     }
 
     /// Whether no data is sendable
     pub(super) fn is_empty(&self) -> bool {
-        !self.acks && !self.other
+        !self.acks && !self.other && !self.close
     }
 }
 
