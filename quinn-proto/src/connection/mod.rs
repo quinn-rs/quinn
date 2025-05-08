@@ -850,6 +850,9 @@ impl Connection {
                 ) || matches!(
                     self.space_ready_to_send(path_id, space_id.next(), builder.buf, close, now),
                     SendReady::Frames(can_send) if !can_send.is_empty(),
+                ) || matches!(
+                    self.space_ready_to_send(path_id, space_id.next().next(), builder.buf, close, now),
+                    SendReady::Frames(can_send) if !can_send.is_empty(),
                 ))
             {
                 // We can append/coalesce the next packet into the current
