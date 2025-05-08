@@ -1,14 +1,16 @@
 use std::{
-    collections::hash_map,
     future::Future,
     io,
+    ops::ControlFlow,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll, ready},
 };
 
 use bytes::Bytes;
 use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
+use tokio::sync::Notify;
 
 use crate::{VarInt, connection::ConnectionRef};
 
@@ -200,12 +202,17 @@ impl SendStream {
     /// For a variety of reasons, the peer may not send acknowledgements immediately upon receiving
     /// data. As such, relying on `stopped` to know when the peer has read a stream to completion
     /// may introduce more latency than using an application-level response of some sort.
-    pub fn stopped(&self) -> Stopped {
-        Stopped {
-            conn: self.conn.clone(),
-            stream: self.stream,
-            is_0rtt: self.is_0rtt,
-            waker_key: None,
+    pub fn stopped(
+        &self,
+    ) -> impl Future<Output = Result<Option<VarInt>, StoppedError>> + Send + Sync + 'static {
+        let (conn, stream, is_0rtt) = (self.conn.clone(), self.stream, self.is_0rtt);
+        async move {
+            loop {
+                match stopped_or_notify(&conn, stream, is_0rtt) {
+                    ControlFlow::Break(res) => return res,
+                    ControlFlow::Continue(notify) => notify.notified().await,
+                }
+            }
         }
     }
 
@@ -227,6 +234,30 @@ impl SendStream {
         buf: &[u8],
     ) -> Poll<Result<usize, WriteError>> {
         self.get_mut().execute_poll(cx, |stream| stream.write(buf))
+    }
+}
+
+fn stopped_or_notify(
+    conn: &ConnectionRef,
+    stream: StreamId,
+    is_0rtt: bool,
+) -> ControlFlow<Result<Option<VarInt>, StoppedError>, Arc<Notify>> {
+    use ControlFlow::*;
+    let mut conn = conn.state.lock("SendStream::stopped");
+    if is_0rtt && conn.check_0rtt().is_err() {
+        return Break(Err(StoppedError::ZeroRttRejected));
+    }
+    match conn.inner.send_stream(stream).stopped() {
+        Err(ClosedStream { .. }) => Break(Ok(None)),
+        Ok(Some(error_code)) => Break(Ok(Some(error_code))),
+        Ok(None) => {
+            if let Some(e) = &conn.error {
+                Break(Err(e.clone().into()))
+            } else {
+                let notify = conn.stopped.entry(stream).or_default().clone();
+                Continue(notify)
+            }
+        }
     }
 }
 
@@ -282,69 +313,6 @@ impl Drop for SendStream {
             }
             // Already finished or reset, which is fine.
             Err(FinishError::ClosedStream) => {}
-        }
-    }
-}
-
-/// Future produced by `SendStream::stopped`
-pub struct Stopped {
-    conn: ConnectionRef,
-    stream: StreamId,
-    is_0rtt: bool,
-    waker_key: Option<usize>,
-}
-
-impl Stopped {
-    fn poll_unpin(&mut self, cx: &mut Context) -> Poll<<Self as Future>::Output> {
-        let mut conn = self.conn.state.lock("send_stream::Stopped::poll");
-
-        // remove previously stored waker to avoid duplicate wakeups.
-        if let Some(key) = self.waker_key.take() {
-            if let Some(wakers) = conn.stopped.get_mut(&self.stream) {
-                wakers.try_remove(key);
-            }
-        }
-
-        if self.is_0rtt {
-            conn.check_0rtt()
-                .map_err(|()| StoppedError::ZeroRttRejected)?;
-        }
-
-        match conn.inner.send_stream(self.stream).stopped() {
-            Err(_) => Poll::Ready(Ok(None)),
-            Ok(Some(error_code)) => Poll::Ready(Ok(Some(error_code))),
-            Ok(None) => {
-                if let Some(e) = &conn.error {
-                    return Poll::Ready(Err(e.clone().into()));
-                }
-                // store a new waker to be woken once the stream stops.
-                let wakers = conn.stopped.entry(self.stream).or_default();
-                self.waker_key = Some(wakers.insert(cx.waker().clone()));
-                Poll::Pending
-            }
-        }
-    }
-}
-
-impl Future for Stopped {
-    type Output = Result<Option<VarInt>, StoppedError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.get_mut().poll_unpin(cx)
-    }
-}
-
-impl Drop for Stopped {
-    fn drop(&mut self) {
-        if let Some(key) = self.waker_key.take() {
-            let mut conn = self.conn.state.lock("send_steam::Stopped::drop");
-            if let hash_map::Entry::Occupied(mut entry) = conn.stopped.entry(self.stream) {
-                let wakers = entry.get_mut();
-                wakers.try_remove(key);
-                if wakers.is_empty() {
-                    entry.remove();
-                }
-            }
         }
     }
 }

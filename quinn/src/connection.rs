@@ -12,7 +12,6 @@ use std::{
 use bytes::Bytes;
 use pin_project_lite::pin_project;
 use rustc_hash::FxHashMap;
-use slab::Slab;
 use thiserror::Error;
 use tokio::sync::{Notify, futures::Notified, mpsc, oneshot};
 use tracing::{Instrument, Span, debug_span};
@@ -964,7 +963,7 @@ pub(crate) struct State {
     endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
     pub(crate) blocked_writers: FxHashMap<StreamId, Waker>,
     pub(crate) blocked_readers: FxHashMap<StreamId, Waker>,
-    pub(crate) stopped: FxHashMap<StreamId, Slab<Waker>>,
+    pub(crate) stopped: FxHashMap<StreamId, Arc<Notify>>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
@@ -1106,7 +1105,7 @@ impl State {
                         // `ZeroRttRejected` errors.
                         wake_all(&mut self.blocked_writers);
                         wake_all(&mut self.blocked_readers);
-                        wake_all_slab(&mut self.stopped);
+                        wake_all_notify(&mut self.stopped);
                     }
                 }
                 ConnectionLost { reason } => {
@@ -1130,9 +1129,9 @@ impl State {
                     // Might mean any number of streams are ready, so we wake up everyone
                     shared.stream_budget_available[dir as usize].notify_waiters();
                 }
-                Stream(StreamEvent::Finished { id }) => wake_stream_slab(id, &mut self.stopped),
+                Stream(StreamEvent::Finished { id }) => wake_stream_notify(id, &mut self.stopped),
                 Stream(StreamEvent::Stopped { id, .. }) => {
-                    wake_stream_slab(id, &mut self.stopped);
+                    wake_stream_notify(id, &mut self.stopped);
                     wake_stream(id, &mut self.blocked_writers);
                 }
             }
@@ -1213,7 +1212,7 @@ impl State {
         if let Some(x) = self.on_connected.take() {
             let _ = x.send(false);
         }
-        wake_all_slab(&mut self.stopped);
+        wake_all_notify(&mut self.stopped);
         shared.closed.notify_waiters();
     }
 
@@ -1267,16 +1266,16 @@ fn wake_all(wakers: &mut FxHashMap<StreamId, Waker>) {
     wakers.drain().for_each(|(_, waker)| waker.wake())
 }
 
-fn wake_stream_slab(stream_id: StreamId, wakers: &mut FxHashMap<StreamId, Slab<Waker>>) {
-    if let Some(mut slab) = wakers.remove(&stream_id) {
-        slab.drain().for_each(|waker| waker.wake())
+fn wake_stream_notify(stream_id: StreamId, wakers: &mut FxHashMap<StreamId, Arc<Notify>>) {
+    if let Some(notify) = wakers.remove(&stream_id) {
+        notify.notify_waiters()
     }
 }
 
-fn wake_all_slab(wakers: &mut FxHashMap<StreamId, Slab<Waker>>) {
+fn wake_all_notify(wakers: &mut FxHashMap<StreamId, Arc<Notify>>) {
     wakers
         .drain()
-        .for_each(|(_, mut slab)| slab.drain().for_each(|waker| waker.wake()))
+        .for_each(|(_, notify)| notify.notify_waiters())
 }
 
 /// Errors that can arise when sending a datagram
