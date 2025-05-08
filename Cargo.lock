@@ -1592,6 +1592,7 @@ dependencies = [
  "rustc-hash 2.1.1",
  "rustls",
  "rustls-pemfile",
+ "slab",
  "smol",
  "socket2",
  "thiserror 2.0.12",
