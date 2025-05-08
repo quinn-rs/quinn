@@ -118,7 +118,8 @@ impl<MakeFut, Fut> UdpPollHelper<MakeFut, Fut> {
     #[cfg(any(
         feature = "runtime-async-std",
         feature = "runtime-smol",
-        feature = "runtime-tokio"
+        feature = "runtime-tokio",
+        feature = "async-io"
     ))]
     fn new(make_fut: MakeFut) -> Self {
         Self {
@@ -196,5 +197,5 @@ pub use self::tokio::TokioRuntime;
 #[cfg(feature = "async-io")]
 mod async_io;
 // Due to MSRV, we must specify `self::` where there's crate/module ambiguity
-#[cfg(feature = "async-io")]
+#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
 pub use self::async_io::*;
