@@ -12,7 +12,10 @@ use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
 use tokio::sync::Notify;
 
-use crate::{VarInt, connection::ConnectionRef};
+use crate::{
+    VarInt,
+    connection::{ConnectionRef, State},
+};
 
 /// A stream that can only be used to send data
 ///
@@ -208,10 +211,21 @@ impl SendStream {
         let (conn, stream, is_0rtt) = (self.conn.clone(), self.stream, self.is_0rtt);
         async move {
             loop {
-                match stopped_or_notify(&conn, stream, is_0rtt) {
-                    ControlFlow::Break(res) => return res,
-                    ControlFlow::Continue(notify) => notify.notified().await,
+                // The `Notify::notified` future needs to be created while the lock is being
+                // held, otherwise a wakeup could be missed if triggered inbetween releasing the lock
+                // and creating the future. The lock may only be held in a block without `await`s,
+                // otherwise the future becomes `!Send`. `Notify::notified` is lifetime-bound to `Notify`,
+                // therefore we need to declare `notify` outside of the block, and initialize it inside.
+                let notify;
+                {
+                    let mut conn = conn.state.lock("SendStream::stopped");
+                    notify = match stopped_or_notify(&mut conn, stream, is_0rtt) {
+                        ControlFlow::Break(res) => return res,
+                        ControlFlow::Continue(notify) => notify,
+                    };
+                    notify.notified()
                 }
+                .await
             }
         }
     }
@@ -238,12 +252,11 @@ impl SendStream {
 }
 
 fn stopped_or_notify(
-    conn: &ConnectionRef,
+    conn: &mut State,
     stream: StreamId,
     is_0rtt: bool,
 ) -> ControlFlow<Result<Option<VarInt>, StoppedError>, Arc<Notify>> {
     use ControlFlow::*;
-    let mut conn = conn.state.lock("SendStream::stopped");
     if is_0rtt && conn.check_0rtt().is_err() {
         return Break(Err(StoppedError::ZeroRttRejected));
     }
