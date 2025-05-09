@@ -6,6 +6,7 @@ use thiserror::Error;
 use crate::{
     ConnectionId,
     coding::{self, BufExt, BufMutExt},
+    connection::BufSlice,
     crypto,
 };
 
@@ -281,7 +282,11 @@ pub(crate) enum Header {
 }
 
 impl Header {
-    pub(crate) fn encode(&self, w: &mut Vec<u8>) -> PartialEncode {
+    /// Encodes the QUIC packet header into the buffer
+    ///
+    /// The current position of the buffer is stored in the [`PartialEncode`] as the start
+    /// of the packet in the buffer.
+    pub(crate) fn encode(&self, w: &mut impl BufSlice) -> PartialEncode {
         use Header::*;
         let start = w.len();
         match *self {
