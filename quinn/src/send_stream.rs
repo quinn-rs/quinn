@@ -1,15 +1,21 @@
 use std::{
     future::Future,
     io,
+    ops::ControlFlow,
     pin::Pin,
+    sync::Arc,
     task::{Context, Poll, ready},
 };
 
 use bytes::Bytes;
 use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
+use tokio::sync::Notify;
 
-use crate::{VarInt, connection::ConnectionRef};
+use crate::{
+    VarInt,
+    connection::{ConnectionRef, State},
+};
 
 /// A stream that can only be used to send data
 ///
@@ -199,27 +205,27 @@ impl SendStream {
     /// For a variety of reasons, the peer may not send acknowledgements immediately upon receiving
     /// data. As such, relying on `stopped` to know when the peer has read a stream to completion
     /// may introduce more latency than using an application-level response of some sort.
-    pub async fn stopped(&mut self) -> Result<Option<VarInt>, StoppedError> {
-        Stopped { stream: self }.await
-    }
-
-    fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<Option<VarInt>, StoppedError>> {
-        let mut conn = self.conn.state.lock("SendStream::poll_stopped");
-
-        if self.is_0rtt {
-            conn.check_0rtt()
-                .map_err(|()| StoppedError::ZeroRttRejected)?;
-        }
-
-        match conn.inner.send_stream(self.stream).stopped() {
-            Err(_) => Poll::Ready(Ok(None)),
-            Ok(Some(error_code)) => Poll::Ready(Ok(Some(error_code))),
-            Ok(None) => {
-                if let Some(e) = &conn.error {
-                    return Poll::Ready(Err(e.clone().into()));
+    pub fn stopped(
+        &self,
+    ) -> impl Future<Output = Result<Option<VarInt>, StoppedError>> + Send + Sync + 'static {
+        let (conn, stream, is_0rtt) = (self.conn.clone(), self.stream, self.is_0rtt);
+        async move {
+            loop {
+                // The `Notify::notified` future needs to be created while the lock is being
+                // held, otherwise a wakeup could be missed if triggered inbetween releasing the lock
+                // and creating the future. The lock may only be held in a block without `await`s,
+                // otherwise the future becomes `!Send`. `Notify::notified` is lifetime-bound to `Notify`,
+                // therefore we need to declare `notify` outside of the block, and initialize it inside.
+                let notify;
+                {
+                    let mut conn = conn.state.lock("SendStream::stopped");
+                    notify = match stopped_or_notify(&mut conn, stream, is_0rtt) {
+                        ControlFlow::Break(res) => return res,
+                        ControlFlow::Continue(notify) => notify,
+                    };
+                    notify.notified()
                 }
-                conn.stopped.insert(self.stream, cx.waker().clone());
-                Poll::Pending
+                .await
             }
         }
     }
@@ -242,6 +248,29 @@ impl SendStream {
         buf: &[u8],
     ) -> Poll<Result<usize, WriteError>> {
         self.get_mut().execute_poll(cx, |stream| stream.write(buf))
+    }
+}
+
+fn stopped_or_notify(
+    conn: &mut State,
+    stream: StreamId,
+    is_0rtt: bool,
+) -> ControlFlow<Result<Option<VarInt>, StoppedError>, Arc<Notify>> {
+    use ControlFlow::*;
+    if is_0rtt && conn.check_0rtt().is_err() {
+        return Break(Err(StoppedError::ZeroRttRejected));
+    }
+    match conn.inner.send_stream(stream).stopped() {
+        Err(ClosedStream { .. }) => Break(Ok(None)),
+        Ok(Some(error_code)) => Break(Ok(Some(error_code))),
+        Ok(None) => {
+            if let Some(e) = &conn.error {
+                Break(Err(e.clone().into()))
+            } else {
+                let notify = conn.stopped.entry(stream).or_default().clone();
+                Continue(notify)
+            }
+        }
     }
 }
 
@@ -283,7 +312,6 @@ impl Drop for SendStream {
         let mut conn = self.conn.state.lock("SendStream::drop");
 
         // clean up any previously registered wakers
-        conn.stopped.remove(&self.stream);
         conn.blocked_writers.remove(&self.stream);
 
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
@@ -299,19 +327,6 @@ impl Drop for SendStream {
             // Already finished or reset, which is fine.
             Err(FinishError::ClosedStream) => {}
         }
-    }
-}
-
-/// Future produced by `SendStream::stopped`
-struct Stopped<'a> {
-    stream: &'a mut SendStream,
-}
-
-impl Future for Stopped<'_> {
-    type Output = Result<Option<VarInt>, StoppedError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.get_mut().stream.poll_stopped(cx)
     }
 }
 
