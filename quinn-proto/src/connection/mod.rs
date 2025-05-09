@@ -566,8 +566,8 @@ impl Connection {
         // Whether this packet can be coalesced with another one in the same datagram.
         let mut coalesce = true;
 
-        // Whether the last packet in the datagram must be padded to at least
-        // MIN_INITIAL_SIZE.
+        // Whether the last packet in the datagram must be padded so the datagram takes up
+        // to at least MIN_INITIAL_SIZE, or to the maximum segment size if this is smaller.
         let mut pad_datagram = false;
 
         // Whether congestion control stopped the next packet from being sent. Further
@@ -590,6 +590,7 @@ impl Connection {
             let can_send = match send_ready {
                 SendReady::Frames(can_send) if !can_send.is_empty() => can_send,
                 SendReady::Frames(_) if space_id < SpaceId::Data => {
+                    trace!(?space_id, ?path_id, "nothing left to send in this space");
                     space_id = space_id.next();
                     continue;
                 }
@@ -844,16 +845,19 @@ impl Connection {
                     .datagram_remaining_mut()
                     .saturating_sub(builder.predict_packet_end())
                     > MIN_PACKET_SPACE
-                && (matches!(
-                 self.space_ready_to_send(path_id, space_id, builder.buf, close, now),
-                 SendReady::Frames(can_send) if !can_send.is_empty(),
-                ) || matches!(
-                    self.space_ready_to_send(path_id, space_id.next(), builder.buf, close, now),
-                    SendReady::Frames(can_send) if !can_send.is_empty(),
-                ) || matches!(
-                    self.space_ready_to_send(path_id, space_id.next().next(), builder.buf, close, now),
-                    SendReady::Frames(can_send) if !can_send.is_empty(),
-                ))
+                && self
+                    .next_send_space(space_id, path_id, builder.buf, close)
+                    .is_some()
+            // && (matches!(
+            //  self.space_ready_to_send(path_id, space_id, builder.buf, close, now),
+            //  SendReady::Frames(can_send) if !can_send.is_empty(),
+            // ) || matches!(
+            //     self.space_ready_to_send(path_id, space_id.next(), builder.buf, close, now),
+            //     SendReady::Frames(can_send) if !can_send.is_empty(),
+            // ) || matches!(
+            //     self.space_ready_to_send(path_id, space_id.next().next(), builder.buf, close, now),
+            //     SendReady::Frames(can_send) if !can_send.is_empty(),
+            // ))
             {
                 // We can append/coalesce the next packet into the current
                 // datagram. Finish the current packet without adding extra padding.
@@ -968,6 +972,8 @@ impl Connection {
         }
 
         trace!(
+            segment_size = buf.segment_size(),
+            last_datagram_len = buf.len() % buf.segment_size(),
             "sending {} bytes in {} datagrams",
             buf.len(),
             buf.num_datagrams()
@@ -992,6 +998,44 @@ impl Connection {
             },
             src_ip: self.local_ip,
         })
+    }
+
+    /// Returns the [`SpaceId`] of the next packet space which has data to send
+    ///
+    /// This takes into account the space available to frames in the next datagram.
+    // TODO(flub): This duplication is not nice.
+    fn next_send_space(
+        &mut self,
+        current_space_id: SpaceId,
+        path_id: PathId,
+        buf: &TransmitBuf<'_>,
+        close: bool,
+    ) -> Option<SpaceId> {
+        // Number of bytes available for frames if this is a 1-RTT packet. We're guaranteed
+        // to be able to send an individual frame at least this large in the next 1-RTT
+        // packet. This could be generalized to support every space, but it's only needed to
+        // handle large fixed-size frames, which only exist in 1-RTT (application
+        // datagrams). We don't account for coalesced packets potentially occupying space
+        // because frames can always spill into the next datagram.
+        let pn = self.spaces[SpaceId::Data]
+            .for_path(path_id)
+            .peek_tx_number();
+        let frame_space_1rtt = buf
+            .segment_size()
+            .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
+        let mut space_id = current_space_id;
+        loop {
+            let can_send = self.space_can_send(space_id, path_id, frame_space_1rtt);
+            if !can_send.is_empty() || (close && self.spaces[space_id].crypto.is_some()) {
+                return Some(space_id);
+            }
+            space_id = match space_id {
+                SpaceId::Initial => SpaceId::Handshake,
+                SpaceId::Handshake => SpaceId::Data,
+                SpaceId::Data => break,
+            }
+        }
+        None
     }
 
     // /// Returns the next path on which data is ready to be sent
@@ -1075,37 +1119,40 @@ impl Connection {
             return SendReady::Frames(can_send);
         }
 
-        // Anti-amplification is only based on `total_sent`, which gets updated after the
-        // transmit is sent. Therefore we pass the amount of bytes for datagrams that are
-        // already created, as well as 1 byte for starting another datagram. If there is any
-        // anti-amplification budget left, we always allow a full MTU to be sent (see
-        // https://github.com/quinn-rs/quinn/issues/1082).
-        if self
-            .path_data(path_id)
-            .anti_amplification_blocked(transmit.len() as u64 + 1)
-        {
-            return SendReady::AntiAmplificationBlocked;
-        }
-
-        // Congestion control check.
-        // Tail loss probes must not be blocked by congestion, or a deadlock could arise.
-        let bytes_to_send = transmit.segment_size() as u64;
-        if can_send.other && !need_loss_probe && !can_send.close {
-            let path = self.path_data(path_id);
-            if path.in_flight.bytes + bytes_to_send >= path.congestion.window() {
-                trace!("blocked by congestion control");
-                return SendReady::CongestionBlocked;
+        // Only if a new datagram is needed do we need to check anti-amplification,
+        // congestion control and pacing.
+        if transmit.datagram_remaining_mut() == 0 {
+            // Anti-amplification is only based on `total_sent`, which gets updated after
+            // the transmit is sent. Therefore we pass the amount of bytes for datagrams
+            // that are already created, as well as 1 byte for starting another datagram. If
+            // there is any anti-amplification budget left, we always allow a full MTU to be
+            // sent (see https://github.com/quinn-rs/quinn/issues/1082).
+            if self
+                .path_data(path_id)
+                .anti_amplification_blocked(transmit.len() as u64 + 1)
+            {
+                return SendReady::AntiAmplificationBlocked;
             }
-        }
 
-        // Pacing check.
-        if let Some(delay) = self.path_data_mut(path_id).pacing_delay(bytes_to_send, now) {
-            // TODO(@divma): this needs fixing asap
-            self.timers.set(Timer::Pacing(path_id), delay);
-            // Loss probes and CONNECTION_CLOSE should be subject to pacing, even though
-            // they are not congestion controlled.
-            trace!("blocked by pacing");
-            return SendReady::PacingBlocked;
+            // Congestion control check.
+            // Tail loss probes must not be blocked by congestion, or a deadlock could arise.
+            let bytes_to_send = transmit.segment_size() as u64;
+            if can_send.other && !need_loss_probe && !can_send.close {
+                let path = self.path_data(path_id);
+                if path.in_flight.bytes + bytes_to_send >= path.congestion.window() {
+                    trace!(?space_id, %path_id, "blocked by congestion control");
+                    return SendReady::CongestionBlocked;
+                }
+            }
+
+            // Pacing check.
+            if let Some(delay) = self.path_data_mut(path_id).pacing_delay(bytes_to_send, now) {
+                self.timers.set(Timer::Pacing(path_id), delay);
+                // Loss probes and CONNECTION_CLOSE should be subject to pacing, even though
+                // they are not congestion controlled.
+                trace!("blocked by pacing");
+                return SendReady::PacingBlocked;
+            }
         }
 
         // Ensure there is something to send if a loss probe is needed.
