@@ -1,4 +1,5 @@
 use std::{
+    fmt,
     future::{Future, poll_fn},
     io,
     pin::{Pin, pin},
@@ -139,7 +140,7 @@ impl SendStream {
     ///
     /// If the `source` callback pushes a total number of bytes to its vec less than or equal to
     /// its given limit, it is guaranteed they will all be written into the stream immediately.
-    pub async fn write_source<F, R>(&mut self, source: F) -> Result<R, (WriteError, F)>
+    pub async fn write_source<F, R>(&mut self, source: F) -> Result<R, WriteSourceError<F>>
     where
         F: FnOnce(usize, &mut Vec<Bytes>) -> R,
     {
@@ -147,10 +148,16 @@ impl SendStream {
         poll_fn(move |cx| {
             let mut conn = self.conn.state.lock("SendStream::write_source");
             if self.is_0rtt && conn.check_0rtt() == Err(()) {
-                return Poll::Ready(Err((WriteError::ZeroRttRejected, source.take().unwrap())));
+                return Poll::Ready(Err(WriteSourceError {
+                    error: WriteError::ZeroRttRejected,
+                    source: source.take().unwrap(),
+                }));
             }
             if let Some(e) = conn.error.clone() {
-                return Poll::Ready(Err((WriteError::ConnectionLost(e), source.take().unwrap())));
+                return Poll::Ready(Err(WriteSourceError {
+                    error: WriteError::ConnectionLost(e),
+                    source: source.take().unwrap(),
+                }));
             }
 
             match conn
@@ -167,14 +174,14 @@ impl SendStream {
                     conn.blocked_writers.insert(self.stream, cx.waker().clone());
                     Poll::Pending
                 }
-                Err((e, returned_source)) => Poll::Ready(Err((
-                    match e {
+                Err((e, returned_source)) => Poll::Ready(Err(WriteSourceError {
+                    error: match e {
                         proto::WriteError::Blocked => unreachable!(),
                         proto::WriteError::Stopped(code) => WriteError::Stopped(code),
                         proto::WriteError::ClosedStream => WriteError::ClosedStream,
                     },
-                    returned_source,
-                ))),
+                    source: returned_source,
+                })),
             }
         })
         .await
@@ -409,6 +416,12 @@ impl From<StoppedError> for WriteError {
     }
 }
 
+impl<F> From<WriteSourceError<F>> for WriteError {
+    fn from(e: WriteSourceError<F>) -> Self {
+        e.error
+    }
+}
+
 impl From<WriteError> for io::Error {
     fn from(x: WriteError) -> Self {
         use WriteError::*;
@@ -444,5 +457,37 @@ impl From<StoppedError> for io::Error {
             ConnectionLost(_) => io::ErrorKind::NotConnected,
         };
         Self::new(kind, x)
+    }
+}
+
+/// Error type for [`SendStream::write_source`]
+pub struct WriteSourceError<F> {
+    /// The underlying write error
+    pub error: WriteError,
+    /// The `source` parameter that was passed to `write_source`
+    pub source: F,
+}
+
+impl<F> fmt::Debug for WriteSourceError<F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.error, f)
+    }
+}
+
+impl<F> fmt::Display for WriteSourceError<F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.error, f)
+    }
+}
+
+impl<F> std::error::Error for WriteSourceError<F> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl<F> From<WriteSourceError<F>> for io::Error {
+    fn from(e: WriteSourceError<F>) -> Self {
+        e.error.into()
     }
 }
