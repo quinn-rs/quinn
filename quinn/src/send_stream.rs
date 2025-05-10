@@ -1,7 +1,7 @@
 use std::{
     future::{Future, poll_fn},
     io,
-    pin::Pin,
+    pin::{Pin, pin},
     task::{Context, Poll},
 };
 
@@ -241,14 +241,14 @@ impl SendStream {
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, WriteError>> {
-        self.get_mut().execute_poll(cx, |stream| stream.write(buf))
+        pin!(self.get_mut().write(buf)).as_mut().poll(cx)
     }
 }
 
 #[cfg(feature = "futures-io")]
 impl futures_io::AsyncWrite for SendStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        Self::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
+        self.poll_write(cx, buf).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
@@ -266,7 +266,7 @@ impl tokio::io::AsyncWrite for SendStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Self::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
+        self.poll_write(cx, buf).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
