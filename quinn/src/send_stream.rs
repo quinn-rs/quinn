@@ -43,53 +43,80 @@ impl SendStream {
         }
     }
 
-    /// Write bytes to the stream
+    /// Attempts to write a buffer into this stream, returning how many bytes were written
     ///
-    /// Yields the number of bytes written on success. Congestion and flow control may cause this to
-    /// be shorter than `buf.len()`, indicating that only a prefix of `buf` was written.
+    /// Unless this method errors, it waits until some amount of `buf` can be written into this
+    /// stream, and then writes as much as it can without waiting again. Due to congestion and flow
+    /// control, this may be shorter than `buf.len()`. On success this resolves to the length of
+    /// the prefix that was written.
     ///
-    /// This operation is cancel-safe.
+    /// This method is cancellation safe: If it does not resolve, no bytes were written.
     pub async fn write(&mut self, buf: &[u8]) -> Result<usize, WriteError> {
         Write { stream: self, buf }.await
     }
 
-    /// Convenience method to write an entire buffer to the stream
+    /// Attempts to write an buffer into this stream in its entirety
     ///
-    /// This operation is *not* cancel-safe.
+    /// This method repeatedly calls [`write`](Self::write) until all bytes are written, or an
+    /// error occurs.
+    ///
+    /// This method is *not* cancellation safe: Even if this does not resolve, some prefix of `buf`
+    /// may have been written when previously polled.
     pub async fn write_all(&mut self, buf: &[u8]) -> Result<(), WriteError> {
         WriteAll { stream: self, buf }.await
     }
 
-    /// Write chunks to the stream
+    /// Like [`write`](Self::write), except that it writes from a slice of [`Bytes`]
     ///
-    /// Yields the number of bytes and chunks written on success.
-    /// Congestion and flow control may cause this to be shorter than `buf.len()`,
-    /// indicating that only a prefix of `bufs` was written
+    /// Bytes to try to write are provided to this method as an array of cheaply cloneable chunks.
+    /// Unless this method errors, it waits until some amount of those bytes can be written into
+    /// this stream, and then writes as much as it can without waiting again. Due to congestion and
+    /// flow control, this may be shorter than the total number of bytes.
     ///
-    /// This operation is cancel-safe.
+    /// On success, this method both mutates `bufs` and yields an informative [`Written`] struct
+    /// indicating how much was written:
+    ///
+    /// - [`Bytes`] chunks that were fully written are mutated to be [empty](Bytes::is_empty).
+    /// - If a [`Bytes`] chunk was partially written, it is [split to](Bytes::split_to) contain
+    ///   only the suffix of bytes that were not written.
+    /// - The yielded [`Written`] struct indicates how many chunks were fully written as well as
+    ///   how many bytes were written.
+    ///
+    /// This method is cancellation safe: If it does not resolve, no bytes were written.
     pub async fn write_chunks(&mut self, bufs: &mut [Bytes]) -> Result<Written, WriteError> {
         WriteChunks { stream: self, bufs }.await
     }
 
-    /// Convenience method to write a single chunk in its entirety to the stream
+    /// Like [`write_all`](Self::write), except that it writes from a slice of [`Bytes`]
     ///
-    /// This operation is *not* cancel-safe.
-    pub async fn write_chunk(&mut self, buf: Bytes) -> Result<(), WriteError> {
-        WriteChunk {
-            stream: self,
-            buf: [buf],
-        }
-        .await
-    }
-
-    /// Convenience method to write an entire list of chunks to the stream
+    /// Bytes to write are provided to this method as an array of cheaply cloneable chunks. This
+    /// method repeatedly calls [`write_chunks`](Self::write_chunks) until all bytes are written,
+    /// or an error occurs. This method mutates `bufs` by mutating all chunks to be
+    /// [empty](Bytes::is_empty).
     ///
-    /// This operation is *not* cancel-safe.
+    /// This method is *not* cancellation safe: Even if this does not resolve, some prefix of `buf`
+    /// may have been written when previously polled.
     pub async fn write_all_chunks(&mut self, bufs: &mut [Bytes]) -> Result<(), WriteError> {
         WriteAllChunks {
             stream: self,
             bufs,
             offset: 0,
+        }
+        .await
+    }
+
+    /// Like [`write_all`](Self::write), except that it writes from a [`Bytes`]
+    ///
+    /// This method is a convenience wrapper around `write_all_chunks`. This method repeatedly
+    /// calls [`write_chunks`](Self::write_chunks) until the entirety of `buf` is written, or an
+    /// error occurs.
+    ///
+    /// This method is *not* cancellation safe: Even if this does not resolve, some prefix of `buf`
+    /// may have been written when previously polled.
+    pub async fn write_chunk(&mut self, buf: Bytes) -> Result<(), WriteError> {
+        WriteChunk {
+            stream: self,
+            buf: [buf],
         }
         .await
     }
