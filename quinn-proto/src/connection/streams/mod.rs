@@ -225,6 +225,7 @@ impl<'a> SendStream<'a> {
             chunks.push(prefix.to_vec().into());
             prefix.len()
         })
+        .map_err(|(e, _)| e)
     }
 
     /// Send data on the given stream
@@ -252,6 +253,7 @@ impl<'a> SendStream<'a> {
             }
             written
         })
+        .map_err(|(e, _)| e)
     }
 
     /// Send data on the given stream
@@ -262,25 +264,23 @@ impl<'a> SendStream<'a> {
     /// guaranteed they will all be written. If it provides more bytes than this, it is guaranteed
     /// that a prefix of the provided cumulative bytes will be written equal in length to the
     /// provided limit.
-    fn write_source<T>(
-        &mut self,
-        source: impl FnOnce(usize, &mut Vec<Bytes>) -> T,
-    ) -> Result<T, WriteError> {
+    fn write_source<F, R>(&mut self, source: F) -> Result<R, (WriteError, F)>
+    where
+        F: FnOnce(usize, &mut Vec<Bytes>) -> R,
+    {
         if self.conn_state.is_closed() {
             trace!(%self.id, "write blocked; connection draining");
-            return Err(WriteError::Blocked);
+            return Err((WriteError::Blocked, source));
         }
 
         let limit = self.state.write_limit();
 
         let max_send_data = self.state.max_send_data(self.id);
 
-        let stream = self
-            .state
-            .send
-            .get_mut(&self.id)
-            .map(get_or_insert_send(max_send_data))
-            .ok_or(WriteError::ClosedStream)?;
+        let stream = match self.state.send.get_mut(&self.id) {
+            Some(opt) => opt.get_or_insert_with(|| Send::new(max_send_data)),
+            None => return Err((WriteError::ClosedStream, source)),
+        };
 
         if limit == 0 {
             trace!(
@@ -291,7 +291,7 @@ impl<'a> SendStream<'a> {
                 stream.connection_blocked = true;
                 self.state.connection_blocked.push(self.id);
             }
-            return Err(WriteError::Blocked);
+            return Err((WriteError::Blocked, source));
         }
 
         let was_pending = stream.is_pending();
