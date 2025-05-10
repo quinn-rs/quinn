@@ -19,8 +19,7 @@ use recv::Recv;
 pub use recv::{Chunks, ReadError, ReadableError};
 
 mod send;
-pub(crate) use send::{ByteSlice, BytesArray};
-pub use send::{BytesSource, FinishError, WriteError, Written};
+pub use send::{FinishError, WriteError, Written};
 use send::{Send, SendState};
 
 mod state;
@@ -221,7 +220,11 @@ impl<'a> SendStream<'a> {
     ///
     /// Returns the number of bytes successfully written.
     pub fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        Ok(self.write_source(&mut ByteSlice::from_slice(data))?.bytes)
+        self.write_source(|limit, chunks| {
+            let prefix = &data[..limit.min(data.len())];
+            chunks.push(prefix.to_vec().into());
+            prefix.len()
+        })
     }
 
     /// Send data on the given stream
@@ -231,10 +234,38 @@ impl<'a> SendStream<'a> {
     /// [`Written::chunks`] will not count this chunk as fully written. However
     /// the chunk will be advanced and contain only non-written data after the call.
     pub fn write_chunks(&mut self, data: &mut [Bytes]) -> Result<Written, WriteError> {
-        self.write_source(&mut BytesArray::from_chunks(data))
+        self.write_source(|limit, chunks| {
+            let mut written = Written::default();
+            for chunk in data {
+                let prefix = chunk.split_to(chunk.len().min(limit - written.bytes));
+                written.bytes += prefix.len();
+                chunks.push(prefix);
+
+                if chunk.is_empty() {
+                    written.chunks += 1;
+                }
+
+                debug_assert!(written.bytes <= limit);
+                if written.bytes == limit {
+                    break;
+                }
+            }
+            written
+        })
     }
 
-    fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
+    /// Send data on the given stream
+    ///
+    /// The `source` callback is invoked with the number of bytes that can be written immediately,
+    /// as well as an initially empty `&mut Vec<Bytes>` to which it can push bytes to write. If the
+    /// callback pushes a total number of bytes less than or equal to the provided limit, it is
+    /// guaranteed they will all be written. If it provides more bytes than this, it is guaranteed
+    /// that a prefix of the provided cumulative bytes will be written equal in length to the
+    /// provided limit.
+    fn write_source<T>(
+        &mut self,
+        source: impl FnOnce(usize, &mut Vec<Bytes>) -> T,
+    ) -> Result<T, WriteError> {
         if self.conn_state.is_closed() {
             trace!(%self.id, "write blocked; connection draining");
             return Err(WriteError::Blocked);
@@ -264,14 +295,14 @@ impl<'a> SendStream<'a> {
         }
 
         let was_pending = stream.is_pending();
-        let written = stream.write(source, limit)?;
-        self.state.data_sent += written.bytes as u64;
-        self.state.unacked_data += written.bytes as u64;
-        trace!(stream = %self.id, "wrote {} bytes", written.bytes);
+        let (written, source_output) = stream.write(source, limit)?;
+        self.state.data_sent += written as u64;
+        self.state.unacked_data += written as u64;
+        trace!(stream = %self.id, "wrote {} bytes", written);
         if !was_pending {
             self.state.pending.push_pending(self.id, stream.priority);
         }
-        Ok(written)
+        Ok(source_output)
     }
 
     /// Check if this stream was stopped, get the reason if it was
