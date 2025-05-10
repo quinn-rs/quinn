@@ -220,11 +220,8 @@ impl<'a> SendStream<'a> {
     ///
     /// Returns the number of bytes successfully written.
     pub fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        self.write_source(|limit, chunks| {
-            let prefix = &data[..limit.min(data.len())];
-            chunks.push(prefix.to_vec().into());
-            prefix.len()
-        })
+        self.write_source(|limit, chunks| stage_buf(data, limit, chunks))
+            .map_err(|(e, _)| e)
     }
 
     /// Send data on the given stream
@@ -234,24 +231,8 @@ impl<'a> SendStream<'a> {
     /// [`Written::chunks`] will not count this chunk as fully written. However
     /// the chunk will be advanced and contain only non-written data after the call.
     pub fn write_chunks(&mut self, data: &mut [Bytes]) -> Result<Written, WriteError> {
-        self.write_source(|limit, chunks| {
-            let mut written = Written::default();
-            for chunk in data {
-                let prefix = chunk.split_to(chunk.len().min(limit - written.bytes));
-                written.bytes += prefix.len();
-                chunks.push(prefix);
-
-                if chunk.is_empty() {
-                    written.chunks += 1;
-                }
-
-                debug_assert!(written.bytes <= limit);
-                if written.bytes == limit {
-                    break;
-                }
-            }
-            written
-        })
+        self.write_source(|limit, chunks| stage_chunks(data, limit, chunks))
+            .map_err(|(e, _)| e)
     }
 
     /// Send data on the given stream
@@ -262,25 +243,23 @@ impl<'a> SendStream<'a> {
     /// guaranteed they will all be written. If it provides more bytes than this, it is guaranteed
     /// that a prefix of the provided cumulative bytes will be written equal in length to the
     /// provided limit.
-    fn write_source<T>(
-        &mut self,
-        source: impl FnOnce(usize, &mut Vec<Bytes>) -> T,
-    ) -> Result<T, WriteError> {
+    pub fn write_source<F, R>(&mut self, source: F) -> Result<R, (WriteError, F)>
+    where
+        F: FnOnce(usize, &mut Vec<Bytes>) -> R,
+    {
         if self.conn_state.is_closed() {
             trace!(%self.id, "write blocked; connection draining");
-            return Err(WriteError::Blocked);
+            return Err((WriteError::Blocked, source));
         }
 
         let limit = self.state.write_limit();
 
         let max_send_data = self.state.max_send_data(self.id);
 
-        let stream = self
-            .state
-            .send
-            .get_mut(&self.id)
-            .map(get_or_insert_send(max_send_data))
-            .ok_or(WriteError::ClosedStream)?;
+        let stream = match self.state.send.get_mut(&self.id) {
+            Some(opt) => opt.get_or_insert_with(|| Send::new(max_send_data)),
+            None => return Err((WriteError::ClosedStream, source)),
+        };
 
         if limit == 0 {
             trace!(
@@ -291,7 +270,7 @@ impl<'a> SendStream<'a> {
                 stream.connection_blocked = true;
                 self.state.connection_blocked.push(self.id);
             }
-            return Err(WriteError::Blocked);
+            return Err((WriteError::Blocked, source));
         }
 
         let was_pending = stream.is_pending();
@@ -396,6 +375,42 @@ impl<'a> SendStream<'a> {
 
         Ok(stream.as_ref().map(|s| s.priority).unwrap_or_default())
     }
+}
+
+/// Helper function for using [`SendStream::write_source`] with `&[u8]`
+///
+/// Copies the largest prefix of `data` that is not longer than `limit` to a new `Bytes`
+/// allocation, pushes it to `chunks`, and returns how many bytes were transferred.
+pub fn stage_buf(data: &[u8], limit: usize, chunks: &mut Vec<Bytes>) -> usize {
+    let prefix = &data[..limit.min(data.len())];
+    chunks.push(prefix.to_vec().into());
+    prefix.len()
+}
+
+/// Helper function for using [`SendStream::write_source`] with `&mut [Bytes]`
+///
+/// Treats `data` as a byte sequences represented as an array of contiguous chunks. Takes the
+/// largest prefix of those bytes that is not longer than `limit` and pushes it to `chunks`.
+/// Mutates each element of `data` so they no longer contain the parts of the chunks that were
+/// taken. Returns a [`Written`] indicating the number of chunks that were *fully* transferred as
+/// well as the total number of bytes that were transferred.
+pub fn stage_chunks(data: &mut [Bytes], limit: usize, chunks: &mut Vec<Bytes>) -> Written {
+    let mut written = Written::default();
+    for chunk in data {
+        let prefix = chunk.split_to(chunk.len().min(limit - written.bytes));
+        written.bytes += prefix.len();
+        chunks.push(prefix);
+
+        if chunk.is_empty() {
+            written.chunks += 1;
+        }
+
+        debug_assert!(written.bytes <= limit);
+        if written.bytes == limit {
+            break;
+        }
+    }
+    written
 }
 
 /// A queue of streams with pending outgoing data, sorted by priority

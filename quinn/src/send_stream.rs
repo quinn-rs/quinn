@@ -1,12 +1,15 @@
 use std::{
+    fmt,
     future::{Future, poll_fn},
     io,
-    pin::Pin,
+    pin::{Pin, pin},
     task::{Context, Poll},
 };
 
 use bytes::Bytes;
-use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
+use proto::{
+    ClosedStream, ConnectionError, FinishError, StreamId, Written, stage_buf, stage_chunks,
+};
 use thiserror::Error;
 
 use crate::{VarInt, connection::ConnectionRef};
@@ -50,7 +53,9 @@ impl SendStream {
     ///
     /// This operation is cancel-safe.
     pub async fn write(&mut self, buf: &[u8]) -> Result<usize, WriteError> {
-        poll_fn(|cx| self.execute_poll(cx, |s| s.write(buf))).await
+        self.write_source(|limit, chunks| stage_buf(buf, limit, chunks))
+            .await
+            .map_err(Into::into)
     }
 
     /// Convenience method to write an entire buffer to the stream
@@ -72,7 +77,9 @@ impl SendStream {
     ///
     /// This operation is cancel-safe.
     pub async fn write_chunks(&mut self, bufs: &mut [Bytes]) -> Result<Written, WriteError> {
-        poll_fn(|cx| self.execute_poll(cx, |s| s.write_chunks(bufs))).await
+        self.write_source(|limit, chunks| stage_chunks(bufs, limit, chunks))
+            .await
+            .map_err(Into::into)
     }
 
     /// Convenience method to write a single chunk in its entirety to the stream
@@ -94,36 +101,64 @@ impl SendStream {
         Ok(())
     }
 
-    fn execute_poll<F, R>(&mut self, cx: &mut Context, write_fn: F) -> Poll<Result<R, WriteError>>
+    /// Attempts to write bytes into this stream from a byte-providing callback
+    ///
+    /// This is a low-level writing API that can be used to perform writes in a way that is atomic
+    /// with respect to congestion and flow control. This method:
+    ///
+    /// 1. Waits until a non-zero number of bytes can be written (or an error occurs).
+    /// 2. Locks the internal connection state.
+    /// 3. Invokes the `source` callback with the number of bytes that can be written immediately,
+    ///    as well as an initially empty `&mut Vec<Bytes>` to which it can push bytes to write.
+    /// 4. Immediately writes as many of those bytes as can be written immediately.
+    ///
+    /// If the `source` callback pushes a total number of bytes to its vec less than or equal to
+    /// its given limit, it is guaranteed they will all be written into the stream immediately.
+    pub async fn write_source<F, R>(&mut self, source: F) -> Result<R, WriteSourceError<F>>
     where
-        F: FnOnce(&mut proto::SendStream) -> Result<R, proto::WriteError>,
+        F: FnOnce(usize, &mut Vec<Bytes>) -> R,
     {
-        use proto::WriteError::*;
-        let mut conn = self.conn.state.lock("SendStream::poll_write");
-        if self.is_0rtt {
-            conn.check_0rtt()
-                .map_err(|()| WriteError::ZeroRttRejected)?;
-        }
-        if let Some(ref x) = conn.error {
-            return Poll::Ready(Err(WriteError::ConnectionLost(x.clone())));
-        }
+        let mut source = Some(source);
+        poll_fn(move |cx| {
+            let mut conn = self.conn.state.lock("SendStream::write_source");
+            if self.is_0rtt && conn.check_0rtt() == Err(()) {
+                return Poll::Ready(Err(WriteSourceError {
+                    error: WriteError::ZeroRttRejected,
+                    source: source.take().unwrap(),
+                }));
+            }
+            if let Some(e) = conn.error.clone() {
+                return Poll::Ready(Err(WriteSourceError {
+                    error: WriteError::ConnectionLost(e),
+                    source: source.take().unwrap(),
+                }));
+            }
 
-        let result = match write_fn(&mut conn.inner.send_stream(self.stream)) {
-            Ok(result) => result,
-            Err(Blocked) => {
-                conn.blocked_writers.insert(self.stream, cx.waker().clone());
-                return Poll::Pending;
+            match conn
+                .inner
+                .send_stream(self.stream)
+                .write_source(source.take().unwrap())
+            {
+                Ok(source_output) => {
+                    conn.wake();
+                    Poll::Ready(Ok(source_output))
+                }
+                Err((proto::WriteError::Blocked, returned_source)) => {
+                    source = Some(returned_source);
+                    conn.blocked_writers.insert(self.stream, cx.waker().clone());
+                    Poll::Pending
+                }
+                Err((e, returned_source)) => Poll::Ready(Err(WriteSourceError {
+                    error: match e {
+                        proto::WriteError::Blocked => unreachable!(),
+                        proto::WriteError::Stopped(code) => WriteError::Stopped(code),
+                        proto::WriteError::ClosedStream => WriteError::ClosedStream,
+                    },
+                    source: returned_source,
+                })),
             }
-            Err(Stopped(error_code)) => {
-                return Poll::Ready(Err(WriteError::Stopped(error_code)));
-            }
-            Err(ClosedStream) => {
-                return Poll::Ready(Err(WriteError::ClosedStream));
-            }
-        };
-
-        conn.wake();
-        Poll::Ready(Ok(result))
+        })
+        .await
     }
 
     /// Notify the peer that no more data will ever be written to this stream
@@ -241,14 +276,14 @@ impl SendStream {
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, WriteError>> {
-        self.get_mut().execute_poll(cx, |stream| stream.write(buf))
+        pin!(self.get_mut().write(buf)).as_mut().poll(cx)
     }
 }
 
 #[cfg(feature = "futures-io")]
 impl futures_io::AsyncWrite for SendStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        Self::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
+        self.poll_write(cx, buf).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
@@ -266,7 +301,7 @@ impl tokio::io::AsyncWrite for SendStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Self::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
+        self.poll_write(cx, buf).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
@@ -355,6 +390,12 @@ impl From<StoppedError> for WriteError {
     }
 }
 
+impl<F> From<WriteSourceError<F>> for WriteError {
+    fn from(e: WriteSourceError<F>) -> Self {
+        e.error
+    }
+}
+
 impl From<WriteError> for io::Error {
     fn from(x: WriteError) -> Self {
         use WriteError::*;
@@ -390,5 +431,37 @@ impl From<StoppedError> for io::Error {
             ConnectionLost(_) => io::ErrorKind::NotConnected,
         };
         Self::new(kind, x)
+    }
+}
+
+/// Error type for [`SendStream::write_source`]
+pub struct WriteSourceError<F> {
+    /// The underlying write error
+    pub error: WriteError,
+    /// The `source` parameter that was passed to `write_source`
+    pub source: F,
+}
+
+impl<F> fmt::Debug for WriteSourceError<F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Debug::fmt(&self.error, f)
+    }
+}
+
+impl<F> fmt::Display for WriteSourceError<F> {
+    fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
+        fmt::Display::fmt(&self.error, f)
+    }
+}
+
+impl<F> std::error::Error for WriteSourceError<F> {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(&self.error)
+    }
+}
+
+impl<F> From<WriteSourceError<F>> for io::Error {
+    fn from(e: WriteSourceError<F>) -> Self {
+        e.error.into()
     }
 }

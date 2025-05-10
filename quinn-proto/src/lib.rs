@@ -47,7 +47,7 @@ pub use crate::connection::{
     Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
     FinishError, FrameStats, PathStats, ReadError, ReadableError, RecvStream, RttEstimator,
     SendDatagramError, SendStream, ShouldTransmit, StreamEvent, Streams, UdpStats, WriteError,
-    Written,
+    Written, stage_buf, stage_chunks,
 };
 
 #[cfg(feature = "rustls")]

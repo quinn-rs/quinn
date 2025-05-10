@@ -52,20 +52,23 @@ impl Send {
         }
     }
 
-    pub(super) fn write<T>(
+    pub(super) fn write<F, R>(
         &mut self,
-        source: impl FnOnce(usize, &mut Vec<Bytes>) -> T,
+        source: F,
         limit: u64,
-    ) -> Result<(usize, T), WriteError> {
+    ) -> Result<(usize, R), (WriteError, F)>
+    where
+        F: FnOnce(usize, &mut Vec<Bytes>) -> R,
+    {
         if !self.is_writable() {
-            return Err(WriteError::ClosedStream);
+            return Err((WriteError::ClosedStream, source));
         }
         if let Some(error_code) = self.stop_reason {
-            return Err(WriteError::Stopped(error_code));
+            return Err((WriteError::Stopped(error_code), source));
         }
         let budget = self.max_data - self.pending.offset();
         if budget == 0 {
-            return Err(WriteError::Blocked);
+            return Err((WriteError::Blocked, source));
         }
         let limit = limit.min(budget) as usize;
 
