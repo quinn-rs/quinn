@@ -227,7 +227,7 @@ impl BytesSource for ByteSlice<'_> {
 ///
 /// The purpose of this data type is to defer conversion as long as possible,
 /// so that no heap allocation is required in case no data is writable.
-pub trait BytesSource {
+pub(super) trait BytesSource {
     /// Returns the next chunk from the source of owned chunks.
     ///
     /// This method will consume parts of the source.

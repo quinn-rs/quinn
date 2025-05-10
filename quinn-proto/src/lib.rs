@@ -44,10 +44,10 @@ pub use bloom_token_log::BloomTokenLog;
 
 mod connection;
 pub use crate::connection::{
-    BytesSource, Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats,
-    Datagrams, Event, FinishError, FrameStats, PathStats, ReadError, ReadableError, RecvStream,
-    RttEstimator, SendDatagramError, SendStream, ShouldTransmit, StreamEvent, Streams, UdpStats,
-    WriteError, Written,
+    Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
+    FinishError, FrameStats, PathStats, ReadError, ReadableError, RecvStream, RttEstimator,
+    SendDatagramError, SendStream, ShouldTransmit, StreamEvent, Streams, UdpStats, WriteError,
+    Written,
 };
 
 #[cfg(feature = "rustls")]
