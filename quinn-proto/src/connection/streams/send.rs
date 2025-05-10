@@ -15,6 +15,8 @@ pub(super) struct Send {
     pub(super) connection_blocked: bool,
     /// The reason the peer wants us to stop, if `STOP_SENDING` was received
     pub(super) stop_reason: Option<VarInt>,
+    /// Reusable buf for usage within `write`--empty between calls to `self.write`
+    chunks: Vec<Bytes>,
 }
 
 impl Send {
@@ -27,6 +29,7 @@ impl Send {
             fin_pending: false,
             connection_blocked: false,
             stop_reason: None,
+            chunks: Vec::new(),
         })
     }
 
@@ -66,12 +69,12 @@ impl Send {
         }
         let limit = limit.min(budget) as usize;
 
-        let mut chunks = Vec::new();
-        let source_output = source(limit, &mut chunks);
+        debug_assert!(self.chunks.is_empty());
+        let source_output = source(limit, &mut self.chunks);
 
         let mut written = 0;
 
-        for mut chunk in chunks.drain(..) {
+        for mut chunk in self.chunks.drain(..) {
             let prefix = chunk.split_to(chunk.len().min(limit - written));
             written += prefix.len();
             self.pending.write(prefix);
