@@ -381,7 +381,7 @@ impl<'a> SendStream<'a> {
 ///
 /// Copies the largest prefix of `data` that is not longer than `limit` to a new `Bytes`
 /// allocation, pushes it to `chunks`, and returns how many bytes were transferred.
-fn stage_buf(data: &[u8], limit: usize, chunks: &mut Vec<Bytes>) -> usize {
+pub fn stage_buf(data: &[u8], limit: usize, chunks: &mut Vec<Bytes>) -> usize {
     let prefix = &data[..limit.min(data.len())];
     chunks.push(prefix.to_vec().into());
     prefix.len()
@@ -394,7 +394,7 @@ fn stage_buf(data: &[u8], limit: usize, chunks: &mut Vec<Bytes>) -> usize {
 /// Mutates each element of `data` so they no longer contain the parts of the chunks that were
 /// taken. Returns a [`Written`] indicating the number of chunks that were *fully* transferred as
 /// well as the total number of bytes that were transferred.
-fn stage_chunks(data: &mut [Bytes], limit: usize, chunks: &mut Vec<Bytes>) -> Written {
+pub fn stage_chunks(data: &mut [Bytes], limit: usize, chunks: &mut Vec<Bytes>) -> Written {
     let mut written = Written::default();
     for chunk in data {
         let prefix = chunk.split_to(chunk.len().min(limit - written.bytes));
