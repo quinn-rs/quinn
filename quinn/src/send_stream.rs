@@ -7,7 +7,9 @@ use std::{
 };
 
 use bytes::Bytes;
-use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
+use proto::{
+    ClosedStream, ConnectionError, FinishError, StreamId, Written, stage_buf, stage_chunks,
+};
 use thiserror::Error;
 
 use crate::{VarInt, connection::ConnectionRef};
@@ -51,7 +53,9 @@ impl SendStream {
     ///
     /// This operation is cancel-safe.
     pub async fn write(&mut self, buf: &[u8]) -> Result<usize, WriteError> {
-        poll_fn(|cx| self.execute_poll(cx, |s| s.write(buf))).await
+        self.write_source(|limit, chunks| stage_buf(buf, limit, chunks))
+            .await
+            .map_err(Into::into)
     }
 
     /// Convenience method to write an entire buffer to the stream
@@ -73,7 +77,9 @@ impl SendStream {
     ///
     /// This operation is cancel-safe.
     pub async fn write_chunks(&mut self, bufs: &mut [Bytes]) -> Result<Written, WriteError> {
-        poll_fn(|cx| self.execute_poll(cx, |s| s.write_chunks(bufs))).await
+        self.write_source(|limit, chunks| stage_chunks(bufs, limit, chunks))
+            .await
+            .map_err(Into::into)
     }
 
     /// Convenience method to write a single chunk in its entirety to the stream
@@ -93,38 +99,6 @@ impl SendStream {
             bufs = &mut bufs[written.chunks..];
         }
         Ok(())
-    }
-
-    fn execute_poll<F, R>(&mut self, cx: &mut Context, write_fn: F) -> Poll<Result<R, WriteError>>
-    where
-        F: FnOnce(&mut proto::SendStream) -> Result<R, proto::WriteError>,
-    {
-        use proto::WriteError::*;
-        let mut conn = self.conn.state.lock("SendStream::poll_write");
-        if self.is_0rtt {
-            conn.check_0rtt()
-                .map_err(|()| WriteError::ZeroRttRejected)?;
-        }
-        if let Some(ref x) = conn.error {
-            return Poll::Ready(Err(WriteError::ConnectionLost(x.clone())));
-        }
-
-        let result = match write_fn(&mut conn.inner.send_stream(self.stream)) {
-            Ok(result) => result,
-            Err(Blocked) => {
-                conn.blocked_writers.insert(self.stream, cx.waker().clone());
-                return Poll::Pending;
-            }
-            Err(Stopped(error_code)) => {
-                return Poll::Ready(Err(WriteError::Stopped(error_code)));
-            }
-            Err(ClosedStream) => {
-                return Poll::Ready(Err(WriteError::ClosedStream));
-            }
-        };
-
-        conn.wake();
-        Poll::Ready(Ok(result))
     }
 
     /// Attempts to write bytes into this stream from a byte-providing callback
