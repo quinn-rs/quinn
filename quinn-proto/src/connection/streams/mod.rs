@@ -264,7 +264,7 @@ impl<'a> SendStream<'a> {
     /// guaranteed they will all be written. If it provides more bytes than this, it is guaranteed
     /// that a prefix of the provided cumulative bytes will be written equal in length to the
     /// provided limit.
-    fn write_source<F, R>(&mut self, source: F) -> Result<R, (WriteError, F)>
+    pub fn write_source<F, R>(&mut self, source: F) -> Result<R, (WriteError, F)>
     where
         F: FnOnce(usize, &mut Vec<Bytes>) -> R,
     {
