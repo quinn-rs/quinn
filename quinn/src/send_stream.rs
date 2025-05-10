@@ -1,7 +1,7 @@
 use std::{
     future::{Future, poll_fn},
     io,
-    pin::Pin,
+    pin::{Pin, pin},
     task::{Context, Poll},
 };
 
@@ -124,6 +124,60 @@ impl SendStream {
 
         conn.wake();
         Poll::Ready(Ok(result))
+    }
+
+    /// Attempts to write bytes into this stream from a byte-providing callback
+    ///
+    /// This is a low-level writing API that can be used to perform writes in a way that is atomic
+    /// with respect to congestion and flow control. This method:
+    ///
+    /// 1. Waits until a non-zero number of bytes can be written (or an error occurs).
+    /// 2. Locks the internal connection state.
+    /// 3. Invokes the `source` callback with the number of bytes that can be written immediately,
+    ///    as well as an initially empty `&mut Vec<Bytes>` to which it can push bytes to write.
+    /// 4. Immediately writes as many of those bytes as can be written immediately.
+    ///
+    /// If the `source` callback pushes a total number of bytes to its vec less than or equal to
+    /// its given limit, it is guaranteed they will all be written into the stream immediately.
+    pub async fn write_source<F, R>(&mut self, source: F) -> Result<R, (WriteError, F)>
+    where
+        F: FnOnce(usize, &mut Vec<Bytes>) -> R,
+    {
+        let mut source = Some(source);
+        poll_fn(move |cx| {
+            let mut conn = self.conn.state.lock("SendStream::write_source");
+            if self.is_0rtt && conn.check_0rtt() == Err(()) {
+                return Poll::Ready(Err((WriteError::ZeroRttRejected, source.take().unwrap())));
+            }
+            if let Some(e) = conn.error.clone() {
+                return Poll::Ready(Err((WriteError::ConnectionLost(e), source.take().unwrap())));
+            }
+
+            match conn
+                .inner
+                .send_stream(self.stream)
+                .write_source(source.take().unwrap())
+            {
+                Ok(source_output) => {
+                    conn.wake();
+                    Poll::Ready(Ok(source_output))
+                }
+                Err((proto::WriteError::Blocked, returned_source)) => {
+                    source = Some(returned_source);
+                    conn.blocked_writers.insert(self.stream, cx.waker().clone());
+                    Poll::Pending
+                }
+                Err((e, returned_source)) => Poll::Ready(Err((
+                    match e {
+                        proto::WriteError::Blocked => unreachable!(),
+                        proto::WriteError::Stopped(code) => WriteError::Stopped(code),
+                        proto::WriteError::ClosedStream => WriteError::ClosedStream,
+                    },
+                    returned_source,
+                ))),
+            }
+        })
+        .await
     }
 
     /// Notify the peer that no more data will ever be written to this stream
