@@ -1156,7 +1156,7 @@ impl Connection {
         }
 
         // Ensure there is something to send if a loss probe is needed.
-        if need_loss_probe && can_send.is_empty() {
+        if need_loss_probe {
             let request_immediate_ack =
                 space_id == SpaceId::Data && self.peer_supports_ack_frequency();
             self.spaces[space_id].maybe_queue_probe(path_id, request_immediate_ack, &self.streams);
