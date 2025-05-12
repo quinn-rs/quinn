@@ -143,10 +143,10 @@ async fn run(options: Opt) -> Result<()> {
             .is_some_and(|n| endpoint.open_connections() >= n)
         {
             info!("refusing due to open connection limit");
-            conn.refuse();
+            conn.refuse_reason(Some("too many open connections".to_owned()));
         } else if Some(conn.remote_address()) == options.block {
             info!("refusing blocked client IP address");
-            conn.refuse();
+            conn.refuse_reason(Some("blocked client IP address".to_owned()));
         } else if options.stateless_retry && !conn.remote_address_validated() {
             info!("requiring connection to validate its address");
             conn.retry().unwrap();

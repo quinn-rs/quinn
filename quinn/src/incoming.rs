@@ -41,9 +41,15 @@ impl Incoming {
     }
 
     /// Reject this incoming connection attempt
-    pub fn refuse(mut self) {
+    #[deprecated(since = "0.11.9", note = "use `refuse_reason()` instead")]
+    pub fn refuse(self) {
+        self.refuse_reason(None);
+    }
+
+    /// Reject this incoming connection attempt
+    pub fn refuse_reason(mut self, reason: Option<String>) {
         let state = self.0.take().unwrap();
-        state.endpoint.refuse(state.inner);
+        state.endpoint.refuse(state.inner, reason);
     }
 
     /// Respond with a retry packet, requiring the client to retry with address validation
@@ -104,7 +110,7 @@ impl Drop for Incoming {
     fn drop(&mut self) {
         // Implicit reject, similar to Connection's implicit close
         if let Some(state) = self.0.take() {
-            state.endpoint.refuse(state.inner);
+            state.endpoint.refuse(state.inner, None);
         }
     }
 }

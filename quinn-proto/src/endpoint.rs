@@ -563,7 +563,7 @@ impl Endpoint {
                     incoming.addresses,
                     &incoming.crypto,
                     &src_cid,
-                    TransportError::CONNECTION_REFUSED(""),
+                    TransportError::CONNECTION_REFUSED("out of connection identifiers"),
                     buf,
                 )),
             });
@@ -677,8 +677,14 @@ impl Endpoint {
         header: &ProtectedInitialHeader,
     ) -> Result<(), TransportError> {
         let config = &self.server_config.as_ref().unwrap();
-        if self.cids_exhausted() || self.incoming_buffers.len() >= config.max_incoming {
-            return Err(TransportError::CONNECTION_REFUSED(""));
+        if self.cids_exhausted() {
+            return Err(TransportError::CONNECTION_REFUSED(
+                "out of connection identifiers",
+            ));
+        } else if self.incoming_buffers.len() >= config.max_incoming {
+            return Err(TransportError::CONNECTION_REFUSED(
+                "incoming handshake queue full",
+            ));
         }
 
         // RFC9000 §7.2 dictates that initial (client-chosen) destination CIDs must be at least 8
@@ -702,7 +708,22 @@ impl Endpoint {
     }
 
     /// Reject this incoming connection attempt
+    #[deprecated(since = "0.11.13", note = "use `refuse_reason()` instead")]
     pub fn refuse(&mut self, incoming: Incoming, buf: &mut Vec<u8>) -> Transmit {
+        self.refuse_reason(
+            incoming,
+            Some("connection refused by application".to_owned()),
+            buf,
+        )
+    }
+
+    /// Reject this incoming connection attempt
+    pub fn refuse_reason(
+        &mut self,
+        incoming: Incoming,
+        reason: Option<String>,
+        buf: &mut Vec<u8>,
+    ) -> Transmit {
         self.clean_up_incoming(&incoming);
         incoming.improper_drop_warner.dismiss();
 
@@ -711,7 +732,9 @@ impl Endpoint {
             incoming.addresses,
             &incoming.crypto,
             &incoming.packet.header.src_cid,
-            TransportError::CONNECTION_REFUSED(""),
+            TransportError::CONNECTION_REFUSED(
+                reason.unwrap_or_else(|| String::from("connection refused by policy")),
+            ),
             buf,
         )
     }
