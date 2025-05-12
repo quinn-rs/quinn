@@ -203,7 +203,11 @@ fn server_stateless_reset() {
     pair.server.endpoint =
         Endpoint::new(endpoint_config, Some(Arc::new(server_config())), true, None);
     // Force the server to generate the smallest possible stateless reset
-    pair.client.connections.get_mut(&client_ch).unwrap().ping();
+    pair.client
+        .connections
+        .get_mut(&client_ch)
+        .unwrap()
+        .ping(PathId(0));
     info!("resetting");
     pair.drive();
     assert_matches!(
@@ -1177,7 +1181,7 @@ fn idle_timeout() {
     };
     let mut pair = Pair::new(Default::default(), server);
     let (client_ch, server_ch) = pair.connect();
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     let start = pair.time;
 
     while !pair.client_conn_mut(client_ch).is_closed()
@@ -1214,7 +1218,7 @@ fn connection_close_sends_acks() {
 
     let client_acks = pair.client_conn_mut(client_ch).stats().frame_rx.acks;
 
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     let time = pair.time;
@@ -1262,7 +1266,7 @@ fn migration() {
         Ipv4Addr::new(127, 0, 0, 1).into(),
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
 
     // Assert that just receiving the ping message is accounted into the servers
     // anti-amplification budget
@@ -1612,7 +1616,7 @@ fn cid_retirement() {
     active_cid_num = active_cid_num.min(LOC_CID_COUNT);
 
     let next_retire_prior_to = active_cid_num + 1;
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     // Server retires all valid remote CIDs
     pair.server_conn_mut(server_ch)
         .rotate_local_cid(next_retire_prior_to, Instant::now());
@@ -1795,7 +1799,7 @@ fn tail_loss_small_segment_size() {
     const DGRAM_NUM: u64 = 5; // Enough to build a GSO batch.
 
     info!("Sending an ack-eliciting datagram");
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     // Drop these packets on the server side.
@@ -1848,7 +1852,7 @@ fn tail_loss_respect_max_datagrams() {
     const DGRAM_NUM: u64 = 5; // Enough to build a GSO batch.
 
     info!("Sending an ack-eliciting datagram");
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     // Drop these packets on the server side.
@@ -2258,7 +2262,7 @@ fn loss_probe_requests_immediate_ack() {
 
     // Lose a ping
     let default_mtu = mem::replace(&mut pair.mtu, 0);
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
     pair.mtu = default_mtu;
 
@@ -2364,7 +2368,7 @@ fn migrate_detects_new_mtu_and_respects_original_peer_max_udp_payload_size() {
         Ipv4Addr::new(127, 0, 0, 1).into(),
         CLIENT_PORTS.lock().unwrap().next().unwrap(),
     );
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive();
 
     // Sanity check: the server saw that the client address was updated
@@ -2537,7 +2541,7 @@ fn single_ack_eliciting_packet_triggers_ack_after_delay() {
     let stats_after_connect = pair.client_conn_mut(client_ch).stats();
 
     let start = pair.time;
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client(); // Send ping
     pair.drive_server(); // Process ping
     pair.drive_client(); // Give the client a chance to process an ack, so our assertion can fail
@@ -2625,7 +2629,7 @@ fn out_of_order_ack_eliciting_packet_triggers_ack() {
 
     // Send a packet that won't arrive right away (it will be dropped and be re-sent later)
     pair.mtu = 0;
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     // Sanity check (ping sent, no ACK received)
@@ -2641,7 +2645,7 @@ fn out_of_order_ack_eliciting_packet_triggers_ack() {
 
     // Restore the default MTU and send another ping, which will arrive earlier than the dropped one
     pair.mtu = default_mtu;
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
     pair.drive_server();
     pair.drive_client();
@@ -2680,7 +2684,7 @@ fn single_ack_eliciting_packet_with_ce_bit_triggers_immediate_ack() {
 
     let start = pair.time;
 
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
 
     pair.congestion_experienced = true;
     pair.drive_client(); // Send ping
@@ -2744,12 +2748,12 @@ fn ack_frequency_ack_delayed_from_first_of_flight() {
     //
     // * 0 ms: ping
     // * 5 ms: ping x2
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     pair.time += Duration::from_millis(5);
     for _ in 0..2 {
-        pair.client_conn_mut(client_ch).ping();
+        pair.client_conn_mut(client_ch).ping(PathId(0));
         pair.drive_client();
     }
 
@@ -2799,7 +2803,7 @@ fn ack_frequency_ack_sent_after_max_ack_delay() {
     let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(max_ack_delay);
 
     // Client sends a ping
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     // Server: receive the ping, send no ACK
@@ -2841,12 +2845,12 @@ fn ack_frequency_ack_sent_after_packets_above_threshold() {
     //
     // * 0 ms: ping
     // * 5 ms: ping (11x)
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     pair.time += Duration::from_millis(5);
     for _ in 0..11 {
-        pair.client_conn_mut(client_ch).ping();
+        pair.client_conn_mut(client_ch).ping(PathId(0));
         pair.drive_client();
     }
 
@@ -2890,19 +2894,19 @@ fn ack_frequency_ack_sent_after_reordered_packets_below_threshold() {
     // * 0 ms: ping
     // * 5 ms: ping (lost)
     // * 5 ms: ping
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     pair.time += Duration::from_millis(5);
 
     // Send and lose an ack-eliciting packet
     pair.mtu = 0;
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     // Restore the default MTU and send another ping, which will arrive earlier than the dropped one
     pair.mtu = DEFAULT_MTU;
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     // Server: receive first ping, send no ACK
@@ -2941,20 +2945,20 @@ fn ack_frequency_ack_sent_after_reordered_packets_above_threshold() {
     let (mut pair, client_ch, server_ch) = setup_ack_frequency_test(max_ack_delay);
 
     // Send a ping
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     // Send and lose two ack-eliciting packets
     pair.time += Duration::from_millis(5);
     pair.mtu = 0;
     for _ in 0..2 {
-        pair.client_conn_mut(client_ch).ping();
+        pair.client_conn_mut(client_ch).ping(PathId(0));
         pair.drive_client();
     }
 
     // Restore the default MTU and send another ping, which will arrive earlier than the dropped ones
     pair.mtu = DEFAULT_MTU;
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive_client();
 
     // Server: receive first ping, send no ACK
@@ -3002,7 +3006,7 @@ fn ack_frequency_update_max_delay() {
 
     // Client sends a PING
     info!("first ping");
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive();
 
     // No change in ACK frequency
@@ -3017,7 +3021,7 @@ fn ack_frequency_update_max_delay() {
     // RTT jumps, client sends another ping
     info!("delayed ping");
     pair.latency *= 10;
-    pair.client_conn_mut(client_ch).ping();
+    pair.client_conn_mut(client_ch).ping(PathId(0));
     pair.drive();
 
     // ACK frequency updated
@@ -3227,10 +3231,10 @@ fn large_datagram_with_acks() {
 
     // Force the client to generate a large ACK frame by dropping several packets
     for _ in 0..10 {
-        pair.server_conn_mut(server_ch).ping();
+        pair.server_conn_mut(server_ch).ping(PathId(0));
         pair.drive_server();
         pair.client.inbound.pop_back();
-        pair.server_conn_mut(server_ch).ping();
+        pair.server_conn_mut(server_ch).ping(PathId(0));
         pair.drive_server();
     }
 

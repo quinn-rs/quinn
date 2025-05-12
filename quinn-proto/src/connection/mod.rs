@@ -394,7 +394,7 @@ impl Connection {
     /// - a call was made to `handle_timeout`
     #[must_use]
     pub fn poll_timeout(&mut self) -> Option<Instant> {
-        self.timers.next_timeout()
+        self.timers.peek().map(|entry| entry.time)
     }
 
     /// Returns application-facing events
@@ -633,8 +633,7 @@ impl Connection {
                     if let Some(delay) =
                         self.path_data_mut(path_id).pacing_delay(bytes_to_send, now)
                     {
-                        // TODO(@divma): this needs fixing asap
-                        self.timers.set(Timer::Pacing, delay);
+                        self.timers.set(Timer::Pacing(path_id), delay);
                         congestion_blocked = true;
                         // Loss probes should be subject to pacing, even though
                         // they are not congestion controlled.
@@ -1204,9 +1203,12 @@ impl Connection {
                 // Update Timer::PushNewCid
                 if self
                     .timers
-                    .get(Timer::PushNewCid)
+                    .get(Timer::PushNewCid(path_id))
                     .map_or(true, |x| x <= now)
                 {
+                    // TODO(@divma): check this. The path_id for which this needs to be updated is
+                    // known, so the inner logic of this might not be doing anything. I'm going to
+                    // leave it like this for now, but to me, it seems wrong
                     self.reset_cid_retirement();
                 }
             }
@@ -1223,12 +1225,7 @@ impl Connection {
     /// `Instant` that was output by `poll_timeout`; however spurious extra calls will simply
     /// no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
-        // TODO(@divma): this won't work
-        for &timer in &Timer::VALUES {
-            if !self.timers.is_expired(timer, now) {
-                continue;
-            }
-            self.timers.stop(timer);
+        while let Some(timer) = self.timers.expire_before(now) {
             trace!(timer = ?timer, "timeout");
             match timer {
                 Timer::Close => {
@@ -1238,23 +1235,21 @@ impl Connection {
                 Timer::Idle => {
                     self.kill(ConnectionError::TimedOut);
                 }
-                Timer::KeepAlive => {
+                Timer::KeepAlive(path_id) => {
                     trace!("sending keep-alive");
-                    self.ping();
+                    self.ping(path_id);
                 }
-                Timer::LossDetection => {
-                    self.on_loss_detection_timeout(now);
+                Timer::LossDetection(path_id) => {
+                    self.on_loss_detection_timeout(now, path_id);
                 }
                 Timer::KeyDiscard => {
                     self.zero_rtt_crypto = None;
                     self.prev_crypto = None;
                 }
-                Timer::PathValidation => {
-                    // TODO(@divma): this code here is completely wrong
-                    let path_data = self
-                        .paths
-                        .get_mut(&PathId::default())
-                        .expect("this might actually fail");
+                Timer::PathValidation(path_id) => {
+                    let Some(path_data) = self.paths.get_mut(&path_id) else {
+                        continue;
+                    };
                     debug!("path validation failed");
                     if let Some((_, prev)) = path_data.prev_path.take() {
                         path_data.path = prev;
@@ -1262,8 +1257,10 @@ impl Connection {
                     path_data.path.challenge = None;
                     path_data.path.challenge_pending = false;
                 }
-                Timer::Pacing => trace!("pacing timer expired"),
-                Timer::PushNewCid => {
+                Timer::Pacing(path_id) => trace!(?path_id, "pacing timer expired"),
+                Timer::PushNewCid(_path_id) => {
+                    // TODO(@divma): same question, use path_id or trust on number of calls =
+                    // number of queued path_ids?
                     match self.next_cid_retirement() {
                         None => error!("Timer::PushNewCid fired without a retired CID"),
                         Some((path_id, _when)) => {
@@ -1349,12 +1346,9 @@ impl Connection {
     /// Ping the remote endpoint
     ///
     /// Causes an ACK-eliciting packet to be transmitted.
-    pub fn ping(&mut self) {
-        // TODO(flub): for now this pings over all the paths, probably should add a path_id
-        // parameter to this.
-        self.spaces[self.highest_space]
-            .iter_paths_mut()
-            .for_each(|s| s.ping_pending = true);
+    pub fn ping(&mut self, path: PathId) {
+        // TODO(@divma): for_path should not be used, we should check if the path still exists
+        self.spaces[self.highest_space].for_path(path).ping_pending = true;
     }
 
     /// Update traffic keys spontaneously
@@ -1733,8 +1727,11 @@ impl Connection {
             .set(Timer::KeyDiscard, start + self.pto(space) * 3);
     }
 
-    fn on_loss_detection_timeout(&mut self, now: Instant) {
-        // TODO(@divma): needs the path_id as param, all timers needs fixing
+    fn on_loss_detection_timeout(&mut self, now: Instant, _path_id: PathId) {
+        // TODO(@divma): ignoring this (to me) bug for now: we know for which packet number
+        // space/path_id we need to detect lost packets, so we only need to find the space
+        // This might technically work as is now that there are as many calls to
+        // `on_loss_detection_timeout` as paths for which the timer ran out
         if let Some((_, pn_space, path_id)) = self.loss_time_and_space() {
             // Time threshold loss Detection
             self.detect_lost_packets(now, pn_space, path_id, false);
@@ -1778,6 +1775,7 @@ impl Connection {
         self.set_loss_detection_timer(path, now);
     }
 
+    // TODO(@divma): some docs wouldn't kill
     fn detect_lost_packets(
         &mut self,
         now: Instant,
@@ -2032,36 +2030,37 @@ impl Connection {
             return;
         }
 
-        if let Some((loss_time, _, _)) = self.loss_time_and_space() {
+        // TODO(@divma): question: use the path_id or trust number of calls = queued timers
+        if let Some((loss_time, _, path_id)) = self.loss_time_and_space() {
             // Time threshold loss detection.
-            // TODO(@divma): fix
-            self.timers.set(Timer::LossDetection, loss_time);
+            // TODO(@divma): at least not completely wrong
+            self.timers.set(Timer::LossDetection(path_id), loss_time);
             return;
         }
 
         if self.path_data(path_id).anti_amplification_blocked(1) {
             // We wouldn't be able to send anything, so don't bother.
-            // TODO(@divma): fixxx
-            self.timers.stop(Timer::LossDetection);
+            self.timers.stop(Timer::LossDetection(path_id));
             return;
         }
 
-        // TODO(flub): multipath once we remove self.path
         if self.path_data(path_id).in_flight.ack_eliciting == 0
             && self.peer_completed_address_validation(path_id)
         {
             // There is nothing to detect lost, so no timer is set. However, the client needs to arm
             // the timer if the server might be blocked by the anti-amplification limit.
-            self.timers.stop(Timer::LossDetection);
+            self.timers.stop(Timer::LossDetection(path_id));
             return;
         }
 
         // Determine which PN space to arm PTO for.
         // Calculate PTO duration
+        // TODO(@divma): both calls are wrong. We need to fin the time and space for this packet
+        // number space, not for any
         if let Some((timeout, _, _)) = self.pto_time_and_space(now) {
-            self.timers.set(Timer::LossDetection, timeout);
+            self.timers.set(Timer::LossDetection(path_id), timeout);
         } else {
-            self.timers.stop(Timer::LossDetection);
+            self.timers.stop(Timer::LossDetection(path_id));
         }
     }
 
@@ -2086,7 +2085,7 @@ impl Connection {
         is_1rtt: bool,
     ) {
         self.total_authed_packets += 1;
-        self.reset_keep_alive(now);
+        self.reset_keep_alive(path_id, now);
         self.reset_idle_timeout(now, space_id);
         self.permit_idle_reset = true;
         self.receiving_ecn |= ecn.is_some();
@@ -2135,18 +2134,18 @@ impl Connection {
         self.timers.set(Timer::Idle, now + dt);
     }
 
-    fn reset_keep_alive(&mut self, now: Instant) {
+    fn reset_keep_alive(&mut self, path_id: PathId, now: Instant) {
         let interval = match self.config.keep_alive_interval {
             Some(x) if self.state.is_established() => x,
             _ => return,
         };
-        self.timers.set(Timer::KeepAlive, now + interval);
+        self.timers.set(Timer::KeepAlive(path_id), now + interval);
     }
 
     /// Sets the timer for when a previously issued CID should be retired next.
     fn reset_cid_retirement(&mut self) {
-        if let Some((_path, t)) = self.next_cid_retirement() {
-            self.timers.set(Timer::PushNewCid, t);
+        if let Some((path, t)) = self.next_cid_retirement() {
+            self.timers.set(Timer::PushNewCid(path), t);
         }
     }
 
@@ -3031,7 +3030,7 @@ impl Connection {
                         // attack. Send a non-probing packet to recover the active path.
                         match self.peer_supports_ack_frequency() {
                             true => self.immediate_ack(path_id),
-                            false => self.ping(),
+                            false => self.ping(path_id),
                         }
                     }
                 }
@@ -3040,7 +3039,7 @@ impl Connection {
                     let path_data = self.paths.get_mut(&path_id).expect("known path");
                     if path_data.path.challenge == Some(token) && remote == path_data.path.remote {
                         trace!("new path validated");
-                        self.timers.stop(Timer::PathValidation);
+                        self.timers.stop(Timer::PathValidation(path_id));
                         path_data.path.challenge = None;
                         path_data.path.validated = true;
                         if let Some((_, ref mut prev_path)) = path_data.prev_path {
@@ -3398,7 +3397,7 @@ impl Connection {
         }
 
         self.timers.set(
-            Timer::PathValidation,
+            Timer::PathValidation(path_id),
             now + 3 * cmp::max(self.pto(SpaceId::Data), prev_pto),
         );
     }
@@ -3407,7 +3406,8 @@ impl Connection {
     pub fn local_address_changed(&mut self) {
         // TODO(flub): if multipath is enabled this needs to create a new path entirely.
         self.update_rem_cid(PathId(0));
-        self.ping();
+        // TODO(@divma): sending pings to paths that might no longer exist!
+        self.ping(PathId(0));
     }
 
     /// Switch to a previously unused remote connection ID, if possible
@@ -3902,9 +3902,7 @@ impl Connection {
 
     fn close_common(&mut self) {
         trace!("connection closed");
-        for &timer in &Timer::VALUES {
-            self.timers.stop(timer);
-        }
+        self.timers.reset();
     }
 
     fn set_close_timer(&mut self, now: Instant) {
@@ -4103,13 +4101,17 @@ impl Connection {
     /// Whether no timers but keepalive, idle, rtt, pushnewcid, and key discard are running
     #[cfg(test)]
     pub(crate) fn is_idle(&self) -> bool {
-        Timer::VALUES
-            .iter()
-            .filter(|&&t| !matches!(t, Timer::KeepAlive | Timer::PushNewCid | Timer::KeyDiscard))
-            // TODO(@divma): will need fixing
-            .filter_map(|&t| Some((t, self.timers.get(t)?)))
-            .min_by_key(|&(_, time)| time)
-            .map_or(true, |(timer, _)| timer == Timer::Idle)
+        let current_timers = self.timers.values();
+        current_timers
+            .into_iter()
+            .filter(|entry| {
+                !matches!(
+                    entry.timer,
+                    Timer::KeepAlive(_) | Timer::PushNewCid(_) | Timer::KeyDiscard
+                )
+            })
+            .min_by_key(|entry| entry.time)
+            .map_or(true, |entry| entry.timer == Timer::Idle)
     }
 
     /// Total number of outgoing packets that have been deemed lost
