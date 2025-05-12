@@ -149,7 +149,7 @@ pub struct Connection {
     /// deterministically select the next PathId to send on.
     ///
     /// TODO(flub): well does it really? But deterministic is nice for now.
-    paths: BTreeMap<PathId, PathMigrationData>,
+    paths: BTreeMap<PathId, PathState>,
     /// Whether MTU detection is supported in this environment
     allow_mtud: bool,
     state: State,
@@ -246,9 +246,9 @@ pub struct Connection {
     version: u32,
 }
 
-struct PathMigrationData {
-    path: PathData,
-    prev_path: Option<(ConnectionId, PathData)>,
+struct PathState {
+    data: PathData,
+    prev: Option<(ConnectionId, PathData)>,
 }
 
 impl Connection {
@@ -310,9 +310,9 @@ impl Connection {
             local_cid_state,
             paths: BTreeMap::from_iter([(
                 PathId(0),
-                PathMigrationData {
-                    path,
-                    prev_path: None,
+                PathState {
+                    data: path,
+                    prev: None,
                 },
             )]),
             allow_mtud,
@@ -466,7 +466,7 @@ impl Connection {
     /// Will panic if the path_id does not reference any known path.
     #[track_caller]
     fn path_data(&self, path_id: PathId) -> &PathData {
-        &self.paths.get(&path_id).expect("known path").path
+        &self.paths.get(&path_id).expect("known path").data
     }
 
     /// Gets the [`PathData`] for a known [`PathId`].
@@ -474,7 +474,7 @@ impl Connection {
     /// Will panic if the path_id does not reference any known path.
     #[track_caller]
     fn path_data_mut(&mut self, path_id: PathId) -> &mut PathData {
-        &mut self.paths.get_mut(&path_id).expect("known path").path
+        &mut self.paths.get_mut(&path_id).expect("known path").data
     }
 
     /// Returns packets to transmit
@@ -553,7 +553,7 @@ impl Connection {
             let rtt = self
                 .paths
                 .values()
-                .map(|p| p.path.rtt.get())
+                .map(|p| p.data.rtt.get())
                 .min()
                 .expect("one path exists");
             self.spaces[SpaceId::Data].pending.ack_frequency = self
@@ -1038,55 +1038,6 @@ impl Connection {
         None
     }
 
-    // /// Returns the next path on which data is ready to be sent
-    // fn next_send_path(&mut self) -> Option<PathId> {
-    //     if !self.is_multipath_enabled() {
-    //         return Some(PathId(0));
-    //     }
-
-    //     // If we still have initial or handshake spaces we prefer those.
-    //     if self.highest_space < SpaceId::Data {
-    //         for space_id in SpaceId::iter() {
-    //             let space = &mut self.spaces[space_id];
-    //             if !space.can_send(PathId(0), &self.streams).is_empty()
-    //                 || space.for_path(PathId(0)).loss_probes > 0
-    //             {
-    //                 // TODO(flub): Check the path is not anti-aplification, congestion or
-    //                 //    pacing blocked.
-    //                 return Some(PathId(0));
-    //             }
-    //         }
-    //     }
-
-    //     // From now on we only need to check SpaceId::Data.
-    //     let space = &mut self.spaces[SpaceId::Data];
-
-    //     // First look for pending PATH_CHALLENGE or PATH_RESPONSE frames.
-
-    //     // PATH_CHALLENGE probes for new paths so is not anti-amplification blocked.
-    //     // PATH_RESPONSE is anti-amplification blocked.  However we can send a PATH_RESPONSE that is
-    //     for (path_id, path) in self.paths.iter() {
-    //         let challenge_pending = path.path.challenge_pending
-    //             || path
-    //                 .prev_path
-    //                 .as_ref()
-    //                 .is_some_and(|(_cid, path_data)| path_data.challenge_pending);
-
-    //         let response_pending = !path.path.path_responses.is_empty();
-    //         if challenge_pending || response_pending {
-    //             // PATH_CHALLENGE and PATH_RESPONSE frames are not anti-amplification blocked.  The
-
-    //             // TODO(flub): Check the path is not congestion or pacing blocked
-    //             return Some(*path_id);
-    //         }
-    //     }
-
-    //     //
-
-    //     todo!();
-    //     None
-    // }
-
     /// Whether anything needs to be sent in this packet number space
     ///
     /// This checks whether there is anything to send on the `(PathId, SpaceId)` tuple and
@@ -1180,7 +1131,7 @@ impl Connection {
         buf: &mut TransmitBuf<'_>,
         path_id: PathId,
     ) -> Option<Transmit> {
-        let (prev_cid, prev_path) = self.paths.get_mut(&path_id)?.prev_path.as_mut()?;
+        let (prev_cid, prev_path) = self.paths.get_mut(&path_id)?.prev.as_mut()?;
         if !prev_path.challenge_pending {
             return None;
         }
@@ -1360,15 +1311,15 @@ impl Connection {
                     self.prev_crypto = None;
                 }
                 Timer::PathValidation(path_id) => {
-                    let Some(path_data) = self.paths.get_mut(&path_id) else {
+                    let Some(path) = self.paths.get_mut(&path_id) else {
                         continue;
                     };
                     debug!("path validation failed");
-                    if let Some((_, prev)) = path_data.prev_path.take() {
-                        path_data.path = prev;
+                    if let Some((_, prev)) = path.prev.take() {
+                        path.data = prev;
                     }
-                    path_data.path.challenge = None;
-                    path_data.path.challenge_pending = false;
+                    path.data.challenge = None;
+                    path.data.challenge_pending = false;
                 }
                 Timer::Pacing(path_id) => trace!(?path_id, "pacing timer expired"),
                 Timer::PushNewCid(_path_id) => {
@@ -1583,7 +1534,7 @@ impl Connection {
         self.paths
             .get_mut(&PathId(0))
             .expect("this might fail")
-            .path
+            .data
             .reset(now, &self.config);
     }
 
@@ -1955,7 +1906,7 @@ impl Connection {
                                 .paths
                                 .get_mut(&path_id)
                                 .expect("known path")
-                                .path
+                                .data
                                 .first_packet_after_rtt_sample
                                 .is_some_and(|x| x < (pn_space, packet)) =>
                             {
@@ -3155,12 +3106,9 @@ impl Connection {
                                 now,
                                 &self.config,
                             );
-                            PathMigrationData {
-                                path: data,
-                                prev_path: None,
-                            }
+                            PathState { data, prev: None }
                         })
-                        .path;
+                        .data;
                     path.path_responses.push(number, token, remote);
                     if remote == path.remote {
                         // PATH_CHALLENGE on active path, possible off-path packet forwarding
@@ -3173,15 +3121,15 @@ impl Connection {
                 }
                 Frame::PathResponse(token) => {
                     // TODO(@divma): make an effort to move to path
-                    let path_data = self.paths.get_mut(&path_id).expect("known path");
-                    if path_data.path.challenge == Some(token) && remote == path_data.path.remote {
+                    let path = self.paths.get_mut(&path_id).expect("known path");
+                    if path.data.challenge == Some(token) && remote == path.data.remote {
                         trace!("new path validated");
                         self.timers.stop(Timer::PathValidation(path_id));
-                        path_data.path.challenge = None;
-                        path_data.path.validated = true;
-                        if let Some((_, ref mut prev_path)) = path_data.prev_path {
-                            prev_path.challenge = None;
-                            prev_path.challenge_pending = false;
+                        path.data.challenge = None;
+                        path.data.validated = true;
+                        if let Some((_, ref mut prev)) = path.prev {
+                            prev.challenge = None;
+                            prev.challenge_pending = false;
                         }
                     } else {
                         debug!(token, "ignoring invalid PATH_RESPONSE");
@@ -3498,7 +3446,7 @@ impl Connection {
         // amplification attacks performed by spoofing source addresses.
         let prev_pto = self.pto(SpaceId::Data);
         let known_path = self.paths.get_mut(&path_id).expect("known path");
-        let path = &mut known_path.path;
+        let path = &mut known_path.data;
         let mut new_path = if remote.is_ipv4() && remote.ip() == path.remote.ip() {
             PathData::from_previous(remote, path, now)
         } else {
@@ -3530,7 +3478,7 @@ impl Connection {
             // We haven't updated the remote CID yet, this captures the remote CID we were using on
             // the previous path.
 
-            known_path.prev_path = Some((self.rem_cids.get(&path_id).unwrap().active(), prev));
+            known_path.prev = Some((self.rem_cids.get(&path_id).unwrap().active(), prev));
         }
 
         self.timers.set(
@@ -3625,7 +3573,7 @@ impl Connection {
         let mut sent = SentFrames::default();
         let is_multipath_enabled = self.is_multipath_enabled();
         let space = &mut self.spaces[space_id];
-        let path = &mut self.paths.get_mut(&path_id).expect("known path").path;
+        let path = &mut self.paths.get_mut(&path_id).expect("known path").data;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         space.pending_acks.maybe_ack_non_eliciting();
 
@@ -4309,8 +4257,8 @@ impl Connection {
     /// may need to be sent.
     fn can_send_1rtt(&self, path_id: PathId, max_size: usize) -> bool {
         let challenge_pending = self.paths.get(&path_id).is_some_and(|p| {
-            p.path.challenge_pending
-                || p.prev_path
+            p.data.challenge_pending
+                || p.prev
                     .as_ref()
                     .is_some_and(|(_, path)| path.challenge_pending)
         });
@@ -4329,11 +4277,11 @@ impl Connection {
         // TODO(@divma): this should be completely moved into path
         let path_mig_data = self.paths.get_mut(&path_id).expect("known path");
         // Visit known paths from newest to oldest to find the one `pn` was sent on
-        for path in [&mut path_mig_data.path]
+        for path_data in [&mut path_mig_data.data]
             .into_iter()
-            .chain(path_mig_data.prev_path.as_mut().map(|(_, data)| data))
+            .chain(path_mig_data.prev.as_mut().map(|(_, data)| data))
         {
-            if path.remove_in_flight(pn, packet) {
+            if path_data.remove_in_flight(pn, packet) {
                 return;
             }
         }
