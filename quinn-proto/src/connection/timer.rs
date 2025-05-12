@@ -30,7 +30,7 @@ pub(crate) enum Timer {
 
 /// Keeps track of the nearest timeout for each `Timer`
 ///
-/// The [`TimerTable`] is advanced with [`TimerTable::expire_timers`].
+/// The [`TimerTable`] is advanced with [`TimerTable::expire_before`].
 #[derive(Debug, Clone, Default)]
 pub(crate) struct TimerTable {
     most_recent_timeout: FxHashMap<Timer, Instant>,
@@ -112,7 +112,7 @@ impl TimerTable {
     pub(super) fn values(&self) -> Vec<TimerEntry> {
         let mut values = self.timeout_queue.clone().into_sorted_vec();
         values.retain(|entry| self.most_recent_timeout.get(&entry.timer) == Some(&entry.time));
-        return values;
+        values
     }
 }
 

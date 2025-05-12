@@ -70,6 +70,8 @@ pub(super) struct PathData {
     pub(super) pacing: Pacer,
     pub(super) challenge: Option<u64>,
     pub(super) challenge_pending: bool,
+    /// Pending responses to PATH_CHALLENGE frames
+    pub(super) path_responses: PathResponses,
     /// Whether we're certain the peer can both send and receive on this address
     ///
     /// Initially equal to `use_stateless_retry` for servers, and becomes false again on every
@@ -123,6 +125,7 @@ impl PathData {
             congestion,
             challenge: None,
             challenge_pending: false,
+            path_responses: PathResponses::default(),
             validated: false,
             total_sent: 0,
             total_recvd: 0,
@@ -163,6 +166,7 @@ impl PathData {
             congestion,
             challenge: None,
             challenge_pending: false,
+            path_responses: PathResponses::default(),
             validated: false,
             total_sent: 0,
             total_recvd: 0,
@@ -414,6 +418,7 @@ impl PathResponses {
 struct PathResponse {
     /// The packet number the corresponding PATH_CHALLENGE was received in
     packet: u64,
+    /// The token of the PATH_CHALLENGE
     token: u64,
     /// The address the corresponding PATH_CHALLENGE was received from
     remote: SocketAddr,

@@ -118,7 +118,7 @@ jobs:
 
     steps:
       - uses: actions/checkout@v4
-      - uses: mozilla-actions/sccache-action@v0.0.4
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: ${{ matrix.rust }}
@@ -181,7 +181,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
     steps:
       - uses: actions/checkout@v4
-      - uses: mozilla-actions/sccache-action@v0.0.4
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: dtolnay/rust-toolchain@1.71.0
       - uses: Swatinem/rust-cache@v2
       - run: cargo check --locked --lib --all-features -p iroh-quinn-udp -p iroh-quinn-proto -p iroh-quinn
@@ -193,7 +193,7 @@ jobs:
       SCCACHE_GHA_ENABLED: "on"
     steps:
       - uses: actions/checkout@v4
-      - uses: mozilla-actions/sccache-action@v0.0.4
+      - uses: mozilla-actions/sccache-action@v0.0.9
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: rustfmt, clippy

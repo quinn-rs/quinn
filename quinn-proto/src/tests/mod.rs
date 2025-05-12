@@ -1242,6 +1242,7 @@ fn server_hs_retransmit() {
     pair.step();
     assert!(!pair.client.inbound.is_empty()); // Initial + Handshakes
     pair.client.inbound.clear();
+    info!("client inbound queue cleared");
     pair.drive();
     assert_matches!(
         pair.client_conn_mut(client_ch).poll(),
