@@ -112,7 +112,7 @@ impl TimerTable {
     pub(super) fn values(&self) -> Vec<TimerEntry> {
         let mut values = self.timeout_queue.clone().into_sorted_vec();
         values.retain(|entry| self.most_recent_timeout.get(&entry.timer) == Some(&entry.time));
-        return values;
+        values
     }
 }
 
