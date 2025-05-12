@@ -37,7 +37,7 @@ rand = "0.9"
 rcgen = "0.13"
 ring = "0.17"
 rustc-hash = "2"
-rustls = { version = "0.23.5", default-features = false, features = ["std"] }
+rustls = { version = "0.23.27", default-features = false, features = ["std"] }
 rustls-pemfile = "2"
 rustls-platform-verifier = "0.5"
 rustls-pki-types = "1.7"
