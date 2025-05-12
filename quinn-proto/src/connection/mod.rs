@@ -1173,7 +1173,7 @@ impl Connection {
     /// Send PATH_CHALLENGE for a previous path if necessary
     ///
     /// QUIC-TRANSPORT section 9.3.3
-    /// https://www.rfc-editor.org/rfc/rfc9000.html#name-off-path-packet-forwarding
+    /// <https://www.rfc-editor.org/rfc/rfc9000.html#name-off-path-packet-forwarding>
     fn send_prev_path_challenge(
         &mut self,
         now: Instant,

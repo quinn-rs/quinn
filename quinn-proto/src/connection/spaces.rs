@@ -152,6 +152,8 @@ impl PacketSpace {
     /// Whether there is anything to send in this space
     ///
     /// For the data space [`Connection::can_send_1rtt`] also needs to be consulted.
+    ///
+    /// [`Connection::can_send_1rtt`]: super::Connection::can_send_1rtt
     pub(super) fn can_send(&self, path_id: PathId, streams: &StreamsState) -> SendableFrames {
         let acks = self.pending_acks.can_send();
         let other = !self.pending.is_empty(streams)
