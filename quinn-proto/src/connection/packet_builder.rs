@@ -226,7 +226,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
             stream_frames: sent.stream_frames,
         };
 
-        conn.paths.get_mut(&path_id).unwrap().path.sent(
+        conn.paths.get_mut(&path_id).unwrap().data.sent(
             path_id,
             exact_number,
             packet,
