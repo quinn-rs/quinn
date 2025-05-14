@@ -89,7 +89,7 @@ mod timer;
 use timer::{Timer, TimerTable};
 
 mod transmit_builder;
-pub(crate) use transmit_builder::BufSlice;
+pub(crate) use transmit_builder::DatagramBuffer;
 use transmit_builder::TransmitBuilder;
 
 /// Protocol state and logic for a single QUIC connection
