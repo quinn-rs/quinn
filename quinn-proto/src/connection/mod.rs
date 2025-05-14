@@ -594,8 +594,14 @@ impl Connection {
         loop {
             // Determine if anything can be sent in this packet number space (SpaceId +
             // PathId).
-            let can_send =
-                self.space_can_send(space_id, path_id, buf.datagram_remaining_mut(), close);
+            let max_packet_size = if buf.datagram_remaining_mut() > 0 {
+                // We are trying to coalesce another packet into this datagram.
+                buf.datagram_remaining_mut()
+            } else {
+                // A new datagram needs to be started.
+                buf.segment_size()
+            };
+            let can_send = self.space_can_send(space_id, path_id, max_packet_size, close);
             let path_should_send = {
                 let path_exclusive_only = space_id == SpaceId::Data
                     && have_available_path
@@ -610,7 +616,7 @@ impl Connection {
             };
 
             if !path_should_send && space_id < SpaceId::Data {
-                trace!(?space_id, ?path_id, "nothing left to send in this space");
+                trace!(?space_id, ?path_id, "nothing to send");
                 space_id = space_id.next();
                 continue;
             }
@@ -622,12 +628,12 @@ impl Connection {
                 PathBlocked::No
             };
             if send_blocked != PathBlocked::No {
+                trace!(?space_id, ?path_id, ?send_blocked, "congestion blocked");
                 congestion_blocked = true;
             }
             if send_blocked == PathBlocked::Congestion && space_id < SpaceId::Data {
                 // Higher spaces might still have tail-loss probes to send, which are not
                 // congestion blocked.
-                trace!(?space_id, ?path_id, "space congestion blocked");
                 space_id = space_id.next();
                 continue;
             }
@@ -643,12 +649,14 @@ impl Connection {
                 match self.paths.keys().find(|&&next| next > path_id) {
                     Some(next_path_id) => {
                         // See if this next path can send anything.
+                        trace!(?space_id, ?path_id, ?next_path_id, "trying next path");
                         path_id = *next_path_id;
                         space_id = SpaceId::Data;
                         continue;
                     }
                     None => {
                         // Nothing more to send.
+                        trace!(?space_id, ?path_id, "no higher path id to send on");
                         break;
                     }
                 }
@@ -664,7 +672,17 @@ impl Connection {
                 match self.spaces[space_id].for_path(path_id).loss_probes {
                     0 => buf.start_new_datagram(),
                     _ => {
+                        // We need something to send for a tail-loss probe.
+                        let request_immediate_ack =
+                            space_id == SpaceId::Data && self.peer_supports_ack_frequency();
+                        self.spaces[space_id].maybe_queue_probe(
+                            path_id,
+                            request_immediate_ack,
+                            &self.streams,
+                        );
+
                         self.spaces[space_id].for_path(path_id).loss_probes -= 1;
+
                         // Clamp the datagram to at most the minimum MTU to ensure that loss
                         // probes can get through and enable recovery even if the path MTU
                         // has shrank unexpectedly.
@@ -685,20 +703,12 @@ impl Connection {
                 debug_assert!(buf.datagram_remaining_mut() >= MIN_PACKET_SPACE);
             }
 
-            // If we need to send a tail-loss probe we need to have something to send.
-            if self.spaces[space_id].for_path(path_id).loss_probes > 0 {
-                let request_immediate_ack =
-                    space_id == SpaceId::Data && self.peer_supports_ack_frequency();
-                self.spaces[space_id].maybe_queue_probe(
-                    path_id,
-                    request_immediate_ack,
-                    &self.streams,
-                );
-            }
-
             //
             // From here on, we've determined that a packet will definitely be sent.
             //
+
+            // TODO(flub): If this is a backup path and have_available_path is true, we
+            //     should only send can_send.path_exclusive frames.
 
             if self.spaces[SpaceId::Initial].crypto.is_some()
                 && space_id == SpaceId::Handshake
