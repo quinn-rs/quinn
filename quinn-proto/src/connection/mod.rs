@@ -850,8 +850,17 @@ impl Connection {
             }
 
             let sent_frames = {
+                let path_exclusive_only =
+                    have_available_path && self.path_data(path_id).status == PathStatus::Backup;
                 let pn = builder.exact_number;
-                self.populate_packet(now, space_id, path_id, &mut builder.frame_space_mut(), pn)
+                self.populate_packet(
+                    now,
+                    space_id,
+                    path_id,
+                    path_exclusive_only,
+                    &mut builder.frame_space_mut(),
+                    pn,
+                )
             };
 
             // ACK-only packets should only be sent when explicitly allowed. If we write them due to
@@ -3575,11 +3584,19 @@ impl Connection {
         }
     }
 
+    /// Populates a packet with frames
+    ///
+    /// This tries to fit as many frames as possible into the packet.
+    ///
+    /// *path_exclusive_only* means to only build frames which can only be sent on this
+    /// *path.  This is used in multipath for backup paths while there is still an active
+    /// *path.
     fn populate_packet(
         &mut self,
         now: Instant,
         space_id: SpaceId,
         path_id: PathId,
+        path_exclusive_only: bool,
         buf: &mut impl BufMut,
         pn: u64,
     ) -> SentFrames {
@@ -3600,7 +3617,8 @@ impl Connection {
         }
 
         // OBSERVED_ADDR
-        if space_id == SpaceId::Data
+        if !path_exclusive_only
+            && space_id == SpaceId::Data
             && self
                 .config
                 .address_discovery_role
@@ -3637,7 +3655,7 @@ impl Connection {
         }
 
         // ACK
-        if space.pending_acks.can_send() {
+        if !path_exclusive_only && space.pending_acks.can_send() {
             let path_id = if is_multipath_enabled {
                 Some(path_id)
             } else {
@@ -3655,7 +3673,7 @@ impl Connection {
         }
 
         // ACK_FREQUENCY
-        if mem::replace(&mut space.pending.ack_frequency, false) {
+        if !path_exclusive_only && mem::replace(&mut space.pending.ack_frequency, false) {
             let sequence_number = self.ack_frequency.next_sequence_number();
 
             // Safe to unwrap because this is always provided when ACK frequency is enabled
@@ -3758,7 +3776,7 @@ impl Connection {
         }
 
         // CRYPTO
-        while buf.remaining_mut() > frame::Crypto::SIZE_BOUND && !is_0rtt {
+        while !path_exclusive_only && buf.remaining_mut() > frame::Crypto::SIZE_BOUND && !is_0rtt {
             let mut frame = match space.pending.crypto.pop_front() {
                 Some(x) => x,
                 None => break,
@@ -3815,7 +3833,7 @@ impl Connection {
             .max()
             .expect("some local CID state must exist");
         let new_cid_size_bound = frame::NewConnectionId::size_bound(is_multipath_enabled, cid_len);
-        while buf.remaining_mut() > new_cid_size_bound {
+        while !path_exclusive_only && buf.remaining_mut() > new_cid_size_bound {
             let issued = match space.pending.new_cids.pop() {
                 Some(x) => x,
                 None => break,
@@ -3862,7 +3880,7 @@ impl Connection {
 
         // RETIRE_CONNECTION_ID
         let retire_cid_bound = frame::RetireConnectionId::size_bound(is_multipath_enabled);
-        while buf.remaining_mut() > retire_cid_bound {
+        while !path_exclusive_only && buf.remaining_mut() > retire_cid_bound {
             let (path_id, sequence) = match space.pending.retire_cids.pop() {
                 Some((PathId(0), seq)) if !is_multipath_enabled => (None, seq),
                 Some((path_id, seq)) => (Some(path_id), seq),
@@ -3879,7 +3897,10 @@ impl Connection {
 
         // DATAGRAM
         let mut sent_datagrams = false;
-        while buf.remaining_mut() > Datagram::SIZE_BOUND && space_id == SpaceId::Data {
+        while !path_exclusive_only
+            && buf.remaining_mut() > Datagram::SIZE_BOUND
+            && space_id == SpaceId::Data
+        {
             match self.datagrams.write(buf) {
                 true => {
                     sent_datagrams = true;
@@ -3896,6 +3917,9 @@ impl Connection {
 
         // NEW_TOKEN
         while let Some(remote_addr) = space.pending.new_tokens.pop() {
+            if path_exclusive_only {
+                break;
+            }
             debug_assert_eq!(space_id, SpaceId::Data);
             let ConnectionSide::Server { server_config } = &self.side else {
                 panic!("NEW_TOKEN frames should not be enqueued by clients");
@@ -3934,7 +3958,7 @@ impl Connection {
         }
 
         // STREAM
-        if space_id == SpaceId::Data {
+        if !path_exclusive_only && space_id == SpaceId::Data {
             sent.stream_frames = self
                 .streams
                 .write_stream_frames(buf, self.config.send_fairness);
