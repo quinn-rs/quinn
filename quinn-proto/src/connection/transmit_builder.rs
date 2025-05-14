@@ -149,8 +149,6 @@ impl<'a> TransmitBuilder<'a> {
     /// This buffer implements [`BufSlice`] and thus allows writing into the buffer using
     /// [`BufMut`] and both reading and modifying the already written data in the buffer
     /// using [`Deref`] and [`DerefMut`].  The buffer also enforces a maximum size.
-    // This returns a concrete type since `impl BufSlice` would need a `+ use<'_>` lifetime
-    // bound, which is only supported since Rust 1.82.
     pub(super) fn datagram_mut(&mut self) -> DatagramBuffer<'_> {
         DatagramBuffer::new(
             self.buf,
@@ -196,32 +194,6 @@ impl<'a> TransmitBuilder<'a> {
     }
 }
 
-/// A writable buffer with a capacity and access to the already written bytes
-///
-/// This is a writable buffer, using the [`BufMut`] trait, which also has a maximum capacity.
-/// If more bytes are written than the buffer can contain a panic will occur.
-///
-/// The [`Deref`] impl must return the already written bytes as a slice.  [`DerefMut`] must
-/// allow modification of these already written bytes.
-pub(crate) trait BufSlice: BufMut + Deref<Target = [u8]> + DerefMut {
-    /// Returns the number of already written bytes in the buffer
-    fn len(&self) -> usize;
-
-    /// Returns the maximum size of the buffer
-    fn capacity(&self) -> usize;
-}
-
-impl BufSlice for Vec<u8> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-
-    /// For `Vec<u8>` the capacity is the same as the maximum vec size
-    fn capacity(&self) -> usize {
-        isize::MAX as usize
-    }
-}
-
 /// A [`BufSlice`] implementation for a datagram
 #[derive(Debug)]
 pub(crate) struct DatagramBuffer<'a> {
@@ -235,6 +207,10 @@ pub(crate) struct DatagramBuffer<'a> {
 
 impl<'a> DatagramBuffer<'a> {
     pub(crate) fn new(buf: &'a mut Vec<u8>, start_offset: usize, max_size: usize) -> Self {
+        // Make sure that at least this datagram is allocated.  Does nothing if, like for a
+        // transmit, already more has been allocated.
+        buf.reserve(max_size);
+
         let max_offset = start_offset + max_size;
         DatagramBuffer {
             buf,
@@ -272,14 +248,9 @@ impl DerefMut for DatagramBuffer<'_> {
     }
 }
 
-impl BufSlice for DatagramBuffer<'_> {
-    /// Returns the number of already written bytes in the buffer
-    fn len(&self) -> usize {
-        self.buf.len() - self.start_offset
-    }
-
+impl DatagramBuffer<'_> {
     /// Returns the maximum size of the buffer
-    fn capacity(&self) -> usize {
+    pub(crate) fn capacity(&self) -> usize {
         self.max_offset - self.start_offset
     }
 }
@@ -287,6 +258,6 @@ impl BufSlice for DatagramBuffer<'_> {
 // Temporary compatibility with the BufLen trait.  To be removed in follow-up commits.
 impl BufLen for DatagramBuffer<'_> {
     fn len(&self) -> usize {
-        <Self as BufSlice>::len(self)
+        self.deref().len()
     }
 }

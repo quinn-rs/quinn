@@ -5,7 +5,7 @@ use tracing::{trace, trace_span};
 use super::{Connection, SentFrames, TransmitBuilder, spaces::SentPacket};
 use crate::{
     ConnectionId, Instant, TransportError, TransportErrorCode,
-    connection::{BufSlice, ConnectionSide},
+    connection::ConnectionSide,
     frame::{self, Close},
     packet::{FIXED_BIT, Header, InitialHeader, LongType, PacketNumber, PartialEncode, SpaceId},
 };

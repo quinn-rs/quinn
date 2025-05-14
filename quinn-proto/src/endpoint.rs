@@ -20,7 +20,7 @@ use crate::{
     cid_generator::ConnectionIdGenerator,
     coding::BufMutExt,
     config::{ClientConfig, EndpointConfig, ServerConfig},
-    connection::{Connection, ConnectionError, SideArgs},
+    connection::{Connection, ConnectionError, DatagramBuffer, SideArgs},
     crypto::{self, Keys, UnsupportedVersion},
     frame,
     packet::{
@@ -146,6 +146,8 @@ impl Endpoint {
         data: BytesMut,
         buf: &mut Vec<u8>,
     ) -> Option<DatagramEvent> {
+        let start_pos = buf.len();
+        let buf = &mut DatagramBuffer::new(buf, start_pos, MIN_INITIAL_SIZE.into());
         // Partially decode packet or short-circuit if unable
         let datagram_len = data.len();
         let event = match PartialDecode::new(
@@ -264,7 +266,7 @@ impl Endpoint {
         inciting_dgram_len: usize,
         addresses: FourTuple,
         dst_cid: ConnectionId,
-        buf: &mut Vec<u8>,
+        buf: &mut DatagramBuffer<'_>,
     ) -> Option<Transmit> {
         if self
             .last_stateless_reset
@@ -303,11 +305,10 @@ impl Endpoint {
             self.rng
                 .random_range(IDEAL_MIN_PADDING_LEN..max_padding_len)
         };
-        buf.reserve(padding_len + RESET_TOKEN_SIZE);
-        buf.resize(padding_len, 0);
+        buf.put_bytes(0, padding_len);
         self.rng.fill_bytes(&mut buf[0..padding_len]);
         buf[0] = 0b0100_0000 | (buf[0] >> 2);
-        buf.extend_from_slice(&ResetToken::new(&*self.config.reset_key, dst_cid));
+        buf.put_slice(&ResetToken::new(&*self.config.reset_key, dst_cid));
 
         debug_assert!(buf.len() < inciting_dgram_len);
 
@@ -419,7 +420,7 @@ impl Endpoint {
         datagram_len: usize,
         event: DatagramConnectionEvent,
         addresses: FourTuple,
-        buf: &mut Vec<u8>,
+        buf: &mut DatagramBuffer<'_>,
     ) -> Option<DatagramEvent> {
         let dst_cid = event.first_decode.dst_cid();
         let header = event.first_decode.initial_header().unwrap();
@@ -525,6 +526,8 @@ impl Endpoint {
         buf: &mut Vec<u8>,
         server_config: Option<Arc<ServerConfig>>,
     ) -> Result<(ConnectionHandle, Connection), AcceptError> {
+        let buf_start = buf.len();
+        let mut buf = DatagramBuffer::new(buf, buf_start, MIN_INITIAL_SIZE.into());
         let remote_address_validated = incoming.remote_address_validated();
         incoming.improper_drop_warner.dismiss();
         let incoming_buffer = self.incoming_buffers.remove(incoming.incoming_idx);
@@ -566,7 +569,7 @@ impl Endpoint {
                     &incoming.crypto,
                     &src_cid,
                     TransportError::CONNECTION_REFUSED(""),
-                    buf,
+                    &mut buf,
                 )),
             });
         }
@@ -664,7 +667,7 @@ impl Endpoint {
                         &incoming.crypto,
                         &src_cid,
                         e.clone(),
-                        buf,
+                        &mut buf,
                     )),
                     _ => None,
                 };
@@ -708,13 +711,15 @@ impl Endpoint {
         self.clean_up_incoming(&incoming);
         incoming.improper_drop_warner.dismiss();
 
+        let start_pos = buf.len();
+        let mut buf = DatagramBuffer::new(buf, start_pos, MIN_INITIAL_SIZE.into());
         self.initial_close(
             incoming.packet.header.version,
             incoming.addresses,
             &incoming.crypto,
             &incoming.packet.header.src_cid,
             TransportError::CONNECTION_REFUSED(""),
-            buf,
+            &mut buf,
         )
     }
 
@@ -752,14 +757,16 @@ impl Endpoint {
             version: incoming.packet.header.version,
         };
 
-        let encode = header.encode(buf);
+        let start_pos = buf.len();
+        let mut buf = DatagramBuffer::new(buf, start_pos, MIN_INITIAL_SIZE.into());
+        let encode = header.encode(&mut buf);
         buf.put_slice(&token);
-        buf.extend_from_slice(&server_config.crypto.retry_tag(
+        buf.put_slice(&server_config.crypto.retry_tag(
             incoming.packet.header.version,
             &incoming.packet.header.dst_cid,
-            buf,
+            &buf,
         ));
-        encode.finish(buf, &*incoming.crypto.header.local, None);
+        encode.finish(&mut buf, &*incoming.crypto.header.local, None);
 
         Ok(Transmit {
             destination: incoming.addresses.remote,
@@ -854,7 +861,7 @@ impl Endpoint {
         crypto: &Keys,
         remote_id: &ConnectionId,
         reason: TransportError,
-        buf: &mut Vec<u8>,
+        buf: &mut DatagramBuffer<'_>,
     ) -> Transmit {
         // We don't need to worry about CID collisions in initial closes because the peer
         // shouldn't respond, and if it does, and the CID collides, we'll just drop the
@@ -873,7 +880,7 @@ impl Endpoint {
         let max_len =
             INITIAL_MTU as usize - partial_encode.header_len - crypto.packet.local.tag_len();
         frame::Close::from(reason).encode(buf, max_len);
-        buf.resize(buf.len() + crypto.packet.local.tag_len(), 0);
+        buf.put_bytes(0, crypto.packet.local.tag_len());
         partial_encode.finish(buf, &*crypto.header.local, Some((0, &*crypto.packet.local)));
         Transmit {
             destination: addresses.remote,
