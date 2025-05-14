@@ -612,7 +612,7 @@ impl Connection {
                     !can_send.is_empty()
                 };
                 let needs_loss_probe = self.spaces[space_id].for_path(path_id).loss_probes > 0;
-                path_should_send || needs_loss_probe
+                path_should_send || needs_loss_probe || can_send.close
             };
 
             if !path_should_send && space_id < SpaceId::Data {
@@ -799,9 +799,8 @@ impl Connection {
                     }
                 }
                 builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
-                if space_id == self.highest_space {
+                if space_id == self.highest_space && path_id == *self.paths.keys().max().unwrap() {
                     // Don't send another close packet
-                    // TODO(flub): Is it worth sending CONNECTION_CLOSE on all paths?
                     self.close = false;
                     // `CONNECTION_CLOSE` is the final packet
                     break;
