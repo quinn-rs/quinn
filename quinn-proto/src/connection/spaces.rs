@@ -156,15 +156,16 @@ impl PacketSpace {
     /// [`Connection::can_send_1rtt`]: super::Connection::can_send_1rtt
     pub(super) fn can_send(&self, path_id: PathId, streams: &StreamsState) -> SendableFrames {
         let acks = self.pending_acks.can_send();
-        let other = !self.pending.is_empty(streams)
-            || self
-                .number_spaces
-                .get(&path_id)
-                .is_some_and(|s| s.ping_pending || s.immediate_ack_pending);
+        let path_exclusive = self
+            .number_spaces
+            .get(&path_id)
+            .is_some_and(|s| s.ping_pending || s.immediate_ack_pending);
+        let other = !self.pending.is_empty(streams) || path_exclusive;
         SendableFrames {
             acks,
             other,
             close: false,
+            path_exclusive,
         }
     }
 
@@ -749,12 +750,18 @@ impl Dedup {
 /// Indicates which data is available for sending
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(super) struct SendableFrames {
-    /// Whether there ACK frames to send
+    /// Whether there ACK frames to send, these are not ack-eliciting
     pub(super) acks: bool,
     /// Whether there are any other frames to send, these are ack-eliciting
     pub(super) other: bool,
-    /// Whether there is a CONNECTION_CLOSE to send
+    /// Whether there is a CONNECTION_CLOSE to send, this is not ack-eliciting
     pub(super) close: bool,
+    /// Whether there are frames to send, which can only be sent on the path queried
+    ///
+    /// These are ack-eliciting, and a subset of [`SendableFrames::other`].  This is useful
+    /// for QUIC-MULTIPATH, which may desire not to send any frames on a backup path, which
+    /// can also be sent on an active path.
+    pub(super) path_exclusive: bool,
 }
 
 impl SendableFrames {
@@ -764,12 +771,22 @@ impl SendableFrames {
             acks: false,
             other: false,
             close: false,
+            path_exclusive: false,
         }
     }
 
     /// Whether no data is sendable
     pub(super) fn is_empty(&self) -> bool {
-        !self.acks && !self.other && !self.close
+        !self.acks && !self.other && !self.close && !self.path_exclusive
+    }
+}
+
+impl ::std::ops::BitOrAssign for SendableFrames {
+    fn bitor_assign(&mut self, rhs: Self) {
+        self.acks |= rhs.acks;
+        self.other |= rhs.other;
+        self.close |= rhs.close;
+        self.path_exclusive |= rhs.path_exclusive;
     }
 }
 

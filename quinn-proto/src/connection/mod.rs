@@ -61,7 +61,7 @@ mod packet_crypto;
 use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
-use paths::PathData;
+use paths::{PathData, PathStatus};
 pub use paths::{PathId, RttEstimator};
 
 mod send_buffer;
@@ -583,52 +583,84 @@ impl Connection {
             PathId(0) => SpaceId::Initial,
             _ => SpaceId::Data,
         };
-        loop {
-            // Can anything be sent on this packet number space?  If not advance either the
-            // SpaceId or PathId and try again.
-            let send_ready = self.space_ready_to_send(path_id, space_id, &buf, close, now);
-            let can_send = match send_ready {
-                SendReady::Frames(can_send) if !can_send.is_empty() => can_send,
-                SendReady::Frames(_) if space_id < SpaceId::Data => {
-                    trace!(?space_id, ?path_id, "nothing left to send in this space");
-                    space_id = space_id.next();
-                    continue;
-                }
-                SendReady::CongestionBlocked if space_id < SpaceId::Data => {
-                    // Higher spaces might still have tail-loss probes to send, which are
-                    // not congestion blocked.
-                    congestion_blocked = true;
-                    space_id = space_id.next();
-                    continue;
-                }
-                _ => {
-                    // Nothing more to send on this path.
-                    if !matches!(send_ready, SendReady::Frames(_)) {
-                        congestion_blocked = true;
-                    }
 
-                    // If there are any datagrams in the transmit, packets for another path
-                    // can not be built anymore.
-                    if buf.num_datagrams() > 0 {
+        // If there is any available path we only want to send frames to a backup path that
+        // must be sent on that path.
+        let have_available_path = self
+            .paths
+            .values()
+            .any(|path| path.data.status == PathStatus::Available);
+
+        loop {
+            // Determine if anything can be sent in this packet number space (SpaceId +
+            // PathId).
+            let max_packet_size = if buf.datagram_remaining_mut() > 0 {
+                // We are trying to coalesce another packet into this datagram.
+                buf.datagram_remaining_mut()
+            } else {
+                // A new datagram needs to be started.
+                buf.segment_size()
+            };
+            let can_send = self.space_can_send(space_id, path_id, max_packet_size, close);
+            let path_should_send = {
+                let path_exclusive_only = space_id == SpaceId::Data
+                    && have_available_path
+                    && self.path_data(path_id).status == PathStatus::Backup;
+                let path_should_send = if path_exclusive_only {
+                    can_send.path_exclusive
+                } else {
+                    !can_send.is_empty()
+                };
+                let needs_loss_probe = self.spaces[space_id].for_path(path_id).loss_probes > 0;
+                path_should_send || needs_loss_probe || can_send.close
+            };
+
+            if !path_should_send && space_id < SpaceId::Data {
+                trace!(?space_id, ?path_id, "nothing to send");
+                space_id = space_id.next();
+                continue;
+            }
+
+            let send_blocked = if path_should_send && buf.datagram_remaining_mut() == 0 {
+                // Only check congestion control if a new datagram is needed.
+                self.path_congestion_check(space_id, path_id, &buf, &can_send, now)
+            } else {
+                PathBlocked::No
+            };
+            if send_blocked != PathBlocked::No {
+                trace!(?space_id, ?path_id, ?send_blocked, "congestion blocked");
+                congestion_blocked = true;
+            }
+            if send_blocked == PathBlocked::Congestion && space_id < SpaceId::Data {
+                // Higher spaces might still have tail-loss probes to send, which are not
+                // congestion blocked.
+                space_id = space_id.next();
+                continue;
+            }
+            if !path_should_send || send_blocked != PathBlocked::No {
+                // Nothing more to send on this path, check the next path if possible.
+
+                // If there are any datagrams in the transmit, packets for another path can
+                // not be built.
+                if buf.num_datagrams() > 0 {
+                    break;
+                }
+
+                match self.paths.keys().find(|&&next| next > path_id) {
+                    Some(next_path_id) => {
+                        // See if this next path can send anything.
+                        trace!(?space_id, ?path_id, ?next_path_id, "trying next path");
+                        path_id = *next_path_id;
+                        space_id = SpaceId::Data;
+                        continue;
+                    }
+                    None => {
+                        // Nothing more to send.
+                        trace!(?space_id, ?path_id, "no higher path id to send on");
                         break;
                     }
-
-                    // TODO(flub): We want to prioritise active paths and those needing path
-                    //    challenges/responses.
-                    match self.paths.keys().find(|&&path| path > path_id) {
-                        Some(new_path_id) => {
-                            // See if this next path can send anything.
-                            path_id = *new_path_id;
-                            space_id = SpaceId::Data;
-                            continue;
-                        }
-                        None => {
-                            // Nothing more to send.
-                            break;
-                        }
-                    }
                 }
-            };
+            }
 
             // If the datagram is full, we need to start a new one.
             if buf.datagram_remaining_mut() == 0 {
@@ -640,7 +672,17 @@ impl Connection {
                 match self.spaces[space_id].for_path(path_id).loss_probes {
                     0 => buf.start_new_datagram(),
                     _ => {
+                        // We need something to send for a tail-loss probe.
+                        let request_immediate_ack =
+                            space_id == SpaceId::Data && self.peer_supports_ack_frequency();
+                        self.spaces[space_id].maybe_queue_probe(
+                            path_id,
+                            request_immediate_ack,
+                            &self.streams,
+                        );
+
                         self.spaces[space_id].for_path(path_id).loss_probes -= 1;
+
                         // Clamp the datagram to at most the minimum MTU to ensure that loss
                         // probes can get through and enable recovery even if the path MTU
                         // has shrank unexpectedly.
@@ -664,6 +706,9 @@ impl Connection {
             //
             // From here on, we've determined that a packet will definitely be sent.
             //
+
+            // TODO(flub): If this is a backup path and have_available_path is true, we
+            //     should only send can_send.path_exclusive frames.
 
             if self.spaces[SpaceId::Initial].crypto.is_some()
                 && space_id == SpaceId::Handshake
@@ -754,9 +799,8 @@ impl Connection {
                     }
                 }
                 builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
-                if space_id == self.highest_space {
+                if space_id == self.highest_space && path_id == *self.paths.keys().max().unwrap() {
                     // Don't send another close packet
-                    // TODO(flub): Is it worth sending CONNECTION_CLOSE on all paths?
                     self.close = false;
                     // `CONNECTION_CLOSE` is the final packet
                     break;
@@ -806,8 +850,17 @@ impl Connection {
             }
 
             let sent_frames = {
+                let path_exclusive_only =
+                    have_available_path && self.path_data(path_id).status == PathStatus::Backup;
                 let pn = builder.exact_number;
-                self.populate_packet(now, space_id, path_id, &mut builder.frame_space_mut(), pn)
+                self.populate_packet(
+                    now,
+                    space_id,
+                    path_id,
+                    path_exclusive_only,
+                    &mut builder.frame_space_mut(),
+                    pn,
+                )
             };
 
             // ACK-only packets should only be sent when explicitly allowed. If we write them due to
@@ -1017,15 +1070,9 @@ impl Connection {
         // handle large fixed-size frames, which only exist in 1-RTT (application
         // datagrams). We don't account for coalesced packets potentially occupying space
         // because frames can always spill into the next datagram.
-        let pn = self.spaces[SpaceId::Data]
-            .for_path(path_id)
-            .peek_tx_number();
-        let frame_space_1rtt = buf
-            .segment_size()
-            .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
         let mut space_id = current_space_id;
         loop {
-            let can_send = self.space_can_send(space_id, path_id, frame_space_1rtt);
+            let can_send = self.space_can_send(space_id, path_id, buf.segment_size(), close);
             if !can_send.is_empty() || (close && self.spaces[space_id].crypto.is_some()) {
                 return Some(space_id);
             }
@@ -1038,87 +1085,51 @@ impl Connection {
         None
     }
 
-    /// Whether anything needs to be sent in this packet number space
-    ///
-    /// This checks whether there is anything to send on the `(PathId, SpaceId)` tuple and
-    /// whether sending is allowed by the congestion controler etc.
-    fn space_ready_to_send(
+    /// Checks if creating a new datagram would be blocked by congestion control
+    fn path_congestion_check(
         &mut self,
-        path_id: PathId,
         space_id: SpaceId,
+        path_id: PathId,
         transmit: &TransmitBuf<'_>,
-        close: bool,
+        can_send: &SendableFrames,
         now: Instant,
-    ) -> SendReady {
-        // Number of bytes available for frames if this is a 1-RTT packet. We're guaranteed
-        // to be able to send an individual frame at least this large in the next 1-RTT
-        // packet. This could be generalized to support every space, but it's only needed to
-        // handle large fixed-size frames, which only exist in 1-RTT (application
-        // datagrams). We don't account for coalesced packets potentially occupying space
-        // because frames can always spill into the next datagram.
-        let pn = self.spaces[SpaceId::Data]
-            .for_path(path_id)
-            .peek_tx_number();
-        let frame_space_1rtt = transmit
-            .segment_size()
-            .saturating_sub(self.predict_1rtt_overhead(pn, path_id));
-        let mut can_send = self.space_can_send(space_id, path_id, frame_space_1rtt);
-        can_send.close = close && self.spaces[space_id].crypto.is_some();
+    ) -> PathBlocked {
+        // Anti-amplification is only based on `total_sent`, which gets updated after
+        // the transmit is sent. Therefore we pass the amount of bytes for datagrams
+        // that are already created, as well as 1 byte for starting another datagram. If
+        // there is any anti-amplification budget left, we always allow a full MTU to be
+        // sent (see https://github.com/quinn-rs/quinn/issues/1082).
+        if self
+            .path_data(path_id)
+            .anti_amplification_blocked(transmit.len() as u64 + 1)
+        {
+            trace!(?space_id, ?path_id, "blocked by anti-amplification");
+            return PathBlocked::AntiAmplification;
+        }
+
+        // Congestion control check.
+        // Tail loss probes must not be blocked by congestion, or a deadlock could arise.
+        let bytes_to_send = transmit.segment_size() as u64;
         let need_loss_probe = self.spaces[space_id].for_path(path_id).loss_probes > 0;
 
-        if can_send.is_empty() && !need_loss_probe {
-            return SendReady::Frames(can_send);
-        }
-
-        // Only if a new datagram is needed do we need to check anti-amplification,
-        // congestion control and pacing.
-        if transmit.datagram_remaining_mut() == 0 {
-            // Anti-amplification is only based on `total_sent`, which gets updated after
-            // the transmit is sent. Therefore we pass the amount of bytes for datagrams
-            // that are already created, as well as 1 byte for starting another datagram. If
-            // there is any anti-amplification budget left, we always allow a full MTU to be
-            // sent (see https://github.com/quinn-rs/quinn/issues/1082).
-            if self
-                .path_data(path_id)
-                .anti_amplification_blocked(transmit.len() as u64 + 1)
-            {
-                return SendReady::AntiAmplificationBlocked;
-            }
-
-            // Congestion control check.
-            // Tail loss probes must not be blocked by congestion, or a deadlock could arise.
-            let bytes_to_send = transmit.segment_size() as u64;
-            if can_send.other && !need_loss_probe && !can_send.close {
-                let path = self.path_data(path_id);
-                if path.in_flight.bytes + bytes_to_send >= path.congestion.window() {
-                    trace!(?space_id, %path_id, "blocked by congestion control");
-                    return SendReady::CongestionBlocked;
-                }
-            }
-
-            // Pacing check.
-            if let Some(delay) = self.path_data_mut(path_id).pacing_delay(bytes_to_send, now) {
-                self.timers.set(Timer::Pacing(path_id), delay);
-                // Loss probes and CONNECTION_CLOSE should be subject to pacing, even though
-                // they are not congestion controlled.
-                trace!("blocked by pacing");
-                return SendReady::PacingBlocked;
+        if can_send.other && !need_loss_probe && !can_send.close {
+            let path = self.path_data(path_id);
+            if path.in_flight.bytes + bytes_to_send >= path.congestion.window() {
+                trace!(?space_id, %path_id, "blocked by congestion control");
+                return PathBlocked::Congestion;
             }
         }
 
-        // Ensure there is something to send if a loss probe is needed.
-        if need_loss_probe {
-            let request_immediate_ack =
-                space_id == SpaceId::Data && self.peer_supports_ack_frequency();
-            self.spaces[space_id].maybe_queue_probe(path_id, request_immediate_ack, &self.streams);
-            can_send = self.space_can_send(space_id, path_id, frame_space_1rtt);
-            debug_assert!(
-                can_send.other,
-                "tail-loss probe must have something to send"
-            );
+        // Pacing check.
+        if let Some(delay) = self.path_data_mut(path_id).pacing_delay(bytes_to_send, now) {
+            self.timers.set(Timer::Pacing(path_id), delay);
+            // Loss probes and CONNECTION_CLOSE should be subject to pacing, even though
+            // they are not congestion controlled.
+            trace!(?space_id, ?path_id, "blocked by pacing");
+            return PathBlocked::Pacing;
         }
 
-        SendReady::Frames(can_send)
+        PathBlocked::No
     }
 
     /// Send PATH_CHALLENGE for a previous path if necessary
@@ -1181,12 +1192,20 @@ impl Connection {
     }
 
     /// Indicate what types of frames are ready to send for the given space
+    ///
+    /// *packet_size* is the number of bytes available to build the next packet.  *close*
+    /// *indicates whether a CONNECTION_CLOSE frame needs to be sent.
     fn space_can_send(
-        &self,
+        &mut self,
         space_id: SpaceId,
         path_id: PathId,
-        frame_space_1rtt: usize,
+        packet_size: usize,
+        close: bool,
     ) -> SendableFrames {
+        let pn = self.spaces[SpaceId::Data]
+            .for_path(path_id)
+            .peek_tx_number();
+        let frame_space_1rtt = packet_size.saturating_sub(self.predict_1rtt_overhead(pn, path_id));
         if self.spaces[space_id].crypto.is_none()
             && (space_id != SpaceId::Data
                 || self.zero_rtt_crypto.is_none()
@@ -1197,8 +1216,11 @@ impl Connection {
         }
         let mut can_send = self.spaces[space_id].can_send(path_id, &self.streams);
         if space_id == SpaceId::Data {
-            can_send.other |= self.can_send_1rtt(path_id, frame_space_1rtt);
+            can_send |= self.can_send_1rtt(path_id, frame_space_1rtt);
         }
+
+        can_send.close = close && self.spaces[space_id].crypto.is_some();
+
         can_send
     }
 
@@ -3562,11 +3584,19 @@ impl Connection {
         }
     }
 
+    /// Populates a packet with frames
+    ///
+    /// This tries to fit as many frames as possible into the packet.
+    ///
+    /// *path_exclusive_only* means to only build frames which can only be sent on this
+    /// *path.  This is used in multipath for backup paths while there is still an active
+    /// *path.
     fn populate_packet(
         &mut self,
         now: Instant,
         space_id: SpaceId,
         path_id: PathId,
+        path_exclusive_only: bool,
         buf: &mut impl BufMut,
         pn: u64,
     ) -> SentFrames {
@@ -3587,7 +3617,8 @@ impl Connection {
         }
 
         // OBSERVED_ADDR
-        if space_id == SpaceId::Data
+        if !path_exclusive_only
+            && space_id == SpaceId::Data
             && self
                 .config
                 .address_discovery_role
@@ -3624,7 +3655,7 @@ impl Connection {
         }
 
         // ACK
-        if space.pending_acks.can_send() {
+        if !path_exclusive_only && space.pending_acks.can_send() {
             let path_id = if is_multipath_enabled {
                 Some(path_id)
             } else {
@@ -3642,7 +3673,7 @@ impl Connection {
         }
 
         // ACK_FREQUENCY
-        if mem::replace(&mut space.pending.ack_frequency, false) {
+        if !path_exclusive_only && mem::replace(&mut space.pending.ack_frequency, false) {
             let sequence_number = self.ack_frequency.next_sequence_number();
 
             // Safe to unwrap because this is always provided when ACK frequency is enabled
@@ -3745,7 +3776,7 @@ impl Connection {
         }
 
         // CRYPTO
-        while buf.remaining_mut() > frame::Crypto::SIZE_BOUND && !is_0rtt {
+        while !path_exclusive_only && buf.remaining_mut() > frame::Crypto::SIZE_BOUND && !is_0rtt {
             let mut frame = match space.pending.crypto.pop_front() {
                 Some(x) => x,
                 None => break,
@@ -3802,7 +3833,7 @@ impl Connection {
             .max()
             .expect("some local CID state must exist");
         let new_cid_size_bound = frame::NewConnectionId::size_bound(is_multipath_enabled, cid_len);
-        while buf.remaining_mut() > new_cid_size_bound {
+        while !path_exclusive_only && buf.remaining_mut() > new_cid_size_bound {
             let issued = match space.pending.new_cids.pop() {
                 Some(x) => x,
                 None => break,
@@ -3849,7 +3880,7 @@ impl Connection {
 
         // RETIRE_CONNECTION_ID
         let retire_cid_bound = frame::RetireConnectionId::size_bound(is_multipath_enabled);
-        while buf.remaining_mut() > retire_cid_bound {
+        while !path_exclusive_only && buf.remaining_mut() > retire_cid_bound {
             let (path_id, sequence) = match space.pending.retire_cids.pop() {
                 Some((PathId(0), seq)) if !is_multipath_enabled => (None, seq),
                 Some((path_id, seq)) => (Some(path_id), seq),
@@ -3866,7 +3897,10 @@ impl Connection {
 
         // DATAGRAM
         let mut sent_datagrams = false;
-        while buf.remaining_mut() > Datagram::SIZE_BOUND && space_id == SpaceId::Data {
+        while !path_exclusive_only
+            && buf.remaining_mut() > Datagram::SIZE_BOUND
+            && space_id == SpaceId::Data
+        {
             match self.datagrams.write(buf) {
                 true => {
                     sent_datagrams = true;
@@ -3883,6 +3917,9 @@ impl Connection {
 
         // NEW_TOKEN
         while let Some(remote_addr) = space.pending.new_tokens.pop() {
+            if path_exclusive_only {
+                break;
+            }
             debug_assert_eq!(space_id, SpaceId::Data);
             let ConnectionSide::Server { server_config } = &self.side else {
                 panic!("NEW_TOKEN frames should not be enqueued by clients");
@@ -3921,7 +3958,7 @@ impl Connection {
         }
 
         // STREAM
-        if space_id == SpaceId::Data {
+        if !path_exclusive_only && space_id == SpaceId::Data {
             sent.stream_frames = self
                 .streams
                 .write_stream_frames(buf, self.config.send_fairness);
@@ -4250,26 +4287,33 @@ impl Connection {
     ///
     /// This checks for frames that can only be sent in the data space (1-RTT):
     /// - Pending PATH_CHALLENGE frames on the active and previous path if just migrated.
+    /// - Pending PATH_RESPONSE frames.
     /// - Pending data to send in STREAM frames.
     /// - Pending DATAGRAM frames to send.
     ///
     /// See also [`PacketSpace::can_send`] which keeps track of all other frame types that
     /// may need to be sent.
-    fn can_send_1rtt(&self, path_id: PathId, max_size: usize) -> bool {
-        let challenge_pending = self.paths.get(&path_id).is_some_and(|p| {
-            p.data.challenge_pending
-                || p.prev
+    fn can_send_1rtt(&self, path_id: PathId, max_size: usize) -> SendableFrames {
+        let path_exclusive = self.paths.get(&path_id).is_some_and(|path| {
+            path.data.challenge_pending
+                || path
+                    .prev
                     .as_ref()
                     .is_some_and(|(_, path)| path.challenge_pending)
+                || !path.data.path_responses.is_empty()
         });
-        self.streams.can_send_stream_data()
-            || challenge_pending
-            || !self.path_data(path_id).path_responses.is_empty()
+        let other = self.streams.can_send_stream_data()
             || self
                 .datagrams
                 .outgoing
                 .front()
-                .is_some_and(|x| x.size(true) <= max_size)
+                .is_some_and(|x| x.size(true) <= max_size);
+        SendableFrames {
+            acks: false,
+            other,
+            close: false,
+            path_exclusive,
+        }
     }
 
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
@@ -4377,11 +4421,12 @@ impl fmt::Debug for Connection {
     }
 }
 
-enum SendReady {
-    Frames(SendableFrames),
-    AntiAmplificationBlocked,
-    CongestionBlocked,
-    PacingBlocked,
+#[derive(Debug, Copy, Clone, PartialEq, Eq)]
+enum PathBlocked {
+    No,
+    AntiAmplification,
+    Congestion,
+    Pacing,
 }
 
 /// Fields of `Connection` specific to it being client-side or server-side

@@ -93,6 +93,8 @@ pub(super) struct PathData {
     pub(super) observed_addr_sent: bool,
     /// Observed address frame with the largest sequence number received from the peer on this path.
     pub(super) last_observed_addr_report: Option<ObservedAddr>,
+    /// The QUIC-MULTIPATH path status
+    pub(super) status: PathStatus,
     /// Number of the first packet sent on this path
     ///
     /// Used to determine whether a packet was sent on an earlier path. Insufficient to determine if
@@ -148,6 +150,7 @@ impl PathData {
             in_flight: InFlight::new(),
             observed_addr_sent: false,
             last_observed_addr_report: None,
+            status: Default::default(),
             first_packet: None,
         }
     }
@@ -175,6 +178,7 @@ impl PathData {
             in_flight: InFlight::new(),
             observed_addr_sent: false,
             last_observed_addr_report: None,
+            status: prev.status,
             first_packet: None,
         }
     }
@@ -458,6 +462,26 @@ impl InFlight {
         self.bytes -= u64::from(packet.size);
         self.ack_eliciting -= u64::from(packet.ack_eliciting);
     }
+}
+
+/// The QUIC-MULTIPATH path status
+///
+/// See section "3.3 Path Status Management":
+/// <https://quicwg.org/multipath/draft-ietf-quic-multipath.html#name-path-status-management>
+#[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
+pub(super) enum PathStatus {
+    /// Paths marked with as available will be used when scheduling packets
+    ///
+    /// If multiple paths are available, packets will be scheduled on whichever has
+    /// capacity.
+    #[default]
+    Available,
+    /// Paths marked as backup will only be used if there are no available paths
+    ///
+    /// If the max_idle_timeout is specified the path will be kept alive so that it does not
+    /// expire.
+    #[allow(dead_code)] // TODO(flub): We should eventually have code that uses this
+    Backup,
 }
 
 #[cfg(test)]
