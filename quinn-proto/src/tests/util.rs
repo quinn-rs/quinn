@@ -497,7 +497,7 @@ impl TestEndpoint {
 
     pub(super) fn reject(&mut self, incoming: Incoming) {
         let mut buf = Vec::new();
-        let transmit = self.endpoint.refuse(incoming, &mut buf);
+        let transmit = self.endpoint.refuse_reason(incoming, None, &mut buf);
         let size = transmit.size;
         self.outbound.extend(split_transmit(transmit, &buf[..size]));
     }
