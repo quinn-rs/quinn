@@ -78,15 +78,11 @@ jobs:
             rustc --version
             echo "~~~~ Solaris-version ~~~~"
             uname -a
-            # Workaround for spurious network issues (https://github.com/quinn-rs/quinn/issues/2218)
-            mkdir ~/.cargo && cat > ~/.cargo/config.toml <<EOF
-            [http]
-            timeout = 90
-            low-speed-limit = 1
-            EOF
           # Unlike others, don't un-ignore stress tests, because they hang on Solaris
           run: |
             export PATH=$HOME/.rust_solaris/bin:$PATH
+            # Workaround for https://github.com/quinn-rs/quinn/issues/2218
+            export CARGO_HTTP_MULTIPLEXING=false
             cargo build --locked --all-targets && cargo test --locked --manifest-path fuzz/Cargo.toml && cargo test --locked -p quinn-udp --benches
 
   test-illumos:
