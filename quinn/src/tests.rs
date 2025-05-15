@@ -861,3 +861,87 @@ async fn multiple_conns_with_zero_length_cids() {
     .instrument(error_span!("server"));
     tokio::join!(client1, client2, server);
 }
+
+#[tokio::test]
+async fn stream_stopped() {
+    let _guard = subscribe();
+    let factory = EndpointFactory::new();
+    let server = {
+        let _guard = error_span!("server").entered();
+        factory.endpoint()
+    };
+    let server_addr = server.local_addr().unwrap();
+
+    let client = {
+        let _guard = error_span!("client1").entered();
+        factory.endpoint()
+    };
+
+    let client = async move {
+        let conn = client
+            .connect(server_addr, "localhost")
+            .unwrap()
+            .await
+            .unwrap();
+        let mut stream = conn.open_uni().await.unwrap();
+        let stopped1 = stream.stopped();
+        let stopped2 = stream.stopped();
+        let stopped3 = stream.stopped();
+
+        stream.write_all(b"hi").await.unwrap();
+        // spawn one of the futures into a task
+        let stopped1 = tokio::task::spawn(stopped1);
+        // verify that both futures resolved
+        let (stopped1, stopped2) = tokio::join!(stopped1, stopped2);
+        assert!(matches!(stopped1, Ok(Ok(Some(val))) if val == 42u32.into()));
+        assert!(matches!(stopped2, Ok(Some(val)) if val == 42u32.into()));
+        // drop the stream
+        drop(stream);
+        // verify that a future also resolves after dropping the stream
+        let stopped3 = stopped3.await;
+        assert_eq!(stopped3, Ok(Some(42u32.into())));
+    };
+    let client =
+        tokio::time::timeout(Duration::from_millis(100), client).instrument(error_span!("client"));
+    let server = async move {
+        let conn = server.accept().await.unwrap().await.unwrap();
+        let mut stream = conn.accept_uni().await.unwrap();
+        let mut buf = [0u8; 2];
+        stream.read_exact(&mut buf).await.unwrap();
+        stream.stop(42u32.into()).unwrap();
+        conn
+    }
+    .instrument(error_span!("server"));
+    let (client, conn) = tokio::join!(client, server);
+    client.expect("timeout");
+    drop(conn);
+}
+
+#[tokio::test]
+async fn stream_stopped_2() {
+    let _guard = subscribe();
+    let endpoint = endpoint();
+
+    let (conn, _server_conn) = tokio::try_join!(
+        endpoint
+            .connect(endpoint.local_addr().unwrap(), "localhost")
+            .unwrap(),
+        async { endpoint.accept().await.unwrap().await }
+    )
+    .unwrap();
+    let send_stream = conn.open_uni().await.unwrap();
+    let stopped = tokio::time::timeout(Duration::from_millis(100), send_stream.stopped())
+        .instrument(error_span!("stopped"));
+    tokio::pin!(stopped);
+    // poll the future once so that the waker is registered.
+    tokio::select! {
+        biased;
+        _x = &mut stopped => {},
+        _x = std::future::ready(()) => {}
+    }
+    // drop the send stream
+    drop(send_stream);
+    // make sure the stopped future still resolves
+    let res = stopped.await;
+    assert_eq!(res, Ok(Ok(None)));
+}
