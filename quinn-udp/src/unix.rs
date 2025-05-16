@@ -795,6 +795,56 @@ pub(crate) const BATCH_SIZE: usize = 32;
 pub(crate) const BATCH_SIZE: usize = 1;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
+mod linux {
+    // https://www.linfo.org/kernel_version_numbering.html
+    pub(crate) struct KernelVersion {
+        version: u8,
+        major_revision: u8,
+        pub(crate) string: String,
+    }
+
+    impl KernelVersion {
+        pub(crate) fn from_uname() -> Option<Self> {
+            let mut n = unsafe { std::mem::zeroed() };
+            let r = unsafe { libc::uname(&mut n) };
+            if r != 0 {
+                crate::log::trace!("Failed to run libc::uname ({})", r);
+                return None;
+            }
+            let release = unsafe {
+                std::ffi::CStr::from_ptr(n.release[..].as_ptr())
+                    .to_string_lossy()
+                    .into_owned()
+            };
+            let mut split = release
+                .split_once('-')
+                .map(|pair| pair.0)
+                .unwrap_or(&release)
+                .split('.');
+
+            let Some(version) = split.next()?.parse().ok() else {
+                crate::log::trace!("Failed to parse kernel version from {release:?}");
+                return None;
+            };
+            let Some(major_revision) = split.next()?.parse().ok() else {
+                crate::log::trace!("Failed to parse kernel major revision from {release:?}");
+                return None;
+            };
+
+            Some(KernelVersion {
+                version,
+                major_revision,
+                string: release,
+            })
+        }
+
+        pub(crate) fn lower_than(&self, version: u8, major_revision: u8) -> bool {
+            (self.version, self.major_revision) < (version, major_revision)
+        }
+    }
+}
+
+#[cfg(any(target_os = "linux", target_os = "android"))]
 mod gso {
     use super::*;
 
@@ -804,10 +854,17 @@ mod gso {
     // TODO: Add this to libc
     const UDP_SEGMENT: libc::c_int = 103;
 
+    // Global mutex to avoid calling `libc::uname` for each socket.
+    static SUPPORTED_BY_OS: Mutex<Option<bool>> = Mutex::new(None);
+
     /// Checks whether GSO support is available by setting the UDP_SEGMENT
     /// option on a socket
     pub(crate) fn max_gso_segments() -> usize {
         const GSO_SIZE: libc::c_int = 1500;
+
+        if !supported_by_os() {
+            return 1;
+        }
 
         let socket = match std::net::UdpSocket::bind("[::]:0")
             .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
@@ -828,6 +885,37 @@ mod gso {
                 1
             }
         }
+    }
+
+    fn supported_by_os() -> bool {
+        let mut lock = match SUPPORTED_BY_OS.lock() {
+            Ok(lock) => lock,
+            Err(e) => {
+                crate::log::trace!("Failed to lock mutex ({e:?}), GSO will not be enabled");
+                return false;
+            }
+        };
+
+        let supported = match *lock {
+            Some(value) => return value,
+            None => match linux::KernelVersion::from_uname() {
+                Some(kernel_version) => {
+                    if kernel_version.lower_than(4, 18) {
+                        crate::log::trace!(
+                            "GSO supported on Linux kernels 4.18+, current {}",
+                            kernel_version.string
+                        );
+                        false
+                    } else {
+                        true
+                    }
+                }
+                None => false,
+            },
+        };
+
+        *lock = Some(supported);
+        return supported;
     }
 
     pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
