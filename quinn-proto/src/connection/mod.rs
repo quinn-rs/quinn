@@ -848,13 +848,11 @@ impl Connection {
                 }
             }
 
-            let sent = self.populate_packet(
-                now,
-                space_id,
-                &mut transmit.datagram_mut(),
-                builder.max_size,
-                builder.exact_number,
-            );
+            let sent = {
+                let frame_space = builder.max_size - transmit.datagram_mut().len();
+                let mut buf = transmit.datagram_mut().limit(frame_space);
+                self.populate_packet(now, space_id, &mut buf, builder.exact_number)
+            };
 
             // ACK-only packets should only be sent when explicitly allowed. If we write them due to
             // any other reason, there is a bug which leads to one component announcing write
@@ -3040,8 +3038,7 @@ impl Connection {
         &mut self,
         now: Instant,
         space_id: SpaceId,
-        buf: &mut (impl BufMut + BufLen),
-        max_size: usize,
+        buf: &mut impl BufMut,
         pn: u64,
     ) -> SentFrames {
         let mut sent = SentFrames::default();
@@ -3117,7 +3114,7 @@ impl Connection {
         }
 
         // PATH_CHALLENGE
-        if buf.len() + 9 < max_size && space_id == SpaceId::Data {
+        if 9 < buf.remaining_mut() && space_id == SpaceId::Data {
             // Transmit challenges with every outgoing frame on an unvalidated path
             if let Some(token) = self.path.challenge {
                 // But only send a packet solely for that purpose at most once
@@ -3132,7 +3129,7 @@ impl Connection {
         }
 
         // PATH_RESPONSE
-        if buf.len() + 9 < max_size && space_id == SpaceId::Data {
+        if 9 < buf.remaining_mut() && space_id == SpaceId::Data {
             if let Some(token) = self.path_responses.pop_on_path(self.path.remote) {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
@@ -3144,7 +3141,7 @@ impl Connection {
         }
 
         // CRYPTO
-        while buf.len() + frame::Crypto::SIZE_BOUND < max_size && !is_0rtt {
+        while frame::Crypto::SIZE_BOUND < buf.remaining_mut() && !is_0rtt {
             let mut frame = match space.pending.crypto.pop_front() {
                 Some(x) => x,
                 None => break,
@@ -3154,8 +3151,7 @@ impl Connection {
             // Since the offset is known, we can reserve the exact size required to encode it.
             // For length we reserve 2bytes which allows to encode up to 2^14,
             // which is more than what fits into normally sized QUIC frames.
-            let max_crypto_data_size = max_size
-                - buf.len()
+            let max_crypto_data_size = buf.remaining_mut()
                 - 1 // Frame Type
                 - VarInt::size(unsafe { VarInt::from_u64_unchecked(frame.offset) })
                 - 2; // Maximum encoded length for frame size, given we send less than 2^14 bytes
@@ -3191,12 +3187,11 @@ impl Connection {
                 &mut space.pending,
                 &mut sent.retransmits,
                 &mut self.stats.frame_tx,
-                max_size,
             );
         }
 
         // NEW_CONNECTION_ID
-        while buf.len() + 44 < max_size {
+        while 44 < buf.remaining_mut() {
             let issued = match space.pending.new_cids.pop() {
                 Some(x) => x,
                 None => break,
@@ -3218,7 +3213,7 @@ impl Connection {
         }
 
         // RETIRE_CONNECTION_ID
-        while buf.len() + frame::RETIRE_CONNECTION_ID_SIZE_BOUND < max_size {
+        while frame::RETIRE_CONNECTION_ID_SIZE_BOUND < buf.remaining_mut() {
             let seq = match space.pending.retire_cids.pop() {
                 Some(x) => x,
                 None => break,
@@ -3232,8 +3227,8 @@ impl Connection {
 
         // DATAGRAM
         let mut sent_datagrams = false;
-        while buf.len() + Datagram::SIZE_BOUND < max_size && space_id == SpaceId::Data {
-            match self.datagrams.write(buf, max_size) {
+        while Datagram::SIZE_BOUND < buf.remaining_mut() && space_id == SpaceId::Data {
+            match self.datagrams.write(buf) {
                 true => {
                     sent_datagrams = true;
                     sent.non_retransmits = true;
@@ -3273,7 +3268,7 @@ impl Connection {
                 token: token.encode(&*server_config.token_key).into(),
             };
 
-            if buf.len() + new_token.size() >= max_size {
+            if new_token.size() >= buf.remaining_mut() {
                 space.pending.new_tokens.push(remote_addr);
                 break;
             }
@@ -3288,9 +3283,9 @@ impl Connection {
 
         // STREAM
         if space_id == SpaceId::Data {
-            sent.stream_frames =
-                self.streams
-                    .write_stream_frames(buf, max_size, self.config.send_fairness);
+            sent.stream_frames = self
+                .streams
+                .write_stream_frames(buf, self.config.send_fairness);
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 
@@ -3973,29 +3968,6 @@ fn negotiate_max_idle_timeout(x: Option<VarInt>, y: Option<VarInt>) -> Option<Du
         (Some(VarInt(0)) | None, Some(y)) => Some(Duration::from_millis(y.0)),
         (Some(x), Some(VarInt(0)) | None) => Some(Duration::from_millis(x.0)),
         (Some(x), Some(y)) => Some(Duration::from_millis(cmp::min(x, y).0)),
-    }
-}
-
-/// A buffer that can tell how much has been written to it already
-///
-/// This is commonly used for when a buffer is passed and the user may not write past a
-/// given size. It allows the user of such a buffer to know the current cursor position in
-/// the buffer. The maximum write size is usually passed in the same unit as
-/// [`BufLen::len`]: bytes since the buffer start.
-pub(crate) trait BufLen {
-    /// Returns the number of bytes written into the buffer so far
-    fn len(&self) -> usize;
-}
-
-impl BufLen for Vec<u8> {
-    fn len(&self) -> usize {
-        self.len()
-    }
-}
-
-impl BufLen for bytes::buf::Limit<&mut Vec<u8>> {
-    fn len(&self) -> usize {
-        self.get_ref().len()
     }
 }
 

@@ -2,8 +2,6 @@ use std::ops::{Deref, DerefMut};
 
 use bytes::BufMut;
 
-use super::BufLen;
-
 /// The buffer in which to write datagrams for [`Connection::poll_transmit`]
 ///
 /// The `poll_transmit` function writes zero or more datagrams to a buffer. Multiple
@@ -252,12 +250,5 @@ impl DatagramBuffer<'_> {
     /// Returns the maximum size of the buffer
     pub(crate) fn capacity(&self) -> usize {
         self.max_offset - self.start_offset
-    }
-}
-
-// Temporary compatibility with the BufLen trait.  To be removed in follow-up commits.
-impl BufLen for DatagramBuffer<'_> {
-    fn len(&self) -> usize {
-        self.deref().len()
     }
 }
