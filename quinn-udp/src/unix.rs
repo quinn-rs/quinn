@@ -1,12 +1,14 @@
 #[cfg(not(any(apple, target_os = "openbsd", solarish)))]
 use std::ptr;
+#[cfg(any(target_os = "linux", target_os = "android"))]
+use std::sync::OnceLock;
 use std::{
     io::{self, IoSliceMut},
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
     sync::{
-        Mutex, OnceLock,
+        Mutex,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Instant,
