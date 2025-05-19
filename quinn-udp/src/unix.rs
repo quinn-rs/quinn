@@ -846,6 +846,37 @@ mod linux {
             })
         }
     }
+
+    #[cfg(test)]
+    mod test {
+        use super::*;
+
+        #[test]
+        fn parse_current_kernel_version_release_string() {
+            let release = kernel_version_string().unwrap();
+            KernelVersion::from_str(&release).unwrap();
+        }
+
+        #[test]
+        fn parse_kernel_version_release_string() {
+            assert_eq!(
+                KernelVersion::from_str("4.14"),
+                Ok(KernelVersion::new(4, 14))
+            );
+            assert_eq!(
+                KernelVersion::from_str("4.18"),
+                Ok(KernelVersion::new(4, 18))
+            );
+            assert_eq!(
+                KernelVersion::from_str("4.14.186-27095505"),
+                Ok(KernelVersion::new(4, 14))
+            );
+            assert_eq!(
+                KernelVersion::from_str("6.8.0-59-generic"),
+                Ok(KernelVersion::new(6, 8))
+            );
+        }
+    }
 }
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
@@ -914,7 +945,7 @@ mod gso {
 
         if kernel_version < SUPPORTED_SINCE {
             crate::log::info!(
-                "GSO supported on Linux kernels 4.18+, current {:?}",
+                "GSO supported on Linux kernels 4.18+, current is {:?}",
                 kernel_version_string
             );
             false
