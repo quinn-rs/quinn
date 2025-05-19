@@ -929,9 +929,9 @@ mod gso {
     fn supported_by_current_kernel() -> bool {
         let kernel_version_string = match linux::kernel_version_string() {
             Ok(kernel_version_string) => kernel_version_string,
-            Err(errno) => {
+            Err(_errno) => {
                 crate::log::warn!(
-                    "Failed to retrieve kernel version string, GSO not enabled ({errno})"
+                    "Failed to retrieve kernel version string, GSO not enabled ({_errno})"
                 );
                 return false;
             }
@@ -939,8 +939,8 @@ mod gso {
 
         let kernel_version = match linux::KernelVersion::from_str(&kernel_version_string) {
             Ok(kernel_version) => kernel_version,
-            Err(reason) => {
-                crate::log::warn!("GSO not enabled: {}", reason);
+            Err(_reason) => {
+                crate::log::warn!("GSO not enabled: {}", _reason);
                 return false;
             }
         };
