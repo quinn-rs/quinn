@@ -191,8 +191,7 @@ impl TransportParameters {
                 order
             }),
             address_discovery_role: config.address_discovery_role,
-            // TODO(@divma): TransportConfig or..?
-            initial_max_path_id: config.initial_max_path_id.map(PathId::from),
+            initial_max_path_id: config.initial_max_path_id,
             ..Self::default()
         }
     }

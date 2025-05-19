@@ -33,6 +33,9 @@ impl PathId {
     /// The maximum path ID allowed.
     pub const MAX: Self = Self(u32::MAX);
 
+    /// The 0 path id.
+    pub const ZERO: Self = Self(0);
+
     pub(crate) fn size(&self) -> usize {
         VarInt(self.0 as u64).size()
     }

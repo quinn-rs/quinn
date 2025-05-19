@@ -1,8 +1,8 @@
 use std::{fmt, sync::Arc};
 
 use crate::{
-    Duration, INITIAL_MTU, MAX_UDP_PAYLOAD, VarInt, VarIntBoundsExceeded, address_discovery,
-    congestion,
+    Duration, INITIAL_MTU, MAX_UDP_PAYLOAD, PathId, VarInt, VarIntBoundsExceeded,
+    address_discovery, congestion,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -49,7 +49,7 @@ pub struct TransportConfig {
 
     pub(crate) address_discovery_role: address_discovery::Role,
 
-    pub(crate) initial_max_path_id: Option<u32>,
+    pub(crate) initial_max_path_id: Option<PathId>,
 }
 
 impl TransportConfig {
@@ -355,7 +355,7 @@ impl TransportConfig {
     // this as max_concurrent_multipath_paths a bit like max_concurrent_bidi_streams etc
     // exist now.  But this will do for now.
     pub fn initial_max_path_id(&mut self, value: Option<u32>) -> &mut Self {
-        self.initial_max_path_id = value;
+        self.initial_max_path_id = value.map(Into::into);
         self
     }
 }

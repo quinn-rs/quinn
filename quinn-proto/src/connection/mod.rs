@@ -148,7 +148,7 @@ pub struct Connection {
     /// This needs to be ordered because [`Connection::poll_transmit`] needs to
     /// deterministically select the next PathId to send on.
     ///
-    /// TODO(flub): well does it really? But deterministic is nice for now.
+    // TODO(flub): well does it really? But deterministic is nice for now.
     paths: BTreeMap<PathId, PathState>,
     /// Whether MTU detection is supported in this environment
     allow_mtud: bool,
@@ -244,6 +244,20 @@ pub struct Connection {
     stats: ConnectionStats,
     /// QUIC version used for the connection.
     version: u32,
+
+    /// Local maximum [`PathId`] to be used.
+    ///
+    /// This is initially set to [`TransportConfig::initial_max_path_id`] when multipath is enabled, or to
+    /// [`PathId::ZERO`] otherwise.
+    // TODO(@divma): we probably need an API to imcrease upon the original value
+    local_max_path_id: PathId,
+
+    /// Remote's maximum [`PathId`] to be used.
+    ///
+    /// This is initially set to the peer's [`TransportParameters::initial_max_path_id`] when
+    /// multipath is enabled, or to [`PathId::ZERO`] otherwise. A peer may increase this limit by
+    /// sending [`Frame::MaxPathId`] frames.
+    remote_max_path_id: PathId,
 }
 
 struct PathState {
@@ -377,6 +391,9 @@ impl Connection {
             rng,
             stats: ConnectionStats::default(),
             version,
+            // peer params are not yet known, so multipath is not enabled
+            local_max_path_id: PathId::ZERO,
+            remote_max_path_id: PathId::ZERO,
         };
         if path_validated {
             this.on_path_validated(PathId(0));
@@ -2894,9 +2911,7 @@ impl Connection {
 
                 // Multipath can only be enabled after the state has reached Established.
                 // So this can not happen any earlier.
-                if self.is_multipath_enabled() {
-                    self.issue_first_path_cids(now);
-                }
+                self.issue_first_path_cids(now);
                 Ok(())
             }
             Header::Initial(InitialHeader {
@@ -3396,8 +3411,15 @@ impl Connection {
                 Frame::PathAvailable(_) => {
                     // TODO(@divma): do stuff
                 }
-                Frame::MaxPathId(_) => {
-                    // TODO(@divma): do stuff
+                Frame::MaxPathId(path_id) => {
+                    if self.is_multipath_enabled() {
+                        // frames that do not increase the path id are ignored
+                        self.remote_max_path_id = self.remote_max_path_id.max(path_id);
+                    } else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received MAX_PATH_ID frame when not multipath was not negotiated",
+                        ));
+                    }
                 }
                 Frame::PathsBlocked(_) => {
                     // TODO(@divma): do stuff
@@ -3566,14 +3588,14 @@ impl Connection {
             .push_back(EndpointEventInner::NeedIdentifiers(PathId(0), now, n));
     }
 
-    /// Issues an initial set of CIDs to the peer for PathId > 0
+    /// Issues an initial set of CIDs to the peer for PathId > 0; CIDs for [`PathId::ZERO`] are
+    /// issued earlier in the connection process.
     // TODO(flub): Whenever we close paths we need to issue new CIDs as well.  Once we do
     //    that we probably want to re-use this function but with a max_path_id parameter or
     //    something.
     fn issue_first_path_cids(&mut self, now: Instant) {
-        debug_assert!(self.is_multipath_enabled());
-        if let Some(max_path_id) = self.config.initial_max_path_id {
-            for n in 1..(max_path_id + 1) {
+        if let Some(PathId(max_path_id)) = self.max_path_id() {
+            for n in 1..=max_path_id {
                 self.endpoint_events
                     .push_back(EndpointEventInner::NeedIdentifiers(
                         PathId(n),
@@ -4072,6 +4094,15 @@ impl Connection {
             self.set_reset_token(remote, info.stateless_reset_token);
         }
         self.ack_frequency.peer_max_ack_delay = get_max_ack_delay(&params);
+
+        if let (Some(local_max_path_id), Some(remote_max_path_id)) =
+            (self.config.initial_max_path_id, params.initial_max_path_id)
+        {
+            // multipath is enabled, register the local and remote maximums
+            self.local_max_path_id = local_max_path_id;
+            self.remote_max_path_id = remote_max_path_id;
+        }
+
         self.peer_params = params;
         let peer_max_udp_payload_size =
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX);
@@ -4409,6 +4440,18 @@ impl Connection {
         new_tokens.clear();
         for _ in 0..server_config.validation_token.sent {
             new_tokens.push(remote_addr);
+        }
+    }
+
+    /// Returns the maximum [`PathId`] to be used in this connection.
+    ///
+    /// This is calculated as minimum between the local and remote's maximums when multipath is
+    /// enabled, or `None` when disabled.
+    fn max_path_id(&self) -> Option<PathId> {
+        if self.is_multipath_enabled() {
+            Some(self.remote_max_path_id.min(self.local_max_path_id))
+        } else {
+            None
         }
     }
 }
