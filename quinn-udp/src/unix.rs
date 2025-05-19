@@ -796,33 +796,39 @@ pub(crate) const BATCH_SIZE: usize = 1;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod linux {
+    pub(crate) fn kernel_version_string() -> Result<String, libc::c_int> {
+        let mut n = unsafe { std::mem::zeroed() };
+        let r = unsafe { libc::uname(&mut n) };
+        if r != 0 {
+            return Err(r);
+        }
+        Ok(unsafe {
+            std::ffi::CStr::from_ptr(n.release[..].as_ptr())
+                .to_string_lossy()
+                .into_owned()
+        })
+    }
+
     // https://www.linfo.org/kernel_version_numbering.html
+    #[derive(Eq, PartialEq, Ord, PartialOrd, Debug)]
     pub(crate) struct KernelVersion {
         version: u8,
         major_revision: u8,
-        pub(crate) string: String,
     }
 
     impl KernelVersion {
-        pub(crate) fn from_uname() -> Result<Self, String> {
-            let mut n = unsafe { std::mem::zeroed() };
-            let r = unsafe { libc::uname(&mut n) };
-            if r != 0 {
-                return Err(format!("Failed to run libc::uname (error code: {r})"));
+        pub(crate) const fn new(version: u8, major_revision: u8) -> Self {
+            Self {
+                version,
+                major_revision,
             }
-            let release = unsafe {
-                std::ffi::CStr::from_ptr(n.release[..].as_ptr())
-                    .to_string_lossy()
-                    .into_owned()
-            };
-            Self::from_string(release)
         }
 
-        pub(crate) fn from_string(release: String) -> Result<Self, String> {
+        pub(crate) fn from_str(release: &str) -> Result<Self, String> {
             let mut split = release
                 .split_once('-')
                 .map(|pair| pair.0)
-                .unwrap_or(&release)
+                .unwrap_or(release)
                 .split('.');
 
             let Some(version) = split.next().and_then(|s| s.parse().ok()) else {
@@ -837,12 +843,7 @@ mod linux {
             Ok(Self {
                 version,
                 major_revision,
-                string: release,
             })
-        }
-
-        pub(crate) fn lower_than(&self, version: u8, major_revision: u8) -> bool {
-            (self.version, self.major_revision) < (version, major_revision)
         }
     }
 }
@@ -856,16 +857,18 @@ mod gso {
     #[cfg(target_os = "android")]
     // TODO: Add this to libc
     const UDP_SEGMENT: libc::c_int = 103;
+    // Support for UDP GSO has been added to linux kernel in version 4.18
+    // https://github.com/torvalds/linux/commit/cb586c63e3fc5b227c51fd8c4cb40b34d3750645
+    const SUPPORTED_SINCE: linux::KernelVersion = linux::KernelVersion::new(4, 18);
+    // Avoid calling `supported_by_current_kernel` for each socket by using `OnceLock`.
+    static SUPPORTED_BY_CURRENT_KERNEL: OnceLock<bool> = OnceLock::new();
 
-    // Avoid calling `libc::uname` for each socket by using `OnceLock`.
-    static SUPPORTED_BY_OS: OnceLock<bool> = OnceLock::new();
-
-    /// Checks whether GSO support is available by setting the UDP_SEGMENT
-    /// option on a socket
+    /// Checks whether GSO support is available by checking the kernel version followed by setting
+    /// the UDP_SEGMENT option on a socket
     pub(crate) fn max_gso_segments() -> usize {
         const GSO_SIZE: libc::c_int = 1500;
 
-        if !SUPPORTED_BY_OS.get_or_init(|| supported_by_os()) {
+        if !SUPPORTED_BY_CURRENT_KERNEL.get_or_init(supported_by_current_kernel) {
             return 1;
         }
 
@@ -890,21 +893,29 @@ mod gso {
         }
     }
 
-    fn supported_by_os() -> bool {
-        let kernel_version = match linux::KernelVersion::from_uname() {
-            Ok(kernel_version) => kernel_version,
-            Err(reason) => {
-                crate::log::warn!("{}", format!("GSO not enabled: {reason}"));
+    fn supported_by_current_kernel() -> bool {
+        let kernel_version_string = match linux::kernel_version_string() {
+            Ok(kernel_version_string) => kernel_version_string,
+            Err(errno) => {
+                crate::log::warn!(
+                    "Failed to retrieve kernel version string, GSO not enabled ({errno})"
+                );
                 return false;
             }
         };
 
-        // Support for UDP GSO has been added to linux kernel in version 4.18
-        // https://github.com/torvalds/linux/commit/cb586c63e3fc5b227c51fd8c4cb40b34d3750645
-        if kernel_version.lower_than(4, 18) {
+        let kernel_version = match linux::KernelVersion::from_str(&kernel_version_string) {
+            Ok(kernel_version) => kernel_version,
+            Err(reason) => {
+                crate::log::warn!("GSO not enabled: {}", reason);
+                return false;
+            }
+        };
+
+        if kernel_version < SUPPORTED_SINCE {
             crate::log::info!(
                 "GSO supported on Linux kernels 4.18+, current {:?}",
-                kernel_version.string
+                kernel_version_string
             );
             false
         } else {
