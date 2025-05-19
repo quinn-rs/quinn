@@ -816,22 +816,26 @@ mod linux {
                     .to_string_lossy()
                     .into_owned()
             };
+            Self::from_string(release)
+        }
+
+        pub(crate) fn from_string(release: String) -> Option<Self> {
             let mut split = release
                 .split_once('-')
                 .map(|pair| pair.0)
                 .unwrap_or(&release)
                 .split('.');
 
-            let Some(version) = split.next()?.parse().ok() else {
+            let Some(version) = split.next().and_then(|s| s.parse().ok()) else {
                 crate::log::trace!("Failed to parse kernel version from {release:?}");
                 return None;
             };
-            let Some(major_revision) = split.next()?.parse().ok() else {
+            let Some(major_revision) = split.next().and_then(|s| s.parse().ok()) else {
                 crate::log::trace!("Failed to parse kernel major revision from {release:?}");
                 return None;
             };
 
-            Some(KernelVersion {
+            Some(Self {
                 version,
                 major_revision,
                 string: release,
@@ -915,7 +919,7 @@ mod gso {
         };
 
         *lock = Some(supported);
-        return supported;
+        supported
     }
 
     pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
