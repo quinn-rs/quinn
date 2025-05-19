@@ -1,7 +1,5 @@
 #[cfg(not(any(apple, target_os = "openbsd", solarish)))]
 use std::ptr;
-#[cfg(any(target_os = "linux", target_os = "android"))]
-use std::sync::OnceLock;
 use std::{
     io::{self, IoSliceMut},
     mem::{self, MaybeUninit},
@@ -833,14 +831,15 @@ mod linux {
                 .unwrap_or(release)
                 .split('.');
 
-            let Some(version) = split.next().and_then(|s| s.parse().ok()) else {
-                return Err(format!("Failed to parse kernel version from {release:?}"));
-            };
-            let Some(major_revision) = split.next().and_then(|s| s.parse().ok()) else {
-                return Err(format!(
-                    "Failed to parse kernel major revision from {release:?}"
-                ));
-            };
+            let version = split
+                .next()
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| format!("Failed to parse kernel version from {release:?}"))?;
+
+            let major_revision = split
+                .next()
+                .and_then(|s| s.parse().ok())
+                .ok_or_else(|| format!("Failed to parse kernel major revision from {release:?}"))?;
 
             Ok(Self {
                 version,
@@ -861,6 +860,7 @@ mod linux {
 
         #[test]
         fn parse_kernel_version_release_string() {
+            // These are made up for the test
             assert_eq!(
                 KernelVersion::from_str("4.14"),
                 Ok(KernelVersion::new(4, 14))
@@ -869,6 +869,7 @@ mod linux {
                 KernelVersion::from_str("4.18"),
                 Ok(KernelVersion::new(4, 18))
             );
+            // These were seen in the wild
             assert_eq!(
                 KernelVersion::from_str("4.14.186-27095505"),
                 Ok(KernelVersion::new(4, 14))
@@ -884,12 +885,14 @@ mod linux {
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod gso {
     use super::*;
+    use std::sync::OnceLock;
 
     #[cfg(not(target_os = "android"))]
     const UDP_SEGMENT: libc::c_int = libc::UDP_SEGMENT;
     #[cfg(target_os = "android")]
     // TODO: Add this to libc
     const UDP_SEGMENT: libc::c_int = 103;
+
     // Support for UDP GSO has been added to linux kernel in version 4.18
     // https://github.com/torvalds/linux/commit/cb586c63e3fc5b227c51fd8c4cb40b34d3750645
     const SUPPORTED_SINCE: linux::KernelVersion = linux::KernelVersion::new(4, 18);
@@ -930,9 +933,7 @@ mod gso {
         let kernel_version_string = match linux::kernel_version_string() {
             Ok(kernel_version_string) => kernel_version_string,
             Err(_errno) => {
-                crate::log::warn!(
-                    "Failed to retrieve kernel version string, GSO not enabled ({_errno})"
-                );
+                crate::log::warn!("GSO disabled: uname returned {_errno}");
                 return false;
             }
         };
@@ -940,20 +941,17 @@ mod gso {
         let kernel_version = match linux::KernelVersion::from_str(&kernel_version_string) {
             Ok(kernel_version) => kernel_version,
             Err(_reason) => {
-                crate::log::warn!("GSO not enabled: {}", _reason);
+                crate::log::warn!("GSO disabled: {_reason}");
                 return false;
             }
         };
 
         if kernel_version < SUPPORTED_SINCE {
-            crate::log::info!(
-                "GSO supported on Linux kernels 4.18+, current is {:?}",
-                kernel_version_string
-            );
-            false
-        } else {
-            true
+            crate::log::info!("GSO disabled: kernel too old ({kernel_version_string}); need 4.18+",);
+            return false;
         }
+
+        true
     }
 
     pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
