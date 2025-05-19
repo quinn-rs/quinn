@@ -804,12 +804,11 @@ mod linux {
     }
 
     impl KernelVersion {
-        pub(crate) fn from_uname() -> Option<Self> {
+        pub(crate) fn from_uname() -> Result<Self, String> {
             let mut n = unsafe { std::mem::zeroed() };
             let r = unsafe { libc::uname(&mut n) };
             if r != 0 {
-                crate::log::trace!("Failed to run libc::uname ({})", r);
-                return None;
+                return Err(format!("Failed to run libc::uname (error code: {r})"));
             }
             let release = unsafe {
                 std::ffi::CStr::from_ptr(n.release[..].as_ptr())
@@ -819,7 +818,7 @@ mod linux {
             Self::from_string(release)
         }
 
-        pub(crate) fn from_string(release: String) -> Option<Self> {
+        pub(crate) fn from_string(release: String) -> Result<Self, String> {
             let mut split = release
                 .split_once('-')
                 .map(|pair| pair.0)
@@ -827,15 +826,15 @@ mod linux {
                 .split('.');
 
             let Some(version) = split.next().and_then(|s| s.parse().ok()) else {
-                crate::log::trace!("Failed to parse kernel version from {release:?}");
-                return None;
+                return Err(format!("Failed to parse kernel version from {release:?}"));
             };
             let Some(major_revision) = split.next().and_then(|s| s.parse().ok()) else {
-                crate::log::trace!("Failed to parse kernel major revision from {release:?}");
-                return None;
+                return Err(format!(
+                    "Failed to parse kernel major revision from {release:?}"
+                ));
             };
 
-            Some(Self {
+            Ok(Self {
                 version,
                 major_revision,
                 string: release,
@@ -903,10 +902,10 @@ mod gso {
         let supported = match *lock {
             Some(value) => return value,
             None => match linux::KernelVersion::from_uname() {
-                Some(kernel_version) => {
+                Ok(kernel_version) => {
                     if kernel_version.lower_than(4, 18) {
-                        crate::log::trace!(
-                            "GSO supported on Linux kernels 4.18+, current {}",
+                        crate::log::warn!(
+                            "GSO supported on Linux kernels 4.18+, current {:?}",
                             kernel_version.string
                         );
                         false
@@ -914,7 +913,10 @@ mod gso {
                         true
                     }
                 }
-                None => false,
+                Err(reason) => {
+                    crate::log::warn!("{}", format!("GSO not enabled: {reason}"));
+                    false
+                }
             },
         };
 
