@@ -6,7 +6,7 @@ use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6},
     os::unix::io::AsRawFd,
     sync::{
-        Mutex,
+        Mutex, OnceLock,
         atomic::{AtomicBool, AtomicUsize, Ordering},
     },
     time::Instant,
@@ -857,15 +857,15 @@ mod gso {
     // TODO: Add this to libc
     const UDP_SEGMENT: libc::c_int = 103;
 
-    // Global mutex to avoid calling `libc::uname` for each socket.
-    static SUPPORTED_BY_OS: Mutex<Option<bool>> = Mutex::new(None);
+    // Avoid calling `libc::uname` for each socket by using `OnceLock`.
+    static SUPPORTED_BY_OS: OnceLock<bool> = OnceLock::new();
 
     /// Checks whether GSO support is available by setting the UDP_SEGMENT
     /// option on a socket
     pub(crate) fn max_gso_segments() -> usize {
         const GSO_SIZE: libc::c_int = 1500;
 
-        if !supported_by_os() {
+        if !SUPPORTED_BY_OS.get_or_init(|| supported_by_os()) {
             return 1;
         }
 
@@ -891,37 +891,25 @@ mod gso {
     }
 
     fn supported_by_os() -> bool {
-        let mut lock = match SUPPORTED_BY_OS.lock() {
-            Ok(lock) => lock,
-            Err(e) => {
-                crate::log::trace!("Failed to lock mutex ({e:?}), GSO will not be enabled");
+        let kernel_version = match linux::KernelVersion::from_uname() {
+            Ok(kernel_version) => kernel_version,
+            Err(reason) => {
+                crate::log::warn!("{}", format!("GSO not enabled: {reason}"));
                 return false;
             }
         };
 
-        let supported = match *lock {
-            Some(value) => return value,
-            None => match linux::KernelVersion::from_uname() {
-                Ok(kernel_version) => {
-                    if kernel_version.lower_than(4, 18) {
-                        crate::log::warn!(
-                            "GSO supported on Linux kernels 4.18+, current {:?}",
-                            kernel_version.string
-                        );
-                        false
-                    } else {
-                        true
-                    }
-                }
-                Err(reason) => {
-                    crate::log::warn!("{}", format!("GSO not enabled: {reason}"));
-                    false
-                }
-            },
-        };
-
-        *lock = Some(supported);
-        supported
+        // Support for UDP GSO has been added to linux kernel in version 4.18
+        // https://github.com/torvalds/linux/commit/cb586c63e3fc5b227c51fd8c4cb40b34d3750645
+        if kernel_version.lower_than(4, 18) {
+            crate::log::info!(
+                "GSO supported on Linux kernels 4.18+, current {:?}",
+                kernel_version.string
+            );
+            false
+        } else {
+            true
+        }
     }
 
     pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
