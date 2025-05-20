@@ -251,13 +251,17 @@ pub struct Connection {
     /// [`PathId::ZERO`] otherwise.
     // TODO(@divma): we probably need an API to imcrease upon the original value
     local_max_path_id: PathId,
-
     /// Remote's maximum [`PathId`] to be used.
     ///
     /// This is initially set to the peer's [`TransportParameters::initial_max_path_id`] when
     /// multipath is enabled, or to [`PathId::ZERO`] otherwise. A peer may increase this limit by
     /// sending [`Frame::MaxPathId`] frames.
     remote_max_path_id: PathId,
+    /// The greatest [`PathId`] this connection has used.
+    ///
+    /// This is kept instead of calculated to account for abandoned paths for which data has been
+    /// purged.
+    max_path_id_in_use: PathId,
 }
 
 struct PathState {
@@ -391,9 +395,11 @@ impl Connection {
             rng,
             stats: ConnectionStats::default(),
             version,
+
             // peer params are not yet known, so multipath is not enabled
             local_max_path_id: PathId::ZERO,
             remote_max_path_id: PathId::ZERO,
+            max_path_id_in_use: PathId::ZERO,
         };
         if path_validated {
             this.on_path_validated(PathId(0));
@@ -1329,7 +1335,8 @@ impl Connection {
     /// no-op and therefore are safe.
     pub fn handle_timeout(&mut self, now: Instant) {
         while let Some(timer) = self.timers.expire_before(now) {
-            trace!(timer = ?timer, "timeout");
+            // TODO(@divma): remove `at` when the unicorn is born
+            trace!(?timer, at=?now, "timeout");
             match timer {
                 Timer::Close => {
                     self.state = State::Drained;
@@ -1364,6 +1371,7 @@ impl Connection {
                 Timer::PushNewCid(_path_id) => {
                     // TODO(@divma): same question, use path_id or trust on number of calls =
                     // number of queued path_ids?
+                    // NOTE: this seems to work from tests (multipath_cid_rotation)
                     match self.next_cid_retirement() {
                         None => error!("Timer::PushNewCid fired without a retired CID"),
                         Some((path_id, _when)) => {
@@ -3588,14 +3596,12 @@ impl Connection {
             .push_back(EndpointEventInner::NeedIdentifiers(PathId(0), now, n));
     }
 
-    /// Issues an initial set of CIDs to the peer for PathId > 0; CIDs for [`PathId::ZERO`] are
-    /// issued earlier in the connection process.
-    // TODO(flub): Whenever we close paths we need to issue new CIDs as well.  Once we do
-    //    that we probably want to re-use this function but with a max_path_id parameter or
-    //    something.
+    /// Issues an initial set of CIDs to the peer starting from the next available [`PathId`] in
+    /// use up to the maximum
     fn issue_first_path_cids(&mut self, now: Instant) {
         if let Some(PathId(max_path_id)) = self.max_path_id() {
-            for n in 1..=max_path_id {
+            let start_path_id = self.max_path_id_in_use.0 + 1;
+            for n in start_path_id..=max_path_id {
                 self.endpoint_events
                     .push_back(EndpointEventInner::NeedIdentifiers(
                         PathId(n),
@@ -4101,6 +4107,7 @@ impl Connection {
             // multipath is enabled, register the local and remote maximums
             self.local_max_path_id = local_max_path_id;
             self.remote_max_path_id = remote_max_path_id;
+            debug!(initial_max_path_id=%local_max_path_id.min(remote_max_path_id), "multipath negotiated");
         }
 
         self.peer_params = params;
@@ -4287,6 +4294,15 @@ impl Connection {
     #[cfg(test)]
     pub(crate) fn active_local_cid_seq(&self) -> (u64, u64) {
         self.local_cid_state.get(&PathId(0)).unwrap().active_seq()
+    }
+
+    #[cfg(test)]
+    #[track_caller]
+    pub(crate) fn active_local_path_cid_seq(&self, path_id: u32) -> (u64, u64) {
+        self.local_cid_state
+            .get(&PathId(path_id))
+            .unwrap()
+            .active_seq()
     }
 
     /// Instruct the peer to replace previously issued CIDs by sending a NEW_CONNECTION_ID frame
