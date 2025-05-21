@@ -910,12 +910,12 @@ mod gso {
             let version = split
                 .next()
                 .and_then(|s| u8::from_str(s).ok())
-                .ok_or_else(|| format!("Failed to parse kernel version from {release:?}"))?;
+                .ok_or_else(|| format!("failed to parse kernel version from {release:?}"))?;
 
             let major_revision = split
                 .next()
                 .and_then(|s| u8::from_str(s).ok())
-                .ok_or_else(|| format!("Failed to parse kernel major revision from {release:?}"))?;
+                .ok_or_else(|| format!("failed to parse kernel major revision from {release:?}"))?;
 
             Ok(Self {
                 version,
