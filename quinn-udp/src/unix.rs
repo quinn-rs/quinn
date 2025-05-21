@@ -795,8 +795,82 @@ pub(crate) const BATCH_SIZE: usize = 32;
 pub(crate) const BATCH_SIZE: usize = 1;
 
 #[cfg(any(target_os = "linux", target_os = "android"))]
-mod linux {
-    pub(crate) fn kernel_version_string() -> Result<String, libc::c_int> {
+mod gso {
+    use super::*;
+    use std::sync::OnceLock;
+
+    #[cfg(not(target_os = "android"))]
+    const UDP_SEGMENT: libc::c_int = libc::UDP_SEGMENT;
+    #[cfg(target_os = "android")]
+    // TODO: Add this to libc
+    const UDP_SEGMENT: libc::c_int = 103;
+
+    // Support for UDP GSO has been added to linux kernel in version 4.18
+    // https://github.com/torvalds/linux/commit/cb586c63e3fc5b227c51fd8c4cb40b34d3750645
+    const SUPPORTED_SINCE: KernelVersion = KernelVersion::new(4, 18);
+    // Avoid calling `supported_by_current_kernel` for each socket by using `OnceLock`.
+    static SUPPORTED_BY_CURRENT_KERNEL: OnceLock<bool> = OnceLock::new();
+
+    /// Checks whether GSO support is available by checking the kernel version followed by setting
+    /// the UDP_SEGMENT option on a socket
+    pub(crate) fn max_gso_segments() -> usize {
+        const GSO_SIZE: libc::c_int = 1500;
+
+        if !SUPPORTED_BY_CURRENT_KERNEL.get_or_init(supported_by_current_kernel) {
+            return 1;
+        }
+
+        let socket = match std::net::UdpSocket::bind("[::]:0")
+            .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        {
+            Ok(socket) => socket,
+            Err(_) => return 1,
+        };
+
+        // As defined in linux/udp.h
+        // #define UDP_MAX_SEGMENTS        (1 << 6UL)
+        match set_socket_option(&socket, libc::SOL_UDP, UDP_SEGMENT, GSO_SIZE) {
+            Ok(()) => 64,
+            Err(_e) => {
+                crate::log::debug!(
+                    "failed to set `UDP_SEGMENT` socket option ({_e}); setting `max_gso_segments = 1`"
+                );
+
+                1
+            }
+        }
+    }
+
+    pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
+        encoder.push(libc::SOL_UDP, UDP_SEGMENT, segment_size);
+    }
+
+    fn supported_by_current_kernel() -> bool {
+        let kernel_version_string = match kernel_version_string() {
+            Ok(kernel_version_string) => kernel_version_string,
+            Err(_errno) => {
+                crate::log::warn!("GSO disabled: uname returned {_errno}");
+                return false;
+            }
+        };
+
+        let kernel_version = match KernelVersion::from_str(&kernel_version_string) {
+            Ok(kernel_version) => kernel_version,
+            Err(_reason) => {
+                crate::log::warn!("GSO disabled: {_reason}");
+                return false;
+            }
+        };
+
+        if kernel_version < SUPPORTED_SINCE {
+            crate::log::info!("GSO disabled: kernel too old ({kernel_version_string}); need 4.18+",);
+            return false;
+        }
+
+        true
+    }
+
+    fn kernel_version_string() -> Result<String, libc::c_int> {
         let mut n = unsafe { std::mem::zeroed() };
         let r = unsafe { libc::uname(&mut n) };
         if r != 0 {
@@ -811,20 +885,20 @@ mod linux {
 
     // https://www.linfo.org/kernel_version_numbering.html
     #[derive(Eq, PartialEq, Ord, PartialOrd, Debug)]
-    pub(crate) struct KernelVersion {
+    struct KernelVersion {
         version: u8,
         major_revision: u8,
     }
 
     impl KernelVersion {
-        pub(crate) const fn new(version: u8, major_revision: u8) -> Self {
+        const fn new(version: u8, major_revision: u8) -> Self {
             Self {
                 version,
                 major_revision,
             }
         }
 
-        pub(crate) fn from_str(release: &str) -> Result<Self, String> {
+        fn from_str(release: &str) -> Result<Self, String> {
             let mut split = release
                 .split_once('-')
                 .map(|pair| pair.0)
@@ -879,83 +953,6 @@ mod linux {
                 Ok(KernelVersion::new(6, 8))
             );
         }
-    }
-}
-
-#[cfg(any(target_os = "linux", target_os = "android"))]
-mod gso {
-    use super::*;
-    use std::sync::OnceLock;
-
-    #[cfg(not(target_os = "android"))]
-    const UDP_SEGMENT: libc::c_int = libc::UDP_SEGMENT;
-    #[cfg(target_os = "android")]
-    // TODO: Add this to libc
-    const UDP_SEGMENT: libc::c_int = 103;
-
-    // Support for UDP GSO has been added to linux kernel in version 4.18
-    // https://github.com/torvalds/linux/commit/cb586c63e3fc5b227c51fd8c4cb40b34d3750645
-    const SUPPORTED_SINCE: linux::KernelVersion = linux::KernelVersion::new(4, 18);
-    // Avoid calling `supported_by_current_kernel` for each socket by using `OnceLock`.
-    static SUPPORTED_BY_CURRENT_KERNEL: OnceLock<bool> = OnceLock::new();
-
-    /// Checks whether GSO support is available by checking the kernel version followed by setting
-    /// the UDP_SEGMENT option on a socket
-    pub(crate) fn max_gso_segments() -> usize {
-        const GSO_SIZE: libc::c_int = 1500;
-
-        if !SUPPORTED_BY_CURRENT_KERNEL.get_or_init(supported_by_current_kernel) {
-            return 1;
-        }
-
-        let socket = match std::net::UdpSocket::bind("[::]:0")
-            .or_else(|_| std::net::UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
-        {
-            Ok(socket) => socket,
-            Err(_) => return 1,
-        };
-
-        // As defined in linux/udp.h
-        // #define UDP_MAX_SEGMENTS        (1 << 6UL)
-        match set_socket_option(&socket, libc::SOL_UDP, UDP_SEGMENT, GSO_SIZE) {
-            Ok(()) => 64,
-            Err(_e) => {
-                crate::log::debug!(
-                    "failed to set `UDP_SEGMENT` socket option ({_e}); setting `max_gso_segments = 1`"
-                );
-
-                1
-            }
-        }
-    }
-
-    fn supported_by_current_kernel() -> bool {
-        let kernel_version_string = match linux::kernel_version_string() {
-            Ok(kernel_version_string) => kernel_version_string,
-            Err(_errno) => {
-                crate::log::warn!("GSO disabled: uname returned {_errno}");
-                return false;
-            }
-        };
-
-        let kernel_version = match linux::KernelVersion::from_str(&kernel_version_string) {
-            Ok(kernel_version) => kernel_version,
-            Err(_reason) => {
-                crate::log::warn!("GSO disabled: {_reason}");
-                return false;
-            }
-        };
-
-        if kernel_version < SUPPORTED_SINCE {
-            crate::log::info!("GSO disabled: kernel too old ({kernel_version_string}); need 4.18+",);
-            return false;
-        }
-
-        true
-    }
-
-    pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
-        encoder.push(libc::SOL_UDP, UDP_SEGMENT, segment_size);
     }
 }
 
