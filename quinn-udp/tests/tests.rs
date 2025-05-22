@@ -32,6 +32,29 @@ fn basic() {
 }
 
 #[test]
+fn basic_src_ip() {
+    let send = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+    let recv = UdpSocket::bind((Ipv6Addr::LOCALHOST, 0))
+        .or_else(|_| UdpSocket::bind((Ipv4Addr::LOCALHOST, 0)))
+        .unwrap();
+    let src_ip = send.local_addr().unwrap().ip();
+    let dst_addr = recv.local_addr().unwrap();
+    test_send_recv(
+        &send.into(),
+        &recv.into(),
+        Transmit {
+            destination: dst_addr,
+            ecn: None,
+            contents: b"hello",
+            segment_size: None,
+            src_ip: Some(src_ip),
+        },
+    );
+}
+
+#[test]
 fn ecn_v6() {
     let send = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());
     let recv = Socket::from(UdpSocket::bind((Ipv6Addr::LOCALHOST, 0)).unwrap());

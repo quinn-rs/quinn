@@ -11,11 +11,15 @@ use rustls::client::WebPkiServerVerifier;
 use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
+#[cfg(feature = "bloom")]
+use crate::BloomTokenLog;
+#[cfg(not(feature = "bloom"))]
+use crate::NoneTokenLog;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 use crate::crypto::rustls::{QuicServerConfig, configured_provider};
 use crate::{
-    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, NoneTokenLog, NoneTokenStore,
-    RandomConnectionIdGenerator, SystemTime, TokenLog, TokenStore, VarInt, VarIntBoundsExceeded,
+    DEFAULT_SUPPORTED_VERSIONS, Duration, MAX_CID_SIZE, RandomConnectionIdGenerator, SystemTime,
+    TokenLog, TokenMemoryCache, TokenStore, VarInt, VarIntBoundsExceeded,
     cid_generator::{ConnectionIdGenerator, HashedConnectionIdGenerator},
     crypto::{self, HandshakeTokenKey, HmacKey},
     shared::ConnectionId,
@@ -485,10 +489,15 @@ impl ValidationTokenConfig {
         self
     }
 
+    #[allow(rustdoc::redundant_explicit_links)] // which links are redundant depends on features
     /// Set a custom [`TokenLog`]
     ///
-    /// Defaults to [`NoneTokenLog`], which makes the server ignore all address validation tokens
-    /// (that is, tokens originating from NEW_TOKEN frames--retry tokens are not affected).
+    /// If the `bloom` feature is enabled (which it is by default), defaults to a default
+    /// [`BloomTokenLog`][crate::BloomTokenLog], which is suitable for most internet applications.
+    ///
+    /// If the `bloom` feature is disabled, defaults to [`NoneTokenLog`][crate::NoneTokenLog],
+    /// which makes the server ignore all address validation tokens (that is, tokens originating
+    /// from NEW_TOKEN frames--retry tokens are not affected).
     pub fn log(&mut self, log: Arc<dyn TokenLog>) -> &mut Self {
         self.log = log;
         self
@@ -498,7 +507,8 @@ impl ValidationTokenConfig {
     ///
     /// This refers only to tokens sent in NEW_TOKEN frames, in contrast to retry tokens.
     ///
-    /// Defaults to 0.
+    /// If the `bloom` feature is enabled (which it is by default), defaults to 2. Otherwise,
+    /// defaults to 0.
     pub fn sent(&mut self, value: u32) -> &mut Self {
         self.sent = value;
         self
@@ -507,10 +517,14 @@ impl ValidationTokenConfig {
 
 impl Default for ValidationTokenConfig {
     fn default() -> Self {
+        #[cfg(feature = "bloom")]
+        let log = Arc::new(BloomTokenLog::default());
+        #[cfg(not(feature = "bloom"))]
+        let log = Arc::new(NoneTokenLog);
         Self {
             lifetime: Duration::from_secs(2 * 7 * 24 * 60 * 60),
-            log: Arc::new(NoneTokenLog),
-            sent: 0,
+            log,
+            sent: if cfg!(feature = "bloom") { 2 } else { 0 },
         }
     }
 }
@@ -553,7 +567,7 @@ impl ClientConfig {
         Self {
             transport: Default::default(),
             crypto,
-            token_store: Arc::new(NoneTokenStore),
+            token_store: Arc::new(TokenMemoryCache::default()),
             initial_dst_cid_provider: Arc::new(|| {
                 RandomConnectionIdGenerator::new(MAX_CID_SIZE).generate_cid()
             }),
@@ -585,8 +599,7 @@ impl ClientConfig {
 
     /// Set a custom [`TokenStore`]
     ///
-    /// Defaults to [`NoneTokenStore`], which disables the use of tokens from NEW_TOKEN frames as a
-    /// client.
+    /// Defaults to [`TokenMemoryCache`], which is suitable for most internet applications.
     pub fn token_store(&mut self, store: Arc<dyn TokenStore>) -> &mut Self {
         self.token_store = store;
         self

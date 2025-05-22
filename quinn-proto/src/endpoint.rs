@@ -532,6 +532,8 @@ impl Endpoint {
     }
 
     /// Attempt to accept this incoming connection (an error may still occur)
+    // AcceptError cannot be made smaller without semver breakage
+    #[allow(clippy::result_large_err)]
     pub fn accept(
         &mut self,
         mut incoming: Incoming,
@@ -740,7 +742,7 @@ impl Endpoint {
     /// Errors if `incoming.may_retry()` is false.
     pub fn retry(&mut self, incoming: Incoming, buf: &mut Vec<u8>) -> Result<Transmit, RetryError> {
         if !incoming.may_retry() {
-            return Err(RetryError(incoming));
+            return Err(RetryError(Box::new(incoming)));
         }
 
         self.clean_up_incoming(&incoming);
@@ -1311,12 +1313,12 @@ pub struct AcceptError {
 /// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
 #[derive(Debug, Error)]
 #[error("retry() with validated Incoming")]
-pub struct RetryError(Incoming);
+pub struct RetryError(Box<Incoming>);
 
 impl RetryError {
     /// Get the [`Incoming`]
     pub fn into_incoming(self) -> Incoming {
-        self.0
+        *self.0
     }
 }
 
