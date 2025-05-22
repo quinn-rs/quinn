@@ -2472,11 +2472,11 @@ impl Connection {
         }
         let space = &mut self.spaces[space_id];
         space.crypto = None;
-        // TODO(@divma): make a single access
-        space.for_path(path_id).time_of_last_ack_eliciting_packet = None;
-        space.for_path(path_id).loss_time = None;
-        space.for_path(path_id).in_flight = 0;
-        let sent_packets = mem::take(&mut space.for_path(PathId(0)).sent_packets);
+        let path_space = space.for_path(path_id);
+        path_space.time_of_last_ack_eliciting_packet = None;
+        path_space.loss_time = None;
+        path_space.in_flight = 0;
+        let sent_packets = mem::take(&mut path_space.sent_packets);
         for (pn, packet) in sent_packets.into_iter() {
             self.remove_in_flight(path_id, pn, &packet);
         }
