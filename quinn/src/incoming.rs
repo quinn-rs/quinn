@@ -52,10 +52,10 @@ impl Incoming {
     pub fn retry(mut self) -> Result<(), RetryError> {
         let state = self.0.take().unwrap();
         state.endpoint.retry(state.inner).map_err(|e| {
-            RetryError(Self(Some(State {
+            RetryError(Box::new(Self(Some(State {
                 inner: e.into_incoming(),
                 endpoint: state.endpoint,
-            })))
+            }))))
         })
     }
 
@@ -118,12 +118,12 @@ struct State {
 /// Error for attempting to retry an [`Incoming`] which already bears a token from a previous retry
 #[derive(Debug, Error)]
 #[error("retry() with validated Incoming")]
-pub struct RetryError(Incoming);
+pub struct RetryError(Box<Incoming>);
 
 impl RetryError {
     /// Get the [`Incoming`]
     pub fn into_incoming(self) -> Incoming {
-        self.0
+        *self.0
     }
 }
 

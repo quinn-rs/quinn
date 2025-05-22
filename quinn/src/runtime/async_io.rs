@@ -9,13 +9,15 @@ use std::{
 
 use async_io::{Async, Timer};
 
-use super::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPollHelper};
+#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
+use super::Runtime;
+use super::{AsyncTimer, AsyncUdpSocket, UdpPollHelper};
 
-#[cfg(feature = "smol")]
+#[cfg(feature = "runtime-smol")]
 // Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 pub use self::smol::SmolRuntime;
 
-#[cfg(feature = "smol")]
+#[cfg(feature = "runtime-smol")]
 mod smol {
     use super::*;
 
@@ -41,11 +43,11 @@ mod smol {
     }
 }
 
-#[cfg(feature = "async-std")]
+#[cfg(feature = "runtime-async-std")]
 // Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 pub use self::async_std::AsyncStdRuntime;
 
-#[cfg(feature = "async-std")]
+#[cfg(feature = "runtime-async-std")]
 mod async_std {
     use super::*;
 
@@ -88,6 +90,7 @@ struct UdpSocket {
 }
 
 impl UdpSocket {
+    #[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
     fn new(sock: std::net::UdpSocket) -> io::Result<Self> {
         Ok(Self {
             inner: udp::UdpSocketState::new((&sock).into())?,

@@ -1,15 +1,18 @@
 use std::{
-    future::Future,
+    future::{Future, poll_fn},
     io,
-    pin::Pin,
-    task::{Context, Poll, ready},
+    pin::{Pin, pin},
+    task::{Context, Poll},
 };
 
 use bytes::Bytes;
 use proto::{ClosedStream, ConnectionError, FinishError, StreamId, Written};
 use thiserror::Error;
 
-use crate::{VarInt, connection::ConnectionRef};
+use crate::{
+    VarInt,
+    connection::{ConnectionRef, State},
+};
 
 /// A stream that can only be used to send data
 ///
@@ -50,14 +53,18 @@ impl SendStream {
     ///
     /// This operation is cancel-safe.
     pub async fn write(&mut self, buf: &[u8]) -> Result<usize, WriteError> {
-        Write { stream: self, buf }.await
+        poll_fn(|cx| self.execute_poll(cx, |s| s.write(buf))).await
     }
 
     /// Convenience method to write an entire buffer to the stream
     ///
     /// This operation is *not* cancel-safe.
-    pub async fn write_all(&mut self, buf: &[u8]) -> Result<(), WriteError> {
-        WriteAll { stream: self, buf }.await
+    pub async fn write_all(&mut self, mut buf: &[u8]) -> Result<(), WriteError> {
+        while !buf.is_empty() {
+            let written = self.write(buf).await?;
+            buf = &buf[written..];
+        }
+        Ok(())
     }
 
     /// Write chunks to the stream
@@ -68,30 +75,26 @@ impl SendStream {
     ///
     /// This operation is cancel-safe.
     pub async fn write_chunks(&mut self, bufs: &mut [Bytes]) -> Result<Written, WriteError> {
-        WriteChunks { stream: self, bufs }.await
+        poll_fn(|cx| self.execute_poll(cx, |s| s.write_chunks(bufs))).await
     }
 
     /// Convenience method to write a single chunk in its entirety to the stream
     ///
     /// This operation is *not* cancel-safe.
     pub async fn write_chunk(&mut self, buf: Bytes) -> Result<(), WriteError> {
-        WriteChunk {
-            stream: self,
-            buf: [buf],
-        }
-        .await
+        self.write_all_chunks(&mut [buf]).await?;
+        Ok(())
     }
 
     /// Convenience method to write an entire list of chunks to the stream
     ///
     /// This operation is *not* cancel-safe.
-    pub async fn write_all_chunks(&mut self, bufs: &mut [Bytes]) -> Result<(), WriteError> {
-        WriteAllChunks {
-            stream: self,
-            bufs,
-            offset: 0,
+    pub async fn write_all_chunks(&mut self, mut bufs: &mut [Bytes]) -> Result<(), WriteError> {
+        while !bufs.is_empty() {
+            let written = self.write_chunks(bufs).await?;
+            bufs = &mut bufs[written.chunks..];
         }
-        .await
+        Ok(())
     }
 
     fn execute_poll<F, R>(&mut self, cx: &mut Context, write_fn: F) -> Poll<Result<R, WriteError>>
@@ -199,27 +202,31 @@ impl SendStream {
     /// For a variety of reasons, the peer may not send acknowledgements immediately upon receiving
     /// data. As such, relying on `stopped` to know when the peer has read a stream to completion
     /// may introduce more latency than using an application-level response of some sort.
-    pub async fn stopped(&mut self) -> Result<Option<VarInt>, StoppedError> {
-        Stopped { stream: self }.await
-    }
+    pub fn stopped(
+        &self,
+    ) -> impl Future<Output = Result<Option<VarInt>, StoppedError>> + Send + Sync + 'static {
+        let conn = self.conn.clone();
+        let stream = self.stream;
+        let is_0rtt = self.is_0rtt;
+        async move {
+            loop {
+                // The `Notify::notified` future needs to be created while the lock is being held,
+                // otherwise a wakeup could be missed if triggered inbetween releasing the lock
+                // and creating the future.
+                // The lock may only be held in a block without `await`s, otherwise the future
+                // becomes `!Send`. `Notify::notified` is lifetime-bound to `Notify`, therefore
+                // we need to declare `notify` outside of the block, and initialize it inside.
+                let notify;
+                {
+                    let mut conn = conn.state.lock("SendStream::stopped");
+                    if let Some(output) = send_stream_stopped(&mut conn, stream, is_0rtt) {
+                        return output;
+                    }
 
-    fn poll_stopped(&mut self, cx: &mut Context) -> Poll<Result<Option<VarInt>, StoppedError>> {
-        let mut conn = self.conn.state.lock("SendStream::poll_stopped");
-
-        if self.is_0rtt {
-            conn.check_0rtt()
-                .map_err(|()| StoppedError::ZeroRttRejected)?;
-        }
-
-        match conn.inner.send_stream(self.stream).stopped() {
-            Err(_) => Poll::Ready(Ok(None)),
-            Ok(Some(error_code)) => Poll::Ready(Ok(Some(error_code))),
-            Ok(None) => {
-                if let Some(e) = &conn.error {
-                    return Poll::Ready(Err(e.clone().into()));
+                    notify = conn.stopped.entry(stream).or_default().clone();
+                    notify.notified()
                 }
-                conn.stopped.insert(self.stream, cx.waker().clone());
-                Poll::Pending
+                .await
             }
         }
     }
@@ -241,14 +248,33 @@ impl SendStream {
         cx: &mut Context,
         buf: &[u8],
     ) -> Poll<Result<usize, WriteError>> {
-        self.get_mut().execute_poll(cx, |stream| stream.write(buf))
+        pin!(self.get_mut().write(buf)).as_mut().poll(cx)
+    }
+}
+
+/// Check if a send stream is stopped.
+///
+/// Returns `Some` if the stream is stopped or the connection is closed.
+/// Returns `None` if the stream is not stopped.
+fn send_stream_stopped(
+    conn: &mut State,
+    stream: StreamId,
+    is_0rtt: bool,
+) -> Option<Result<Option<VarInt>, StoppedError>> {
+    if is_0rtt && conn.check_0rtt().is_err() {
+        return Some(Err(StoppedError::ZeroRttRejected));
+    }
+    match conn.inner.send_stream(stream).stopped() {
+        Err(ClosedStream { .. }) => Some(Ok(None)),
+        Ok(Some(error_code)) => Some(Ok(Some(error_code))),
+        Ok(None) => conn.error.clone().map(|error| Err(error.into())),
     }
 }
 
 #[cfg(feature = "futures-io")]
 impl futures_io::AsyncWrite for SendStream {
     fn poll_write(self: Pin<&mut Self>, cx: &mut Context, buf: &[u8]) -> Poll<io::Result<usize>> {
-        Self::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
+        self.poll_write(cx, buf).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
@@ -266,7 +292,7 @@ impl tokio::io::AsyncWrite for SendStream {
         cx: &mut Context<'_>,
         buf: &[u8],
     ) -> Poll<io::Result<usize>> {
-        Self::execute_poll(self.get_mut(), cx, |stream| stream.write(buf)).map_err(Into::into)
+        self.poll_write(cx, buf).map_err(Into::into)
     }
 
     fn poll_flush(self: Pin<&mut Self>, _cx: &mut Context) -> Poll<io::Result<()>> {
@@ -283,7 +309,6 @@ impl Drop for SendStream {
         let mut conn = self.conn.state.lock("SendStream::drop");
 
         // clean up any previously registered wakers
-        conn.stopped.remove(&self.stream);
         conn.blocked_writers.remove(&self.stream);
 
         if conn.error.is_some() || (self.is_0rtt && conn.check_0rtt().is_err()) {
@@ -298,122 +323,6 @@ impl Drop for SendStream {
             }
             // Already finished or reset, which is fine.
             Err(FinishError::ClosedStream) => {}
-        }
-    }
-}
-
-/// Future produced by `SendStream::stopped`
-struct Stopped<'a> {
-    stream: &'a mut SendStream,
-}
-
-impl Future for Stopped<'_> {
-    type Output = Result<Option<VarInt>, StoppedError>;
-
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        self.get_mut().stream.poll_stopped(cx)
-    }
-}
-
-/// Future produced by [`SendStream::write()`].
-///
-/// [`SendStream::write()`]: crate::SendStream::write
-struct Write<'a> {
-    stream: &'a mut SendStream,
-    buf: &'a [u8],
-}
-
-impl Future for Write<'_> {
-    type Output = Result<usize, WriteError>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        let buf = this.buf;
-        this.stream.execute_poll(cx, |s| s.write(buf))
-    }
-}
-
-/// Future produced by [`SendStream::write_all()`].
-///
-/// [`SendStream::write_all()`]: crate::SendStream::write_all
-struct WriteAll<'a> {
-    stream: &'a mut SendStream,
-    buf: &'a [u8],
-}
-
-impl Future for WriteAll<'_> {
-    type Output = Result<(), WriteError>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        loop {
-            if this.buf.is_empty() {
-                return Poll::Ready(Ok(()));
-            }
-            let buf = this.buf;
-            let n = ready!(this.stream.execute_poll(cx, |s| s.write(buf)))?;
-            this.buf = &this.buf[n..];
-        }
-    }
-}
-
-/// Future produced by [`SendStream::write_chunks()`].
-///
-/// [`SendStream::write_chunks()`]: crate::SendStream::write_chunks
-struct WriteChunks<'a> {
-    stream: &'a mut SendStream,
-    bufs: &'a mut [Bytes],
-}
-
-impl Future for WriteChunks<'_> {
-    type Output = Result<Written, WriteError>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        let bufs = &mut *this.bufs;
-        this.stream.execute_poll(cx, |s| s.write_chunks(bufs))
-    }
-}
-
-/// Future produced by [`SendStream::write_chunk()`].
-///
-/// [`SendStream::write_chunk()`]: crate::SendStream::write_chunk
-struct WriteChunk<'a> {
-    stream: &'a mut SendStream,
-    buf: [Bytes; 1],
-}
-
-impl Future for WriteChunk<'_> {
-    type Output = Result<(), WriteError>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        loop {
-            if this.buf[0].is_empty() {
-                return Poll::Ready(Ok(()));
-            }
-            let bufs = &mut this.buf[..];
-            ready!(this.stream.execute_poll(cx, |s| s.write_chunks(bufs)))?;
-        }
-    }
-}
-
-/// Future produced by [`SendStream::write_all_chunks()`].
-///
-/// [`SendStream::write_all_chunks()`]: crate::SendStream::write_all_chunks
-struct WriteAllChunks<'a> {
-    stream: &'a mut SendStream,
-    bufs: &'a mut [Bytes],
-    offset: usize,
-}
-
-impl Future for WriteAllChunks<'_> {
-    type Output = Result<(), WriteError>;
-    fn poll(self: Pin<&mut Self>, cx: &mut Context) -> Poll<Self::Output> {
-        let this = self.get_mut();
-        loop {
-            if this.offset == this.bufs.len() {
-                return Poll::Ready(Ok(()));
-            }
-            let bufs = &mut this.bufs[this.offset..];
-            let written = ready!(this.stream.execute_poll(cx, |s| s.write_chunks(bufs)))?;
-            this.offset += written.chunks;
         }
     }
 }

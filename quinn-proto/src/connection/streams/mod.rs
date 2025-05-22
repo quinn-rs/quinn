@@ -20,8 +20,8 @@ pub use recv::{Chunks, ReadError, ReadableError};
 
 mod send;
 pub(crate) use send::{ByteSlice, BytesArray};
-pub use send::{BytesSource, FinishError, WriteError, Written};
-use send::{Send, SendState};
+use send::{BytesSource, Send, SendState};
+pub use send::{FinishError, WriteError, Written};
 
 mod state;
 #[allow(unreachable_pub)] // fuzzing only
