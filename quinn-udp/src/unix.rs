@@ -811,8 +811,6 @@ mod gso {
         version: 4,
         major_revision: 18,
     };
-    // Avoid calling `supported_by_current_kernel` for each socket by using `OnceLock`.
-    static SUPPORTED_BY_CURRENT_KERNEL: OnceLock<bool> = OnceLock::new();
 
     /// Checks whether GSO support is available by checking the kernel version followed by setting
     /// the UDP_SEGMENT option on a socket
@@ -847,6 +845,9 @@ mod gso {
     pub(crate) fn set_segment_size(encoder: &mut cmsg::Encoder<libc::msghdr>, segment_size: u16) {
         encoder.push(libc::SOL_UDP, UDP_SEGMENT, segment_size);
     }
+
+    // Avoid calling `supported_by_current_kernel` for each socket by using `OnceLock`.
+    static SUPPORTED_BY_CURRENT_KERNEL: OnceLock<bool> = OnceLock::new();
 
     fn supported_by_current_kernel() -> bool {
         let kernel_version_string = match kernel_version_string() {
