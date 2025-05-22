@@ -860,7 +860,7 @@ mod gso {
 
         let Some(kernel_version) = KernelVersion::from_str(&kernel_version_string) else {
             crate::log::warn!(
-                "GSO disabled: failed to parse kernel version ({kernel_version_string:?})"
+                "GSO disabled: failed to parse kernel version ({kernel_version_string})"
             );
             return false;
         };
