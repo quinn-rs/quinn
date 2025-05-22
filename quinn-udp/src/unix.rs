@@ -797,7 +797,7 @@ pub(crate) const BATCH_SIZE: usize = 1;
 #[cfg(any(target_os = "linux", target_os = "android"))]
 mod gso {
     use super::*;
-    use std::sync::OnceLock;
+    use std::{ffi::CStr, mem, str::FromStr, sync::OnceLock};
 
     #[cfg(not(target_os = "android"))]
     const UDP_SEGMENT: libc::c_int = libc::UDP_SEGMENT;
@@ -874,13 +874,13 @@ mod gso {
     }
 
     fn kernel_version_string() -> Result<String, libc::c_int> {
-        let mut n = unsafe { std::mem::zeroed() };
+        let mut n = unsafe { mem::zeroed() };
         let r = unsafe { libc::uname(&mut n) };
         if r != 0 {
             return Err(r);
         }
         Ok(unsafe {
-            std::ffi::CStr::from_ptr(n.release[..].as_ptr())
+            CStr::from_ptr(n.release[..].as_ptr())
                 .to_string_lossy()
                 .into_owned()
         })
@@ -895,8 +895,6 @@ mod gso {
 
     impl KernelVersion {
         fn from_str(release: &str) -> Result<Self, String> {
-            use std::str::FromStr;
-
             let mut split = release
                 .split_once('-')
                 .map(|pair| pair.0)
