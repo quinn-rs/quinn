@@ -807,7 +807,10 @@ mod gso {
 
     // Support for UDP GSO has been added to linux kernel in version 4.18
     // https://github.com/torvalds/linux/commit/cb586c63e3fc5b227c51fd8c4cb40b34d3750645
-    const SUPPORTED_SINCE: KernelVersion = KernelVersion::new(4, 18);
+    const SUPPORTED_SINCE: KernelVersion = KernelVersion {
+        version: 4,
+        major_revision: 18,
+    };
     // Avoid calling `supported_by_current_kernel` for each socket by using `OnceLock`.
     static SUPPORTED_BY_CURRENT_KERNEL: OnceLock<bool> = OnceLock::new();
 
@@ -891,13 +894,6 @@ mod gso {
     }
 
     impl KernelVersion {
-        const fn new(version: u8, major_revision: u8) -> Self {
-            Self {
-                version,
-                major_revision,
-            }
-        }
-
         fn from_str(release: &str) -> Result<Self, String> {
             use std::str::FromStr;
 
@@ -939,20 +935,32 @@ mod gso {
             // These are made up for the test
             assert_eq!(
                 KernelVersion::from_str("4.14"),
-                Ok(KernelVersion::new(4, 14))
+                Ok(KernelVersion {
+                    version: 4,
+                    major_revision: 14
+                })
             );
             assert_eq!(
                 KernelVersion::from_str("4.18"),
-                Ok(KernelVersion::new(4, 18))
+                Ok(KernelVersion {
+                    version: 4,
+                    major_revision: 18
+                })
             );
             // These were seen in the wild
             assert_eq!(
                 KernelVersion::from_str("4.14.186-27095505"),
-                Ok(KernelVersion::new(4, 14))
+                Ok(KernelVersion {
+                    version: 4,
+                    major_revision: 14
+                })
             );
             assert_eq!(
                 KernelVersion::from_str("6.8.0-59-generic"),
-                Ok(KernelVersion::new(6, 8))
+                Ok(KernelVersion {
+                    version: 6,
+                    major_revision: 8
+                })
             );
         }
     }
