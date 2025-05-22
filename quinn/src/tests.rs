@@ -864,16 +864,10 @@ async fn multiple_conns_with_zero_length_cids() {
 async fn stream_stopped() {
     let _guard = subscribe();
     let factory = EndpointFactory::new();
-    let server = {
-        let _guard = error_span!("server").entered();
-        factory.endpoint()
-    };
+    let server = { factory.endpoint("server") };
     let server_addr = server.local_addr().unwrap();
 
-    let client = {
-        let _guard = error_span!("client1").entered();
-        factory.endpoint()
-    };
+    let client = { factory.endpoint("client1") };
 
     let client = async move {
         let conn = client
