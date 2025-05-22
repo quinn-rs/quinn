@@ -857,12 +857,11 @@ mod gso {
             }
         };
 
-        let kernel_version = match KernelVersion::from_str(&kernel_version_string) {
-            Ok(kernel_version) => kernel_version,
-            Err(_reason) => {
-                crate::log::warn!("GSO disabled: {_reason}");
-                return false;
-            }
+        let Some(kernel_version) = KernelVersion::from_str(&kernel_version_string) else {
+            crate::log::warn!(
+                "GSO disabled: failed to parse kernel version ({kernel_version_string:?})"
+            );
+            return false;
         };
 
         if kernel_version < SUPPORTED_SINCE {
@@ -894,24 +893,17 @@ mod gso {
     }
 
     impl KernelVersion {
-        fn from_str(release: &str) -> Result<Self, String> {
+        fn from_str(release: &str) -> Option<Self> {
             let mut split = release
                 .split_once('-')
                 .map(|pair| pair.0)
                 .unwrap_or(release)
                 .split('.');
 
-            let version = split
-                .next()
-                .and_then(|s| u8::from_str(s).ok())
-                .ok_or_else(|| format!("failed to parse kernel version from {release:?}"))?;
+            let version = u8::from_str(split.next()?).ok()?;
+            let major_revision = u8::from_str(split.next()?).ok()?;
 
-            let major_revision = split
-                .next()
-                .and_then(|s| u8::from_str(s).ok())
-                .ok_or_else(|| format!("failed to parse kernel major revision from {release:?}"))?;
-
-            Ok(Self {
+            Some(Self {
                 version,
                 major_revision,
             })
@@ -933,14 +925,14 @@ mod gso {
             // These are made up for the test
             assert_eq!(
                 KernelVersion::from_str("4.14"),
-                Ok(KernelVersion {
+                Some(KernelVersion {
                     version: 4,
                     major_revision: 14
                 })
             );
             assert_eq!(
                 KernelVersion::from_str("4.18"),
-                Ok(KernelVersion {
+                Some(KernelVersion {
                     version: 4,
                     major_revision: 18
                 })
@@ -948,14 +940,14 @@ mod gso {
             // These were seen in the wild
             assert_eq!(
                 KernelVersion::from_str("4.14.186-27095505"),
-                Ok(KernelVersion {
+                Some(KernelVersion {
                     version: 4,
                     major_revision: 14
                 })
             );
             assert_eq!(
                 KernelVersion::from_str("6.8.0-59-generic"),
-                Ok(KernelVersion {
+                Some(KernelVersion {
                     version: 6,
                     major_revision: 8
                 })
