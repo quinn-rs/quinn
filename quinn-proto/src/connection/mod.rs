@@ -1288,7 +1288,7 @@ impl Connection {
                     // A prior attempt to set the loss detection timer may have failed due to
                     // anti-amplification, so ensure it's set now. Prevents a handshake deadlock if
                     // the server's first flight is lost.
-                    self.set_loss_detection_timer(path_id, now);
+                    self.set_loss_detection_timer(now);
                 }
             }
             NewIdentifiers(ids, now, cid_len, cid_lifetime) => {
@@ -1343,8 +1343,8 @@ impl Connection {
                     trace!("sending keep-alive");
                     self.ping(path_id);
                 }
-                Timer::LossDetection(path_id) => {
-                    self.on_loss_detection_timeout(now, path_id);
+                Timer::LossDetection => {
+                    self.on_loss_detection_timeout(now);
                 }
                 Timer::KeyDiscard => {
                     self.zero_rtt_crypto = None;
@@ -1621,6 +1621,8 @@ impl Connection {
             && self.peer_params.initial_max_path_id.is_some()
     }
 
+    // TODO(flub): Why does this take PathId?  Which PathId is it, the one over which the
+    //    acks were received, or the one from inside the PATH_ACKS frame?
     fn on_ack_received(
         &mut self,
         now: Instant,
@@ -1753,7 +1755,7 @@ impl Connection {
             }
         }
 
-        self.set_loss_detection_timer(path, now);
+        self.set_loss_detection_timer(now);
         Ok(())
     }
 
@@ -1834,15 +1836,23 @@ impl Connection {
             .set(Timer::KeyDiscard, start + self.pto(space) * 3);
     }
 
-    fn on_loss_detection_timeout(&mut self, now: Instant, _path_id: PathId) {
-        // TODO(@divma): ignoring this (to me) bug for now: we know for which packet number
-        // space/path_id we need to detect lost packets, so we only need to find the space
-        // This might technically work as is now that there are as many calls to
-        // `on_loss_detection_timeout` as paths for which the timer ran out
+    /// Handle a [`Timer::LossDetection`] timeout.
+    ///
+    /// This timer expires for two reasons:
+    /// - An ACK-eliciting packet we sent should be considered lost.
+    /// - The PTO may have expired and a tail-loss probe needs to be scheduled.
+    ///
+    /// The former needs us to schedule re-transmission of the lost data.
+    ///
+    /// The latter means we have not received an ACK for an ack-eliciting packet we sent
+    /// within the PTO time-window. We need to schedule a tail-loss probe, an ack-eliciting
+    /// packet, to try and elicit new acknowledgements. These new acknowledgements will
+    /// indicate whether the previously sent packets were lost or not.
+    fn on_loss_detection_timeout(&mut self, now: Instant) {
         if let Some((_, pn_space, path_id)) = self.loss_time_and_space() {
             // Time threshold loss Detection
             self.detect_lost_packets(now, pn_space, path_id, false);
-            self.set_loss_detection_timer(path_id, now);
+            self.set_loss_detection_timer(now);
             return;
         }
 
@@ -1879,7 +1889,7 @@ impl Connection {
             .for_path(path)
             .pto_count
             .saturating_add(1);
-        self.set_loss_detection_timer(path, now);
+        self.set_loss_detection_timer(now);
     }
 
     // TODO(@divma): some docs wouldn't kill
@@ -2050,31 +2060,26 @@ impl Connection {
         loss_times.into_iter().min_by_key(|&(when, _, _)| when)
     }
 
-    /// Returns the earliest next PTO for all paths.
-    // TODO(@divma): this needs to receive the PathId as param
+    /// Returns the earliest next PTO should fire for all paths and spaces.
     fn pto_time_and_space(&mut self, now: Instant) -> Option<(Instant, SpaceId, PathId)> {
-        // TODO(flub): this will need more adjustments once we have multiple paths as well.
-        //    Also ack-frequency needs to be checked.
-        // TODO(@divma): fixme
-        if self.path_data_mut(PathId(0)).in_flight.ack_eliciting == 0 {
-            // TODO(flub): This uses self.path so effectively PathId(0). Fix for multipath
-            debug_assert!(!self.peer_completed_address_validation(PathId(0)));
+        let path0_in_flight = self
+            .paths
+            .get(&PathId::ZERO)
+            .map(|path| path.data.in_flight.ack_eliciting);
+        if path0_in_flight == Some(0) && !self.peer_completed_address_validation(PathId::ZERO) {
+            // Address Validation during Connection Establishment:
+            // https://www.rfc-editor.org/rfc/rfc9000.html#section-8.1. To prevent a
+            // deadlock if an Initial or Handshake packet from the server is lost and the
+            // server can not send more due to its anti-amplification limit the client must
+            // send another packet on PTO.
             let space = match self.highest_space {
                 SpaceId::Handshake => SpaceId::Handshake,
                 _ => SpaceId::Initial,
             };
-            let path_id = match space {
-                SpaceId::Initial | SpaceId::Handshake => PathId(0),
-                SpaceId::Data => self.spaces[space]
-                    .iter_paths()
-                    .min_by_key(|&(_, s)| s.pto_count)
-                    .map(|(p, _)| *p)
-                    .unwrap_or(PathId(0)),
-            };
-            let pto_count = self.spaces[space].for_path(path_id).pto_count;
+            let pto_count = self.spaces[space].for_path(PathId::ZERO).pto_count;
             let backoff = 2u32.pow(pto_count.min(MAX_BACKOFF_EXPONENT));
-            let duration = self.path_data_mut(path_id).rtt.pto_base() * backoff;
-            return Some((now + duration, space, path_id));
+            let duration = self.path_data_mut(PathId::ZERO).rtt.pto_base() * backoff;
+            return Some((now + duration, space, PathId::ZERO));
         }
 
         let mut result = None;
@@ -2085,7 +2090,7 @@ impl Connection {
                 }
                 let pto_count = pn_space.pto_count;
                 let backoff = 2u32.pow(pto_count.min(MAX_BACKOFF_EXPONENT));
-                let mut duration = self.path_data(PathId(0)).rtt.pto_base() * backoff;
+                let mut duration = self.path_data(*path_id).rtt.pto_base() * backoff;
                 if space == SpaceId::Data {
                     // Skip ApplicationData until handshake completes.
                     if self.is_handshaking() {
@@ -2100,6 +2105,14 @@ impl Connection {
                 };
                 let pto = last_ack_eliciting + duration;
                 if result.map_or(true, |(earliest_pto, _, _)| pto < earliest_pto) {
+                    if self.path_data(*path_id).anti_amplification_blocked(1) {
+                        // Nothing would be able to be sent.
+                        continue;
+                    }
+                    if self.path_data(*path_id).in_flight.ack_eliciting == 0 {
+                        // Nothing ack-eliciting, no PTO to arm/fire.
+                        continue;
+                    }
                     result = Some((pto, space, *path_id));
                 }
             }
@@ -2129,7 +2142,14 @@ impl Connection {
         // when it shouldn't be possible.
     }
 
-    fn set_loss_detection_timer(&mut self, path_id: PathId, now: Instant) {
+    /// Resets the the [`Timer::LossDetection`] timer to the next instant it may be needed
+    ///
+    /// The timer must fire if either:
+    /// - An ack-eliciting packet we sent needs to be declared lost.
+    /// - A tail-loss probe needs to be sent.
+    ///
+    /// See [`Connection::on_loss_detection_timeout`] for details.
+    fn set_loss_detection_timer(&mut self, now: Instant) {
         if self.state.is_closed() {
             // No loss detection takes place on closed connections, and `close_common` already
             // stopped time timer. Ensure we don't restart it inadvertently, e.g. in response to a
@@ -2137,37 +2157,18 @@ impl Connection {
             return;
         }
 
-        // TODO(@divma): question: use the path_id or trust number of calls = queued timers
-        if let Some((loss_time, _, path_id)) = self.loss_time_and_space() {
+        if let Some((loss_time, _, _)) = self.loss_time_and_space() {
             // Time threshold loss detection.
-            // TODO(@divma): at least not completely wrong
-            self.timers.set(Timer::LossDetection(path_id), loss_time);
-            return;
-        }
-
-        if self.path_data(path_id).anti_amplification_blocked(1) {
-            // We wouldn't be able to send anything, so don't bother.
-            self.timers.stop(Timer::LossDetection(path_id));
-            return;
-        }
-
-        if self.path_data(path_id).in_flight.ack_eliciting == 0
-            && self.peer_completed_address_validation(path_id)
-        {
-            // There is nothing to detect lost, so no timer is set. However, the client needs to arm
-            // the timer if the server might be blocked by the anti-amplification limit.
-            self.timers.stop(Timer::LossDetection(path_id));
+            self.timers.set(Timer::LossDetection, loss_time);
             return;
         }
 
         // Determine which PN space to arm PTO for.
         // Calculate PTO duration
-        // TODO(@divma): both calls are wrong. We need to fin the time and space for this packet
-        // number space, not for any
         if let Some((timeout, _, _)) = self.pto_time_and_space(now) {
-            self.timers.set(Timer::LossDetection(path_id), timeout);
+            self.timers.set(Timer::LossDetection, timeout);
         } else {
-            self.timers.stop(Timer::LossDetection(path_id));
+            self.timers.stop(Timer::LossDetection);
         }
     }
 
@@ -2480,7 +2481,7 @@ impl Connection {
         for (pn, packet) in sent_packets.into_iter() {
             self.remove_in_flight(path_id, pn, &packet);
         }
-        self.set_loss_detection_timer(path_id, now)
+        self.set_loss_detection_timer(now)
     }
 
     fn handle_coalesced(

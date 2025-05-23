@@ -9,7 +9,7 @@ use super::PathId;
 #[derive(Debug, Copy, Clone, Ord, PartialOrd, Eq, PartialEq, Hash)]
 pub(crate) enum Timer {
     /// When to send an ack-eliciting probe packet or declare unacked packets lost
-    LossDetection(PathId),
+    LossDetection,
     /// When to close the connection after no activity
     Idle,
     /// When the close timer expires, the connection has been gracefully terminated.
