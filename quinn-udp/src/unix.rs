@@ -852,8 +852,8 @@ mod gso {
     fn supported_by_current_kernel() -> bool {
         let kernel_version_string = match kernel_version_string() {
             Ok(kernel_version_string) => kernel_version_string,
-            Err(_errno) => {
-                crate::log::warn!("GSO disabled: uname returned {_errno}");
+            Err(_e) => {
+                crate::log::warn!("GSO disabled: uname returned {_e}");
                 return false;
             }
         };
@@ -873,11 +873,11 @@ mod gso {
         true
     }
 
-    fn kernel_version_string() -> Result<String, libc::c_int> {
+    fn kernel_version_string() -> io::Result<String> {
         let mut n = unsafe { mem::zeroed() };
         let r = unsafe { libc::uname(&mut n) };
         if r != 0 {
-            return Err(r);
+            return Err(io::Error::last_os_error());
         }
         Ok(unsafe {
             CStr::from_ptr(n.release[..].as_ptr())
