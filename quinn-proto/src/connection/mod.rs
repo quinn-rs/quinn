@@ -1306,12 +1306,9 @@ impl Connection {
                 // Update Timer::PushNewCid
                 if self
                     .timers
-                    .get(Timer::PushNewCid(path_id))
+                    .get(Timer::PushNewCid)
                     .map_or(true, |x| x <= now)
                 {
-                    // TODO(@divma): check this. The path_id for which this needs to be updated is
-                    // known, so the inner logic of this might not be doing anything. I'm going to
-                    // leave it like this for now, but to me, it seems wrong
                     self.reset_cid_retirement();
                 }
             }
@@ -1362,31 +1359,28 @@ impl Connection {
                     path.data.challenge_pending = false;
                 }
                 Timer::Pacing(path_id) => trace!(?path_id, "pacing timer expired"),
-                Timer::PushNewCid(_path_id) => {
-                    // TODO(@divma): same question, use path_id or trust on number of calls =
-                    // number of queued path_ids?
-                    // NOTE: this seems to work from tests (multipath_cid_rotation)
-                    match self.next_cid_retirement() {
-                        None => error!("Timer::PushNewCid fired without a retired CID"),
-                        Some((path_id, _when)) => {
-                            match self.local_cid_state.get_mut(&path_id) {
-                                None => error!(?path_id, "No local CID state for path"),
-                                Some(cid_state) => {
-                                    // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
-                                    let num_new_cid = cid_state.on_cid_timeout().into();
-                                    if !self.state.is_closed() {
-                                        trace!(
-                                            "push a new CID to peer RETIRE_PRIOR_TO field {}",
-                                            cid_state.retire_prior_to()
-                                        );
-                                        self.endpoint_events.push_back(
-                                            EndpointEventInner::NeedIdentifiers(
-                                                path_id,
-                                                now,
-                                                num_new_cid,
-                                            ),
-                                        );
-                                    }
+                Timer::PushNewCid => {
+                    while let Some((path_id, when)) = self.next_cid_retirement() {
+                        if when > now {
+                            break;
+                        }
+                        match self.local_cid_state.get_mut(&path_id) {
+                            None => error!(?path_id, "No local CID state for path"),
+                            Some(cid_state) => {
+                                // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
+                                let num_new_cid = cid_state.on_cid_timeout().into();
+                                if !self.state.is_closed() {
+                                    trace!(
+                                        "push a new CID to peer RETIRE_PRIOR_TO field {}",
+                                        cid_state.retire_prior_to()
+                                    );
+                                    self.endpoint_events.push_back(
+                                        EndpointEventInner::NeedIdentifiers(
+                                            path_id,
+                                            now,
+                                            num_new_cid,
+                                        ),
+                                    );
                                 }
                             }
                         }
@@ -2252,8 +2246,8 @@ impl Connection {
 
     /// Sets the timer for when a previously issued CID should be retired next.
     fn reset_cid_retirement(&mut self) {
-        if let Some((path, t)) = self.next_cid_retirement() {
-            self.timers.set(Timer::PushNewCid(path), t);
+        if let Some((_path, t)) = self.next_cid_retirement() {
+            self.timers.set(Timer::PushNewCid, t);
         }
     }
 
@@ -4248,7 +4242,7 @@ impl Connection {
             .filter(|entry| {
                 !matches!(
                     entry.timer,
-                    Timer::KeepAlive(_) | Timer::PushNewCid(_) | Timer::KeyDiscard
+                    Timer::KeepAlive(_) | Timer::PushNewCid | Timer::KeyDiscard
                 )
             })
             .min_by_key(|entry| entry.time)
