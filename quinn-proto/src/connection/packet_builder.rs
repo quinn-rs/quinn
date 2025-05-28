@@ -244,7 +244,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
                 }
                 conn.permit_idle_reset = false;
             }
-            conn.set_loss_detection_timer(path_id, now);
+            conn.set_loss_detection_timer(now, path_id);
             conn.path_data_mut(path_id).pacing.on_transmit(size);
         }
     }

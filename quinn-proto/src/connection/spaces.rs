@@ -83,10 +83,6 @@ impl PacketSpace {
             .or_insert_with(PacketNumberSpace::new_default)
     }
 
-    pub(super) fn iter_paths(&self) -> impl Iterator<Item = (&PathId, &PacketNumberSpace)> {
-        self.number_spaces.iter()
-    }
-
     pub(super) fn iter_paths_mut(&mut self) -> impl Iterator<Item = &mut PacketNumberSpace> {
         self.number_spaces.values_mut()
     }
@@ -230,10 +226,6 @@ pub(super) struct PacketNumberSpace {
     //
     // Loss Detection
     //
-    /// The number of times a PTO has been sent without receiving an ack.
-    // TODO(flub): This used to be on the connection itself.  Maybe it should be on the
-    // PathData or somewhere.  Evaluate this again later on when we have more working.
-    pub(super) pto_count: u32,
     /// The time the most recently sent retransmittable packet was sent.
     pub(super) time_of_last_ack_eliciting_packet: Option<Instant>,
     /// Earliest time when we might declare a packet lost.
@@ -268,7 +260,6 @@ impl PacketNumberSpace {
             sent_with_keys: 0,
             ping_pending: false,
             immediate_ack_pending: false,
-            pto_count: 0,
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
             loss_probes: 0,
@@ -295,7 +286,6 @@ impl PacketNumberSpace {
             sent_with_keys: 0,
             ping_pending: false,
             immediate_ack_pending: false,
-            pto_count: 0,
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
             loss_probes: 0,
@@ -323,7 +313,6 @@ impl PacketNumberSpace {
             sent_with_keys: 0,
             ping_pending: false,
             immediate_ack_pending: false,
-            pto_count: 0,
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
             loss_probes: 0,
