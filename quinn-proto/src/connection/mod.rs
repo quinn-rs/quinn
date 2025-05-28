@@ -1628,6 +1628,35 @@ impl Connection {
         path: PathId,
         ack: frame::Ack,
     ) -> Result<(), TransportError> {
+        // TODO(dig): should this be a different error?
+        debug_assert_eq!(
+            path,
+            PathId::ZERO,
+            "regular acks must only be used for Path 0"
+        );
+
+        self.inner_on_ack_received(now, space, path, ack)
+    }
+
+    fn on_path_ack_received(
+        &mut self,
+        now: Instant,
+        space: SpaceId,
+        _path: PathId,
+        path_ack: frame::PathAck,
+    ) -> Result<(), TransportError> {
+        let (ack, path) = path_ack.into_ack();
+
+        self.inner_on_ack_received(now, space, path, ack)
+    }
+
+    fn inner_on_ack_received(
+        &mut self,
+        now: Instant,
+        space: SpaceId,
+        path: PathId,
+        ack: frame::Ack,
+    ) -> Result<(), TransportError> {
         if ack.largest >= self.spaces[space].for_path(path).next_packet_number {
             return Err(TransportError::PROTOCOL_VIOLATION("unsent packet acked"));
         }
@@ -3025,12 +3054,16 @@ impl Connection {
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, packet.header.space(), path_id, ack)?;
                 }
+                Frame::PathAck(ack) => {
+                    self.on_path_ack_received(now, packet.header.space(), path_id, ack)?;
+                }
                 Frame::Close(reason) => {
                     self.error = Some(reason.into());
                     self.state = State::Draining;
                     return Ok(());
                 }
                 _ => {
+                    dbg!(&frame);
                     let mut err =
                         TransportError::PROTOCOL_VIOLATION("illegal frame type in handshake");
                     err.frame = Some(frame.ty());
@@ -3127,6 +3160,9 @@ impl Connection {
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, path_id, ack)?;
+                }
+                Frame::PathAck(ack) => {
+                    self.on_path_ack_received(now, SpaceId::Data, path_id, ack)?;
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::Close(reason) => {
@@ -4021,13 +4057,15 @@ impl Connection {
             let ack_delay_exp = TransportParameters::default().ack_delay_exponent;
             let delay = delay_micros >> ack_delay_exp.into_inner();
 
-            trace!("ACK {:?}, Delay = {}us", ranges, delay_micros);
-            let path_id = match send_path_acks {
-                true => Some(*path_id),
-                false => None,
-            };
-            frame::Ack::encode(path_id, delay as _, ranges, ecn.as_ref(), buf);
-            stats.frame_tx.acks += 1;
+            if send_path_acks {
+                trace!("PATH_ACK {:?}, Delay = {}us", ranges, delay_micros);
+                frame::PathAck::encode(*path_id, delay as _, ranges, ecn.as_ref(), buf);
+                stats.frame_tx.path_acks += 1;
+            } else {
+                trace!("ACK {:?}, Delay = {}us", ranges, delay_micros);
+                frame::Ack::encode(delay as _, ranges, ecn.as_ref(), buf);
+                stats.frame_tx.acks += 1;
+            }
         }
     }
 
