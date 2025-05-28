@@ -1650,6 +1650,7 @@ impl Connection {
         self.inner_on_ack_received(now, space, path, ack)
     }
 
+    /// Handles an ACK frame acknowledging packets sent on *path*.
     fn inner_on_ack_received(
         &mut self,
         now: Instant,
@@ -1782,7 +1783,7 @@ impl Connection {
             }
         }
 
-        self.set_loss_detection_timer(now, ack.path_id.unwrap_or(PathId::ZERO));
+        self.set_loss_detection_timer(now, path);
         Ok(())
     }
 
