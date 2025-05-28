@@ -147,7 +147,6 @@ pub struct Connection {
     ///
     /// This needs to be ordered because [`Connection::poll_transmit`] needs to
     /// deterministically select the next PathId to send on.
-    ///
     // TODO(flub): well does it really? But deterministic is nice for now.
     paths: BTreeMap<PathId, PathState>,
     /// Whether MTU detection is supported in this environment
@@ -209,7 +208,6 @@ pub struct Connection {
     //
     // ACK frequency
     //
-    // TODO(flub): This might also have to be per-path :(
     ack_frequency: AckFrequencyState,
 
     //
@@ -735,9 +733,6 @@ impl Connection {
             // From here on, we've determined that a packet will definitely be sent.
             //
 
-            // TODO(flub): If this is a backup path and have_available_path is true, we
-            //     should only send can_send.path_exclusive frames.
-
             if self.spaces[SpaceId::Initial].crypto.is_some()
                 && space_id == SpaceId::Handshake
                 && self.side.is_client()
@@ -1037,7 +1032,11 @@ impl Connection {
             };
             builder.finish_and_track(now, self, path_id, sent_frames, false);
 
-            self.stats.path.sent_plpmtud_probes += 1;
+            self.stats
+                .paths
+                .entry(path_id)
+                .or_default()
+                .sent_plpmtud_probes += 1;
 
             trace!(?probe_size, "writing MTUD probe");
         }
@@ -1437,15 +1436,14 @@ impl Connection {
     }
 
     /// Returns connection statistics
-    // TODO(@divma): also completely wrong
-    pub fn stats(&self) -> ConnectionStats {
-        let mut stats = self.stats;
-        let path_0 = self.path_data(PathId::default());
-        stats.path.rtt = path_0.rtt.get();
-        stats.path.cwnd = path_0.congestion.window();
-        stats.path.current_mtu = path_0.mtud.current_mtu();
-
-        stats
+    pub fn stats(&mut self) -> ConnectionStats {
+        for (path_id, path) in self.paths.iter() {
+            let stats = self.stats.paths.entry(*path_id).or_default();
+            stats.rtt = path.data.rtt.get();
+            stats.cwnd = path.data.congestion.window();
+            stats.current_mtu = path.data.mtud.current_mtu();
+        }
+        self.stats.clone()
     }
 
     /// Ping the remote endpoint
@@ -1803,7 +1801,7 @@ impl Connection {
             }
             Ok(false) => {}
             Ok(true) => {
-                self.stats.path.congestion_events += 1;
+                self.stats.paths.entry(path).or_default().congestion_events += 1;
                 self.path_data_mut(path).congestion.on_congestion_event(
                     now,
                     largest_sent_time,
@@ -2003,8 +2001,9 @@ impl Connection {
             let largest_lost_sent =
                 self.spaces[pn_space].for_path(path_id).sent_packets[&largest_lost].time_sent;
             self.lost_packets += lost_packets.len() as u64;
-            self.stats.path.lost_packets += lost_packets.len() as u64;
-            self.stats.path.lost_bytes += size_of_lost_packets;
+            let path_stats = self.stats.paths.entry(path_id).or_default();
+            path_stats.lost_packets += lost_packets.len() as u64;
+            path_stats.lost_bytes += size_of_lost_packets;
             trace!(
                 "packets lost: {:?}, bytes lost: {}",
                 lost_packets, size_of_lost_packets
@@ -2031,7 +2030,11 @@ impl Connection {
                 if let Some(max_datagram_size) = self.datagrams().max_size() {
                     self.datagrams.drop_oversized(max_datagram_size);
                 }
-                self.stats.path.black_holes_detected += 1;
+                self.stats
+                    .paths
+                    .entry(path_id)
+                    .or_default()
+                    .black_holes_detected += 1;
             }
 
             // Don't apply congestion penalty for lost ack-only packets
@@ -2040,7 +2043,11 @@ impl Connection {
 
             if lost_ack_eliciting {
                 // TODO(@divma): needs fixing
-                self.stats.path.congestion_events += 1;
+                self.stats
+                    .paths
+                    .entry(path_id)
+                    .or_default()
+                    .congestion_events += 1;
                 self.path_data_mut(path_id).congestion.on_congestion_event(
                     now,
                     largest_lost_sent,
@@ -2059,7 +2066,11 @@ impl Connection {
             // therefore must not have been removed yet
             self.remove_in_flight(path_id, packet, &info);
             self.path_data_mut(path_id).mtud.on_probe_lost();
-            self.stats.path.lost_plpmtud_probes += 1;
+            self.stats
+                .paths
+                .entry(path_id)
+                .or_default()
+                .lost_plpmtud_probes += 1;
         }
     }
 

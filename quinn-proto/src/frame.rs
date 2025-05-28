@@ -230,7 +230,6 @@ impl Frame {
             StreamsBlocked { dir: Dir::Uni, .. } => FrameType::STREAMS_BLOCKED_UNI,
             StopSending { .. } => FrameType::STOP_SENDING,
             RetireConnectionId { .. } => FrameType::RETIRE_CONNECTION_ID,
-            // TODO(@divma): wth?
             Ack(_) => FrameType::ACK,
             PathAck(_) => FrameType::PATH_ACK,
             Stream(ref x) => {

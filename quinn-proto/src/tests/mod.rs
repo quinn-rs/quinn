@@ -2386,14 +2386,16 @@ fn connect_lost_mtu_probes_do_not_trigger_congestion_control() {
     let server_stats = pair.server_conn_mut(server_ch).stats();
 
     // Sanity check (all MTU probes should have been lost)
-    assert_eq!(client_stats.path.sent_plpmtud_probes, 9);
-    assert_eq!(client_stats.path.lost_plpmtud_probes, 9);
-    assert_eq!(server_stats.path.sent_plpmtud_probes, 9);
-    assert_eq!(server_stats.path.lost_plpmtud_probes, 9);
+    let client_path_stats = client_stats.paths.get(&PathId::ZERO).unwrap();
+    assert_eq!(client_path_stats.sent_plpmtud_probes, 9);
+    assert_eq!(client_path_stats.lost_plpmtud_probes, 9);
+    let server_path_stats = server_stats.paths.get(&PathId::ZERO).unwrap();
+    assert_eq!(server_path_stats.sent_plpmtud_probes, 9);
+    assert_eq!(server_path_stats.lost_plpmtud_probes, 9);
 
     // No congestion events
-    assert_eq!(client_stats.path.congestion_events, 0);
-    assert_eq!(server_stats.path.congestion_events, 0);
+    assert_eq!(client_path_stats.congestion_events, 0);
+    assert_eq!(server_path_stats.congestion_events, 0);
 }
 
 #[test]
@@ -2491,13 +2493,17 @@ fn connect_runs_mtud_again_after_600_seconds() {
 
     // Sanity check: the mtu has been discovered
     let client_conn = pair.client_conn_mut(client_ch);
+    let client_stats = client_conn.stats();
+    let client_path_stats = client_stats.paths.get(&PathId::ZERO).unwrap();
     assert_eq!(client_conn.path_mtu(), 1389);
-    assert_eq!(client_conn.stats().path.sent_plpmtud_probes, 5);
-    assert_eq!(client_conn.stats().path.lost_plpmtud_probes, 3);
+    assert_eq!(client_path_stats.sent_plpmtud_probes, 5);
+    assert_eq!(client_path_stats.lost_plpmtud_probes, 3);
     let server_conn = pair.server_conn_mut(server_ch);
+    let server_stats = server_conn.stats();
+    let server_path_stats = server_stats.paths.get(&PathId::ZERO).unwrap();
     assert_eq!(server_conn.path_mtu(), 1389);
-    assert_eq!(server_conn.stats().path.sent_plpmtud_probes, 5);
-    assert_eq!(server_conn.stats().path.lost_plpmtud_probes, 3);
+    assert_eq!(server_path_stats.sent_plpmtud_probes, 5);
+    assert_eq!(server_path_stats.lost_plpmtud_probes, 3);
 
     // Sanity check: the mtu does not change after the fact, even though the link now supports a
     // higher udp payload size
@@ -2549,9 +2555,10 @@ fn blackhole_after_mtu_change_repairs_itself() {
 
     // Sanity checks (black hole detected after 3 lost packets)
     let client_stats = pair.client_conn_mut(client_ch).stats();
-    assert!(client_stats.path.lost_packets >= 3);
-    assert!(client_stats.path.congestion_events >= 3);
-    assert_eq!(client_stats.path.black_holes_detected, 1);
+    let client_path_stats = client_stats.paths.get(&PathId::ZERO).unwrap();
+    assert!(client_path_stats.lost_packets >= 3);
+    assert!(client_path_stats.congestion_events >= 3);
+    assert_eq!(client_path_stats.black_holes_detected, 1);
 }
 
 #[test]
@@ -2562,7 +2569,8 @@ fn mtud_probes_include_immediate_ack() {
     pair.drive();
 
     let stats = pair.client_conn_mut(client_ch).stats();
-    assert_eq!(stats.path.sent_plpmtud_probes, 4);
+    let path_stats = stats.paths.get(&PathId::ZERO).unwrap();
+    assert_eq!(path_stats.sent_plpmtud_probes, 4);
 
     // Each probe contains a ping and an immediate ack
     assert_eq!(stats.frame_tx.ping, 4);
@@ -2786,8 +2794,10 @@ fn single_ack_eliciting_packet_with_ce_bit_triggers_immediate_ack() {
         stats_after_ping.frame_rx.acks - stats_after_connect.frame_rx.acks,
         1
     );
+    let after_ping_path_stats = stats_after_ping.paths.get(&PathId::ZERO).unwrap();
+    let after_connect_path_stats = stats_after_connect.paths.get(&PathId::ZERO).unwrap();
     assert_eq!(
-        stats_after_ping.path.congestion_events - stats_after_connect.path.congestion_events,
+        after_ping_path_stats.congestion_events - after_connect_path_stats.congestion_events,
         1
     );
 }
