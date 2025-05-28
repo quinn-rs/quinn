@@ -1625,16 +1625,10 @@ impl Connection {
         &mut self,
         now: Instant,
         space: SpaceId,
-        path: PathId,
         ack: frame::Ack,
     ) -> Result<(), TransportError> {
-        // TODO(dig): should this be a different error?
-        debug_assert_eq!(
-            path,
-            PathId::ZERO,
-            "regular acks must only be used for Path 0"
-        );
-
+        // All ACKs are referencing path 0
+        let path = PathId::ZERO;
         self.inner_on_ack_received(now, space, path, ack)
     }
 
@@ -1642,11 +1636,9 @@ impl Connection {
         &mut self,
         now: Instant,
         space: SpaceId,
-        _path: PathId,
         path_ack: frame::PathAck,
     ) -> Result<(), TransportError> {
         let (ack, path) = path_ack.into_ack();
-
         self.inner_on_ack_received(now, space, path, ack)
     }
 
@@ -3052,10 +3044,10 @@ impl Connection {
                     self.read_crypto(packet.header.space(), &frame, payload_len)?;
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(now, packet.header.space(), path_id, ack)?;
+                    self.on_ack_received(now, packet.header.space(), ack)?;
                 }
                 Frame::PathAck(ack) => {
-                    self.on_path_ack_received(now, packet.header.space(), path_id, ack)?;
+                    self.on_path_ack_received(now, packet.header.space(), ack)?;
                 }
                 Frame::Close(reason) => {
                     self.error = Some(reason.into());
@@ -3159,10 +3151,10 @@ impl Connection {
                     }
                 }
                 Frame::Ack(ack) => {
-                    self.on_ack_received(now, SpaceId::Data, path_id, ack)?;
+                    self.on_ack_received(now, SpaceId::Data, ack)?;
                 }
                 Frame::PathAck(ack) => {
-                    self.on_path_ack_received(now, SpaceId::Data, path_id, ack)?;
+                    self.on_path_ack_received(now, SpaceId::Data, ack)?;
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::Close(reason) => {
