@@ -6,6 +6,7 @@ use thiserror::Error;
 use crate::{
     ConnectionId,
     coding::{self, BufExt, BufMutExt},
+    connection::DatagramBuffer,
     crypto,
 };
 
@@ -281,7 +282,11 @@ pub(crate) enum Header {
 }
 
 impl Header {
-    pub(crate) fn encode(&self, w: &mut Vec<u8>) -> PartialEncode {
+    /// Encodes the QUIC packet header into the buffer
+    ///
+    /// The current position of the buffer is stored in the [`PartialEncode`] as the start
+    /// of the packet in the buffer.
+    pub(crate) fn encode(&self, w: &mut DatagramBuffer<'_>) -> PartialEncode {
         use Header::*;
         let start = w.len();
         match *self {
@@ -938,8 +943,10 @@ mod tests {
     #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
     #[test]
     fn header_encoding() {
-        use crate::Side;
+        use std::ops::Deref;
+
         use crate::crypto::rustls::{initial_keys, initial_suite_from_provider};
+        use crate::{MIN_INITIAL_SIZE, Side};
         #[cfg(all(feature = "rustls-aws-lc-rs", not(feature = "rustls-ring")))]
         use rustls::crypto::aws_lc_rs::default_provider;
         #[cfg(feature = "rustls-ring")]
@@ -952,6 +959,7 @@ mod tests {
         let suite = initial_suite_from_provider(&std::sync::Arc::new(provider)).unwrap();
         let client = initial_keys(Version::V1, dcid, Side::Client, &suite);
         let mut buf = Vec::new();
+        let mut buf = DatagramBuffer::new(&mut buf, 0, MIN_INITIAL_SIZE.into());
         let header = Header::Initial(InitialHeader {
             number: PacketNumber::U8(0),
             src_cid: ConnectionId::new(&[]),
@@ -960,15 +968,14 @@ mod tests {
             version: crate::DEFAULT_SUPPORTED_VERSIONS[0],
         });
         let encode = header.encode(&mut buf);
-        let header_len = buf.len();
-        buf.resize(header_len + 16 + client.packet.local.tag_len(), 0);
+        buf.put_bytes(0, 16 + client.packet.local.tag_len());
         encode.finish(
             &mut buf,
             &*client.header.local,
             Some((0, &*client.packet.local)),
         );
 
-        for byte in &buf {
+        for byte in buf.deref() {
             print!("{byte:02x}");
         }
         println!();
@@ -983,7 +990,7 @@ mod tests {
         let server = initial_keys(Version::V1, dcid, Side::Server, &suite);
         let supported_versions = crate::DEFAULT_SUPPORTED_VERSIONS.to_vec();
         let decode = PartialDecode::new(
-            buf.as_slice().into(),
+            buf.deref().into(),
             &FixedLengthConnectionIdParser::new(0),
             &supported_versions,
             false,
