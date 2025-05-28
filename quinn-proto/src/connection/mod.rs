@@ -1621,8 +1621,6 @@ impl Connection {
             && self.peer_params.initial_max_path_id.is_some()
     }
 
-    // TODO(flub): Why does this take PathId?  Which PathId is it, the one over which the
-    //    acks were received, or the one from inside the PATH_ACKS frame?
     fn on_ack_received(
         &mut self,
         now: Instant,
