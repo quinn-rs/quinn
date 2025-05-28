@@ -539,20 +539,6 @@ impl Connection {
         // What about PATH_CHALLENGE or PATH_RESPONSE?  We need to check if we need to send
         // any of those.
 
-        // TODO(flub): We only have PathId(0) for now.  For multipath we need to figure
-        //    out which path we want to send the packet on before we start building it.
-        let path_id = PathId(0);
-
-        let mut buf = TransmitBuf::new(
-            buf,
-            max_datagrams,
-            self.path_data(path_id).current_mtu().into(),
-        );
-
-        if let Some(challenge) = self.send_prev_path_challenge(now, &mut buf, path_id) {
-            return Some(challenge);
-        }
-
         // Check whether we need to send a close message
         let close = match self.state {
             State::Drained => {
@@ -602,10 +588,6 @@ impl Connection {
         let mut last_packet_number = None;
 
         let mut path_id = *self.paths.first_key_value().expect("one path must exist").0;
-        let mut space_id = match path_id {
-            PathId(0) => SpaceId::Initial,
-            _ => SpaceId::Data,
-        };
 
         // If there is any available path we only want to send frames to a backup path that
         // must be sent on that path.
@@ -614,15 +596,29 @@ impl Connection {
             .values()
             .any(|path| path.data.status == PathStatus::Available);
 
+        // Setup for the first path_id
+        let mut transmit = TransmitBuf::new(
+            buf,
+            max_datagrams,
+            self.path_data(path_id).current_mtu().into(),
+        );
+        if let Some(challenge) = self.send_prev_path_challenge(now, &mut transmit, path_id) {
+            return Some(challenge);
+        }
+        let mut space_id = match path_id {
+            PathId(0) => SpaceId::Initial,
+            _ => SpaceId::Data,
+        };
+
         loop {
             // Determine if anything can be sent in this packet number space (SpaceId +
             // PathId).
-            let max_packet_size = if buf.datagram_remaining_mut() > 0 {
+            let max_packet_size = if transmit.datagram_remaining_mut() > 0 {
                 // We are trying to coalesce another packet into this datagram.
-                buf.datagram_remaining_mut()
+                transmit.datagram_remaining_mut()
             } else {
                 // A new datagram needs to be started.
-                buf.segment_size()
+                transmit.segment_size()
             };
             let can_send = self.space_can_send(space_id, path_id, max_packet_size, close);
             let path_should_send = {
@@ -644,9 +640,9 @@ impl Connection {
                 continue;
             }
 
-            let send_blocked = if path_should_send && buf.datagram_remaining_mut() == 0 {
+            let send_blocked = if path_should_send && transmit.datagram_remaining_mut() == 0 {
                 // Only check congestion control if a new datagram is needed.
-                self.path_congestion_check(space_id, path_id, &buf, &can_send, now)
+                self.path_congestion_check(space_id, path_id, &transmit, &can_send, now)
             } else {
                 PathBlocked::No
             };
@@ -665,7 +661,7 @@ impl Connection {
 
                 // If there are any datagrams in the transmit, packets for another path can
                 // not be built.
-                if buf.num_datagrams() > 0 {
+                if transmit.num_datagrams() > 0 {
                     break;
                 }
 
@@ -675,6 +671,15 @@ impl Connection {
                         trace!(?space_id, ?path_id, ?next_path_id, "trying next path");
                         path_id = *next_path_id;
                         space_id = SpaceId::Data;
+
+                        // update per path state
+                        transmit.set_segment_size(self.path_data(path_id).current_mtu().into());
+                        if let Some(challenge) =
+                            self.send_prev_path_challenge(now, &mut transmit, path_id)
+                        {
+                            return Some(challenge);
+                        }
+
                         continue;
                     }
                     None => {
@@ -686,14 +691,14 @@ impl Connection {
             }
 
             // If the datagram is full, we need to start a new one.
-            if buf.datagram_remaining_mut() == 0 {
-                if buf.num_datagrams() >= buf.max_datagrams() {
+            if transmit.datagram_remaining_mut() == 0 {
+                if transmit.num_datagrams() >= transmit.max_datagrams() {
                     // No more datagrams allowed
                     break;
                 }
 
                 match self.spaces[space_id].for_path(path_id).loss_probes {
-                    0 => buf.start_new_datagram(),
+                    0 => transmit.start_new_datagram(),
                     _ => {
                         // We need something to send for a tail-loss probe.
                         let request_immediate_ack =
@@ -709,21 +714,21 @@ impl Connection {
                         // Clamp the datagram to at most the minimum MTU to ensure that loss
                         // probes can get through and enable recovery even if the path MTU
                         // has shrank unexpectedly.
-                        buf.start_new_datagram_with_size(std::cmp::min(
+                        transmit.start_new_datagram_with_size(std::cmp::min(
                             usize::from(INITIAL_MTU),
-                            buf.segment_size(),
+                            transmit.segment_size(),
                         ));
                     }
                 }
-                trace!(count = buf.num_datagrams(), "new datagram started");
+                trace!(count = transmit.num_datagrams(), "new datagram started");
                 coalesce = true;
                 pad_datagram = false;
             }
 
             // If coalescing another packet into the existing datagram, there should
             // still be enough space for a whole packet.
-            if buf.datagram_start_offset() < buf.len() {
-                debug_assert!(buf.datagram_remaining_mut() >= MIN_PACKET_SPACE);
+            if transmit.datagram_start_offset() < transmit.len() {
+                debug_assert!(transmit.datagram_remaining_mut() >= MIN_PACKET_SPACE);
             }
 
             //
@@ -753,7 +758,7 @@ impl Connection {
                 space_id,
                 path_id,
                 self.rem_cids.get(&path_id).unwrap().active(),
-                &mut buf,
+                &mut transmit,
                 can_send.other,
                 self,
             )?;
@@ -855,10 +860,10 @@ impl Connection {
                         },
                         false,
                     );
-                    self.stats.udp_tx.on_sent(1, buf.len());
+                    self.stats.udp_tx.on_sent(1, transmit.len());
                     return Some(Transmit {
                         destination: remote,
-                        size: buf.len(),
+                        size: transmit.len(),
                         ecn: None,
                         segment_size: None,
                         src_ip: self.local_ip,
@@ -969,8 +974,8 @@ impl Connection {
 
                 builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
 
-                if buf.num_datagrams() == 1 {
-                    buf.clip_datagram_size();
+                if transmit.num_datagrams() == 1 {
+                    transmit.clip_datagram_size();
                 }
             }
         }
@@ -980,15 +985,15 @@ impl Connection {
             // be the one from the highest packet space.
             self.path_data_mut(path_id).congestion.on_sent(
                 now,
-                buf.len() as u64,
+                transmit.len() as u64,
                 last_packet_number,
             );
         }
 
-        self.app_limited = buf.is_empty() && !congestion_blocked;
+        self.app_limited = transmit.is_empty() && !congestion_blocked;
 
         // Send MTU probe if necessary
-        if buf.is_empty() && self.state.is_established() {
+        if transmit.is_empty() && self.state.is_established() {
             let space_id = SpaceId::Data;
             let next_pn = self.spaces[space_id].for_path(path_id).peek_tx_number();
             let probe_size = self
@@ -996,10 +1001,10 @@ impl Connection {
                 .mtud
                 .poll_transmit(now, next_pn)?;
 
-            debug_assert_eq!(buf.num_datagrams(), 0);
-            buf.start_new_datagram_with_size(probe_size as usize);
+            debug_assert_eq!(transmit.num_datagrams(), 0);
+            transmit.start_new_datagram_with_size(probe_size as usize);
 
-            debug_assert_eq!(buf.datagram_start_offset(), 0);
+            debug_assert_eq!(transmit.datagram_start_offset(), 0);
             // TODO(flub): I'm not particularly happy about this unwrap.  But let's leave it
             //    for now until more stuff is settled.  We probably should check earlier on
             //    in poll_transmit that we have a valid CID to use.
@@ -1008,7 +1013,7 @@ impl Connection {
                 space_id,
                 path_id,
                 self.rem_cids.get(&path_id).unwrap().active(),
-                &mut buf,
+                &mut transmit,
                 true,
                 self,
             )?;
@@ -1037,34 +1042,35 @@ impl Connection {
             trace!(?probe_size, "writing MTUD probe");
         }
 
-        if buf.is_empty() {
+        if transmit.is_empty() {
             return None;
         }
 
         trace!(
-            segment_size = buf.segment_size(),
-            last_datagram_len = buf.len() % buf.segment_size(),
+            segment_size = transmit.segment_size(),
+            last_datagram_len = transmit.len() % transmit.segment_size(),
             "sending {} bytes in {} datagrams",
-            buf.len(),
-            buf.num_datagrams()
+            transmit.len(),
+            transmit.num_datagrams()
         );
-        self.path_data_mut(path_id).inc_total_sent(buf.len() as u64);
+        self.path_data_mut(path_id)
+            .inc_total_sent(transmit.len() as u64);
 
         self.stats
             .udp_tx
-            .on_sent(buf.num_datagrams() as u64, buf.len());
+            .on_sent(transmit.num_datagrams() as u64, transmit.len());
 
         Some(Transmit {
             destination: self.path_data(path_id).remote,
-            size: buf.len(),
+            size: transmit.len(),
             ecn: if self.path_data(path_id).sending_ecn {
                 Some(EcnCodepoint::Ect0)
             } else {
                 None
             },
-            segment_size: match buf.num_datagrams() {
+            segment_size: match transmit.num_datagrams() {
                 1 => None,
-                _ => Some(buf.segment_size()),
+                _ => Some(transmit.segment_size()),
             },
             src_ip: self.local_ip,
         })
@@ -1306,12 +1312,9 @@ impl Connection {
                 // Update Timer::PushNewCid
                 if self
                     .timers
-                    .get(Timer::PushNewCid(path_id))
+                    .get(Timer::PushNewCid)
                     .map_or(true, |x| x <= now)
                 {
-                    // TODO(@divma): check this. The path_id for which this needs to be updated is
-                    // known, so the inner logic of this might not be doing anything. I'm going to
-                    // leave it like this for now, but to me, it seems wrong
                     self.reset_cid_retirement();
                 }
             }
@@ -1362,31 +1365,28 @@ impl Connection {
                     path.data.challenge_pending = false;
                 }
                 Timer::Pacing(path_id) => trace!(?path_id, "pacing timer expired"),
-                Timer::PushNewCid(_path_id) => {
-                    // TODO(@divma): same question, use path_id or trust on number of calls =
-                    // number of queued path_ids?
-                    // NOTE: this seems to work from tests (multipath_cid_rotation)
-                    match self.next_cid_retirement() {
-                        None => error!("Timer::PushNewCid fired without a retired CID"),
-                        Some((path_id, _when)) => {
-                            match self.local_cid_state.get_mut(&path_id) {
-                                None => error!(?path_id, "No local CID state for path"),
-                                Some(cid_state) => {
-                                    // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
-                                    let num_new_cid = cid_state.on_cid_timeout().into();
-                                    if !self.state.is_closed() {
-                                        trace!(
-                                            "push a new CID to peer RETIRE_PRIOR_TO field {}",
-                                            cid_state.retire_prior_to()
-                                        );
-                                        self.endpoint_events.push_back(
-                                            EndpointEventInner::NeedIdentifiers(
-                                                path_id,
-                                                now,
-                                                num_new_cid,
-                                            ),
-                                        );
-                                    }
+                Timer::PushNewCid => {
+                    while let Some((path_id, when)) = self.next_cid_retirement() {
+                        if when > now {
+                            break;
+                        }
+                        match self.local_cid_state.get_mut(&path_id) {
+                            None => error!(?path_id, "No local CID state for path"),
+                            Some(cid_state) => {
+                                // Update `retire_prior_to` field in NEW_CONNECTION_ID frame
+                                let num_new_cid = cid_state.on_cid_timeout().into();
+                                if !self.state.is_closed() {
+                                    trace!(
+                                        "push a new CID to peer RETIRE_PRIOR_TO field {}",
+                                        cid_state.retire_prior_to()
+                                    );
+                                    self.endpoint_events.push_back(
+                                        EndpointEventInner::NeedIdentifiers(
+                                            path_id,
+                                            now,
+                                            num_new_cid,
+                                        ),
+                                    );
                                 }
                             }
                         }
@@ -1624,6 +1624,35 @@ impl Connection {
     // TODO(flub): Why does this take PathId?  Which PathId is it, the one over which the
     //    acks were received, or the one from inside the PATH_ACKS frame?
     fn on_ack_received(
+        &mut self,
+        now: Instant,
+        space: SpaceId,
+        path: PathId,
+        ack: frame::Ack,
+    ) -> Result<(), TransportError> {
+        // TODO(dig): should this be a different error?
+        debug_assert_eq!(
+            path,
+            PathId::ZERO,
+            "regular acks must only be used for Path 0"
+        );
+
+        self.inner_on_ack_received(now, space, path, ack)
+    }
+
+    fn on_path_ack_received(
+        &mut self,
+        now: Instant,
+        space: SpaceId,
+        _path: PathId,
+        path_ack: frame::PathAck,
+    ) -> Result<(), TransportError> {
+        let (ack, path) = path_ack.into_ack();
+
+        self.inner_on_ack_received(now, space, path, ack)
+    }
+
+    fn inner_on_ack_received(
         &mut self,
         now: Instant,
         space: SpaceId,
@@ -2252,8 +2281,8 @@ impl Connection {
 
     /// Sets the timer for when a previously issued CID should be retired next.
     fn reset_cid_retirement(&mut self) {
-        if let Some((path, t)) = self.next_cid_retirement() {
-            self.timers.set(Timer::PushNewCid(path), t);
+        if let Some((_path, t)) = self.next_cid_retirement() {
+            self.timers.set(Timer::PushNewCid, t);
         }
     }
 
@@ -3023,12 +3052,16 @@ impl Connection {
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, packet.header.space(), path_id, ack)?;
                 }
+                Frame::PathAck(ack) => {
+                    self.on_path_ack_received(now, packet.header.space(), path_id, ack)?;
+                }
                 Frame::Close(reason) => {
                     self.error = Some(reason.into());
                     self.state = State::Draining;
                     return Ok(());
                 }
                 _ => {
+                    dbg!(&frame);
                     let mut err =
                         TransportError::PROTOCOL_VIOLATION("illegal frame type in handshake");
                     err.frame = Some(frame.ty());
@@ -3125,6 +3158,9 @@ impl Connection {
                 }
                 Frame::Ack(ack) => {
                     self.on_ack_received(now, SpaceId::Data, path_id, ack)?;
+                }
+                Frame::PathAck(ack) => {
+                    self.on_path_ack_received(now, SpaceId::Data, path_id, ack)?;
                 }
                 Frame::Padding | Frame::Ping => {}
                 Frame::Close(reason) => {
@@ -4019,13 +4055,15 @@ impl Connection {
             let ack_delay_exp = TransportParameters::default().ack_delay_exponent;
             let delay = delay_micros >> ack_delay_exp.into_inner();
 
-            trace!("ACK {:?}, Delay = {}us", ranges, delay_micros);
-            let path_id = match send_path_acks {
-                true => Some(*path_id),
-                false => None,
-            };
-            frame::Ack::encode(path_id, delay as _, ranges, ecn.as_ref(), buf);
-            stats.frame_tx.acks += 1;
+            if send_path_acks {
+                trace!("PATH_ACK {:?}, Delay = {}us", ranges, delay_micros);
+                frame::PathAck::encode(*path_id, delay as _, ranges, ecn.as_ref(), buf);
+                stats.frame_tx.path_acks += 1;
+            } else {
+                trace!("ACK {:?}, Delay = {}us", ranges, delay_micros);
+                frame::Ack::encode(delay as _, ranges, ecn.as_ref(), buf);
+                stats.frame_tx.acks += 1;
+            }
         }
     }
 
@@ -4246,7 +4284,7 @@ impl Connection {
             .filter(|entry| {
                 !matches!(
                     entry.timer,
-                    Timer::KeepAlive(_) | Timer::PushNewCid(_) | Timer::KeyDiscard
+                    Timer::KeepAlive(_) | Timer::PushNewCid | Timer::KeyDiscard
                 )
             })
             .min_by_key(|entry| entry.time)

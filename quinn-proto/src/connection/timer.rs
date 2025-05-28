@@ -23,7 +23,7 @@ pub(crate) enum Timer {
     /// When pacing will allow us to send a packet
     Pacing(PathId),
     /// When to invalidate old CID and proactively push new one via NEW_CONNECTION_ID frame
-    PushNewCid(PathId),
+    PushNewCid,
     /// When to send an immediate ACK if there are unacked ack-eliciting packets of the peer
     MaxAckDelay,
 }

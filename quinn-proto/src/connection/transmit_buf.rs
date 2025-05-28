@@ -68,6 +68,15 @@ impl<'a> TransmitBuf<'a> {
         }
     }
 
+    pub(super) fn set_segment_size(&mut self, mtu: usize) {
+        debug_assert!(
+            self.datagram_start == 0 && self.buf_capacity == 0 && self.num_datagrams == 0,
+            "can only change the segment size if nothing has been written yet"
+        );
+
+        self.segment_size = mtu;
+    }
+
     /// Starts a datagram with a custom datagram size
     ///
     /// This is a specialized version of [`TransmitBuf::start_new_datagram`] which sets the

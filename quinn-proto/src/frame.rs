@@ -160,6 +160,7 @@ pub(crate) enum Frame {
     Padding,
     Ping,
     Ack(Ack),
+    PathAck(PathAck),
     ResetStream(ResetStream),
     StopSending(StopSending),
     Crypto(Crypto),
@@ -231,6 +232,7 @@ impl Frame {
             RetireConnectionId { .. } => FrameType::RETIRE_CONNECTION_ID,
             // TODO(@divma): wth?
             Ack(_) => FrameType::ACK,
+            PathAck(_) => FrameType::PATH_ACK,
             Stream(ref x) => {
                 let mut ty = *STREAM_TYS.start();
                 if x.fin {
@@ -441,10 +443,95 @@ impl ApplicationClose {
     }
 }
 
-// TODO(@divma): for now reusing the struct, good or bad idea?
+#[derive(Clone, Eq, PartialEq)]
+pub struct PathAck {
+    pub path_id: PathId,
+    pub largest: u64,
+    pub delay: u64,
+    pub additional: Bytes,
+    pub ecn: Option<EcnCounts>,
+}
+
+impl fmt::Debug for PathAck {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut ranges = "[".to_string();
+        let mut first = true;
+        for range in self.into_iter() {
+            if !first {
+                ranges.push(',');
+            }
+            write!(ranges, "{range:?}").unwrap();
+            first = false;
+        }
+        ranges.push(']');
+
+        f.debug_struct("PathAck")
+            .field("path_id", &self.path_id)
+            .field("largest", &self.largest)
+            .field("delay", &self.delay)
+            .field("ecn", &self.ecn)
+            .field("ranges", &ranges)
+            .finish()
+    }
+}
+
+impl<'a> IntoIterator for &'a PathAck {
+    type Item = RangeInclusive<u64>;
+    type IntoIter = AckIter<'a>;
+
+    fn into_iter(self) -> AckIter<'a> {
+        AckIter::new(self.largest, &self.additional[..])
+    }
+}
+
+impl PathAck {
+    pub fn encode<W: BufMut>(
+        path_id: PathId,
+        delay: u64,
+        ranges: &ArrayRangeSet,
+        ecn: Option<&EcnCounts>,
+        buf: &mut W,
+    ) {
+        let mut rest = ranges.iter().rev();
+        let first = rest.next().unwrap();
+        let largest = first.end - 1;
+        let first_size = first.end - first.start;
+        let kind = match ecn.is_some() {
+            true => FrameType::PATH_ACK_ECN,
+            false => FrameType::PATH_ACK,
+        };
+        buf.write(kind);
+        buf.write(path_id);
+        buf.write_var(largest);
+        buf.write_var(delay);
+        buf.write_var(ranges.len() as u64 - 1);
+        buf.write_var(first_size - 1);
+        let mut prev = first.start;
+        for block in rest {
+            let size = block.end - block.start;
+            buf.write_var(prev - block.end - 1);
+            buf.write_var(size - 1);
+            prev = block.start;
+        }
+        if let Some(x) = ecn {
+            x.encode(buf)
+        }
+    }
+
+    pub fn into_ack(self) -> (Ack, PathId) {
+        let ack = Ack {
+            largest: self.largest,
+            delay: self.delay,
+            additional: self.additional,
+            ecn: self.ecn,
+        };
+
+        (ack, self.path_id)
+    }
+}
+
 #[derive(Clone, Eq, PartialEq)]
 pub struct Ack {
-    pub path_id: Option<PathId>,
     pub largest: u64,
     pub delay: u64,
     pub additional: Bytes,
@@ -465,7 +552,6 @@ impl fmt::Debug for Ack {
         ranges.push(']');
 
         f.debug_struct("Ack")
-            .field("path_id", &self.path_id)
             .field("largest", &self.largest)
             .field("delay", &self.delay)
             .field("ecn", &self.ecn)
@@ -485,7 +571,6 @@ impl<'a> IntoIterator for &'a Ack {
 
 impl Ack {
     pub fn encode<W: BufMut>(
-        path_id: Option<PathId>,
         delay: u64,
         ranges: &ArrayRangeSet,
         ecn: Option<&EcnCounts>,
@@ -495,17 +580,11 @@ impl Ack {
         let first = rest.next().unwrap();
         let largest = first.end - 1;
         let first_size = first.end - first.start;
-        let kind = match (path_id.is_some(), ecn.is_some()) {
-            (true, true) => FrameType::PATH_ACK_ECN,
-            (true, false) => FrameType::PATH_ACK,
-            (false, true) => FrameType::ACK_ECN,
-            (false, false) => FrameType::ACK,
+        let kind = match ecn.is_some() {
+            true => FrameType::ACK_ECN,
+            false => FrameType::ACK,
         };
         buf.write(kind);
-        if let Some(id) = path_id {
-            buf.write(id);
-        }
-
         buf.write_var(largest);
         buf.write_var(delay);
         buf.write_var(ranges.len() as u64 - 1);
@@ -747,17 +826,33 @@ impl Iter {
                     ty == FrameType::PATH_RETIRE_CONNECTION_ID,
                 )?)
             }
-            FrameType::ACK | FrameType::ACK_ECN | FrameType::PATH_ACK | FrameType::PATH_ACK_ECN => {
-                let path_id = if ty == FrameType::PATH_ACK || ty == FrameType::PATH_ACK_ECN {
-                    Some(self.bytes.get()?)
-                } else {
-                    None
-                };
+            FrameType::ACK | FrameType::ACK_ECN => {
                 let largest = self.bytes.get_var()?;
                 let delay = self.bytes.get_var()?;
                 let extra_blocks = self.bytes.get_var()? as usize;
                 let n = scan_ack_blocks(&self.bytes, largest, extra_blocks)?;
                 Frame::Ack(Ack {
+                    delay,
+                    largest,
+                    additional: self.bytes.split_to(n),
+                    ecn: if ty != FrameType::ACK_ECN && ty != FrameType::PATH_ACK_ECN {
+                        None
+                    } else {
+                        Some(EcnCounts {
+                            ect0: self.bytes.get_var()?,
+                            ect1: self.bytes.get_var()?,
+                            ce: self.bytes.get_var()?,
+                        })
+                    },
+                })
+            }
+            FrameType::PATH_ACK | FrameType::PATH_ACK_ECN => {
+                let path_id = self.bytes.get()?;
+                let largest = self.bytes.get_var()?;
+                let delay = self.bytes.get_var()?;
+                let extra_blocks = self.bytes.get_var()? as usize;
+                let n = scan_ack_blocks(&self.bytes, largest, extra_blocks)?;
+                Frame::PathAck(PathAck {
                     path_id,
                     delay,
                     largest,
@@ -1277,7 +1372,7 @@ mod test {
             ect1: 24,
             ce: 12,
         };
-        Ack::encode(None, 42, &ranges, Some(&ECN), &mut buf);
+        Ack::encode(42, &ranges, Some(&ECN), &mut buf);
         let frames = frames(buf);
         assert_eq!(frames.len(), 1);
         match frames[0] {
@@ -1305,14 +1400,14 @@ mod test {
             ect1: 24,
             ce: 12,
         };
-        const PATH_ID: Option<PathId> = Some(PathId(u32::MAX));
-        Ack::encode(PATH_ID, 42, &ranges, Some(&ECN), &mut buf);
+        const PATH_ID: PathId = PathId(u32::MAX);
+        PathAck::encode(PATH_ID, 42, &ranges, Some(&ECN), &mut buf);
         let frames = frames(buf);
         assert_eq!(frames.len(), 1);
         match frames[0] {
-            Frame::Ack(ref ack) => {
+            Frame::PathAck(ref ack) => {
                 assert_eq!(ack.path_id, PATH_ID);
-                let mut packets = ack.iter().flatten().collect::<Vec<_>>();
+                let mut packets = ack.into_iter().flatten().collect::<Vec<_>>();
                 packets.sort_unstable();
                 assert_eq!(&packets[..], PACKETS);
                 assert_eq!(ack.ecn, Some(ECN));

@@ -30,6 +30,7 @@ impl UdpStats {
 #[allow(missing_docs)]
 pub struct FrameStats {
     pub acks: u64,
+    pub path_acks: u64,
     pub ack_frequency: u64,
     pub crypto: u64,
     pub connection_close: u64,
@@ -66,8 +67,8 @@ impl FrameStats {
         match frame {
             Frame::Padding => {}
             Frame::Ping => self.ping += 1,
-            // TODO(@divma): path acks independently?
             Frame::Ack(_) => self.acks += 1,
+            Frame::PathAck(_) => self.path_acks += 1,
             Frame::ResetStream(_) => self.reset_stream += 1,
             Frame::StopSending(_) => self.stop_sending += 1,
             Frame::Crypto(_) => self.crypto += 1,
@@ -119,6 +120,7 @@ impl std::fmt::Debug for FrameStats {
         f.debug_struct("FrameStats")
             .field("ACK", &self.acks)
             .field("ACK_FREQUENCY", &self.ack_frequency)
+            .field("PATH_ACK", &self.path_acks)
             .field("CONNECTION_CLOSE", &self.connection_close)
             .field("CRYPTO", &self.crypto)
             .field("DATA_BLOCKED", &self.data_blocked)
