@@ -202,12 +202,10 @@ pub(crate) enum Frame {
     PathAvailable(PathAvailable),
     #[allow(dead_code)] // TODO(flub)
     MaxPathId(PathId),
-    #[allow(dead_code)] // TODO(flub)
     PathsBlocked(PathId),
     // TODO(flub): We should send this to be spec-compliant, but for ourselves we don't
     // really care because we always issue CIDs.  Perhaps we can get this frame removed
     // again from the spec: https://github.com/quicwg/multipath/issues/500
-    #[allow(dead_code)]
     PathCidsBlocked(PathId),
 }
 
@@ -901,6 +899,7 @@ impl Iter {
             }
             FrameType::MAX_PATH_ID => Frame::MaxPathId(self.bytes.get()?),
             FrameType::PATHS_BLOCKED => Frame::PathsBlocked(self.bytes.get()?),
+            FrameType::PATH_CIDS_BLOCKED => Frame::PathCidsBlocked(self.bytes.get()?),
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {

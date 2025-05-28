@@ -3451,13 +3451,43 @@ impl Connection {
                         ));
                     }
                 }
-                Frame::PathsBlocked(_) => {
-                    // TODO(@divma): do stuff
+                Frame::PathsBlocked(max_path_id) => {
+                    // Receipt of a value of Maximum Path Identifier or Path Identifier that is higher than the local maximum value MUST
+                    // be treated as a connection error of type PROTOCOL_VIOLATION.
+                    // Ref <https://www.ietf.org/archive/id/draft-ietf-quic-multipath-14.html#name-paths_blocked-and-path_cids>
+                    if self.is_multipath_enabled() {
+                        if self.local_max_path_id > max_path_id {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "PATHS_BLOCKED maximum path identifier was larger than local maximum",
+                            ));
+                        }
+                        debug!("received PATHS_BLOCKED({:?})", max_path_id);
+                    } else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received PATHS_BLOCKED frame when not multipath was not negotiated",
+                        ));
+                    }
                 }
-                Frame::PathCidsBlocked(_) => {
+                Frame::PathCidsBlocked(path_id) => {
                     // Nothing to do.  This is recorded in the frame stats, but otherwise we
                     // always issue all CIDs we're allowed to issue, so either this is an
                     // impatient peer or a bug on our side.
+
+                    // Receipt of a value of Maximum Path Identifier or Path Identifier that is higher than the local maximum value MUST
+                    // be treated as a connection error of type PROTOCOL_VIOLATION.
+                    // Ref <https://www.ietf.org/archive/id/draft-ietf-quic-multipath-14.html#name-paths_blocked-and-path_cids>
+                    if self.is_multipath_enabled() {
+                        if self.local_max_path_id > path_id {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "PATH_CIDS_BLOCKED path identifier was larger than local maximum",
+                            ));
+                        }
+                        debug!("received PATH_CIDS_BLOCKED({:?})", path_id);
+                    } else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received PATH_CIDS_BLOCKED frame when not multipath was not negotiated",
+                        ));
+                    }
                 }
             }
         }
