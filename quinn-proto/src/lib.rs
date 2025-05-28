@@ -15,9 +15,8 @@
 #![cfg_attr(not(fuzzing), warn(missing_docs))]
 #![cfg_attr(test, allow(dead_code))]
 // Fixes welcome:
-#![warn(unreachable_pub)]
-#![allow(clippy::cognitive_complexity)]
 #![allow(clippy::too_many_arguments)]
+#![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
 use std::{

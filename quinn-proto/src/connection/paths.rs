@@ -98,6 +98,8 @@ pub(super) struct PathData {
     pub(super) last_observed_addr_report: Option<ObservedAddr>,
     /// The QUIC-MULTIPATH path status
     pub(super) status: PathStatus,
+    /// The sequence number of the received PATH_AVAILABLE and PATH_BACKUP frames.
+    pub(super) status_seq_no: Option<VarInt>,
     /// Number of the first packet sent on this path
     ///
     /// Used to determine whether a packet was sent on an earlier path. Insufficient to determine if
@@ -156,6 +158,7 @@ impl PathData {
             observed_addr_sent: false,
             last_observed_addr_report: None,
             status: Default::default(),
+            status_seq_no: None,
             first_packet: None,
             pto_count: 0,
         }
@@ -185,6 +188,7 @@ impl PathData {
             observed_addr_sent: false,
             last_observed_addr_report: None,
             status: prev.status,
+            status_seq_no: prev.status_seq_no,
             first_packet: None,
             pto_count: 0,
         }
@@ -487,7 +491,6 @@ pub(super) enum PathStatus {
     ///
     /// If the max_idle_timeout is specified the path will be kept alive so that it does not
     /// expire.
-    #[allow(dead_code)] // TODO(flub): We should eventually have code that uses this
     Backup,
 }
 

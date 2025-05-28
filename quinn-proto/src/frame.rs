@@ -198,7 +198,6 @@ pub(crate) enum Frame {
     ObservedAddr(ObservedAddr),
     #[allow(dead_code)] // TODO(flub)
     PathAbandon(PathAbandon),
-    #[allow(dead_code)] // TODO(flub)
     PathAvailable(PathAvailable),
     #[allow(dead_code)] // TODO(flub)
     MaxPathId(PathId),
@@ -1310,9 +1309,9 @@ impl PathAbandon {
 // TODO(@divma): split?
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct PathAvailable {
-    is_backup: bool,
-    path_id: PathId,
-    status_seq_no: VarInt,
+    pub(crate) is_backup: bool,
+    pub(crate) path_id: PathId,
+    pub(crate) status_seq_no: VarInt,
 }
 
 #[allow(dead_code)] // TODO(flub)

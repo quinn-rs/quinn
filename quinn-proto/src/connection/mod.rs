@@ -3449,8 +3449,14 @@ impl Connection {
                 Frame::PathAbandon(_) => {
                     // TODO(@divma): jump ship?
                 }
-                Frame::PathAvailable(_) => {
-                    // TODO(@divma): do stuff
+                Frame::PathAvailable(info) => {
+                    if self.is_multipath_enabled() {
+                        self.on_path_available(info.path_id, info.is_backup, info.status_seq_no);
+                    } else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received PATH_AVAILABLE frame when not multipath was not negotiated",
+                        ));
+                    }
                 }
                 Frame::MaxPathId(path_id) => {
                     if self.is_multipath_enabled() {
@@ -4506,6 +4512,24 @@ impl Connection {
         new_tokens.clear();
         for _ in 0..server_config.validation_token.sent {
             new_tokens.push(remote_addr);
+        }
+    }
+
+    /// Handle new path availability information
+    fn on_path_available(&mut self, path_id: PathId, is_backup: bool, status_seq_no: VarInt) {
+        if let Some(path_data) = self.paths.get_mut(&path_id) {
+            let data = &mut path_data.data;
+            // If a newer sequence no was sent, update the information.
+            if data.status_seq_no < Some(status_seq_no) {
+                data.status = if is_backup {
+                    PathStatus::Backup
+                } else {
+                    PathStatus::Available
+                };
+                data.status_seq_no.replace(status_seq_no);
+            }
+        } else {
+            debug!("PATH_AVAILABLE received unknown path {:?}", path_id);
         }
     }
 
