@@ -1288,7 +1288,7 @@ impl Connection {
                     // A prior attempt to set the loss detection timer may have failed due to
                     // anti-amplification, so ensure it's set now. Prevents a handshake deadlock if
                     // the server's first flight is lost.
-                    self.set_loss_detection_timer(now);
+                    self.set_loss_detection_timer(now, path_id);
                 }
             }
             NewIdentifiers(ids, now, cid_len, cid_lifetime) => {
@@ -1343,8 +1343,8 @@ impl Connection {
                     trace!("sending keep-alive");
                     self.ping(path_id);
                 }
-                Timer::LossDetection => {
-                    self.on_loss_detection_timeout(now);
+                Timer::LossDetection(path_id) => {
+                    self.on_loss_detection_timeout(now, path_id);
                 }
                 Timer::KeyDiscard => {
                     self.zero_rtt_crypto = None;
@@ -1731,7 +1731,7 @@ impl Connection {
         self.detect_lost_packets(now, space, path, true);
 
         if self.peer_completed_address_validation(path) {
-            self.spaces[space].for_path(path).pto_count = 0;
+            self.path_data_mut(path).pto_count = 0;
         }
 
         // Explicit congestion notification
@@ -1755,7 +1755,7 @@ impl Connection {
             }
         }
 
-        self.set_loss_detection_timer(now);
+        self.set_loss_detection_timer(now, ack.path_id.unwrap_or(PathId::ZERO));
         Ok(())
     }
 
@@ -1848,48 +1848,45 @@ impl Connection {
     /// within the PTO time-window. We need to schedule a tail-loss probe, an ack-eliciting
     /// packet, to try and elicit new acknowledgements. These new acknowledgements will
     /// indicate whether the previously sent packets were lost or not.
-    fn on_loss_detection_timeout(&mut self, now: Instant) {
-        if let Some((_, pn_space, path_id)) = self.loss_time_and_space() {
+    fn on_loss_detection_timeout(&mut self, now: Instant, path_id: PathId) {
+        if let Some((_, pn_space)) = self.loss_time_and_space(path_id) {
             // Time threshold loss Detection
             self.detect_lost_packets(now, pn_space, path_id, false);
-            self.set_loss_detection_timer(now);
+            self.set_loss_detection_timer(now, path_id);
             return;
         }
 
-        let (_, space, path) = match self.pto_time_and_space(now) {
+        let (_, space) = match self.pto_time_and_space(now, path_id) {
             Some(x) => x,
             None => {
                 error!("PTO expired while unset");
                 return;
             }
         };
-        let in_flight = self.path_data(path).in_flight.bytes;
+        let in_flight = self.path_data(path_id).in_flight.bytes;
         trace!(
             in_flight,
-            count = self.spaces[space].for_path(path).pto_count,
+            count = self.path_data(path_id).pto_count,
             ?space,
+            ?path_id,
             "PTO fired"
         );
 
-        let count = match self.path_data(path).in_flight.ack_eliciting {
+        let count = match self.path_data(path_id).in_flight.ack_eliciting {
             // A PTO when we're not expecting any ACKs must be due to handshake anti-amplification
             // deadlock preventions
             0 => {
-                debug_assert!(!self.peer_completed_address_validation(path));
+                debug_assert!(!self.peer_completed_address_validation(path_id));
                 1
             }
             // Conventional loss probe
             _ => 2,
         };
-        self.spaces[space].for_path(path).loss_probes = self.spaces[space]
-            .for_path(path)
-            .loss_probes
-            .saturating_add(count);
-        self.spaces[space].for_path(path).pto_count = self.spaces[space]
-            .for_path(path)
-            .pto_count
-            .saturating_add(1);
-        self.set_loss_detection_timer(now);
+        let pns = self.spaces[space].for_path(path_id);
+        pns.loss_probes = pns.loss_probes.saturating_add(count);
+        let path_data = self.path_data_mut(path_id);
+        path_data.pto_count = path_data.pto_count.saturating_add(1);
+        self.set_loss_detection_timer(now, path_id);
     }
 
     // TODO(@divma): some docs wouldn't kill
@@ -2046,27 +2043,33 @@ impl Connection {
         }
     }
 
-    /// Returns the earliest time packets should be declared lost on a path.
-    fn loss_time_and_space(&self) -> Option<(Instant, SpaceId, PathId)> {
-        let mut loss_times = Vec::new();
-        for space_id in SpaceId::iter() {
-            let space = &self.spaces[space_id];
-            for (path_id, number_space) in space.iter_paths() {
-                if let Some(loss_time) = number_space.loss_time {
-                    loss_times.push((loss_time, space_id, *path_id));
-                }
-            }
-        }
-        loss_times.into_iter().min_by_key(|&(when, _, _)| when)
+    /// Returns the earliest time packets should be declared lost for all spaces on a path.
+    fn loss_time_and_space(&self, path_id: PathId) -> Option<(Instant, SpaceId)> {
+        SpaceId::iter()
+            .filter_map(|id| {
+                self.spaces[id]
+                    .number_spaces
+                    .get(&path_id)
+                    .and_then(|pns| pns.loss_time)
+                    .map(|time| (time, id))
+            })
+            .min_by_key(|&(time, _)| time)
     }
 
-    /// Returns the earliest next PTO should fire for all paths and spaces.
-    fn pto_time_and_space(&mut self, now: Instant) -> Option<(Instant, SpaceId, PathId)> {
-        let path0_in_flight = self
-            .paths
-            .get(&PathId::ZERO)
-            .map(|path| path.data.in_flight.ack_eliciting);
-        if path0_in_flight == Some(0) && !self.peer_completed_address_validation(PathId::ZERO) {
+    /// Returns the earliest next PTO should fire for all spaces on a path.
+    fn pto_time_and_space(&mut self, now: Instant, path_id: PathId) -> Option<(Instant, SpaceId)> {
+        let pto_count = self.path_data(path_id).pto_count;
+        let backoff = 2u32.pow(pto_count.min(MAX_BACKOFF_EXPONENT));
+        let mut duration = self.path_data_mut(path_id).rtt.pto_base() * backoff;
+
+        if path_id == PathId::ZERO
+            && self
+                .paths
+                .get(&PathId::ZERO)
+                .map(|path| path.data.in_flight.ack_eliciting)
+                == Some(0)
+            && !self.peer_completed_address_validation(PathId::ZERO)
+        {
             // Address Validation during Connection Establishment:
             // https://www.rfc-editor.org/rfc/rfc9000.html#section-8.1. To prevent a
             // deadlock if an Initial or Handshake packet from the server is lost and the
@@ -2076,45 +2079,41 @@ impl Connection {
                 SpaceId::Handshake => SpaceId::Handshake,
                 _ => SpaceId::Initial,
             };
-            let pto_count = self.spaces[space].for_path(PathId::ZERO).pto_count;
-            let backoff = 2u32.pow(pto_count.min(MAX_BACKOFF_EXPONENT));
-            let duration = self.path_data_mut(PathId::ZERO).rtt.pto_base() * backoff;
-            return Some((now + duration, space, PathId::ZERO));
+
+            return Some((now + duration, space));
         }
 
         let mut result = None;
         for space in SpaceId::iter() {
-            for (path_id, pn_space) in self.spaces[space].iter_paths() {
-                if pn_space.in_flight == 0 {
+            if self.spaces[space].for_path(path_id).in_flight == 0 {
+                continue;
+            }
+            if space == SpaceId::Data {
+                // Skip ApplicationData until handshake completes.
+                if self.is_handshaking() {
+                    return result;
+                }
+                // Include max_ack_delay and backoff for ApplicationData.
+                duration += self.ack_frequency.max_ack_delay_for_pto() * backoff;
+            }
+            let last_ack_eliciting = match self.spaces[space]
+                .for_path(path_id)
+                .time_of_last_ack_eliciting_packet
+            {
+                Some(time) => time,
+                None => continue,
+            };
+            let pto = last_ack_eliciting + duration;
+            if result.map_or(true, |(earliest_pto, _)| pto < earliest_pto) {
+                if self.path_data(path_id).anti_amplification_blocked(1) {
+                    // Nothing would be able to be sent.
                     continue;
                 }
-                let pto_count = pn_space.pto_count;
-                let backoff = 2u32.pow(pto_count.min(MAX_BACKOFF_EXPONENT));
-                let mut duration = self.path_data(*path_id).rtt.pto_base() * backoff;
-                if space == SpaceId::Data {
-                    // Skip ApplicationData until handshake completes.
-                    if self.is_handshaking() {
-                        return result;
-                    }
-                    // Include max_ack_delay and backoff for ApplicationData.
-                    duration += self.ack_frequency.max_ack_delay_for_pto() * backoff;
+                if self.path_data(path_id).in_flight.ack_eliciting == 0 {
+                    // Nothing ack-eliciting, no PTO to arm/fire.
+                    continue;
                 }
-                let last_ack_eliciting = match pn_space.time_of_last_ack_eliciting_packet {
-                    Some(time) => time,
-                    None => continue,
-                };
-                let pto = last_ack_eliciting + duration;
-                if result.map_or(true, |(earliest_pto, _, _)| pto < earliest_pto) {
-                    if self.path_data(*path_id).anti_amplification_blocked(1) {
-                        // Nothing would be able to be sent.
-                        continue;
-                    }
-                    if self.path_data(*path_id).in_flight.ack_eliciting == 0 {
-                        // Nothing ack-eliciting, no PTO to arm/fire.
-                        continue;
-                    }
-                    result = Some((pto, space, *path_id));
-                }
+                result = Some((pto, space));
             }
         }
         result
@@ -2149,7 +2148,7 @@ impl Connection {
     /// - A tail-loss probe needs to be sent.
     ///
     /// See [`Connection::on_loss_detection_timeout`] for details.
-    fn set_loss_detection_timer(&mut self, now: Instant) {
+    fn set_loss_detection_timer(&mut self, now: Instant, path_id: PathId) {
         if self.state.is_closed() {
             // No loss detection takes place on closed connections, and `close_common` already
             // stopped time timer. Ensure we don't restart it inadvertently, e.g. in response to a
@@ -2157,18 +2156,18 @@ impl Connection {
             return;
         }
 
-        if let Some((loss_time, _, _)) = self.loss_time_and_space() {
+        if let Some((loss_time, _)) = self.loss_time_and_space(path_id) {
             // Time threshold loss detection.
-            self.timers.set(Timer::LossDetection, loss_time);
+            self.timers.set(Timer::LossDetection(path_id), loss_time);
             return;
         }
 
         // Determine which PN space to arm PTO for.
         // Calculate PTO duration
-        if let Some((timeout, _, _)) = self.pto_time_and_space(now) {
-            self.timers.set(Timer::LossDetection, timeout);
+        if let Some((timeout, _)) = self.pto_time_and_space(now, path_id) {
+            self.timers.set(Timer::LossDetection(path_id), timeout);
         } else {
-            self.timers.stop(Timer::LossDetection);
+            self.timers.stop(Timer::LossDetection(path_id));
         }
     }
 
@@ -2462,8 +2461,6 @@ impl Connection {
 
     fn discard_space(&mut self, now: Instant, space_id: SpaceId) {
         debug_assert!(space_id != SpaceId::Data);
-        // other path ids exist only in the data space, in which we should no be
-        let path_id = PathId(0);
         trace!("discarding {:?} keys", space_id);
         if space_id == SpaceId::Initial {
             // No longer needed
@@ -2473,15 +2470,15 @@ impl Connection {
         }
         let space = &mut self.spaces[space_id];
         space.crypto = None;
-        let path_space = space.for_path(path_id);
+        let path_space = space.for_path(PathId::ZERO);
         path_space.time_of_last_ack_eliciting_packet = None;
         path_space.loss_time = None;
         path_space.in_flight = 0;
         let sent_packets = mem::take(&mut path_space.sent_packets);
         for (pn, packet) in sent_packets.into_iter() {
-            self.remove_in_flight(path_id, pn, &packet);
+            self.remove_in_flight(PathId::ZERO, pn, &packet);
         }
-        self.set_loss_detection_timer(now)
+        self.set_loss_detection_timer(now, PathId::ZERO)
     }
 
     fn handle_coalesced(
