@@ -19,9 +19,8 @@ use recv::Recv;
 pub use recv::{Chunks, ReadError, ReadableError};
 
 mod send;
-pub(crate) use send::{ByteSlice, BytesArray};
-use send::{BytesSource, Send, SendState};
 pub use send::{FinishError, WriteError, Written};
+use send::{Send, SendState};
 
 mod state;
 #[allow(unreachable_pub)] // fuzzing only
@@ -221,7 +220,10 @@ impl<'a> SendStream<'a> {
     ///
     /// Returns the number of bytes successfully written.
     pub fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        Ok(self.write_source(&mut ByteSlice::from_slice(data))?.bytes)
+        let mut guard = self.write_guard()?;
+        let written = data.len().min(guard.limit);
+        guard.write(data[..written].to_vec().into());
+        Ok(written)
     }
 
     /// Send data on the given stream
@@ -231,10 +233,25 @@ impl<'a> SendStream<'a> {
     /// [`Written::chunks`] will not count this chunk as fully written. However
     /// the chunk will be advanced and contain only non-written data after the call.
     pub fn write_chunks(&mut self, data: &mut [Bytes]) -> Result<Written, WriteError> {
-        self.write_source(&mut BytesArray::from_chunks(data))
+        let mut guard = self.write_guard()?;
+        let mut written = Written::default();
+        for chunk in data {
+            let prefix = chunk.split_to(chunk.len().min(guard.limit));
+            written.bytes += prefix.len();
+            guard.write(prefix);
+
+            if chunk.is_empty() {
+                written.chunks += 1;
+            }
+
+            if guard.limit == 0 {
+                break;
+            }
+        }
+        Ok(written)
     }
 
-    fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
+    fn write_guard(&mut self) -> Result<WriteGuard, WriteError> {
         if self.conn_state.is_closed() {
             trace!(%self.id, "write blocked; connection draining");
             return Err(WriteError::Blocked);
@@ -263,15 +280,16 @@ impl<'a> SendStream<'a> {
             return Err(WriteError::Blocked);
         }
 
-        let was_pending = stream.is_pending();
-        let written = stream.write(source, limit)?;
-        self.state.data_sent += written.bytes as u64;
-        self.state.unacked_data += written.bytes as u64;
-        trace!(stream = %self.id, "wrote {} bytes", written.bytes);
-        if !was_pending {
-            self.state.pending.push_pending(self.id, stream.priority);
-        }
-        Ok(written)
+        let limit = stream.write_limit(limit)?;
+
+        Ok(WriteGuard {
+            limit,
+            stream,
+            id: self.id,
+            data_sent: &mut self.state.data_sent,
+            unacked_data: &mut self.state.unacked_data,
+            pending: &mut self.state.pending,
+        })
     }
 
     /// Check if this stream was stopped, get the reason if it was
@@ -364,6 +382,28 @@ impl<'a> SendStream<'a> {
             .ok_or(ClosedStream { _private: () })?;
 
         Ok(stream.as_ref().map(|s| s.priority).unwrap_or_default())
+    }
+}
+
+struct WriteGuard<'a> {
+    limit: usize,
+    id: StreamId,
+    stream: &'a mut Send,
+    data_sent: &'a mut u64,
+    unacked_data: &'a mut u64,
+    pending: &'a mut PendingStreamsQueue,
+}
+
+impl<'a> WriteGuard<'a> {
+    fn write(&mut self, bytes: Bytes) {
+        self.limit -= bytes.len();
+        *self.data_sent += bytes.len() as u64;
+        *self.unacked_data += bytes.len() as u64;
+        let was_pending = self.stream.is_pending();
+        self.stream.pending.write(bytes);
+        if !was_pending {
+            self.pending.push_pending(self.id, self.stream.priority);
+        }
     }
 }
 
