@@ -232,7 +232,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
             packet,
             &mut conn.spaces[space_id],
         );
-        conn.stats.path.sent_packets += 1;
+        conn.stats.paths.entry(path_id).or_default().sent_packets += 1;
         conn.reset_keep_alive(path_id, now);
         if size != 0 {
             if ack_eliciting {

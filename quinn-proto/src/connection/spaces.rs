@@ -169,7 +169,6 @@ impl PacketSpace {
     ///
     /// Used to know if a key update is needed.
     pub(super) fn sent_with_keys(&self) -> u64 {
-        // TODO(flub): Maybe this only needs to return the highest?
         self.number_spaces.values().map(|s| s.sent_with_keys).sum()
     }
 }
