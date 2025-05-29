@@ -480,7 +480,7 @@ impl InFlight {
 /// See section "3.3 Path Status Management":
 /// <https://quicwg.org/multipath/draft-ietf-quic-multipath.html#name-path-status-management>
 #[derive(Debug, Copy, Clone, Default, PartialEq, Eq)]
-pub(super) enum PathStatus {
+pub enum PathStatus {
     /// Paths marked with as available will be used when scheduling packets
     ///
     /// If multiple paths are available, packets will be scheduled on whichever has
@@ -492,6 +492,25 @@ pub(super) enum PathStatus {
     /// If the max_idle_timeout is specified the path will be kept alive so that it does not
     /// expire.
     Backup,
+}
+
+/// Application events about paths
+#[derive(Debug, PartialEq, Eq)]
+pub enum PathEvent {
+    /// A new path has been opened
+    Opened {
+        /// Which path is now open
+        id: PathId,
+    },
+    /// A path has been closed
+    Closed {
+        /// Which path has been closed
+        id: PathId,
+        /// Error code supplied by the peer
+        /// See <https://www.ietf.org/archive/id/draft-ietf-quic-multipath-14.html#name-error-codes>
+        /// for a list of known errors.
+        error_code: VarInt,
+    },
 }
 
 #[cfg(test)]

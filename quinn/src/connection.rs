@@ -19,14 +19,15 @@ use tracing::{Instrument, Span, debug_span};
 use crate::{
     ConnectionEvent, Duration, Instant, VarInt,
     mutex::Mutex,
+    path::OpenPath,
     recv_stream::RecvStream,
     runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller},
     send_stream::SendStream,
     udp_transmit,
 };
 use proto::{
-    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, StreamEvent, StreamId,
-    congestion::Controller,
+    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, PathEvent, PathId,
+    PathStatus, StreamEvent, StreamId, congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -356,6 +357,19 @@ impl Connection {
             conn: &self.0,
             notify: self.0.shared.datagram_received.notified(),
         }
+    }
+
+    /// Open a (Multi)Path.
+    pub fn open_path(&self, addr: SocketAddr, initial_status: PathStatus) -> OpenPath {
+        let (on_open_path_send, on_open_path_recv) = oneshot::channel();
+        let path_id = {
+            let mut state = self.0.state.lock("open_path");
+            let path_id = state.inner.open_path(addr, initial_status);
+            state.open_path.insert(path_id, on_open_path_send);
+            path_id
+        };
+
+        OpenPath::new(path_id, on_open_path_recv, self.0.clone())
     }
 
     /// Wait for the connection to be closed for any reason
@@ -904,6 +918,8 @@ impl ConnectionRef {
                 blocked_writers: FxHashMap::default(),
                 blocked_readers: FxHashMap::default(),
                 stopped: FxHashMap::default(),
+                open_path: FxHashMap::default(),
+                close_path: FxHashMap::default(),
                 error: None,
                 ref_count: 0,
                 io_poller: socket.clone().create_io_poller(),
@@ -1024,6 +1040,10 @@ pub(crate) struct State {
     pub(crate) stopped: FxHashMap<StreamId, Arc<Notify>>,
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
+    /// Tracks paths being opened
+    open_path: FxHashMap<PathId, oneshot::Sender<()>>,
+    /// Tracks paths being closed
+    pub(crate) close_path: FxHashMap<PathId, oneshot::Sender<VarInt>>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
     socket: Arc<dyn AsyncUdpSocket>,
@@ -1199,6 +1219,16 @@ impl State {
                         let old = addr.replace(observed);
                         old != *addr
                     });
+                }
+                Path(PathEvent::Opened { id }) => {
+                    if let Some(sender) = self.open_path.remove(&id) {
+                        let _ = sender.send(());
+                    }
+                }
+                Path(PathEvent::Closed { id, error_code }) => {
+                    if let Some(sender) = self.close_path.remove(&id) {
+                        let _ = sender.send(error_code);
+                    }
                 }
             }
         }

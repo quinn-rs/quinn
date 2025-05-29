@@ -61,8 +61,8 @@ mod packet_crypto;
 use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
-use paths::{PathData, PathStatus};
-pub use paths::{PathId, RttEstimator};
+use paths::PathData;
+pub use paths::{PathEvent, PathId, PathStatus, RttEstimator};
 
 mod send_buffer;
 
@@ -481,12 +481,29 @@ impl Connection {
         }
     }
 
+    /// Opens a path
+    pub fn open_path(&mut self, _addr: SocketAddr, _initial_status: PathStatus) -> PathId {
+        todo!()
+    }
+
+    /// Closes a path
+    pub fn close_path(&mut self, _id: PathId, _error_code: VarInt) {
+        todo!()
+    }
+
     /// Gets the [`PathData`] for a known [`PathId`].
     ///
     /// Will panic if the path_id does not reference any known path.
     #[track_caller]
     fn path_data(&self, path_id: PathId) -> &PathData {
         &self.paths.get(&path_id).expect("known path").data
+    }
+
+    /// Gets the [`PathStatus`] for a known [`PathId`].
+    ///
+    /// Will panic if the path_id does not reference any known path.
+    pub fn path_status(&self, path_id: PathId) -> PathStatus {
+        self.path_data(path_id).status
     }
 
     /// Gets the [`PathData`] for a known [`PathId`].
@@ -4800,6 +4817,8 @@ pub enum Event {
     DatagramsUnblocked,
     /// Received an observation of our external address from the peer.
     ObservedAddr(SocketAddr),
+    /// (Multi)Path events
+    Path(PathEvent),
 }
 
 fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
