@@ -191,7 +191,7 @@ impl TransportParameters {
                 order
             }),
             address_discovery_role: config.address_discovery_role,
-            initial_max_path_id: config.initial_max_path_id,
+            initial_max_path_id: config.get_initial_max_path_id(),
             ..Self::default()
         }
     }

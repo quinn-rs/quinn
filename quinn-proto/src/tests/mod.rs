@@ -2,6 +2,7 @@ use std::{
     convert::TryInto,
     mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
+    num::NonZeroU32,
     sync::{Arc, Mutex},
 };
 
@@ -1607,7 +1608,7 @@ fn multipath_cid_rotation() {
     // Only test cid rotation on server side to have a clear output trace
     let server_cfg = ServerConfig {
         transport: Arc::new(TransportConfig {
-            initial_max_path_id: Some(PathId(5)),
+            max_concurrent_multipath_paths: NonZeroU32::new(6),
             ..TransportConfig::default()
         }),
         ..server_config()
@@ -1627,7 +1628,7 @@ fn multipath_cid_rotation() {
     let mut pair = Pair::new_from_endpoint(client, server);
     let client_cfg = ClientConfig {
         transport: Arc::new(TransportConfig {
-            initial_max_path_id: Some(PathId(2)),
+            max_concurrent_multipath_paths: NonZeroU32::new(3),
             ..TransportConfig::default()
         }),
         ..client_config()

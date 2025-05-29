@@ -944,7 +944,7 @@ async fn test_multipath_negotiated() {
     let factory = EndpointFactory::new();
 
     let mut transport_config = TransportConfig::default();
-    transport_config.initial_max_path_id(Some(0));
+    transport_config.max_concurrent_multipath_paths(1);
     let server = factory.endpoint_with_config("server", transport_config);
     let server_addr = server.local_addr().unwrap();
 
@@ -955,7 +955,7 @@ async fn test_multipath_negotiated() {
     .instrument(info_span!("server"));
 
     let mut transport_config = TransportConfig::default();
-    transport_config.initial_max_path_id(Some(0));
+    transport_config.max_concurrent_multipath_paths(1);
     let client = factory.endpoint_with_config("client", transport_config);
 
     let client_task = async move {

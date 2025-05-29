@@ -1,8 +1,8 @@
-use std::{fmt, sync::Arc};
+use std::{fmt, num::NonZeroU32, sync::Arc};
 
 use crate::{
-    Duration, INITIAL_MTU, MAX_UDP_PAYLOAD, PathId, VarInt, VarIntBoundsExceeded,
-    address_discovery, congestion,
+    Duration, INITIAL_MTU, MAX_UDP_PAYLOAD, VarInt, VarIntBoundsExceeded, address_discovery,
+    congestion,
 };
 
 /// Parameters governing the core QUIC state machine
@@ -49,7 +49,7 @@ pub struct TransportConfig {
 
     pub(crate) address_discovery_role: address_discovery::Role,
 
-    pub(crate) initial_max_path_id: Option<PathId>,
+    pub(crate) max_concurrent_multipath_paths: Option<NonZeroU32>,
 }
 
 impl TransportConfig {
@@ -345,18 +345,26 @@ impl TransportConfig {
 
     /// Enables the Multipath Extension for QUIC.
     ///
-    /// Setting this to any `Some` value will enable the Multipath Extension for QUIC,
+    /// Setting this to any nonzero value will enable the Multipath Extension for QUIC,
     /// <https://datatracker.ietf.org/doc/draft-ietf-quic-multipath/>.
     ///
-    /// The value provided specifies the number of paths this endpoint is willing to open
-    /// initially.  Setting this to `0` will negotiate multipath but not allow creating any
-    /// extra paths immediately.
-    // TODO(flub): Not sure if this is a nice API.  I think it might be better to specify
-    // this as max_concurrent_multipath_paths a bit like max_concurrent_bidi_streams etc
-    // exist now.  But this will do for now.
-    pub fn initial_max_path_id(&mut self, value: Option<u32>) -> &mut Self {
-        self.initial_max_path_id = value.map(Into::into);
+    /// The value provided specifies the number maximum number of paths this endpoint may open
+    /// concurrently when multipath is negotiated. For any path to be opened, the remote must
+    /// enable multipath as well.
+    pub fn max_concurrent_multipath_paths(&mut self, max_concurrent: u32) -> &mut Self {
+        self.max_concurrent_multipath_paths = NonZeroU32::new(max_concurrent);
         self
+    }
+
+    /// Get the initial max [`crate::PathId`] this endpoint allows.
+    ///
+    /// Returns `None` if multipath is disabled.
+    pub(crate) fn get_initial_max_path_id(&self) -> Option<crate::PathId> {
+        self.max_concurrent_multipath_paths
+            // a max_concurrent_multipath_paths value of 1 only allows the first path, which
+            // has id 0
+            .map(|nonzero_concurrent| nonzero_concurrent.get() - 1)
+            .map(Into::into)
     }
 }
 
@@ -402,7 +410,7 @@ impl Default for TransportConfig {
             address_discovery_role: address_discovery::Role::default(),
 
             // disabled multipath by default
-            initial_max_path_id: None,
+            max_concurrent_multipath_paths: None,
         }
     }
 }
@@ -435,7 +443,7 @@ impl fmt::Debug for TransportConfig {
             congestion_controller_factory: _,
             enable_segmentation_offload,
             address_discovery_role,
-            initial_max_path_id,
+            max_concurrent_multipath_paths,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -464,7 +472,10 @@ impl fmt::Debug for TransportConfig {
             // congestion_controller_factory not debug
             .field("enable_segmentation_offload", enable_segmentation_offload)
             .field("address_discovery_role", address_discovery_role)
-            .field("initial_max_path_id", initial_max_path_id)
+            .field(
+                "max_concurrent_multipath_paths",
+                max_concurrent_multipath_paths,
+            )
             .finish_non_exhaustive()
     }
 }

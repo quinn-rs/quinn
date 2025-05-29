@@ -245,15 +245,14 @@ pub struct Connection {
 
     /// Local maximum [`PathId`] to be used.
     ///
-    /// This is initially set to [`TransportConfig::initial_max_path_id`] when multipath is enabled, or to
-    /// [`PathId::ZERO`] otherwise.
-    // TODO(@divma): we probably need an API to imcrease upon the original value
+    /// This is initially set to [`TransportConfig::get_initial_max_path_id`] when multipath is
+    /// negotiated, or to [`PathId::ZERO`] otherwise.
     local_max_path_id: PathId,
     /// Remote's maximum [`PathId`] to be used.
     ///
     /// This is initially set to the peer's [`TransportParameters::initial_max_path_id`] when
-    /// multipath is enabled, or to [`PathId::ZERO`] otherwise. A peer may increase this limit by
-    /// sending [`Frame::MaxPathId`] frames.
+    /// multipath is negotiated, or to [`PathId::ZERO`] otherwise. A peer may increase this limit
+    /// by sending [`Frame::MaxPathId`] frames.
     remote_max_path_id: PathId,
     /// The greatest [`PathId`] this connection has used.
     ///
@@ -771,7 +770,7 @@ impl Connection {
                 // especially important with ack delay, since the peer might not
                 // have gotten any other ACK for the data earlier on.
                 let mut sent_frames = SentFrames::default();
-                let is_multipath_enabled = self.is_multipath_enabled();
+                let is_multipath_enabled = self.is_multipath_negotiated();
                 Self::populate_acks(
                     now,
                     self.receiving_ecn,
@@ -1607,15 +1606,15 @@ impl Connection {
 
     /// Whether the Multipath for QUIC extension is enabled.
     ///
-    /// Multipath is only enabled after the handshake is completed and if it was negotiated
-    /// by both peers.
-    pub fn is_multipath_enabled(&self) -> bool {
+    /// Multipath is only enabled after the handshake is completed and if it was enabled by both
+    /// peers.
+    pub fn is_multipath_negotiated(&self) -> bool {
         // TODO(flub): I believe it might be a TRANSPORT_ERROR if multipath is enabled but
         // there's a zero-lenth CID.
         !self.is_handshaking()
             && !self.handshake_cid.is_empty()
             && !self.rem_handshake_cid.is_empty()
-            && self.config.initial_max_path_id.is_some()
+            && self.config.max_concurrent_multipath_paths.is_some()
             && self.peer_params.initial_max_path_id.is_some()
     }
 
@@ -3450,7 +3449,7 @@ impl Connection {
                     // TODO(@divma): jump ship?
                 }
                 Frame::PathAvailable(info) => {
-                    if self.is_multipath_enabled() {
+                    if self.is_multipath_negotiated() {
                         self.on_path_available(info.path_id, info.is_backup, info.status_seq_no);
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
@@ -3459,7 +3458,7 @@ impl Connection {
                     }
                 }
                 Frame::MaxPathId(path_id) => {
-                    if self.is_multipath_enabled() {
+                    if self.is_multipath_negotiated() {
                         // frames that do not increase the path id are ignored
                         self.remote_max_path_id = self.remote_max_path_id.max(path_id);
                     } else {
@@ -3472,7 +3471,7 @@ impl Connection {
                     // Receipt of a value of Maximum Path Identifier or Path Identifier that is higher than the local maximum value MUST
                     // be treated as a connection error of type PROTOCOL_VIOLATION.
                     // Ref <https://www.ietf.org/archive/id/draft-ietf-quic-multipath-14.html#name-paths_blocked-and-path_cids>
-                    if self.is_multipath_enabled() {
+                    if self.is_multipath_negotiated() {
                         if self.local_max_path_id > max_path_id {
                             return Err(TransportError::PROTOCOL_VIOLATION(
                                 "PATHS_BLOCKED maximum path identifier was larger than local maximum",
@@ -3493,7 +3492,7 @@ impl Connection {
                     // Receipt of a value of Maximum Path Identifier or Path Identifier that is higher than the local maximum value MUST
                     // be treated as a connection error of type PROTOCOL_VIOLATION.
                     // Ref <https://www.ietf.org/archive/id/draft-ietf-quic-multipath-14.html#name-paths_blocked-and-path_cids>
-                    if self.is_multipath_enabled() {
+                    if self.is_multipath_negotiated() {
                         if self.local_max_path_id > path_id {
                             return Err(TransportError::PROTOCOL_VIOLATION(
                                 "PATH_CIDS_BLOCKED path identifier was larger than local maximum",
@@ -3701,7 +3700,7 @@ impl Connection {
         pn: u64,
     ) -> SentFrames {
         let mut sent = SentFrames::default();
-        let is_multipath_enabled = self.is_multipath_enabled();
+        let is_multipath_negotiated = self.is_multipath_negotiated();
         let space = &mut self.spaces[space_id];
         let path = &mut self.paths.get_mut(&path_id).expect("known path").data;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
@@ -3761,7 +3760,7 @@ impl Connection {
                 self.receiving_ecn,
                 &mut sent,
                 space,
-                is_multipath_enabled,
+                is_multipath_negotiated,
                 buf,
                 &mut self.stats,
             );
@@ -3927,7 +3926,8 @@ impl Connection {
             .map(|cid_state| cid_state.cid_len())
             .max()
             .expect("some local CID state must exist");
-        let new_cid_size_bound = frame::NewConnectionId::size_bound(is_multipath_enabled, cid_len);
+        let new_cid_size_bound =
+            frame::NewConnectionId::size_bound(is_multipath_negotiated, cid_len);
         while !path_exclusive_only && buf.remaining_mut() > new_cid_size_bound {
             let issued = match space.pending.new_cids.pop() {
                 Some(x) => x,
@@ -3941,7 +3941,7 @@ impl Connection {
                     error!(path_id = ?issued.path_id, "Missing local CID state");
                     0
                 });
-            let cid_path_id = match is_multipath_enabled {
+            let cid_path_id = match is_multipath_negotiated {
                 true => {
                     trace!(
                         path_id = ?issued.path_id,
@@ -3974,10 +3974,10 @@ impl Connection {
         }
 
         // RETIRE_CONNECTION_ID
-        let retire_cid_bound = frame::RetireConnectionId::size_bound(is_multipath_enabled);
+        let retire_cid_bound = frame::RetireConnectionId::size_bound(is_multipath_negotiated);
         while !path_exclusive_only && buf.remaining_mut() > retire_cid_bound {
             let (path_id, sequence) = match space.pending.retire_cids.pop() {
-                Some((PathId(0), seq)) if !is_multipath_enabled => (None, seq),
+                Some((PathId(0), seq)) if !is_multipath_negotiated => (None, seq),
                 Some((path_id, seq)) => (Some(path_id), seq),
                 None => break,
             };
@@ -4157,9 +4157,10 @@ impl Connection {
         }
         self.ack_frequency.peer_max_ack_delay = get_max_ack_delay(&params);
 
-        if let (Some(local_max_path_id), Some(remote_max_path_id)) =
-            (self.config.initial_max_path_id, params.initial_max_path_id)
-        {
+        if let (Some(local_max_path_id), Some(remote_max_path_id)) = (
+            self.config.get_initial_max_path_id(),
+            params.initial_max_path_id,
+        ) {
             // multipath is enabled, register the local and remote maximums
             self.local_max_path_id = local_max_path_id;
             self.remote_max_path_id = remote_max_path_id;
@@ -4538,7 +4539,7 @@ impl Connection {
     /// This is calculated as minimum between the local and remote's maximums when multipath is
     /// enabled, or `None` when disabled.
     fn max_path_id(&self) -> Option<PathId> {
-        if self.is_multipath_enabled() {
+        if self.is_multipath_negotiated() {
             Some(self.remote_max_path_id.min(self.local_max_path_id))
         } else {
             None

@@ -653,7 +653,7 @@ impl Connection {
     // this again.
     pub fn is_multipath_enabled(&self) -> bool {
         let conn = self.0.state.lock("is_multipath_enabled");
-        conn.inner.is_multipath_enabled()
+        conn.inner.is_multipath_negotiated()
     }
 }
 
