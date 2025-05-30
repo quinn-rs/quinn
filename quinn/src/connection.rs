@@ -636,6 +636,28 @@ impl Connection {
         // May need to send MAX_STREAMS to make progress
         conn.wake();
     }
+
+    /// Waits until the connection received TLS resumption tickets.
+    ///
+    /// Completes immediately if tickets were already received. Otherwise completes
+    /// once tickets are received.
+    ///
+    /// Should only be used on the client. On the server, this will be pending forever.
+    /// Will also be pending forever if the server does not send any tickets.
+    pub fn resumption_tickets_received(&self) -> impl Future<Output = ()> + Send + 'static {
+        let conn = self.0.state.lock("resumption_tickets_received");
+        let mut notify = if !conn.resumption_tickets_received {
+            Some(conn.resumption_tickets_received_notify.clone())
+        } else {
+            None
+        };
+        drop(conn);
+        async move {
+            if let Some(notify) = notify.take() {
+                notify.notified().await;
+            }
+        }
+    }
 }
 
 pin_project! {
@@ -892,6 +914,8 @@ impl ConnectionRef {
                 runtime,
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
+                resumption_tickets_received: false,
+                resumption_tickets_received_notify: Arc::new(Notify::new()),
             }),
             shared: Shared::default(),
         }))
@@ -974,6 +998,8 @@ pub(crate) struct State {
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<proto::Transmit>,
+    resumption_tickets_received: bool,
+    resumption_tickets_received_notify: Arc<Notify>,
 }
 
 impl State {
@@ -1107,6 +1133,10 @@ impl State {
                         wake_all(&mut self.blocked_readers);
                         wake_all_notify(&mut self.stopped);
                     }
+                }
+                ResumptionTicketsReceived => {
+                    self.resumption_tickets_received = true;
+                    self.resumption_tickets_received_notify.notify_waiters();
                 }
                 ConnectionLost { reason } => {
                     self.terminate(reason, shared);

@@ -127,6 +127,10 @@ impl crypto::Session for NoProtectionSession {
     ) -> Result<(), crypto::ExportKeyingMaterialError> {
         self.inner.export_keying_material(output, label, context)
     }
+
+    fn tls13_session_tickets_received(&self) -> Option<u32> {
+        self.inner.tls13_session_tickets_received()
+    }
 }
 
 impl crypto::ClientConfig for NoProtectionClientConfig {

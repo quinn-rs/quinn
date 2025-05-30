@@ -63,3 +63,6 @@ debug = true
 
 [profile.release]
 debug = true
+
+[patch.crates-io]
+rustls = { git = "https://github.com/Frando/rustls", branch = "feat/tls13-ticket-count" }
