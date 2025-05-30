@@ -91,6 +91,11 @@ pub trait Session: Send + Sync + 'static {
         label: &[u8],
         context: &[u8],
     ) -> Result<(), ExportKeyingMaterialError>;
+
+    /// Returns the number of TLS1.3 session resumption tickets that were received
+    ///
+    /// Returns `None` on the server side.
+    fn resumption_tickets_received(&self) -> Option<u32>;
 }
 
 /// A pair of keys for bidirectional communication
