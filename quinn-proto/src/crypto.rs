@@ -91,6 +91,11 @@ pub trait Session: Send + Sync + 'static {
         label: &[u8],
         context: &[u8],
     ) -> Result<(), ExportKeyingMaterialError>;
+
+    /// Returns the number of TLS13 session tickets that were received.
+    ///
+    /// Returns `None` on the server side.
+    fn tls13_session_tickets_received(&self) -> Option<u32>;
 }
 
 /// A pair of keys for bidirectional communication
