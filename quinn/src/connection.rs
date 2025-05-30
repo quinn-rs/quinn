@@ -25,8 +25,8 @@ use crate::{
     udp_transmit,
 };
 use proto::{
-    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, StreamEvent, StreamId,
-    congestion::Controller,
+    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, Side, StreamEvent,
+    StreamId, congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -639,23 +639,25 @@ impl Connection {
 
     /// Waits until the connection received TLS resumption tickets.
     ///
-    /// Completes immediately if tickets were already received. Otherwise completes
-    /// once tickets are received.
+    /// Returns `true` once resumption tickets were received. Resolves immediately
+    /// if tickets were already received, otherwise it resolves once tickets arrive.
+    /// If the server does not send any tickets, the returned future will remain pending forever.
     ///
-    /// Should only be used on the client. On the server, this will be pending forever.
-    /// Will also be pending forever if the server does not send any tickets.
-    pub fn resumption_tickets_received(&self) -> impl Future<Output = ()> + Send + 'static {
+    /// This should only be used on the client side. On the server side, it will
+    /// always resolve immediately and return `false`.
+    pub fn resumption_tickets_received(&self) -> impl Future<Output = bool> + Send + 'static {
         let conn = self.0.state.lock("resumption_tickets_received");
-        let mut notify = if !conn.resumption_tickets_received {
-            Some(conn.resumption_tickets_received_notify.clone())
-        } else {
-            None
+        let (mut notify, out) = match conn.resumption_tickets.as_ref() {
+            Some(ResumptionTicketState::Received) => (None, true),
+            Some(ResumptionTicketState::Pending(notify)) => (Some(notify.clone()), true),
+            None => (None, false),
         };
         drop(conn);
         async move {
             if let Some(notify) = notify.take() {
                 notify.notified().await;
             }
+            out
         }
     }
 }
@@ -892,6 +894,10 @@ impl ConnectionRef {
         socket: Arc<dyn AsyncUdpSocket>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
+        let resumption_tickets = match conn.side() {
+            Side::Client => Some(ResumptionTicketState::Pending(Default::default())),
+            Side::Server => None,
+        };
         Self(Arc::new(ConnectionInner {
             state: Mutex::new(State {
                 inner: conn,
@@ -914,8 +920,7 @@ impl ConnectionRef {
                 runtime,
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
-                resumption_tickets_received: false,
-                resumption_tickets_received_notify: Arc::new(Notify::new()),
+                resumption_tickets,
             }),
             shared: Shared::default(),
         }))
@@ -998,8 +1003,8 @@ pub(crate) struct State {
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<proto::Transmit>,
-    resumption_tickets_received: bool,
-    resumption_tickets_received_notify: Arc<Notify>,
+    /// Whether we received resumption tickets. None on the server side.
+    resumption_tickets: Option<ResumptionTicketState>,
 }
 
 impl State {
@@ -1135,8 +1140,12 @@ impl State {
                     }
                 }
                 ResumptionTicketsReceived => {
-                    self.resumption_tickets_received = true;
-                    self.resumption_tickets_received_notify.notify_waiters();
+                    if let Some(ResumptionTicketState::Pending(notify)) =
+                        self.resumption_tickets.as_mut()
+                    {
+                        notify.notify_waiters();
+                        self.resumption_tickets = Some(ResumptionTicketState::Received);
+                    }
                 }
                 ConnectionLost { reason } => {
                     self.terminate(reason, shared);
@@ -1306,6 +1315,12 @@ fn wake_all_notify(wakers: &mut FxHashMap<StreamId, Arc<Notify>>) {
     wakers
         .drain()
         .for_each(|(_, notify)| notify.notify_waiters())
+}
+
+#[derive(Debug)]
+enum ResumptionTicketState {
+    Received,
+    Pending(Arc<Notify>),
 }
 
 /// Errors that can arise when sending a datagram
