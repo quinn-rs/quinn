@@ -649,7 +649,7 @@ impl Connection {
             };
 
             if !path_should_send && space_id < SpaceId::Data {
-                trace!(?space_id, ?path_id, "nothing to send");
+                trace!(?space_id, ?path_id, "everything sent in space");
                 space_id = space_id.next();
                 continue;
             }
@@ -1030,11 +1030,13 @@ impl Connection {
             )?;
 
             // We implement MTU probes as ping packets padded up to the probe size
+            trace!("PING");
             builder.frame_space_mut().write(frame::FrameType::PING);
             self.stats.frame_tx.ping += 1;
 
             // If supported by the peer, we want no delays to the probe's ACK
             if self.peer_supports_ack_frequency() {
+                trace!("IMMEDIATE_ACK");
                 builder
                     .frame_space_mut()
                     .write(frame::FrameType::IMMEDIATE_ACK);
@@ -3725,6 +3727,7 @@ impl Connection {
 
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
+            trace!("HANDSHAKE_DONE");
             buf.write(frame::FrameType::HANDSHAKE_DONE);
             sent.retransmits.get_or_create().handshake_done = true;
             // This is just a u8 counter and the frame is typically just sent once
@@ -3743,6 +3746,7 @@ impl Connection {
         {
             let frame = frame::ObservedAddr::new(path.remote, self.next_observed_addr_seq_no);
             if buf.remaining_mut() > frame.size() {
+                trace!(seq = %frame.seq_no, ip = %frame.ip, port = frame.port, "OBSERVED_ADDRESS");
                 frame.write(buf);
 
                 self.next_observed_addr_seq_no = self.next_observed_addr_seq_no.saturating_add(1u8);
@@ -3966,6 +3970,7 @@ impl Connection {
                         id = %issued.id,
                         "PATH_NEW_CONNECTION_ID",
                     );
+                    self.stats.frame_tx.path_new_connection_id += 1;
                     Some(issued.path_id)
                 }
                 false => {
@@ -3975,6 +3980,7 @@ impl Connection {
                         "NEW_CONNECTION_ID"
                     );
                     debug_assert_eq!(issued.path_id, PathId(0));
+                    self.stats.frame_tx.new_connection_id += 1;
                     None
                 }
             };
@@ -3987,18 +3993,22 @@ impl Connection {
             }
             .encode(buf);
             sent.retransmits.get_or_create().new_cids.push(issued);
-            self.stats.frame_tx.new_connection_id += 1;
         }
 
         // RETIRE_CONNECTION_ID
         let retire_cid_bound = frame::RetireConnectionId::size_bound(is_multipath_negotiated);
         while !path_exclusive_only && buf.remaining_mut() > retire_cid_bound {
             let (path_id, sequence) = match space.pending.retire_cids.pop() {
-                Some((PathId(0), seq)) if !is_multipath_negotiated => (None, seq),
-                Some((path_id, seq)) => (Some(path_id), seq),
+                Some((PathId(0), seq)) if !is_multipath_negotiated => {
+                    trace!(sequence = seq, "RETIRE_CONNECTION_ID");
+                    (None, seq)
+                }
+                Some((path_id, seq)) => {
+                    trace!(?path_id, sequence = seq, "PATH_RETIRE_CONNECTION_ID");
+                    (Some(path_id), seq)
+                }
                 None => break,
             };
-            trace!(?path_id, sequence, "RETIRE_CONNECTION_ID");
             frame::RetireConnectionId { path_id, sequence }.write(buf);
             sent.retransmits
                 .get_or_create()
@@ -4061,6 +4071,7 @@ impl Connection {
                 break;
             }
 
+            trace!("NEW_TOKEN");
             new_token.encode(buf);
             sent.retransmits
                 .get_or_create()
