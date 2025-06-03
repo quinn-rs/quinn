@@ -1538,10 +1538,12 @@ fn keep_alive() {
 }
 
 #[test]
-fn cid_issued() {
+fn cid_issued_multipath() {
     let _guard = subscribe();
+    const MAX_PATHS: u64 = 3;
+    const ACTIVE_CID_LIMIT: u64 = crate::cid_queue::CidQueue::LEN as _;
     let transport_cfg = Arc::new(TransportConfig {
-        max_concurrent_multipath_paths: NonZeroU32::new(3),
+        max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS as _),
         ..TransportConfig::default()
     });
     let server_cfg = Arc::new(ServerConfig {
@@ -1562,14 +1564,25 @@ fn cid_issued() {
     let client_stats = pair.client_conn_mut(client_ch).stats();
     dbg!(&client_stats);
 
-    // The client does not send NEW_CONNECTION_ID frames when multipath is enabled.
+    // The client does not send NEW_CONNECTION_ID frames when multipath is enabled as they
+    // are all sent after the handshake is completed.
     assert_eq!(client_stats.frame_tx.new_connection_id, 0);
-    assert!(client_stats.frame_tx.path_new_connection_id > 0);
+    assert_eq!(
+        client_stats.frame_tx.path_new_connection_id,
+        MAX_PATHS * ACTIVE_CID_LIMIT
+    );
 
-    // The server still does send NEW_CONNECTION_ID frames when multipath is enabled, this
-    // is allowed, though it could avoid this.  TODO(flub): fix this sometime.
-    assert!(client_stats.frame_rx.new_connection_id > 0);
-    assert!(client_stats.frame_rx.path_new_connection_id > 0);
+    // The server sends NEW_CONNECTION_ID frames before the handshake is completed.
+    // Multipath is only enabled *after* the handshake completes.  The first server-CID is
+    // not issued but assigned by the client and changed by the server.
+    assert_eq!(
+        client_stats.frame_rx.new_connection_id,
+        ACTIVE_CID_LIMIT - 1
+    );
+    assert_eq!(
+        client_stats.frame_rx.path_new_connection_id,
+        (MAX_PATHS - 1) * ACTIVE_CID_LIMIT
+    );
 }
 
 #[test]
