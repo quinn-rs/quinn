@@ -49,7 +49,7 @@ pub trait AsyncUdpSocket: Send + Sync + Debug + 'static {
     /// [`Waker`].
     ///
     /// [`Waker`]: std::task::Waker
-    fn create_sender(self: Arc<Self>) -> Pin<Box<dyn UdpSender>>;
+    fn create_sender(&self) -> Pin<Box<dyn UdpSender>>;
 
     /// Receive UDP datagrams, or register to be woken if receiving may succeed in the future
     fn poll_recv(

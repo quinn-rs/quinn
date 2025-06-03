@@ -55,7 +55,7 @@ impl AsyncTimer for Timer {
     }
 }
 
-#[cfg(feature = "runtime-smol")]
+#[cfg(any(feature = "runtime-smol"))]
 #[derive(Debug, Clone)]
 struct UdpSocket {
     io: Arc<Async<std::net::UdpSocket>>,
@@ -73,7 +73,7 @@ impl UdpSocket {
 }
 
 #[cfg(feature = "runtime-smol")]
-impl UdpSenderHelperSocket for Arc<UdpSocket> {
+impl UdpSenderHelperSocket for UdpSocket {
     fn max_transmit_segments(&self) -> usize {
         self.inner.max_gso_segments()
     }
@@ -85,14 +85,11 @@ impl UdpSenderHelperSocket for Arc<UdpSocket> {
 
 #[cfg(feature = "runtime-smol")]
 impl AsyncUdpSocket for UdpSocket {
-    fn create_sender(self: Arc<Self>) -> Pin<Box<dyn UdpSender>> {
-        Box::pin(UdpSenderHelper::new(
-            Arc::clone(&self),
-            |socket: &Arc<Self>| {
-                let socket = socket.clone();
-                async move { socket.io.writable().await }
-            },
-        ))
+    fn create_sender(&self) -> Pin<Box<dyn UdpSender>> {
+        Box::pin(UdpSenderHelper::new(self.clone(), |socket: &Self| {
+            let socket = socket.clone();
+            async move { socket.io.writable().await }
+        }))
     }
 
     fn poll_recv(
