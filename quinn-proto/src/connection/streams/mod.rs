@@ -8,20 +8,15 @@ use thiserror::Error;
 use tracing::trace;
 
 use super::spaces::{Retransmits, ThinRetransmits};
-use crate::{
-    Dir, StreamId, VarInt,
-    connection::streams::state::get_or_insert_recv,
-    frame,
-};
+use crate::{Dir, StreamId, VarInt, connection::streams::state::get_or_insert_recv, frame};
 
 mod recv;
 use recv::Recv;
 pub use recv::{Chunks, ReadError, ReadableError};
 
 mod send;
-pub(crate) use send::{ByteSlice, BytesArray};
-use send::{BytesSource, Send, SendState};
 pub use send::{FinishError, WriteError, Written};
+use send::{Send, SendState};
 
 mod state;
 #[allow(unreachable_pub)] // fuzzing only
@@ -233,7 +228,9 @@ impl<'a> SendStream<'a> {
     ///
     /// Returns the number of bytes successfully written.
     pub fn write(&mut self, data: &[u8]) -> Result<usize, WriteError> {
-        Ok(self.write_source(&mut ByteSlice::from_slice(data))?.bytes)
+        let prefix_len = self.write_limit()?.min(data.len());
+        self.write_unchecked(data[..prefix_len].to_vec().into());
+        Ok(prefix_len)
     }
 
     /// Send data on the given stream
@@ -243,10 +240,27 @@ impl<'a> SendStream<'a> {
     /// [`Written::chunks`] will not count this chunk as fully written. However
     /// the chunk will be advanced and contain only non-written data after the call.
     pub fn write_chunks(&mut self, data: &mut [Bytes]) -> Result<Written, WriteError> {
-        self.write_source(&mut BytesArray::from_chunks(data))
+        let limit = self.write_limit()?;
+        let mut written = Written::default();
+        for chunk in data {
+            let prefix = chunk.split_to(chunk.len().min(limit - written.bytes));
+            written.bytes += prefix.len();
+            self.write_unchecked(prefix);
+
+            if chunk.is_empty() {
+                written.chunks += 1;
+            }
+
+            debug_assert!(written.bytes <= limit);
+            if written.bytes == limit {
+                break;
+            }
+        }
+        Ok(written)
     }
 
-    fn write_source<B: BytesSource>(&mut self, source: &mut B) -> Result<Written, WriteError> {
+    /// Get how many bytes could be written immediately, or mark as blocked if zero
+    fn write_limit(&mut self) -> Result<usize, WriteError> {
         if self.conn_state.is_closed() {
             trace!(%self.id, "write blocked; connection draining");
             return Err(WriteError::Blocked);
@@ -271,15 +285,20 @@ impl<'a> SendStream<'a> {
             return Err(WriteError::Blocked);
         }
 
+        stream.write_limit(limit)
+    }
+
+    /// Write bytes under the assumption that `write_limit().unwrap() <= chunk.len()`
+    fn write_unchecked(&mut self, chunk: Bytes) {
+        let stream = self.state.send[self.index.unwrap()].as_mut().unwrap();
         let was_pending = stream.is_pending();
-        let written = stream.write(source, limit)?;
-        self.state.data_sent += written.bytes as u64;
-        self.state.unacked_data += written.bytes as u64;
-        trace!(stream = %self.id, "wrote {} bytes", written.bytes);
+        self.state.data_sent += chunk.len() as u64;
+        self.state.unacked_data += chunk.len() as u64;
+        trace!(stream = %self.id, "wrote {} bytes", chunk.len());
+        stream.pending.write(chunk);
         if !was_pending {
             self.state.pending.push_pending(self.id, stream.priority);
         }
-        Ok(written)
     }
 
     /// Check if this stream was stopped, get the reason if it was
