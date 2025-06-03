@@ -39,8 +39,8 @@ mod smol {
         fn wrap_udp_socket(
             &self,
             sock: std::net::UdpSocket,
-        ) -> io::Result<Arc<dyn AsyncUdpSocket>> {
-            Ok(Arc::new(UdpSocket::new(sock)?))
+        ) -> io::Result<Box<dyn AsyncUdpSocket>> {
+            Ok(Box::new(UdpSocket::new(sock)?))
         }
     }
 }
@@ -55,25 +55,25 @@ impl AsyncTimer for Timer {
     }
 }
 
-#[cfg(feature = "runtime-smol")]
-#[derive(Debug)]
+#[cfg(any(feature = "runtime-smol"))]
+#[derive(Debug, Clone)]
 struct UdpSocket {
-    io: Async<std::net::UdpSocket>,
-    inner: udp::UdpSocketState,
+    io: Arc<Async<std::net::UdpSocket>>,
+    inner: Arc<udp::UdpSocketState>,
 }
 
 #[cfg(feature = "runtime-smol")]
 impl UdpSocket {
     fn new(sock: std::net::UdpSocket) -> io::Result<Self> {
         Ok(Self {
-            inner: udp::UdpSocketState::new((&sock).into())?,
-            io: Async::new_nonblocking(sock)?,
+            inner: Arc::new(udp::UdpSocketState::new((&sock).into())?),
+            io: Arc::new(Async::new_nonblocking(sock)?),
         })
     }
 }
 
 #[cfg(feature = "runtime-smol")]
-impl UdpSenderHelperSocket for Arc<UdpSocket> {
+impl UdpSenderHelperSocket for UdpSocket {
     fn max_transmit_segments(&self) -> usize {
         self.inner.max_gso_segments()
     }
@@ -85,18 +85,15 @@ impl UdpSenderHelperSocket for Arc<UdpSocket> {
 
 #[cfg(feature = "runtime-smol")]
 impl AsyncUdpSocket for UdpSocket {
-    fn create_sender(self: Arc<Self>) -> Pin<Box<dyn UdpSender>> {
-        Box::pin(UdpSenderHelper::new(
-            Arc::clone(&self),
-            |socket: &Arc<Self>| {
-                let socket = socket.clone();
-                async move { socket.io.writable().await }
-            },
-        ))
+    fn create_sender(&self) -> Pin<Box<dyn UdpSender>> {
+        Box::pin(UdpSenderHelper::new(self.clone(), |socket: &Self| {
+            let socket = socket.clone();
+            async move { socket.io.writable().await }
+        }))
     }
 
     fn poll_recv(
-        &self,
+        &mut self,
         cx: &mut Context,
         bufs: &mut [io::IoSliceMut<'_>],
         meta: &mut [udp::RecvMeta],
@@ -110,7 +107,7 @@ impl AsyncUdpSocket for UdpSocket {
     }
 
     fn local_addr(&self) -> io::Result<std::net::SocketAddr> {
-        self.io.as_ref().local_addr()
+        self.io.as_ref().as_ref().local_addr()
     }
 
     fn may_fragment(&self) -> bool {

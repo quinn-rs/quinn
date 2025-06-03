@@ -27,10 +27,10 @@ impl Runtime for TokioRuntime {
         tokio::spawn(future);
     }
 
-    fn wrap_udp_socket(&self, sock: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>> {
-        Ok(Arc::new(UdpSocket {
-            inner: udp::UdpSocketState::new((&sock).into())?,
-            io: tokio::net::UdpSocket::from_std(sock)?,
+    fn wrap_udp_socket(&self, sock: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>> {
+        Ok(Box::new(UdpSocket {
+            inner: Arc::new(udp::UdpSocketState::new((&sock).into())?),
+            io: Arc::new(tokio::net::UdpSocket::from_std(sock)?),
         }))
     }
 
@@ -48,13 +48,13 @@ impl AsyncTimer for Sleep {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct UdpSocket {
-    io: tokio::net::UdpSocket,
-    inner: udp::UdpSocketState,
+    io: Arc<tokio::net::UdpSocket>,
+    inner: Arc<udp::UdpSocketState>,
 }
 
-impl UdpSenderHelperSocket for Arc<UdpSocket> {
+impl UdpSenderHelperSocket for UdpSocket {
     fn max_transmit_segments(&self) -> usize {
         self.inner.max_gso_segments()
     }
@@ -67,18 +67,15 @@ impl UdpSenderHelperSocket for Arc<UdpSocket> {
 }
 
 impl AsyncUdpSocket for UdpSocket {
-    fn create_sender(self: Arc<Self>) -> Pin<Box<dyn super::UdpSender>> {
-        Box::pin(UdpSenderHelper::new(
-            Arc::clone(&self),
-            |socket: &Arc<Self>| {
-                let socket = socket.clone();
-                async move { socket.io.writable().await }
-            },
-        ))
+    fn create_sender(&self) -> Pin<Box<dyn super::UdpSender>> {
+        Box::pin(UdpSenderHelper::new(self.clone(), |socket: &Self| {
+            let socket = socket.clone();
+            async move { socket.io.writable().await }
+        }))
     }
 
     fn poll_recv(
-        &self,
+        &mut self,
         cx: &mut Context,
         bufs: &mut [std::io::IoSliceMut<'_>],
         meta: &mut [udp::RecvMeta],
