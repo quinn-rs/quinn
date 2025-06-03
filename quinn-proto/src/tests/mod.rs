@@ -1538,6 +1538,41 @@ fn keep_alive() {
 }
 
 #[test]
+fn cid_issued() {
+    let _guard = subscribe();
+    let transport_cfg = Arc::new(TransportConfig {
+        max_concurrent_multipath_paths: NonZeroU32::new(3),
+        ..TransportConfig::default()
+    });
+    let server_cfg = Arc::new(ServerConfig {
+        transport: transport_cfg.clone(),
+        ..server_config()
+    });
+    let server = Endpoint::new(Default::default(), Some(server_cfg), true, None);
+    let client = Endpoint::new(Default::default(), None, true, None);
+
+    let mut pair = Pair::new_from_endpoint(client, server);
+    let client_cfg = ClientConfig {
+        transport: transport_cfg,
+        ..client_config()
+    };
+    let (client_ch, _server_ch) = pair.connect_with(client_cfg);
+    pair.drive();
+
+    let client_stats = pair.client_conn_mut(client_ch).stats();
+    dbg!(&client_stats);
+
+    // The client does not send NEW_CONNECTION_ID frames when multipath is enabled.
+    assert_eq!(client_stats.frame_tx.new_connection_id, 0);
+    assert!(client_stats.frame_tx.path_new_connection_id > 0);
+
+    // The server still does send NEW_CONNECTION_ID frames when multipath is enabled, this
+    // is allowed, though it could avoid this.  TODO(flub): fix this sometime.
+    assert!(client_stats.frame_rx.new_connection_id > 0);
+    assert!(client_stats.frame_rx.path_new_connection_id > 0);
+}
+
+#[test]
 fn cid_rotation() {
     let _guard = subscribe();
     const CID_TIMEOUT: Duration = Duration::from_secs(2);

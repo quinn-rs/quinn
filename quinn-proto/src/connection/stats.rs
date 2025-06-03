@@ -47,6 +47,7 @@ pub struct FrameStats {
     pub max_streams_bidi: u64,
     pub max_streams_uni: u64,
     pub new_connection_id: u64,
+    pub path_new_connection_id: u64,
     pub new_token: u64,
     pub path_challenge: u64,
     pub path_response: u64,
@@ -97,7 +98,11 @@ impl FrameStats {
                     self.streams_blocked_uni += 1;
                 }
             }
-            Frame::NewConnectionId(_) => self.new_connection_id += 1,
+            Frame::NewConnectionId(frame) => match frame.path_id {
+                Some(_) => self.path_new_connection_id += 1,
+                None => self.new_connection_id += 1,
+            },
+
             // TODO(@divma): split stats?
             Frame::RetireConnectionId { .. } => self.retire_connection_id += 1,
             Frame::PathChallenge(_) => self.path_challenge += 1,
@@ -136,6 +141,7 @@ impl std::fmt::Debug for FrameStats {
             .field("MAX_STREAMS_BIDI", &self.max_streams_bidi)
             .field("MAX_STREAMS_UNI", &self.max_streams_uni)
             .field("NEW_CONNECTION_ID", &self.new_connection_id)
+            .field("PATH_NEW_CONNECTION_ID", &self.path_new_connection_id)
             .field("NEW_TOKEN", &self.new_token)
             .field("PATH_CHALLENGE", &self.path_challenge)
             .field("PATH_RESPONSE", &self.path_response)

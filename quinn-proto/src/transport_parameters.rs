@@ -532,7 +532,6 @@ impl TransportParameters {
                     }
 
                     params.initial_max_path_id = Some(value);
-                    tracing::debug!(initial_max_path_id=%value, "multipath enabled");
                 }
                 _ => {
                     macro_rules! parse {
