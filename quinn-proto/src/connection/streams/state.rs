@@ -1,11 +1,8 @@
-use std::{
-    collections::{VecDeque, hash_map},
-    convert::TryFrom,
-    mem,
-};
+use std::{collections::VecDeque, convert::TryFrom, mem};
 
 use bytes::BufMut;
-use rustc_hash::FxHashMap;
+use indexmap::IndexMap;
+use rustc_hash::{FxBuildHasher, FxHashMap};
 use tracing::{debug, trace};
 
 use super::{
@@ -69,7 +66,7 @@ impl StreamRecv {
 pub struct StreamsState {
     pub(super) side: Side,
     // Set of streams that are currently open, or could be immediately opened by the peer
-    pub(super) send: FxHashMap<StreamId, Option<Box<Send>>>,
+    pub(super) send: IndexMap<StreamId, Option<Box<Send>>, FxBuildHasher>,
     pub(super) recv: FxHashMap<StreamId, Option<StreamRecv>>,
     pub(super) free_recv: Vec<StreamRecv>,
     pub(super) next: [u64; 2],
@@ -149,7 +146,7 @@ impl StreamsState {
     ) -> Self {
         let mut this = Self {
             side,
-            send: FxHashMap::default(),
+            send: IndexMap::default(),
             recv: FxHashMap::default(),
             free_recv: Vec::new(),
             next: [0, 0],
@@ -225,7 +222,7 @@ impl StreamsState {
                 // We don't bother calling `stream_freed` here because we explicitly reset affected
                 // counters below.
                 let id = StreamId::new(self.side, dir, i);
-                self.send.remove(&id).unwrap();
+                self.send.swap_remove(&id).unwrap();
                 if let Dir::Bi = dir {
                     self.recv.remove(&id).unwrap();
                 }
@@ -379,10 +376,10 @@ impl StreamsState {
 
     pub(crate) fn reset_acked(&mut self, id: StreamId) {
         match self.send.entry(id) {
-            hash_map::Entry::Vacant(_) => {}
-            hash_map::Entry::Occupied(e) => {
+            indexmap::map::Entry::Vacant(_) => {}
+            indexmap::map::Entry::Occupied(e) => {
                 if let Some(SendState::ResetSent) = e.get().as_ref().map(|s| s.state) {
-                    e.remove_entry();
+                    e.swap_remove_entry();
                     self.stream_freed(id, StreamHalf::Send);
                 }
             }
@@ -636,8 +633,8 @@ impl StreamsState {
 
     pub(crate) fn received_ack_of(&mut self, frame: frame::StreamMeta) {
         let mut entry = match self.send.entry(frame.id) {
-            hash_map::Entry::Vacant(_) => return,
-            hash_map::Entry::Occupied(e) => e,
+            indexmap::map::Entry::Vacant(_) => return,
+            indexmap::map::Entry::Occupied(e) => e,
         };
 
         let stream = match entry.get_mut().as_mut() {
@@ -662,7 +659,7 @@ impl StreamsState {
             return;
         }
 
-        entry.remove_entry();
+        entry.swap_remove_entry();
         self.stream_freed(id, StreamHalf::Send);
         self.events.push_back(StreamEvent::Finished { id });
     }
