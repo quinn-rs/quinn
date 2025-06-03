@@ -203,7 +203,16 @@ pub struct SendStream<'a> {
 #[allow(clippy::needless_lifetimes)] // Needed for cfg(fuzzing)
 impl<'a> SendStream<'a> {
     #[cfg(fuzzing)]
-    pub fn new(
+    pub fn new_for_fuzzing(
+        id: StreamId,
+        state: &'a mut StreamsState,
+        pending: &'a mut Retransmits,
+        conn_state: &'a super::State,
+    ) -> Self {
+        Self::new(id, state, pending, conn_state)
+    }
+
+    pub(super) fn new(
         id: StreamId,
         state: &'a mut StreamsState,
         pending: &'a mut Retransmits,

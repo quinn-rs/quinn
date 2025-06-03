@@ -1290,12 +1290,7 @@ mod tests {
         .open(Dir::Uni)
         .unwrap();
 
-        let mut stream = SendStream {
-            id,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut stream = SendStream::new(id, &mut server, &mut pending, &state);
 
         let error_code = 0u32.into();
         stream.state.received_stop_sending(id, error_code);
@@ -1353,29 +1348,14 @@ mod tests {
         let id_mid = streams.open(Dir::Bi).unwrap();
         let id_low = streams.open(Dir::Bi).unwrap();
 
-        let mut mid = SendStream {
-            id: id_mid,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut mid = SendStream::new(id_mid, &mut server, &mut pending, &state);
         mid.write(b"mid").unwrap();
 
-        let mut low = SendStream {
-            id: id_low,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut low = SendStream::new(id_low, &mut server, &mut pending, &state);
         low.set_priority(-1).unwrap();
         low.write(b"low").unwrap();
 
-        let mut high = SendStream {
-            id: id_high,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut high = SendStream::new(id_high, &mut server, &mut pending, &state);
         high.set_priority(1).unwrap();
         high.write(b"high").unwrap();
 
@@ -1408,21 +1388,11 @@ mod tests {
         let id_high = streams.open(Dir::Bi).unwrap();
         let id_mid = streams.open(Dir::Bi).unwrap();
 
-        let mut mid = SendStream {
-            id: id_mid,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut mid = SendStream::new(id_mid, &mut server, &mut pending, &state);
         assert_eq!(mid.write(b"mid").unwrap(), 3);
         assert_eq!(server.pending.len(), 1);
 
-        let mut high = SendStream {
-            id: id_high,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut high = SendStream::new(id_high, &mut server, &mut pending, &state);
         high.set_priority(1).unwrap();
         assert_eq!(high.write(&[0; 200]).unwrap(), 200);
         assert_eq!(server.pending.len(), 2);
@@ -1430,12 +1400,7 @@ mod tests {
         // Requeue the high priority stream to lowest priority. The initial send
         // still uses high priority since it's queued that way. After that it will
         // switch to low priority
-        let mut high = SendStream {
-            id: id_high,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut high = SendStream::new(id_high, &mut server, &mut pending, &state);
         high.set_priority(-1).unwrap();
 
         let mut buf = Vec::with_capacity(1000);
@@ -1478,28 +1443,13 @@ mod tests {
             let id_b = streams.open(Dir::Bi).unwrap();
             let id_c = streams.open(Dir::Bi).unwrap();
 
-            let mut stream_a = SendStream {
-                id: id_a,
-                state: &mut server,
-                pending: &mut pending,
-                conn_state: &state,
-            };
+            let mut stream_a = SendStream::new(id_a, &mut server, &mut pending, &state);
             stream_a.write(&[b'a'; 100]).unwrap();
 
-            let mut stream_b = SendStream {
-                id: id_b,
-                state: &mut server,
-                pending: &mut pending,
-                conn_state: &state,
-            };
+            let mut stream_b = SendStream::new(id_b, &mut server, &mut pending, &state);
             stream_b.write(&[b'b'; 100]).unwrap();
 
-            let mut stream_c = SendStream {
-                id: id_c,
-                state: &mut server,
-                pending: &mut pending,
-                conn_state: &state,
-            };
+            let mut stream_c = SendStream::new(id_c, &mut server, &mut pending, &state);
             stream_c.write(&[b'c'; 100]).unwrap();
 
             let mut metas = vec![];
@@ -1558,20 +1508,10 @@ mod tests {
         let id_b = streams.open(Dir::Bi).unwrap();
         let id_c = streams.open(Dir::Bi).unwrap();
 
-        let mut stream_a = SendStream {
-            id: id_a,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut stream_a = SendStream::new(id_a, &mut server, &mut pending, &state);
         stream_a.write(&[b'a'; 100]).unwrap();
 
-        let mut stream_b = SendStream {
-            id: id_b,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut stream_b = SendStream::new(id_b, &mut server, &mut pending, &state);
         stream_b.write(&[b'b'; 100]).unwrap();
 
         let mut metas = vec![];
@@ -1584,12 +1524,7 @@ mod tests {
         metas.extend(meta);
 
         // Queue stream_c which has higher priority
-        let mut stream_c = SendStream {
-            id: id_c,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut stream_c = SendStream::new(id_c, &mut server, &mut pending, &state);
         stream_c.set_priority(1).unwrap();
         stream_c.write(&[b'b'; 100]).unwrap();
 
@@ -1658,12 +1593,7 @@ mod tests {
         };
 
         let id = streams.open(Dir::Uni).unwrap();
-        let mut stream = SendStream {
-            id,
-            state: &mut server,
-            pending: &mut pending,
-            conn_state: &state,
-        };
+        let mut stream = SendStream::new(id, &mut server, &mut pending, &state);
         stream.write(b"hello").unwrap();
         stream.reset(0u32.into()).unwrap();
 
