@@ -21,7 +21,7 @@ pub trait Runtime: Send + Sync + Debug + 'static {
     fn spawn(&self, future: Pin<Box<dyn Future<Output = ()> + Send>>);
     /// Convert `t` into the socket type used by this runtime
     #[cfg(not(wasm_browser))]
-    fn wrap_udp_socket(&self, t: std::net::UdpSocket) -> io::Result<Arc<dyn AsyncUdpSocket>>;
+    fn wrap_udp_socket(&self, t: std::net::UdpSocket) -> io::Result<Box<dyn AsyncUdpSocket>>;
     /// Look up the current time
     ///
     /// Allows simulating the flow of time for testing.
@@ -50,11 +50,11 @@ pub trait AsyncUdpSocket: Send + Sync + Debug + 'static {
     /// [`Waker`].
     ///
     /// [`Waker`]: std::task::Waker
-    fn create_sender(self: Arc<Self>) -> Pin<Box<dyn UdpSender>>;
+    fn create_sender(&self) -> Pin<Box<dyn UdpSender>>;
 
     /// Receive UDP datagrams, or register to be woken if receiving may succeed in the future
     fn poll_recv(
-        &self,
+        &mut self,
         cx: &mut Context,
         bufs: &mut [IoSliceMut<'_>],
         meta: &mut [RecvMeta],
