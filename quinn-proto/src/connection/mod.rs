@@ -629,7 +629,7 @@ impl Connection {
                         builder.pad_to(MIN_INITIAL_SIZE);
                     }
 
-                    if transmit.num_datagrams() > 1 {
+                    if !transmit.is_first_datagram() {
                         // If too many padding bytes would be required to continue the GSO batch
                         // after this packet, end the GSO batch here. Ensures that fixed-size frames
                         // with heterogeneous sizes (e.g. application datagrams) won't inadvertently
@@ -670,7 +670,7 @@ impl Connection {
                         &mut transmit.datagram_mut(),
                     );
 
-                    if transmit.num_datagrams() == 1 {
+                    if transmit.is_first_datagram() {
                         transmit.clip_datagram_size();
                         if space_id == SpaceId::Data {
                             // Now that we know the size of the first datagram, check
@@ -827,7 +827,7 @@ impl Connection {
 
             // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
             // validation can occur while the link is saturated.
-            if space_id == SpaceId::Data && transmit.num_datagrams() == 1 {
+            if space_id == SpaceId::Data && transmit.is_first_datagram() {
                 let mut datagram = transmit.datagram_mut();
                 if let Some((token, remote)) = self.path_responses.pop_off_path(self.path.remote) {
                     // `unwrap` guaranteed to succeed because `builder_storage` was populated just

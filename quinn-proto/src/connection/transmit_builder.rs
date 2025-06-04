@@ -176,6 +176,11 @@ impl<'a> TransmitBuilder<'a> {
         self.segment_size * self.num_datagrams
     }
 
+    /// Whether the current datagram is the first in the transmit buffer
+    pub(super) fn is_first_datagram(&self) -> bool {
+        self.num_datagrams == 1
+    }
+
     /// Returns the GSO segment size
     ///
     /// This is also the maximum size datagrams are allowed to be. The first and last
