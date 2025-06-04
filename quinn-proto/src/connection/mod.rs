@@ -964,20 +964,12 @@ impl Connection {
             .udp_tx
             .on_sent(transmit.num_datagrams() as u64, transmit.len());
 
-        Some(Transmit {
-            destination: self.path.remote,
-            size: transmit.len(),
-            ecn: if self.path.sending_ecn {
-                Some(EcnCodepoint::Ect0)
-            } else {
-                None
-            },
-            segment_size: match transmit.num_datagrams() {
-                1 => None,
-                _ => Some(transmit.segment_size()),
-            },
-            src_ip: self.local_ip,
-        })
+        let ecn = if self.path.sending_ecn {
+            Some(EcnCodepoint::Ect0)
+        } else {
+            None
+        };
+        Some(transmit.build(self.path.remote, ecn, self.local_ip))
     }
 
     /// Send PATH_CHALLENGE for a previous path if necessary

@@ -1,6 +1,9 @@
+use std::net::{IpAddr, SocketAddr};
 use std::ops::{Deref, DerefMut};
 
 use bytes::BufMut;
+
+use crate::{EcnCodepoint, Transmit};
 
 /// The buffer in which to write datagrams for [`Connection::poll_transmit`]
 ///
@@ -153,6 +156,24 @@ impl<'a> TransmitBuilder<'a> {
             self.datagram_start,
             self.buf_capacity - self.datagram_start,
         )
+    }
+
+    pub(super) fn build(
+        self,
+        destination: SocketAddr,
+        ecn: Option<EcnCodepoint>,
+        src_ip: Option<IpAddr>,
+    ) -> Transmit {
+        Transmit {
+            destination,
+            ecn,
+            size: self.len(),
+            segment_size: match self.num_datagrams {
+                1 => None,
+                _ => Some(self.segment_size),
+            },
+            src_ip,
+        }
     }
 
     /// Returns the bytes written into the current datagram
