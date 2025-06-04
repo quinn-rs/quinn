@@ -25,8 +25,8 @@ use crate::{
     udp_transmit,
 };
 use proto::{
-    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, StreamEvent, StreamId,
-    congestion::Controller,
+    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, Side, StreamEvent,
+    StreamId, congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -494,6 +494,11 @@ impl Connection {
             .inner
             .datagrams()
             .send_buffer_space()
+    }
+
+    /// The side of the connection (client or server)
+    pub fn side(&self) -> Side {
+        self.0.state.lock("side").inner.side()
     }
 
     /// The peer's UDP address
