@@ -2,7 +2,7 @@ use bytes::{BufMut, Bytes};
 use rand::Rng;
 use tracing::{trace, trace_span};
 
-use super::{Connection, SentFrames, TransmitBuilder, spaces::SentPacket};
+use super::{Connection, DatagramBuffer, SentFrames, spaces::SentPacket};
 use crate::{
     ConnectionId, Instant, TransportError, TransportErrorCode,
     connection::ConnectionSide,
@@ -36,7 +36,7 @@ impl PacketBuilder {
         now: Instant,
         space_id: SpaceId,
         dst_cid: ConnectionId,
-        transmits: &mut TransmitBuilder<'_>,
+        datagram: &mut DatagramBuffer<'_>,
         ack_eliciting: bool,
         conn: &mut Connection,
     ) -> Option<Self> {
@@ -120,9 +120,9 @@ impl PacketBuilder {
                 version,
             }),
         };
-        let partial_encode = header.encode(&mut transmits.datagram_mut());
+        let partial_encode = header.encode(datagram);
         if conn.peer_params.grease_quic_bit && conn.rng.random() {
-            transmits.datagram_mut()[partial_encode.start] ^= FIXED_BIT;
+            datagram[partial_encode.start] ^= FIXED_BIT;
         }
 
         let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
@@ -146,10 +146,10 @@ impl PacketBuilder {
         // pn_len + payload_len + tag_len >= sample_size + 4
         // payload_len >= sample_size + 4 - pn_len - tag_len
         let min_size = Ord::max(
-            transmits.datagram().len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
+            datagram.len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
             partial_encode.start + dst_cid.len() + 6,
         );
-        let max_size = transmits.datagram_mut().capacity() - tag_len;
+        let max_size = datagram.capacity() - tag_len;
         debug_assert!(max_size >= min_size);
 
         Some(Self {
@@ -179,12 +179,12 @@ impl PacketBuilder {
         now: Instant,
         conn: &mut Connection,
         sent: Option<SentFrames>,
-        transmits: &mut TransmitBuilder<'_>,
+        datagram: &mut DatagramBuffer<'_>,
     ) {
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
-        let (size, padded) = self.finish(conn, transmits);
+        let (size, padded) = self.finish(conn, datagram);
         let sent = match sent {
             Some(sent) => sent,
             None => return,
@@ -225,13 +225,13 @@ impl PacketBuilder {
     pub(super) fn finish(
         self,
         conn: &mut Connection,
-        transmits: &mut TransmitBuilder<'_>,
+        datagram: &mut DatagramBuffer<'_>,
     ) -> (usize, bool) {
-        let pad = self.min_size > transmits.datagram().len();
+        let pad = self.min_size > datagram.len();
         if pad {
-            let padding_bytes = self.min_size - transmits.datagram().len();
+            let padding_bytes = self.min_size - datagram.len();
             trace!("PADDING * {padding_bytes}");
-            transmits.datagram_mut().put_bytes(0, padding_bytes);
+            datagram.put_bytes(0, padding_bytes);
         }
 
         let space = &conn.spaces[self.space];
@@ -250,18 +250,15 @@ impl PacketBuilder {
             "Mismatching crypto tag len"
         );
 
-        transmits
-            .datagram_mut()
-            .put_bytes(0, packet_crypto.tag_len());
+        datagram.put_bytes(0, packet_crypto.tag_len());
         let encode_start = self.partial_encode.start;
-        let mut datagram_buf = transmits.datagram_mut();
-        let packet_buf = &mut datagram_buf[encode_start..];
+        let packet_buf = &mut datagram[encode_start..];
         self.partial_encode.finish(
             packet_buf,
             header_crypto,
             Some((self.exact_number, packet_crypto)),
         );
 
-        (transmits.datagram().len() - encode_start, pad)
+        (datagram.len() - encode_start, pad)
     }
 }
