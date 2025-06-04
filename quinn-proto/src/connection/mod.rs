@@ -565,7 +565,7 @@ impl Connection {
                 // We need to send 1 more datagram and extend the buffer for that.
 
                 // Is 1 more datagram allowed?
-                if transmit.num_datagrams() >= transmit.max_datagrams() {
+                if transmit.has_datagram_capacity() {
                     // No more datagrams allowed
                     break;
                 }

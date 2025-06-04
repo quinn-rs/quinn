@@ -160,6 +160,11 @@ impl<'a> TransmitBuilder<'a> {
         &self.buf[self.datagram_start..]
     }
 
+    /// Whether there is space for another datagram in this transmit
+    pub(super) fn has_datagram_capacity(&self) -> bool {
+        self.num_datagrams >= self.max_datagrams
+    }
+
     /// Returns the GSO segment size
     ///
     /// This is also the maximum size datagrams are allowed to be. The first and last
@@ -174,11 +179,6 @@ impl<'a> TransmitBuilder<'a> {
     /// The last datagram is not necessarily finished yet.
     pub(super) fn num_datagrams(&self) -> usize {
         self.num_datagrams
-    }
-
-    /// Returns the maximum number of datagrams allowed to be written into the buffer
-    pub(super) fn max_datagrams(&self) -> usize {
-        self.max_datagrams
     }
 
     /// Returns `true` if there are no datagrams in this transmit
