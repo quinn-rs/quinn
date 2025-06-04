@@ -662,7 +662,12 @@ impl Connection {
                         builder.pad_to(transmit.segment_size() as u16);
                     }
 
-                    builder.finish_and_track(now, self, sent_frames.take(), &mut transmit);
+                    builder.finish_and_track(
+                        now,
+                        self,
+                        sent_frames.take(),
+                        &mut transmit.datagram_mut(),
+                    );
 
                     if transmit.num_datagrams() == 1 {
                         transmit.clip_datagram_size();
@@ -707,7 +712,12 @@ impl Connection {
                 // datagram.
                 // Finish current packet without adding extra padding
                 if let Some(builder) = builder_storage.take() {
-                    builder.finish_and_track(now, self, sent_frames.take(), &mut transmit);
+                    builder.finish_and_track(
+                        now,
+                        self,
+                        sent_frames.take(),
+                        &mut transmit.datagram_mut(),
+                    );
                 }
             }
 
@@ -738,7 +748,7 @@ impl Connection {
                 now,
                 space_id,
                 self.rem_cids.active(),
-                &mut transmit,
+                &mut transmit.datagram_mut(),
                 ack_eliciting,
                 self,
             )?);
@@ -835,7 +845,7 @@ impl Connection {
                             non_retransmits: true,
                             ..SentFrames::default()
                         }),
-                        &mut transmit,
+                        &mut transmit.datagram_mut(),
                     );
                     self.stats.udp_tx.on_sent(1, transmit.len());
                     return Some(Transmit {
@@ -888,7 +898,7 @@ impl Connection {
                 builder.pad_to(MIN_INITIAL_SIZE);
             }
             let last_packet_number = builder.exact_number;
-            builder.finish_and_track(now, self, sent_frames, &mut transmit);
+            builder.finish_and_track(now, self, sent_frames, &mut transmit.datagram_mut());
             self.path
                 .congestion
                 .on_sent(now, transmit.len() as u64, last_packet_number);
@@ -912,7 +922,7 @@ impl Connection {
                 now,
                 space_id,
                 self.rem_cids.active(),
-                &mut transmit,
+                &mut transmit.datagram_mut(),
                 true,
                 self,
             )?;
@@ -934,7 +944,7 @@ impl Connection {
                 non_retransmits: true,
                 ..Default::default()
             };
-            builder.finish_and_track(now, self, Some(sent_frames), &mut transmit);
+            builder.finish_and_track(now, self, Some(sent_frames), &mut transmit.datagram_mut());
 
             self.stats.path.sent_plpmtud_probes += 1;
 
@@ -1000,7 +1010,14 @@ impl Connection {
         // if a post-migration packet caused the CID to be retired, it's fair to pretend
         // this is sent first.
         debug_assert!(buf.datagram().is_empty());
-        let mut builder = PacketBuilder::new(now, SpaceId::Data, *prev_cid, buf, false, self)?;
+        let mut builder = PacketBuilder::new(
+            now,
+            SpaceId::Data,
+            *prev_cid,
+            &mut buf.datagram_mut(),
+            false,
+            self,
+        )?;
         trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
         buf.datagram_mut().write(frame::FrameType::PATH_CHALLENGE);
         buf.datagram_mut().write(token);
@@ -1012,7 +1029,7 @@ impl Connection {
         // sending a datagram of this size
         builder.pad_to(MIN_INITIAL_SIZE);
 
-        builder.finish(self, buf);
+        builder.finish(self, &mut buf.datagram_mut());
         self.stats.udp_tx.on_sent(1, buf.len());
 
         Some(Transmit {
