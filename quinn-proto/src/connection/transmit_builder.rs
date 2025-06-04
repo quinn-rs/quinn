@@ -165,6 +165,17 @@ impl<'a> TransmitBuilder<'a> {
         self.num_datagrams >= self.max_datagrams
     }
 
+    /// The sum of the capacity of all started datagrams in the transmit
+    ///
+    /// This might be more than [`len`] when the current datagram is not yet fully
+    /// written. In other words: this is the length of the transmit when the current
+    /// datagram would fill the entire segment size.
+    ///
+    /// [`len`]: TransmitBuf::len
+    pub(super) fn capacity(&self) -> usize {
+        self.segment_size * self.num_datagrams
+    }
+
     /// Returns the GSO segment size
     ///
     /// This is also the maximum size datagrams are allowed to be. The first and last

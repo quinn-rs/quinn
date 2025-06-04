@@ -576,9 +576,10 @@ impl Connection {
                 // for starting another datagram. If there is any anti-amplification
                 // budget left, we always allow a full MTU to be sent
                 // (see https://github.com/quinn-rs/quinn/issues/1082)
-                if self.path.anti_amplification_blocked(
-                    (transmit.segment_size() * transmit.num_datagrams()) as u64 + 1,
-                ) {
+                if self
+                    .path
+                    .anti_amplification_blocked(transmit.capacity() as u64 + 1)
+                {
                     trace!("blocked by anti-amplification");
                     break;
                 }
