@@ -760,6 +760,8 @@ impl Connection {
 
             if close {
                 trace!("sending CONNECTION_CLOSE");
+                let mut datagram = transmit.datagram_mut();
+
                 // Encode ACKs before the ConnectionClose message, to give the receiver
                 // a better approximate on what data has been processed. This is
                 // especially important with ack delay, since the peer might not
@@ -770,7 +772,7 @@ impl Connection {
                         self.receiving_ecn,
                         &mut SentFrames::default(),
                         &mut self.spaces[space_id],
-                        &mut transmit.datagram_mut(),
+                        &mut datagram,
                         &mut self.stats,
                     );
                 }
@@ -779,24 +781,22 @@ impl Connection {
                 // to encode the ConnectionClose frame too. However we still have the
                 // check here to prevent crashes if something changes.
                 debug_assert!(
-                    transmit.datagram().len() + frame::ConnectionClose::SIZE_BOUND
-                        < builder.max_size,
+                    datagram.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size,
                     "ACKS should leave space for ConnectionClose"
                 );
-                if transmit.datagram().len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size
-                {
-                    let max_frame_size = builder.max_size - transmit.datagram().len();
+                if datagram.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size {
+                    let max_frame_size = builder.max_size - datagram.len();
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
                             if space_id == SpaceId::Data || reason.is_transport_layer() {
-                                reason.encode(&mut transmit.datagram_mut(), max_frame_size)
+                                reason.encode(&mut datagram, max_frame_size)
                             } else {
                                 frame::ConnectionClose {
                                     error_code: TransportErrorCode::APPLICATION_ERROR,
                                     frame_type: None,
                                     reason: Bytes::new(),
                                 }
-                                .encode(&mut transmit.datagram_mut(), max_frame_size)
+                                .encode(&mut datagram, max_frame_size)
                             }
                         }
                         State::Draining => frame::ConnectionClose {
@@ -804,7 +804,7 @@ impl Connection {
                             frame_type: None,
                             reason: Bytes::new(),
                         }
-                        .encode(&mut transmit.datagram_mut(), max_frame_size),
+                        .encode(&mut datagram, max_frame_size),
                         _ => unreachable!(
                             "tried to make a close packet when the connection wasn't closed"
                         ),
@@ -827,15 +827,14 @@ impl Connection {
             // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
             // validation can occur while the link is saturated.
             if space_id == SpaceId::Data && transmit.num_datagrams() == 1 {
+                let mut datagram = transmit.datagram_mut();
                 if let Some((token, remote)) = self.path_responses.pop_off_path(self.path.remote) {
                     // `unwrap` guaranteed to succeed because `builder_storage` was populated just
                     // above.
                     let mut builder = builder_storage.take().unwrap();
                     trace!("PATH_RESPONSE {:08x} (off-path)", token);
-                    transmit
-                        .datagram_mut()
-                        .write(frame::FrameType::PATH_RESPONSE);
-                    transmit.datagram_mut().write(token);
+                    datagram.write(frame::FrameType::PATH_RESPONSE);
+                    datagram.write(token);
                     self.stats.frame_tx.path_response += 1;
                     builder.pad_to(MIN_INITIAL_SIZE);
                     builder.finish_and_track(
@@ -845,7 +844,7 @@ impl Connection {
                             non_retransmits: true,
                             ..SentFrames::default()
                         }),
-                        &mut transmit.datagram_mut(),
+                        &mut datagram,
                     );
                     self.stats.udp_tx.on_sent(1, transmit.len());
                     return Some(Transmit {
@@ -859,8 +858,9 @@ impl Connection {
             }
 
             let sent = {
-                let frame_space = builder.max_size - transmit.datagram_mut().len();
-                let mut buf = transmit.datagram_mut().limit(frame_space);
+                let datagram = transmit.datagram_mut();
+                let frame_space = builder.max_size - datagram.len();
+                let mut buf = datagram.limit(frame_space);
                 self.populate_packet(now, space_id, &mut buf, builder.exact_number)
             };
 
@@ -916,26 +916,23 @@ impl Connection {
 
             debug_assert_eq!(transmit.num_datagrams(), 0);
             transmit.start_new_datagram_with_size(probe_size as usize);
-
-            debug_assert!(transmit.datagram().is_empty());
+            let mut datagram = transmit.datagram_mut();
             let mut builder = PacketBuilder::new(
                 now,
                 space_id,
                 self.rem_cids.active(),
-                &mut transmit.datagram_mut(),
+                &mut datagram,
                 true,
                 self,
             )?;
 
             // We implement MTU probes as ping packets padded up to the probe size
-            transmit.datagram_mut().write(frame::FrameType::PING);
+            datagram.write(frame::FrameType::PING);
             self.stats.frame_tx.ping += 1;
 
             // If supported by the peer, we want no delays to the probe's ACK
             if self.peer_supports_ack_frequency() {
-                transmit
-                    .datagram_mut()
-                    .write(frame::FrameType::IMMEDIATE_ACK);
+                datagram.write(frame::FrameType::IMMEDIATE_ACK);
                 self.stats.frame_tx.immediate_ack += 1;
             }
 
@@ -944,7 +941,7 @@ impl Connection {
                 non_retransmits: true,
                 ..Default::default()
             };
-            builder.finish_and_track(now, self, Some(sent_frames), &mut transmit.datagram_mut());
+            builder.finish_and_track(now, self, Some(sent_frames), &mut datagram);
 
             self.stats.path.sent_plpmtud_probes += 1;
 
