@@ -139,6 +139,11 @@ impl<Socket, MakeWritableFutFn, WriteableFut>
     /// that resolves once the socket is write-ready.
     ///
     /// See also the bounds on this struct's [`UdpSender`] implementation.
+    #[cfg(any(
+        feature = "runtime-async-std",
+        feature = "runtime-smol",
+        feature = "runtime-tokio",
+    ))]
     fn new(inner: Socket, make_fut: MakeWritableFutFn) -> Self {
         Self {
             socket: inner,
@@ -249,7 +254,7 @@ mod tokio;
 #[cfg(feature = "runtime-tokio")]
 pub use self::tokio::TokioRuntime;
 
-#[cfg(feature = "async-io")]
+#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
 mod async_io;
 // Due to MSRV, we must specify `self::` where there's crate/module ambiguity
 #[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]

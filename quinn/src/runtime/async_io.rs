@@ -90,7 +90,6 @@ struct UdpSocket {
 }
 
 impl UdpSocket {
-    #[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))]
     fn new(sock: std::net::UdpSocket) -> io::Result<Self> {
         Ok(Self {
             inner: Arc::new(udp::UdpSocketState::new((&sock).into())?),
