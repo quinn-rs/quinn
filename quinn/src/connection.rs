@@ -1110,7 +1110,7 @@ pub(crate) struct State {
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
     sender: Pin<Box<dyn UdpSender>>,
-    pub(crate) runtime: Arc<dyn Runtime>,
+    runtime: Arc<dyn Runtime>,
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
     buffered_transmit: Option<proto::Transmit>,
@@ -1124,7 +1124,10 @@ impl State {
         let now = self.runtime.now();
         let mut transmits = 0;
 
-        let max_datagrams = self.sender.max_transmit_segments();
+        let max_datagrams = self
+            .sender
+            .max_transmit_segments()
+            .min(MAX_TRANSMIT_SEGMENTS);
 
         loop {
             // Retry the last transmit, or get a new one.

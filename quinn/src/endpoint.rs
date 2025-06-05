@@ -2,14 +2,13 @@ use std::{
     collections::VecDeque,
     fmt,
     future::Future,
-    io,
-    io::IoSliceMut,
+    io::{self, IoSliceMut},
     mem,
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
     sync::{Arc, Mutex},
-    task::{Context, Poll, Waker},
+    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
 #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))]
@@ -225,7 +224,7 @@ impl Endpoint {
             .inner
             .connect(self.runtime.now(), config, addr, server_name)?;
 
-        let sender = endpoint.socket.create_sender();
+        let sender = endpoint.socket.clone().create_sender();
         endpoint.stats.outgoing_handshakes += 1;
         Ok(endpoint
             .recv_state
@@ -256,7 +255,9 @@ impl Endpoint {
         // Update connection socket references
         for sender in inner.recv_state.connections.senders.values() {
             // Ignoring errors from dropped connections
-            let _ = sender.send(ConnectionEvent::Rebind(inner.socket.create_sender()));
+            let _ = sender.send(ConnectionEvent::Rebind(
+                inner.socket.clone().create_sender(),
+            ));
         }
         if let Some(driver) = inner.driver.take() {
             // Ensure the driver can register for wake-ups from the new socket
@@ -425,7 +426,7 @@ impl EndpointInner {
         {
             Ok((handle, conn)) => {
                 state.stats.accepted_handshakes += 1;
-                let sender = state.socket.create_sender();
+                let sender = state.socket.clone().create_sender();
                 let runtime = state.runtime.clone();
                 Ok(state
                     .recv_state
@@ -466,7 +467,7 @@ impl EndpointInner {
 
 #[derive(Debug)]
 pub(crate) struct State {
-    socket: Box<dyn AsyncUdpSocket>,
+    socket: Arc<dyn AsyncUdpSocket>,
     sender: Pin<Box<dyn UdpSender>>,
     /// During an active migration, abandoned_socket receives traffic
     /// until the first packet arrives on the new socket.
@@ -498,7 +499,7 @@ impl State {
             let poll_res = self.recv_state.poll_socket(
                 cx,
                 &mut self.inner,
-                &mut *socket,
+                &**socket,
                 &mut self.sender,
                 &*self.runtime,
                 now,
@@ -510,7 +511,7 @@ impl State {
         let poll_res = self.recv_state.poll_socket(
             cx,
             &mut self.inner,
-            &mut self.socket,
+            &*self.socket,
             &mut self.sender,
             &*self.runtime,
             now,
@@ -591,9 +592,29 @@ fn respond(
     // to transmit. This is morally equivalent to the packet getting
     // lost due to congestion further along the link, which
     // similarly relies on peer retries for recovery.
-    _ = sender
-        .as_mut()
-        .try_send(&udp_transmit(&transmit, &response_buffer[..transmit.size]));
+
+    // Copied from rust 1.85's std::task::Waker::noop() implementation for backwards compatibility
+    const NOOP: RawWaker = {
+        const VTABLE: RawWakerVTable = RawWakerVTable::new(
+            // Cloning just returns a new no-op raw waker
+            |_| NOOP,
+            // `wake` does nothing
+            |_| {},
+            // `wake_by_ref` does nothing
+            |_| {},
+            // Dropping does nothing as we don't allocate anything
+            |_| {},
+        );
+        RawWaker::new(std::ptr::null(), &VTABLE)
+    };
+    // SAFETY: Copied from rust stdlib, the NOOP waker is thread-safe and doesn't violate the RawWakerVTable contract,
+    // it doesn't access the data pointer at all.
+    let waker = unsafe { Waker::from_raw(NOOP) };
+    let mut cx = Context::from_waker(&waker);
+    _ = sender.as_mut().poll_send(
+        &udp_transmit(&transmit, &response_buffer[..transmit.size]),
+        &mut cx,
+    );
 }
 
 #[inline]
@@ -698,7 +719,7 @@ impl EndpointRef {
     ) -> Self {
         let (sender, events) = mpsc::unbounded_channel();
         let recv_state = RecvState::new(sender, socket.max_receive_segments(), &inner);
-        let sender = socket.create_sender();
+        let sender = socket.clone().create_sender();
         Self(Arc::new(EndpointInner {
             shared: Shared {
                 incoming: Notify::new(),
@@ -788,7 +809,7 @@ impl RecvState {
         &mut self,
         cx: &mut Context,
         endpoint: &mut proto::Endpoint,
-        socket: &mut Box<dyn AsyncUdpSocket>,
+        socket: &dyn AsyncUdpSocket,
         sender: &mut Pin<Box<dyn UdpSender>>,
         runtime: &dyn Runtime,
         now: Instant,

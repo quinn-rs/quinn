@@ -1,5 +1,5 @@
 use std::{
-    fmt::Debug,
+    fmt::{self, Debug},
     future::Future,
     io::{self, IoSliceMut},
     net::SocketAddr,
@@ -49,7 +49,7 @@ pub trait AsyncUdpSocket: Send + Sync + Debug + 'static {
     /// [`Waker`].
     ///
     /// [`Waker`]: std::task::Waker
-    fn create_sender(&self) -> Pin<Box<dyn UdpSender>>;
+    fn create_sender(self: Arc<Self>) -> Pin<Box<dyn UdpSender>>;
 
     /// Receive UDP datagrams, or register to be woken if receiving may succeed in the future
     fn poll_recv(
@@ -101,21 +101,6 @@ pub trait UdpSender: Send + Sync + Debug + 'static {
     fn max_transmit_segments(&self) -> usize {
         1
     }
-
-    /// Try to send a UDP datagram, if the socket happens to be write-ready.
-    ///
-    /// This may fail with [`io::ErrorKind::WouldBlock`], if the socket is currently full.
-    ///
-    /// The quinn endpoint uses this function when sending
-    ///
-    /// - A version negotiation response due to an unknown version
-    /// - A `CLOSE` due to a malformed or unwanted connection attempt
-    /// - A stateless reset due to an unrecognized connection
-    /// - A `Retry` packet due to a connection attempt when `use_retry` is set
-    ///
-    /// If sending in these cases fails, a well-behaved peer will re-try. Thus it's fine
-    /// if we drop datagrams sometimes with this function.
-    fn try_send(self: Pin<&mut Self>, transmit: &Transmit) -> io::Result<()>;
 }
 
 pin_project_lite::pin_project! {
@@ -129,7 +114,7 @@ pin_project_lite::pin_project! {
     ///
     /// The `UdpSenderHelper` generic type parameters don't need to named, as it will be
     /// used in its dyn-compatible form as a `Pin<Box<dyn UdpSender>>`.
-    pub struct UdpSenderHelper<Socket, MakeWritableFutFn, WritableFut> {
+    struct UdpSenderHelper<Socket, MakeWritableFutFn, WritableFut> {
         socket: Socket,
         make_writable_fut_fn: MakeWritableFutFn,
         #[pin]
@@ -140,7 +125,7 @@ pin_project_lite::pin_project! {
 impl<Socket, MakeWritableFutFn, WritableFut> Debug
     for UdpSenderHelper<Socket, MakeWritableFutFn, WritableFut>
 {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("UdpSender")
     }
 }
@@ -154,7 +139,8 @@ impl<Socket, MakeWritableFutFn, WriteableFut>
     /// that resolves once the socket is write-ready.
     ///
     /// See also the bounds on this struct's [`UdpSender`] implementation.
-    pub fn new(inner: Socket, make_fut: MakeWritableFutFn) -> Self {
+    #[cfg(any(feature = "runtime-smol", feature = "runtime-tokio",))]
+    fn new(inner: Socket, make_fut: MakeWritableFutFn) -> Self {
         Self {
             socket: inner,
             make_writable_fut_fn: make_fut,
@@ -195,16 +181,14 @@ where
             // If .writable() fails, propagate the error
             result?;
 
-            let result = this.socket.try_send(transmit);
-
-            match result {
+            match this.socket.try_send(transmit) {
                 // We thought the socket was writable, but it wasn't, then retry so that either another
                 // `writable().await` call determines that the socket is indeed not writable and
                 // registers us for a wakeup, or the send succeeds if this really was just a
                 // transient failure.
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => continue,
+                Err(e) if e.kind() == io::ErrorKind::WouldBlock => continue,
                 // In all other cases, either propagate the error or we're Ok
-                _ => return Poll::Ready(result),
+                result => return Poll::Ready(result),
             }
         }
     }
@@ -212,19 +196,17 @@ where
     fn max_transmit_segments(&self) -> usize {
         self.socket.max_transmit_segments()
     }
-
-    fn try_send(self: Pin<&mut Self>, transmit: &udp::Transmit) -> io::Result<()> {
-        self.socket.try_send(transmit)
-    }
 }
 
 /// Parts of the [`UdpSender`] trait that aren't asynchronous or require storing wakers.
 ///
 /// This trait is used by [`UdpSenderHelper`] to help construct [`UdpSender`]s.
-pub trait UdpSenderHelperSocket: Send + Sync + 'static {
+trait UdpSenderHelperSocket: Send + Sync + 'static {
     /// Try to send a transmit, if the socket happens to be write-ready.
     ///
-    /// Supposed to work identically to [`UdpSender::try_send`], see also its documentation.
+    /// If not write-ready, this is allowed to return [`std::io::ErrorKind::WouldBlock`].
+    ///
+    /// The [`UdpSenderHelper`] will use this to implement [`UdpSender::poll_send`].
     fn try_send(&self, transmit: &udp::Transmit) -> io::Result<()>;
 
     /// See [`UdpSender::max_transmit_segments`].

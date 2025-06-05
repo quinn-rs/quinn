@@ -55,7 +55,7 @@ struct UdpSocket {
     inner: Arc<udp::UdpSocketState>,
 }
 
-impl UdpSenderHelperSocket for UdpSocket {
+impl UdpSenderHelperSocket for Arc<UdpSocket> {
     fn max_transmit_segments(&self) -> usize {
         self.inner.max_gso_segments()
     }
@@ -68,11 +68,14 @@ impl UdpSenderHelperSocket for UdpSocket {
 }
 
 impl AsyncUdpSocket for UdpSocket {
-    fn create_sender(&self) -> Pin<Box<dyn super::UdpSender>> {
-        Box::pin(UdpSenderHelper::new(self.clone(), |socket: &Self| {
-            let socket = socket.clone();
-            async move { socket.io.writable().await }
-        }))
+    fn create_sender(self: Arc<Self>) -> Pin<Box<dyn super::UdpSender>> {
+        Box::pin(UdpSenderHelper::new(
+            Arc::clone(&self),
+            |socket: &Arc<Self>| {
+                let socket = socket.clone();
+                async move { socket.io.writable().await }
+            },
+        ))
     }
 
     fn poll_recv(
