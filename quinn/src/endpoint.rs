@@ -2,21 +2,20 @@ use std::{
     collections::VecDeque,
     fmt,
     future::Future,
-    io,
-    io::IoSliceMut,
+    io::{self, IoSliceMut},
     mem,
     net::{SocketAddr, SocketAddrV6},
     pin::Pin,
     str,
     sync::{Arc, Mutex},
-    task::{Context, Poll, Waker},
+    task::{Context, Poll, RawWaker, RawWakerVTable, Waker},
 };
 
 #[cfg(all(not(wasm_browser), any(feature = "aws-lc-rs", feature = "ring")))]
 use crate::runtime::default_runtime;
 use crate::{
     Instant,
-    runtime::{AsyncUdpSocket, Runtime},
+    runtime::{AsyncUdpSocket, Runtime, UdpSender},
     udp_transmit,
 };
 use bytes::{Bytes, BytesMut};
@@ -225,12 +224,12 @@ impl Endpoint {
             .inner
             .connect(self.runtime.now(), config, addr, server_name)?;
 
-        let socket = endpoint.socket.clone();
+        let sender = endpoint.socket.clone().create_sender();
         endpoint.stats.outgoing_handshakes += 1;
         Ok(endpoint
             .recv_state
             .connections
-            .insert(ch, conn, socket, self.runtime.clone()))
+            .insert(ch, conn, sender, self.runtime.clone()))
     }
 
     /// Switch to a new UDP socket
@@ -256,7 +255,9 @@ impl Endpoint {
         // Update connection socket references
         for sender in inner.recv_state.connections.senders.values() {
             // Ignoring errors from dropped connections
-            let _ = sender.send(ConnectionEvent::Rebind(inner.socket.clone()));
+            let _ = sender.send(ConnectionEvent::Rebind(
+                inner.socket.clone().create_sender(),
+            ));
         }
         if let Some(driver) = inner.driver.take() {
             // Ensure the driver can register for wake-ups from the new socket
@@ -425,16 +426,16 @@ impl EndpointInner {
         {
             Ok((handle, conn)) => {
                 state.stats.accepted_handshakes += 1;
-                let socket = state.socket.clone();
+                let sender = state.socket.clone().create_sender();
                 let runtime = state.runtime.clone();
                 Ok(state
                     .recv_state
                     .connections
-                    .insert(handle, conn, socket, runtime))
+                    .insert(handle, conn, sender, runtime))
             }
             Err(error) => {
                 if let Some(transmit) = error.response {
-                    respond(transmit, &response_buffer, &*state.socket);
+                    respond(transmit, &response_buffer, &mut state.sender);
                 }
                 Err(error.cause)
             }
@@ -446,14 +447,14 @@ impl EndpointInner {
         state.stats.refused_handshakes += 1;
         let mut response_buffer = Vec::new();
         let transmit = state.inner.refuse(incoming, &mut response_buffer);
-        respond(transmit, &response_buffer, &*state.socket);
+        respond(transmit, &response_buffer, &mut state.sender);
     }
 
     pub(crate) fn retry(&self, incoming: proto::Incoming) -> Result<(), proto::RetryError> {
         let mut state = self.state.lock().unwrap();
         let mut response_buffer = Vec::new();
         let transmit = state.inner.retry(incoming, &mut response_buffer)?;
-        respond(transmit, &response_buffer, &*state.socket);
+        respond(transmit, &response_buffer, &mut state.sender);
         Ok(())
     }
 
@@ -467,6 +468,7 @@ impl EndpointInner {
 #[derive(Debug)]
 pub(crate) struct State {
     socket: Arc<dyn AsyncUdpSocket>,
+    sender: Pin<Box<dyn UdpSender>>,
     /// During an active migration, abandoned_socket receives traffic
     /// until the first packet arrives on the new socket.
     prev_socket: Option<Arc<dyn AsyncUdpSocket>>,
@@ -494,16 +496,26 @@ impl State {
         self.recv_state.recv_limiter.start_cycle(get_time);
         if let Some(socket) = &self.prev_socket {
             // We don't care about the `PollProgress` from old sockets.
-            let poll_res =
-                self.recv_state
-                    .poll_socket(cx, &mut self.inner, &**socket, &*self.runtime, now);
+            let poll_res = self.recv_state.poll_socket(
+                cx,
+                &mut self.inner,
+                &**socket,
+                &mut self.sender,
+                &*self.runtime,
+                now,
+            );
             if poll_res.is_err() {
                 self.prev_socket = None;
             }
         };
-        let poll_res =
-            self.recv_state
-                .poll_socket(cx, &mut self.inner, &*self.socket, &*self.runtime, now);
+        let poll_res = self.recv_state.poll_socket(
+            cx,
+            &mut self.inner,
+            &*self.socket,
+            &mut self.sender,
+            &*self.runtime,
+            now,
+        );
         self.recv_state.recv_limiter.finish_cycle(get_time);
         let poll_res = poll_res?;
         if poll_res.received_connection_packet {
@@ -555,7 +567,11 @@ impl Drop for State {
     }
 }
 
-fn respond(transmit: proto::Transmit, response_buffer: &[u8], socket: &dyn AsyncUdpSocket) {
+fn respond(
+    transmit: proto::Transmit,
+    response_buffer: &[u8],
+    sender: &mut Pin<Box<dyn UdpSender>>,
+) {
     // Send if there's kernel buffer space; otherwise, drop it
     //
     // As an endpoint-generated packet, we know this is an
@@ -576,7 +592,29 @@ fn respond(transmit: proto::Transmit, response_buffer: &[u8], socket: &dyn Async
     // to transmit. This is morally equivalent to the packet getting
     // lost due to congestion further along the link, which
     // similarly relies on peer retries for recovery.
-    _ = socket.try_send(&udp_transmit(&transmit, &response_buffer[..transmit.size]));
+
+    // Copied from rust 1.85's std::task::Waker::noop() implementation for backwards compatibility
+    const NOOP: RawWaker = {
+        const VTABLE: RawWakerVTable = RawWakerVTable::new(
+            // Cloning just returns a new no-op raw waker
+            |_| NOOP,
+            // `wake` does nothing
+            |_| {},
+            // `wake_by_ref` does nothing
+            |_| {},
+            // Dropping does nothing as we don't allocate anything
+            |_| {},
+        );
+        RawWaker::new(std::ptr::null(), &VTABLE)
+    };
+    // SAFETY: Copied from rust stdlib, the NOOP waker is thread-safe and doesn't violate the RawWakerVTable contract,
+    // it doesn't access the data pointer at all.
+    let waker = unsafe { Waker::from_raw(NOOP) };
+    let mut cx = Context::from_waker(&waker);
+    _ = sender.as_mut().poll_send(
+        &udp_transmit(&transmit, &response_buffer[..transmit.size]),
+        &mut cx,
+    );
 }
 
 #[inline]
@@ -603,7 +641,7 @@ impl ConnectionSet {
         &mut self,
         handle: ConnectionHandle,
         conn: proto::Connection,
-        socket: Arc<dyn AsyncUdpSocket>,
+        sender: Pin<Box<dyn UdpSender>>,
         runtime: Arc<dyn Runtime>,
     ) -> Connecting {
         let (send, recv) = mpsc::unbounded_channel();
@@ -615,7 +653,7 @@ impl ConnectionSet {
             .unwrap();
         }
         self.senders.insert(handle, send);
-        Connecting::new(handle, conn, self.sender.clone(), recv, socket, runtime)
+        Connecting::new(handle, conn, self.sender.clone(), recv, sender, runtime)
     }
 
     fn is_empty(&self) -> bool {
@@ -681,6 +719,7 @@ impl EndpointRef {
     ) -> Self {
         let (sender, events) = mpsc::unbounded_channel();
         let recv_state = RecvState::new(sender, socket.max_receive_segments(), &inner);
+        let sender = socket.clone().create_sender();
         Self(Arc::new(EndpointInner {
             shared: Shared {
                 incoming: Notify::new(),
@@ -688,6 +727,7 @@ impl EndpointRef {
             },
             state: Mutex::new(State {
                 socket,
+                sender,
                 prev_socket: None,
                 inner,
                 ipv6,
@@ -770,6 +810,7 @@ impl RecvState {
         cx: &mut Context,
         endpoint: &mut proto::Endpoint,
         socket: &dyn AsyncUdpSocket,
+        sender: &mut Pin<Box<dyn UdpSender>>,
         runtime: &dyn Runtime,
         now: Instant,
     ) -> Result<PollProgress, io::Error> {
@@ -809,7 +850,7 @@ impl RecvState {
                                     } else {
                                         let transmit =
                                             endpoint.refuse(incoming, &mut response_buffer);
-                                        respond(transmit, &response_buffer, socket);
+                                        respond(transmit, &response_buffer, sender);
                                     }
                                 }
                                 Some(DatagramEvent::ConnectionEvent(handle, event)) => {
@@ -823,7 +864,7 @@ impl RecvState {
                                         .send(ConnectionEvent::Proto(event));
                                 }
                                 Some(DatagramEvent::Response(transmit)) => {
-                                    respond(transmit, &response_buffer, socket);
+                                    respond(transmit, &response_buffer, sender);
                                 }
                                 None => {}
                             }

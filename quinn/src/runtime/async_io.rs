@@ -13,7 +13,7 @@ use async_io::Timer;
 
 use super::AsyncTimer;
 #[cfg(feature = "runtime-smol")]
-use super::{AsyncUdpSocket, Runtime, UdpPollHelper};
+use super::{AsyncUdpSocket, Runtime, UdpSender, UdpSenderHelper, UdpSenderHelperSocket};
 
 #[cfg(feature = "runtime-smol")]
 // Due to MSRV, we must specify `self::` where there's crate/module ambiguity
@@ -73,16 +73,26 @@ impl UdpSocket {
 }
 
 #[cfg(feature = "runtime-smol")]
-impl AsyncUdpSocket for UdpSocket {
-    fn create_io_poller(self: Arc<Self>) -> Pin<Box<dyn super::UdpPoller>> {
-        Box::pin(UdpPollHelper::new(move || {
-            let socket = self.clone();
-            async move { socket.io.writable().await }
-        }))
+impl UdpSenderHelperSocket for Arc<UdpSocket> {
+    fn max_transmit_segments(&self) -> usize {
+        self.inner.max_gso_segments()
     }
 
     fn try_send(&self, transmit: &udp::Transmit) -> io::Result<()> {
         self.inner.send((&self.io).into(), transmit)
+    }
+}
+
+#[cfg(feature = "runtime-smol")]
+impl AsyncUdpSocket for UdpSocket {
+    fn create_sender(self: Arc<Self>) -> Pin<Box<dyn UdpSender>> {
+        Box::pin(UdpSenderHelper::new(
+            Arc::clone(&self),
+            |socket: &Arc<Self>| {
+                let socket = socket.clone();
+                async move { socket.io.writable().await }
+            },
+        ))
     }
 
     fn poll_recv(
@@ -105,10 +115,6 @@ impl AsyncUdpSocket for UdpSocket {
 
     fn may_fragment(&self) -> bool {
         self.inner.may_fragment()
-    }
-
-    fn max_transmit_segments(&self) -> usize {
-        self.inner.max_gso_segments()
     }
 
     fn max_receive_segments(&self) -> usize {
