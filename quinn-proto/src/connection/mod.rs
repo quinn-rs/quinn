@@ -426,12 +426,12 @@ impl Connection {
     #[must_use]
     pub fn send_stream(&mut self, id: StreamId) -> SendStream<'_> {
         assert!(id.dir() == Dir::Bi || id.initiator() == self.side.side());
-        SendStream {
+        SendStream::new(
             id,
-            state: &mut self.streams,
-            pending: &mut self.spaces[SpaceId::Data].pending,
-            conn_state: &self.state,
-        }
+            &mut self.streams,
+            &mut self.spaces[SpaceId::Data].pending,
+            &self.state,
+        )
     }
 
     /// Returns packets to transmit
