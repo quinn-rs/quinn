@@ -1628,11 +1628,7 @@ impl Connection {
     /// Multipath is only enabled after the handshake is completed and if it was enabled by both
     /// peers.
     pub fn is_multipath_negotiated(&self) -> bool {
-        // TODO(flub): I believe it might be a TRANSPORT_ERROR if multipath is enabled but
-        // there's a zero-lenth CID.
         !self.is_handshaking()
-            && !self.handshake_cid.is_empty()
-            && !self.rem_handshake_cid.is_empty()
             && self.config.max_concurrent_multipath_paths.is_some()
             && self.peer_params.initial_max_path_id.is_some()
     }
@@ -2889,6 +2885,7 @@ impl Connection {
             Header::Long {
                 ty: LongType::Handshake,
                 src_cid: rem_cid,
+                dst_cid: loc_cid,
                 ..
             } => {
                 debug_assert_eq!(path_id, PathId(0));
@@ -2949,7 +2946,7 @@ impl Connection {
                         self.endpoint_events
                             .push_back(EndpointEventInner::ResetToken(remote, token));
                     }
-                    self.handle_peer_params(params)?;
+                    self.handle_peer_params(params, loc_cid, rem_cid)?;
                     self.issue_first_cids(now);
                 } else {
                     // Server-only
@@ -2967,7 +2964,9 @@ impl Connection {
                 Ok(())
             }
             Header::Initial(InitialHeader {
-                src_cid: rem_cid, ..
+                src_cid: rem_cid,
+                dst_cid: loc_cid,
+                ..
             }) => {
                 debug_assert_eq!(path_id, PathId(0));
                 if !state.rem_cid_set {
@@ -3004,7 +3003,7 @@ impl Connection {
                                 frame: None,
                                 reason: "transport parameters missing".into(),
                             })?;
-                    self.handle_peer_params(params)?;
+                    self.handle_peer_params(params, loc_cid, rem_cid)?;
                     self.issue_first_cids(now);
                     self.init_0rtt();
                 }
@@ -4144,8 +4143,15 @@ impl Connection {
     }
 
     /// Handle transport parameters received from the peer
-    fn handle_peer_params(&mut self, params: TransportParameters) -> Result<(), TransportError> {
-        // TODO(@divma): check if we need to validate anything regarding multipath here
+    ///
+    /// *rem_cid* and *loc_cid* are the source and destination CIDs respectively of the
+    /// *packet into which the transport parameters arrived.
+    fn handle_peer_params(
+        &mut self,
+        params: TransportParameters,
+        loc_cid: ConnectionId,
+        rem_cid: ConnectionId,
+    ) -> Result<(), TransportError> {
         if Some(self.orig_rem_cid) != params.initial_src_cid
             || (self.side.is_client()
                 && (Some(self.initial_dst_cid) != params.original_dst_cid
@@ -4153,6 +4159,11 @@ impl Connection {
         {
             return Err(TransportError::TRANSPORT_PARAMETER_ERROR(
                 "CID authentication failure",
+            ));
+        }
+        if params.initial_max_path_id.is_some() && (loc_cid.is_empty() || rem_cid.is_empty()) {
+            return Err(TransportError::PROTOCOL_VIOLATION(
+                "multipath must not use zero-length CIDs",
             ));
         }
 
