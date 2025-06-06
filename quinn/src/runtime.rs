@@ -119,7 +119,6 @@ impl<MakeFut, Fut> UdpPollHelper<MakeFut, Fut> {
         feature = "runtime-async-std",
         feature = "runtime-smol",
         feature = "runtime-tokio",
-        feature = "async-io"
     ))]
     fn new(make_fut: MakeFut) -> Self {
         Self {
