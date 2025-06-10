@@ -25,7 +25,7 @@ pub(crate) enum Timer {
     /// When to invalidate old CID and proactively push new one via NEW_CONNECTION_ID frame
     PushNewCid,
     /// When to send an immediate ACK if there are unacked ack-eliciting packets of the peer
-    MaxAckDelay,
+    MaxAckDelay(PathId),
 }
 
 /// Keeps track of the nearest timeout for each `Timer`

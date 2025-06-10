@@ -17,14 +17,11 @@ use crate::{
 
 pub(super) struct PacketSpace {
     pub(super) crypto: Option<Keys>,
-    pub(super) dedup: FxHashMap<PathId, Dedup>,
     /// Highest received packet number
     pub(super) rx_packet: u64,
 
     /// Data to send
     pub(super) pending: Retransmits,
-    /// Packet numbers to acknowledge
-    pub(super) pending_acks: PendingAcks,
 
     /// Incoming cryptographic handshake stream
     pub(super) crypto_stream: Assembler,
@@ -44,10 +41,8 @@ impl PacketSpace {
         let number_space_0 = PacketNumberSpace::new(now, space, rng);
         Self {
             crypto: None,
-            dedup: Default::default(),
             rx_packet: 0,
             pending: Retransmits::default(),
-            pending_acks: PendingAcks::new(),
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
             number_spaces: BTreeMap::from([(PathId(0), number_space_0)]),
@@ -59,10 +54,8 @@ impl PacketSpace {
         let number_space_0 = PacketNumberSpace::new_deterministic(now, space);
         Self {
             crypto: None,
-            dedup: Default::default(),
             rx_packet: 0,
             pending: Retransmits::default(),
-            pending_acks: PendingAcks::new(),
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
             number_spaces: BTreeMap::from([(PathId(0), number_space_0)]),
@@ -151,7 +144,10 @@ impl PacketSpace {
     ///
     /// [`Connection::can_send_1rtt`]: super::Connection::can_send_1rtt
     pub(super) fn can_send(&self, path_id: PathId, streams: &StreamsState) -> SendableFrames {
-        let acks = self.pending_acks.can_send();
+        let acks = self
+            .number_spaces
+            .values()
+            .any(|pns| pns.pending_acks.can_send());
         let path_exclusive = self
             .number_spaces
             .get(&path_id)
@@ -221,6 +217,10 @@ pub(super) struct PacketNumberSpace {
     pub(super) ping_pending: bool,
     /// An IMMEDIATE_ACK (draft-ietf-quic-ack-frequency) frame needs to be sent on this path
     pub(super) immediate_ack_pending: bool,
+    /// Packet deduplicator
+    pub(super) dedup: Dedup,
+    /// Packet numbers to acknowledge
+    pub(super) pending_acks: PendingAcks,
 
     //
     // Loss Detection
@@ -259,6 +259,8 @@ impl PacketNumberSpace {
             sent_with_keys: 0,
             ping_pending: false,
             immediate_ack_pending: false,
+            dedup: Default::default(),
+            pending_acks: PendingAcks::new(),
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
             loss_probes: 0,
@@ -285,6 +287,8 @@ impl PacketNumberSpace {
             sent_with_keys: 0,
             ping_pending: false,
             immediate_ack_pending: false,
+            dedup: Default::default(),
+            pending_acks: PendingAcks::new(),
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
             loss_probes: 0,
@@ -312,6 +316,8 @@ impl PacketNumberSpace {
             sent_with_keys: 0,
             ping_pending: false,
             immediate_ack_pending: false,
+            dedup: Default::default(),
+            pending_acks: PendingAcks::new(),
             time_of_last_ack_eliciting_packet: None,
             loss_time: None,
             loss_probes: 0,
@@ -467,7 +473,7 @@ pub(super) struct SentPacket {
     /// Whether an acknowledgement is expected directly in response to this packet.
     pub(super) ack_eliciting: bool,
     /// The largest packet number acknowledged by this packet
-    pub(super) largest_acked: Option<u64>,
+    pub(super) largest_acked: FxHashMap<PathId, u64>,
     /// Data which needs to be retransmitted in case the packet is lost.
     /// The data is boxed to minimize `SentPacket` size for the typical case of
     /// packets only containing ACKs and STREAM frames.
@@ -809,15 +815,15 @@ pub(super) struct PendingAcks {
     /// These are packet number ranges of ack-eliciting packets the peer has sent and which
     /// need to be acknowledged.  Packet numbers are only removed from here once the peer has
     /// acknowledged the ACKs for them.
-    ranges: FxHashMap<PathId, ArrayRangeSet>,
+    ranges: ArrayRangeSet,
     /// The largest packet number received and the time it was received
     ///
     /// Used to calculate ACK delay in [`PendingAcks::ack_delay`].
-    largest_packet: FxHashMap<PathId, (u64, Instant)>,
+    largest_packet: Option<(u64, Instant)>,
     /// The ack-eliciting packet we have received with the largest packet number
-    largest_ack_eliciting_packet: FxHashMap<PathId, u64>,
+    largest_ack_eliciting_packet: Option<u64>,
     /// The largest acknowledged packet number sent in an ACK frame
-    largest_acked: FxHashMap<PathId, u64>,
+    largest_acked: Option<u64>,
 }
 
 impl PendingAcks {
@@ -858,14 +864,13 @@ impl PendingAcks {
     pub(super) fn can_send(&self) -> bool {
         // This always checks all the paths.  If any other path is present then multipath is
         // assumed to be enabled.
-        self.immediate_ack_required && self.ranges.values().any(|ranges| !ranges.is_empty())
+        self.immediate_ack_required && !self.ranges.is_empty()
     }
 
     /// Returns the delay since the packet with the largest packet number was received
-    pub(super) fn ack_delay(&self, path_id: PathId, now: Instant) -> Duration {
+    pub(super) fn ack_delay(&self, now: Instant) -> Duration {
         self.largest_packet
-            .get(&path_id)
-            .map_or(Duration::default(), |(_, received)| now - *received)
+            .map_or(Duration::default(), |(_, received)| now - received)
     }
 
     /// Handle receipt of a new packet
@@ -874,7 +879,6 @@ impl PendingAcks {
     pub(super) fn packet_received(
         &mut self,
         now: Instant,
-        path_id: PathId,
         packet_number: u64,
         ack_eliciting: bool,
         dedup: &Dedup,
@@ -884,19 +888,14 @@ impl PendingAcks {
             return false;
         }
 
-        let prev_largest_ack_eliciting = self
-            .largest_ack_eliciting_packet
-            .get(&path_id)
-            .copied()
-            .unwrap_or(0);
+        let prev_largest_ack_eliciting = self.largest_ack_eliciting_packet.unwrap_or(0);
 
         // Track largest ack-eliciting packet
-        self.largest_ack_eliciting_packet
-            .entry(path_id)
-            .and_modify(|pn| {
-                *pn = (*pn).max(packet_number);
-            })
-            .or_insert(packet_number);
+        self.largest_ack_eliciting_packet = self
+            .largest_ack_eliciting_packet
+            .map(|pn| pn.max(packet_number))
+            .or(Some(packet_number));
+        tracing::warn!(?prev_largest_ack_eliciting, ?self.largest_ack_eliciting_packet, "eeee");
 
         // Handle ack_eliciting_threshold
         self.ack_eliciting_since_last_ack_sent += 1;
@@ -905,7 +904,7 @@ impl PendingAcks {
 
         // Handle out-of-order packets
         self.immediate_ack_required |=
-            self.is_out_of_order(path_id, packet_number, prev_largest_ack_eliciting, dedup);
+            self.is_out_of_order(packet_number, prev_largest_ack_eliciting, dedup);
 
         // Arm max_ack_delay timer if necessary
         if self.earliest_ack_eliciting_since_last_ack_sent.is_none() && !self.can_send() {
@@ -918,7 +917,6 @@ impl PendingAcks {
 
     fn is_out_of_order(
         &self,
-        path_id: PathId,
         packet_number: u64,
         prev_largest_ack_eliciting: u64,
         dedup: &Dedup,
@@ -933,10 +931,8 @@ impl PendingAcks {
             _ => {
                 // From acknowledgement frequency draft, section 6.1: send an ACK immediately if
                 // doing so would cause the sender to detect a new packet loss
-                let Some((&largest_acked, &largest_unacked)) = self
-                    .largest_acked
-                    .get(&path_id)
-                    .zip(self.largest_ack_eliciting_packet.get(&path_id))
+                let Some((largest_acked, largest_unacked)) =
+                    self.largest_acked.zip(self.largest_ack_eliciting_packet)
                 else {
                     return false;
                 };
@@ -973,36 +969,30 @@ impl PendingAcks {
         self.ack_eliciting_since_last_ack_sent = 0;
         self.non_ack_eliciting_since_last_ack_sent = 0;
         self.earliest_ack_eliciting_since_last_ack_sent = None;
-        self.largest_acked.clear();
-        self.largest_acked
-            .extend(&self.largest_ack_eliciting_packet);
+        tracing::warn!(?self.largest_acked, ?self.largest_ack_eliciting_packet, "who");
+        self.largest_acked = self.largest_ack_eliciting_packet;
     }
 
     /// Insert one packet that needs to be acknowledged
-    pub(super) fn insert_one(&mut self, path_id: PathId, packet: u64, now: Instant) {
-        let ranges = self.ranges.entry(path_id).or_default();
-        ranges.insert_one(packet);
+    pub(super) fn insert_one(&mut self, packet: u64, now: Instant) {
+        self.ranges.insert_one(packet);
 
-        if ranges.len() > MAX_ACK_BLOCKS {
-            ranges.pop_min();
+        if self.largest_packet.map_or(true, |(pn, _)| packet > pn) {
+            self.largest_packet = Some((packet, now));
         }
 
-        let largest_packet = self.largest_packet.entry(path_id).or_insert((packet, now));
-        if packet > largest_packet.0 {
-            largest_packet.0 = packet;
-            largest_packet.1 = now;
+        if self.ranges.len() > MAX_ACK_BLOCKS {
+            self.ranges.pop_min();
         }
     }
 
     /// Remove ACKs of packets numbered at or below `max` from the set of pending ACKs
-    pub(super) fn subtract_below(&mut self, path_id: PathId, max: u64) {
-        self.ranges
-            .get_mut(&path_id)
-            .map(|ranges| ranges.remove(0..(max + 1)));
+    pub(super) fn subtract_below(&mut self, max: u64) {
+        self.ranges.remove(0..(max + 1));
     }
 
     /// Returns the set of currently pending ACK ranges
-    pub(super) fn ranges(&self) -> &FxHashMap<PathId, ArrayRangeSet> {
+    pub(super) fn ranges(&self) -> &ArrayRangeSet {
         &self.ranges
     }
 
@@ -1219,7 +1209,7 @@ mod test {
         let mut acks = PendingAcks::new();
         let mut dedup = Dedup::new();
         dedup.insert(0);
-        acks.packet_received(Instant::now(), PathId::ZERO, 0, true, &dedup);
+        acks.packet_received(Instant::now(), 0, true, &dedup);
         assert!(!acks.immediate_ack_required);
     }
 
@@ -1231,8 +1221,8 @@ mod test {
         // Receive ack-eliciting packet
         dedup.insert(0);
         let now = Instant::now();
-        acks.insert_one(PathId(0), 0, now);
-        acks.packet_received(now, PathId::ZERO, 0, true, &dedup);
+        acks.insert_one(0, now);
+        acks.packet_received(now, 0, true, &dedup);
 
         // Sanity check
         assert!(!acks.ranges.is_empty());
@@ -1251,30 +1241,30 @@ mod test {
         let t1 = Instant::now();
         let t2 = t1 + Duration::from_millis(2);
         let t3 = t2 + Duration::from_millis(5);
-        assert_eq!(acks.ack_delay(PathId::ZERO, t1), Duration::from_millis(0));
-        assert_eq!(acks.ack_delay(PathId::ZERO, t2), Duration::from_millis(0));
-        assert_eq!(acks.ack_delay(PathId::ZERO, t3), Duration::from_millis(0));
+        assert_eq!(acks.ack_delay(t1), Duration::from_millis(0));
+        assert_eq!(acks.ack_delay(t2), Duration::from_millis(0));
+        assert_eq!(acks.ack_delay(t3), Duration::from_millis(0));
 
         // In-order packet
         dedup.insert(0);
-        acks.insert_one(PathId::ZERO, 0, t1);
-        acks.packet_received(t1, PathId::ZERO, 0, true, &dedup);
-        assert_eq!(acks.ack_delay(PathId::ZERO, t1), Duration::from_millis(0));
-        assert_eq!(acks.ack_delay(PathId::ZERO, t2), Duration::from_millis(2));
-        assert_eq!(acks.ack_delay(PathId::ZERO, t3), Duration::from_millis(7));
+        acks.insert_one(0, t1);
+        acks.packet_received(t1, 0, true, &dedup);
+        assert_eq!(acks.ack_delay(t1), Duration::from_millis(0));
+        assert_eq!(acks.ack_delay(t2), Duration::from_millis(2));
+        assert_eq!(acks.ack_delay(t3), Duration::from_millis(7));
 
         // Out of order (higher than expected)
         dedup.insert(3);
-        acks.insert_one(PathId::ZERO, 3, t2);
-        acks.packet_received(t2, PathId::ZERO, 3, true, &dedup);
-        assert_eq!(acks.ack_delay(PathId::ZERO, t2), Duration::from_millis(0));
-        assert_eq!(acks.ack_delay(PathId::ZERO, t3), Duration::from_millis(5));
+        acks.insert_one(3, t2);
+        acks.packet_received(t2, 3, true, &dedup);
+        assert_eq!(acks.ack_delay(t2), Duration::from_millis(0));
+        assert_eq!(acks.ack_delay(t3), Duration::from_millis(5));
 
         // Out of order (lower than expected, so previous instant is kept)
         dedup.insert(2);
-        acks.insert_one(PathId::ZERO, 2, t3);
-        acks.packet_received(t3, PathId::ZERO, 2, true, &dedup);
-        assert_eq!(acks.ack_delay(PathId::ZERO, t3), Duration::from_millis(5));
+        acks.insert_one(2, t3);
+        acks.packet_received(t3, 2, true, &dedup);
+        assert_eq!(acks.ack_delay(t3), Duration::from_millis(5));
     }
 
     #[test]
