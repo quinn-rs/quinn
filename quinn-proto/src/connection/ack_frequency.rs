@@ -125,7 +125,6 @@ impl AckFrequencyState {
     pub(super) fn ack_frequency_received(
         &mut self,
         frame: &AckFrequency,
-        // pending_acks: &mut PendingAcks,
     ) -> Result<bool, TransportError> {
         if self
             .last_ack_frequency_frame
@@ -144,9 +143,6 @@ impl AckFrequencyState {
             ));
         }
         self.max_ack_delay = max_ack_delay;
-
-        // Update the rest of the params
-        // pending_acks.set_ack_frequency_params(frame);
 
         Ok(true)
     }
