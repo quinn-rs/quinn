@@ -2,38 +2,64 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 
-use proto::{ConnectionError, PathId, PathStatus, VarInt};
+use proto::{ConnectionError, OpenPathError, PathId, PathStatus, VarInt};
 use tokio::sync::oneshot;
 
 use crate::connection::ConnectionRef;
 
 /// Future produced by [`crate::Connection::open_path`]
-pub struct OpenPath {
-    opened: oneshot::Receiver<()>,
-    path_id: PathId,
-    conn: ConnectionRef,
+pub struct OpenPath(OpenPathInner);
+
+enum OpenPathInner {
+    /// Opening a path in underway.
+    ///
+    /// This migth fail later on.
+    Ongoing {
+        opened: oneshot::Receiver<Result<(), OpenPathError>>,
+        path_id: PathId,
+        conn: ConnectionRef,
+    },
+    /// Opening a path failed immediately.
+    Rejected {
+        /// The error that occurred.
+        err: OpenPathError,
+    },
 }
 
 impl OpenPath {
-    pub(crate) fn new(path_id: PathId, opened: oneshot::Receiver<()>, conn: ConnectionRef) -> Self {
-        Self {
+    pub(crate) fn new(
+        path_id: PathId,
+        opened: oneshot::Receiver<Result<(), OpenPathError>>,
+        conn: ConnectionRef,
+    ) -> Self {
+        Self(OpenPathInner::Ongoing {
             opened,
             path_id,
             conn,
-        }
+        })
+    }
+
+    pub(crate) fn rejected(err: OpenPathError) -> Self {
+        Self(OpenPathInner::Rejected { err })
     }
 }
 
 impl Future for OpenPath {
-    type Output = Result<Path, ConnectionError>;
-    fn poll(mut self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
-        // TODO: thread through errors
-        Pin::new(&mut self.opened).poll(ctx).map(|_| {
-            Ok(Path {
-                id: self.path_id,
-                conn: self.conn.clone(),
-            })
-        })
+    type Output = Result<Path, OpenPathError>;
+    fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
+        match self.get_mut().0 {
+            OpenPathInner::Ongoing {
+                ref mut opened,
+                path_id,
+                ref mut conn,
+            } => Pin::new(opened).poll(ctx).map(|_| {
+                Ok(Path {
+                    id: path_id,
+                    conn: conn.clone(),
+                })
+            }),
+            OpenPathInner::Rejected { err } => Poll::Ready(Err(err)),
+        }
     }
 }
 

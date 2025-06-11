@@ -3,6 +3,7 @@ use std::{cmp, net::SocketAddr};
 use tracing::trace;
 
 use super::{
+    OpenPathError,
     mtud::MtuDiscovery,
     pacing::Pacer,
     spaces::{PacketSpace, SentPacket},
@@ -98,6 +99,8 @@ pub(super) struct PathData {
     pub(super) last_observed_addr_report: Option<ObservedAddr>,
     /// The QUIC-MULTIPATH path status
     pub(super) status: PathStatus,
+    /// Next status sequence number to use to inform the remote of status updates.
+    pub(super) local_status_seq_no: VarInt,
     /// The sequence number of the received PATH_AVAILABLE and PATH_BACKUP frames.
     pub(super) status_seq_no: Option<VarInt>,
     /// Number of the first packet sent on this path
@@ -158,6 +161,7 @@ impl PathData {
             observed_addr_sent: false,
             last_observed_addr_report: None,
             status: Default::default(),
+            local_status_seq_no: VarInt::default(),
             status_seq_no: None,
             first_packet: None,
             pto_count: 0,
@@ -188,6 +192,7 @@ impl PathData {
             observed_addr_sent: false,
             last_observed_addr_report: None,
             status: prev.status,
+            local_status_seq_no: prev.local_status_seq_no,
             status_seq_no: prev.status_seq_no,
             first_packet: None,
             pto_count: 0,
@@ -510,6 +515,13 @@ pub enum PathEvent {
         /// See <https://www.ietf.org/archive/id/draft-ietf-quic-multipath-14.html#name-error-codes>
         /// for a list of known errors.
         error_code: VarInt,
+    },
+    /// Opening a path failed
+    OpenFailed {
+        /// Path for which opening failed
+        id: PathId,
+        /// The error that occurred
+        error: OpenPathError,
     },
 }
 

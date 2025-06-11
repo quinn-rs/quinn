@@ -24,7 +24,9 @@ use crate::{
     config::{ServerConfig, TransportConfig},
     congestion::Controller,
     crypto::{self, KeyPair, Keys, PacketKey},
-    frame::{self, Close, Datagram, FrameStruct, NewToken, ObservedAddr},
+    frame::{
+        self, Close, Datagram, FrameStruct, NewToken, ObservedAddr, PathAbandon, PathAvailable,
+    },
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -259,6 +261,13 @@ pub struct Connection {
     /// This is kept instead of calculated to account for abandoned paths for which data has been
     /// purged.
     max_path_id_in_use: PathId,
+    /// Path ids requested to be opened via [`Connection::queue_open_path`].
+    paths_to_open: BTreeMap<PathId, (SocketAddr, PathStatus)>,
+    /// Whether we should inform the peer we will allow higher [`PathId`]s.
+    increase_local_max_path_id: bool,
+    /// Whether we should inform the peer their current `MAX_PATH_ID` is blocking our attempts to
+    /// open a new path,
+    path_cids_blocked: bool,
 }
 
 struct PathState {
@@ -397,6 +406,9 @@ impl Connection {
             local_max_path_id: PathId::ZERO,
             remote_max_path_id: PathId::ZERO,
             max_path_id_in_use: PathId::ZERO,
+            paths_to_open: BTreeMap::default(),
+            increase_local_max_path_id: false,
+            path_cids_blocked: false,
         };
         if path_validated {
             this.on_path_validated(PathId(0));
@@ -481,9 +493,43 @@ impl Connection {
         }
     }
 
-    /// Opens a path
-    pub fn open_path(&mut self, _addr: SocketAddr, _initial_status: PathStatus) -> PathId {
-        todo!()
+    /// Start opening a new path
+    ///
+    /// Further errors might occur and they will be emitted in [`PathEvent::OpenFailed`] events.
+    pub fn queue_open_path(
+        &mut self,
+        remote: SocketAddr,
+        initial_status: PathStatus,
+        now: Instant,
+    ) -> Result<PathId, OpenPathError> {
+        if !self.is_multipath_negotiated() {
+            return Err(OpenPathError::MultipathNotNegotiated);
+        }
+        if self.side().is_server() {
+            return Err(OpenPathError::ServerSideNotAllowed);
+        }
+
+        let next_path_id = self.max_path_id_in_use.saturating_add(1u8);
+
+        if next_path_id > self.local_max_path_id {
+            self.increase_local_max_path_id = true;
+            return Err(OpenPathError::MaxPathIdReached);
+        }
+
+        if next_path_id > self.remote_max_path_id {
+            self.path_cids_blocked = true;
+            return Err(OpenPathError::MaxPathIdReached);
+        }
+
+        // TODO(@divma): this part might be an overkill
+        // ensure we have CIDs to use on our side
+
+        self.issue_first_path_cids(now);
+
+        self.paths_to_open
+            .insert(next_path_id, (remote, initial_status));
+
+        Ok(next_path_id)
     }
 
     /// Closes a path
@@ -512,6 +558,64 @@ impl Connection {
     #[track_caller]
     fn path_data_mut(&mut self, path_id: PathId) -> &mut PathData {
         &mut self.paths.get_mut(&path_id).expect("known path").data
+    }
+
+    // TODO(@divma): wip. for now this creates a bare bones packet that just does the path
+    // opening.
+    #[allow(clippy::type_complexity)]
+    #[allow(dead_code)]
+    fn open_new_path(
+        &mut self,
+        now: Instant,
+    ) -> Option<(Option<(PathId, ConnectionId)>, Vec<Frame>)> // TODO(@divma): return type is ugly for now
+    {
+        let (path_id, (remote, status)) = self.paths_to_open.pop_first()?;
+
+        let Some(remote_cid) = self.rem_cids.get(&path_id).map(CidQueue::active) else {
+            let err = OpenPathError::RemoteCidsExhausted;
+            debug!(?err, %path_id, "failed to open path");
+            self.events.push_back(Event::Path(PathEvent::OpenFailed {
+                id: path_id,
+                error: err,
+            }));
+            //   This allows us to safely consume the path_id due to the failed attempt, otherwise
+            //   we would need to keep track of holes in the range and revert the
+            //   max_path_id_in_use
+
+            return Some((
+                None,
+                vec![Frame::PathAbandon(PathAbandon {
+                    path_id,
+                    error_code: TransportErrorCode::NO_CID_AVAILABLE,
+                })],
+            ));
+        };
+
+        let mut path = PathData::new(remote, self.allow_mtud, None, now, &self.config);
+        path.status = status;
+
+        let challenge = self.rng.random();
+        path.challenge = Some(challenge);
+        let status_seq_no = path.local_status_seq_no;
+        path.local_status_seq_no = path.local_status_seq_no.saturating_add(1u8);
+        self.paths.insert(
+            path_id,
+            PathState {
+                data: path,
+                prev: None,
+            },
+        );
+
+        // regardles of what's the status we inform it to the remote
+        let frames = vec![
+            Frame::PathChallenge(challenge),
+            Frame::PathAvailable(PathAvailable {
+                is_backup: status == PathStatus::Backup,
+                path_id,
+                status_seq_no,
+            }),
+        ];
+        Some((Some((path_id, remote_cid)), frames))
     }
 
     /// Returns packets to transmit
@@ -3498,9 +3602,12 @@ impl Connection {
                     }
                 }
                 Frame::MaxPathId(path_id) => {
-                    if self.is_multipath_negotiated() {
+                    if let Some(current_max) = self.max_path_id() {
                         // frames that do not increase the path id are ignored
                         self.remote_max_path_id = self.remote_max_path_id.max(path_id);
+                        if self.max_path_id() != Some(current_max) {
+                            self.issue_first_path_cids(now);
+                        }
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "received MAX_PATH_ID frame when not multipath was not negotiated",
@@ -3712,12 +3819,23 @@ impl Connection {
         if let Some(PathId(max_path_id)) = self.max_path_id() {
             let start_path_id = self.max_path_id_in_use.0 + 1;
             for n in start_path_id..=max_path_id {
-                self.endpoint_events
-                    .push_back(EndpointEventInner::NeedIdentifiers(
-                        PathId(n),
-                        now,
-                        self.peer_params.issue_cids_limit(),
-                    ));
+                let path_id = PathId(n);
+                // check how many CIDs are required. This method might have been called in the past
+                // with a lower max_path_id
+                // TODO(@divma): alternatively, just check if there's any instead of calculating
+                // how many. I think this always is either `issue_cids_limit` or 0
+                let existing = self
+                    .local_cid_state
+                    .get(&path_id)
+                    .map(CidState::active_cid_count)
+                    .unwrap_or_default()
+                    .try_into()
+                    .expect("usize is at max u64 at moment of writing");
+                let required = self.peer_params.issue_cids_limit().saturating_sub(existing);
+                if required > 0 {
+                    let ev = EndpointEventInner::NeedIdentifiers(path_id, now, required);
+                    self.endpoint_events.push_back(ev);
+                }
             }
         }
     }
@@ -4795,6 +4913,19 @@ impl From<ConnectionError> for io::Error {
         };
         Self::new(kind, x)
     }
+}
+
+/// Errors that might happen when opening a path.
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+pub enum OpenPathError {
+    /// The extension was not negotiated with the peer
+    MultipathNotNegotiated,
+    /// Paths can only be opened client-side
+    ServerSideNotAllowed,
+    /// Current limits do not allow us to open more paths
+    MaxPathIdReached,
+    /// No remove CIDs avaiable to open a new path
+    RemoteCidsExhausted,
 }
 
 #[allow(unreachable_pub)] // fuzzing only

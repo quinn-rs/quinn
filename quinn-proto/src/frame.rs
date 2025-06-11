@@ -1279,12 +1279,10 @@ impl ObservedAddr {
 
 /* Multipath <https://datatracker.ietf.org/doc/draft-ietf-quic-multipath/> */
 
-// TODO(@divma): AbandonPath? PathAbandon is the name in the spec....
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct PathAbandon {
-    path_id: PathId,
-    // TODO(@divma): this is TransportErrorCode plus two new errors
-    error_code: TransportErrorCode,
+    pub(crate) path_id: PathId,
+    pub(crate) error_code: TransportErrorCode,
 }
 
 #[allow(dead_code)] // TODO(flub)

@@ -194,6 +194,11 @@ impl CidState {
         self.retire_seq
     }
 
+    /// Number of active CIDs
+    pub(crate) fn active_cid_count(&self) -> usize {
+        self.active_seq.len()
+    }
+
     #[cfg(test)]
     pub(crate) fn active_seq(&self) -> (u64, u64) {
         let mut min = u64::MAX;

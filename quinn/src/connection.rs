@@ -26,8 +26,8 @@ use crate::{
     udp_transmit,
 };
 use proto::{
-    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, PathEvent, PathId,
-    PathStatus, StreamEvent, StreamId, congestion::Controller,
+    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, OpenPathError,
+    PathEvent, PathId, PathStatus, StreamEvent, StreamId, congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -361,15 +361,19 @@ impl Connection {
 
     /// Open a (Multi)Path.
     pub fn open_path(&self, addr: SocketAddr, initial_status: PathStatus) -> OpenPath {
+        let mut state = self.0.state.lock("open_path");
         let (on_open_path_send, on_open_path_recv) = oneshot::channel();
-        let path_id = {
-            let mut state = self.0.state.lock("open_path");
-            let path_id = state.inner.open_path(addr, initial_status);
-            state.open_path.insert(path_id, on_open_path_send);
-            path_id
-        };
-
-        OpenPath::new(path_id, on_open_path_recv, self.0.clone())
+        let now = state.runtime.now();
+        let open_res = state.inner.queue_open_path(addr, initial_status, now);
+        state.wake();
+        match open_res {
+            Ok(path_id) => {
+                state.open_path.insert(path_id, on_open_path_send);
+                drop(state);
+                OpenPath::new(path_id, on_open_path_recv, self.0.clone())
+            }
+            Err(err) => OpenPath::rejected(err),
+        }
     }
 
     /// Wait for the connection to be closed for any reason
@@ -1041,7 +1045,7 @@ pub(crate) struct State {
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Tracks paths being opened
-    open_path: FxHashMap<PathId, oneshot::Sender<()>>,
+    open_path: FxHashMap<PathId, oneshot::Sender<Result<(), OpenPathError>>>,
     /// Tracks paths being closed
     pub(crate) close_path: FxHashMap<PathId, oneshot::Sender<VarInt>>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
@@ -1222,12 +1226,17 @@ impl State {
                 }
                 Path(PathEvent::Opened { id }) => {
                     if let Some(sender) = self.open_path.remove(&id) {
-                        let _ = sender.send(());
+                        let _ = sender.send(Ok(()));
                     }
                 }
                 Path(PathEvent::Closed { id, error_code }) => {
                     if let Some(sender) = self.close_path.remove(&id) {
                         let _ = sender.send(error_code);
+                    }
+                }
+                Path(PathEvent::OpenFailed { id, error }) => {
+                    if let Some(sender) = self.open_path.remove(&id) {
+                        let _ = sender.send(Err(error));
                     }
                 }
             }
