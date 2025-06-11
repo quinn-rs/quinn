@@ -17,8 +17,6 @@ use crate::{
 
 pub(super) struct PacketSpace {
     pub(super) crypto: Option<Keys>,
-    /// Highest received packet number
-    pub(super) rx_packet: u64,
 
     /// Data to send
     pub(super) pending: Retransmits,
@@ -41,7 +39,6 @@ impl PacketSpace {
         let number_space_0 = PacketNumberSpace::new(now, space, rng);
         Self {
             crypto: None,
-            rx_packet: 0,
             pending: Retransmits::default(),
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
@@ -54,7 +51,6 @@ impl PacketSpace {
         let number_space_0 = PacketNumberSpace::new_deterministic(now, space);
         Self {
             crypto: None,
-            rx_packet: 0,
             pending: Retransmits::default(),
             crypto_stream: Assembler::new(),
             crypto_offset: 0,
@@ -187,6 +183,8 @@ impl IndexMut<SpaceId> for [PacketSpace; 3] {
 /// This contains the data specific to a per-path packet number space.  You should access
 /// this via [`PacketSpace::for_path`].
 pub(super) struct PacketNumberSpace {
+    /// Highest received packet number
+    pub(super) rx_packet: u64,
     /// The packet number of the next packet that will be sent, if any. In the Data space, the
     /// packet number stored here is sometimes skipped by [`PacketNumberFilter`] logic.
     pub(super) next_packet_number: u64,
@@ -247,6 +245,7 @@ impl PacketNumberSpace {
             SpaceId::Data => Some(PacketNumberFilter::new(rng)),
         };
         Self {
+            rx_packet: 0,
             next_packet_number: 0,
             largest_acked_packet: None,
             largest_acked_packet_sent: now,
@@ -275,6 +274,7 @@ impl PacketNumberSpace {
             SpaceId::Data => Some(PacketNumberFilter::disabled()),
         };
         Self {
+            rx_packet: 0,
             next_packet_number: 0,
             largest_acked_packet: None,
             largest_acked_packet_sent: now,
@@ -304,6 +304,7 @@ impl PacketNumberSpace {
     fn new_default() -> Self {
         error!("PacketNumberSpace created by default");
         Self {
+            rx_packet: 0,
             next_packet_number: 0,
             largest_acked_packet: None,
             largest_acked_packet_sent: Instant::now(),

@@ -2287,8 +2287,8 @@ impl Connection {
                 self.set_key_discard_timer(now, space_id)
             }
         }
-        let space = &mut self.spaces[space_id];
-        space.for_path(path_id).pending_acks.insert_one(packet, now);
+        let space = self.spaces[space_id].for_path(path_id);
+        space.pending_acks.insert_one(packet, now);
         if packet >= space.rx_packet {
             space.rx_packet = packet;
             // Update outgoing spin bit, inverting iff we're the client
@@ -3572,7 +3572,7 @@ impl Connection {
             self.close = true;
         }
 
-        if number == self.spaces[SpaceId::Data].rx_packet
+        if number == self.spaces[SpaceId::Data].for_path(path_id).rx_packet
             && !is_probing_packet
             && remote != self.path_data(path_id).remote
         {
