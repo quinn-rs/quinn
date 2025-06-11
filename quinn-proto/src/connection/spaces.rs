@@ -895,7 +895,6 @@ impl PendingAcks {
             .largest_ack_eliciting_packet
             .map(|pn| pn.max(packet_number))
             .or(Some(packet_number));
-        tracing::warn!(?prev_largest_ack_eliciting, ?self.largest_ack_eliciting_packet, "eeee");
 
         // Handle ack_eliciting_threshold
         self.ack_eliciting_since_last_ack_sent += 1;
@@ -969,7 +968,6 @@ impl PendingAcks {
         self.ack_eliciting_since_last_ack_sent = 0;
         self.non_ack_eliciting_since_last_ack_sent = 0;
         self.earliest_ack_eliciting_since_last_ack_sent = None;
-        tracing::warn!(?self.largest_acked, ?self.largest_ack_eliciting_packet, "who");
         self.largest_acked = self.largest_ack_eliciting_packet;
     }
 
