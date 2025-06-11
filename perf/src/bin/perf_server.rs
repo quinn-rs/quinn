@@ -39,6 +39,9 @@ struct Opt {
     /// Disable packet encryption/decryption (for debugging purpose)
     #[clap(long = "no-protection")]
     no_protection: bool,
+    /// The initial round-trip-time (in msecs)
+    #[clap(long)]
+    initial_rtt: Option<u64>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -93,6 +96,10 @@ async fn run(opt: Opt) -> Result<()> {
 
     let mut transport = quinn::TransportConfig::default();
     transport.initial_mtu(opt.initial_mtu);
+
+    if let Some(initial_rtt) = opt.initial_rtt {
+        transport.initial_rtt(Duration::from_millis(initial_rtt));
+    }
 
     let crypto = Arc::new(QuicServerConfig::try_from(crypto)?);
     let mut config = quinn::ServerConfig::with_crypto(match opt.no_protection {
