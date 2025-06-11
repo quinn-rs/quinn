@@ -926,7 +926,7 @@ impl Connection {
             );
             pad_datagram |= sent_frames.requires_padding;
 
-            for (path_id, pn) in sent_frames.largest_acked.iter() {
+            for (path_id, _pn) in sent_frames.largest_acked.iter() {
                 self.spaces[space_id]
                     .for_path(*path_id)
                     .pending_acks
