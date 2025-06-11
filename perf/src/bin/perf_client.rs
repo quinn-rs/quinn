@@ -12,8 +12,11 @@ use rustls::pki_types::{CertificateDer, ServerName, UnixTime};
 use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
-use perf::stats::{OpenStreamStats, Stats};
-use perf::{bind_socket, noprotection::NoProtectionClientConfig};
+use perf::{
+    bind_socket,
+    noprotection::NoProtectionClientConfig,
+    stats::{OpenStreamStats, Stats},
+};
 #[cfg(feature = "json-output")]
 use std::path::PathBuf;
 
@@ -73,6 +76,9 @@ struct Opt {
     /// The initial round-trip-time (in msecs)
     #[clap(long)]
     initial_rtt: Option<u64>,
+    /// Ack Frequency mode
+    #[clap(long = "ack-frequency")]
+    ack_frequency: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -142,6 +148,10 @@ async fn run(opt: Opt) -> Result<()> {
 
     if let Some(initial_rtt) = opt.initial_rtt {
         transport.initial_rtt(Duration::from_millis(initial_rtt));
+    }
+
+    if opt.ack_frequency {
+        transport.ack_frequency_config(Some(quinn::AckFrequencyConfig::default()));
     }
 
     let crypto = Arc::new(QuicClientConfig::try_from(crypto)?);

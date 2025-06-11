@@ -42,6 +42,9 @@ struct Opt {
     /// The initial round-trip-time (in msecs)
     #[clap(long)]
     initial_rtt: Option<u64>,
+    /// Ack Frequency mode
+    #[clap(long = "ack-frequency")]
+    ack_frequency: bool,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -99,6 +102,10 @@ async fn run(opt: Opt) -> Result<()> {
 
     if let Some(initial_rtt) = opt.initial_rtt {
         transport.initial_rtt(Duration::from_millis(initial_rtt));
+    }
+
+    if opt.ack_frequency {
+        transport.ack_frequency_config(Some(quinn::AckFrequencyConfig::default()));
     }
 
     let crypto = Arc::new(QuicServerConfig::try_from(crypto)?);
