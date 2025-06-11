@@ -788,15 +788,28 @@ impl Connection {
                 // have gotten any other ACK for the data earlier on.
                 let mut sent_frames = SentFrames::default();
                 let is_multipath_enabled = self.is_multipath_negotiated();
-                Self::populate_acks(
-                    now,
-                    self.receiving_ecn,
-                    &mut sent_frames,
-                    &mut self.spaces[space_id],
-                    is_multipath_enabled,
-                    &mut builder.frame_space_mut(),
-                    &mut self.stats,
-                );
+                for path_id in self.spaces[space_id]
+                    .number_spaces
+                    .iter()
+                    .filter(|(_, pns)| !pns.pending_acks.ranges().is_empty())
+                    .map(|(&path_id, _)| path_id)
+                    .collect::<Vec<_>>()
+                {
+                    debug_assert!(
+                        is_multipath_enabled || path_id == PathId::ZERO,
+                        "Only PathId(0) allowed without multipath (have {path_id:?})"
+                    );
+                    Self::populate_acks(
+                        now,
+                        self.receiving_ecn,
+                        &mut sent_frames,
+                        path_id,
+                        &mut self.spaces[space_id],
+                        is_multipath_enabled,
+                        &mut builder.frame_space_mut(),
+                        &mut self.stats,
+                    );
+                }
 
                 // Since there only 64 ACK frames there will always be enough space
                 // to encode the ConnectionClose frame too. However we still have the
@@ -913,9 +926,12 @@ impl Connection {
             );
             pad_datagram |= sent_frames.requires_padding;
 
-            if sent_frames.largest_acked.is_some() {
-                self.spaces[space_id].pending_acks.acks_sent();
-                self.timers.stop(Timer::MaxAckDelay);
+            for (path_id, _pn) in sent_frames.largest_acked.iter() {
+                self.spaces[space_id]
+                    .for_path(*path_id)
+                    .pending_acks
+                    .acks_sent();
+                self.timers.stop(Timer::MaxAckDelay(*path_id));
             }
 
             // Now we need to finish the packet.  Before we do so we need to know if we will
@@ -1409,10 +1425,11 @@ impl Connection {
                         }
                     }
                 }
-                Timer::MaxAckDelay => {
+                Timer::MaxAckDelay(path_id) => {
                     trace!("max ack delay reached");
                     // This timer is only armed in the Data space
                     self.spaces[SpaceId::Data]
+                        .for_path(path_id)
                         .pending_acks
                         .on_max_ack_delay_timeout()
                 }
@@ -1700,19 +1717,21 @@ impl Connection {
         let mut ack_eliciting_acked = false;
         for packet in newly_acked.elts() {
             if let Some(info) = self.spaces[space].for_path(path).take(packet) {
-                if let Some(acked) = info.largest_acked {
-                    // Assume ACKs for all packets below the largest acknowledged in `packet` have
-                    // been received. This can cause the peer to spuriously retransmit if some of
-                    // our earlier ACKs were lost, but allows for simpler state tracking. See
-                    // discussion at
+                for (acked_path_id, acked_pn) in info.largest_acked.iter() {
+                    // Assume ACKs for all packets below the largest acknowledged in
+                    // `packet` have been received. This can cause the peer to spuriously
+                    // retransmit if some of our earlier ACKs were lost, but allows for
+                    // simpler state tracking. See discussion at
                     // https://www.rfc-editor.org/rfc/rfc9000.html#name-limiting-ranges-by-tracking
-                    self.spaces[space].pending_acks.subtract_below(path, acked);
+                    self.spaces[space]
+                        .for_path(*acked_path_id)
+                        .pending_acks
+                        .subtract_below(*acked_pn);
                 }
                 ack_eliciting_acked |= info.ack_eliciting;
 
                 // Notify MTU discovery that a packet was acked, because it might be an MTU probe
                 let path_data = self.path_data_mut(path);
-                // TODO(@divma): all this needs to go into path
                 let mtu_updated = path_data.mtud.on_acked(space, packet, info.size);
                 if mtu_updated {
                     path_data
@@ -1721,7 +1740,7 @@ impl Connection {
                 }
 
                 // Notify ack frequency that a packet was acked, because it might contain an ACK_FREQUENCY frame
-                self.ack_frequency.on_acked(packet);
+                self.ack_frequency.on_acked(path, packet);
 
                 self.on_packet_acked(now, path, packet, info);
             }
@@ -2247,7 +2266,10 @@ impl Connection {
             space.for_path(path_id).ecn_counters += x;
 
             if x.is_ce() {
-                space.pending_acks.set_immediate_ack_required();
+                space
+                    .for_path(path_id)
+                    .pending_acks
+                    .set_immediate_ack_required();
             }
         }
 
@@ -2266,7 +2288,7 @@ impl Connection {
             }
         }
         let space = &mut self.spaces[space_id];
-        space.pending_acks.insert_one(path_id, packet, now);
+        space.for_path(path_id).pending_acks.insert_one(packet, now);
         if packet >= space.rx_packet {
             space.rx_packet = packet;
             // Update outgoing spin bit, inverting iff we're the client
@@ -2653,10 +2675,7 @@ impl Connection {
                 };
                 let _guard = span.enter();
 
-                let dedup = self.spaces[packet.header.space()]
-                    .dedup
-                    .entry(path_id)
-                    .or_default();
+                let dedup = &mut self.spaces[packet.header.space()].for_path(path_id).dedup;
                 if number.is_some_and(|n| dedup.insert(n)) {
                     debug!("discarding possible duplicate packet");
                     return;
@@ -3092,6 +3111,7 @@ impl Connection {
         if ack_eliciting {
             // In the initial and handshake spaces, ACKs must be sent immediately
             self.spaces[packet.header.space()]
+                .for_path(path_id)
                 .pending_acks
                 .set_immediate_ack_required();
         }
@@ -3400,30 +3420,32 @@ impl Connection {
                 }
                 Frame::AckFrequency(ack_frequency) => {
                     // This frame can only be sent in the Data space
-                    let space = &mut self.spaces[SpaceId::Data];
 
-                    if !self
-                        .ack_frequency
-                        .ack_frequency_received(&ack_frequency, &mut space.pending_acks)?
-                    {
-                        // The AckFrequency frame is stale (we have already received a more recent one)
+                    if !self.ack_frequency.ack_frequency_received(&ack_frequency)? {
+                        // The AckFrequency frame is stale (we have already received a more
+                        // recent one)
                         continue;
                     }
 
-                    // Our `max_ack_delay` has been updated, so we may need to adjust its associated
-                    // timeout
-                    if let Some(timeout) = space
-                        .pending_acks
-                        .max_ack_delay_timeout(self.ack_frequency.max_ack_delay)
-                    {
-                        self.timers.set(Timer::MaxAckDelay, timeout);
+                    // Update the params for all of our paths
+                    for (path_id, space) in self.spaces[SpaceId::Data].number_spaces.iter_mut() {
+                        space.pending_acks.set_ack_frequency_params(&ack_frequency);
+
+                        // Our `max_ack_delay` has been updated, so we may need to adjust
+                        // its associated timeout
+                        if let Some(timeout) = space
+                            .pending_acks
+                            .max_ack_delay_timeout(self.ack_frequency.max_ack_delay)
+                        {
+                            self.timers.set(Timer::MaxAckDelay(*path_id), timeout);
+                        }
                     }
                 }
                 Frame::ImmediateAck => {
                     // This frame can only be sent in the Data space
-                    self.spaces[SpaceId::Data]
-                        .pending_acks
-                        .set_immediate_ack_required();
+                    for pns in self.spaces[SpaceId::Data].iter_paths_mut() {
+                        pns.pending_acks.set_immediate_ack_required();
+                    }
                 }
                 Frame::HandshakeDone => {
                     if self.side.is_server() {
@@ -3526,16 +3548,15 @@ impl Connection {
             }
         }
 
-        let space = &mut self.spaces[SpaceId::Data];
-        if space.pending_acks.packet_received(
-            now,
-            path_id,
-            number,
-            ack_eliciting,
-            space.dedup.entry(path_id).or_default(),
-        ) {
-            self.timers
-                .set(Timer::MaxAckDelay, now + self.ack_frequency.max_ack_delay);
+        let space = self.spaces[SpaceId::Data].for_path(path_id);
+        if space
+            .pending_acks
+            .packet_received(now, number, ack_eliciting, &space.dedup)
+        {
+            self.timers.set(
+                Timer::MaxAckDelay(path_id),
+                now + self.ack_frequency.max_ack_delay,
+            );
         }
 
         // Issue stream ID credit due to ACKs of outgoing finish/resets and incoming finish/resets
@@ -3722,7 +3743,10 @@ impl Connection {
         let space = &mut self.spaces[space_id];
         let path = &mut self.paths.get_mut(&path_id).expect("known path").data;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
-        space.pending_acks.maybe_ack_non_eliciting();
+        space
+            .for_path(path_id)
+            .pending_acks
+            .maybe_ack_non_eliciting();
 
         // HANDSHAKE_DONE
         if !is_0rtt && mem::replace(&mut space.pending.handshake_done, false) {
@@ -3774,16 +3798,30 @@ impl Connection {
         }
 
         // ACK
-        if !path_exclusive_only && space.pending_acks.can_send() {
-            Self::populate_acks(
-                now,
-                self.receiving_ecn,
-                &mut sent,
-                space,
-                is_multipath_negotiated,
-                buf,
-                &mut self.stats,
-            );
+        // TODO(flub): Should this sends acks for this path anyway?
+        if !path_exclusive_only {
+            for path_id in space
+                .number_spaces
+                .iter_mut()
+                .filter(|(_, pns)| pns.pending_acks.can_send())
+                .map(|(&path_id, _)| path_id)
+                .collect::<Vec<_>>()
+            {
+                debug_assert!(
+                    is_multipath_negotiated || path_id == PathId::ZERO,
+                    "Only PathId(0) allowed without multipath (have {path_id:?})"
+                );
+                Self::populate_acks(
+                    now,
+                    self.receiving_ecn,
+                    &mut sent,
+                    path_id,
+                    space,
+                    is_multipath_negotiated,
+                    buf,
+                    &mut self.stats,
+                );
+            }
         }
 
         // ACK_FREQUENCY
@@ -3812,7 +3850,8 @@ impl Connection {
 
             sent.retransmits.get_or_create().ack_frequency = true;
 
-            self.ack_frequency.ack_frequency_sent(pn, max_ack_delay);
+            self.ack_frequency
+                .ack_frequency_sent(path_id, pn, max_ack_delay);
             self.stats.frame_tx.ack_frequency += 1;
         }
 
@@ -4095,6 +4134,7 @@ impl Connection {
         now: Instant,
         receiving_ecn: bool,
         sent: &mut SentFrames,
+        path_id: PathId,
         space: &mut PacketSpace,
         send_path_acks: bool,
         buf: &mut impl BufMut,
@@ -4103,32 +4143,31 @@ impl Connection {
         // 0-RTT packets must never carry acks (which would have to be of handshake packets)
         debug_assert!(space.crypto.is_some(), "tried to send ACK in 0-RTT");
 
-        for (path_id, ranges) in space.pending_acks.ranges() {
-            if !send_path_acks && *path_id != PathId::ZERO {
-                continue;
-            }
-            let ecn = receiving_ecn
-                .then_some(&space.number_spaces)
-                .and_then(|map| map.get(path_id))
-                .map(|pns| pns.ecn_counters);
+        let pns = space.for_path(path_id);
+        let ranges = pns.pending_acks.ranges();
+        debug_assert!(!ranges.is_empty(), "can not send empty ACK range");
+        let ecn = if receiving_ecn {
+            Some(&pns.ecn_counters)
+        } else {
+            None
+        };
+        if let Some(max) = ranges.max() {
+            sent.largest_acked.insert(path_id, max);
+        }
 
-            // TODO(flub): Figure out how this is used and what to do about it.
-            sent.largest_acked = ranges.max();
+        let delay_micros = pns.pending_acks.ack_delay(now).as_micros() as u64;
+        // TODO: This should come from `TransportConfig` if that gets configurable.
+        let ack_delay_exp = TransportParameters::default().ack_delay_exponent;
+        let delay = delay_micros >> ack_delay_exp.into_inner();
 
-            let delay_micros = space.pending_acks.ack_delay(*path_id, now).as_micros() as u64;
-            // TODO: This should come from `TransportConfig` if that gets configurable.
-            let ack_delay_exp = TransportParameters::default().ack_delay_exponent;
-            let delay = delay_micros >> ack_delay_exp.into_inner();
-
-            if send_path_acks {
-                trace!("PATH_ACK {:?}, Delay = {}us", ranges, delay_micros);
-                frame::PathAck::encode(*path_id, delay as _, ranges, ecn.as_ref(), buf);
-                stats.frame_tx.path_acks += 1;
-            } else {
-                trace!("ACK {:?}, Delay = {}us", ranges, delay_micros);
-                frame::Ack::encode(delay as _, ranges, ecn.as_ref(), buf);
-                stats.frame_tx.acks += 1;
-            }
+        if send_path_acks {
+            trace!("PATH_ACK {:?}, Delay = {}us", ranges, delay_micros);
+            frame::PathAck::encode(path_id, delay as _, ranges, ecn, buf);
+            stats.frame_tx.path_acks += 1;
+        } else {
+            trace!("ACK {:?}, Delay = {}us", ranges, delay_micros);
+            frame::Ack::encode(delay as _, ranges, ecn, buf);
+            stats.frame_tx.acks += 1;
         }
     }
 
@@ -4462,6 +4501,9 @@ impl Connection {
     /// Update counters to account for a packet becoming acknowledged, lost, or abandoned
     fn remove_in_flight(&mut self, path_id: PathId, pn: u64, packet: &SentPacket) {
         // TODO(@divma): this should be completely moved into path
+        // TODO(flub): not sure this can be moved into PathData, because this handles
+        //    looking in both the current and a possible previous (from involuntary path
+        //    migration) path migration.
         let path_mig_data = self.paths.get_mut(&path_id).expect("known path");
         // Visit known paths from newest to oldest to find the one `pn` was sent on
         for path_data in [&mut path_mig_data.data]
@@ -4879,7 +4921,8 @@ const KEY_UPDATE_MARGIN: u64 = 10_000;
 #[derive(Default)]
 struct SentFrames {
     retransmits: ThinRetransmits,
-    largest_acked: Option<u64>,
+    /// The packet number of the largest acknowledged packet for each path.
+    largest_acked: FxHashMap<PathId, u64>,
     stream_frames: StreamMetaVec,
     /// Whether the packet contains non-retransmittable frames (like datagrams)
     non_retransmits: bool,
@@ -4889,7 +4932,7 @@ struct SentFrames {
 impl SentFrames {
     /// Returns whether the packet contains only ACKs
     fn is_ack_only(&self, streams: &StreamsState) -> bool {
-        self.largest_acked.is_some()
+        !self.largest_acked.is_empty()
             && !self.non_retransmits
             && self.stream_frames.is_empty()
             && self.retransmits.is_empty(streams)

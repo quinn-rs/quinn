@@ -1,21 +1,24 @@
 use crate::Duration;
-use crate::connection::spaces::PendingAcks;
 use crate::frame::AckFrequency;
 use crate::transport_parameters::TransportParameters;
 use crate::{AckFrequencyConfig, TIMER_GRANULARITY, TransportError, VarInt};
+
+use super::PathId;
 
 /// State associated to ACK frequency
 pub(super) struct AckFrequencyState {
     //
     // Sending ACK_FREQUENCY frames
     //
-    in_flight_ack_frequency_frame: Option<(u64, Duration)>,
+    /// The path ID, packet number and value of the in-flight ACK_FREQUENCY frame
+    in_flight_ack_frequency_frame: Option<(PathId, u64, Duration)>,
     next_outgoing_sequence_number: VarInt,
     pub(super) peer_max_ack_delay: Duration,
 
     //
     // Receiving ACK_FREQUENCY frames
     //
+    /// The sequence number of the most recently received ACK_FREQUENCY frame
     last_ack_frequency_frame: Option<u64>,
     pub(super) max_ack_delay: Duration,
 }
@@ -56,7 +59,7 @@ impl AckFrequencyState {
     /// might be already in use by the peer).
     pub(super) fn max_ack_delay_for_pto(&self) -> Duration {
         // Note: we have at most one in-flight ACK_FREQUENCY frame
-        if let Some((_, max_ack_delay)) = self.in_flight_ack_frequency_frame {
+        if let Some((_, _, max_ack_delay)) = self.in_flight_ack_frequency_frame {
             self.peer_max_ack_delay.max(max_ack_delay)
         } else {
             self.peer_max_ack_delay
@@ -85,21 +88,26 @@ impl AckFrequencyState {
         }
         let current = self
             .in_flight_ack_frequency_frame
-            .map_or(self.peer_max_ack_delay, |(_, pending)| pending);
+            .map_or(self.peer_max_ack_delay, |(_, _, pending)| pending);
         let desired = self.candidate_max_ack_delay(rtt, config, peer_params);
         let error = (desired.as_secs_f32() / current.as_secs_f32()) - 1.0;
         error.abs() > MAX_RTT_ERROR
     }
 
     /// Notifies the [`AckFrequencyState`] that a packet containing an ACK_FREQUENCY frame was sent
-    pub(super) fn ack_frequency_sent(&mut self, pn: u64, requested_max_ack_delay: Duration) {
-        self.in_flight_ack_frequency_frame = Some((pn, requested_max_ack_delay));
+    pub(super) fn ack_frequency_sent(
+        &mut self,
+        path_id: PathId,
+        pn: u64,
+        requested_max_ack_delay: Duration,
+    ) {
+        self.in_flight_ack_frequency_frame = Some((path_id, pn, requested_max_ack_delay));
     }
 
     /// Notifies the [`AckFrequencyState`] that a packet has been ACKed
-    pub(super) fn on_acked(&mut self, pn: u64) {
+    pub(super) fn on_acked(&mut self, path_id: PathId, pn: u64) {
         match self.in_flight_ack_frequency_frame {
-            Some((number, requested_max_ack_delay)) if number == pn => {
+            Some((path, number, requested_max_ack_delay)) if path == path_id && number == pn => {
                 self.in_flight_ack_frequency_frame = None;
                 self.peer_max_ack_delay = requested_max_ack_delay;
             }
@@ -117,7 +125,6 @@ impl AckFrequencyState {
     pub(super) fn ack_frequency_received(
         &mut self,
         frame: &AckFrequency,
-        pending_acks: &mut PendingAcks,
     ) -> Result<bool, TransportError> {
         if self
             .last_ack_frequency_frame
@@ -136,9 +143,6 @@ impl AckFrequencyState {
             ));
         }
         self.max_ack_delay = max_ack_delay;
-
-        // Update the rest of the params
-        pending_acks.set_ack_frequency_params(frame);
 
         Ok(true)
     }
