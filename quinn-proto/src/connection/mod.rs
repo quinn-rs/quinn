@@ -625,14 +625,17 @@ impl Connection {
         );
 
         // regardles of what's the status we inform it to the remote
-        let frames = vec![
-            Frame::PathChallenge(challenge),
-            Frame::PathAvailable(frame::PathStatus {
-                is_backup: status == PathStatus::Backup,
+        let status_frame = match status {
+            PathStatus::Available => Frame::PathAvailable(frame::PathAvailable {
                 path_id,
                 status_seq_no,
             }),
-        ];
+            PathStatus::Backup => Frame::PathBackup(frame::PathBackup {
+                path_id,
+                status_seq_no,
+            }),
+        };
+        let frames = vec![Frame::PathChallenge(challenge), status_frame];
         Some((Some((path_id, remote_cid)), frames))
     }
 
@@ -3612,10 +3615,19 @@ impl Connection {
                 }
                 Frame::PathAvailable(info) => {
                     if self.is_multipath_negotiated() {
-                        self.on_path_available(info.path_id, info.is_backup, info.status_seq_no);
+                        self.on_path_status(info.path_id, false, info.status_seq_no);
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
-                            "received PATH_AVAILABLE frame when not multipath was not negotiated",
+                            "received PATH_AVAILABLE frame when multipath was not negotiated",
+                        ));
+                    }
+                }
+                Frame::PathBackup(info) => {
+                    if self.is_multipath_negotiated() {
+                        self.on_path_status(info.path_id, true, info.status_seq_no);
+                    } else {
+                        return Err(TransportError::PROTOCOL_VIOLATION(
+                            "received PATH_BACKUP frame when multipath was not negotiated",
                         ));
                     }
                 }
@@ -4124,22 +4136,30 @@ impl Connection {
         // PATH_AVAILABLE & PATH_BACKUP
         while !path_exclusive_only
             && space_id == SpaceId::Data
-            && frame::PathStatus::SIZE_BOUND <= buf.remaining_mut()
+            && frame::PathAvailable::SIZE_BOUND <= buf.remaining_mut()
         {
             let Some((path_id, status)) = space.pending.path_status.pop() else {
                 break;
             };
             let seq = path.local_status_seq_no;
             path.local_status_seq_no.saturating_add(1u8);
-            frame::PathStatus {
-                is_backup: matches!(status, PathStatus::Backup),
-                path_id,
-                status_seq_no: seq,
-            }
-            .encode(buf);
             match status {
-                PathStatus::Available => trace!(?path_id, %seq, "PATH_AVAILABLE"),
-                PathStatus::Backup => trace!(?path_id, %seq, "PATH_BACKUP"),
+                PathStatus::Available => {
+                    frame::PathAvailable {
+                        path_id,
+                        status_seq_no: seq,
+                    }
+                    .encode(buf);
+                    trace!(?path_id, %seq, "PATH_AVAILABLE")
+                }
+                PathStatus::Backup => {
+                    frame::PathBackup {
+                        path_id,
+                        status_seq_no: seq,
+                    }
+                    .encode(buf);
+                    trace!(?path_id, %seq, "PATH_BACKUP")
+                }
             }
 
             // TODO(flub): frame stats?
@@ -4774,8 +4794,8 @@ impl Connection {
         }
     }
 
-    /// Handle new path availability information
-    fn on_path_available(&mut self, path_id: PathId, is_backup: bool, status_seq_no: VarInt) {
+    /// Handle new path status information: PATH_AVAILABLE, PATH_BACKUP
+    fn on_path_status(&mut self, path_id: PathId, is_backup: bool, status_seq_no: VarInt) {
         if let Some(path_data) = self.paths.get_mut(&path_id) {
             let data = &mut path_data.data;
             // If a newer sequence no was sent, update the information.
