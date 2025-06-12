@@ -24,9 +24,7 @@ use crate::{
     config::{ServerConfig, TransportConfig},
     congestion::Controller,
     crypto::{self, KeyPair, Keys, PacketKey},
-    frame::{
-        self, Close, Datagram, FrameStruct, NewToken, ObservedAddr, PathAbandon, PathAvailable,
-    },
+    frame::{self, Close, Datagram, FrameStruct, NewToken, ObservedAddr, PathAvailable},
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -581,14 +579,11 @@ impl Connection {
             //   This allows us to safely consume the path_id due to the failed attempt, otherwise
             //   we would need to keep track of holes in the range and revert the
             //   max_path_id_in_use
-
-            return Some((
-                None,
-                vec![Frame::PathAbandon(PathAbandon {
-                    path_id,
-                    error_code: TransportErrorCode::NO_CID_AVAILABLE,
-                })],
-            ));
+            self.spaces[SpaceId::Data]
+                .pending
+                .path_abandon
+                .push((path_id, TransportErrorCode::NO_CID_AVAILABLE));
+            return None;
         };
 
         let mut path = PathData::new(remote, self.allow_mtud, None, now, &self.config);
@@ -4087,6 +4082,23 @@ impl Connection {
             }
         }
 
+        // PATH_ABANDON
+        while !path_exclusive_only
+            && space_id == SpaceId::Data
+            && frame::PathAbandon::SIZE_BOUND <= buf.remaining_mut()
+        {
+            let Some((path_id, error_code)) = space.pending.path_abandon.pop() else {
+                break;
+            };
+            frame::PathAbandon {
+                path_id,
+                error_code,
+            }
+            .encode(buf);
+            // TODO(flub): frame stats?
+        }
+
+        // RESET_STREAM, STOP_SENDING, MAX_DATA, MAX_STREAM_DATA, MAX_STREAMS
         if space_id == SpaceId::Data {
             self.streams.write_control_frames(
                 buf,
