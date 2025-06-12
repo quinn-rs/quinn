@@ -198,7 +198,7 @@ pub(crate) enum Frame {
     ObservedAddr(ObservedAddr),
     #[allow(dead_code)] // TODO(flub)
     PathAbandon(PathAbandon),
-    PathAvailable(PathAvailable),
+    PathAvailable(PathStatus),
     #[allow(dead_code)] // TODO(flub)
     MaxPathId(PathId),
     PathsBlocked(PathId),
@@ -896,7 +896,7 @@ impl Iter {
             FrameType::PATH_ABANDON => Frame::PathAbandon(PathAbandon::decode(&mut self.bytes)?),
             FrameType::PATH_BACKUP | FrameType::PATH_AVAILABLE => {
                 let is_backup = ty == FrameType::PATH_BACKUP;
-                Frame::PathAvailable(PathAvailable::decode(&mut self.bytes, is_backup)?)
+                Frame::PathAvailable(PathStatus::decode(&mut self.bytes, is_backup)?)
             }
             FrameType::MAX_PATH_ID => Frame::MaxPathId(self.bytes.get()?),
             FrameType::PATHS_BLOCKED => Frame::PathsBlocked(self.bytes.get()?),
@@ -1310,14 +1310,15 @@ impl PathAbandon {
 
 // TODO(@divma): split?
 #[derive(Debug, PartialEq, Eq)]
-pub(crate) struct PathAvailable {
+pub(crate) struct PathStatus {
     pub(crate) is_backup: bool,
     pub(crate) path_id: PathId,
     pub(crate) status_seq_no: VarInt,
 }
 
-#[allow(dead_code)] // TODO(flub)
-impl PathAvailable {
+impl PathStatus {
+    pub(crate) const SIZE_BOUND: usize = VarInt(FrameType::PATH_AVAILABLE.0).size() + 8 + 8;
+
     // TODO(@divma): docs
     pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.write(self.get_type());
@@ -1486,7 +1487,7 @@ mod test {
 
     #[test]
     fn test_path_available_roundtrip() {
-        let path_avaiable = PathAvailable {
+        let path_avaiable = PathStatus {
             is_backup: true,
             path_id: PathId(42),
             status_seq_no: VarInt(73),

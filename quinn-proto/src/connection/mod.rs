@@ -24,7 +24,7 @@ use crate::{
     config::{ServerConfig, TransportConfig},
     congestion::Controller,
     crypto::{self, KeyPair, Keys, PacketKey},
-    frame::{self, Close, Datagram, FrameStruct, NewToken, ObservedAddr, PathAvailable},
+    frame::{self, Close, Datagram, FrameStruct, NewToken, ObservedAddr},
     packet::{
         FixedLengthConnectionIdParser, Header, InitialHeader, InitialPacket, LongType, Packet,
         PacketNumber, PartialDecode, SpaceId,
@@ -62,7 +62,7 @@ use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 
 mod paths;
 use paths::PathData;
-pub use paths::{PathEvent, PathId, PathStatus, RttEstimator};
+pub use paths::{ClosedPath, PathEvent, PathId, PathStatus, RttEstimator};
 
 mod send_buffer;
 
@@ -543,11 +543,34 @@ impl Connection {
         &self.paths.get(&path_id).expect("known path").data
     }
 
-    /// Gets the [`PathStatus`] for a known [`PathId`].
+    /// Gets the [`PathStatus`] for a known [`PathId`]
+    pub fn path_status(&self, path_id: PathId) -> Result<PathStatus, ClosedPath> {
+        match self.paths.get(&path_id) {
+            Some(path) => Ok(path.data.status),
+            None => Err(ClosedPath { _private: () }),
+        }
+    }
+
+    /// Sets the [`PathStatus`] for a known [`PathId`]
     ///
-    /// Will panic if the path_id does not reference any known path.
-    pub fn path_status(&self, path_id: PathId) -> PathStatus {
-        self.path_data(path_id).status
+    /// Returns the previous path status on success.
+    pub fn set_path_status(
+        &mut self,
+        path_id: PathId,
+        status: PathStatus,
+    ) -> Result<PathStatus, ClosedPath> {
+        match self.paths.get_mut(&path_id) {
+            Some(path) => {
+                let prev_status = path.data.status;
+                path.data.status = status;
+                self.spaces[SpaceId::Data]
+                    .pending
+                    .path_status
+                    .push((path_id, status));
+                Ok(prev_status)
+            }
+            None => Err(ClosedPath { _private: () }),
+        }
     }
 
     /// Gets the [`PathData`] for a known [`PathId`].
@@ -604,7 +627,7 @@ impl Connection {
         // regardles of what's the status we inform it to the remote
         let frames = vec![
             Frame::PathChallenge(challenge),
-            Frame::PathAvailable(PathAvailable {
+            Frame::PathAvailable(frame::PathStatus {
                 is_backup: status == PathStatus::Backup,
                 path_id,
                 status_seq_no,
@@ -4095,6 +4118,30 @@ impl Connection {
                 error_code,
             }
             .encode(buf);
+            // TODO(flub): frame stats?
+        }
+
+        // PATH_AVAILABLE & PATH_BACKUP
+        while !path_exclusive_only
+            && space_id == SpaceId::Data
+            && frame::PathStatus::SIZE_BOUND <= buf.remaining_mut()
+        {
+            let Some((path_id, status)) = space.pending.path_status.pop() else {
+                break;
+            };
+            let seq = path.local_status_seq_no;
+            path.local_status_seq_no.saturating_add(1u8);
+            frame::PathStatus {
+                is_backup: matches!(status, PathStatus::Backup),
+                path_id,
+                status_seq_no: seq,
+            }
+            .encode(buf);
+            match status {
+                PathStatus::Available => trace!(?path_id, %seq, "PATH_AVAILABLE"),
+                PathStatus::Backup => trace!(?path_id, %seq, "PATH_BACKUP"),
+            }
+
             // TODO(flub): frame stats?
         }
 

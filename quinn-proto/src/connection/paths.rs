@@ -1,5 +1,6 @@
 use std::{cmp, net::SocketAddr};
 
+use thiserror::Error;
 use tracing::trace;
 
 use super::{
@@ -523,6 +524,13 @@ pub enum PathEvent {
         /// The error that occurred
         error: OpenPathError,
     },
+}
+
+/// Error indicating that a path has not been opened or has already been abandoned
+#[derive(Debug, Default, Error, Clone, PartialEq, Eq)]
+#[error("closed path")]
+pub struct ClosedPath {
+    pub(super) _private: (),
 }
 
 #[cfg(test)]
