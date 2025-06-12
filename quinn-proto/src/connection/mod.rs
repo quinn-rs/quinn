@@ -4165,7 +4165,7 @@ impl Connection {
                 }
                 None => break,
             };
-            frame::RetireConnectionId { path_id, sequence }.write(buf);
+            frame::RetireConnectionId { path_id, sequence }.encode(buf);
             sent.retransmits
                 .get_or_create()
                 .retire_cids

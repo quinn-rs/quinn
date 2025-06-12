@@ -270,7 +270,7 @@ pub(crate) struct RetireConnectionId {
 
 impl RetireConnectionId {
     // TODO(@divma): docs
-    pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
+    pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.write(self.get_type());
         if let Some(id) = self.path_id {
             buf.write(id);
@@ -280,7 +280,7 @@ impl RetireConnectionId {
 
     // TODO(@divma): docs
     // should only be called after the frame type has been verified
-    pub(crate) fn read<R: Buf>(bytes: &mut R, read_path: bool) -> coding::Result<Self> {
+    pub(crate) fn decode<R: Buf>(bytes: &mut R, read_path: bool) -> coding::Result<Self> {
         Ok(Self {
             path_id: if read_path { Some(bytes.get()?) } else { None },
             sequence: bytes.get()?,
@@ -817,7 +817,7 @@ impl Iter {
                 error_code: self.bytes.get()?,
             }),
             FrameType::RETIRE_CONNECTION_ID | FrameType::PATH_RETIRE_CONNECTION_ID => {
-                Frame::RetireConnectionId(RetireConnectionId::read(
+                Frame::RetireConnectionId(RetireConnectionId::decode(
                     &mut self.bytes,
                     ty == FrameType::PATH_RETIRE_CONNECTION_ID,
                 )?)
@@ -890,10 +890,10 @@ impl Iter {
                 let observed = ObservedAddr::read(&mut self.bytes, is_ipv6)?;
                 Frame::ObservedAddr(observed)
             }
-            FrameType::PATH_ABANDON => Frame::PathAbandon(PathAbandon::read(&mut self.bytes)?),
+            FrameType::PATH_ABANDON => Frame::PathAbandon(PathAbandon::decode(&mut self.bytes)?),
             FrameType::PATH_BACKUP | FrameType::PATH_AVAILABLE => {
                 let is_backup = ty == FrameType::PATH_BACKUP;
-                Frame::PathAvailable(PathAvailable::read(&mut self.bytes, is_backup)?)
+                Frame::PathAvailable(PathAvailable::decode(&mut self.bytes, is_backup)?)
             }
             FrameType::MAX_PATH_ID => Frame::MaxPathId(self.bytes.get()?),
             FrameType::PATHS_BLOCKED => Frame::PathsBlocked(self.bytes.get()?),
@@ -1288,7 +1288,7 @@ pub(crate) struct PathAbandon {
 #[allow(dead_code)] // TODO(flub)
 impl PathAbandon {
     // TODO(@divma): docs
-    pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
+    pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.write(FrameType::PATH_ABANDON);
         buf.write(self.path_id);
         buf.write(self.error_code);
@@ -1296,7 +1296,7 @@ impl PathAbandon {
 
     // TODO(@divma): docs
     // should only be called after the frame type has been verified
-    pub(crate) fn read<R: Buf>(bytes: &mut R) -> coding::Result<Self> {
+    pub(crate) fn decode<R: Buf>(bytes: &mut R) -> coding::Result<Self> {
         Ok(Self {
             path_id: bytes.get()?,
             error_code: bytes.get()?,
@@ -1315,7 +1315,7 @@ pub(crate) struct PathAvailable {
 #[allow(dead_code)] // TODO(flub)
 impl PathAvailable {
     // TODO(@divma): docs
-    pub(crate) fn write<W: BufMut>(&self, buf: &mut W) {
+    pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.write(self.get_type());
         buf.write(self.path_id);
         buf.write(self.status_seq_no);
@@ -1323,7 +1323,7 @@ impl PathAvailable {
 
     // TODO(@divma): docs
     // should only be called after the frame type has been verified
-    pub(crate) fn read<R: Buf>(bytes: &mut R, is_backup: bool) -> coding::Result<Self> {
+    pub(crate) fn decode<R: Buf>(bytes: &mut R, is_backup: bool) -> coding::Result<Self> {
         Ok(Self {
             is_backup,
             path_id: bytes.get()?,
@@ -1470,7 +1470,7 @@ mod test {
             error_code: TransportErrorCode::NO_ERROR,
         };
         let mut buf = Vec::new();
-        abandon.write(&mut buf);
+        abandon.encode(&mut buf);
 
         let mut decoded = frames(buf);
         assert_eq!(decoded.len(), 1);
@@ -1488,7 +1488,7 @@ mod test {
             status_seq_no: VarInt(73),
         };
         let mut buf = Vec::new();
-        path_avaiable.write(&mut buf);
+        path_avaiable.encode(&mut buf);
 
         let mut decoded = frames(buf);
         assert_eq!(decoded.len(), 1);
@@ -1525,7 +1525,7 @@ mod test {
             sequence: 31,
         };
         let mut buf = Vec::new();
-        retire_cid.write(&mut buf);
+        retire_cid.encode(&mut buf);
 
         let mut decoded = frames(buf);
         assert_eq!(decoded.len(), 1);
