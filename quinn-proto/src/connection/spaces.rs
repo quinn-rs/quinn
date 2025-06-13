@@ -11,8 +11,9 @@ use tracing::{error, trace};
 
 use super::{PathId, assembler::Assembler};
 use crate::{
-    Dir, Duration, Instant, SocketAddr, StreamId, TransportError, VarInt, connection::StreamsState,
-    crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet, shared::IssuedCid,
+    Dir, Duration, Instant, SocketAddr, StreamId, TransportError, TransportErrorCode, VarInt,
+    connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
+    shared::IssuedCid,
 };
 
 pub(super) struct PacketSpace {
@@ -517,6 +518,8 @@ pub struct Retransmits {
     /// something. However, due to the architecture of Quinn, it is considerably simpler to not do
     /// that; consider what such a change would mean for implementing `BitOrAssign` on Self.
     pub(super) new_tokens: Vec<SocketAddr>,
+    /// Paths which need to be abandoned
+    pub(super) path_abandon: Vec<(PathId, TransportErrorCode)>,
 }
 
 impl Retransmits {
@@ -536,6 +539,7 @@ impl Retransmits {
             && !self.handshake_done
             && !self.observed_addr
             && self.new_tokens.is_empty()
+            && self.path_abandon.is_empty()
     }
 }
 
@@ -559,6 +563,7 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.handshake_done |= rhs.handshake_done;
         self.observed_addr |= rhs.observed_addr;
         self.new_tokens.extend_from_slice(&rhs.new_tokens);
+        self.path_abandon.extend_from_slice(&rhs.path_abandon)
     }
 }
 

@@ -1288,8 +1288,9 @@ pub(crate) struct PathAbandon {
     pub(crate) error_code: TransportErrorCode,
 }
 
-#[allow(dead_code)] // TODO(flub)
 impl PathAbandon {
+    pub(crate) const SIZE_BOUND: usize = VarInt(FrameType::PATH_ABANDON.0).size() + 8 + 8;
+
     // TODO(@divma): docs
     pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
         buf.write(FrameType::PATH_ABANDON);
