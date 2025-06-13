@@ -258,7 +258,10 @@ impl Frame {
     }
 
     pub(crate) fn is_ack_eliciting(&self) -> bool {
-        !matches!(*self, Self::Ack(_) | Self::Padding | Self::Close(_))
+        !matches!(
+            *self,
+            Self::Ack(_) | Self::PathAck(_) | Self::Padding | Self::Close(_)
+        )
     }
 }
 
