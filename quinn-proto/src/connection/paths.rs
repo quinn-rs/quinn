@@ -500,7 +500,7 @@ impl PathStatusState {
             return;
         }
         self.remote_seq = Some(seq);
-        let prev = std::mem::replace(&mut self.remote_status, Some(status));
+        let prev = self.remote_status.replace(status);
         if prev != Some(status) {
             debug!(?status, ?seq, "remote changed path status");
         }
