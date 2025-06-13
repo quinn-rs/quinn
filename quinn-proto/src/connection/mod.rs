@@ -774,7 +774,9 @@ impl Connection {
             };
 
             if !path_should_send && space_id < SpaceId::Data {
-                trace!(?space_id, ?path_id, "everything sent in space");
+                if self.spaces[space_id].crypto.is_some() {
+                    trace!(?space_id, ?path_id, "nothing to send in space");
+                }
                 space_id = space_id.next();
                 continue;
             }
@@ -807,7 +809,12 @@ impl Connection {
                 match self.paths.keys().find(|&&next| next > path_id) {
                     Some(next_path_id) => {
                         // See if this next path can send anything.
-                        trace!(?space_id, ?path_id, ?next_path_id, "trying next path");
+                        trace!(
+                            ?space_id,
+                            ?path_id,
+                            ?next_path_id,
+                            "nothing to send on path"
+                        );
                         path_id = *next_path_id;
                         space_id = SpaceId::Data;
 
@@ -823,7 +830,11 @@ impl Connection {
                     }
                     None => {
                         // Nothing more to send.
-                        trace!(?space_id, ?path_id, "no higher path id to send on");
+                        trace!(
+                            ?space_id,
+                            ?path_id,
+                            "nothing to send on path, no more paths"
+                        );
                         break;
                     }
                 }
