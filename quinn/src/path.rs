@@ -2,7 +2,7 @@ use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 
-use proto::{ConnectionError, OpenPathError, PathId, PathStatus, VarInt};
+use proto::{ClosedPath, ConnectionError, OpenPathError, PathId, PathStatus, VarInt};
 use tokio::sync::oneshot;
 
 use crate::connection::ConnectionRef;
@@ -76,7 +76,7 @@ impl Path {
     }
 
     /// The current [`PathStatus`] of this path.
-    pub fn status(&self) -> PathStatus {
+    pub fn status(&self) -> Result<PathStatus, ClosedPath> {
         self.conn
             .state
             .lock("path status")

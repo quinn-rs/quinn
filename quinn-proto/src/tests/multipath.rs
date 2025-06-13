@@ -3,9 +3,11 @@
 use std::num::NonZeroU32;
 use std::sync::Arc;
 
+use tracing::info;
+
 use crate::{
-    ClientConfig, ConnectionId, ConnectionIdGenerator, Endpoint, EndpointConfig, ServerConfig,
-    TransportConfig,
+    ClientConfig, ConnectionHandle, ConnectionId, ConnectionIdGenerator, Endpoint, EndpointConfig,
+    PathId, PathStatus, ServerConfig, TransportConfig,
 };
 
 use super::util::subscribe;
@@ -63,4 +65,49 @@ fn non_zero_length_cids() {
         }
         _ => panic!("Not a TransportError"),
     }
+}
+
+/// Returns a connected client-server pair with multipath enabled
+fn multipath_pair() -> (Pair, ConnectionHandle, ConnectionHandle) {
+    let multipath_transport_cfg = Arc::new(TransportConfig {
+        max_concurrent_multipath_paths: NonZeroU32::new(3 as _),
+        ..TransportConfig::default()
+    });
+    let server_cfg = Arc::new(ServerConfig {
+        transport: multipath_transport_cfg.clone(),
+        ..server_config()
+    });
+    let server = Endpoint::new(Default::default(), Some(server_cfg), true, None);
+    let client = Endpoint::new(Default::default(), None, true, None);
+
+    let mut pair = Pair::new_from_endpoint(client, server);
+    let client_cfg = ClientConfig {
+        transport: multipath_transport_cfg,
+        ..client_config()
+    };
+    let (client_ch, server_ch) = pair.connect_with(client_cfg);
+    pair.drive();
+    info!("connected");
+    (pair, client_ch, server_ch)
+}
+
+#[test]
+fn path_status() {
+    let _guard = subscribe();
+    let (mut pair, client_ch, server_ch) = multipath_pair();
+
+    let client_conn = pair.client_conn_mut(client_ch);
+    let prev_status = client_conn
+        .set_path_status(PathId::ZERO, PathStatus::Backup)
+        .unwrap();
+    assert_eq!(prev_status, PathStatus::Available);
+
+    // Send the frame to the server
+    pair.drive();
+
+    let server_conn = pair.server_conn_mut(server_ch);
+    assert_eq!(
+        server_conn.remote_path_status(PathId::ZERO).unwrap(),
+        PathStatus::Backup
+    );
 }

@@ -1,6 +1,7 @@
 use std::{cmp, net::SocketAddr};
 
-use tracing::trace;
+use thiserror::Error;
+use tracing::{debug, trace};
 
 use super::{
     OpenPathError,
@@ -98,11 +99,7 @@ pub(super) struct PathData {
     /// Observed address frame with the largest sequence number received from the peer on this path.
     pub(super) last_observed_addr_report: Option<ObservedAddr>,
     /// The QUIC-MULTIPATH path status
-    pub(super) status: PathStatus,
-    /// Next status sequence number to use to inform the remote of status updates.
-    pub(super) local_status_seq_no: VarInt,
-    /// The sequence number of the received PATH_AVAILABLE and PATH_BACKUP frames.
-    pub(super) status_seq_no: Option<VarInt>,
+    pub(super) status: PathStatusState,
     /// Number of the first packet sent on this path
     ///
     /// Used to determine whether a packet was sent on an earlier path. Insufficient to determine if
@@ -161,8 +158,6 @@ impl PathData {
             observed_addr_sent: false,
             last_observed_addr_report: None,
             status: Default::default(),
-            local_status_seq_no: VarInt::default(),
-            status_seq_no: None,
             first_packet: None,
             pto_count: 0,
         }
@@ -191,9 +186,7 @@ impl PathData {
             in_flight: InFlight::new(),
             observed_addr_sent: false,
             last_observed_addr_report: None,
-            status: prev.status,
-            local_status_seq_no: prev.local_status_seq_no,
-            status_seq_no: prev.status_seq_no,
+            status: prev.status.clone(),
             first_packet: None,
             pto_count: 0,
         }
@@ -480,6 +473,40 @@ impl InFlight {
     }
 }
 
+/// State for QUIC-MULTIPATH PATH_AVAILABLE and PATH_BACKUP frames
+// TODO(flub): We might want to keep track of whether the local state was set explicitly.
+//    OTOH our open path API allows explicitly setting the path status, which means it is
+//    always set explicitly.  So basically we currently just use the local state and only
+//    keep track of the remote state.
+#[derive(Debug, Clone, Default)]
+pub(super) struct PathStatusState {
+    /// The local status
+    pub(super) local_status: PathStatus,
+    /// Local sequence number, for both PATH_AVAIALABLE and PATH_BACKUP
+    ///
+    /// This is the number of the *next* path status frame to be sent.
+    pub(super) local_seq: VarInt,
+    /// The status set by the remote
+    pub(super) remote_status: Option<PathStatus>,
+    /// Remote sequence number, for both PATH_AVAIALABLE and PATH_BACKUP
+    pub(super) remote_seq: Option<VarInt>,
+}
+
+impl PathStatusState {
+    /// To be called on received PATH_AVAILABLE/PATH_BACKUP frames
+    pub(super) fn on_path_status(&mut self, status: PathStatus, seq: VarInt) {
+        if Some(seq) <= self.remote_seq {
+            tracing::warn!("whoops");
+            return;
+        }
+        self.remote_seq = Some(seq);
+        let prev = self.remote_status.replace(status);
+        if prev != Some(status) {
+            debug!(?status, ?seq, "remote changed path status");
+        }
+    }
+}
+
 /// The QUIC-MULTIPATH path status
 ///
 /// See section "3.3 Path Status Management":
@@ -523,6 +550,13 @@ pub enum PathEvent {
         /// The error that occurred
         error: OpenPathError,
     },
+}
+
+/// Error indicating that a path has not been opened or has already been abandoned
+#[derive(Debug, Default, Error, Clone, PartialEq, Eq)]
+#[error("closed path")]
+pub struct ClosedPath {
+    pub(super) _private: (),
 }
 
 #[cfg(test)]

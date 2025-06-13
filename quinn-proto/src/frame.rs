@@ -199,6 +199,7 @@ pub(crate) enum Frame {
     #[allow(dead_code)] // TODO(flub)
     PathAbandon(PathAbandon),
     PathAvailable(PathAvailable),
+    PathBackup(PathBackup),
     #[allow(dead_code)] // TODO(flub)
     MaxPathId(PathId),
     PathsBlocked(PathId),
@@ -250,7 +251,8 @@ impl Frame {
             HandshakeDone => FrameType::HANDSHAKE_DONE,
             ObservedAddr(ref observed) => observed.get_type(),
             PathAbandon(_) => FrameType::PATH_ABANDON,
-            PathAvailable(ref path_avaiable) => path_avaiable.get_type(),
+            PathAvailable(_) => FrameType::PATH_AVAILABLE,
+            PathBackup(_) => FrameType::PATH_BACKUP,
             MaxPathId(_) => FrameType::MAX_PATH_ID,
             PathsBlocked(_) => FrameType::PATHS_BLOCKED,
             PathCidsBlocked(_) => FrameType::PATH_CIDS_BLOCKED,
@@ -894,10 +896,10 @@ impl Iter {
                 Frame::ObservedAddr(observed)
             }
             FrameType::PATH_ABANDON => Frame::PathAbandon(PathAbandon::decode(&mut self.bytes)?),
-            FrameType::PATH_BACKUP | FrameType::PATH_AVAILABLE => {
-                let is_backup = ty == FrameType::PATH_BACKUP;
-                Frame::PathAvailable(PathAvailable::decode(&mut self.bytes, is_backup)?)
+            FrameType::PATH_AVAILABLE => {
+                Frame::PathAvailable(PathAvailable::decode(&mut self.bytes)?)
             }
+            FrameType::PATH_BACKUP => Frame::PathBackup(PathBackup::decode(&mut self.bytes)?),
             FrameType::MAX_PATH_ID => Frame::MaxPathId(self.bytes.get()?),
             FrameType::PATHS_BLOCKED => Frame::PathsBlocked(self.bytes.get()?),
             FrameType::PATH_CIDS_BLOCKED => Frame::PathCidsBlocked(self.bytes.get()?),
@@ -1308,39 +1310,56 @@ impl PathAbandon {
     }
 }
 
-// TODO(@divma): split?
 #[derive(Debug, PartialEq, Eq)]
 pub(crate) struct PathAvailable {
-    pub(crate) is_backup: bool,
     pub(crate) path_id: PathId,
     pub(crate) status_seq_no: VarInt,
 }
 
-#[allow(dead_code)] // TODO(flub)
 impl PathAvailable {
+    const TYPE: FrameType = FrameType::PATH_AVAILABLE;
+    pub(crate) const SIZE_BOUND: usize = VarInt(FrameType::PATH_AVAILABLE.0).size() + 8 + 8;
+
     // TODO(@divma): docs
     pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
-        buf.write(self.get_type());
+        buf.write(Self::TYPE);
         buf.write(self.path_id);
         buf.write(self.status_seq_no);
     }
 
     // TODO(@divma): docs
     // should only be called after the frame type has been verified
-    pub(crate) fn decode<R: Buf>(bytes: &mut R, is_backup: bool) -> coding::Result<Self> {
+    pub(crate) fn decode<R: Buf>(bytes: &mut R) -> coding::Result<Self> {
         Ok(Self {
-            is_backup,
             path_id: bytes.get()?,
             status_seq_no: bytes.get()?,
         })
     }
+}
 
-    fn get_type(&self) -> FrameType {
-        if self.is_backup {
-            FrameType::PATH_BACKUP
-        } else {
-            FrameType::PATH_AVAILABLE
-        }
+#[derive(Debug, PartialEq, Eq)]
+pub(crate) struct PathBackup {
+    pub(crate) path_id: PathId,
+    pub(crate) status_seq_no: VarInt,
+}
+
+impl PathBackup {
+    const TYPE: FrameType = FrameType::PATH_BACKUP;
+
+    // TODO(@divma): docs
+    pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
+        buf.write(Self::TYPE);
+        buf.write(self.path_id);
+        buf.write(self.status_seq_no);
+    }
+
+    // TODO(@divma): docs
+    // should only be called after the frame type has been verified
+    pub(crate) fn decode<R: Buf>(bytes: &mut R) -> coding::Result<Self> {
+        Ok(Self {
+            path_id: bytes.get()?,
+            status_seq_no: bytes.get()?,
+        })
     }
 }
 
@@ -1487,7 +1506,6 @@ mod test {
     #[test]
     fn test_path_available_roundtrip() {
         let path_avaiable = PathAvailable {
-            is_backup: true,
             path_id: PathId(42),
             status_seq_no: VarInt(73),
         };
@@ -1498,6 +1516,23 @@ mod test {
         assert_eq!(decoded.len(), 1);
         match decoded.pop().expect("non empty") {
             Frame::PathAvailable(decoded) => assert_eq!(decoded, path_avaiable),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn test_path_backup_roundtrip() {
+        let path_backup = PathBackup {
+            path_id: PathId(42),
+            status_seq_no: VarInt(73),
+        };
+        let mut buf = Vec::new();
+        path_backup.encode(&mut buf);
+
+        let mut decoded = frames(buf);
+        assert_eq!(decoded.len(), 1);
+        match decoded.pop().expect("non empty") {
+            Frame::PathBackup(decoded) => assert_eq!(decoded, path_backup),
             x => panic!("incorrect frame {x:?}"),
         }
     }

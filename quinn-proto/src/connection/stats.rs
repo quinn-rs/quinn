@@ -62,6 +62,7 @@ pub struct FrameStats {
     pub observed_addr: u64,
     pub path_abandon: u64,
     pub path_available: u64,
+    pub path_backup: u64,
     pub max_path_id: u64,
     pub paths_blocked: u64,
     pub path_cids_blocked: u64,
@@ -113,8 +114,8 @@ impl FrameStats {
             Frame::HandshakeDone => self.handshake_done = self.handshake_done.saturating_add(1),
             Frame::ObservedAddr(_) => self.observed_addr += 1,
             Frame::PathAbandon(_) => self.path_abandon = self.path_abandon.saturating_add(1),
-            // TODO(@divma): split stats?
             Frame::PathAvailable(_) => self.path_available = self.path_available.saturating_add(1),
+            Frame::PathBackup(_) => self.path_backup = self.path_backup.saturating_add(1),
             Frame::MaxPathId(_) => self.max_path_id = self.max_path_id.saturating_add(1),
             Frame::PathsBlocked(_) => self.paths_blocked = self.paths_blocked.saturating_add(1),
             Frame::PathCidsBlocked(_) => {

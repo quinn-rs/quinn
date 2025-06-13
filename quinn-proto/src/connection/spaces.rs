@@ -520,6 +520,8 @@ pub struct Retransmits {
     pub(super) new_tokens: Vec<SocketAddr>,
     /// Paths which need to be abandoned
     pub(super) path_abandon: Vec<(PathId, TransportErrorCode)>,
+    /// If a PATH_AVAILABLE and PATH_BACKUP frame needs to be sent for a path
+    pub(super) path_status: Vec<PathId>,
 }
 
 impl Retransmits {
@@ -540,6 +542,7 @@ impl Retransmits {
             && !self.observed_addr
             && self.new_tokens.is_empty()
             && self.path_abandon.is_empty()
+            && self.path_status.is_empty()
     }
 }
 
