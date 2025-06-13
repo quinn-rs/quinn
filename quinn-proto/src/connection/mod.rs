@@ -546,7 +546,7 @@ impl Connection {
     /// Gets the [`PathStatus`] for a known [`PathId`]
     pub fn path_status(&self, path_id: PathId) -> Result<PathStatus, ClosedPath> {
         match self.paths.get(&path_id) {
-            Some(path) => Ok(path.data.status),
+            Some(path) => Ok(path.data.status.local_status),
             None => Err(ClosedPath { _private: () }),
         }
     }
@@ -561,12 +561,9 @@ impl Connection {
     ) -> Result<PathStatus, ClosedPath> {
         match self.paths.get_mut(&path_id) {
             Some(path) => {
-                let prev_status = path.data.status;
-                path.data.status = status;
-                self.spaces[SpaceId::Data]
-                    .pending
-                    .path_status
-                    .push((path_id, status));
+                let prev_status = path.data.status.local_status;
+                path.data.status.local_status = status;
+                self.spaces[SpaceId::Data].pending.path_status.push(path_id);
                 Ok(prev_status)
             }
             None => Err(ClosedPath { _private: () }),
@@ -610,12 +607,10 @@ impl Connection {
         };
 
         let mut path = PathData::new(remote, self.allow_mtud, None, now, &self.config);
-        path.status = status;
+        path.status.local_status = status;
 
         let challenge = self.rng.random();
         path.challenge = Some(challenge);
-        let status_seq_no = path.local_status_seq_no;
-        path.local_status_seq_no = path.local_status_seq_no.saturating_add(1u8);
         self.paths.insert(
             path_id,
             PathState {
@@ -624,18 +619,10 @@ impl Connection {
             },
         );
 
-        // regardles of what's the status we inform it to the remote
-        let status_frame = match status {
-            PathStatus::Available => Frame::PathAvailable(frame::PathAvailable {
-                path_id,
-                status_seq_no,
-            }),
-            PathStatus::Backup => Frame::PathBackup(frame::PathBackup {
-                path_id,
-                status_seq_no,
-            }),
-        };
-        let frames = vec![Frame::PathChallenge(challenge), status_frame];
+        // Inform the remote of the path status.
+        self.spaces[SpaceId::Data].pending.path_status.push(path_id);
+
+        let frames = vec![Frame::PathChallenge(challenge)];
         Some((Some((path_id, remote_cid)), frames))
     }
 
@@ -728,12 +715,12 @@ impl Connection {
 
         let mut path_id = *self.paths.first_key_value().expect("one path must exist").0;
 
-        // If there is any available path we only want to send frames to a backup path that
-        // must be sent on that path.
+        // If there is any available path we only want to send frames to any backup path
+        // that must be sent on that backup path exclusively.
         let have_available_path = self
             .paths
             .values()
-            .any(|path| path.data.status == PathStatus::Available);
+            .any(|path| path.data.status.local_status == PathStatus::Available);
 
         // Setup for the first path_id
         let mut transmit = TransmitBuf::new(
@@ -763,7 +750,7 @@ impl Connection {
             let path_should_send = {
                 let path_exclusive_only = space_id == SpaceId::Data
                     && have_available_path
-                    && self.path_data(path_id).status == PathStatus::Backup;
+                    && self.path_data(path_id).status.local_status == PathStatus::Backup;
                 let path_should_send = if path_exclusive_only {
                     can_send.path_exclusive
                 } else {
@@ -1032,8 +1019,8 @@ impl Connection {
             }
 
             let sent_frames = {
-                let path_exclusive_only =
-                    have_available_path && self.path_data(path_id).status == PathStatus::Backup;
+                let path_exclusive_only = have_available_path
+                    && self.path_data(path_id).status.local_status == PathStatus::Backup;
                 let pn = builder.exact_number;
                 self.populate_packet(
                     now,
@@ -3626,7 +3613,11 @@ impl Connection {
                 }
                 Frame::PathAvailable(info) => {
                     if self.is_multipath_negotiated() {
-                        self.on_path_status(info.path_id, false, info.status_seq_no);
+                        self.on_path_status(
+                            info.path_id,
+                            PathStatus::Available,
+                            info.status_seq_no,
+                        );
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "received PATH_AVAILABLE frame when multipath was not negotiated",
@@ -3635,7 +3626,7 @@ impl Connection {
                 }
                 Frame::PathBackup(info) => {
                     if self.is_multipath_negotiated() {
-                        self.on_path_status(info.path_id, true, info.status_seq_no);
+                        self.on_path_status(info.path_id, PathStatus::Backup, info.status_seq_no);
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "received PATH_BACKUP frame when multipath was not negotiated",
@@ -4128,6 +4119,7 @@ impl Connection {
             }
         }
 
+        // TODO(flub): maybe this is much higher priority?
         // PATH_ABANDON
         while !path_exclusive_only
             && space_id == SpaceId::Data
@@ -4149,12 +4141,13 @@ impl Connection {
             && space_id == SpaceId::Data
             && frame::PathAvailable::SIZE_BOUND <= buf.remaining_mut()
         {
-            let Some((path_id, status)) = space.pending.path_status.pop() else {
+            let Some(path_id) = space.pending.path_status.pop() else {
                 break;
             };
-            let seq = path.local_status_seq_no;
-            path.local_status_seq_no.saturating_add(1u8);
-            match status {
+            let status_state = &mut path.status;
+            let seq = status_state.local_seq;
+            status_state.local_seq.saturating_add(1u8);
+            match status_state.local_status {
                 PathStatus::Available => {
                     frame::PathAvailable {
                         path_id,
@@ -4172,7 +4165,6 @@ impl Connection {
                     trace!(?path_id, %seq, "PATH_BACKUP")
                 }
             }
-
             // TODO(flub): frame stats?
         }
 
@@ -4806,18 +4798,9 @@ impl Connection {
     }
 
     /// Handle new path status information: PATH_AVAILABLE, PATH_BACKUP
-    fn on_path_status(&mut self, path_id: PathId, is_backup: bool, status_seq_no: VarInt) {
-        if let Some(path_data) = self.paths.get_mut(&path_id) {
-            let data = &mut path_data.data;
-            // If a newer sequence no was sent, update the information.
-            if data.status_seq_no < Some(status_seq_no) {
-                data.status = if is_backup {
-                    PathStatus::Backup
-                } else {
-                    PathStatus::Available
-                };
-                data.status_seq_no.replace(status_seq_no);
-            }
+    fn on_path_status(&mut self, path_id: PathId, status: PathStatus, status_seq_no: VarInt) {
+        if let Some(path) = self.paths.get_mut(&path_id) {
+            path.data.status.on_path_status(status, status_seq_no);
         } else {
             debug!("PATH_AVAILABLE received unknown path {:?}", path_id);
         }

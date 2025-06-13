@@ -9,7 +9,7 @@ use rand::Rng;
 use rustc_hash::{FxHashMap, FxHashSet};
 use tracing::{error, trace};
 
-use super::{PathId, PathStatus, assembler::Assembler};
+use super::{PathId, assembler::Assembler};
 use crate::{
     Dir, Duration, Instant, SocketAddr, StreamId, TransportError, TransportErrorCode, VarInt,
     connection::StreamsState, crypto::Keys, frame, packet::SpaceId, range_set::ArrayRangeSet,
@@ -520,8 +520,8 @@ pub struct Retransmits {
     pub(super) new_tokens: Vec<SocketAddr>,
     /// Paths which need to be abandoned
     pub(super) path_abandon: Vec<(PathId, TransportErrorCode)>,
-    /// PATH_AVAILABLE and PATH_BACKUP frames that need to be sent
-    pub(super) path_status: Vec<(PathId, PathStatus)>,
+    /// If a PATH_AVAILABLE and PATH_BACKUP frame needs to be sent for a path
+    pub(super) path_status: Vec<PathId>,
 }
 
 impl Retransmits {
