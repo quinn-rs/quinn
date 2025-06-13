@@ -96,7 +96,6 @@ fn path_status() {
     let _guard = subscribe();
     let (mut pair, client_ch, server_ch) = multipath_pair();
 
-    info!("client sets PATH_BACKUP");
     let client_conn = pair.client_conn_mut(client_ch);
     let prev_status = client_conn
         .set_path_status(PathId::ZERO, PathStatus::Backup)
@@ -108,15 +107,7 @@ fn path_status() {
 
     let server_conn = pair.server_conn_mut(server_ch);
     assert_eq!(
-        server_conn.path_status(PathId::ZERO).unwrap(),
+        server_conn.remote_path_status(PathId::ZERO).unwrap(),
         PathStatus::Backup
     );
-
-    info!("server sets PATH_AVAILABLE");
-    server_conn
-        .set_path_status(PathId::ZERO, PathStatus::Available)
-        .unwrap();
-
-    // Send the frame to the client
-    pair.drive()
 }

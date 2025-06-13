@@ -570,6 +570,16 @@ impl Connection {
         }
     }
 
+    /// Returns the remote path status
+    // TODO(flub): Probably should also be some kind of path event?  Not even sure if I like
+    //    this as an API, but for now it allows me to write a test easily.
+    // TODO(flub): Technically this should be a Result<Option<PathSTatus>>?
+    pub fn remote_path_status(&self, path_id: PathId) -> Option<PathStatus> {
+        self.paths
+            .get(&path_id)
+            .and_then(|path| path.data.status.remote_status)
+    }
+
     /// Gets the [`PathData`] for a known [`PathId`].
     ///
     /// Will panic if the path_id does not reference any known path.

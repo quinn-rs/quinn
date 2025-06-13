@@ -487,7 +487,7 @@ pub(super) struct PathStatusState {
     /// This is the number of the *next* path status frame to be sent.
     pub(super) local_seq: VarInt,
     /// The status set by the remote
-    pub(super) remote_status: PathStatus,
+    pub(super) remote_status: Option<PathStatus>,
     /// Remote sequence number, for both PATH_AVAIALABLE and PATH_BACKUP
     pub(super) remote_seq: Option<VarInt>,
 }
@@ -500,8 +500,8 @@ impl PathStatusState {
             return;
         }
         self.remote_seq = Some(seq);
-        let prev = std::mem::replace(&mut self.remote_status, status);
-        if prev != status {
+        let prev = std::mem::replace(&mut self.remote_status, Some(status));
+        if prev != Some(status) {
             debug!(?status, ?seq, "remote changed path status");
         }
     }
