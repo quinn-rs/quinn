@@ -542,6 +542,7 @@ impl Retransmits {
             && !self.observed_addr
             && self.new_tokens.is_empty()
             && self.path_abandon.is_empty()
+            && self.path_status.is_empty()
     }
 }
 
