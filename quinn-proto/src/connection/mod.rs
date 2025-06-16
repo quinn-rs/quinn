@@ -4143,7 +4143,7 @@ impl Connection {
                 error_code,
             }
             .encode(buf);
-            // TODO(flub): frame stats?
+            self.stats.frame_tx.path_abandon += 1;
         }
 
         // PATH_AVAILABLE & PATH_BACKUP
@@ -4164,6 +4164,7 @@ impl Connection {
                         status_seq_no: seq,
                     }
                     .encode(buf);
+                    self.stats.frame_tx.path_available += 1;
                     trace!(?path_id, %seq, "PATH_AVAILABLE")
                 }
                 PathStatus::Backup => {
@@ -4172,10 +4173,10 @@ impl Connection {
                         status_seq_no: seq,
                     }
                     .encode(buf);
+                    self.stats.frame_tx.path_backup += 1;
                     trace!(?path_id, %seq, "PATH_BACKUP")
                 }
             }
-            // TODO(flub): frame stats?
         }
 
         // RESET_STREAM, STOP_SENDING, MAX_DATA, MAX_STREAM_DATA, MAX_STREAMS

@@ -110,4 +110,16 @@ fn path_status() {
         server_conn.remote_path_status(PathId::ZERO).unwrap(),
         PathStatus::Backup
     );
+
+    let client_stats = pair.client_conn_mut(client_ch).stats();
+    assert_eq!(client_stats.frame_tx.path_available, 0);
+    assert_eq!(client_stats.frame_tx.path_backup, 1);
+    assert_eq!(client_stats.frame_rx.path_available, 0);
+    assert_eq!(client_stats.frame_rx.path_backup, 0);
+
+    let server_stats = pair.server_conn_mut(server_ch).stats();
+    assert_eq!(server_stats.frame_tx.path_available, 0);
+    assert_eq!(server_stats.frame_tx.path_backup, 0);
+    assert_eq!(server_stats.frame_rx.path_available, 0);
+    assert_eq!(server_stats.frame_rx.path_backup, 1);
 }
