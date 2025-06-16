@@ -2016,8 +2016,10 @@ impl Connection {
                 .expect("update not acknowledged yet")
                 .1
         };
+
+        // QUIC-MULTIPATH § 2.5 Key Phase Update Process: use largest PTO off all paths.
         self.timers
-            .set(Timer::KeyDiscard, start + self.pto(space) * 3);
+            .set(Timer::KeyDiscard, start + self.pto_max_path(space) * 3);
     }
 
     /// Handle a [`Timer::LossDetection`] timeout.
@@ -2103,7 +2105,7 @@ impl Connection {
         // lost packet, including the edges, are marked lost. PTO computation must always
         // include max ACK delay, i.e. operate as if in Data space (see RFC9001 §7.6.1).
         let congestion_period =
-            self.pto(SpaceId::Data) * self.config.persistent_congestion_threshold;
+            self.pto(SpaceId::Data, path_id) * self.config.persistent_congestion_threshold;
         let mut persistent_congestion_start: Option<Instant> = None;
         let mut prev_packet = None;
         let mut in_persistent_congestion = false;
@@ -2368,15 +2370,31 @@ impl Connection {
         }
     }
 
+    /// The maximum probe timeout across all paths
+    ///
+    /// See [`Connection::pto`]
+    fn pto_max_path(&self, space: SpaceId) -> Duration {
+        match space {
+            SpaceId::Initial | SpaceId::Handshake => self.pto(space, PathId::ZERO),
+            SpaceId::Data => self
+                .paths
+                .keys()
+                .map(|path_id| self.pto(space, *path_id))
+                .max()
+                .expect("there should be one at least path"),
+        }
+    }
+
     /// Probe Timeout
-    // TODO(flub): This needs a PathId parameter
-    fn pto(&self, space: SpaceId) -> Duration {
+    ///
+    /// The PTO is logically the time in which you'd expect to receive an acknowledgement
+    /// for a packet. So approximately RTT + max_ack_delay.
+    fn pto(&self, space: SpaceId, path_id: PathId) -> Duration {
         let max_ack_delay = match space {
             SpaceId::Initial | SpaceId::Handshake => Duration::ZERO,
             SpaceId::Data => self.ack_frequency.max_ack_delay_for_pto(),
         };
-        // TODO(@divma): fix
-        self.path_data(PathId(0)).rtt.pto_base() + max_ack_delay
+        self.path_data(path_id).rtt.pto_base() + max_ack_delay
     }
 
     fn on_packet_authenticated(
@@ -2429,6 +2447,8 @@ impl Connection {
         }
     }
 
+    // TODO(flub): figure out if this should take a PathId.  We could use an idle timeout on
+    //    each path.  We will need to figure out.
     fn reset_idle_timeout(&mut self, now: Instant, space: SpaceId) {
         let timeout = match self.idle_timeout {
             None => return,
@@ -2438,7 +2458,8 @@ impl Connection {
             self.timers.stop(Timer::Idle);
             return;
         }
-        let dt = cmp::max(timeout, 3 * self.pto(space));
+        // TODO(flub): Wrong PathId, see comment above.
+        let dt = cmp::max(timeout, 3 * self.pto(space, PathId::ZERO));
         self.timers.set(Timer::Idle, now + dt);
     }
 
@@ -3755,7 +3776,7 @@ impl Connection {
         // Reset rtt/congestion state for new path unless it looks like a NAT rebinding.
         // Note that the congestion window will not grow until validation terminates. Helps mitigate
         // amplification attacks performed by spoofing source addresses.
-        let prev_pto = self.pto(SpaceId::Data);
+        let prev_pto = self.pto(SpaceId::Data, path_id);
         let known_path = self.paths.get_mut(&path_id).expect("known path");
         let path = &mut known_path.data;
         let mut new_path = if remote.is_ipv4() && remote.ip() == path.remote.ip() {
@@ -3794,7 +3815,7 @@ impl Connection {
 
         self.timers.set(
             Timer::PathValidation(path_id),
-            now + 3 * cmp::max(self.pto(SpaceId::Data), prev_pto),
+            now + 3 * cmp::max(self.pto(SpaceId::Data, path_id), prev_pto),
         );
     }
 
@@ -4388,8 +4409,12 @@ impl Connection {
     }
 
     fn set_close_timer(&mut self, now: Instant) {
-        self.timers
-            .set(Timer::Close, now + 3 * self.pto(self.highest_space));
+        // QUIC-MULTIPATH § 2.6 Connection Closure: draining for 3*PTO with PTO the max of
+        // the PTO for all paths.
+        self.timers.set(
+            Timer::Close,
+            now + 3 * self.pto_max_path(self.highest_space),
+        );
     }
 
     /// Handle transport parameters received from the peer
