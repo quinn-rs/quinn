@@ -107,6 +107,22 @@ pub(super) struct PathData {
     first_packet: Option<u64>,
     /// The number of times a PTO has been sent without receiving an ack.
     pub(super) pto_count: u32,
+
+    //
+    // Per-path idle & keep alive
+    //
+    /// Idle timeout for the path
+    ///
+    /// If expired, the path will be abandoned.  This is different from the connection-wide
+    /// idle timeout which closes the connection if expired.
+    pub(super) idle_timeout: Option<Duration>,
+    /// Keep alives to send on this path
+    ///
+    /// There is also a connection-level keep alive configured in the
+    /// [`TransportParameters`].  This triggers activity on any path which can keep the
+    /// connection alive.
+    // TODO(flub): Implement this.
+    pub(super) keep_alive: Option<Duration>,
 }
 
 impl PathData {
@@ -160,6 +176,8 @@ impl PathData {
             status: Default::default(),
             first_packet: None,
             pto_count: 0,
+            idle_timeout: None,
+            keep_alive: None,
         }
     }
 
@@ -189,6 +207,8 @@ impl PathData {
             status: prev.status.clone(),
             first_packet: None,
             pto_count: 0,
+            idle_timeout: prev.idle_timeout,
+            keep_alive: prev.keep_alive,
         }
     }
 

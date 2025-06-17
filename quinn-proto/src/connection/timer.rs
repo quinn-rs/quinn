@@ -12,6 +12,8 @@ pub(crate) enum Timer {
     LossDetection(PathId),
     /// When to close the connection after no activity
     Idle,
+    /// When to abandon a path after no activity
+    PathIdle(PathId),
     /// When the close timer expires, the connection has been gracefully terminated.
     Close,
     /// When keys are discarded because they should not be needed anymore

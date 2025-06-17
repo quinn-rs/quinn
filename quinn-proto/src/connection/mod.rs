@@ -1508,6 +1508,9 @@ impl Connection {
                 Timer::Idle => {
                     self.kill(ConnectionError::TimedOut);
                 }
+                Timer::PathIdle(path_id) => {
+                    todo!();
+                }
                 Timer::KeepAlive(path_id) => {
                     trace!("sending keep-alive");
                     self.ping(path_id);
@@ -2409,7 +2412,7 @@ impl Connection {
     ) {
         self.total_authed_packets += 1;
         self.reset_keep_alive(path_id, now);
-        self.reset_idle_timeout(now, space_id);
+        self.reset_idle_timeout(now, space_id, path_id);
         self.permit_idle_reset = true;
         self.receiving_ecn |= ecn.is_some();
         if let Some(x) = ecn {
@@ -2447,20 +2450,30 @@ impl Connection {
         }
     }
 
-    // TODO(flub): figure out if this should take a PathId.  We could use an idle timeout on
-    //    each path.  We will need to figure out.
-    fn reset_idle_timeout(&mut self, now: Instant, space: SpaceId) {
-        let timeout = match self.idle_timeout {
-            None => return,
-            Some(dur) => dur,
-        };
-        if self.state.is_closed() {
-            self.timers.stop(Timer::Idle);
-            return;
+    /// Resets the idle timeout timers
+    ///
+    /// Without multipath there is only the connection-wide idle timeout. When multipath is
+    /// enabled there is an additional per-path idle timeout.
+    fn reset_idle_timeout(&mut self, now: Instant, space: SpaceId, path_id: PathId) {
+        // First reset the global idle timeout.
+        if let Some(timeout) = self.idle_timeout {
+            if self.state.is_closed() {
+                self.timers.stop(Timer::Idle);
+            } else {
+                let dt = cmp::max(timeout, 3 * self.pto_max_path(space));
+                self.timers.set(Timer::Idle, now + dt);
+            }
         }
-        // TODO(flub): Wrong PathId, see comment above.
-        let dt = cmp::max(timeout, 3 * self.pto(space, PathId::ZERO));
-        self.timers.set(Timer::Idle, now + dt);
+
+        // Now handle the per-path state
+        if let Some(timeout) = self.path_data(path_id).idle_timeout {
+            if self.state.is_closed() {
+                self.timers.stop(Timer::PathIdle(path_id));
+            } else {
+                let dt = cmp::max(timeout, 3 * self.pto(space, path_id));
+                self.timers.set(Timer::PathIdle(path_id), now + dt);
+            }
+        }
     }
 
     fn reset_keep_alive(&mut self, path_id: PathId, now: Instant) {
