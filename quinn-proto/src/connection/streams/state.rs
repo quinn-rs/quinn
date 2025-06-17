@@ -123,7 +123,9 @@ pub struct StreamsState {
     data_recvd: u64,
     /// Total quantity of unacknowledged outgoing data
     pub(super) unacked_data: u64,
-    /// Configured upper bound for `unacked_data`
+    /// Configured upper bound for `unacked_data`.
+    ///
+    /// Note this may be less than `unacked_data` if the user has set a new value.
     pub(super) send_window: u64,
     /// Configured upper bound for how much unacked data the peer can send us per stream
     pub(super) stream_receive_window: u64,
@@ -769,7 +771,9 @@ impl StreamsState {
 
     /// Returns the maximum amount of data this is allowed to be written on the connection
     pub(crate) fn write_limit(&self) -> u64 {
-        (self.max_data - self.data_sent).min(self.send_window - self.unacked_data)
+        (self.max_data - self.data_sent)
+            // `send_window` can be set after construction to something *less* than `unacked_data`
+            .min(self.send_window.saturating_sub(self.unacked_data))
     }
 
     /// Yield stream events
@@ -855,6 +859,10 @@ impl StreamsState {
 
     pub(crate) fn max_concurrent(&self, dir: Dir) -> u64 {
         self.allocated_remote_count[dir as usize]
+    }
+
+    pub(crate) fn set_send_window(&mut self, send_window: u64) {
+        self.send_window = send_window;
     }
 
     /// Set the receive_window and returns whether the receive_window has been
