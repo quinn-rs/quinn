@@ -384,6 +384,71 @@ async fn zero_rtt() {
     endpoint.wait_idle().await;
 }
 
+#[tokio::test]
+async fn zero_rtt_resumption() {
+    let _guard = subscribe();
+    let endpoint = endpoint();
+
+    let endpoint2 = endpoint.clone();
+    tokio::spawn(async move {
+        for _ in 0..12 {
+            let incoming = endpoint2.accept().await.unwrap().accept().unwrap();
+            let (connection, _established) =
+                incoming.into_0rtt().unwrap_or_else(|_| unreachable!());
+            connection.closed().await;
+        }
+    });
+
+    let connect_0rtt = || {
+        endpoint
+            .connect(endpoint.local_addr().unwrap(), "localhost")
+            .unwrap()
+            .into_0rtt()
+            .unwrap_or_else(|_| panic!("missing 0-RTT keys"))
+    };
+
+    let connect_0rtt_fail = || {
+        endpoint
+            .connect(endpoint.local_addr().unwrap(), "localhost")
+            .unwrap()
+            .into_0rtt()
+            .err()
+            .expect("0-RTT succeeded without keys")
+    };
+
+    let connect_full = || async {
+        endpoint
+            .connect(endpoint.local_addr().unwrap(), "localhost")
+            .unwrap()
+            .into_0rtt()
+            .err()
+            .expect("0-RTT succeeded without keys")
+            .await
+            .expect("connect")
+    };
+
+    // 0rtt without full connection should fail
+    connect_0rtt_fail();
+    // now do a full connection
+    connect_full().await;
+    // we received two tickets, so we should be able to resume two times, and then fail
+    connect_0rtt();
+    connect_0rtt();
+    connect_0rtt_fail();
+
+    // now do another full connection
+    connect_full().await;
+    connect_0rtt();
+    // this time we wait to receive resumption tickets on the zero-rtt connection
+    let (conn, _0rtt_accepted) = connect_0rtt();
+    conn.resumption_tickets_received().await;
+    // and we can do two more 0rtt conns
+    connect_0rtt();
+    connect_0rtt();
+    // and then fail again
+    connect_0rtt_fail();
+}
+
 #[test]
 #[cfg_attr(
     any(target_os = "solaris", target_os = "illumos"),
