@@ -121,7 +121,8 @@ pub(super) struct PathData {
     /// There is also a connection-level keep alive configured in the
     /// [`TransportParameters`].  This triggers activity on any path which can keep the
     /// connection alive.
-    // TODO(flub): Implement this.
+    ///
+    /// [`TransportParameters`]: crate::TransportParameters
     pub(super) keep_alive: Option<Duration>,
 }
 

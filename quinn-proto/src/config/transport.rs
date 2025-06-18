@@ -367,6 +367,8 @@ impl TransportConfig {
     ///
     /// You can also change this using [`Connection::set_path_max_idle_timeout`] for
     /// existing paths.
+    ///
+    /// [`Connection::set_path_max_idle_timeout`]: crate::Connection::set_path_max_idle_timeout
     pub fn default_path_max_idle_timeout(&mut self, timeout: Option<Duration>) -> &mut Self {
         self.default_path_max_idle_timeout = timeout;
         self
@@ -381,6 +383,8 @@ impl TransportConfig {
     ///
     /// You can also change this using [`Connection::set_path_keep_alive_interval`] for
     /// existing path.
+    ///
+    /// [`Connection::set_path_keep_alive_interval`]: crate::Connection::set_path_keep_alive_interval
     pub fn default_path_keep_alive_interval(&mut self, interval: Option<Duration>) -> &mut Self {
         self.default_path_keep_alive_interval = interval;
         self
