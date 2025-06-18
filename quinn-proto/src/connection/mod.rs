@@ -580,6 +580,40 @@ impl Connection {
             .and_then(|path| path.data.status.remote_status)
     }
 
+    /// Sets the max_idle_timeout for a specific path
+    ///
+    /// See [`TransportConfig::default_path_max_idle_timeout`] for details.
+    ///
+    /// Returns the previous value of the setting.
+    pub fn set_path_max_idle_timeout(
+        &mut self,
+        path_id: PathId,
+        timeout: Option<Duration>,
+    ) -> Result<Option<Duration>, ClosedPath> {
+        let path = self
+            .paths
+            .get_mut(&path_id)
+            .ok_or(ClosedPath { _private: () })?;
+        Ok(std::mem::replace(&mut path.data.idle_timeout, timeout))
+    }
+
+    /// Sets the keep_alive_interval for a specific path
+    ///
+    /// See [`TransportConfig::default_path_keep_alive_interval`] for details.
+    ///
+    /// Returns the previous value of the setting.
+    pub fn set_path_keep_alive_interval(
+        &mut self,
+        path_id: PathId,
+        interval: Option<Duration>,
+    ) -> Result<Option<Duration>, ClosedPath> {
+        let path = self
+            .paths
+            .get_mut(&path_id)
+            .ok_or(ClosedPath { _private: () })?;
+        Ok(std::mem::replace(&mut path.data.keep_alive, interval))
+    }
+
     /// Gets the [`PathData`] for a known [`PathId`].
     ///
     /// Will panic if the path_id does not reference any known path.

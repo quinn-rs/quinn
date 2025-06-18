@@ -50,6 +50,9 @@ pub struct TransportConfig {
     pub(crate) address_discovery_role: address_discovery::Role,
 
     pub(crate) max_concurrent_multipath_paths: Option<NonZeroU32>,
+
+    pub(crate) default_path_max_idle_timeout: Option<Duration>,
+    pub(crate) default_path_keep_alive_interval: Option<Duration>,
 }
 
 impl TransportConfig {
@@ -356,6 +359,33 @@ impl TransportConfig {
         self
     }
 
+    /// Sets a default per-path maximum idle timeout
+    ///
+    /// If the path is idle for this long the path will be abandoned. Bear in mind this will
+    /// interact with the [`TransportConfig::max_idle_timeout`], if the last path is
+    /// abandoned the entire connection will be closed.
+    ///
+    /// You can also change this using [`Connection::set_path_max_idle_timeout`] for
+    /// existing paths.
+    pub fn default_path_max_idle_timeout(&mut self, timeout: Option<Duration>) -> &mut Self {
+        self.default_path_max_idle_timeout = timeout;
+        self
+    }
+
+    /// Sets a default per-path keep alive interval
+    ///
+    /// Note that this does not interact with the connection-wide
+    /// [`TransportConfig::keep_alive_interval`].  This setting will keep this path active,
+    /// [`TransportConfig::keep_alive_interval`] will keep the connection active, with no
+    /// control over which path is used for this.
+    ///
+    /// You can also change this using [`Connection::set_path_keep_alive_interval`] for
+    /// existing path.
+    pub fn default_path_keep_alive_interval(&mut self, interval: Option<Duration>) -> &mut Self {
+        self.default_path_keep_alive_interval = interval;
+        self
+    }
+
     /// Get the initial max [`crate::PathId`] this endpoint allows.
     ///
     /// Returns `None` if multipath is disabled.
@@ -411,6 +441,8 @@ impl Default for TransportConfig {
 
             // disabled multipath by default
             max_concurrent_multipath_paths: None,
+            default_path_max_idle_timeout: None,
+            default_path_keep_alive_interval: None,
         }
     }
 }
@@ -444,6 +476,8 @@ impl fmt::Debug for TransportConfig {
             enable_segmentation_offload,
             address_discovery_role,
             max_concurrent_multipath_paths,
+            default_path_max_idle_timeout,
+            default_path_keep_alive_interval,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -475,6 +509,14 @@ impl fmt::Debug for TransportConfig {
             .field(
                 "max_concurrent_multipath_paths",
                 max_concurrent_multipath_paths,
+            )
+            .field(
+                "default_path_max_idle_timeout",
+                default_path_max_idle_timeout,
+            )
+            .field(
+                "default_path_keep_alive_interval",
+                default_path_keep_alive_interval,
             )
             .finish_non_exhaustive()
     }
