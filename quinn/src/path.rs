@@ -1,6 +1,7 @@
 use std::future::Future;
 use std::pin::Pin;
 use std::task::{Context, Poll, ready};
+use std::time::Duration;
 
 use proto::{ClosedPath, ConnectionError, OpenPathError, PathId, PathStatus, VarInt};
 use tokio::sync::oneshot;
@@ -99,6 +100,32 @@ impl Path {
         ClosePath {
             closed: on_path_close_recv,
         }
+    }
+
+    /// Sets the keep_alive_interval for a specific path
+    ///
+    /// See [`TransportConfig::default_path_keep_alive_interval`] for details.
+    ///
+    /// Returns the previous value of the setting.
+    pub fn set_max_idle_timeout(
+        &self,
+        timeout: Option<Duration>,
+    ) -> Result<Option<Duration>, ClosedPath> {
+        let mut state = self.conn.state.lock("path_set_max_idle_timeout");
+        state.inner.set_path_max_idle_timeout(self.id, timeout)
+    }
+
+    /// Sets the keep_alive_interval for a specific path
+    ///
+    /// See [`TransportConfig::default_path_keep_alive_interval`] for details.
+    ///
+    /// Returns the previous value of the setting.
+    pub fn set_keep_alive_interval(
+        &self,
+        interval: Option<Duration>,
+    ) -> Result<Option<Duration>, ClosedPath> {
+        let mut state = self.conn.state.lock("path_set_keep_alive_interval");
+        state.inner.set_path_keep_alive_interval(self.id, interval)
     }
 }
 
