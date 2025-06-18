@@ -437,11 +437,13 @@ impl EndpointInner {
         }
     }
 
-    pub(crate) fn refuse(&self, incoming: proto::Incoming) {
+    pub(crate) fn refuse(&self, incoming: proto::Incoming, reason: Option<String>) {
         let mut state = self.state.lock().unwrap();
         state.stats.refused_handshakes += 1;
         let mut response_buffer = Vec::new();
-        let transmit = state.inner.refuse(incoming, &mut response_buffer);
+        let transmit = state
+            .inner
+            .refuse_reason(incoming, reason, &mut response_buffer);
         respond(transmit, &response_buffer, &*state.socket);
     }
 
@@ -803,8 +805,11 @@ impl RecvState {
                                     if self.connections.close.is_none() {
                                         self.incoming.push_back(incoming);
                                     } else {
-                                        let transmit =
-                                            endpoint.refuse(incoming, &mut response_buffer);
+                                        let transmit = endpoint.refuse_reason(
+                                            incoming,
+                                            None,
+                                            &mut response_buffer,
+                                        );
                                         respond(transmit, &response_buffer, socket);
                                     }
                                 }
