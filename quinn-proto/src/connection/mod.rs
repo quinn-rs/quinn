@@ -531,7 +531,7 @@ impl Connection {
     }
 
     /// Closes a path
-    pub fn close_path(&mut self, _id: PathId, _error_code: TransportErrorCode) {
+    pub fn close_path(&mut self, _id: PathId, _error_code: VarInt) {
         todo!()
     }
 
@@ -1509,11 +1509,17 @@ impl Connection {
                     self.kill(ConnectionError::TimedOut);
                 }
                 Timer::PathIdle(path_id) => {
-                    self.close_path(path_id, TransportErrorCode::NO_ERROR);
+                    // TODO(flub): TransportErrorCode::NO_ERROR but where's the API to get
+                    //    that into a VarInt?
+                    self.close_path(path_id, VarInt::from_u32(0));
                 }
-                Timer::KeepAlive(path_id) => {
+                Timer::KeepAlive => {
                     trace!("sending keep-alive");
-                    self.ping(path_id);
+                    self.ping();
+                }
+                Timer::PathKeepAlive(path_id) => {
+                    trace!(?path_id, "sending keep-alive on path");
+                    self.ping_path(path_id).ok();
                 }
                 Timer::LossDetection(path_id) => {
                     self.on_loss_detection_timeout(now, path_id);
@@ -1619,10 +1625,25 @@ impl Connection {
 
     /// Ping the remote endpoint
     ///
-    /// Causes an ACK-eliciting packet to be transmitted.
-    pub fn ping(&mut self, path: PathId) {
-        // TODO(@divma): for_path should not be used, we should check if the path still exists
-        self.spaces[self.highest_space].for_path(path).ping_pending = true;
+    /// Causes an ACK-eliciting packet to be transmitted on the connection.
+    pub fn ping(&mut self) {
+        // TODO(flub): This is very brute-force: it pings *all* the paths.  Instead it would
+        //    be nice if we could only send a single packet for this.
+        for path_data in self.spaces[self.highest_space].number_spaces.values_mut() {
+            path_data.ping_pending = true;
+        }
+    }
+
+    /// Ping the remote endpoint over a specific path
+    ///
+    /// Causes an ACK-eliciting packet to be transmitted on the path.
+    pub fn ping_path(&mut self, path: PathId) -> Result<(), ClosedPath> {
+        let path_data = self.spaces[self.highest_space]
+            .number_spaces
+            .get_mut(&path)
+            .ok_or(ClosedPath { _private: () })?;
+        path_data.ping_pending = true;
+        Ok(())
     }
 
     /// Update traffic keys spontaneously
@@ -2476,22 +2497,30 @@ impl Connection {
         }
     }
 
+    /// Resets both the [`Timer::KeepAlive`] and [`Timer::PathKeepAlive`] timers
     fn reset_keep_alive(&mut self, path_id: PathId, now: Instant) {
-        let interval = match self.config.keep_alive_interval {
-            Some(x) if self.state.is_established() => x,
-            _ => return,
-        };
-        self.timers.set(Timer::KeepAlive(path_id), now + interval);
+        if !self.state.is_established() {
+            return;
+        }
+
+        if let Some(interval) = self.config.keep_alive_interval {
+            self.timers.set(Timer::KeepAlive, now + interval);
+        }
+
+        if let Some(interval) = self.path_data(path_id).keep_alive {
+            self.timers
+                .set(Timer::PathKeepAlive(path_id), now + interval);
+        }
     }
 
-    /// Sets the timer for when a previously issued CID should be retired next.
+    /// Sets the timer for when a previously issued CID should be retired next
     fn reset_cid_retirement(&mut self) {
         if let Some((_path, t)) = self.next_cid_retirement() {
             self.timers.set(Timer::PushNewCid, t);
         }
     }
 
-    /// The next time when a previously issued CID should be retired.
+    /// The next time when a previously issued CID should be retired
     fn next_cid_retirement(&self) -> Option<(PathId, Instant)> {
         self.local_cid_state
             .iter()
@@ -3397,7 +3426,9 @@ impl Connection {
                         // attack. Send a non-probing packet to recover the active path.
                         match self.peer_supports_ack_frequency() {
                             true => self.immediate_ack(path_id),
-                            false => self.ping(path_id),
+                            false => {
+                                self.ping_path(path_id).ok();
+                            }
                         }
                     }
                 }
@@ -3836,8 +3867,7 @@ impl Connection {
     pub fn local_address_changed(&mut self) {
         // TODO(flub): if multipath is enabled this needs to create a new path entirely.
         self.update_rem_cid(PathId(0));
-        // TODO(@divma): sending pings to paths that might no longer exist!
-        self.ping(PathId(0));
+        self.ping();
     }
 
     /// Switch to a previously unused remote connection ID, if possible
@@ -4650,7 +4680,10 @@ impl Connection {
             .filter(|entry| {
                 !matches!(
                     entry.timer,
-                    Timer::KeepAlive(_) | Timer::PushNewCid | Timer::KeyDiscard
+                    Timer::KeepAlive
+                        | Timer::PathKeepAlive(_)
+                        | Timer::PushNewCid
+                        | Timer::KeyDiscard
                 )
             })
             .min_by_key(|entry| entry.time)

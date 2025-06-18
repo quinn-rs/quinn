@@ -21,7 +21,9 @@ pub(crate) enum Timer {
     /// When to give up on validating a new path to the peer
     PathValidation(PathId),
     /// When to send a `PING` frame to keep the connection alive
-    KeepAlive(PathId),
+    KeepAlive,
+    /// When to send a `PING` frame to keep the path alive
+    PathKeepAlive(PathId),
     /// When pacing will allow us to send a packet
     Pacing(PathId),
     /// When to invalidate old CID and proactively push new one via NEW_CONNECTION_ID frame
