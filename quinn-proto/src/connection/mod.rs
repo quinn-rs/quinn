@@ -531,7 +531,7 @@ impl Connection {
     }
 
     /// Closes a path
-    pub fn close_path(&mut self, _id: PathId, _error_code: VarInt) {
+    pub fn close_path(&mut self, _id: PathId, _error_code: TransportErrorCode) {
         todo!()
     }
 
@@ -1509,7 +1509,7 @@ impl Connection {
                     self.kill(ConnectionError::TimedOut);
                 }
                 Timer::PathIdle(path_id) => {
-                    todo!();
+                    self.close_path(path_id, TransportErrorCode::NO_ERROR);
                 }
                 Timer::KeepAlive(path_id) => {
                     trace!("sending keep-alive");
