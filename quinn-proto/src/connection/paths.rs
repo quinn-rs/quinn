@@ -122,7 +122,7 @@ pub(super) struct PathData {
     /// [`TransportParameters`].  This triggers activity on any path which can keep the
     /// connection alive.
     ///
-    /// [`TransportParameters`]: crate::TransportParameters
+    /// [`TransportParameters`]: crate::transport_parameters::TransportParameters
     pub(super) keep_alive: Option<Duration>,
 }
 
