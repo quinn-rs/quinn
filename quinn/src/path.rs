@@ -107,6 +107,8 @@ impl Path {
     /// See [`TransportConfig::default_path_keep_alive_interval`] for details.
     ///
     /// Returns the previous value of the setting.
+    ///
+    /// [`TransportConfig::default_path_keep_alive_interval`]: crate::TransportConfig::default_path_keep_alive_interval
     pub fn set_max_idle_timeout(
         &self,
         timeout: Option<Duration>,
@@ -120,6 +122,8 @@ impl Path {
     /// See [`TransportConfig::default_path_keep_alive_interval`] for details.
     ///
     /// Returns the previous value of the setting.
+    ///
+    /// [`TransportConfig::default_path_keep_alive_interval`]: crate::TransportConfig::default_path_keep_alive_interval
     pub fn set_keep_alive_interval(
         &self,
         interval: Option<Duration>,
