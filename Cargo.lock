@@ -1580,7 +1580,7 @@ dependencies = [
 
 [[package]]
 name = "quinn-udp"
-version = "0.5.12"
+version = "0.5.13"
 dependencies = [
  "cfg_aliases",
  "criterion",
