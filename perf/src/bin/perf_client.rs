@@ -70,6 +70,10 @@ struct Opt {
     /// Disable packet encryption/decryption (for debugging purpose)
     #[clap(long = "no-protection")]
     no_protection: bool,
+    /// qlog output file
+    #[cfg(feature = "qlog")]
+    #[clap(long = "qlog")]
+    qlog_file: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -146,10 +150,16 @@ async fn run(opt: Opt) -> Result<()> {
 
     let stream_stats = OpenStreamStats::default();
 
-    let connection = endpoint
+    let mut connection = endpoint
         .connect_with(config, addr, host_name)?
         .await
         .context("connecting")?;
+
+    #[cfg(feature = "qlog")]
+    if let Some(qlog_file) = &opt.qlog_file {
+        let writer = std::fs::File::create(qlog_file)?;
+        connection.set_qlog(Box::new(writer), Some("perf-client".to_string()), None);
+    }
 
     info!("established");
 
