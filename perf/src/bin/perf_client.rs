@@ -1,3 +1,5 @@
+#[cfg(feature = "json-output")]
+use std::{fs::File, path::PathBuf};
 use std::{
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     sync::Arc,
@@ -17,8 +19,6 @@ use perf::{
     noprotection::NoProtectionClientConfig,
     stats::{OpenStreamStats, Stats},
 };
-#[cfg(feature = "json-output")]
-use std::path::PathBuf;
 
 /// Connects to a QUIC perf server and maintains a specified pattern of requests until interrupted
 #[derive(Parser)]
@@ -82,6 +82,10 @@ struct Opt {
     /// Congestion algorithm to use
     #[clap(long = "congestion")]
     cong_alg: Option<CongestionAlgorithm>,
+    /// qlog output file
+    #[cfg(feature = "__qlog")]
+    #[clap(long = "qlog")]
+    qlog_file: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -170,10 +174,16 @@ async fn run(opt: Opt) -> Result<()> {
 
     let stream_stats = OpenStreamStats::default();
 
-    let connection = endpoint
+    let mut connection = endpoint
         .connect_with(config, addr, host_name)?
         .await
         .context("connecting")?;
+
+    #[cfg(feature = "__qlog")]
+    if let Some(qlog_file) = &opt.qlog_file {
+        let writer = File::create(qlog_file)?;
+        connection.set_qlog(Box::new(writer), Some("perf-client".to_string()), None);
+    }
 
     info!("established");
 
