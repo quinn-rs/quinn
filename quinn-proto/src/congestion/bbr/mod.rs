@@ -4,6 +4,7 @@ use std::sync::Arc;
 
 use rand::{Rng, SeedableRng};
 
+use crate::congestion::ControllerMetrics;
 use crate::congestion::bbr::bw_estimation::BandwidthEstimation;
 use crate::congestion::bbr::min_max::MinMax;
 use crate::connection::RttEstimator;
@@ -483,6 +484,14 @@ impl Controller for Bbr {
             return self.cwnd.min(self.recovery_window);
         }
         self.cwnd
+    }
+
+    fn metrics(&self) -> ControllerMetrics {
+        ControllerMetrics {
+            congestion_window: self.window(),
+            ssthresh: None,
+            pacing_rate: Some(self.pacing_rate),
+        }
     }
 
     fn clone_box(&self) -> Box<dyn Controller> {
