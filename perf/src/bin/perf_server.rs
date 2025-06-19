@@ -1,3 +1,5 @@
+#[cfg(feature = "__qlog")]
+use std::fs::File;
 use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
 use anyhow::{Context, Result};
@@ -50,6 +52,10 @@ struct Opt {
     /// Congestion algorithm to use
     #[clap(long = "congestion")]
     cong_alg: Option<CongestionAlgorithm>,
+    /// qlog output file
+    #[cfg(feature = "__qlog")]
+    #[clap(long = "qlog")]
+    qlog_file: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -151,7 +157,14 @@ async fn run(opt: Opt) -> Result<()> {
 }
 
 async fn handle(handshake: quinn::Incoming, opt: Arc<Opt>) -> Result<()> {
-    let connection = handshake.await.context("handshake failed")?;
+    let mut connection = handshake.await.context("handshake failed")?;
+
+    #[cfg(feature = "__qlog")]
+    if let Some(qlog_file) = &opt.qlog_file {
+        let writer = File::create(qlog_file)?;
+        connection.set_qlog(Box::new(writer), Some("perf-server".to_string()), None);
+    }
+
     debug!("{} connected", connection.remote_address());
     tokio::try_join!(
         drive_uni(connection.clone()),
