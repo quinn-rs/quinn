@@ -43,6 +43,8 @@ runtime-smol = ["async-io", "smol"]
 log = ["tracing/log", "proto/log", "udp/log"]
 # Enable rustls logging
 rustls-log = ["rustls?/logging"]
+# Enable qlog support
+qlog = ["proto/qlog"]
 
 [dependencies]
 async-io = { workspace = true, optional = true }

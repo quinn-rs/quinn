@@ -233,6 +233,10 @@ pub struct Connection {
     stats: ConnectionStats,
     /// QUIC version used for the connection.
     version: u32,
+
+    /// qlog streamer to ouput events as JSON text sequences
+    #[cfg(feature = "qlog")]
+    qlog_streamer: Option<qlog::streamer::QlogStreamer>,
 }
 
 impl Connection {
@@ -350,6 +354,9 @@ impl Connection {
             rng,
             stats: ConnectionStats::default(),
             version,
+
+            #[cfg(feature = "qlog")]
+            qlog_streamer: None,
         };
         if path_validated {
             this.on_path_validated();
@@ -360,6 +367,66 @@ impl Connection {
             this.init_0rtt();
         }
         this
+    }
+
+    /// Set up qlog for this connection.
+    #[cfg(feature = "qlog")]
+    pub fn set_qlog(
+        &mut self,
+        writer: Box<dyn std::io::Write + Send + Sync>,
+        title: Option<String>,
+        description: Option<String>,
+        now: Instant,
+    ) {
+        let vp = if self.side.is_server() {
+            qlog::VantagePointType::Server
+        } else {
+            qlog::VantagePointType::Client
+        };
+
+        let level = qlog::events::EventImportance::Core;
+
+        let trace = qlog::TraceSeq::new(
+            qlog::VantagePoint {
+                name: None,
+                ty: vp,
+                flow: None,
+            },
+            title.clone(),
+            description.clone(),
+            Some(qlog::Configuration {
+                time_offset: Some(0.0),
+                original_uris: None,
+            }),
+            None,
+        );
+
+        let mut streamer = qlog::streamer::QlogStreamer::new(
+            qlog::QLOG_VERSION.to_string(),
+            title,
+            description,
+            None,
+            now,
+            trace,
+            level,
+            writer,
+        );
+
+        streamer.start_log().ok();
+
+        self.qlog_streamer = Some(streamer);
+    }
+
+    /// Emit a `MetricsUpdated` event to the qlog streamer containing only the updated values.
+    #[cfg(feature = "qlog")]
+    fn emit_qlog_recovery_metrics(&mut self, now: Instant) {
+        let Some(qlog_streamer) = &mut self.qlog_streamer else {
+            return;
+        };
+
+        let metrics = self.path.qlog_congestion_metrics(self.pto_count);
+        let event = qlog::events::EventData::MetricsUpdated(metrics);
+        let _ = qlog_streamer.add_event_data_with_instant(event, now);
     }
 
     /// Returns the next time at which `handle_timeout` should be called
@@ -909,6 +976,9 @@ impl Connection {
             self.path
                 .congestion
                 .on_sent(now, buf.len() as u64, last_packet_number);
+
+            #[cfg(feature = "qlog")]
+            self.emit_qlog_recovery_metrics(now);
         }
 
         self.app_limited = buf.is_empty() && !congestion_blocked;
@@ -1153,6 +1223,9 @@ impl Connection {
                 }
                 Timer::LossDetection => {
                     self.on_loss_detection_timeout(now);
+
+                    #[cfg(feature = "qlog")]
+                    self.emit_qlog_recovery_metrics(now);
                 }
                 Timer::KeyDiscard => {
                     self.zero_rtt_crypto = None;
@@ -1950,6 +2023,10 @@ impl Connection {
         if let Some(data) = remaining {
             self.handle_coalesced(now, remote, ecn, data);
         }
+
+        #[cfg(feature = "qlog")]
+        self.emit_qlog_recovery_metrics(now);
+
         Ok(())
     }
 
@@ -2268,7 +2345,13 @@ impl Connection {
                             packet.header.is_1rtt(),
                         );
                     }
-                    self.process_decrypted_packet(now, remote, number, packet)
+
+                    let result = self.process_decrypted_packet(now, remote, number, packet);
+
+                    #[cfg(feature = "qlog")]
+                    self.emit_qlog_recovery_metrics(now);
+
+                    result
                 }
             }
         };
