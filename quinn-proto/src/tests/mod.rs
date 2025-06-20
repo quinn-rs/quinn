@@ -3217,6 +3217,72 @@ fn gso_truncation() {
     }
 }
 
+/// Verify that UDP datagrams are padded to MTU if specified in the transport config.
+#[test]
+fn pad_to_mtu() {
+    let _guard = subscribe();
+    const MTU: u16 = 1333;
+    let client_config = {
+        let mut c_config = client_config();
+        let t_config = TransportConfig {
+            initial_mtu: MTU,
+            mtu_discovery_config: None,
+            pad_to_mtu: true,
+            ..TransportConfig::default()
+        };
+        c_config.transport_config(t_config.into());
+        c_config
+    };
+    let mut pair = Pair::default();
+    let (client_ch, server_ch) = pair.connect_with(client_config);
+
+    let initial_ios = pair.client_conn_mut(client_ch).stats().udp_tx.ios;
+    pair.server.capture_inbound_packets = true;
+
+    info!("sending");
+    // Send two datagrams significantly smaller than MTU, but large enough to require two UDP datagrams.
+    const LEN_1: usize = 800;
+    const LEN_2: usize = 600;
+    pair.client_datagrams(client_ch)
+        .send(vec![0; LEN_1].into(), false)
+        .unwrap();
+    pair.client_datagrams(client_ch)
+        .send(vec![0; LEN_2].into(), false)
+        .unwrap();
+    pair.client.drive(pair.time, pair.server.addr);
+
+    // Check padding
+    assert_eq!(pair.client.outbound.len(), 2);
+    assert_eq!(pair.client.outbound[0].0.size, usize::from(MTU));
+    assert_eq!(pair.client.outbound[0].1.len(), usize::from(MTU));
+    assert_eq!(pair.client.outbound[1].0.size, usize::from(MTU));
+    assert_eq!(pair.client.outbound[1].1.len(), usize::from(MTU));
+    pair.drive_client();
+    assert_eq!(pair.server.inbound.len(), 2);
+    assert_eq!(pair.server.inbound[0].2.len(), usize::from(MTU));
+    assert_eq!(pair.server.inbound[1].2.len(), usize::from(MTU));
+    pair.drive();
+
+    // Check that both datagrams ended up in the same GSO batch
+    let final_ios = pair.client_conn_mut(client_ch).stats().udp_tx.ios;
+    assert_eq!(final_ios - initial_ios, 1);
+
+    assert_eq!(
+        pair.server_datagrams(server_ch)
+            .recv()
+            .expect("datagram lost")
+            .len(),
+        LEN_1
+    );
+    assert_eq!(
+        pair.server_datagrams(server_ch)
+            .recv()
+            .expect("datagram lost")
+            .len(),
+        LEN_2
+    );
+}
+
 /// Verify that a large application datagram is sent successfully when an ACK frame too large to fit
 /// alongside it is also queued, in exactly 2 UDP datagrams.
 #[test]

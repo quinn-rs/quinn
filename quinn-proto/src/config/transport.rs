@@ -29,6 +29,7 @@ pub struct TransportConfig {
     pub(crate) initial_mtu: u16,
     pub(crate) min_mtu: u16,
     pub(crate) mtu_discovery_config: Option<MtuDiscoveryConfig>,
+    pub(crate) pad_to_mtu: bool,
     pub(crate) ack_frequency_config: Option<AckFrequencyConfig>,
 
     pub(crate) persistent_congestion_threshold: u32,
@@ -203,6 +204,20 @@ impl TransportConfig {
         self
     }
 
+    /// Pad UDP datagrams carrying application data to current maximum UDP payload size
+    ///
+    /// Disabled by default. UDP datagrams containing loss probes are exempt from padding.
+    ///
+    /// Enabling this helps mitigate traffic analysis by network observers, but it increases
+    /// bandwidth usage. Without this mitigation precise plain text size of application datagrams as
+    /// well as the total size of stream write bursts can be inferred by observers under certain
+    /// conditions. This analysis requires either an uncongested connection or application datagrams
+    /// too large to be coalesced.
+    pub fn pad_to_mtu(&mut self, value: bool) -> &mut Self {
+        self.pad_to_mtu = value;
+        self
+    }
+
     /// Specifies the ACK frequency config (see [`AckFrequencyConfig`] for details)
     ///
     /// The provided configuration will be ignored if the peer does not support the acknowledgement
@@ -340,6 +355,7 @@ impl Default for TransportConfig {
             initial_mtu: INITIAL_MTU,
             min_mtu: INITIAL_MTU,
             mtu_discovery_config: Some(MtuDiscoveryConfig::default()),
+            pad_to_mtu: false,
             ack_frequency_config: None,
 
             persistent_congestion_threshold: 3,
@@ -374,6 +390,7 @@ impl fmt::Debug for TransportConfig {
             initial_mtu,
             min_mtu,
             mtu_discovery_config,
+            pad_to_mtu,
             ack_frequency_config,
             persistent_congestion_threshold,
             keep_alive_interval,
@@ -400,6 +417,7 @@ impl fmt::Debug for TransportConfig {
             .field("initial_mtu", initial_mtu)
             .field("min_mtu", min_mtu)
             .field("mtu_discovery_config", mtu_discovery_config)
+            .field("pad_to_mtu", pad_to_mtu)
             .field("ack_frequency_config", ack_frequency_config)
             .field(
                 "persistent_congestion_threshold",
