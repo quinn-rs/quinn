@@ -509,6 +509,7 @@ impl Connection {
         let mut builder_storage: Option<PacketBuilder> = None;
         let mut sent_frames = None;
         let mut pad_datagram = false;
+        let mut pad_datagram_to_mtu = false;
         let mut congestion_blocked = false;
 
         // Iterate over all spaces and find data to send
@@ -541,6 +542,8 @@ impl Connection {
             if space_id == SpaceId::Data {
                 ack_eliciting |= self.can_send_1rtt(frame_space_1rtt);
             }
+
+            pad_datagram_to_mtu |= space_id == SpaceId::Data && self.config.pad_to_mtu;
 
             // Can we append more data into the current buffer?
             // It is not safe to assume that `buf.len()` is the end of the data,
@@ -626,6 +629,9 @@ impl Connection {
                 if let Some(mut builder) = builder_storage.take() {
                     if pad_datagram {
                         builder.pad_to(MIN_INITIAL_SIZE);
+                    }
+                    if pad_datagram_to_mtu {
+                        builder.pad_to(self.path.current_mtu())
                     }
 
                     if num_datagrams > 1 {
@@ -903,6 +909,9 @@ impl Connection {
         if let Some(mut builder) = builder_storage {
             if pad_datagram {
                 builder.pad_to(MIN_INITIAL_SIZE);
+            }
+            if pad_datagram_to_mtu {
+                builder.pad_to(self.path.current_mtu());
             }
             let last_packet_number = builder.exact_number;
             builder.finish_and_track(now, self, sent_frames, buf);
