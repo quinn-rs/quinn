@@ -615,11 +615,18 @@ impl ClientConfig {
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 impl ClientConfig {
     /// Create a client configuration that trusts the platform's native roots
+    #[deprecated(since = "0.11.13", note = "use `try_with_platform_verifier()` instead")]
     #[cfg(feature = "platform-verifier")]
     pub fn with_platform_verifier() -> Self {
-        Self::new(Arc::new(crypto::rustls::QuicClientConfig::new(Arc::new(
-            rustls_platform_verifier::Verifier::new(),
-        ))))
+        Self::try_with_platform_verifier().expect("use try_with_platform_verifier() instead")
+    }
+
+    /// Create a client configuration that trusts the platform's native roots
+    #[cfg(feature = "platform-verifier")]
+    pub fn try_with_platform_verifier() -> Result<Self, rustls::Error> {
+        Ok(Self::new(Arc::new(
+            crypto::rustls::QuicClientConfig::with_platform_verifier()?,
+        )))
     }
 
     /// Create a client configuration that trusts specified trust anchors
