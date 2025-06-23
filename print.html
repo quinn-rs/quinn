@@ -454,7 +454,7 @@ After configuring plug the configuration into the <code>Endpoint</code>.</p>
 <p><strong>Configure Client</strong></p>
 <pre><pre class="playground"><code class="language-rust"><span class="boring">#![allow(unused)]
 </span><span class="boring">fn main() {
-</span>    let client_config = quinn::ClientConfig::with_platform_verifier();
+</span>    let client_config = quinn::ClientConfig::try_with_platform_verifier().unwrap();
 <span class="boring">}</span></code></pre></pre>
 <p>This is the only thing you need to do for your client to trust a server certificate signed by a conventional certificate authority.</p>
 <p><br><hr></p>
