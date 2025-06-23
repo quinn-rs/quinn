@@ -580,6 +580,40 @@ impl Connection {
             .and_then(|path| path.data.status.remote_status)
     }
 
+    /// Sets the max_idle_timeout for a specific path
+    ///
+    /// See [`TransportConfig::default_path_max_idle_timeout`] for details.
+    ///
+    /// Returns the previous value of the setting.
+    pub fn set_path_max_idle_timeout(
+        &mut self,
+        path_id: PathId,
+        timeout: Option<Duration>,
+    ) -> Result<Option<Duration>, ClosedPath> {
+        let path = self
+            .paths
+            .get_mut(&path_id)
+            .ok_or(ClosedPath { _private: () })?;
+        Ok(std::mem::replace(&mut path.data.idle_timeout, timeout))
+    }
+
+    /// Sets the keep_alive_interval for a specific path
+    ///
+    /// See [`TransportConfig::default_path_keep_alive_interval`] for details.
+    ///
+    /// Returns the previous value of the setting.
+    pub fn set_path_keep_alive_interval(
+        &mut self,
+        path_id: PathId,
+        interval: Option<Duration>,
+    ) -> Result<Option<Duration>, ClosedPath> {
+        let path = self
+            .paths
+            .get_mut(&path_id)
+            .ok_or(ClosedPath { _private: () })?;
+        Ok(std::mem::replace(&mut path.data.keep_alive, interval))
+    }
+
     /// Gets the [`PathData`] for a known [`PathId`].
     ///
     /// Will panic if the path_id does not reference any known path.
@@ -1508,9 +1542,18 @@ impl Connection {
                 Timer::Idle => {
                     self.kill(ConnectionError::TimedOut);
                 }
-                Timer::KeepAlive(path_id) => {
+                Timer::PathIdle(path_id) => {
+                    // TODO(flub): TransportErrorCode::NO_ERROR but where's the API to get
+                    //    that into a VarInt?
+                    self.close_path(path_id, VarInt::from_u32(0));
+                }
+                Timer::KeepAlive => {
                     trace!("sending keep-alive");
-                    self.ping(path_id);
+                    self.ping();
+                }
+                Timer::PathKeepAlive(path_id) => {
+                    trace!(?path_id, "sending keep-alive on path");
+                    self.ping_path(path_id).ok();
                 }
                 Timer::LossDetection(path_id) => {
                     self.on_loss_detection_timeout(now, path_id);
@@ -1616,10 +1659,25 @@ impl Connection {
 
     /// Ping the remote endpoint
     ///
-    /// Causes an ACK-eliciting packet to be transmitted.
-    pub fn ping(&mut self, path: PathId) {
-        // TODO(@divma): for_path should not be used, we should check if the path still exists
-        self.spaces[self.highest_space].for_path(path).ping_pending = true;
+    /// Causes an ACK-eliciting packet to be transmitted on the connection.
+    pub fn ping(&mut self) {
+        // TODO(flub): This is very brute-force: it pings *all* the paths.  Instead it would
+        //    be nice if we could only send a single packet for this.
+        for path_data in self.spaces[self.highest_space].number_spaces.values_mut() {
+            path_data.ping_pending = true;
+        }
+    }
+
+    /// Ping the remote endpoint over a specific path
+    ///
+    /// Causes an ACK-eliciting packet to be transmitted on the path.
+    pub fn ping_path(&mut self, path: PathId) -> Result<(), ClosedPath> {
+        let path_data = self.spaces[self.highest_space]
+            .number_spaces
+            .get_mut(&path)
+            .ok_or(ClosedPath { _private: () })?;
+        path_data.ping_pending = true;
+        Ok(())
     }
 
     /// Update traffic keys spontaneously
@@ -2409,7 +2467,7 @@ impl Connection {
     ) {
         self.total_authed_packets += 1;
         self.reset_keep_alive(path_id, now);
-        self.reset_idle_timeout(now, space_id);
+        self.reset_idle_timeout(now, space_id, path_id);
         self.permit_idle_reset = true;
         self.receiving_ecn |= ecn.is_some();
         if let Some(x) = ecn {
@@ -2447,38 +2505,56 @@ impl Connection {
         }
     }
 
-    // TODO(flub): figure out if this should take a PathId.  We could use an idle timeout on
-    //    each path.  We will need to figure out.
-    fn reset_idle_timeout(&mut self, now: Instant, space: SpaceId) {
-        let timeout = match self.idle_timeout {
-            None => return,
-            Some(dur) => dur,
-        };
-        if self.state.is_closed() {
-            self.timers.stop(Timer::Idle);
+    /// Resets the idle timeout timers
+    ///
+    /// Without multipath there is only the connection-wide idle timeout. When multipath is
+    /// enabled there is an additional per-path idle timeout.
+    fn reset_idle_timeout(&mut self, now: Instant, space: SpaceId, path_id: PathId) {
+        // First reset the global idle timeout.
+        if let Some(timeout) = self.idle_timeout {
+            if self.state.is_closed() {
+                self.timers.stop(Timer::Idle);
+            } else {
+                let dt = cmp::max(timeout, 3 * self.pto_max_path(space));
+                self.timers.set(Timer::Idle, now + dt);
+            }
+        }
+
+        // Now handle the per-path state
+        if let Some(timeout) = self.path_data(path_id).idle_timeout {
+            if self.state.is_closed() {
+                self.timers.stop(Timer::PathIdle(path_id));
+            } else {
+                let dt = cmp::max(timeout, 3 * self.pto(space, path_id));
+                self.timers.set(Timer::PathIdle(path_id), now + dt);
+            }
+        }
+    }
+
+    /// Resets both the [`Timer::KeepAlive`] and [`Timer::PathKeepAlive`] timers
+    fn reset_keep_alive(&mut self, path_id: PathId, now: Instant) {
+        if !self.state.is_established() {
             return;
         }
-        // TODO(flub): Wrong PathId, see comment above.
-        let dt = cmp::max(timeout, 3 * self.pto(space, PathId::ZERO));
-        self.timers.set(Timer::Idle, now + dt);
+
+        if let Some(interval) = self.config.keep_alive_interval {
+            self.timers.set(Timer::KeepAlive, now + interval);
+        }
+
+        if let Some(interval) = self.path_data(path_id).keep_alive {
+            self.timers
+                .set(Timer::PathKeepAlive(path_id), now + interval);
+        }
     }
 
-    fn reset_keep_alive(&mut self, path_id: PathId, now: Instant) {
-        let interval = match self.config.keep_alive_interval {
-            Some(x) if self.state.is_established() => x,
-            _ => return,
-        };
-        self.timers.set(Timer::KeepAlive(path_id), now + interval);
-    }
-
-    /// Sets the timer for when a previously issued CID should be retired next.
+    /// Sets the timer for when a previously issued CID should be retired next
     fn reset_cid_retirement(&mut self) {
         if let Some((_path, t)) = self.next_cid_retirement() {
             self.timers.set(Timer::PushNewCid, t);
         }
     }
 
-    /// The next time when a previously issued CID should be retired.
+    /// The next time when a previously issued CID should be retired
     fn next_cid_retirement(&self) -> Option<(PathId, Instant)> {
         self.local_cid_state
             .iter()
@@ -3384,7 +3460,9 @@ impl Connection {
                         // attack. Send a non-probing packet to recover the active path.
                         match self.peer_supports_ack_frequency() {
                             true => self.immediate_ack(path_id),
-                            false => self.ping(path_id),
+                            false => {
+                                self.ping_path(path_id).ok();
+                            }
                         }
                     }
                 }
@@ -3823,8 +3901,7 @@ impl Connection {
     pub fn local_address_changed(&mut self) {
         // TODO(flub): if multipath is enabled this needs to create a new path entirely.
         self.update_rem_cid(PathId(0));
-        // TODO(@divma): sending pings to paths that might no longer exist!
-        self.ping(PathId(0));
+        self.ping();
     }
 
     /// Switch to a previously unused remote connection ID, if possible
@@ -4637,7 +4714,10 @@ impl Connection {
             .filter(|entry| {
                 !matches!(
                     entry.timer,
-                    Timer::KeepAlive(_) | Timer::PushNewCid | Timer::KeyDiscard
+                    Timer::KeepAlive
+                        | Timer::PathKeepAlive(_)
+                        | Timer::PushNewCid
+                        | Timer::KeyDiscard
                 )
             })
             .min_by_key(|entry| entry.time)

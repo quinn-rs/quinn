@@ -12,6 +12,8 @@ pub(crate) enum Timer {
     LossDetection(PathId),
     /// When to close the connection after no activity
     Idle,
+    /// When to abandon a path after no activity
+    PathIdle(PathId),
     /// When the close timer expires, the connection has been gracefully terminated.
     Close,
     /// When keys are discarded because they should not be needed anymore
@@ -19,7 +21,9 @@ pub(crate) enum Timer {
     /// When to give up on validating a new path to the peer
     PathValidation(PathId),
     /// When to send a `PING` frame to keep the connection alive
-    KeepAlive(PathId),
+    KeepAlive,
+    /// When to send a `PING` frame to keep the path alive
+    PathKeepAlive(PathId),
     /// When pacing will allow us to send a packet
     Pacing(PathId),
     /// When to invalidate old CID and proactively push new one via NEW_CONNECTION_ID frame
