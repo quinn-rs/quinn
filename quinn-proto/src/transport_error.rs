@@ -3,6 +3,7 @@ use std::fmt;
 use bytes::{Buf, BufMut};
 
 use crate::{
+    VarInt,
     coding::{self, BufExt, BufMutExt},
     frame,
 };
@@ -66,6 +67,18 @@ impl coding::Codec for Code {
 impl From<Code> for u64 {
     fn from(x: Code) -> Self {
         x.0
+    }
+}
+
+impl From<VarInt> for Code {
+    fn from(value: VarInt) -> Self {
+        Self(value.0)
+    }
+}
+
+impl From<Code> for VarInt {
+    fn from(value: Code) -> Self {
+        Self(value.0)
     }
 }
 

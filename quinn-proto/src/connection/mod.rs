@@ -530,8 +530,27 @@ impl Connection {
         Ok(next_path_id)
     }
 
-    /// Closes a path
-    pub fn close_path(&mut self, _id: PathId, _error_code: VarInt) {
+    /// Closes a path by sending a PATH_ABANDON frame
+    ///
+    /// This will allow closing the last path. Once the corresponding PATH_ABANDON is
+    /// received from the peer the connection will be closed if there is no other open path.
+    pub fn close_path(
+        &mut self,
+        path_id: PathId,
+        _error_code: VarInt,
+    ) -> Result<(), ClosePathError> {
+        let _path = self
+            .paths
+            .get_mut(&path_id)
+            .ok_or(ClosePathError::ClosedPath)?;
+        if self.paths.len() < 2 {
+            return Err(ClosePathError::LastOpenPath);
+        }
+        // - send PATH_ABANDON
+        // - retire received CIDs for this path - this means no more sending anything using
+        //   it.
+        // - Now set a timer for 3 * PTO to remove the rest of the state? and set the reset
+        //   token.
         todo!()
     }
 
@@ -1545,7 +1564,8 @@ impl Connection {
                 Timer::PathIdle(path_id) => {
                     // TODO(flub): TransportErrorCode::NO_ERROR but where's the API to get
                     //    that into a VarInt?
-                    self.close_path(path_id, VarInt::from_u32(0));
+                    self.close_path(path_id, TransportErrorCode::NO_ERROR.into())
+                        .ok();
                 }
                 Timer::KeepAlive => {
                     trace!("sending keep-alive");
@@ -3615,16 +3635,16 @@ impl Connection {
                     };
 
                     if self.side.is_server()
-                        && path_id == PathId(0)
+                        && path_id == PathId::ZERO
                         && self
                             .rem_cids
-                            .get(&PathId(0))
+                            .get(&PathId::ZERO)
                             .map(|cids| cids.active_seq() == 0)
                             .unwrap_or_default()
                     {
                         // We're a server still using the initial remote CID for the client, so
                         // let's switch immediately to enable clientside stateless resets.
-                        self.update_rem_cid(PathId(0));
+                        self.update_rem_cid(PathId::ZERO);
                     }
                 }
                 Frame::NewToken(NewToken { token }) => {
@@ -4941,6 +4961,17 @@ impl fmt::Debug for Connection {
             .field("handshake_cid", &self.handshake_cid)
             .finish()
     }
+}
+
+/// Errors triggered when abandoning a path
+#[derive(Debug, Error, Clone, Eq, PartialEq)]
+pub enum ClosePathError {
+    /// The path is already closed or was never opened
+    #[error("closed path")]
+    ClosedPath,
+    /// This is the last path, which can not be abandoned
+    #[error("last open path")]
+    LastOpenPath,
 }
 
 #[derive(Debug, Copy, Clone, PartialEq, Eq)]

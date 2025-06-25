@@ -6,8 +6,8 @@ use std::sync::Arc;
 use tracing::info;
 
 use crate::{
-    ClientConfig, ConnectionHandle, ConnectionId, ConnectionIdGenerator, Endpoint, EndpointConfig,
-    PathId, PathStatus, ServerConfig, TransportConfig,
+    ClientConfig, ClosePathError, ConnectionHandle, ConnectionId, ConnectionIdGenerator, Endpoint,
+    EndpointConfig, PathId, PathStatus, ServerConfig, TransportConfig,
 };
 
 use super::util::subscribe;
@@ -122,4 +122,17 @@ fn path_status() {
     assert_eq!(server_stats.frame_tx.path_backup, 0);
     assert_eq!(server_stats.frame_rx.path_available, 0);
     assert_eq!(server_stats.frame_rx.path_backup, 1);
+}
+
+#[test]
+fn path_close_last_path() {
+    let _guard = subscribe();
+    let (mut pair, client_ch, _server_ch) = multipath_pair();
+
+    let client_conn = pair.client_conn_mut(client_ch);
+    let err = client_conn
+        .close_path(PathId::ZERO, 0u8.into())
+        .err()
+        .unwrap();
+    assert!(matches!(err, ClosePathError::LastOpenPath));
 }

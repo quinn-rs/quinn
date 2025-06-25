@@ -3,7 +3,9 @@ use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
-use proto::{ClosedPath, ConnectionError, OpenPathError, PathId, PathStatus, VarInt};
+use proto::{
+    ClosePathError, ClosedPath, ConnectionError, OpenPathError, PathId, PathStatus, VarInt,
+};
 use tokio::sync::oneshot;
 
 use crate::connection::ConnectionRef;
@@ -89,17 +91,17 @@ impl Path {
     ///
     /// The passed in `error_code` is sent to the remote.
     /// The future will resolve to the `error_code` received from the remote.
-    pub fn close(&self, error_code: VarInt) -> ClosePath {
+    pub fn close(&self, error_code: VarInt) -> Result<ClosePath, ClosePathError> {
         let (on_path_close_send, on_path_close_recv) = oneshot::channel();
         {
             let mut state = self.conn.state.lock("close_path");
-            state.inner.close_path(self.id, error_code);
+            state.inner.close_path(self.id, error_code)?;
             state.close_path.insert(self.id, on_path_close_send);
         }
 
-        ClosePath {
+        Ok(ClosePath {
             closed: on_path_close_recv,
-        }
+        })
     }
 
     /// Sets the keep_alive_interval for a specific path
