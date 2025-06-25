@@ -78,7 +78,7 @@ impl From<VarInt> for Code {
 
 impl From<Code> for VarInt {
     fn from(value: Code) -> Self {
-        VarInt(value.0)
+        Self(value.0)
     }
 }
 
