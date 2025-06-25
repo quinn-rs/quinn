@@ -92,6 +92,16 @@ fn multipath_pair() -> (Pair, ConnectionHandle, ConnectionHandle) {
 }
 
 #[test]
+fn path_acks() {
+    let _guard = subscribe();
+    let (mut pair, client_ch, _server_ch) = multipath_pair();
+
+    let client_conn = pair.client_conn_mut(client_ch);
+    assert!(client_conn.stats().frame_rx.path_acks > 0);
+    assert!(client_conn.stats().frame_tx.path_acks > 0);
+}
+
+#[test]
 fn path_status() {
     let _guard = subscribe();
     let (mut pair, client_ch, server_ch) = multipath_pair();
