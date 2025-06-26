@@ -244,6 +244,10 @@ async fn drain_stream(
     download: u64,
     stream_stats: OpenStreamStats,
 ) -> Result<()> {
+    if download == 0 {
+        return Ok(());
+    }
+
     #[rustfmt::skip]
     let mut bufs = [
         Bytes::new(), Bytes::new(), Bytes::new(), Bytes::new(),
@@ -285,6 +289,10 @@ async fn drive_uni(
     upload: u64,
     download: u64,
 ) -> Result<()> {
+    if concurrency == 0 {
+        return Ok(());
+    }
+
     let sem = Arc::new(Semaphore::new(concurrency as usize));
 
     loop {
@@ -357,6 +365,10 @@ async fn drive_bi(
     upload: u64,
     download: u64,
 ) -> Result<()> {
+    if concurrency == 0 {
+        return Ok(());
+    }
+
     let sem = Arc::new(Semaphore::new(concurrency as usize));
 
     loop {
