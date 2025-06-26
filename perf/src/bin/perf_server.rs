@@ -7,7 +7,9 @@ use quinn::{TokioRuntime, crypto::rustls::QuicServerConfig};
 use rustls::pki_types::{CertificateDer, PrivatePkcs8KeyDer};
 use tracing::{debug, error, info};
 
-use perf::{PERF_CIPHER_SUITES, bind_socket, noprotection::NoProtectionServerConfig};
+use perf::{
+    CongestionAlgorithm, PERF_CIPHER_SUITES, bind_socket, noprotection::NoProtectionServerConfig,
+};
 
 #[derive(Parser)]
 #[clap(name = "server")]
@@ -45,6 +47,9 @@ struct Opt {
     /// Ack Frequency mode
     #[clap(long = "ack-frequency")]
     ack_frequency: bool,
+    /// Congestion algorithm to use
+    #[clap(long = "congestion")]
+    cong_alg: Option<CongestionAlgorithm>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -106,6 +111,10 @@ async fn run(opt: Opt) -> Result<()> {
 
     if opt.ack_frequency {
         transport.ack_frequency_config(Some(quinn::AckFrequencyConfig::default()));
+    }
+
+    if let Some(cong_alg) = opt.cong_alg {
+        transport.congestion_controller_factory(cong_alg.build());
     }
 
     let crypto = Arc::new(QuicServerConfig::try_from(crypto)?);

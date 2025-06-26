@@ -13,7 +13,7 @@ use tokio::sync::Semaphore;
 use tracing::{debug, error, info};
 
 use perf::{
-    bind_socket,
+    CongestionAlgorithm, bind_socket,
     noprotection::NoProtectionClientConfig,
     stats::{OpenStreamStats, Stats},
 };
@@ -79,6 +79,9 @@ struct Opt {
     /// Ack Frequency mode
     #[clap(long = "ack-frequency")]
     ack_frequency: bool,
+    /// Congestion algorithm to use
+    #[clap(long = "congestion")]
+    cong_alg: Option<CongestionAlgorithm>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -152,6 +155,10 @@ async fn run(opt: Opt) -> Result<()> {
 
     if opt.ack_frequency {
         transport.ack_frequency_config(Some(quinn::AckFrequencyConfig::default()));
+    }
+
+    if let Some(cong_alg) = opt.cong_alg {
+        transport.congestion_controller_factory(cong_alg.build());
     }
 
     let crypto = Arc::new(QuicClientConfig::try_from(crypto)?);

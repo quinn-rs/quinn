@@ -1,7 +1,11 @@
-use std::net::SocketAddr;
+use std::{net::SocketAddr, sync::Arc};
 
 use anyhow::{Context, Result};
-use quinn::udp::UdpSocketState;
+use clap::ValueEnum;
+use quinn::{
+    congestion::{self, ControllerFactory},
+    udp::UdpSocketState,
+};
 use rustls::crypto::ring::cipher_suite;
 use socket2::{Domain, Protocol, Socket, Type};
 use tracing::warn;
@@ -10,6 +14,23 @@ use tracing::warn;
 pub mod stats;
 
 pub mod noprotection;
+
+#[derive(Clone, Copy, ValueEnum)]
+pub enum CongestionAlgorithm {
+    Cubic,
+    Bbr,
+    NewReno,
+}
+
+impl CongestionAlgorithm {
+    pub fn build(self) -> Arc<dyn ControllerFactory + Send + Sync + 'static> {
+        match self {
+            CongestionAlgorithm::Cubic => Arc::new(congestion::CubicConfig::default()),
+            CongestionAlgorithm::Bbr => Arc::new(congestion::BbrConfig::default()),
+            CongestionAlgorithm::NewReno => Arc::new(congestion::NewRenoConfig::default()),
+        }
+    }
+}
 
 pub fn bind_socket(
     addr: SocketAddr,
