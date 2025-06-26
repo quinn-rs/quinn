@@ -647,6 +647,7 @@ impl Connection {
 
         let challenge = self.rng.random();
         path.challenge = Some(challenge);
+        path.challenge_pending = true;
         self.paths.insert(
             path_id,
             PathState {
@@ -657,6 +658,10 @@ impl Connection {
 
         // Inform the remote of the path status.
         self.spaces[SpaceId::Data].pending.path_status.push(path_id);
+        let pn_space = spaces::PacketNumberSpace::new(now, SpaceId::Data, &mut self.rng);
+        self.spaces[SpaceId::Data]
+            .number_spaces
+            .insert(path_id, pn_space);
         true
     }
 
@@ -1366,9 +1371,10 @@ impl Connection {
         // that are already created, as well as 1 byte for starting another datagram. If
         // there is any anti-amplification budget left, we always allow a full MTU to be
         // sent (see https://github.com/quinn-rs/quinn/issues/1082).
-        if self
-            .path_data(path_id)
-            .anti_amplification_blocked(transmit.len() as u64 + 1)
+        if self.side().is_server()
+            && self
+                .path_data(path_id)
+                .anti_amplification_blocked(transmit.len() as u64 + 1)
         {
             trace!(?space_id, ?path_id, "blocked by anti-amplification");
             return PathBlocked::AntiAmplification;

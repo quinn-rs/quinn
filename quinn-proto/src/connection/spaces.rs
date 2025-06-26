@@ -17,6 +17,8 @@ use crate::{
 };
 
 pub(super) struct PacketSpace {
+    // TODO(@divma): for debugging purposes
+    space_id: SpaceId,
     pub(super) crypto: Option<Keys>,
 
     /// Data to send
@@ -39,6 +41,7 @@ impl PacketSpace {
     pub(super) fn new(now: Instant, space: SpaceId, rng: &mut (impl Rng + ?Sized)) -> Self {
         let number_space_0 = PacketNumberSpace::new(now, space, rng);
         Self {
+            space_id: space,
             crypto: None,
             pending: Retransmits::default(),
             crypto_stream: Assembler::new(),
@@ -51,6 +54,7 @@ impl PacketSpace {
     pub(super) fn new_deterministic(now: Instant, space: SpaceId) -> Self {
         let number_space_0 = PacketNumberSpace::new_deterministic(now, space);
         Self {
+            space_id: space,
             crypto: None,
             pending: Retransmits::default(),
             crypto_stream: Assembler::new(),
@@ -70,7 +74,7 @@ impl PacketSpace {
     pub(super) fn for_path(&mut self, path: PathId) -> &mut PacketNumberSpace {
         self.number_spaces
             .entry(path)
-            .or_insert_with(PacketNumberSpace::new_default)
+            .or_insert_with(|| PacketNumberSpace::new_default(self.space_id, path))
     }
 
     pub(super) fn iter_paths_mut(&mut self) -> impl Iterator<Item = &mut PacketNumberSpace> {
@@ -240,7 +244,7 @@ pub(super) struct PacketNumberSpace {
 }
 
 impl PacketNumberSpace {
-    fn new(now: Instant, space: SpaceId, rng: &mut (impl Rng + ?Sized)) -> Self {
+    pub(super) fn new(now: Instant, space: SpaceId, rng: &mut (impl Rng + ?Sized)) -> Self {
         let pn_filter = match space {
             SpaceId::Initial | SpaceId::Handshake => None,
             SpaceId::Data => Some(PacketNumberFilter::new(rng)),
@@ -302,8 +306,8 @@ impl PacketNumberSpace {
     /// This allows us to be type-safe about always being able to access a
     /// PacketNumberSpace.  While the space will work it will not skip packet numbers to
     /// protect against eaget ack attacks.
-    fn new_default() -> Self {
-        error!("PacketNumberSpace created by default");
+    fn new_default(space_id: SpaceId, path_id: PathId) -> Self {
+        error!(?path_id, ?space_id, "PacketNumberSpace created by default");
         Self {
             rx_packet: 0,
             next_packet_number: 0,
