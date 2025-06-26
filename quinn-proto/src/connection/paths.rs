@@ -4,7 +4,7 @@ use thiserror::Error;
 use tracing::{debug, trace};
 
 use super::{
-    OpenPathError,
+    PathError,
     mtud::MtuDiscovery,
     pacing::Pacer,
     spaces::{PacketSpace, SentPacket},
@@ -47,6 +47,14 @@ impl PathId {
     pub fn saturating_add(self, rhs: impl Into<Self>) -> Self {
         let rhs = rhs.into();
         let inner = self.0.saturating_add(rhs.0);
+        Self(inner)
+    }
+
+    /// Saturating integer substraction. Computes self - rhs, saturating at the numeric bounds
+    /// instead of overflowing.
+    pub fn saturating_sub(self, rhs: impl Into<Self>) -> Self {
+        let rhs = rhs.into();
+        let inner = self.0.saturating_sub(rhs.0);
         Self(inner)
     }
 }
@@ -564,12 +572,12 @@ pub enum PathEvent {
         /// for a list of known errors.
         error_code: VarInt,
     },
-    /// Opening a path failed
-    OpenFailed {
-        /// Path for which opening failed
+    /// Path was closed locally.
+    LocallyClosed {
+        /// Path for which the error occurred.
         id: PathId,
         /// The error that occurred
-        error: OpenPathError,
+        error: PathError,
     },
 }
 

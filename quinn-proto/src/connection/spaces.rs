@@ -501,6 +501,12 @@ pub struct Retransmits {
     pub(super) ack_frequency: bool,
     pub(super) handshake_done: bool,
     pub(super) observed_addr: bool,
+    /// Whether we should inform the peer we will allow higher [`PathId`]s.
+    pub(super) max_path_id: bool,
+    /// Whether we should inform the peer that their max [`PathId`] is blocking our attempt to open
+    /// new paths.
+    // TODO(@divma): we need logic to prevent sending this more than once after being ack-d once
+    pub(super) paths_blocked: bool,
     /// For each enqueued NEW_TOKEN frame, a copy of the path's remote address
     ///
     /// There are 2 reasons this is unusual:
@@ -543,6 +549,8 @@ impl Retransmits {
             && self.new_tokens.is_empty()
             && self.path_abandon.is_empty()
             && self.path_status.is_empty()
+            && !self.max_path_id
+            && !self.paths_blocked
     }
 }
 
@@ -566,7 +574,9 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.handshake_done |= rhs.handshake_done;
         self.observed_addr |= rhs.observed_addr;
         self.new_tokens.extend_from_slice(&rhs.new_tokens);
-        self.path_abandon.extend_from_slice(&rhs.path_abandon)
+        self.path_abandon.extend_from_slice(&rhs.path_abandon);
+        self.max_path_id |= rhs.max_path_id;
+        self.paths_blocked |= rhs.paths_blocked;
     }
 }
 

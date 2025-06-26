@@ -200,9 +200,8 @@ pub(crate) enum Frame {
     PathAbandon(PathAbandon),
     PathAvailable(PathAvailable),
     PathBackup(PathBackup),
-    #[allow(dead_code)] // TODO(flub)
-    MaxPathId(PathId),
-    PathsBlocked(PathId),
+    MaxPathId(MaxPathId),
+    PathsBlocked(PathsBlocked),
     // TODO(flub): We should send this to be spec-compliant, but for ourselves we don't
     // really care because we always issue CIDs.  Perhaps we can get this frame removed
     // again from the spec: https://github.com/quicwg/multipath/issues/500
@@ -735,6 +734,34 @@ impl NewToken {
     }
 }
 
+#[derive(Debug, Clone)]
+pub(crate) struct MaxPathId(pub(crate) PathId);
+
+impl MaxPathId {
+    pub(crate) fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
+        Ok(Self(buf.get()?))
+    }
+
+    pub(crate) fn encode<B: BufMut>(&self, buf: &mut B) {
+        buf.write(FrameType::MAX_PATH_ID);
+        buf.write(self.0);
+    }
+}
+
+#[derive(Debug, Clone)]
+pub(crate) struct PathsBlocked(pub(crate) PathId);
+
+impl PathsBlocked {
+    pub(crate) fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
+        Ok(Self(buf.get()?))
+    }
+
+    pub(crate) fn encode<B: BufMut>(&self, buf: &mut B) {
+        buf.write(FrameType::PATHS_BLOCKED);
+        buf.write(self.0);
+    }
+}
+
 pub(crate) struct Iter {
     bytes: Bytes,
     last_ty: Option<FrameType>,
@@ -900,8 +927,8 @@ impl Iter {
                 Frame::PathAvailable(PathAvailable::decode(&mut self.bytes)?)
             }
             FrameType::PATH_BACKUP => Frame::PathBackup(PathBackup::decode(&mut self.bytes)?),
-            FrameType::MAX_PATH_ID => Frame::MaxPathId(self.bytes.get()?),
-            FrameType::PATHS_BLOCKED => Frame::PathsBlocked(self.bytes.get()?),
+            FrameType::MAX_PATH_ID => Frame::MaxPathId(MaxPathId::decode(&mut self.bytes)?),
+            FrameType::PATHS_BLOCKED => Frame::PathsBlocked(PathsBlocked::decode(&mut self.bytes)?),
             FrameType::PATH_CIDS_BLOCKED => Frame::PathCidsBlocked(self.bytes.get()?),
             _ => {
                 if let Some(s) = ty.stream() {

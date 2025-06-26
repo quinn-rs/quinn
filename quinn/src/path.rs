@@ -3,9 +3,7 @@ use std::pin::Pin;
 use std::task::{Context, Poll, ready};
 use std::time::Duration;
 
-use proto::{
-    ClosePathError, ClosedPath, ConnectionError, OpenPathError, PathId, PathStatus, VarInt,
-};
+use proto::{ClosePathError, ClosedPath, ConnectionError, PathError, PathId, PathStatus, VarInt};
 use tokio::sync::oneshot;
 
 use crate::connection::ConnectionRef;
@@ -18,21 +16,21 @@ enum OpenPathInner {
     ///
     /// This migth fail later on.
     Ongoing {
-        opened: oneshot::Receiver<Result<(), OpenPathError>>,
+        opened: oneshot::Receiver<Result<(), PathError>>,
         path_id: PathId,
         conn: ConnectionRef,
     },
     /// Opening a path failed immediately.
     Rejected {
         /// The error that occurred.
-        err: OpenPathError,
+        err: PathError,
     },
 }
 
 impl OpenPath {
     pub(crate) fn new(
         path_id: PathId,
-        opened: oneshot::Receiver<Result<(), OpenPathError>>,
+        opened: oneshot::Receiver<Result<(), PathError>>,
         conn: ConnectionRef,
     ) -> Self {
         Self(OpenPathInner::Ongoing {
@@ -42,13 +40,13 @@ impl OpenPath {
         })
     }
 
-    pub(crate) fn rejected(err: OpenPathError) -> Self {
+    pub(crate) fn rejected(err: PathError) -> Self {
         Self(OpenPathInner::Rejected { err })
     }
 }
 
 impl Future for OpenPath {
-    type Output = Result<Path, OpenPathError>;
+    type Output = Result<Path, PathError>;
     fn poll(self: Pin<&mut Self>, ctx: &mut Context<'_>) -> Poll<Self::Output> {
         match self.get_mut().0 {
             OpenPathInner::Ongoing {

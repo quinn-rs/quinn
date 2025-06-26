@@ -257,15 +257,11 @@ pub struct Connection {
     /// The greatest [`PathId`] this connection has used.
     ///
     /// This is kept instead of calculated to account for abandoned paths for which data has been
-    /// purged.
+    /// purged. This takes into account paths that are pending for opening, which for all purposes
+    /// can be considered half open.
     max_path_id_in_use: PathId,
     /// Path ids requested to be opened via [`Connection::queue_open_path`].
     paths_to_open: BTreeMap<PathId, (SocketAddr, PathStatus)>,
-    /// Whether we should inform the peer we will allow higher [`PathId`]s.
-    increase_local_max_path_id: bool,
-    /// Whether we should inform the peer their current `MAX_PATH_ID` is blocking our attempts to
-    /// open a new path,
-    path_cids_blocked: bool,
 }
 
 struct PathState {
@@ -405,8 +401,6 @@ impl Connection {
             remote_max_path_id: PathId::ZERO,
             max_path_id_in_use: PathId::ZERO,
             paths_to_open: BTreeMap::default(),
-            increase_local_max_path_id: false,
-            path_cids_blocked: false,
         };
         if path_validated {
             this.on_path_validated(PathId(0));
@@ -493,30 +487,30 @@ impl Connection {
 
     /// Start opening a new path
     ///
-    /// Further errors might occur and they will be emitted in [`PathEvent::OpenFailed`] events.
+    /// Further errors might occur and they will be emitted in [`PathEvent::LocallyClosed`] events.
     pub fn queue_open_path(
         &mut self,
         remote: SocketAddr,
         initial_status: PathStatus,
         now: Instant,
-    ) -> Result<PathId, OpenPathError> {
+    ) -> Result<PathId, PathError> {
         if !self.is_multipath_negotiated() {
-            return Err(OpenPathError::MultipathNotNegotiated);
+            return Err(PathError::MultipathNotNegotiated);
         }
         if self.side().is_server() {
-            return Err(OpenPathError::ServerSideNotAllowed);
+            return Err(PathError::ServerSideNotAllowed);
         }
 
         let next_path_id = self.max_path_id_in_use.saturating_add(1u8);
 
         if next_path_id > self.local_max_path_id {
-            self.increase_local_max_path_id = true;
-            return Err(OpenPathError::MaxPathIdReached);
+            self.spaces[SpaceId::Data].pending.max_path_id = true;
+            return Err(PathError::MaxPathIdReached);
         }
 
         if next_path_id > self.remote_max_path_id {
-            self.path_cids_blocked = true;
-            return Err(OpenPathError::MaxPathIdReached);
+            self.spaces[SpaceId::Data].pending.paths_blocked = true;
+            return Err(PathError::MaxPathIdReached);
         }
 
         // TODO(@divma): this part might be an overkill
@@ -641,32 +635,11 @@ impl Connection {
         &mut self.paths.get_mut(&path_id).expect("known path").data
     }
 
-    // TODO(@divma): wip. for now this creates a bare bones packet that just does the path
-    // opening.
-    #[allow(clippy::type_complexity)]
-    #[allow(dead_code)]
-    fn open_new_path(
-        &mut self,
-        now: Instant,
-    ) -> Option<(Option<(PathId, ConnectionId)>, Vec<Frame>)> // TODO(@divma): return type is ugly for now
-    {
-        let (path_id, (remote, status)) = self.paths_to_open.pop_first()?;
-
-        let Some(remote_cid) = self.rem_cids.get(&path_id).map(CidQueue::active) else {
-            let err = OpenPathError::RemoteCidsExhausted;
-            debug!(?err, %path_id, "failed to open path");
-            self.events.push_back(Event::Path(PathEvent::OpenFailed {
-                id: path_id,
-                error: err,
-            }));
-            //   This allows us to safely consume the path_id due to the failed attempt, otherwise
-            //   we would need to keep track of holes in the range and revert the
-            //   max_path_id_in_use
-            self.spaces[SpaceId::Data]
-                .pending
-                .path_abandon
-                .push((path_id, TransportErrorCode::NO_CID_AVAILABLE));
-            return None;
+    // TODO(@divma): missing descriptive docs...
+    /// Returns true if a new path has been added to [`Connection::paths`]
+    fn open_new_path(&mut self, now: Instant) -> bool {
+        let Some((path_id, (remote, status))) = self.paths_to_open.pop_first() else {
+            return false;
         };
 
         let mut path = PathData::new(remote, self.allow_mtud, None, now, &self.config);
@@ -684,9 +657,7 @@ impl Connection {
 
         // Inform the remote of the path status.
         self.spaces[SpaceId::Data].pending.path_status.push(path_id);
-
-        let frames = vec![Frame::PathChallenge(challenge)];
-        Some((Some((path_id, remote_cid)), frames))
+        true
     }
 
     /// Returns packets to transmit
@@ -746,6 +717,8 @@ impl Connection {
             _ => false,
         };
 
+        while self.open_new_path(now) {}
+
         // Check whether we need to send an ACK_FREQUENCY frame
         if let Some(config) = &self.config.ack_frequency_config {
             let rtt = self
@@ -800,6 +773,61 @@ impl Connection {
         };
 
         loop {
+            // check if there is at least one active CID to use for sending
+            let Some(remote_cid) = self.rem_cids.get(&path_id).map(CidQueue::active) else {
+                let err = PathError::RemoteCidsExhausted;
+                debug!(?err, %path_id, "no active CID for path");
+                self.events.push_back(Event::Path(PathEvent::LocallyClosed {
+                    id: path_id,
+                    error: err,
+                }));
+                // this allows us to safely consume the path_id due to the failed attempt,
+                // otherwise we would need to keep track of holes in the range and revert the
+                // max_path_id_in_use
+                self.spaces[SpaceId::Data]
+                    .pending
+                    .path_abandon
+                    .push((path_id, TransportErrorCode::NO_CID_AVAILABLE));
+                // TODO(@divma): we here need to set the path as abandoned to avoid using it
+                // TODO(@divma): missing logic to remove the path, most likely not here tho. Note
+                // that this includes "considering all associated CIDs retired"
+                // TODO(@divma): here we could send PATH_CIDS_BLOCKED frame, just to play all the
+                // spec's frames, given our range maintenance strategy it's otherwise useless
+
+                match self.paths.keys().find(|&&next| next > path_id) {
+                    Some(next_path_id) => {
+                        // See if this next path can send anything.
+                        trace!(
+                            ?space_id,
+                            ?path_id,
+                            ?next_path_id,
+                            "nothing to send on path"
+                        );
+                        path_id = *next_path_id;
+                        space_id = SpaceId::Data;
+
+                        // update per path state
+                        transmit.set_segment_size(self.path_data(path_id).current_mtu().into());
+                        if let Some(challenge) =
+                            self.send_prev_path_challenge(now, &mut transmit, path_id)
+                        {
+                            return Some(challenge);
+                        }
+
+                        continue;
+                    }
+                    None => {
+                        // Nothing more to send.
+                        trace!(
+                            ?space_id,
+                            ?path_id,
+                            "nothing to send on path, no more paths"
+                        );
+                        break;
+                    }
+                }
+            };
+
             // Determine if anything can be sent in this packet number space (SpaceId +
             // PathId).
             let max_packet_size = if transmit.datagram_remaining_mut() > 0 {
@@ -947,14 +975,11 @@ impl Connection {
                 prev.update_unacked = false;
             }
 
-            // TODO(flub): I'm not particularly happy about this unwrap.  But let's leave it
-            //    for now until more stuff is settled.  We probably should check earlier on
-            //    in poll_transmit that we have a valid CID to use.
             let mut builder = PacketBuilder::new(
                 now,
                 space_id,
                 path_id,
-                self.rem_cids.get(&path_id).unwrap().active(),
+                remote_cid,
                 &mut transmit,
                 can_send.other,
                 self,
@@ -3762,7 +3787,7 @@ impl Connection {
                         ));
                     }
                 }
-                Frame::MaxPathId(path_id) => {
+                Frame::MaxPathId(frame::MaxPathId(path_id)) => {
                     if let Some(current_max) = self.max_path_id() {
                         // frames that do not increase the path id are ignored
                         self.remote_max_path_id = self.remote_max_path_id.max(path_id);
@@ -3771,11 +3796,11 @@ impl Connection {
                         }
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
-                            "received MAX_PATH_ID frame when not multipath was not negotiated",
+                            "received MAX_PATH_ID frame when multipath was not negotiated",
                         ));
                     }
                 }
-                Frame::PathsBlocked(max_path_id) => {
+                Frame::PathsBlocked(frame::PathsBlocked(max_path_id)) => {
                     // Receipt of a value of Maximum Path Identifier or Path Identifier that is higher than the local maximum value MUST
                     // be treated as a connection error of type PROTOCOL_VIOLATION.
                     // Ref <https://www.ietf.org/archive/id/draft-ietf-quic-multipath-14.html#name-paths_blocked-and-path_cids>
@@ -3786,6 +3811,7 @@ impl Connection {
                             ));
                         }
                         debug!("received PATHS_BLOCKED({:?})", max_path_id);
+                        // TODO(@divma): ensure max concurrent paths
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "received PATHS_BLOCKED frame when not multipath was not negotiated",
@@ -4019,6 +4045,7 @@ impl Connection {
         let mut sent = SentFrames::default();
         let is_multipath_negotiated = self.is_multipath_negotiated();
         let space = &mut self.spaces[space_id];
+        let allocated_path_count = self.paths.len() + self.paths_to_open.len();
         let path = &mut self.paths.get_mut(&path_id).expect("known path").data;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         space
@@ -4295,6 +4322,31 @@ impl Connection {
                     trace!(?path_id, %seq, "PATH_BACKUP")
                 }
             }
+        }
+
+        // TODO(@divma): missing size bound checks and potentially other checks
+        if space_id == SpaceId::Data && space.pending.max_path_id {
+            let currently_allocated = allocated_path_count
+                .try_into()
+                .expect("allocated <= max_concurrent <= u32::MAX");
+
+            let max_concurrent = self
+                .config
+                .max_concurrent_multipath_paths
+                .expect("pending.max_path_id is set, thus multipath is negotiated.")
+                .get();
+            let new_count = max_concurrent.saturating_sub(currently_allocated);
+            self.local_max_path_id.saturating_add(new_count);
+            frame::MaxPathId(self.local_max_path_id).encode(buf);
+            space.pending.max_path_id = false;
+            sent.retransmits.get_or_create().max_path_id = true;
+        }
+
+        // TODO(@divma): missing size bound checks and potentially other checks
+        if space_id == SpaceId::Data && space.pending.paths_blocked {
+            frame::PathsBlocked(self.remote_max_path_id).encode(buf);
+            space.pending.paths_blocked = false;
+            sent.retransmits.get_or_create().paths_blocked = true;
         }
 
         // RESET_STREAM, STOP_SENDING, MAX_DATA, MAX_STREAM_DATA, MAX_STREAMS
@@ -5135,9 +5187,10 @@ impl From<ConnectionError> for io::Error {
     }
 }
 
-/// Errors that might happen when opening a path.
+/// Errors that might trigger a path being closed.
+// TODO(@divma): maybe needs to be reworked based on what we want to do with the public API
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum OpenPathError {
+pub enum PathError {
     /// The extension was not negotiated with the peer
     MultipathNotNegotiated,
     /// Paths can only be opened client-side

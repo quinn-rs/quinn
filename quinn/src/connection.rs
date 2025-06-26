@@ -26,8 +26,8 @@ use crate::{
     udp_transmit,
 };
 use proto::{
-    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, OpenPathError,
-    PathEvent, PathId, PathStatus, StreamEvent, StreamId, congestion::Controller,
+    ConnectionError, ConnectionHandle, ConnectionStats, Dir, EndpointEvent, PathError, PathEvent,
+    PathId, PathStatus, StreamEvent, StreamId, congestion::Controller,
 };
 
 /// In-progress connection attempt future
@@ -1045,7 +1045,7 @@ pub(crate) struct State {
     /// Always set to Some before the connection becomes drained
     pub(crate) error: Option<ConnectionError>,
     /// Tracks paths being opened
-    open_path: FxHashMap<PathId, oneshot::Sender<Result<(), OpenPathError>>>,
+    open_path: FxHashMap<PathId, oneshot::Sender<Result<(), PathError>>>,
     /// Tracks paths being closed
     pub(crate) close_path: FxHashMap<PathId, oneshot::Sender<VarInt>>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
@@ -1234,10 +1234,11 @@ impl State {
                         let _ = sender.send(error_code);
                     }
                 }
-                Path(PathEvent::OpenFailed { id, error }) => {
+                Path(PathEvent::LocallyClosed { id, error }) => {
                     if let Some(sender) = self.open_path.remove(&id) {
                         let _ = sender.send(Err(error));
                     }
+                    // this will happen also for already opened paths
                 }
             }
         }
