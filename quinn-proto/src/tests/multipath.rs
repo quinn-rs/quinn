@@ -271,7 +271,7 @@ fn multipath_cid_rotation() {
     let each_round: u64 = MAX_PATHS as u64 * CidQueue::LEN as u64;
     // The final round only pushes one set of CIDs with expires_before, the round is not run
     // to completion to wait for the expiry messages from the client.
-    let final_round: u64 = MAX_PATHS as u64 * 1;
+    let final_round: u64 = MAX_PATHS as u64;
     let path_new_cids = initial_batch + (round - 2) * each_round + final_round;
     debug_assert_eq!(path_new_cids, 73);
     assert_eq!(stats.frame_tx.path_new_connection_id, path_new_cids);
