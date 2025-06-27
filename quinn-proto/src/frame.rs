@@ -291,7 +291,7 @@ impl RetireConnectionId {
         })
     }
 
-    fn get_type(&self) -> FrameType {
+    pub(crate) fn get_type(&self) -> FrameType {
         if self.path_id.is_some() {
             FrameType::PATH_RETIRE_CONNECTION_ID
         } else {

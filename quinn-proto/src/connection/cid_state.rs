@@ -7,6 +7,7 @@ use tracing::{debug, trace};
 use crate::{Duration, Instant, TransportError, shared::IssuedCid};
 
 /// Local connection ID management
+#[derive(Debug)]
 pub(super) struct CidState {
     /// Timestamp when issued cids should be retired
     ///
@@ -225,7 +226,7 @@ impl CidState {
 }
 
 /// Data structure that records when issued cids should be retired
-#[derive(Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
 struct CidTimestamp {
     /// Highest cid sequence number created in a batch
     sequence: u64,

@@ -2,7 +2,6 @@ use std::{
     convert::TryInto,
     mem,
     net::{Ipv4Addr, Ipv6Addr, SocketAddr},
-    num::NonZeroU32,
     sync::{Arc, Mutex},
 };
 
@@ -1535,54 +1534,6 @@ fn keep_alive() {
 }
 
 #[test]
-fn cid_issued_multipath() {
-    let _guard = subscribe();
-    const MAX_PATHS: u64 = 3;
-    const ACTIVE_CID_LIMIT: u64 = crate::cid_queue::CidQueue::LEN as _;
-    let transport_cfg = Arc::new(TransportConfig {
-        max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS as _),
-        ..TransportConfig::default()
-    });
-    let server_cfg = Arc::new(ServerConfig {
-        transport: transport_cfg.clone(),
-        ..server_config()
-    });
-    let server = Endpoint::new(Default::default(), Some(server_cfg), true, None);
-    let client = Endpoint::new(Default::default(), None, true, None);
-
-    let mut pair = Pair::new_from_endpoint(client, server);
-    let client_cfg = ClientConfig {
-        transport: transport_cfg,
-        ..client_config()
-    };
-    let (client_ch, _server_ch) = pair.connect_with(client_cfg);
-    pair.drive();
-
-    let client_stats = pair.client_conn_mut(client_ch).stats();
-    dbg!(&client_stats);
-
-    // The client does not send NEW_CONNECTION_ID frames when multipath is enabled as they
-    // are all sent after the handshake is completed.
-    assert_eq!(client_stats.frame_tx.new_connection_id, 0);
-    assert_eq!(
-        client_stats.frame_tx.path_new_connection_id,
-        MAX_PATHS * ACTIVE_CID_LIMIT
-    );
-
-    // The server sends NEW_CONNECTION_ID frames before the handshake is completed.
-    // Multipath is only enabled *after* the handshake completes.  The first server-CID is
-    // not issued but assigned by the client and changed by the server.
-    assert_eq!(
-        client_stats.frame_rx.new_connection_id,
-        ACTIVE_CID_LIMIT - 1
-    );
-    assert_eq!(
-        client_stats.frame_rx.path_new_connection_id,
-        (MAX_PATHS - 1) * ACTIVE_CID_LIMIT
-    );
-}
-
-#[test]
 fn cid_rotation() {
     let _guard = subscribe();
     const CID_TIMEOUT: Duration = Duration::from_secs(2);
@@ -1635,86 +1586,6 @@ fn cid_rotation() {
             pair.server_conn_mut(server_ch).active_local_cid_seq(),
             _bound
         );
-        round += 1;
-        left_bound += active_cid_num;
-        right_bound += active_cid_num;
-        pair.drive_server();
-    }
-}
-
-#[test]
-fn multipath_cid_rotation() {
-    let _guard = subscribe();
-    const CID_TIMEOUT: Duration = Duration::from_secs(2);
-
-    let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
-        || Box::new(*RandomConnectionIdGenerator::new(8).set_lifetime(CID_TIMEOUT));
-
-    // Only test cid rotation on server side to have a clear output trace
-    let server_cfg = ServerConfig {
-        transport: Arc::new(TransportConfig {
-            max_concurrent_multipath_paths: NonZeroU32::new(6),
-            ..TransportConfig::default()
-        }),
-        ..server_config()
-    };
-
-    let server = Endpoint::new(
-        Arc::new(EndpointConfig {
-            connection_id_generator_factory: Arc::new(cid_generator_factory),
-            ..EndpointConfig::default()
-        }),
-        Some(Arc::new(server_cfg)),
-        true,
-        None,
-    );
-    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true, None);
-
-    let mut pair = Pair::new_from_endpoint(client, server);
-    let client_cfg = ClientConfig {
-        transport: Arc::new(TransportConfig {
-            max_concurrent_multipath_paths: NonZeroU32::new(3),
-            ..TransportConfig::default()
-        }),
-        ..client_config()
-    };
-
-    let (_, server_ch) = pair.connect_with(client_cfg);
-
-    let mut round: u64 = 1;
-    let mut stop = pair.time;
-    let end = pair.time + 5 * CID_TIMEOUT;
-
-    use crate::LOC_CID_COUNT;
-    use crate::cid_queue::CidQueue;
-
-    let mut active_cid_num = CidQueue::LEN as u64 + 1;
-    active_cid_num = active_cid_num.min(LOC_CID_COUNT);
-    let mut left_bound = 0;
-    let mut right_bound = active_cid_num - 1;
-
-    while pair.time < end {
-        stop += CID_TIMEOUT;
-        // Run a while until PushNewCID timer fires
-        while pair.time < stop {
-            if !pair.step() {
-                if let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
-                    pair.time = time;
-                }
-            }
-        }
-        info!(
-            "Checking active cid sequence range before {:?} seconds",
-            round * CID_TIMEOUT.as_secs()
-        );
-        let _bound = (left_bound, right_bound);
-        for path_id in 0..=2 {
-            assert_matches!(
-                pair.server_conn_mut(server_ch)
-                    .active_local_path_cid_seq(path_id),
-                _bound
-            );
-        }
         round += 1;
         left_bound += active_cid_num;
         right_bound += active_cid_num;

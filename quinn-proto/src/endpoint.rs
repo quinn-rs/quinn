@@ -119,7 +119,7 @@ impl Endpoint {
                     .get_mut(&path_id)
                     .and_then(|pcid| pcid.cids.remove(&seq))
                 {
-                    trace!("peer retired CID {}: {}", seq, cid);
+                    trace!(?path_id, "peer retired CID {}: {}", seq, cid);
                     self.index.retire(cid);
                     if allow_more_cids {
                         return Some(self.send_new_identifiers(path_id, now, ch, 1));
