@@ -2,16 +2,44 @@
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
+use std::time::Duration;
 
+use assert_matches::assert_matches;
 use tracing::info;
 
 use crate::{
     ClientConfig, ClosePathError, ConnectionHandle, ConnectionId, ConnectionIdGenerator, Endpoint,
-    EndpointConfig, PathId, PathStatus, ServerConfig, TransportConfig,
+    EndpointConfig, PathId, PathStatus, RandomConnectionIdGenerator, ServerConfig, TransportConfig,
 };
 
-use super::util::subscribe;
+use super::util::{min_opt, subscribe};
 use super::{Pair, client_config, server_config};
+
+const MAX_PATHS: u32 = 3;
+
+/// Returns a connected client-server pair with multipath enabled
+fn multipath_pair() -> (Pair, ConnectionHandle, ConnectionHandle) {
+    let multipath_transport_cfg = Arc::new(TransportConfig {
+        max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS),
+        ..TransportConfig::default()
+    });
+    let server_cfg = Arc::new(ServerConfig {
+        transport: multipath_transport_cfg.clone(),
+        ..server_config()
+    });
+    let server = Endpoint::new(Default::default(), Some(server_cfg), true, None);
+    let client = Endpoint::new(Default::default(), None, true, None);
+
+    let mut pair = Pair::new_from_endpoint(client, server);
+    let client_cfg = ClientConfig {
+        transport: multipath_transport_cfg,
+        ..client_config()
+    };
+    let (client_ch, server_ch) = pair.connect_with(client_cfg);
+    pair.drive();
+    info!("connected");
+    (pair, client_ch, server_ch)
+}
 
 #[test]
 fn non_zero_length_cids() {
@@ -65,30 +93,6 @@ fn non_zero_length_cids() {
         }
         _ => panic!("Not a TransportError"),
     }
-}
-
-/// Returns a connected client-server pair with multipath enabled
-fn multipath_pair() -> (Pair, ConnectionHandle, ConnectionHandle) {
-    let multipath_transport_cfg = Arc::new(TransportConfig {
-        max_concurrent_multipath_paths: NonZeroU32::new(3 as _),
-        ..TransportConfig::default()
-    });
-    let server_cfg = Arc::new(ServerConfig {
-        transport: multipath_transport_cfg.clone(),
-        ..server_config()
-    });
-    let server = Endpoint::new(Default::default(), Some(server_cfg), true, None);
-    let client = Endpoint::new(Default::default(), None, true, None);
-
-    let mut pair = Pair::new_from_endpoint(client, server);
-    let client_cfg = ClientConfig {
-        transport: multipath_transport_cfg,
-        ..client_config()
-    };
-    let (client_ch, server_ch) = pair.connect_with(client_cfg);
-    pair.drive();
-    info!("connected");
-    (pair, client_ch, server_ch)
 }
 
 #[test]
@@ -145,4 +149,151 @@ fn path_close_last_path() {
         .err()
         .unwrap();
     assert!(matches!(err, ClosePathError::LastOpenPath));
+}
+
+#[test]
+fn cid_issued_multipath() {
+    let _guard = subscribe();
+    const ACTIVE_CID_LIMIT: u64 = crate::cid_queue::CidQueue::LEN as _;
+    let (mut pair, client_ch, _server_ch) = multipath_pair();
+
+    let client_stats = pair.client_conn_mut(client_ch).stats();
+    dbg!(&client_stats);
+
+    // The client does not send NEW_CONNECTION_ID frames when multipath is enabled as they
+    // are all sent after the handshake is completed.
+    assert_eq!(client_stats.frame_tx.new_connection_id, 0);
+    assert_eq!(
+        client_stats.frame_tx.path_new_connection_id,
+        MAX_PATHS as u64 * ACTIVE_CID_LIMIT
+    );
+
+    // The server sends NEW_CONNECTION_ID frames before the handshake is completed.
+    // Multipath is only enabled *after* the handshake completes.  The first server-CID is
+    // not issued but assigned by the client and changed by the server.
+    assert_eq!(
+        client_stats.frame_rx.new_connection_id,
+        ACTIVE_CID_LIMIT - 1
+    );
+    assert_eq!(
+        client_stats.frame_rx.path_new_connection_id,
+        (MAX_PATHS - 1) as u64 * ACTIVE_CID_LIMIT
+    );
+}
+
+#[test]
+fn multipath_cid_rotation() {
+    let _guard = subscribe();
+    const CID_TIMEOUT: Duration = Duration::from_secs(2);
+
+    let cid_generator_factory: fn() -> Box<dyn ConnectionIdGenerator> =
+        || Box::new(*RandomConnectionIdGenerator::new(8).set_lifetime(CID_TIMEOUT));
+
+    // Only test cid rotation on server side to have a clear output trace
+    let server_cfg = ServerConfig {
+        transport: Arc::new(TransportConfig {
+            max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS),
+            ..TransportConfig::default()
+        }),
+        ..server_config()
+    };
+
+    let server = Endpoint::new(
+        Arc::new(EndpointConfig {
+            connection_id_generator_factory: Arc::new(cid_generator_factory),
+            ..EndpointConfig::default()
+        }),
+        Some(Arc::new(server_cfg)),
+        true,
+        None,
+    );
+    let client = Endpoint::new(Arc::new(EndpointConfig::default()), None, true, None);
+
+    let mut pair = Pair::new_from_endpoint(client, server);
+    let client_cfg = ClientConfig {
+        transport: Arc::new(TransportConfig {
+            max_concurrent_multipath_paths: NonZeroU32::new(MAX_PATHS),
+            ..TransportConfig::default()
+        }),
+        ..client_config()
+    };
+
+    let (_, server_ch) = pair.connect_with(client_cfg);
+
+    let mut round: u64 = 1;
+    let mut stop = pair.time;
+    let end = pair.time + 5 * CID_TIMEOUT;
+
+    use crate::LOC_CID_COUNT;
+    use crate::cid_queue::CidQueue;
+
+    let mut active_cid_num = CidQueue::LEN as u64 + 1;
+    active_cid_num = active_cid_num.min(LOC_CID_COUNT);
+    let mut left_bound = 0;
+    let mut right_bound = active_cid_num - 1;
+
+    while pair.time < end {
+        stop += CID_TIMEOUT;
+        // Run a while until PushNewCID timer fires
+        while pair.time < stop {
+            if !pair.step() {
+                if let Some(time) = min_opt(pair.client.next_wakeup(), pair.server.next_wakeup()) {
+                    pair.time = time;
+                }
+            }
+        }
+        info!(
+            "Checking active cid sequence range before {:?} seconds",
+            round * CID_TIMEOUT.as_secs()
+        );
+        let _bound = (left_bound, right_bound);
+        for path_id in 0..MAX_PATHS {
+            assert_matches!(
+                pair.server_conn_mut(server_ch)
+                    .active_local_path_cid_seq(path_id),
+                _bound
+            );
+        }
+        round += 1;
+        left_bound += active_cid_num;
+        right_bound += active_cid_num;
+        pair.drive_server();
+    }
+
+    let stats = pair.server_conn_mut(server_ch).stats();
+
+    // Server sends CIDs for PathId(0) before multipath is negotiated.
+    assert_eq!(stats.frame_tx.new_connection_id, (CidQueue::LEN - 1) as _);
+
+    // For the first batch the PathId(0) CIDs have already been sent.
+    let initial_batch: u64 = (MAX_PATHS - 1) as u64 * CidQueue::LEN as u64;
+    // Each round expires all CIDs, so they all get re-issued.
+    let each_round: u64 = MAX_PATHS as u64 * CidQueue::LEN as u64;
+    // The final round only pushes one set of CIDs with expires_before, the round is not run
+    // to completion to wait for the expiry messages from the client.
+    let final_round: u64 = MAX_PATHS as u64;
+    let path_new_cids = initial_batch + (round - 2) * each_round + final_round;
+    debug_assert_eq!(path_new_cids, 73);
+    assert_eq!(stats.frame_tx.path_new_connection_id, path_new_cids);
+
+    // We don't retire any CIDs before multipath is negotiated.
+    assert_eq!(stats.frame_tx.retire_connection_id, 0);
+
+    // Server expires the CID of the initial sent by the client.
+    assert_eq!(stats.frame_tx.path_retire_connection_id, 1);
+
+    // Client only sends CIDs after multipath is negotiated.
+    assert_eq!(stats.frame_rx.new_connection_id, 0);
+
+    // Client does not expire CIDs, only the initial set for all the paths.
+    assert_eq!(
+        stats.frame_rx.path_new_connection_id,
+        MAX_PATHS as u64 * CidQueue::LEN as u64
+    );
+    assert_eq!(stats.frame_rx.retire_connection_id, 0);
+
+    // Test stops before last batch of retirements is sent.
+    let path_retire_cids = MAX_PATHS as u64 * CidQueue::LEN as u64 * (round - 2);
+    debug_assert_eq!(path_retire_cids, 60);
+    assert_eq!(stats.frame_rx.path_retire_connection_id, path_retire_cids);
 }

@@ -4426,10 +4426,12 @@ impl Connection {
             let (path_id, sequence) = match space.pending.retire_cids.pop() {
                 Some((PathId(0), seq)) if !is_multipath_negotiated => {
                     trace!(sequence = seq, "RETIRE_CONNECTION_ID");
+                    self.stats.frame_tx.retire_connection_id += 1;
                     (None, seq)
                 }
                 Some((path_id, seq)) => {
                     trace!(?path_id, sequence = seq, "PATH_RETIRE_CONNECTION_ID");
+                    self.stats.frame_tx.path_retire_connection_id += 1;
                     (Some(path_id), seq)
                 }
                 None => break,
@@ -4439,7 +4441,6 @@ impl Connection {
                 .get_or_create()
                 .retire_cids
                 .push((path_id.unwrap_or_default(), sequence));
-            self.stats.frame_tx.retire_connection_id += 1;
         }
 
         // DATAGRAM

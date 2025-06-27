@@ -2,6 +2,7 @@
 
 use rustc_hash::FxHashMap;
 
+use crate::FrameType;
 use crate::{Dir, Duration, frame::Frame};
 
 use super::PathId;
@@ -54,6 +55,7 @@ pub struct FrameStats {
     pub ping: u64,
     pub reset_stream: u64,
     pub retire_connection_id: u64,
+    pub path_retire_connection_id: u64,
     pub stream_data_blocked: u64,
     pub streams_blocked_bidi: u64,
     pub streams_blocked_uni: u64,
@@ -105,7 +107,11 @@ impl FrameStats {
             },
 
             // TODO(@divma): split stats?
-            Frame::RetireConnectionId { .. } => self.retire_connection_id += 1,
+            Frame::RetireConnectionId(frame) => match frame.get_type() {
+                FrameType::RETIRE_CONNECTION_ID => self.retire_connection_id += 1,
+                FrameType::PATH_RETIRE_CONNECTION_ID => self.path_retire_connection_id += 1,
+                _ => unreachable!(),
+            },
             Frame::PathChallenge(_) => self.path_challenge += 1,
             Frame::PathResponse(_) => self.path_response += 1,
             Frame::Close(_) => self.connection_close += 1,
