@@ -365,6 +365,10 @@ impl ServerConfig {
         self.time_source = time_source;
         self
     }
+
+    pub(crate) fn has_preferred_address(&self) -> bool {
+        self.preferred_address_v4.is_some() || self.preferred_address_v6.is_some()
+    }
 }
 
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
