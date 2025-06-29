@@ -604,9 +604,7 @@ impl Endpoint {
         params.original_dst_cid = Some(incoming.token.orig_dst_cid);
         params.retry_src_cid = incoming.token.retry_src_cid;
         let mut pref_addr_cid = None;
-        if server_config.preferred_address_v4.is_some()
-            || server_config.preferred_address_v6.is_some()
-        {
+        if server_config.has_preferred_address() {
             let cid = self.new_cid(ch);
             pref_addr_cid = Some(cid);
             params.preferred_address = Some(PreferredAddress {
