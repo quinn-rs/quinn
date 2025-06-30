@@ -65,6 +65,15 @@ pub trait Controller: Send + Sync {
     /// Number of ack-eliciting bytes that may be in flight
     fn window(&self) -> u64;
 
+    /// Update implementation-specific metrics.
+    fn metrics(&self) -> ControllerMetrics {
+        ControllerMetrics {
+            congestion_window: self.window(),
+            ssthresh: None,
+            pacing_rate: None,
+        }
+    }
+
     /// Duplicate the controller's state
     fn clone_box(&self) -> Box<dyn Controller>;
 
@@ -82,3 +91,14 @@ pub trait ControllerFactory {
 }
 
 const BASE_DATAGRAM_SIZE: u64 = 1200;
+
+/// Common congestion controller metrics
+#[non_exhaustive]
+pub struct ControllerMetrics {
+    /// Congestion window (bytes)
+    pub congestion_window: u64,
+    /// Slow start threshold (bytes)
+    pub ssthresh: Option<u64>,
+    /// Pacing rate (bytes/s)
+    pub pacing_rate: Option<u64>,
+}

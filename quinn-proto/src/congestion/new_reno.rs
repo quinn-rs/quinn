@@ -112,6 +112,14 @@ impl Controller for NewReno {
         self.window
     }
 
+    fn metrics(&self) -> super::ControllerMetrics {
+        super::ControllerMetrics {
+            congestion_window: self.window(),
+            ssthresh: Some(self.ssthresh),
+            pacing_rate: None,
+        }
+    }
+
     fn clone_box(&self) -> Box<dyn Controller> {
         Box::new(self.clone())
     }

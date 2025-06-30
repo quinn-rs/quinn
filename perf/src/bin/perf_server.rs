@@ -39,6 +39,10 @@ struct Opt {
     /// Disable packet encryption/decryption (for debugging purpose)
     #[clap(long = "no-protection")]
     no_protection: bool,
+    /// qlog output file
+    #[cfg(feature = "qlog")]
+    #[clap(long = "qlog")]
+    qlog_file: Option<PathBuf>,
 }
 
 #[tokio::main(flavor = "current_thread")]
@@ -128,7 +132,14 @@ async fn run(opt: Opt) -> Result<()> {
 }
 
 async fn handle(handshake: quinn::Incoming, opt: Arc<Opt>) -> Result<()> {
-    let connection = handshake.await.context("handshake failed")?;
+    let mut connection = handshake.await.context("handshake failed")?;
+
+    #[cfg(feature = "qlog")]
+    if let Some(qlog_file) = &opt.qlog_file {
+        let writer = std::fs::File::create(qlog_file)?;
+        connection.set_qlog(Box::new(writer), Some("perf-server".to_string()), None);
+    }
+
     debug!("{} connected", connection.remote_address());
     tokio::try_join!(
         drive_uni(connection.clone()),
