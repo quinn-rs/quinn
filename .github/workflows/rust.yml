@@ -8,6 +8,8 @@ on:
   schedule:
     - cron: "21 3 * * 5"
 
+permissions: {}
+
 jobs:
   test-freebsd:
     # see https://github.com/actions/runner/issues/385
