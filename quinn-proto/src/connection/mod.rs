@@ -509,6 +509,7 @@ impl Connection {
         let mut builder_storage: Option<PacketBuilder> = None;
         let mut sent_frames = None;
         let mut pad_datagram = false;
+        let mut pad_datagram_to_mtu = false;
         let mut congestion_blocked = false;
 
         // Iterate over all spaces and find data to send
@@ -541,6 +542,8 @@ impl Connection {
             if space_id == SpaceId::Data {
                 ack_eliciting |= self.can_send_1rtt(frame_space_1rtt);
             }
+
+            pad_datagram_to_mtu |= space_id == SpaceId::Data && self.config.pad_to_mtu;
 
             // Can we append more data into the current buffer?
             // It is not safe to assume that `buf.len()` is the end of the data,
@@ -628,7 +631,7 @@ impl Connection {
                         builder.pad_to(MIN_INITIAL_SIZE);
                     }
 
-                    if num_datagrams > 1 {
+                    if num_datagrams > 1 || pad_datagram_to_mtu {
                         // If too many padding bytes would be required to continue the GSO batch
                         // after this packet, end the GSO batch here. Ensures that fixed-size frames
                         // with heterogeneous sizes (e.g. application datagrams) won't inadvertently
@@ -645,7 +648,8 @@ impl Connection {
                         let packet_len_unpadded = cmp::max(builder.min_size, buf.len())
                             - datagram_start
                             + builder.tag_len;
-                        if packet_len_unpadded + MAX_PADDING < segment_size
+                        if (packet_len_unpadded + MAX_PADDING < segment_size
+                            && !pad_datagram_to_mtu)
                             || datagram_start + segment_size > buf_capacity
                         {
                             trace!(
@@ -904,6 +908,16 @@ impl Connection {
             if pad_datagram {
                 builder.pad_to(MIN_INITIAL_SIZE);
             }
+
+            // If this datagram is a loss probe and `segment_size` is larger than `INITIAL_MTU`,
+            // then padding it to `segment_size` would risk failure to recover from a reduction in
+            // path MTU.
+            // Loss probes are the only packets for which we might grow `buf_capacity`
+            // by less than `segment_size`.
+            if pad_datagram_to_mtu && buf_capacity >= datagram_start + segment_size {
+                builder.pad_to(segment_size as u16);
+            }
+
             let last_packet_number = builder.exact_number;
             builder.finish_and_track(now, self, sent_frames, buf);
             self.path
