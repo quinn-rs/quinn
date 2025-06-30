@@ -289,3 +289,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: taiki-e/install-action@cargo-hack
       - run: cargo hack check --feature-powerset --depth 3 --optional-deps --no-dev-deps --ignore-private --skip "${{env.SKIP_FEATURES}}"
+
+  actionlint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Download actionlint
+        id: get_actionlint
+        run: bash <(curl https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+        shell: bash
+      - name: Check workflow files
+        env:
+          ACTIONLINT: ${{ steps.get_actionlint.outputs.executable }}
+        run: $ACTIONLINT -color
+        shell: bash
