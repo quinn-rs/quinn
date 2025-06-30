@@ -427,6 +427,9 @@ impl Connection {
     /// Application datagrams are a low-level primitive. They may be lost or delivered out of order,
     /// and `data` must both fit inside a single QUIC packet and be smaller than the maximum
     /// dictated by the peer.
+    ///
+    /// Previously queued datagrams which are still unsent may be discarded to make space for this
+    /// datagram, in order of oldest to newest.
     pub fn send_datagram(&self, data: Bytes) -> Result<(), SendDatagramError> {
         let conn = &mut *self.0.state.lock("send_datagram");
         if let Some(ref x) = conn.error {
