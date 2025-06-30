@@ -223,7 +223,7 @@ async fn ip_blocking() {
         loop {
             let accepting = server.accept().await.unwrap();
             if accepting.remote_address() == client_1_addr {
-                accepting.refuse();
+                accepting.refuse_reason(None);
             } else if accepting.remote_address_validated() {
                 accepting.await.expect("connection");
             } else {
