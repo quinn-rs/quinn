@@ -125,13 +125,13 @@ jobs:
       - run: cargo build --locked --all-targets
       - run: cargo test --locked
       - run: cargo test --locked -p quinn-udp --features fast-apple-datapath
-        if: ${{ runner.os }} == "macOS"
+        if: ${{ runner.os == 'macOS' }}
       - run: cargo test --locked -- --ignored stress
       - run: cargo test --locked --manifest-path fuzz/Cargo.toml
-        if: ${{ matrix.rust }} == "stable"
+        if: ${{ matrix.rust == 'stable' }}
       - run: cargo test --locked -p quinn-udp --benches
       - run: cargo test --locked -p quinn-udp --benches --features fast-apple-datapath
-        if: ${{ runner.os }} == "macOS"
+        if: ${{ runner.os == 'macOS' }}
 
   test-aws-lc-rs:
     runs-on: ubuntu-latest
@@ -229,7 +229,7 @@ jobs:
 
     steps:
       - name: Set API level environment variable
-        run: echo "API_LEVEL=${{ matrix.api-level }}" >> $GITHUB_ENV
+        run: echo "API_LEVEL=\"${{ matrix.api-level }}\"" >> $GITHUB_ENV
 
       - name: Checkout code
         uses: actions/checkout@v4
