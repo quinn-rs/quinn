@@ -485,6 +485,7 @@ impl Connection {
     /// Open a new path
     ///
     /// Further errors might occur and they will be emitted in [`PathEvent::LocallyClosed`] events.
+    /// When the path is opened it will be reported as an [`PathEvent::Opened`].
     pub fn open_path(
         &mut self,
         remote: SocketAddr,
@@ -2934,8 +2935,8 @@ impl Connection {
             }
             Ok((packet, number)) => {
                 let span = match number {
-                    Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn),
-                    None => trace_span!("recv", space = ?packet.header.space()),
+                    Some(pn) => trace_span!("recv", space = ?packet.header.space(), pn, %path_id),
+                    None => trace_span!("recv", space = ?packet.header.space(), %path_id),
                 };
                 let _guard = span.enter();
 
@@ -3405,7 +3406,7 @@ impl Connection {
             let frame = result?;
             let span = match frame {
                 Frame::Padding => continue,
-                _ => trace_span!("frame", ty = %frame.ty()),
+                _ => trace_span!("frame", ty = %frame.ty(), ?path_id),
             };
 
             self.stats.frame_rx.record(&frame);

@@ -87,7 +87,7 @@ impl<'a, 'b> PacketBuilder<'a, 'b> {
 
         let space = &mut conn.spaces[space_id];
         let exact_number = space.for_path(path_id).get_tx_number(&mut conn.rng);
-        let span = trace_span!("send", space = ?space_id, pn = exact_number).entered();
+        let span = trace_span!("send", space = ?space_id, pn = exact_number, %path_id).entered();
 
         let number = PacketNumber::new(
             exact_number,
