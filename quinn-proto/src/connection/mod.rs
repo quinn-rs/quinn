@@ -260,8 +260,6 @@ pub struct Connection {
     /// purged. This takes into account paths that are pending for opening, which for all purposes
     /// can be considered half open.
     max_path_id_in_use: PathId,
-    /// Path ids requested to be opened via [`Connection::queue_open_path`].
-    paths_to_open: BTreeMap<PathId, (SocketAddr, PathStatus)>,
 }
 
 struct PathState {
@@ -400,7 +398,6 @@ impl Connection {
             local_max_path_id: PathId::ZERO,
             remote_max_path_id: PathId::ZERO,
             max_path_id_in_use: PathId::ZERO,
-            paths_to_open: BTreeMap::default(),
         };
         if path_validated {
             this.on_path_validated(PathId(0));
@@ -485,10 +482,10 @@ impl Connection {
         }
     }
 
-    /// Start opening a new path
+    /// Open a new path
     ///
     /// Further errors might occur and they will be emitted in [`PathEvent::LocallyClosed`] events.
-    pub fn queue_open_path(
+    pub fn open_path(
         &mut self,
         remote: SocketAddr,
         initial_status: PathStatus,
@@ -501,14 +498,14 @@ impl Connection {
             return Err(PathError::ServerSideNotAllowed);
         }
 
-        let next_path_id = self.max_path_id_in_use.saturating_add(1u8);
+        let path_id = self.max_path_id_in_use.saturating_add(1u8);
 
-        if next_path_id > self.local_max_path_id {
+        if path_id > self.local_max_path_id {
             self.spaces[SpaceId::Data].pending.max_path_id = true;
             return Err(PathError::MaxPathIdReached);
         }
 
-        if next_path_id > self.remote_max_path_id {
+        if path_id > self.remote_max_path_id {
             self.spaces[SpaceId::Data].pending.paths_blocked = true;
             return Err(PathError::MaxPathIdReached);
         }
@@ -518,10 +515,36 @@ impl Connection {
 
         self.issue_first_path_cids(now);
 
-        self.paths_to_open
-            .insert(next_path_id, (remote, initial_status));
+        // // TODO(@divma): missing descriptive docs...
+        // /// Returns true if a new path has been added to [`Connection::paths`]
+        // fn open_new_path(&mut self, now: Instant) -> bool {
+        //     let Some((path_id, (remote, status))) = self.paths_to_open.pop_first() else {
+        //         return false;
+        //     };
 
-        Ok(next_path_id)
+        // Create PathData, schedule PATH_CHALLENGE to be sent.
+        // TODO(flub): We only need to send the challenge if the remote is not validated.
+        //   It's not the most likely that it already is, but it could be.
+        let mut path = PathData::new(remote, self.allow_mtud, None, now, &self.config);
+        path.status.local_status = initial_status;
+        path.challenge = Some(self.rng.random());
+        path.challenge_pending = true;
+        self.paths.insert(
+            path_id,
+            PathState {
+                data: path,
+                prev: None,
+            },
+        );
+
+        // Inform the remote of the path status.
+        self.spaces[SpaceId::Data].pending.path_status.push(path_id);
+        let pn_space = spaces::PacketNumberSpace::new(now, SpaceId::Data, &mut self.rng);
+        self.spaces[SpaceId::Data]
+            .number_spaces
+            .insert(path_id, pn_space);
+
+        Ok(path_id)
     }
 
     /// Closes a path by sending a PATH_ABANDON frame
@@ -635,36 +658,6 @@ impl Connection {
         &mut self.paths.get_mut(&path_id).expect("known path").data
     }
 
-    // TODO(@divma): missing descriptive docs...
-    /// Returns true if a new path has been added to [`Connection::paths`]
-    fn open_new_path(&mut self, now: Instant) -> bool {
-        let Some((path_id, (remote, status))) = self.paths_to_open.pop_first() else {
-            return false;
-        };
-
-        let mut path = PathData::new(remote, self.allow_mtud, None, now, &self.config);
-        path.status.local_status = status;
-
-        let challenge = self.rng.random();
-        path.challenge = Some(challenge);
-        path.challenge_pending = true;
-        self.paths.insert(
-            path_id,
-            PathState {
-                data: path,
-                prev: None,
-            },
-        );
-
-        // Inform the remote of the path status.
-        self.spaces[SpaceId::Data].pending.path_status.push(path_id);
-        let pn_space = spaces::PacketNumberSpace::new(now, SpaceId::Data, &mut self.rng);
-        self.spaces[SpaceId::Data]
-            .number_spaces
-            .insert(path_id, pn_space);
-        true
-    }
-
     /// Returns packets to transmit
     ///
     /// Connections should be polled for transmit after:
@@ -721,8 +714,6 @@ impl Connection {
             }
             _ => false,
         };
-
-        while self.open_new_path(now) {}
 
         // Check whether we need to send an ACK_FREQUENCY frame
         if let Some(config) = &self.config.ack_frequency_config {
@@ -4051,7 +4042,7 @@ impl Connection {
         let mut sent = SentFrames::default();
         let is_multipath_negotiated = self.is_multipath_negotiated();
         let space = &mut self.spaces[space_id];
-        let allocated_path_count = self.paths.len() + self.paths_to_open.len();
+        let allocated_path_count = self.paths.len();
         let path = &mut self.paths.get_mut(&path_id).expect("known path").data;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         space

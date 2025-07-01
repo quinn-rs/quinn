@@ -364,7 +364,7 @@ impl Connection {
         let mut state = self.0.state.lock("open_path");
         let (on_open_path_send, on_open_path_recv) = oneshot::channel();
         let now = state.runtime.now();
-        let open_res = state.inner.queue_open_path(addr, initial_status, now);
+        let open_res = state.inner.open_path(addr, initial_status, now);
         state.wake();
         match open_res {
             Ok(path_id) => {
