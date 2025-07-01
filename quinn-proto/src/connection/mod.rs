@@ -512,15 +512,7 @@ impl Connection {
 
         // TODO(@divma): this part might be an overkill
         // ensure we have CIDs to use on our side
-
         self.issue_first_path_cids(now);
-
-        // // TODO(@divma): missing descriptive docs...
-        // /// Returns true if a new path has been added to [`Connection::paths`]
-        // fn open_new_path(&mut self, now: Instant) -> bool {
-        //     let Some((path_id, (remote, status))) = self.paths_to_open.pop_first() else {
-        //         return false;
-        //     };
 
         // Create PathData, schedule PATH_CHALLENGE to be sent.
         // TODO(flub): We only need to send the challenge if the remote is not validated.
