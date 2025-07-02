@@ -263,7 +263,7 @@ This example uses <a href="https://github.com/est31/rcgen">rcgen</a> to generate
 -&gt; Result&lt;(CertificateDer&lt;'static&gt;, PrivatePkcs8KeyDer&lt;'static&gt;), Box&lt;dyn Error&gt;&gt; {
     let cert = rcgen::generate_simple_self_signed(vec!["localhost".to_string()])?;
     let cert_der = CertificateDer::from(cert.cert);
-    let key = PrivatePkcs8KeyDer::from(cert.key_pair.serialize_der());
+    let key = PrivatePkcs8KeyDer::from(cert.signing_key.serialize_der());
     Ok((cert_der, key))
 }
 <span class="boring">}</span></code></pre></pre>
