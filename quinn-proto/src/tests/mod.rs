@@ -451,7 +451,7 @@ fn reject_missing_client_cert() {
     // because it's convenient.
     store.add(CERTIFIED_KEY.cert.der().clone()).unwrap();
 
-    let key = PrivatePkcs8KeyDer::from(CERTIFIED_KEY.key_pair.serialize_der());
+    let key = PrivatePkcs8KeyDer::from(CERTIFIED_KEY.signing_key.serialize_der());
     let cert = CERTIFIED_KEY.cert.der().clone();
 
     let provider = Arc::new(default_provider());
@@ -2222,7 +2222,7 @@ fn big_cert_and_key() -> (CertificateDer<'static>, PrivateKeyDer<'static>) {
 
     (
         cert.cert.into(),
-        PrivateKeyDer::Pkcs8(cert.key_pair.serialize_der().into()),
+        PrivateKeyDer::Pkcs8(cert.signing_key.serialize_der().into()),
     )
 }
 
