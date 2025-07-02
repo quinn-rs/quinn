@@ -27,7 +27,7 @@ fastbloom = "0.9"
 futures-io = "0.3.19"
 getrandom = { version = "0.3", default-features = false }
 hdrhistogram = { version = "7.2", default-features = false }
-hex-literal = "0.4"
+hex-literal = "1"
 lru-slab = "0.1.2"
 lazy_static = "1"
 log = "0.4"
