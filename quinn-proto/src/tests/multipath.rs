@@ -2,15 +2,15 @@
 
 use std::num::NonZeroU32;
 use std::sync::Arc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use assert_matches::assert_matches;
 use tracing::info;
 
 use crate::{
     ClientConfig, ClosePathError, ConnectionHandle, ConnectionId, ConnectionIdGenerator, Endpoint,
-    EndpointConfig, LOC_CID_COUNT, PathId, PathStatus, RandomConnectionIdGenerator, ServerConfig,
-    TransportConfig, cid_queue::CidQueue,
+    EndpointConfig, Instant, LOC_CID_COUNT, PathId, PathStatus, RandomConnectionIdGenerator,
+    ServerConfig, TransportConfig, cid_queue::CidQueue,
 };
 
 use super::util::{min_opt, subscribe};
