@@ -1008,7 +1008,7 @@ impl State {
                         Some(t) => {
                             transmits += match t.segment_size {
                                 None => 1,
-                                Some(s) => (t.size + s - 1) / s, // round up
+                                Some(s) => t.size.div_ceil(s), // round up
                             };
                             t
                         }
