@@ -75,8 +75,10 @@ impl State {
 #[derive(Debug, Clone)]
 pub struct Cubic {
     config: Arc<CubicConfig>,
-    state: State,
     current_mtu: u64,
+    state: State,
+    /// Copy of the controller state to restore when a spurious congestion event is detected.
+    pre_congestion_state: Option<State>,
 }
 
 impl Cubic {
@@ -89,6 +91,7 @@ impl Cubic {
                 ..Default::default()
             },
             current_mtu: current_mtu as u64,
+            pre_congestion_state: None,
             config,
         }
     }
@@ -176,6 +179,7 @@ impl Controller for Cubic {
         now: Instant,
         sent: Instant,
         is_persistent_congestion: bool,
+        is_ecn: bool,
         _lost_bytes: u64,
     ) {
         if self
@@ -185,6 +189,11 @@ impl Controller for Cubic {
             .unwrap_or(false)
         {
             return;
+        }
+
+        // Save state in case this event ends up being spurious
+        if !is_ecn {
+            self.pre_congestion_state = Some(self.state.clone());
         }
 
         self.state.recovery_start_time = Some(now);
@@ -218,6 +227,14 @@ impl Controller for Cubic {
             self.state.cwnd_inc = 0;
 
             self.state.window = self.minimum_window();
+        }
+    }
+
+    fn on_spurious_congestion_event(&mut self) {
+        if let Some(prior_state) = self.pre_congestion_state.take() {
+            if self.state.window < prior_state.window {
+                self.state = prior_state;
+            }
         }
     }
 

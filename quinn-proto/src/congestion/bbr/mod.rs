@@ -465,6 +465,7 @@ impl Controller for Bbr {
         _now: Instant,
         _sent: Instant,
         _is_persistent_congestion: bool,
+        _is_ecn: bool,
         lost_bytes: u64,
     ) {
         self.loss_state.lost_bytes += lost_bytes;
