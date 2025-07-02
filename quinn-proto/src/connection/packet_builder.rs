@@ -1,8 +1,8 @@
-use bytes::Bytes;
+use bytes::{BufMut, Bytes};
 use rand::Rng;
 use tracing::{trace, trace_span};
 
-use super::{Connection, SentFrames, spaces::SentPacket};
+use super::{Connection, DatagramBuffer, SentFrames, spaces::SentPacket};
 use crate::{
     ConnectionId, Instant, TransportError, TransportErrorCode,
     connection::ConnectionSide,
@@ -11,17 +11,17 @@ use crate::{
 };
 
 pub(super) struct PacketBuilder {
-    pub(super) datagram_start: usize,
     pub(super) space: SpaceId,
     pub(super) partial_encode: PartialEncode,
     pub(super) ack_eliciting: bool,
     pub(super) exact_number: u64,
     pub(super) short_header: bool,
-    /// Smallest absolute position in the associated buffer that must be occupied by this packet's
-    /// frames
+    /// The smallest datagram offset that must be occupied by this packet's frames
+    ///
+    /// This is the smallest offset into the datagram this packet is being written into,
+    /// that must contain frames for this packet.
     pub(super) min_size: usize,
-    /// Largest absolute position in the associated buffer that may be occupied by this packet's
-    /// frames
+    /// The largest datagram offset that may be occupied by this packet's frames
     pub(super) max_size: usize,
     pub(super) tag_len: usize,
     pub(super) _span: tracing::span::EnteredSpan,
@@ -36,9 +36,7 @@ impl PacketBuilder {
         now: Instant,
         space_id: SpaceId,
         dst_cid: ConnectionId,
-        buffer: &mut Vec<u8>,
-        buffer_capacity: usize,
-        datagram_start: usize,
+        datagram: &mut DatagramBuffer<'_>,
         ack_eliciting: bool,
         conn: &mut Connection,
     ) -> Option<Self> {
@@ -122,9 +120,9 @@ impl PacketBuilder {
                 version,
             }),
         };
-        let partial_encode = header.encode(buffer);
+        let partial_encode = header.encode(datagram);
         if conn.peer_params.grease_quic_bit && conn.rng.random() {
-            buffer[partial_encode.start] ^= FIXED_BIT;
+            datagram[partial_encode.start] ^= FIXED_BIT;
         }
 
         let (sample_size, tag_len) = if let Some(ref crypto) = space.crypto {
@@ -148,14 +146,13 @@ impl PacketBuilder {
         // pn_len + payload_len + tag_len >= sample_size + 4
         // payload_len >= sample_size + 4 - pn_len - tag_len
         let min_size = Ord::max(
-            buffer.len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
+            datagram.len() + (sample_size + 4).saturating_sub(number.len() + tag_len),
             partial_encode.start + dst_cid.len() + 6,
         );
-        let max_size = buffer_capacity - tag_len;
+        let max_size = datagram.capacity() - tag_len;
         debug_assert!(max_size >= min_size);
 
         Some(Self {
-            datagram_start,
             space: space_id,
             partial_encode,
             exact_number,
@@ -174,10 +171,7 @@ impl PacketBuilder {
         // The datagram might already have a larger minimum size than the caller is requesting, if
         // e.g. we're coalescing packets and have populated more than `min_size` bytes with packets
         // already.
-        self.min_size = Ord::max(
-            self.min_size,
-            self.datagram_start + (min_size as usize) - self.tag_len,
-        );
+        self.min_size = Ord::max(self.min_size, (min_size as usize) - self.tag_len);
     }
 
     pub(super) fn finish_and_track(
@@ -185,12 +179,12 @@ impl PacketBuilder {
         now: Instant,
         conn: &mut Connection,
         sent: Option<SentFrames>,
-        buffer: &mut Vec<u8>,
+        datagram: &mut DatagramBuffer<'_>,
     ) {
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
-        let (size, padded) = self.finish(conn, buffer);
+        let (size, padded) = self.finish(conn, datagram);
         let sent = match sent {
             Some(sent) => sent,
             None => return,
@@ -228,11 +222,16 @@ impl PacketBuilder {
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
-    pub(super) fn finish(self, conn: &mut Connection, buffer: &mut Vec<u8>) -> (usize, bool) {
-        let pad = buffer.len() < self.min_size;
+    pub(super) fn finish(
+        self,
+        conn: &mut Connection,
+        datagram: &mut DatagramBuffer<'_>,
+    ) -> (usize, bool) {
+        let pad = self.min_size > datagram.len();
         if pad {
-            trace!("PADDING * {}", self.min_size - buffer.len());
-            buffer.resize(self.min_size, 0);
+            let padding_bytes = self.min_size - datagram.len();
+            trace!("PADDING * {padding_bytes}");
+            datagram.put_bytes(0, padding_bytes);
         }
 
         let space = &conn.spaces[self.space];
@@ -251,15 +250,15 @@ impl PacketBuilder {
             "Mismatching crypto tag len"
         );
 
-        buffer.resize(buffer.len() + packet_crypto.tag_len(), 0);
+        datagram.put_bytes(0, packet_crypto.tag_len());
         let encode_start = self.partial_encode.start;
-        let packet_buf = &mut buffer[encode_start..];
+        let packet_buf = &mut datagram[encode_start..];
         self.partial_encode.finish(
             packet_buf,
             header_crypto,
             Some((self.exact_number, packet_crypto)),
         );
 
-        (buffer.len() - encode_start, pad)
+        (datagram.len() - encode_start, pad)
     }
 }
