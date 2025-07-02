@@ -50,7 +50,8 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
                 Streams::new(&mut state, &conn_state).accept(dir);
             }
             Operation::Finish(id) => {
-                let _ = SendStream::new(id, &mut state, &mut pending, &conn_state).finish();
+                let _ =
+                    SendStream::new_for_fuzzing(id, &mut state, &mut pending, &conn_state).finish();
             }
             Operation::ReceivedStopSending(sid, err_code) => {
                 Streams::new(&mut state, &conn_state)
@@ -63,8 +64,8 @@ fuzz_target!(|input: (StreamParams, Vec<Operation>)| {
                     .received_reset(rs);
             }
             Operation::Reset(id) => {
-                let _ =
-                    SendStream::new(id, &mut state, &mut pending, &conn_state).reset(0u32.into());
+                let _ = SendStream::new_for_fuzzing(id, &mut state, &mut pending, &conn_state)
+                    .reset(0u32.into());
             }
         }
     }
