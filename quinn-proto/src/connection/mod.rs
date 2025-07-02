@@ -233,6 +233,8 @@ pub struct Connection {
     stats: ConnectionStats,
     /// QUIC version used for the connection.
     version: u32,
+    /// True if we emitted the event for received resumption tickets
+    resumption_tickets_received: bool,
 }
 
 impl Connection {
@@ -350,6 +352,7 @@ impl Connection {
             rng,
             stats: ConnectionStats::default(),
             version,
+            resumption_tickets_received: false,
         };
         if path_validated {
             this.on_path_validated();
@@ -2033,6 +2036,12 @@ impl Connection {
             if self.crypto.read_handshake(&chunk.bytes)? {
                 self.events.push_back(Event::HandshakeDataReady);
             }
+        }
+
+        if !self.resumption_tickets_received && self.crypto.resumption_tickets_received() > Some(0)
+        {
+            self.resumption_tickets_received = true;
+            self.events.push_back(Event::ResumptionTicketsReceived)
         }
 
         Ok(())
@@ -3926,6 +3935,10 @@ pub enum Event {
     DatagramReceived,
     /// One or more application datagrams have been sent after blocking
     DatagramsUnblocked,
+    /// One or more TLS session resumption tickets have been received
+    ///
+    /// This event is only emitted on the client, and is emitted at most once per connection.
+    ResumptionTicketsReceived,
 }
 
 fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
