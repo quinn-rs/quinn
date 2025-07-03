@@ -71,10 +71,6 @@ impl TimerTable {
         self.timeout_queue.push(TimerEntry { time, timer });
     }
 
-    pub(super) fn get(&self, timer: Timer) -> Option<Instant> {
-        self.most_recent_timeout.get(&timer).copied()
-    }
-
     pub(super) fn stop(&mut self, timer: Timer) {
         self.most_recent_timeout.remove(&timer);
     }

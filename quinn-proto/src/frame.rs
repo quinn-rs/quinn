@@ -738,6 +738,9 @@ impl NewToken {
 pub(crate) struct MaxPathId(pub(crate) PathId);
 
 impl MaxPathId {
+    pub(crate) const SIZE_BOUND: usize =
+        VarInt(FrameType::MAX_PATH_ID.0).size() + VarInt(u32::MAX as u64).size();
+
     pub(crate) fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
         Ok(Self(buf.get()?))
     }
