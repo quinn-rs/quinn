@@ -279,7 +279,7 @@ impl RetireConnectionId {
         if let Some(id) = self.path_id {
             buf.write(id);
         }
-        buf.write(self.sequence);
+        buf.write_var(self.sequence);
     }
 
     // TODO(@divma): docs
@@ -287,7 +287,7 @@ impl RetireConnectionId {
     pub(crate) fn decode<R: Buf>(bytes: &mut R, read_path: bool) -> coding::Result<Self> {
         Ok(Self {
             path_id: if read_path { Some(bytes.get()?) } else { None },
-            sequence: bytes.get()?,
+            sequence: bytes.get_var()?,
         })
     }
 
