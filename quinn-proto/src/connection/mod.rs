@@ -1899,7 +1899,8 @@ impl Connection {
         }
         self.max_concurrent_paths = count;
 
-        let in_use_count = self.local_max_path_id.0 - self.abandoned_paths.len() as u32;
+        let in_use_count =
+            (self.local_max_path_id.0 + 1).saturating_sub(self.abandoned_paths.len() as u32);
         let extra_needed = count.get().saturating_sub(in_use_count);
         let new_max_path_id = self.local_max_path_id.saturating_add(extra_needed);
 
