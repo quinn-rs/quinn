@@ -545,10 +545,16 @@ impl Connection {
         if Some(path_id) > self.max_path_id() {
             return Err(PathError::MaxPathIdReached);
         }
-
         if path_id > self.remote_max_path_id {
             self.spaces[SpaceId::Data].pending.paths_blocked = true;
             return Err(PathError::MaxPathIdReached);
+        }
+        if self.rem_cids.get(&path_id).map(CidQueue::active).is_none() {
+            self.spaces[SpaceId::Data]
+                .pending
+                .path_cids_blocked
+                .push(path_id);
+            return Err(PathError::RemoteCidsExhausted);
         }
 
         // Create PathData, schedule PATH_CHALLENGE to be sent.
@@ -845,18 +851,14 @@ impl Connection {
                     id: path_id,
                     error: err,
                 }));
-                // this allows us to safely consume the path_id due to the failed attempt,
-                // otherwise we would need to keep track of holes in the range and revert the
-                // max_path_id_in_use
+                // Locally we should have refused to open this path, the remote should have
+                // given us CIDs for this path before opening it.
+                self.close_path(path_id, TransportErrorCode::NO_CID_AVAILABLE.into())
+                    .ok();
                 self.spaces[SpaceId::Data]
                     .pending
-                    .path_abandon
-                    .push((path_id, TransportErrorCode::NO_CID_AVAILABLE));
-                // TODO(@divma): we here need to set the path as abandoned to avoid using it
-                // TODO(@divma): missing logic to remove the path, most likely not here tho. Note
-                // that this includes "considering all associated CIDs retired"
-                // TODO(@divma): here we could send PATH_CIDS_BLOCKED frame, just to play all the
-                // spec's frames, given our range maintenance strategy it's otherwise useless
+                    .path_cids_blocked
+                    .push(path_id);
 
                 match self.paths.keys().find(|&&next| next > path_id) {
                     Some(next_path_id) => {
@@ -3918,7 +3920,7 @@ impl Connection {
                         ));
                     }
                 }
-                Frame::PathCidsBlocked(path_id) => {
+                Frame::PathCidsBlocked(frame::PathCidsBlocked { path_id, next_seq }) => {
                     // Nothing to do.  This is recorded in the frame stats, but otherwise we
                     // always issue all CIDs we're allowed to issue, so either this is an
                     // impatient peer or a bug on our side.
@@ -3932,7 +3934,7 @@ impl Connection {
                                 "PATH_CIDS_BLOCKED path identifier was larger than local maximum",
                             ));
                         }
-                        debug!("received PATH_CIDS_BLOCKED({:?})", path_id);
+                        debug!(?path_id, %next_seq, "received PATH_CIDS_BLOCKED");
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
                             "received PATH_CIDS_BLOCKED frame when not multipath was not negotiated",
@@ -4426,11 +4428,31 @@ impl Connection {
             self.stats.frame_tx.max_path_id += 1;
         }
 
-        // TODO(@divma): missing size bound checks and potentially other checks
-        if space_id == SpaceId::Data && space.pending.paths_blocked {
+        // PATHS_BLOCKED
+        if space_id == SpaceId::Data
+            && space.pending.paths_blocked
+            && frame::PathsBlocked::SIZE_BOUND <= buf.remaining_mut()
+        {
             frame::PathsBlocked(self.remote_max_path_id).encode(buf);
             space.pending.paths_blocked = false;
             sent.retransmits.get_or_create().paths_blocked = true;
+        }
+
+        // PATH_CIDS_BLOCKED
+        while space_id == SpaceId::Data && frame::PathCidsBlocked::SIZE_BOUND <= buf.remaining_mut()
+        {
+            let Some(path_id) = space.pending.path_cids_blocked.pop() else {
+                break;
+            };
+            frame::PathCidsBlocked {
+                path_id,
+                next_seq: todo!(),
+            }
+            .encode(buf);
+            sent.retransmits
+                .get_or_create()
+                .path_cids_blocked
+                .push(path_id);
         }
 
         // RESET_STREAM, STOP_SENDING, MAX_DATA, MAX_STREAM_DATA, MAX_STREAMS
