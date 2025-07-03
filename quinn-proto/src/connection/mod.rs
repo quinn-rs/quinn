@@ -254,7 +254,9 @@ pub struct Connection {
     //
     /// Maximum number of concurrent paths
     ///
-    /// Initially set from the [`TransportConfig::max_concurrent_multipath_paths`].
+    /// Initially set from the [`TransportConfig::max_concurrent_multipath_paths`]. Even
+    /// when multipath is disabled this will be set to 1, it is not used in that case
+    /// though.
     max_concurrent_paths: NonZeroU32,
     /// Local maximum [`PathId`] to be used
     ///
@@ -262,7 +264,7 @@ pub struct Connection {
     /// is negotiated, or to [`PathId::ZERO`] otherwise. This is essentially the value of
     /// the highest MAX_PATH_ID frame sent.
     ///
-    /// Any path with and ID equal or below this [`PathId`] is either:
+    /// Any path with an ID equal or below this [`PathId`] is either:
     ///
     /// - Abandoned, if it is also in [`Connection::abandoned_paths`].
     /// - Open, in this case it is present in [`Connection::paths`]
@@ -1885,8 +1887,8 @@ impl Connection {
     /// actively reduce paths they must be closed using [`Connection::close_path`], which
     /// can also be used to close not-yet-opened paths.
     ///
-    /// If multipath is not enabled in the [`TransportConfig`] this can not enable mulipath
-    /// and will fail.
+    /// If multipath is not negotiated (see the [`TransportConfig`]) this can not enable
+    /// multipath and will fail.
     pub fn set_max_concurrent_paths(
         &mut self,
         now: Instant,
@@ -1898,18 +1900,15 @@ impl Connection {
         self.max_concurrent_paths = count;
 
         let in_use_count = self.local_max_path_id.0 - self.abandoned_paths.len() as u32;
-        let desired_count = u32::from(count);
-        let extra_needed = desired_count.saturating_sub(in_use_count);
-        let new_max_path_id = self.local_max_path_id.0 + extra_needed;
+        let extra_needed = count.get().saturating_sub(in_use_count);
+        let new_max_path_id = self.local_max_path_id.saturating_add(extra_needed);
 
-        self.set_max_path_id(now, PathId(new_max_path_id));
+        self.set_max_path_id(now, new_max_path_id);
 
         Ok(())
     }
 
     /// If needed, issues a new MAX_PATH_ID frame and new CIDs for any newly allowed paths
-    ///
-    /// If the `max_path_id` is equal to or below the `
     fn set_max_path_id(&mut self, now: Instant, max_path_id: PathId) {
         if max_path_id <= self.local_max_path_id {
             return;
@@ -4060,7 +4059,7 @@ impl Connection {
             .push_back(EndpointEventInner::NeedIdentifiers(PathId(0), now, n));
     }
 
-    /// Issues an initial set of CIDs for paths that have not yet had any issued
+    /// Issues an initial set of CIDs for paths that have not yet had any CIDs issued
     ///
     /// Later CIDs are issued when CIDs expire or are retired by the peer.
     fn issue_first_path_cids(&mut self, now: Instant) {
