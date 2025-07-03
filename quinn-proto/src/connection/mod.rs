@@ -4096,7 +4096,6 @@ impl Connection {
         let mut sent = SentFrames::default();
         let is_multipath_negotiated = self.is_multipath_negotiated();
         let space = &mut self.spaces[space_id];
-        let allocated_path_count = self.paths.len();
         let path = &mut self.paths.get_mut(&path_id).expect("known path").data;
         let is_0rtt = space_id == SpaceId::Data && space.crypto.is_none();
         space
@@ -4380,17 +4379,6 @@ impl Connection {
             && space.pending.max_path_id
             && frame::MaxPathId::SIZE_BOUND <= buf.remaining_mut()
         {
-            let currently_allocated = allocated_path_count
-                .try_into()
-                .expect("allocated <= max_concurrent <= u32::MAX");
-
-            let max_concurrent = self
-                .config
-                .max_concurrent_multipath_paths
-                .expect("pending.max_path_id is set, thus multipath is negotiated.")
-                .get();
-            let new_count = max_concurrent.saturating_sub(currently_allocated);
-            self.local_max_path_id.saturating_add(new_count);
             frame::MaxPathId(self.local_max_path_id).encode(buf);
             space.pending.max_path_id = false;
             sent.retransmits.get_or_create().max_path_id = true;
