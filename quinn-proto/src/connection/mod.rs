@@ -7,7 +7,7 @@ use std::{
     sync::Arc,
 };
 
-use bytes::{Bytes, BytesMut};
+use bytes::{BufMut, Bytes, BytesMut};
 use frame::StreamMetaVec;
 #[cfg(feature = "__qlog")]
 use qlog::{
@@ -27,6 +27,7 @@ use crate::{
     cid_queue::CidQueue,
     coding::BufMutExt,
     config::{ServerConfig, TransportConfig},
+    congestion::Controller,
     crypto::{self, KeyPair, Keys, PacketKey},
     frame::{self, Close, Datagram, FrameStruct, NewToken},
     packet::{
@@ -91,8 +92,10 @@ pub use streams::{
 };
 
 mod timer;
-use crate::congestion::Controller;
 use timer::{Timer, TimerTable};
+
+mod transmit_buf;
+use transmit_buf::TransmitBuf;
 
 /// Protocol state and logic for a single QUIC connection
 ///
@@ -538,14 +541,9 @@ impl Connection {
             false => 1,
             true => max_datagrams,
         };
+        let mut buf = TransmitBuf::new(buf, max_datagrams, self.path.current_mtu().into());
 
-        let mut num_datagrams = 0;
-        // Position in `buf` of the first byte of the current UDP datagram. When coalescing QUIC
-        // packets, this can be earlier than the start of the current QUIC packet.
-        let mut datagram_start = 0;
-        let mut segment_size = usize::from(self.path.current_mtu());
-
-        if let Some(challenge) = self.send_path_challenge(now, buf) {
+        if let Some(challenge) = self.send_path_challenge(now, &mut buf) {
             return Some(challenge);
         }
 
@@ -583,71 +581,43 @@ impl Connection {
                 && self.peer_supports_ack_frequency();
         }
 
-        // Reserving capacity can provide more capacity than we asked for. However, we are not
-        // allowed to write more than `segment_size`. Therefore the maximum capacity is tracked
-        // separately.
-        let mut buf_capacity = 0;
-
+        // Whether this packet can be coalesced with another one in the same datagram.
         let mut coalesce = true;
-        let mut builder_storage: Option<PacketBuilder> = None;
-        let mut sent_frames = None;
+
+        // Whether the last packet in the datagram must be padded to at least
+        // MIN_INITIAL_SIZE.
         let mut pad_datagram = false;
+
+        // Whether congestion control stopped the next packet from being sent. Further
+        // packets could still be built, as e.g. tail-loss probes are not congestion
+        // limited.
         let mut congestion_blocked = false;
 
+        // The packet number of the last built packet.
+        let mut last_packet_number = None;
+
         // Iterate over all spaces and find data to send
-        let mut space_idx = 0;
-        let spaces = [SpaceId::Initial, SpaceId::Handshake, SpaceId::Data];
-        // This loop will potentially spend multiple iterations in the same `SpaceId`,
-        // so we cannot trivially rewrite it to take advantage of `SpaceId::iter()`.
-        while space_idx < spaces.len() {
-            let space_id = spaces[space_idx];
-            // Number of bytes available for frames if this is a 1-RTT packet. We're guaranteed to
-            // be able to send an individual frame at least this large in the next 1-RTT
-            // packet. This could be generalized to support every space, but it's only needed to
-            // handle large fixed-size frames, which only exist in 1-RTT (application datagrams). We
-            // don't account for coalesced packets potentially occupying space because frames can
-            // always spill into the next datagram.
-            let pn = self.packet_number_filter.peek(&self.spaces[SpaceId::Data]);
-            let frame_space_1rtt =
-                segment_size.saturating_sub(self.predict_1rtt_overhead(Some(pn)));
-
-            // Is there data or a close message to send in this space?
-            let can_send = self.space_can_send(space_id, frame_space_1rtt);
-            if can_send.is_empty() && (!close || self.spaces[space_id].crypto.is_none()) {
-                space_idx += 1;
-                continue;
-            }
-
+        //
+        // Each loop builds one packet, which is finished before the next iteration of the
+        // loop.  When packets are coalesced a datagram is filled over multiple loops.
+        let mut next_space_id = self.next_send_space(SpaceId::Initial, &buf, close);
+        while let Some(space_id) = next_space_id {
+            // Whether the next packet will contain ack-eliciting frames.
             let mut ack_eliciting = !self.spaces[space_id].pending.is_empty(&self.streams)
                 || self.spaces[space_id].ping_pending
                 || self.spaces[space_id].immediate_ack_pending;
             if space_id == SpaceId::Data {
+                let pn = self.packet_number_filter.peek(&self.spaces[SpaceId::Data]);
+                let frame_space_1rtt = buf
+                    .segment_size()
+                    .saturating_sub(self.predict_1rtt_overhead(Some(pn)));
                 ack_eliciting |= self.can_send_1rtt(frame_space_1rtt);
             }
 
-            // Can we append more data into the current buffer?
-            // It is not safe to assume that `buf.len()` is the end of the data,
-            // since the last packet might not have been finished.
-            let buf_end = if let Some(builder) = &builder_storage {
-                buf.len().max(builder.min_size) + builder.tag_len
-            } else {
-                buf.len()
-            };
-
-            let tag_len = if let Some(ref crypto) = self.spaces[space_id].crypto {
-                crypto.packet.local.tag_len()
-            } else if space_id == SpaceId::Data {
-                self.zero_rtt_crypto.as_ref().expect(
-                    "sending packets in the application data space requires known 0-RTT or 1-RTT keys",
-                ).packet.tag_len()
-            } else {
-                unreachable!("tried to send {:?} packet without keys", space_id)
-            };
-            if !coalesce || buf_capacity - buf_end < MIN_PACKET_SPACE + tag_len {
-                // We need to send 1 more datagram and extend the buffer for that.
-
+            // If the datagram is full, we need to start a new one.
+            if buf.datagram_remaining_mut() == 0 {
                 // Is 1 more datagram allowed?
-                if num_datagrams >= max_datagrams {
+                if buf.num_datagrams() >= buf.max_datagrams() {
                     // No more datagrams allowed
                     break;
                 }
@@ -658,10 +628,9 @@ impl Connection {
                 // for starting another datagram. If there is any anti-amplification
                 // budget left, we always allow a full MTU to be sent
                 // (see https://github.com/quinn-rs/quinn/issues/1082)
-                if self
-                    .path
-                    .anti_amplification_blocked(segment_size as u64 * (num_datagrams as u64) + 1)
-                {
+                if self.path.anti_amplification_blocked(
+                    (buf.segment_size() * buf.num_datagrams()) as u64 + 1,
+                ) {
                     trace!("blocked by anti-amplification");
                     break;
                 }
@@ -669,22 +638,20 @@ impl Connection {
                 // Congestion control and pacing checks
                 // Tail loss probes must not be blocked by congestion, or a deadlock could arise
                 if ack_eliciting && self.spaces[space_id].loss_probes == 0 {
-                    // Assume the current packet will get padded to fill the segment
-                    let untracked_bytes = if let Some(builder) = &builder_storage {
-                        buf_capacity - builder.partial_encode.start
-                    } else {
-                        0
-                    } as u64;
-                    debug_assert!(untracked_bytes <= segment_size as u64);
-
-                    let bytes_to_send = segment_size as u64 + untracked_bytes;
+                    let bytes_to_send = buf.segment_size() as u64;
                     if self.path.in_flight.bytes + bytes_to_send >= self.path.congestion.window() {
-                        space_idx += 1;
+                        next_space_id = self.next_send_space(space_id.next(), &buf, close);
                         congestion_blocked = true;
-                        // We continue instead of breaking here in order to avoid
-                        // blocking loss probes queued for higher spaces.
                         trace!("blocked by congestion control");
-                        continue;
+                        if next_space_id == Some(space_id) {
+                            // We are in the highest space, nothing more to do.
+                            break;
+                        } else {
+                            // We continue looking for packets in higher spaces because we
+                            // might still have to send loss probes in them, which are not
+                            // congestion controlled.
+                            continue;
+                        }
                     }
 
                     // Check whether the next datagram is blocked by pacing
@@ -705,118 +672,25 @@ impl Connection {
                     }
                 }
 
-                // Finish current packet
-                if let Some(mut builder) = builder_storage.take() {
-                    if pad_datagram {
-                        builder.pad_to(MIN_INITIAL_SIZE);
-                    }
-
-                    if num_datagrams > 1 {
-                        // If too many padding bytes would be required to continue the GSO batch
-                        // after this packet, end the GSO batch here. Ensures that fixed-size frames
-                        // with heterogeneous sizes (e.g. application datagrams) won't inadvertently
-                        // waste large amounts of bandwidth. The exact threshold is a bit arbitrary
-                        // and might benefit from further tuning, though there's no universally
-                        // optimal value.
-                        //
-                        // Additionally, if this datagram is a loss probe and `segment_size` is
-                        // larger than `INITIAL_MTU`, then padding it to `segment_size` to continue
-                        // the GSO batch would risk failure to recover from a reduction in path
-                        // MTU. Loss probes are the only packets for which we might grow
-                        // `buf_capacity` by less than `segment_size`.
-                        const MAX_PADDING: usize = 16;
-                        let packet_len_unpadded = cmp::max(builder.min_size, buf.len())
-                            - datagram_start
-                            + builder.tag_len;
-                        if packet_len_unpadded + MAX_PADDING < segment_size
-                            || datagram_start + segment_size > buf_capacity
-                        {
-                            trace!(
-                                "GSO truncated by demand for {} padding bytes or loss probe",
-                                segment_size - packet_len_unpadded
-                            );
-                            builder_storage = Some(builder);
-                            break;
-                        }
-
-                        // Pad the current datagram to GSO segment size so it can be included in the
-                        // GSO batch.
-                        builder.pad_to(segment_size as u16);
-                    }
-
-                    builder.finish_and_track(now, self, sent_frames.take(), buf);
-
-                    if num_datagrams == 1 {
-                        // Set the segment size for this GSO batch to the size of the first UDP
-                        // datagram in the batch. Larger data that cannot be fragmented
-                        // (e.g. application datagrams) will be included in a future batch. When
-                        // sending large enough volumes of data for GSO to be useful, we expect
-                        // packet sizes to usually be consistent, e.g. populated by max-size STREAM
-                        // frames or uniformly sized datagrams.
-                        segment_size = buf.len();
-                        // Clip the unused capacity out of the buffer so future packets don't
-                        // overrun
-                        buf_capacity = buf.len();
-
-                        // Check whether the data we planned to send will fit in the reduced segment
-                        // size. If not, bail out and leave it for the next GSO batch so we don't
-                        // end up trying to send an empty packet. We can't easily compute the right
-                        // segment size before the original call to `space_can_send`, because at
-                        // that time we haven't determined whether we're going to coalesce with the
-                        // first datagram or potentially pad it to `MIN_INITIAL_SIZE`.
-                        if space_id == SpaceId::Data {
-                            let frame_space_1rtt =
-                                segment_size.saturating_sub(self.predict_1rtt_overhead(Some(pn)));
-                            if self.space_can_send(space_id, frame_space_1rtt).is_empty() {
-                                break;
-                            }
-                        }
-                    }
-                }
-
-                // Allocate space for another datagram
-                let next_datagram_size_limit = match self.spaces[space_id].loss_probes {
-                    0 => segment_size,
+                // Start the next datagram
+                match self.spaces[space_id].loss_probes {
+                    0 => buf.start_new_datagram(),
                     _ => {
                         self.spaces[space_id].loss_probes -= 1;
                         // Clamp the datagram to at most the minimum MTU to ensure that loss probes
                         // can get through and enable recovery even if the path MTU has shrank
                         // unexpectedly.
-                        std::cmp::min(segment_size, usize::from(INITIAL_MTU))
+                        buf.start_new_datagram_with_size(std::cmp::min(
+                            usize::from(INITIAL_MTU),
+                            buf.segment_size(),
+                        ));
                     }
                 };
-                buf_capacity += next_datagram_size_limit;
-                if buf.capacity() < buf_capacity {
-                    // We reserve the maximum space for sending `max_datagrams` upfront
-                    // to avoid any reallocations if more datagrams have to be appended later on.
-                    // Benchmarks have shown shown a 5-10% throughput improvement
-                    // compared to continuously resizing the datagram buffer.
-                    // While this will lead to over-allocation for small transmits
-                    // (e.g. purely containing ACKs), modern memory allocators
-                    // (e.g. mimalloc and jemalloc) will pool certain allocation sizes
-                    // and therefore this is still rather efficient.
-                    buf.reserve(max_datagrams * segment_size);
-                }
-                num_datagrams += 1;
                 coalesce = true;
                 pad_datagram = false;
-                datagram_start = buf.len();
-
-                debug_assert_eq!(
-                    datagram_start % segment_size,
-                    0,
-                    "datagrams in a GSO batch must be aligned to the segment size"
-                );
-            } else {
-                // We can append/coalesce the next packet into the current
-                // datagram.
-                // Finish current packet without adding extra padding
-                if let Some(builder) = builder_storage.take() {
-                    builder.finish_and_track(now, self, sent_frames.take(), buf);
-                }
             }
 
-            debug_assert!(buf_capacity - buf.len() >= MIN_PACKET_SPACE);
+            debug_assert!(buf.datagram_remaining_mut() >= MIN_PACKET_SPACE);
 
             //
             // From here on, we've determined that a packet will definitely be sent.
@@ -834,21 +708,15 @@ impl Connection {
                 prev.update_unacked = false;
             }
 
-            debug_assert!(
-                builder_storage.is_none() && sent_frames.is_none(),
-                "Previous packet must have been finished"
-            );
-
-            let builder = builder_storage.insert(PacketBuilder::new(
+            let mut builder = PacketBuilder::new(
                 now,
                 space_id,
                 self.rem_cids.active(),
-                buf,
-                buf_capacity,
-                datagram_start,
+                &mut buf,
                 ack_eliciting,
                 self,
-            )?);
+            )?;
+            last_packet_number = Some(builder.exact_number);
             coalesce = coalesce && !builder.short_header;
 
             // https://tools.ietf.org/html/draft-ietf-quic-transport-34#section-14.1
@@ -861,13 +729,14 @@ impl Connection {
                 // a better approximate on what data has been processed. This is
                 // especially important with ack delay, since the peer might not
                 // have gotten any other ACK for the data earlier on.
+                let mut sent_frames = SentFrames::default();
                 if !self.spaces[space_id].pending_acks.ranges().is_empty() {
                     Self::populate_acks(
                         now,
                         self.receiving_ecn,
-                        &mut SentFrames::default(),
+                        &mut sent_frames,
                         &mut self.spaces[space_id],
-                        buf,
+                        &mut builder.frame_space_mut(),
                         &mut self.stats,
                     );
                 }
@@ -876,22 +745,22 @@ impl Connection {
                 // to encode the ConnectionClose frame too. However we still have the
                 // check here to prevent crashes if something changes.
                 debug_assert!(
-                    buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size,
+                    builder.frame_space_remaining() > frame::ConnectionClose::SIZE_BOUND,
                     "ACKs should leave space for ConnectionClose"
                 );
-                if buf.len() + frame::ConnectionClose::SIZE_BOUND < builder.max_size {
-                    let max_frame_size = builder.max_size - buf.len();
+                if frame::ConnectionClose::SIZE_BOUND < builder.frame_space_remaining() {
+                    let max_frame_size = builder.frame_space_remaining();
                     match self.state {
                         State::Closed(state::Closed { ref reason }) => {
                             if space_id == SpaceId::Data || reason.is_transport_layer() {
-                                reason.encode(buf, max_frame_size)
+                                reason.encode(&mut builder.frame_space_mut(), max_frame_size)
                             } else {
                                 frame::ConnectionClose {
                                     error_code: TransportErrorCode::APPLICATION_ERROR,
                                     frame_type: None,
                                     reason: Bytes::new(),
                                 }
-                                .encode(buf, max_frame_size)
+                                .encode(&mut builder.frame_space_mut(), max_frame_size)
                             }
                         }
                         State::Draining => frame::ConnectionClose {
@@ -899,12 +768,13 @@ impl Connection {
                             frame_type: None,
                             reason: Bytes::new(),
                         }
-                        .encode(buf, max_frame_size),
+                        .encode(&mut builder.frame_space_mut(), max_frame_size),
                         _ => unreachable!(
                             "tried to make a close packet when the connection wasn't closed"
                         ),
                     }
                 }
+                builder.finish_and_track(now, self, sent_frames, pad_datagram);
                 if space_id == self.highest_space {
                     // Don't send another close packet
                     self.close = false;
@@ -914,31 +784,30 @@ impl Connection {
                     // Send a close frame in every possible space for robustness, per RFC9000
                     // "Immediate Close during the Handshake". Don't bother trying to send anything
                     // else.
-                    space_idx += 1;
+                    next_space_id = self.next_send_space(space_id.next(), &buf, close);
                     continue;
                 }
             }
 
             // Send an off-path PATH_RESPONSE. Prioritized over on-path data to ensure that path
             // validation can occur while the link is saturated.
-            if space_id == SpaceId::Data && num_datagrams == 1 {
+            if space_id == SpaceId::Data && builder.buf.num_datagrams() == 1 {
                 if let Some((token, remote)) = self.path_responses.pop_off_path(self.path.remote) {
-                    // `unwrap` guaranteed to succeed because `builder_storage` was populated just
-                    // above.
-                    let mut builder = builder_storage.take().unwrap();
                     trace!("PATH_RESPONSE {:08x} (off-path)", token);
-                    buf.write(frame::FrameType::PATH_RESPONSE);
-                    buf.write(token);
+                    builder
+                        .frame_space_mut()
+                        .write(frame::FrameType::PATH_RESPONSE);
+                    builder.frame_space_mut().write(token);
                     self.stats.frame_tx.path_response += 1;
                     builder.pad_to(MIN_INITIAL_SIZE);
                     builder.finish_and_track(
                         now,
                         self,
-                        Some(SentFrames {
+                        SentFrames {
                             non_retransmits: true,
                             ..SentFrames::default()
-                        }),
-                        buf,
+                        },
+                        false,
                     );
                     self.stats.udp_tx.on_sent(1, buf.len());
                     return Some(Transmit {
@@ -951,8 +820,10 @@ impl Connection {
                 }
             }
 
-            let sent =
-                self.populate_packet(now, space_id, buf, builder.max_size, builder.exact_number);
+            let sent_frames = {
+                let pn = builder.exact_number;
+                self.populate_packet(now, space_id, &mut builder.frame_space_mut(), pn)
+            };
 
             // ACK-only packets should only be sent when explicitly allowed. If we write them due to
             // any other reason, there is a bug which leads to one component announcing write
@@ -960,35 +831,121 @@ impl Connection {
             // only checked if the full MTU is available and when potentially large fixed-size
             // frames aren't queued, so that lack of space in the datagram isn't the reason for just
             // writing ACKs.
-            debug_assert!(
-                !(sent.is_ack_only(&self.streams)
-                    && !can_send.acks
-                    && can_send.other
-                    && (buf_capacity - builder.datagram_start) == self.path.current_mtu() as usize
-                    && self.datagrams.outgoing.is_empty()),
-                "SendableFrames was {can_send:?}, but only ACKs have been written"
-            );
-            pad_datagram |= sent.requires_padding;
+            {
+                let pn = if builder.space == SpaceId::Data {
+                    builder.exact_number
+                } else {
+                    self.packet_number_filter.peek(&self.spaces[SpaceId::Data])
+                };
+                let frame_space_1rtt = builder
+                    .buf
+                    .segment_size()
+                    .saturating_sub(self.predict_1rtt_overhead(Some(pn)));
+                let can_send = self.space_can_send(space_id, frame_space_1rtt);
+                debug_assert!(
+                    !(sent_frames.is_ack_only(&self.streams)
+                        && !can_send.acks
+                        && can_send.other
+                        && builder.buf.segment_size() == self.path.current_mtu() as usize
+                        && self.datagrams.outgoing.is_empty()),
+                    "SendableFrames was {can_send:?}, but only ACKs have been written"
+                );
+            }
+            pad_datagram |= sent_frames.requires_padding;
 
-            if sent.largest_acked.is_some() {
+            if sent_frames.largest_acked.is_some() {
                 self.spaces[space_id].pending_acks.acks_sent();
                 self.timers.stop(Timer::MaxAckDelay);
             }
 
-            // Keep information about the packet around until it gets finalized
-            sent_frames = Some(sent);
+            // Now we need to finish the packet.  Before we do so we need to know if we will
+            // be coalescing the next packet into this one, or will be ending the datagram
+            // as well.  Because if this is the last packet in the datagram more padding
+            // might be needed because of the packet type, or to fill the GSO segment size.
+            next_space_id = self.next_send_space(space_id, builder.buf, close);
+            if let Some(next_space_id) = next_space_id {
+                // Are we allowed to coalesce AND is there enough space for another *packet*
+                // in this datagram?
+                if coalesce
+                    && builder
+                        .buf
+                        .datagram_remaining_mut()
+                        .saturating_sub(builder.predict_packet_end())
+                        > MIN_PACKET_SPACE
+                {
+                    // We can append/coalesce the next packet into the current
+                    // datagram. Finish the current packet without adding extra padding.
+                    builder.finish_and_track(now, self, sent_frames, false);
+                } else {
+                    // We need a new datagram for the next packet.  Finish the current
+                    // packet with padding.
+                    if builder.buf.num_datagrams() > 1 {
+                        // If too many padding bytes would be required to continue the
+                        // GSO batch after this packet, end the GSO batch here. Ensures
+                        // that fixed-size frames with heterogeneous sizes
+                        // (e.g. application datagrams) won't inadvertently waste large
+                        // amounts of bandwidth. The exact threshold is a bit arbitrary
+                        // and might benefit from further tuning, though there's no
+                        // universally optimal value.
+                        //
+                        // Additionally, if this datagram is a loss probe and
+                        // `segment_size` is larger than `INITIAL_MTU`, then padding it
+                        // to `segment_size` to continue the GSO batch would risk
+                        // failure to recover from a reduction in path MTU. Loss probes
+                        // are the only packets for which we might grow `buf_capacity`
+                        // by less than `segment_size`.
+                        const MAX_PADDING: usize = 16;
+                        if builder.buf.datagram_remaining_mut()
+                            > builder.predict_packet_end() + MAX_PADDING
+                        {
+                            trace!(
+                                "GSO truncated by demand for {} padding bytes",
+                                builder.buf.datagram_remaining_mut() - builder.predict_packet_end()
+                            );
+                            builder.finish_and_track(now, self, sent_frames, pad_datagram);
+                            break;
+                        }
 
-            // Don't increment space_idx.
-            // We stay in the current space and check if there is more data to send.
+                        // Pad the current datagram to GSO segment size so it can be
+                        // included in the GSO batch.
+                        builder.pad_to(builder.buf.segment_size() as u16);
+                    }
+
+                    builder.finish_and_track(now, self, sent_frames, pad_datagram);
+
+                    if buf.num_datagrams() == 1 {
+                        buf.clip_datagram_size();
+                        if next_space_id == SpaceId::Data {
+                            // Now that we know the size of the first datagram, check whether
+                            // the data we planned to send will fit in the next segment.  If
+                            // not, bail out and leave it for the next GSO batch.  We can't
+                            // easily compute the right segment size before the original call to
+                            // `space_can_send`, because at that time we haven't determined
+                            // whether we're going to coalesce with the first datagram or
+                            // potentially pad it to `MIN_INITIAL_SIZE`.
+                            let pn = self.packet_number_filter.peek(&self.spaces[SpaceId::Data]);
+                            let frame_space_1rtt = buf
+                                .segment_size()
+                                .saturating_sub(self.predict_1rtt_overhead(Some(pn)));
+                            if self
+                                .space_can_send(next_space_id, frame_space_1rtt)
+                                .is_empty()
+                            {
+                                break;
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Nothing more to send.  This was the last packet.
+                builder.finish_and_track(now, self, sent_frames, pad_datagram);
+                break;
+            }
         }
 
-        // Finish the last packet
-        if let Some(mut builder) = builder_storage {
-            if pad_datagram {
-                builder.pad_to(MIN_INITIAL_SIZE);
-            }
-            let last_packet_number = builder.exact_number;
-            builder.finish_and_track(now, self, sent_frames, buf);
+        if let Some(last_packet_number) = last_packet_number {
+            // Note that when sending in multiple packet spaces the last packet number will
+            // be the one from the highest packet space.
             self.path
                 .congestion
                 .on_sent(now, buf.len() as u64, last_packet_number);
@@ -1007,27 +964,22 @@ impl Connection {
                 .mtud
                 .poll_transmit(now, self.packet_number_filter.peek(&self.spaces[space_id]))?;
 
-            let buf_capacity = probe_size as usize;
-            buf.reserve(buf_capacity);
+            debug_assert_eq!(buf.num_datagrams(), 0);
+            buf.start_new_datagram_with_size(probe_size as usize);
 
-            let mut builder = PacketBuilder::new(
-                now,
-                space_id,
-                self.rem_cids.active(),
-                buf,
-                buf_capacity,
-                0,
-                true,
-                self,
-            )?;
+            debug_assert_eq!(buf.datagram_start_offset(), 0);
+            let mut builder =
+                PacketBuilder::new(now, space_id, self.rem_cids.active(), &mut buf, true, self)?;
 
             // We implement MTU probes as ping packets padded up to the probe size
-            buf.write(frame::FrameType::PING);
+            builder.frame_space_mut().write(frame::FrameType::PING);
             self.stats.frame_tx.ping += 1;
 
             // If supported by the peer, we want no delays to the probe's ACK
             if self.peer_supports_ack_frequency() {
-                buf.write(frame::FrameType::IMMEDIATE_ACK);
+                builder
+                    .frame_space_mut()
+                    .write(frame::FrameType::IMMEDIATE_ACK);
                 self.stats.frame_tx.immediate_ack += 1;
             }
 
@@ -1036,10 +988,9 @@ impl Connection {
                 non_retransmits: true,
                 ..Default::default()
             };
-            builder.finish_and_track(now, self, Some(sent_frames), buf);
+            builder.finish_and_track(now, self, sent_frames, false);
 
             self.stats.path.sent_plpmtud_probes += 1;
-            num_datagrams = 1;
 
             trace!(?probe_size, "writing MTUD probe");
         }
@@ -1048,10 +999,16 @@ impl Connection {
             return None;
         }
 
-        trace!("sending {} bytes in {} datagrams", buf.len(), num_datagrams);
+        trace!(
+            "sending {} bytes in {} datagrams",
+            buf.len(),
+            buf.num_datagrams()
+        );
         self.path.total_sent = self.path.total_sent.saturating_add(buf.len() as u64);
 
-        self.stats.udp_tx.on_sent(num_datagrams as u64, buf.len());
+        self.stats
+            .udp_tx
+            .on_sent(buf.num_datagrams() as u64, buf.len());
 
         Some(Transmit {
             destination: self.path.remote,
@@ -1061,16 +1018,50 @@ impl Connection {
             } else {
                 None
             },
-            segment_size: match num_datagrams {
+            segment_size: match buf.num_datagrams() {
                 1 => None,
-                _ => Some(segment_size),
+                _ => Some(buf.segment_size()),
             },
             src_ip: self.local_ip,
         })
     }
 
+    /// Returns the [`SpaceId`] of the next packet space which has data to send
+    ///
+    /// This takes into account the space available to frames in the next datagram.
+    fn next_send_space(
+        &self,
+        current_space_id: SpaceId,
+        buf: &TransmitBuf<'_>,
+        close: bool,
+    ) -> Option<SpaceId> {
+        // Number of bytes available for frames if this is a 1-RTT packet. We're guaranteed
+        // to be able to send an individual frame at least this large in the next 1-RTT
+        // packet. This could be generalized to support every space, but it's only needed to
+        // handle large fixed-size frames, which only exist in 1-RTT (application
+        // datagrams). We don't account for coalesced packets potentially occupying space
+        // because frames can always spill into the next datagram.
+        let pn = self.packet_number_filter.peek(&self.spaces[SpaceId::Data]);
+        let frame_space_1rtt = buf
+            .segment_size()
+            .saturating_sub(self.predict_1rtt_overhead(Some(pn)));
+        let mut space_id = current_space_id;
+        loop {
+            let can_send = self.space_can_send(space_id, frame_space_1rtt);
+            if !can_send.is_empty() || (close && self.spaces[space_id].crypto.is_some()) {
+                return Some(space_id);
+            }
+            space_id = match space_id {
+                SpaceId::Initial => SpaceId::Handshake,
+                SpaceId::Handshake => SpaceId::Data,
+                SpaceId::Data => break,
+            }
+        }
+        None
+    }
+
     /// Send PATH_CHALLENGE for a previous path if necessary
-    fn send_path_challenge(&mut self, now: Instant, buf: &mut Vec<u8>) -> Option<Transmit> {
+    fn send_path_challenge(&mut self, now: Instant, buf: &mut TransmitBuf<'_>) -> Option<Transmit> {
         let (prev_cid, prev_path) = self.prev_path.as_mut()?;
         if !prev_path.challenge_pending {
             return None;
@@ -1085,28 +1076,20 @@ impl Connection {
             SpaceId::Data,
             "PATH_CHALLENGE queued without 1-RTT keys"
         );
-        buf.reserve(MIN_INITIAL_SIZE as usize);
-
-        let buf_capacity = buf.capacity();
+        buf.start_new_datagram_with_size(MIN_INITIAL_SIZE as usize);
 
         // Use the previous CID to avoid linking the new path with the previous path. We
         // don't bother accounting for possible retirement of that prev_cid because this is
         // sent once, immediately after migration, when the CID is known to be valid. Even
         // if a post-migration packet caused the CID to be retired, it's fair to pretend
         // this is sent first.
-        let mut builder = PacketBuilder::new(
-            now,
-            SpaceId::Data,
-            *prev_cid,
-            buf,
-            buf_capacity,
-            0,
-            false,
-            self,
-        )?;
+        debug_assert_eq!(buf.datagram_start_offset(), 0);
+        let mut builder = PacketBuilder::new(now, SpaceId::Data, *prev_cid, buf, false, self)?;
         trace!("validating previous path with PATH_CHALLENGE {:08x}", token);
-        buf.write(frame::FrameType::PATH_CHALLENGE);
-        buf.write(token);
+        builder
+            .frame_space_mut()
+            .write(frame::FrameType::PATH_CHALLENGE);
+        builder.frame_space_mut().write(token);
         self.stats.frame_tx.path_challenge += 1;
 
         // An endpoint MUST expand datagrams that contain a PATH_CHALLENGE frame
@@ -1115,7 +1098,7 @@ impl Connection {
         // sending a datagram of this size
         builder.pad_to(MIN_INITIAL_SIZE);
 
-        builder.finish(self, buf);
+        builder.finish(self);
         self.stats.udp_tx.on_sent(1, buf.len());
 
         Some(Transmit {
@@ -3158,8 +3141,7 @@ impl Connection {
         &mut self,
         now: Instant,
         space_id: SpaceId,
-        buf: &mut Vec<u8>,
-        max_size: usize,
+        buf: &mut impl BufMut,
         pn: u64,
     ) -> SentFrames {
         let mut sent = SentFrames::default();
@@ -3235,7 +3217,7 @@ impl Connection {
         }
 
         // PATH_CHALLENGE
-        if buf.len() + 9 < max_size && space_id == SpaceId::Data {
+        if buf.remaining_mut() > 9 && space_id == SpaceId::Data {
             // Transmit challenges with every outgoing frame on an unvalidated path
             if let Some(token) = self.path.challenge {
                 // But only send a packet solely for that purpose at most once
@@ -3250,7 +3232,7 @@ impl Connection {
         }
 
         // PATH_RESPONSE
-        if buf.len() + 9 < max_size && space_id == SpaceId::Data {
+        if buf.remaining_mut() > 9 && space_id == SpaceId::Data {
             if let Some(token) = self.path_responses.pop_on_path(self.path.remote) {
                 sent.non_retransmits = true;
                 sent.requires_padding = true;
@@ -3262,7 +3244,7 @@ impl Connection {
         }
 
         // CRYPTO
-        while buf.len() + frame::Crypto::SIZE_BOUND < max_size && !is_0rtt {
+        while buf.remaining_mut() > frame::Crypto::SIZE_BOUND && !is_0rtt {
             let mut frame = match space.pending.crypto.pop_front() {
                 Some(x) => x,
                 None => break,
@@ -3272,8 +3254,7 @@ impl Connection {
             // Since the offset is known, we can reserve the exact size required to encode it.
             // For length we reserve 2bytes which allows to encode up to 2^14,
             // which is more than what fits into normally sized QUIC frames.
-            let max_crypto_data_size = max_size
-                - buf.len()
+            let max_crypto_data_size = buf.remaining_mut()
                 - 1 // Frame Type
                 - VarInt::size(unsafe { VarInt::from_u64_unchecked(frame.offset) })
                 - 2; // Maximum encoded length for frame size, given we send less than 2^14 bytes
@@ -3309,12 +3290,11 @@ impl Connection {
                 &mut space.pending,
                 &mut sent.retransmits,
                 &mut self.stats.frame_tx,
-                max_size,
             );
         }
 
         // NEW_CONNECTION_ID
-        while buf.len() + 44 < max_size {
+        while buf.remaining_mut() > 44 {
             let issued = match space.pending.new_cids.pop() {
                 Some(x) => x,
                 None => break,
@@ -3336,7 +3316,7 @@ impl Connection {
         }
 
         // RETIRE_CONNECTION_ID
-        while buf.len() + frame::RETIRE_CONNECTION_ID_SIZE_BOUND < max_size {
+        while buf.remaining_mut() > frame::RETIRE_CONNECTION_ID_SIZE_BOUND {
             let seq = match space.pending.retire_cids.pop() {
                 Some(x) => x,
                 None => break,
@@ -3350,8 +3330,8 @@ impl Connection {
 
         // DATAGRAM
         let mut sent_datagrams = false;
-        while buf.len() + Datagram::SIZE_BOUND < max_size && space_id == SpaceId::Data {
-            match self.datagrams.write(buf, max_size) {
+        while buf.remaining_mut() > Datagram::SIZE_BOUND && space_id == SpaceId::Data {
+            match self.datagrams.write(buf) {
                 true => {
                     sent_datagrams = true;
                     sent.non_retransmits = true;
@@ -3391,7 +3371,7 @@ impl Connection {
                 token: token.encode(&*server_config.token_key).into(),
             };
 
-            if buf.len() + new_token.size() >= max_size {
+            if buf.remaining_mut() < new_token.size() {
                 space.pending.new_tokens.push(remote_addr);
                 break;
             }
@@ -3406,9 +3386,9 @@ impl Connection {
 
         // STREAM
         if space_id == SpaceId::Data {
-            sent.stream_frames =
-                self.streams
-                    .write_stream_frames(buf, max_size, self.config.send_fairness);
+            sent.stream_frames = self
+                .streams
+                .write_stream_frames(buf, self.config.send_fairness);
             self.stats.frame_tx.stream += sent.stream_frames.len() as u64;
         }
 
@@ -3424,7 +3404,7 @@ impl Connection {
         receiving_ecn: bool,
         sent: &mut SentFrames,
         space: &mut PacketSpace,
-        buf: &mut Vec<u8>,
+        buf: &mut impl BufMut,
         stats: &mut ConnectionStats,
     ) {
         debug_assert!(!space.pending_acks.ranges().is_empty());

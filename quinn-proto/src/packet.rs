@@ -219,6 +219,23 @@ impl PartialDecode {
     }
 }
 
+/// A buffer that can tell how much has been written to it already
+///
+/// This is commonly used for when a buffer is passed and the user may not write past a
+/// given size. It allows the user of such a buffer to know the current cursor position in
+/// the buffer. The maximum write size is usually passed in the same unit as
+/// [`BufLen::len`]: bytes since the buffer start.
+pub(crate) trait BufLen {
+    /// Returns the number of bytes written into the buffer so far
+    fn len(&self) -> usize;
+}
+
+impl BufLen for Vec<u8> {
+    fn len(&self) -> usize {
+        self.len()
+    }
+}
+
 pub(crate) struct Packet {
     pub(crate) header: Header,
     pub(crate) header_data: Bytes,
@@ -281,7 +298,7 @@ pub(crate) enum Header {
 }
 
 impl Header {
-    pub(crate) fn encode(&self, w: &mut Vec<u8>) -> PartialEncode {
+    pub(crate) fn encode(&self, w: &mut (impl BufMut + BufLen)) -> PartialEncode {
         use Header::*;
         let start = w.len();
         match *self {
@@ -893,6 +910,17 @@ pub enum SpaceId {
 impl SpaceId {
     pub fn iter() -> impl Iterator<Item = Self> {
         [Self::Initial, Self::Handshake, Self::Data].iter().cloned()
+    }
+
+    /// Returns the next higher packet space.
+    ///
+    /// Keeps returning [`SpaceId::Data`] as the highest space.
+    pub fn next(&self) -> Self {
+        match self {
+            Self::Initial => Self::Handshake,
+            Self::Handshake => Self::Data,
+            Self::Data => Self::Data,
+        }
     }
 }
 
