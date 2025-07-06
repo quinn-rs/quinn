@@ -1350,6 +1350,10 @@ impl Connection {
     ///
     /// This can be useful for testing key updates, as they otherwise only happen infrequently.
     pub fn force_key_update(&mut self) {
+        if !self.state.is_established() {
+            debug!("ignoring forced key update in illegal state");
+            return;
+        }
         if self.prev_crypto.is_some() {
             // We already just updated, or are currently updating, the keys. Concurrent key updates
             // are illegal.
