@@ -1,6 +1,6 @@
 use bytes::Bytes;
 use rand::Rng;
-use tracing::{trace, trace_span};
+use tracing::{debug, trace, trace_span};
 
 use super::{Connection, SentFrames, spaces::SentPacket};
 use crate::{
@@ -47,6 +47,7 @@ impl PacketBuilder {
         let sent_with_keys = conn.spaces[space_id].sent_with_keys;
         if space_id == SpaceId::Data {
             if sent_with_keys >= conn.key_phase_size {
+                debug!("routine key update due to phase exhaustion");
                 conn.force_key_update();
             }
         } else {
