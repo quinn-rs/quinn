@@ -202,10 +202,7 @@ pub(crate) enum Frame {
     PathBackup(PathBackup),
     MaxPathId(MaxPathId),
     PathsBlocked(PathsBlocked),
-    // TODO(flub): We should send this to be spec-compliant, but for ourselves we don't
-    // really care because we always issue CIDs.  Perhaps we can get this frame removed
-    // again from the spec: https://github.com/quicwg/multipath/issues/500
-    PathCidsBlocked(PathId),
+    PathCidsBlocked(PathCidsBlocked),
 }
 
 impl Frame {
@@ -751,10 +748,13 @@ impl MaxPathId {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub(crate) struct PathsBlocked(pub(crate) PathId);
 
 impl PathsBlocked {
+    pub(crate) const SIZE_BOUND: usize =
+        VarInt(FrameType::PATHS_BLOCKED.0).size() + VarInt(u32::MAX as u64).size();
+
     pub(crate) fn decode<B: Buf>(buf: &mut B) -> coding::Result<Self> {
         Ok(Self(buf.get()?))
     }
@@ -762,6 +762,31 @@ impl PathsBlocked {
     pub(crate) fn encode<B: BufMut>(&self, buf: &mut B) {
         buf.write(FrameType::PATHS_BLOCKED);
         buf.write(self.0);
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PathCidsBlocked {
+    pub(crate) path_id: PathId,
+    pub(crate) next_seq: VarInt,
+}
+
+impl PathCidsBlocked {
+    pub(crate) const SIZE_BOUND: usize = VarInt(FrameType::PATH_CIDS_BLOCKED.0).size()
+        + VarInt(u32::MAX as u64).size()
+        + VarInt::MAX.size();
+
+    pub(crate) fn decode<R: Buf>(buf: &mut R) -> coding::Result<Self> {
+        Ok(Self {
+            path_id: buf.get()?,
+            next_seq: buf.get()?,
+        })
+    }
+
+    pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
+        buf.write(FrameType::PATH_CIDS_BLOCKED);
+        buf.write(self.path_id);
+        buf.write(self.next_seq);
     }
 }
 
@@ -932,7 +957,9 @@ impl Iter {
             FrameType::PATH_BACKUP => Frame::PathBackup(PathBackup::decode(&mut self.bytes)?),
             FrameType::MAX_PATH_ID => Frame::MaxPathId(MaxPathId::decode(&mut self.bytes)?),
             FrameType::PATHS_BLOCKED => Frame::PathsBlocked(PathsBlocked::decode(&mut self.bytes)?),
-            FrameType::PATH_CIDS_BLOCKED => Frame::PathCidsBlocked(self.bytes.get()?),
+            FrameType::PATH_CIDS_BLOCKED => {
+                Frame::PathCidsBlocked(PathCidsBlocked::decode(&mut self.bytes)?)
+            }
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {
@@ -1600,6 +1627,30 @@ mod test {
         assert_eq!(decoded.len(), 1);
         match decoded.pop().expect("non empty") {
             Frame::RetireConnectionId(decoded) => assert_eq!(decoded, retire_cid),
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn test_paths_blocked_path_cids_blocked_roundtrip() {
+        let mut buf = Vec::new();
+
+        let frame0 = PathsBlocked(PathId(22));
+        frame0.encode(&mut buf);
+        let frame1 = PathCidsBlocked {
+            path_id: PathId(23),
+            next_seq: VarInt(32),
+        };
+        frame1.encode(&mut buf);
+
+        let mut decoded = frames(buf);
+        assert_eq!(decoded.len(), 2);
+        match decoded.pop().expect("non empty") {
+            Frame::PathCidsBlocked(decoded) => assert_eq!(decoded, frame1),
+            x => panic!("incorrect frame {x:?}"),
+        }
+        match decoded.pop().expect("non empty") {
+            Frame::PathsBlocked(decoded) => assert_eq!(decoded, frame0),
             x => panic!("incorrect frame {x:?}"),
         }
     }

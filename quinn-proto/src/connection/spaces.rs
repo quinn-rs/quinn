@@ -546,6 +546,8 @@ pub struct Retransmits {
     pub(super) path_abandon: Vec<(PathId, TransportErrorCode)>,
     /// If a PATH_AVAILABLE and PATH_BACKUP frame needs to be sent for a path
     pub(super) path_status: Vec<PathId>,
+    /// If a PATH_CIDS_BLOCKED frame needs to be sent for a path
+    pub(super) path_cids_blocked: Vec<PathId>,
 }
 
 impl Retransmits {
