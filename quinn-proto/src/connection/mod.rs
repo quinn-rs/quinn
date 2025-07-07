@@ -4447,6 +4447,8 @@ impl Connection {
             frame::PathsBlocked(self.remote_max_path_id).encode(buf);
             space.pending.paths_blocked = false;
             sent.retransmits.get_or_create().paths_blocked = true;
+            trace!(max_path_id = ?self.remote_max_path_id, "PATHS_BLOCKED");
+            self.stats.frame_tx.paths_blocked += 1;
         }
 
         // PATH_CIDS_BLOCKED
@@ -4468,6 +4470,7 @@ impl Connection {
                 .get_or_create()
                 .path_cids_blocked
                 .push(path_id);
+            trace!(?path_id, next_seq, "PATH_CIDS_BLOCKED");
         }
 
         // RESET_STREAM, STOP_SENDING, MAX_DATA, MAX_STREAM_DATA, MAX_STREAMS
