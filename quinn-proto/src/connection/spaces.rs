@@ -65,6 +65,20 @@ impl PacketSpace {
 
     /// Returns the [`PacketNumberSpace`] for a path
     ///
+    /// When multipath is disabled use [`PathId::ZERO`].
+    pub(super) fn path_space(&self, path_id: PathId) -> Option<&PacketNumberSpace> {
+        self.number_spaces.get(&path_id)
+    }
+
+    /// Returns a mutable reference to the [`PacketNumberSpace`] for a path
+    ///
+    /// When multipath is disabled use [`PathId::ZERO`].
+    pub(super) fn path_space_mut(&mut self, path_id: PathId) -> Option<&mut PacketNumberSpace> {
+        self.number_spaces.get_mut(&path_id)
+    }
+
+    /// Returns the [`PacketNumberSpace`] for a path
+    ///
     /// When multipath is disabled use `PathId(0)`.
     // TODO(flub): Note that this only exists as `&mut self` because it creates a new
     //    [`PacketNumberSpace`] if one is not yet available for a path.  This forces a few

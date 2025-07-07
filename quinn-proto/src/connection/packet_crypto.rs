@@ -82,7 +82,19 @@ pub(super) fn decrypt_packet_body(
         return Ok(None);
     }
     let space = packet.header.space();
-    let rx_packet = spaces[space].number_spaces.get(&path_id).unwrap().rx_packet;
+
+    if path_id != PathId::ZERO && space != SpaceId::Data {
+        // do not try to decrypt ilegal multipath packets
+        return Err(Some(TransportError::PROTOCOL_VIOLATION(
+            "multipath packet on non Data packet number space",
+        )));
+    }
+    // Packets that do not belong to known path ids are valid as long as they can be decrypted. In
+    // this case we assume the initial packet number
+    let rx_packet = spaces[space]
+        .path_space(path_id)
+        .map(|space| space.rx_packet)
+        .unwrap_or_default();
     let number = packet.header.number().ok_or(None)?.expand(rx_packet + 1);
     let packet_key_phase = packet.header.key_phase();
 

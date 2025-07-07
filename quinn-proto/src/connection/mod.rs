@@ -1,6 +1,6 @@
 use std::{
     cmp,
-    collections::{BTreeMap, VecDeque},
+    collections::{BTreeMap, VecDeque, btree_map},
     convert::TryFrom,
     fmt, io, mem,
     net::{IpAddr, SocketAddr},
@@ -608,6 +608,18 @@ impl Connection {
         &self.paths.get(&path_id).expect("known path").data
     }
 
+    /// Gets a reference to the [`PathData`] for a [`PathId`]
+    fn path(&self, path_id: PathId) -> Option<&PathData> {
+        self.paths.get(&path_id).map(|path_state| &path_state.data)
+    }
+
+    /// Gets a mutable reference to the [`PathData`] for a [`PathId`]
+    fn path_mut(&mut self, path_id: PathId) -> Option<&mut PathData> {
+        self.paths
+            .get_mut(&path_id)
+            .map(|path_state| &mut path_state.data)
+    }
+
     /// Gets the [`PathStatus`] for a known [`PathId`]
     pub fn path_status(&self, path_id: PathId) -> Result<PathStatus, ClosedPath> {
         match self.paths.get(&path_id) {
@@ -687,6 +699,33 @@ impl Connection {
         &mut self.paths.get_mut(&path_id).expect("known path").data
     }
 
+    fn ensure_path(&mut self, path_id: PathId, remote: SocketAddr, now: Instant, pn: Option<u64>) {
+        // TODO(@divma): consider adding here some validation params/logic, ej: if the remote is
+        // known, adding a challenge, etc
+        let btree_map::Entry::Vacant(vacant_entry) = self.paths.entry(path_id) else {
+            return;
+        };
+
+        debug!(%path_id, "path added");
+        let peer_max_udp_payload_size =
+            u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX);
+        let data = PathData::new(
+            remote,
+            self.allow_mtud,
+            Some(peer_max_udp_payload_size),
+            now,
+            &self.config,
+        );
+        vacant_entry.insert(PathState { data, prev: None });
+
+        let mut pn_space = spaces::PacketNumberSpace::new(now, SpaceId::Data, &mut self.rng);
+        if let Some(pn) = pn {
+            pn_space.dedup.insert(pn);
+        }
+        self.spaces[SpaceId::Data]
+            .number_spaces
+            .insert(path_id, pn_space);
+    }
     /// Returns packets to transmit
     ///
     /// Connections should be polled for transmit after:
@@ -1536,24 +1575,31 @@ impl Connection {
                 // If this packet could initiate a migration and we're a client or a server that
                 // forbids migration, drop the datagram. This could be relaxed to heuristically
                 // permit NAT-rebinding-like migration.
-                if remote != self.path_data(path_id).remote && !self.side.remote_may_migrate() {
-                    trace!("discarding packet from unrecognized peer {}", remote);
-                    return;
+                if let Some(known_remote) = self.path(path_id).map(|path| path.remote) {
+                    if remote != known_remote && !self.side.remote_may_migrate() {
+                        trace!("discarding packet from unrecognized peer {}", remote);
+                        return;
+                    }
                 }
 
-                let was_anti_amplification_blocked =
-                    self.path_data(path_id).anti_amplification_blocked(1);
+                let was_anti_amplification_blocked = self
+                    .path(path_id)
+                    .map(|path| path.anti_amplification_blocked(1))
+                    .unwrap_or(true); // if we don't know about this path it's eagerly considered as unvalidated
+                // TODO(@divma): revisit this
 
                 self.stats.udp_rx.datagrams += 1;
                 self.stats.udp_rx.bytes += first_decode.len() as u64;
                 let data_len = first_decode.len();
 
                 self.handle_decode(now, remote, path_id, ecn, first_decode);
-                // The current `path` might have changed inside `handle_decode`,
-                // since the packet could have triggered a migration. Make sure
-                // the data received is accounted for the most recent path by accessing
-                // `path` after `handle_decode`.
-                self.path_data_mut(path_id).inc_total_recvd(data_len as u64);
+                // The current `path` might have changed inside `handle_decode` since the packet
+                // could have triggered a migration. The packet might also belong to an unknown
+                // path and have been rejected. Make sure the data received is accounted for the
+                // most recent path by accessing `path` after `handle_decode`.
+                if let Some(path) = self.path_mut(path_id) {
+                    path.inc_total_recvd(data_len as u64);
+                }
 
                 if let Some(data) = remaining {
                     self.stats.udp_rx.bytes += data.len() as u64;
@@ -2421,16 +2467,13 @@ impl Connection {
 
     /// Returns the earliest next PTO should fire for all spaces on a path.
     fn pto_time_and_space(&mut self, now: Instant, path_id: PathId) -> Option<(Instant, SpaceId)> {
-        let pto_count = self.path_data(path_id).pto_count;
+        let path = self.path(path_id)?;
+        let pto_count = path.pto_count;
         let backoff = 2u32.pow(pto_count.min(MAX_BACKOFF_EXPONENT));
-        let mut duration = self.path_data_mut(path_id).rtt.pto_base() * backoff;
+        let mut duration = path.rtt.pto_base() * backoff;
 
         if path_id == PathId::ZERO
-            && self
-                .paths
-                .get(&PathId::ZERO)
-                .map(|path| path.data.in_flight.ack_eliciting)
-                == Some(0)
+            && path.in_flight.ack_eliciting == 0
             && !self.peer_completed_address_validation(PathId::ZERO)
         {
             // Address Validation during Connection Establishment:
@@ -2448,7 +2491,11 @@ impl Connection {
 
         let mut result = None;
         for space in SpaceId::iter() {
-            if self.spaces[space].for_path(path_id).in_flight == 0 {
+            let Some(pns) = self.spaces[space].number_spaces.get(&path_id) else {
+                continue;
+            };
+
+            if pns.in_flight == 0 {
                 continue;
             }
             if space == SpaceId::Data {
@@ -2459,20 +2506,16 @@ impl Connection {
                 // Include max_ack_delay and backoff for ApplicationData.
                 duration += self.ack_frequency.max_ack_delay_for_pto() * backoff;
             }
-            let last_ack_eliciting = match self.spaces[space]
-                .for_path(path_id)
-                .time_of_last_ack_eliciting_packet
-            {
-                Some(time) => time,
-                None => continue,
+            let Some(last_ack_eliciting) = pns.time_of_last_ack_eliciting_packet else {
+                continue;
             };
             let pto = last_ack_eliciting + duration;
             if result.map_or(true, |(earliest_pto, _)| pto < earliest_pto) {
-                if self.path_data(path_id).anti_amplification_blocked(1) {
+                if path.anti_amplification_blocked(1) {
                     // Nothing would be able to be sent.
                     continue;
                 }
-                if self.path_data(path_id).in_flight.ack_eliciting == 0 {
+                if path.in_flight.ack_eliciting == 0 {
                     // Nothing ack-eliciting, no PTO to arm/fire.
                     continue;
                 }
@@ -2482,7 +2525,7 @@ impl Connection {
         result
     }
 
-    fn peer_completed_address_validation(&mut self, path: PathId) -> bool {
+    fn peer_completed_address_validation(&self, path: PathId) -> bool {
         // TODO(flub): This logic needs updating for multipath
         if self.side.is_server() || self.state.is_closed() {
             return true;
@@ -2490,18 +2533,15 @@ impl Connection {
         // The server is guaranteed to have validated our address if any of our handshake or 1-RTT
         // packets are acknowledged or we've seen HANDSHAKE_DONE and discarded handshake keys.
         self.spaces[SpaceId::Handshake]
-            .for_path(path)
-            .largest_acked_packet
+            .path_space(PathId::ZERO)
+            .and_then(|pns| pns.largest_acked_packet)
             .is_some()
             || self.spaces[SpaceId::Data]
-                .for_path(path)
-                .largest_acked_packet
+                .path_space(path)
+                .and_then(|pns| pns.largest_acked_packet)
                 .is_some()
             || (self.spaces[SpaceId::Data].crypto.is_some()
                 && self.spaces[SpaceId::Handshake].crypto.is_none())
-
-        // TODO(@divma): I'm worried about acessing for a generic path in the handshake space
-        // when it shouldn't be possible.
     }
 
     /// Resets the the [`Timer::LossDetection`] timer to the next instant it may be needed
@@ -2965,9 +3005,15 @@ impl Connection {
             );
         }
 
-        if self.is_handshaking() && remote != self.path_data(path_id).remote {
-            debug!("discarding packet with unexpected remote during handshake");
-            return;
+        if self.is_handshaking() {
+            if path_id != PathId::ZERO {
+                debug!(%remote, %path_id, "discarding multipath packet during handshake");
+                return;
+            }
+            if remote != self.path_data(path_id).remote {
+                debug!("discarding packet with unexpected remote during handshake");
+                return;
+            }
         }
 
         let was_closed = self.state.is_closed();
@@ -3011,8 +3057,10 @@ impl Connection {
                 };
                 let _guard = span.enter();
 
-                let dedup = &mut self.spaces[packet.header.space()].for_path(path_id).dedup;
-                if number.is_some_and(|n| dedup.insert(n)) {
+                let dedup = self.spaces[packet.header.space()]
+                    .path_space_mut(path_id)
+                    .map(|pns| &mut pns.dedup);
+                if number.zip(dedup).is_some_and(|(n, d)| d.insert(n)) {
                     debug!("discarding possible duplicate packet");
                     return;
                 } else if self.state.is_handshake() && packet.header.is_short() {
@@ -3037,6 +3085,8 @@ impl Connection {
                             Header::Short { spin, .. } => spin,
                             _ => false,
                         };
+
+                        self.ensure_path(path_id, remote, now, number);
                         self.on_packet_authenticated(
                             now,
                             packet.header.space(),
@@ -3477,7 +3527,7 @@ impl Connection {
             let frame = result?;
             let span = match frame {
                 Frame::Padding => continue,
-                _ => trace_span!("frame", ty = %frame.ty(), ?path_id),
+                _ => trace_span!("frame", ty = %frame.ty(), %path_id),
             };
 
             self.stats.frame_rx.record(&frame);
@@ -3542,24 +3592,9 @@ impl Connection {
                     close = Some(reason);
                 }
                 Frame::PathChallenge(token) => {
-                    // A PATH_CHALLENGE can create a new path.
                     let path = &mut self
-                        .paths
-                        .entry(path_id)
-                        .or_insert_with(|| {
-                            let peer_max_udp_payload_size =
-                                u16::try_from(self.peer_params.max_udp_payload_size.into_inner())
-                                    .unwrap_or(u16::MAX);
-                            let data = PathData::new(
-                                remote,
-                                self.allow_mtud,
-                                Some(peer_max_udp_payload_size),
-                                now,
-                                &self.config,
-                            );
-                            PathState { data, prev: None }
-                        })
-                        .data;
+                        .path_mut(path_id)
+                        .expect("payload is processed only after the path becomes known");
                     path.path_responses.push(number, token, remote);
                     if remote == path.remote {
                         // PATH_CHALLENGE on active path, possible off-path packet forwarding
@@ -3573,13 +3608,17 @@ impl Connection {
                     }
                 }
                 Frame::PathResponse(token) => {
-                    // TODO(@divma): make an effort to move to path
-                    let path = self.paths.get_mut(&path_id).expect("known path");
+                    let path = self
+                        .paths
+                        .get_mut(&path_id)
+                        .expect("payload is processed only after the path becomes known");
                     if path.data.challenge == Some(token) && remote == path.data.remote {
                         trace!("new path validated");
                         self.timers.stop(Timer::PathValidation(path_id));
                         path.data.challenge = None;
                         path.data.validated = true;
+                        self.events
+                            .push_back(Event::Path(PathEvent::Opened { id: path_id }));
                         if let Some((_, ref mut prev)) = path.prev {
                             prev.challenge = None;
                             prev.challenge_pending = false;
@@ -4684,6 +4723,7 @@ impl Connection {
             .on_peer_max_udp_payload_size_received(peer_max_udp_payload_size);
     }
 
+    /// Decrypts a packet, returning the packet number on success
     fn decrypt_packet(
         &mut self,
         now: Instant,
