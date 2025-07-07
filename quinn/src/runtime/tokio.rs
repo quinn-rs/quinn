@@ -69,7 +69,7 @@ impl UdpSenderHelperSocket for UdpSocket {
 
 impl AsyncUdpSocket for UdpSocket {
     fn create_sender(&self) -> Pin<Box<dyn super::UdpSender>> {
-        Box::pin(UdpSenderHelper::new(self.clone(), |socket: &UdpSocket| {
+        Box::pin(UdpSenderHelper::new(self.clone(), |socket: &Self| {
             let socket = socket.clone();
             async move { socket.io.writable().await }
         }))

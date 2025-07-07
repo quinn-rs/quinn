@@ -179,7 +179,7 @@ where
         loop {
             if this.writable_fut.is_none() {
                 this.writable_fut
-                    .set(Some((this.make_writable_fut_fn)(&this.socket)));
+                    .set(Some((this.make_writable_fut_fn)(this.socket)));
             }
             // We're forced to `unwrap` here because `Fut` may be `!Unpin`, which means we can't safely
             // obtain an `&mut WritableFut` after storing it in `self.writable_fut` when `self` is already behind `Pin`,
