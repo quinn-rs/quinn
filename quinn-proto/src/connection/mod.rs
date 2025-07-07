@@ -4389,9 +4389,18 @@ impl Connection {
             let Some(path_id) = space.pending.path_status.pop() else {
                 break;
             };
+            let Some(path) = self
+                .paths
+                .get_mut(&path_id)
+                .map(|path_state| &mut path_state.data)
+            else {
+                trace!(%path_id, "discarding queued path status for unknown path");
+                continue;
+            };
+
             let status_state = &mut path.status;
             let seq = status_state.local_seq;
-            status_state.local_seq.saturating_add(1u8);
+            status_state.local_seq = status_state.local_seq.saturating_add(1u8);
             match status_state.local_status {
                 PathStatus::Available => {
                     frame::PathAvailable {
@@ -4540,6 +4549,8 @@ impl Connection {
             self.events.push_back(Event::DatagramsUnblocked);
             self.datagrams.send_blocked = false;
         }
+
+        let path = &mut self.paths.get_mut(&path_id).expect("known path").data;
 
         // NEW_TOKEN
         while let Some(remote_addr) = space.pending.new_tokens.pop() {
