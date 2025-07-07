@@ -10,7 +10,7 @@ cargo-fuzz = true
 
 [dependencies]
 arbitrary = { version = "1.0.1", features = ["derive"] }
-libfuzzer-sys = "0.4.2"
+libfuzzer-sys = "0.4.10"
 
 [dependencies.proto]
 features = ["arbitrary"]
