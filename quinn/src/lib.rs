@@ -41,7 +41,7 @@
 #![warn(unreachable_pub)]
 #![warn(clippy::use_self)]
 
-use std::sync::Arc;
+use std::pin::Pin;
 
 mod connection;
 mod endpoint;
@@ -87,7 +87,10 @@ pub use crate::runtime::AsyncStdRuntime;
 pub use crate::runtime::SmolRuntime;
 #[cfg(feature = "runtime-tokio")]
 pub use crate::runtime::TokioRuntime;
-pub use crate::runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller, default_runtime};
+pub use crate::runtime::{
+    AsyncTimer, AsyncUdpSocket, Runtime, UdpSender, UdpSenderHelper, UdpSenderHelperSocket,
+    default_runtime,
+};
 pub use crate::send_stream::{SendStream, StoppedError, WriteError};
 
 #[cfg(test)]
@@ -100,7 +103,7 @@ enum ConnectionEvent {
         reason: bytes::Bytes,
     },
     Proto(proto::ConnectionEvent),
-    Rebind(Arc<dyn AsyncUdpSocket>),
+    Rebind(Pin<Box<dyn UdpSender>>),
 }
 
 fn udp_transmit<'a>(t: &proto::Transmit, buffer: &'a [u8]) -> udp::Transmit<'a> {

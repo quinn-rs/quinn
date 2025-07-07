@@ -21,7 +21,7 @@ use crate::{
     mutex::Mutex,
     path::OpenPath,
     recv_stream::RecvStream,
-    runtime::{AsyncTimer, AsyncUdpSocket, Runtime, UdpPoller},
+    runtime::{AsyncTimer, Runtime, UdpSender},
     send_stream::SendStream,
     udp_transmit,
 };
@@ -44,7 +44,7 @@ impl Connecting {
         conn: proto::Connection,
         endpoint_events: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
-        socket: Arc<dyn AsyncUdpSocket>,
+        sender: Pin<Box<dyn UdpSender>>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
         let (on_handshake_data_send, on_handshake_data_recv) = oneshot::channel();
@@ -56,7 +56,7 @@ impl Connecting {
             conn_events,
             on_handshake_data_send,
             on_connected_send,
-            socket,
+            sender,
             runtime.clone(),
         );
 
@@ -904,7 +904,7 @@ impl ConnectionRef {
         conn_events: mpsc::UnboundedReceiver<ConnectionEvent>,
         on_handshake_data: oneshot::Sender<()>,
         on_connected: oneshot::Sender<bool>,
-        socket: Arc<dyn AsyncUdpSocket>,
+        sender: Pin<Box<dyn UdpSender>>,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
         Self(Arc::new(ConnectionInner {
@@ -926,8 +926,7 @@ impl ConnectionRef {
                 close_path: FxHashMap::default(),
                 error: None,
                 ref_count: 0,
-                io_poller: socket.clone().create_io_poller(),
-                socket,
+                sender,
                 runtime,
                 send_buffer: Vec::new(),
                 buffered_transmit: None,
@@ -1050,8 +1049,7 @@ pub(crate) struct State {
     pub(crate) close_path: FxHashMap<PathId, oneshot::Sender<VarInt>>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
-    socket: Arc<dyn AsyncUdpSocket>,
-    io_poller: Pin<Box<dyn UdpPoller>>,
+    sender: Pin<Box<dyn UdpSender>>,
     runtime: Arc<dyn Runtime>,
     send_buffer: Vec<u8>,
     /// We buffer a transmit when the underlying I/O would block
@@ -1065,10 +1063,7 @@ impl State {
         let now = self.runtime.now();
         let mut transmits = 0;
 
-        let max_datagrams = self
-            .socket
-            .max_transmit_segments()
-            .min(MAX_TRANSMIT_SEGMENTS);
+        let max_datagrams = self.sender.max_transmit_segments();
 
         loop {
             // Retry the last transmit, or get a new one.
@@ -1093,28 +1088,18 @@ impl State {
                 }
             };
 
-            if self.io_poller.as_mut().poll_writable(cx)?.is_pending() {
-                // Retry after a future wakeup
-                self.buffered_transmit = Some(t);
-                return Ok(false);
-            }
-
             let len = t.size;
-            let retry = match self
-                .socket
-                .try_send(&udp_transmit(&t, &self.send_buffer[..len]))
+            match self
+                .sender
+                .as_mut()
+                .poll_send(&udp_transmit(&t, &self.send_buffer[..len]), cx)
             {
-                Ok(()) => false,
-                Err(ref e) if e.kind() == io::ErrorKind::WouldBlock => true,
-                Err(e) => return Err(e),
-            };
-            if retry {
-                // We thought the socket was writable, but it wasn't. Retry so that either another
-                // `poll_writable` call determines that the socket is indeed not writable and
-                // registers us for a wakeup, or the send succeeds if this really was just a
-                // transient failure.
-                self.buffered_transmit = Some(t);
-                continue;
+                Poll::Pending => {
+                    self.buffered_transmit = Some(t);
+                    return Ok(false);
+                }
+                Poll::Ready(Err(e)) => return Err(e),
+                Poll::Ready(Ok(())) => {}
             }
 
             if transmits >= MAX_TRANSMIT_DATAGRAMS {
@@ -1144,9 +1129,8 @@ impl State {
     ) -> Result<(), ConnectionError> {
         loop {
             match self.conn_events.poll_recv(cx) {
-                Poll::Ready(Some(ConnectionEvent::Rebind(socket))) => {
-                    self.socket = socket;
-                    self.io_poller = self.socket.clone().create_io_poller();
+                Poll::Ready(Some(ConnectionEvent::Rebind(sender))) => {
+                    self.sender = sender;
                     self.inner.local_address_changed();
                 }
                 Poll::Ready(Some(ConnectionEvent::Proto(event))) => {
