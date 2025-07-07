@@ -132,9 +132,9 @@ jobs:
       - run: cargo test --locked -- --ignored stress
       - run: cargo test --locked --manifest-path fuzz/Cargo.toml
         if: ${{ matrix.rust }} == "stable"
-      - run: cargo test -p iroh-quinn-udp --benches
-      - run: cargo test -p iroh-quinn-udp --benches --features fast-apple-datapath
-        if: ${{ matrix.os }} == "macos-latest"
+      - run: cargo test --locked -p iroh-quinn-udp --benches
+      - run: cargo test --locked -p iroh-quinn-udp --benches --features fast-apple-datapath
+        if: ${{ runner.os }} == "macOS"
 
   test-aws-lc-rs:
     runs-on: ubuntu-latest
@@ -162,9 +162,9 @@ jobs:
       - uses: bytecodealliance/actions/wasm-tools/setup@v1
       - uses: cargo-bins/cargo-binstall@main
 
-      - run: cargo test -p iroh-quinn-proto --target wasm32-unknown-unknown --no-run
-      - run: cargo check -p iroh-quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
-      - run: cargo rustc -p iroh-quinn --target wasm32-unknown-unknown --no-default-features --features=log,platform-verifier,rustls-ring --crate-type=cdylib
+      - run: cargo test --locked -p iroh-quinn-proto --target wasm32-unknown-unknown --no-run
+      - run: cargo check --locked -p iroh-quinn-udp --target wasm32-unknown-unknown --no-default-features --features=tracing,log
+      - run: cargo rustc --locked -p iroh-quinn --target wasm32-unknown-unknown --no-default-features --features=log,platform-verifier,rustls-ring --crate-type=cdylib
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
@@ -176,7 +176,7 @@ jobs:
           ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh_quinn.wasm | grep 'import "env"'
 
       - run: cargo binstall wasm-bindgen-cli --locked --no-confirm
-      - run: cargo test -p iroh-quinn-proto --target wasm32-unknown-unknown
+      - run: cargo test --locked -p iroh-quinn-proto --target wasm32-unknown-unknown
 
   msrv:
     runs-on: ubuntu-latest
