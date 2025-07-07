@@ -3934,6 +3934,17 @@ impl Connection {
                                 "PATH_CIDS_BLOCKED path identifier was larger than local maximum",
                             ));
                         }
+                        if next_seq.0
+                            > self
+                                .local_cid_state
+                                .get(&path_id)
+                                .map(|cid_state| cid_state.active_seq().1 + 1)
+                                .unwrap_or_default()
+                        {
+                            return Err(TransportError::PROTOCOL_VIOLATION(
+                                "PATH_CIDS_BLOCKED next sequence number larger than in local state",
+                            ));
+                        }
                         debug!(?path_id, %next_seq, "received PATH_CIDS_BLOCKED");
                     } else {
                         return Err(TransportError::PROTOCOL_VIOLATION(
@@ -4444,9 +4455,13 @@ impl Connection {
             let Some(path_id) = space.pending.path_cids_blocked.pop() else {
                 break;
             };
+            let next_seq = match self.rem_cids.get(&path_id) {
+                Some(cid_queue) => cid_queue.active_seq() + 1,
+                None => 0,
+            };
             frame::PathCidsBlocked {
                 path_id,
-                next_seq: todo!(),
+                next_seq: VarInt(next_seq),
             }
             .encode(buf);
             sent.retransmits
