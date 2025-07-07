@@ -185,7 +185,8 @@ where
             // obtain an `&mut WritableFut` after storing it in `self.writable_fut` when `self` is already behind `Pin`,
             // and if we didn't store it then we wouldn't be able to keep it alive between
             // `poll_send` calls.
-            let result = ready!(this.writable_fut.as_mut().as_pin_mut().unwrap().poll(cx));
+            let result =
+                std::task::ready!(this.writable_fut.as_mut().as_pin_mut().unwrap().poll(cx));
 
             // Polling an arbitrary `Future` after it becomes ready is a logic error, so arrange for
             // a new `Future` to be created on the next call.
