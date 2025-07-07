@@ -168,12 +168,12 @@ jobs:
 
       # If the Wasm file contains any 'import "env"' declarations, then
       # some non-Wasm-compatible code made it into the final code.
-      - name: Ensure no 'import "env"' in quinn_proto Wasm
+      - name: Ensure no 'import "env"' in iroh-quinn-proto Wasm
         run: |
-          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/deps/quinn_proto-*.wasm | grep 'import "env"'
-      - name: Ensure no 'import "env"' in quinn Wasm
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/deps/iroh_quinn_proto-*.wasm | grep 'import "env"'
+      - name: Ensure no 'import "env"' in iroh-quinn Wasm
         run: |
-          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/quinn.wasm | grep 'import "env"'
+          ! wasm-tools print --skeleton target/wasm32-unknown-unknown/debug/iroh_quinn.wasm | grep 'import "env"'
 
       - run: cargo binstall wasm-bindgen-cli --locked --no-confirm
       - run: cargo test --locked -p iroh-quinn-proto --target wasm32-unknown-unknown

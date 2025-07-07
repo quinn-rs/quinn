@@ -3347,6 +3347,7 @@ fn address_discovery_zero_rtt_accepted() {
     };
     let mut pair = Pair::new(Default::default(), server);
 
+    pair.server.handle_incoming = Box::new(|_| IncomingConnectionBehavior::Accept);
     let client_cfg = ClientConfig {
         transport: Arc::new(TransportConfig {
             address_discovery_role: crate::address_discovery::Role::Both,
