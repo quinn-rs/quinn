@@ -4471,6 +4471,7 @@ impl Connection {
                 .path_cids_blocked
                 .push(path_id);
             trace!(?path_id, next_seq, "PATH_CIDS_BLOCKED");
+            self.stats.frame_tx.path_cids_blocked += 1;
         }
 
         // RESET_STREAM, STOP_SENDING, MAX_DATA, MAX_STREAM_DATA, MAX_STREAMS
