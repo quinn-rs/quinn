@@ -305,6 +305,9 @@ impl UnifiedP2PNode {
         let socket = UdpSocket::bind(listen_addr).await?;
         let local_addr = socket.local_addr()?;
         
+        // Verify port allocation if random port was requested
+        verify_port_allocation(&listen_addr, &local_addr)?;
+        
         debug!("Node {:?} starting on {}", peer_id, local_addr);
         
         Ok(Self {
@@ -1141,6 +1144,68 @@ fn parse_peer_id(hex_str: &str) -> Result<PeerId, Box<dyn std::error::Error>> {
     Ok(PeerId(bytes))
 }
 
+/// Verify that port allocation works as expected
+fn verify_port_allocation(requested_addr: &SocketAddr, actual_addr: &SocketAddr) -> Result<(), Box<dyn std::error::Error>> {
+    // Check if a random port was requested (port 0)
+    if requested_addr.port() == 0 {
+        // Ensure the OS actually allocated a port
+        if actual_addr.port() == 0 {
+            return Err("OS failed to allocate a port automatically".into());
+        }
+        
+        // Check if the allocated port is in the ephemeral range (typically > 32768)
+        let allocated_port = actual_addr.port();
+        if allocated_port < 1024 {
+            warn!("Allocated port {} is in privileged range - this may indicate a problem", allocated_port);
+        } else if allocated_port > 32768 {
+            debug!("Successfully allocated ephemeral port {}", allocated_port);
+        } else {
+            // Port is in registered range (1024-32767), which is still fine but worth noting
+            debug!("Allocated port {} is in registered range", allocated_port);
+        }
+        
+        // Check for common predictable port patterns
+        if is_predictable_port(allocated_port) {
+            warn!("Allocated port {} follows a predictable pattern - consider explicit port configuration", allocated_port);
+        }
+    } else {
+        // Specific port was requested - verify it was honored
+        if requested_addr.port() != actual_addr.port() {
+            return Err(format!("Requested port {} but got port {}", requested_addr.port(), actual_addr.port()).into());
+        }
+        
+        // Check if it's a commonly used/guessable port
+        if is_common_port(requested_addr.port()) {
+            warn!("Using commonly known port {} - consider using a random port for better security", requested_addr.port());
+        }
+    }
+    
+    Ok(())
+}
+
+/// Check if a port follows predictable patterns
+fn is_predictable_port(port: u16) -> bool {
+    // Check for some common predictable patterns
+    match port {
+        // Sequential patterns
+        p if p % 1000 == 0 => true,  // Round thousands
+        p if p % 100 == 0 => true,   // Round hundreds
+        p if p.to_string().chars().all(|c| c == p.to_string().chars().next().unwrap()) => true, // Repeating digits
+        // Common dev ports
+        3000..=3999 | 8000..=8999 | 9000..=9999 => true,
+        _ => false,
+    }
+}
+
+/// Check if a port is commonly known/used
+fn is_common_port(port: u16) -> bool {
+    matches!(port,
+        22 | 23 | 25 | 53 | 80 | 110 | 143 | 443 | 993 | 995 |  // Common protocols
+        1080 | 3128 | 8080 | 8443 | 8888 |                     // Common proxy ports
+        3000 | 3001 | 4000 | 5000 | 8000 | 8001 | 9000 | 9001  // Common dev ports
+    )
+}
+
 /// Parse a single address that could be either IP:port or four-word format
 fn parse_single_address(addr_str: &str) -> Result<SocketAddr, Box<dyn std::error::Error>> {
     let addr_str = addr_str.trim();
@@ -1225,6 +1290,9 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Display node information
     println!();
     print_section(&format!("Node ID: {}", symbols::KEY), &format_peer_id(&node_peer_id.0));
+    
+    // Display port allocation information
+    display_port_allocation_info(&args.listen, &actual_addr);
     println!();
     
     // Display network interfaces
@@ -1328,6 +1396,107 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
+/// Discover external IP address by connecting to well-known internet addresses
+async fn discover_external_ip(bound_addr: SocketAddr) -> Option<IpAddr> {
+    // Well-known public DNS servers
+    let test_addresses = [
+        "1.1.1.1:53",      // Cloudflare DNS
+        "8.8.8.8:53",      // Google DNS
+        "208.67.222.222:53", // OpenDNS
+        "9.9.9.9:53",      // Quad9 DNS
+    ];
+    
+    for test_addr_str in &test_addresses {
+        if let Ok(test_addr) = test_addr_str.parse::<SocketAddr>() {
+            match timeout(Duration::from_secs(3), discover_external_ip_via(&test_addr, bound_addr)).await {
+                Ok(Some(external_ip)) => {
+                    debug!("Discovered external IP {} via {}", external_ip, test_addr);
+                    return Some(external_ip);
+                }
+                Ok(None) => {
+                    debug!("No external IP discovered via {}", test_addr);
+                }
+                Err(_) => {
+                    debug!("Timeout discovering external IP via {}", test_addr);
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Discover external IP by connecting to a specific internet address
+async fn discover_external_ip_via(test_addr: &SocketAddr, bound_addr: SocketAddr) -> Option<IpAddr> {
+    // Create a UDP socket bound to the same port/interface as our main socket
+    let socket = match UdpSocket::bind(if bound_addr.ip().is_unspecified() {
+        SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
+    } else {
+        SocketAddr::new(bound_addr.ip(), 0)
+    }).await {
+        Ok(s) => s,
+        Err(_) => return None,
+    };
+    
+    // Connect to the test address (this doesn't actually send data for UDP)
+    if socket.connect(test_addr).await.is_err() {
+        return None;
+    }
+    
+    // Get the local address after "connecting"
+    match socket.local_addr() {
+        Ok(local_addr) => {
+            let local_ip = local_addr.ip();
+            // Only return non-local addresses as external IPs
+            match local_ip {
+                IpAddr::V4(ip) if !ip.is_loopback() && !ip.is_private() && !ip.is_link_local() => Some(local_ip),
+                IpAddr::V6(ip) if !ip.is_loopback() && !ip.is_unspecified() => Some(local_ip),
+                _ => None,
+            }
+        }
+        Err(_) => None,
+    }
+}
+
+/// Display port allocation information
+fn display_port_allocation_info(requested_addr: &SocketAddr, actual_addr: &SocketAddr) {
+    println!();
+    print_section("🔌", "Port Allocation:");
+    
+    if requested_addr.port() == 0 {
+        // Random port was requested
+        let allocated_port = actual_addr.port();
+        print_item(&format!("Requested: {} (random port)", requested_addr), 2);
+        print_item(&format!("Allocated: {} (port {})", actual_addr, allocated_port), 2);
+        
+        // Provide security assessment
+        if allocated_port > 32768 {
+            print_status(symbols::CHECK, &format!("Port {} is in ephemeral range (secure)", allocated_port), colors::GREEN);
+        } else if allocated_port > 1024 {
+            print_status(symbols::INFO, &format!("Port {} is in registered range", allocated_port), colors::BLUE);
+        } else {
+            print_status(symbols::WARNING, &format!("Port {} is in privileged range", allocated_port), colors::YELLOW);
+        }
+        
+        // Check for predictable patterns
+        if is_predictable_port(allocated_port) {
+            print_status(symbols::WARNING, "Port follows a predictable pattern", colors::YELLOW);
+        } else {
+            print_status(symbols::CHECK, "Port allocation appears random", colors::GREEN);
+        }
+    } else {
+        // Specific port was requested
+        print_item(&format!("Requested: {} (explicit)", requested_addr), 2);
+        print_item(&format!("Bound to: {}", actual_addr), 2);
+        
+        if is_common_port(requested_addr.port()) {
+            print_status(symbols::WARNING, "Using a commonly known port", colors::YELLOW);
+            print_status(symbols::INFO, "Consider using a random port (--listen 0.0.0.0:0) for better security", colors::BLUE);
+        } else {
+            print_status(symbols::CHECK, "Using a non-standard port", colors::GREEN);
+        }
+    }
+}
+
 /// Display network interfaces with categorization
 async fn display_network_interfaces(bound_addr: SocketAddr) {
     // Add a message about four-word addresses
@@ -1336,6 +1505,16 @@ async fn display_network_interfaces(bound_addr: SocketAddr) {
     print_item("We use memorable four-word addresses that are easy to share", 2);
     print_item("Tell your friends these words instead of hard-to-remember numbers!", 2);
     println!();
+    
+    // Discover external IP address
+    let external_ip = discover_external_ip(bound_addr).await;
+    
+    if let Some(external_ip) = external_ip {
+        let external_addr = SocketAddr::new(external_ip, bound_addr.port());
+        print_item("External Address:", 2);
+        print_item(&format!("{} {}", format_address_with_words(&external_addr), "(discovered via internet connectivity)"), 4);
+        println!();
+    }
     
     print_item("Local Addresses:", 2);
     
@@ -1353,15 +1532,43 @@ async fn display_network_interfaces(bound_addr: SocketAddr) {
     // Try to get local network interfaces
     match local_ip_address::list_afinet_netifas() {
         Ok(interfaces) => {
-            let mut displayed = std::collections::HashSet::new();
+            let mut displayed_v4 = std::collections::HashSet::new();
+            let mut displayed_v6 = std::collections::HashSet::new();
+            let mut ipv4_addrs = Vec::new();
+            let mut ipv6_addrs = Vec::new();
             
+            // Separate IPv4 and IPv6 addresses
             for (_name, ip) in interfaces {
-                let addr = SocketAddr::new(ip, bound_addr.port());
                 if !ip.is_unspecified() {
-                    let addr_str = format_address_with_words(&addr);
-                    if displayed.insert(addr.to_string()) {
-                        print_item(&addr_str, 4);
+                    let addr = SocketAddr::new(ip, bound_addr.port());
+                    match ip {
+                        IpAddr::V4(_) => {
+                            if displayed_v4.insert(addr.to_string()) {
+                                ipv4_addrs.push(addr);
+                            }
+                        }
+                        IpAddr::V6(_) => {
+                            if displayed_v6.insert(addr.to_string()) {
+                                ipv6_addrs.push(addr);
+                            }
+                        }
                     }
+                }
+            }
+            
+            // Display IPv4 addresses
+            if !ipv4_addrs.is_empty() {
+                for addr in ipv4_addrs {
+                    let desc = describe_address(&addr);
+                    print_item(&format!("{} ({})", format_address_with_words(&addr), desc), 4);
+                }
+            }
+            
+            // Display IPv6 addresses
+            if !ipv6_addrs.is_empty() {
+                for addr in ipv6_addrs {
+                    let desc = describe_address(&addr);
+                    print_item(&format!("{} ({})", format_address_with_words(&addr), desc), 4);
                 }
             }
         }
@@ -1371,8 +1578,8 @@ async fn display_network_interfaces(bound_addr: SocketAddr) {
                 let localhost_v4 = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)), bound_addr.port());
                 let localhost_v6 = SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), bound_addr.port());
                 
-                print_item(&format_address_with_words(&localhost_v4), 4);
-                print_item(&format_address_with_words(&localhost_v6), 4);
+                print_item(&format!("{} ({})", format_address_with_words(&localhost_v4), describe_address(&localhost_v4)), 4);
+                print_item(&format!("{} ({})", format_address_with_words(&localhost_v6), describe_address(&localhost_v6)), 4);
             }
         }
     }

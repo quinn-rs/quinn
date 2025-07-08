@@ -63,6 +63,24 @@ pub mod box_chars {
     pub const T_RIGHT: &str = "┤";
 }
 
+/// Check if an IPv6 address is link-local (fe80::/10)
+fn is_ipv6_link_local(ip: &std::net::Ipv6Addr) -> bool {
+    let octets = ip.octets();
+    (octets[0] == 0xfe) && ((octets[1] & 0xc0) == 0x80)
+}
+
+/// Check if an IPv6 address is unique local (fc00::/7)
+fn is_ipv6_unique_local(ip: &std::net::Ipv6Addr) -> bool {
+    let octets = ip.octets();
+    (octets[0] & 0xfe) == 0xfc
+}
+
+/// Check if an IPv6 address is multicast (ff00::/8)
+fn is_ipv6_multicast(ip: &std::net::Ipv6Addr) -> bool {
+    let octets = ip.octets();
+    octets[0] == 0xff
+}
+
 /// Format a peer ID with color (shows first 8 chars)
 pub fn format_peer_id(peer_id: &[u8; 32]) -> String {
     let hex = hex::encode(&peer_id[..4]);
@@ -86,6 +104,10 @@ pub fn format_address(addr: &SocketAddr) -> String {
                 colors::DIM
             } else if ip.is_unspecified() {
                 colors::DIM
+            } else if is_ipv6_link_local(&ip) {
+                colors::YELLOW
+            } else if is_ipv6_unique_local(&ip) {
+                colors::CYAN
             } else {
                 colors::BRIGHT_CYAN
             }
@@ -117,6 +139,10 @@ pub fn format_address_with_words(addr: &SocketAddr) -> String {
                                 colors::DIM
                             } else if ip.is_unspecified() {
                                 colors::DIM
+                            } else if is_ipv6_link_local(&ip) {
+                                colors::YELLOW
+                            } else if is_ipv6_unique_local(&ip) {
+                                colors::CYAN
                             } else {
                                 colors::BRIGHT_CYAN
                             }
@@ -160,8 +186,14 @@ pub fn describe_address(addr: &SocketAddr) -> &'static str {
                 "IPv6 loopback"
             } else if ip.is_unspecified() {
                 "IPv6 unspecified"
+            } else if is_ipv6_link_local(&ip) {
+                "IPv6 link-local"
+            } else if is_ipv6_unique_local(&ip) {
+                "IPv6 unique local"
+            } else if is_ipv6_multicast(&ip) {
+                "IPv6 multicast"
             } else {
-                "IPv6"
+                "IPv6 global"
             }
         }
     }
