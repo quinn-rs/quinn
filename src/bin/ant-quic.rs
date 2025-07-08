@@ -1297,7 +1297,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     
     // Display network interfaces
     print_section(symbols::NETWORK, "Network Interfaces:");
-    display_network_interfaces(actual_addr).await;
+    display_network_interfaces(actual_addr, &bootstrap_addresses).await;
     println!();
     
     // Determine and display mode
@@ -1396,65 +1396,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     Ok(())
 }
 
-/// Discover external IP address by connecting to well-known internet addresses
-async fn discover_external_ip(bound_addr: SocketAddr) -> Option<IpAddr> {
-    // Well-known public DNS servers
-    let test_addresses = [
-        "1.1.1.1:53",      // Cloudflare DNS
-        "8.8.8.8:53",      // Google DNS
-        "208.67.222.222:53", // OpenDNS
-        "9.9.9.9:53",      // Quad9 DNS
-    ];
-    
-    for test_addr_str in &test_addresses {
-        if let Ok(test_addr) = test_addr_str.parse::<SocketAddr>() {
-            match timeout(Duration::from_secs(3), discover_external_ip_via(&test_addr, bound_addr)).await {
-                Ok(Some(external_ip)) => {
-                    debug!("Discovered external IP {} via {}", external_ip, test_addr);
-                    return Some(external_ip);
-                }
-                Ok(None) => {
-                    debug!("No external IP discovered via {}", test_addr);
-                }
-                Err(_) => {
-                    debug!("Timeout discovering external IP via {}", test_addr);
-                }
-            }
-        }
-    }
-    None
-}
-
-/// Discover external IP by connecting to a specific internet address
-async fn discover_external_ip_via(test_addr: &SocketAddr, bound_addr: SocketAddr) -> Option<IpAddr> {
-    // Create a UDP socket bound to the same port/interface as our main socket
-    let socket = match UdpSocket::bind(if bound_addr.ip().is_unspecified() {
-        SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0)
-    } else {
-        SocketAddr::new(bound_addr.ip(), 0)
-    }).await {
-        Ok(s) => s,
-        Err(_) => return None,
-    };
-    
-    // Connect to the test address (this doesn't actually send data for UDP)
-    if socket.connect(test_addr).await.is_err() {
-        return None;
-    }
-    
-    // Get the local address after "connecting"
-    match socket.local_addr() {
-        Ok(local_addr) => {
-            let local_ip = local_addr.ip();
-            // Only return non-local addresses as external IPs
-            match local_ip {
-                IpAddr::V4(ip) if !ip.is_loopback() && !ip.is_private() && !ip.is_link_local() => Some(local_ip),
-                IpAddr::V6(ip) if !ip.is_loopback() && !ip.is_unspecified() => Some(local_ip),
-                _ => None,
-            }
-        }
-        Err(_) => None,
-    }
+/// Check if server reflexive discovery is expected based on node configuration
+async fn should_show_external_discovery_info(bootstrap_addresses: &[SocketAddr]) -> bool {
+    // External IP discovery happens via server reflexive discovery when connecting to bootstrap nodes
+    !bootstrap_addresses.is_empty()
 }
 
 /// Display port allocation information
@@ -1498,7 +1443,7 @@ fn display_port_allocation_info(requested_addr: &SocketAddr, actual_addr: &Socke
 }
 
 /// Display network interfaces with categorization
-async fn display_network_interfaces(bound_addr: SocketAddr) {
+async fn display_network_interfaces(bound_addr: SocketAddr, bootstrap_addresses: &[SocketAddr]) {
     // Add a message about four-word addresses
     println!();
     print_section("🗣️", "Human-Readable Four-Word Network Addresses");
@@ -1506,13 +1451,16 @@ async fn display_network_interfaces(bound_addr: SocketAddr) {
     print_item("Tell your friends these words instead of hard-to-remember numbers!", 2);
     println!();
     
-    // Discover external IP address
-    let external_ip = discover_external_ip(bound_addr).await;
-    
-    if let Some(external_ip) = external_ip {
-        let external_addr = SocketAddr::new(external_ip, bound_addr.port());
-        print_item("External Address:", 2);
-        print_item(&format!("{} {}", format_address_with_words(&external_addr), "(discovered via internet connectivity)"), 4);
+    // Show information about server reflexive discovery
+    if should_show_external_discovery_info(bootstrap_addresses).await {
+        print_item("External Address Discovery:", 2);
+        print_item("External address will be discovered via server reflexive discovery", 4);
+        print_item("when connecting to bootstrap nodes (per QUIC NAT traversal spec)", 4);
+        println!();
+    } else {
+        print_item("External Address Discovery:", 2);
+        print_item("Running as coordinator - no bootstrap nodes for external discovery", 4);
+        print_item("External addresses will be discovered when peers connect to us", 4);
         println!();
     }
     
