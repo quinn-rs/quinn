@@ -42,34 +42,24 @@ cargo build --release
 ### Basic Usage
 
 ```bash
-# Run as P2P node (automatically detects if it can be a coordinator)
+# Run as P2P node (auto-detects role)
 ant-quic --listen 0.0.0.0:9000
 
-# Connect to bootstrap nodes for peer discovery
+# Connect to bootstrap nodes
 ant-quic --bootstrap node1.example.com:9000,node2.example.com:9000
 
-# Connect to specific peer by ID
+# Connect to specific peer
 ant-quic --connect 1234567890abcdef1234567890abcdef12345678
 
-# Force coordinator mode (skip auto-detection)
+# Force coordinator mode
 ant-quic --force-coordinator --listen 0.0.0.0:9000
 
-# Enable verbose logging to see role detection
-ant-quic --verbose --listen 0.0.0.0:9000
-
-# Network simulation for testing
+# Run network simulation
 ant-quic --simulate --nodes 50 --duration 300
+
+# Enable verbose logging
+ant-quic --verbose --listen 0.0.0.0:9000
 ```
-
-### How It Works
-
-ant-quic automatically detects its network reachability and adapts its role:
-
-- **Public IP + Reachable**: Becomes full coordinator providing bootstrap services to other nodes
-- **Limited Reachability**: Provides limited coordinator services while also acting as client
-- **Behind NAT**: Client-only mode, connects to others through NAT traversal
-
-This creates a **decentralized bootstrap network** where any publicly reachable node automatically helps coordinate connections for nodes behind NATs.
 
 ### Library Usage
 

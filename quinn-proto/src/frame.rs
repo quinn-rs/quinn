@@ -1,6 +1,7 @@
 use std::{
     fmt::{self, Write},
     mem,
+    net::SocketAddr,
     ops::{Range, RangeInclusive},
 };
 
@@ -133,6 +134,10 @@ frame_types! {
     // ACK Frequency
     ACK_FREQUENCY = 0xaf,
     IMMEDIATE_ACK = 0x1f,
+    // NAT Traversal Extension
+    ADD_ADDRESS = 0x40,
+    PUNCH_ME_NOW = 0x41,
+    REMOVE_ADDRESS = 0x42,
     // DATAGRAM
 }
 
@@ -164,6 +169,9 @@ pub(crate) enum Frame {
     AckFrequency(AckFrequency),
     ImmediateAck,
     HandshakeDone,
+    AddAddress(AddAddress),
+    PunchMeNow(PunchMeNow),
+    RemoveAddress(RemoveAddress),
 }
 
 impl Frame {
@@ -205,6 +213,9 @@ impl Frame {
             AckFrequency(_) => FrameType::ACK_FREQUENCY,
             ImmediateAck => FrameType::IMMEDIATE_ACK,
             HandshakeDone => FrameType::HANDSHAKE_DONE,
+            AddAddress(_) => FrameType::ADD_ADDRESS,
+            PunchMeNow(_) => FrameType::PUNCH_ME_NOW,
+            RemoveAddress(_) => FrameType::REMOVE_ADDRESS,
         }
     }
 
@@ -695,6 +706,9 @@ impl Iter {
                 reordering_threshold: self.bytes.get()?,
             }),
             FrameType::IMMEDIATE_ACK => Frame::ImmediateAck,
+            FrameType::ADD_ADDRESS => Frame::AddAddress(AddAddress::decode(&mut self.bytes)?),
+            FrameType::PUNCH_ME_NOW => Frame::PunchMeNow(PunchMeNow::decode(&mut self.bytes)?),
+            FrameType::REMOVE_ADDRESS => Frame::RemoveAddress(RemoveAddress::decode(&mut self.bytes)?),
             _ => {
                 if let Some(s) = ty.stream() {
                     Frame::Stream(Stream {
@@ -933,6 +947,181 @@ impl AckFrequency {
         buf.write(self.request_max_ack_delay);
         buf.write(self.reordering_threshold);
     }
+}
+
+/// NAT traversal frame for advertising candidate addresses
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct AddAddress {
+    /// Sequence number for this address advertisement
+    pub(crate) sequence: VarInt,
+    /// Socket address being advertised
+    pub(crate) address: SocketAddr,
+    /// Priority of this address candidate
+    pub(crate) priority: VarInt,
+}
+
+impl AddAddress {
+    pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
+        buf.write(FrameType::ADD_ADDRESS);
+        buf.write(self.sequence);
+        buf.write(self.priority);
+        
+        match self.address {
+            SocketAddr::V4(addr) => {
+                buf.put_u8(4); // IPv4 indicator
+                buf.put_slice(&addr.ip().octets());
+                buf.put_u16(addr.port());
+            }
+            SocketAddr::V6(addr) => {
+                buf.put_u8(6); // IPv6 indicator
+                buf.put_slice(&addr.ip().octets());
+                buf.put_u16(addr.port());
+                buf.put_u32(addr.flowinfo());
+                buf.put_u32(addr.scope_id());
+            }
+        }
+    }
+    
+    pub(crate) fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
+        let sequence = r.get()?;
+        let priority = r.get()?;
+        let ip_version = r.get::<u8>()?;
+        
+        let address = match ip_version {
+            4 => {
+                let mut octets = [0u8; 4];
+                r.copy_to_slice(&mut octets);
+                let port = r.get::<u16>()?;
+                SocketAddr::V4(std::net::SocketAddrV4::new(
+                    std::net::Ipv4Addr::from(octets),
+                    port,
+                ))
+            }
+            6 => {
+                let mut octets = [0u8; 16];
+                r.copy_to_slice(&mut octets);
+                let port = r.get::<u16>()?;
+                let flowinfo = r.get::<u32>()?;
+                let scope_id = r.get::<u32>()?;
+                SocketAddr::V6(std::net::SocketAddrV6::new(
+                    std::net::Ipv6Addr::from(octets),
+                    port,
+                    flowinfo,
+                    scope_id,
+                ))
+            }
+            _ => return Err(UnexpectedEnd),
+        };
+        
+        Ok(Self {
+            sequence,
+            address,
+            priority,
+        })
+    }
+}
+
+impl FrameStruct for AddAddress {
+    const SIZE_BOUND: usize = 1 + 8 + 8 + 1 + 16 + 2 + 4 + 4; // Worst case IPv6
+}
+
+/// NAT traversal frame for requesting simultaneous hole punching
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct PunchMeNow {
+    /// Round number for coordination
+    pub(crate) round: VarInt,
+    /// Sequence number of the address to punch to (from AddAddress)
+    pub(crate) target_sequence: VarInt,
+    /// Local address for this punch attempt
+    pub(crate) local_address: SocketAddr,
+}
+
+impl PunchMeNow {
+    pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
+        buf.write(FrameType::PUNCH_ME_NOW);
+        buf.write(self.round);
+        buf.write(self.target_sequence);
+        
+        match self.local_address {
+            SocketAddr::V4(addr) => {
+                buf.put_u8(4); // IPv4 indicator
+                buf.put_slice(&addr.ip().octets());
+                buf.put_u16(addr.port());
+            }
+            SocketAddr::V6(addr) => {
+                buf.put_u8(6); // IPv6 indicator
+                buf.put_slice(&addr.ip().octets());
+                buf.put_u16(addr.port());
+                buf.put_u32(addr.flowinfo());
+                buf.put_u32(addr.scope_id());
+            }
+        }
+    }
+    
+    pub(crate) fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
+        let round = r.get()?;
+        let target_sequence = r.get()?;
+        let ip_version = r.get::<u8>()?;
+        
+        let local_address = match ip_version {
+            4 => {
+                let mut octets = [0u8; 4];
+                r.copy_to_slice(&mut octets);
+                let port = r.get::<u16>()?;
+                SocketAddr::V4(std::net::SocketAddrV4::new(
+                    std::net::Ipv4Addr::from(octets),
+                    port,
+                ))
+            }
+            6 => {
+                let mut octets = [0u8; 16];
+                r.copy_to_slice(&mut octets);
+                let port = r.get::<u16>()?;
+                let flowinfo = r.get::<u32>()?;
+                let scope_id = r.get::<u32>()?;
+                SocketAddr::V6(std::net::SocketAddrV6::new(
+                    std::net::Ipv6Addr::from(octets),
+                    port,
+                    flowinfo,
+                    scope_id,
+                ))
+            }
+            _ => return Err(UnexpectedEnd),
+        };
+        
+        Ok(Self {
+            round,
+            target_sequence,
+            local_address,
+        })
+    }
+}
+
+impl FrameStruct for PunchMeNow {
+    const SIZE_BOUND: usize = 1 + 8 + 8 + 1 + 16 + 2 + 4 + 4; // Worst case IPv6
+}
+
+/// NAT traversal frame for removing stale addresses
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct RemoveAddress {
+    /// Sequence number of the address to remove (from AddAddress)
+    pub(crate) sequence: VarInt,
+}
+
+impl RemoveAddress {
+    pub(crate) fn encode<W: BufMut>(&self, buf: &mut W) {
+        buf.write(FrameType::REMOVE_ADDRESS);
+        buf.write(self.sequence);
+    }
+    
+    pub(crate) fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
+        let sequence = r.get()?;
+        Ok(Self { sequence })
+    }
+}
+
+impl FrameStruct for RemoveAddress {
+    const SIZE_BOUND: usize = 1 + 8; // frame type + sequence
 }
 
 #[cfg(test)]

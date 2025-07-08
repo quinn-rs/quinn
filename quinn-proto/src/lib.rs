@@ -96,6 +96,27 @@ pub use token::{NoneTokenLog, NoneTokenStore, TokenLog, TokenReuseError, TokenSt
 mod token_memory_cache;
 pub use token_memory_cache::TokenMemoryCache;
 
+mod candidate_discovery;
+pub use candidate_discovery::{
+    CandidateDiscoveryManager, DiscoveryConfig, DiscoveryEvent, DiscoveryError,
+    NetworkInterface, ValidatedCandidate,
+};
+
+mod connection_establishment_simple;
+pub use connection_establishment_simple::{
+    SimpleConnectionEstablishmentManager, SimpleEstablishmentConfig,
+    SimpleConnectionEvent, SimpleConnectionStatus,
+};
+
+pub mod nat_traversal_api;
+pub use nat_traversal_api::{
+    NatTraversalEndpoint, NatTraversalConfig, EndpointRole, PeerId, BootstrapNode,
+    CandidateAddress, NatTraversalEvent, NatTraversalError, NatTraversalStatistics,
+};
+
+// Re-export NAT traversal types from connection module
+pub use connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole};
+
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;
 

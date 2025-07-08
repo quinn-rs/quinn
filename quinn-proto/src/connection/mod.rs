@@ -45,6 +45,10 @@ use crate::{
 mod ack_frequency;
 use ack_frequency::AckFrequencyState;
 
+pub mod nat_traversal;
+pub use nat_traversal::{NatTraversalRole, NatTraversalError, CoordinationPhase};
+use nat_traversal::NatTraversalState;
+
 mod assembler;
 pub use assembler::Chunk;
 
@@ -240,6 +244,9 @@ pub struct Connection {
     /// QUIC version used for the connection.
     version: u32,
 
+    /// NAT traversal state for establishing direct P2P connections
+    nat_traversal: Option<NatTraversalState>,
+
     /// qlog streamer to ouput events as JSON text sequences
     #[cfg(feature = "__qlog")]
     qlog_streamer: Option<QlogStreamer>,
@@ -360,6 +367,7 @@ impl Connection {
             rng,
             stats: ConnectionStats::default(),
             version,
+            nat_traversal: None, // Will be initialized when NAT traversal is negotiated
 
             #[cfg(feature = "__qlog")]
             qlog_streamer: None,
@@ -545,6 +553,18 @@ impl Connection {
         let mut datagram_start = 0;
         let mut segment_size = usize::from(self.path.current_mtu());
 
+        // Check for NAT traversal coordination timeouts
+        if let Some(nat_traversal) = &mut self.nat_traversal {
+            if nat_traversal.check_coordination_timeout(now) {
+                trace!("NAT traversal coordination timed out, may retry");
+            }
+        }
+
+        // First priority: NAT traversal PATH_CHALLENGE packets (includes coordination)
+        if let Some(challenge) = self.send_nat_traversal_challenge(now, buf) {
+            return Some(challenge);
+        }
+        
         if let Some(challenge) = self.send_path_challenge(now, buf) {
             return Some(challenge);
         }
@@ -1079,6 +1099,237 @@ impl Connection {
                 1 => None,
                 _ => Some(segment_size),
             },
+            src_ip: self.local_ip,
+        })
+    }
+
+    /// Send PUNCH_ME_NOW for coordination if necessary
+    fn send_coordination_request(&mut self, now: Instant, buf: &mut Vec<u8>) -> Option<Transmit> {
+        // Get coordination info without borrowing mutably
+        let should_send = self.nat_traversal.as_ref()?.should_send_punch_request();
+        if !should_send {
+            return None;
+        }
+        
+        let (round, target_addrs, coordinator_addr) = {
+            let nat_traversal = self.nat_traversal.as_ref()?;
+            let coord = nat_traversal.coordination.as_ref()?;
+            let addrs: Vec<_> = coord.punch_targets.iter().map(|t| t.remote_addr).collect();
+            (coord.round, addrs, self.path.remote) // Placeholder - should be bootstrap node
+        };
+        
+        if target_addrs.is_empty() {
+            return None;
+        }
+        
+        debug_assert_eq!(
+            self.highest_space,
+            SpaceId::Data,
+            "PUNCH_ME_NOW queued without 1-RTT keys"
+        );
+        
+        buf.reserve(MIN_INITIAL_SIZE as usize);
+        let buf_capacity = buf.capacity();
+        
+        let mut builder = PacketBuilder::new(
+            now,
+            SpaceId::Data,
+            self.rem_cids.active(),
+            buf,
+            buf_capacity,
+            0,
+            false,
+            self,
+        )?;
+        
+        trace!("sending PUNCH_ME_NOW round {} with {} targets", round, target_addrs.len());
+        
+        // Write PUNCH_ME_NOW frame
+        buf.write(frame::FrameType::PUNCH_ME_NOW);
+        buf.write(round);
+        buf.write(target_addrs.len() as u8);
+        for addr in target_addrs {
+            match addr {
+                SocketAddr::V4(v4) => {
+                    buf.write(4u8); // IPv4
+                    buf.write(u32::from(*v4.ip()));
+                    buf.write(v4.port());
+                }
+                SocketAddr::V6(v6) => {
+                    buf.write(6u8); // IPv6  
+                    buf.write(*v6.ip());
+                    buf.write(v6.port());
+                }
+            }
+        }
+        
+        self.stats.frame_tx.ping += 1; // Use ping counter for now
+        
+        builder.pad_to(MIN_INITIAL_SIZE);
+        builder.finish_and_track(now, self, None, buf);
+        
+        // Mark request sent after packet is built
+        if let Some(nat_traversal) = &mut self.nat_traversal {
+            nat_traversal.mark_punch_request_sent();
+        }
+        
+        Some(Transmit {
+            destination: coordinator_addr,
+            size: buf.len(),
+            ecn: if self.path.sending_ecn {
+                Some(EcnCodepoint::Ect0)
+            } else {
+                None
+            },
+            segment_size: None,
+            src_ip: self.local_ip,
+        })
+    }
+
+    /// Send coordinated PATH_CHALLENGE for hole punching
+    fn send_coordinated_path_challenge(&mut self, now: Instant, buf: &mut Vec<u8>) -> Option<Transmit> {
+        // Check if it's time to start synchronized hole punching
+        if let Some(nat_traversal) = &mut self.nat_traversal {
+            if nat_traversal.should_start_punching(now) {
+                nat_traversal.start_punching_phase(now);
+            }
+        }
+        
+        // Get punch targets if we're in punching phase
+        let (target_addr, challenge) = {
+            let nat_traversal = self.nat_traversal.as_ref()?;
+            match nat_traversal.get_coordination_phase() {
+                Some(CoordinationPhase::Punching) => {
+                    let targets = nat_traversal.get_punch_targets()?;
+                    if targets.is_empty() {
+                        return None;
+                    }
+                    // Send PATH_CHALLENGE to the first target (could be round-robin in future)
+                    let target = &targets[0];
+                    (target.remote_addr, target.challenge)
+                }
+                _ => return None,
+            }
+        };
+        
+        debug_assert_eq!(
+            self.highest_space,
+            SpaceId::Data,
+            "PATH_CHALLENGE queued without 1-RTT keys"
+        );
+        
+        buf.reserve(MIN_INITIAL_SIZE as usize);
+        let buf_capacity = buf.capacity();
+        
+        let mut builder = PacketBuilder::new(
+            now,
+            SpaceId::Data,
+            self.rem_cids.active(),
+            buf,
+            buf_capacity,
+            0,
+            false,
+            self,
+        )?;
+        
+        trace!("sending coordinated PATH_CHALLENGE {:08x} to {}", challenge, target_addr);
+        buf.write(frame::FrameType::PATH_CHALLENGE);
+        buf.write(challenge);
+        self.stats.frame_tx.path_challenge += 1;
+
+        builder.pad_to(MIN_INITIAL_SIZE);
+        builder.finish_and_track(now, self, None, buf);
+        
+        // Mark coordination as validating after packet is built
+        if let Some(nat_traversal) = &mut self.nat_traversal {
+            nat_traversal.mark_coordination_validating();
+        }
+        
+        Some(Transmit {
+            destination: target_addr,
+            size: buf.len(),
+            ecn: if self.path.sending_ecn {
+                Some(EcnCodepoint::Ect0)
+            } else {
+                None
+            },
+            segment_size: None,
+            src_ip: self.local_ip,
+        })
+    }
+
+    /// Send PATH_CHALLENGE for NAT traversal candidates if necessary
+    fn send_nat_traversal_challenge(&mut self, now: Instant, buf: &mut Vec<u8>) -> Option<Transmit> {
+        // Priority 1: Coordination protocol requests
+        if let Some(request) = self.send_coordination_request(now, buf) {
+            return Some(request);
+        }
+        
+        // Priority 2: Coordinated hole punching
+        if let Some(punch) = self.send_coordinated_path_challenge(now, buf) {
+            return Some(punch);
+        }
+        
+        // Priority 3: Regular candidate validation (fallback)
+        let (remote_addr, remote_sequence) = {
+            let nat_traversal = self.nat_traversal.as_ref()?;
+            let candidates = nat_traversal.get_validation_candidates();
+            if candidates.is_empty() {
+                return None;
+            }
+            // Get the highest priority candidate
+            let (sequence, candidate) = candidates[0];
+            (candidate.address, sequence)
+        };
+        
+        let challenge = rand::Rng::random::<u64>(&mut self.rng);
+        
+        // Start validation for this candidate
+        if let Err(e) = self.nat_traversal.as_mut()?.start_validation(remote_sequence, challenge, now) {
+            warn!("Failed to start NAT traversal validation: {}", e);
+            return None;
+        }
+        
+        debug_assert_eq!(
+            self.highest_space,
+            SpaceId::Data,
+            "PATH_CHALLENGE queued without 1-RTT keys"
+        );
+        
+        buf.reserve(MIN_INITIAL_SIZE as usize);
+        let buf_capacity = buf.capacity();
+        
+        // Use current connection ID for NAT traversal PATH_CHALLENGE
+        let mut builder = PacketBuilder::new(
+            now,
+            SpaceId::Data,
+            self.rem_cids.active(),
+            buf,
+            buf_capacity,
+            0,
+            false,
+            self,
+        )?;
+        
+        trace!("sending PATH_CHALLENGE {:08x} to NAT candidate {}", challenge, remote_addr);
+        buf.write(frame::FrameType::PATH_CHALLENGE);
+        buf.write(challenge);
+        self.stats.frame_tx.path_challenge += 1;
+
+        // PATH_CHALLENGE frames must be padded to at least 1200 bytes
+        builder.pad_to(MIN_INITIAL_SIZE);
+        
+        builder.finish_and_track(now, self, None, buf);
+        
+        Some(Transmit {
+            destination: remote_addr,
+            size: buf.len(),
+            ecn: if self.path.sending_ecn {
+                Some(EcnCodepoint::Ect0)
+            } else {
+                None
+            },
+            segment_size: None,
             src_ip: self.local_ip,
         })
     }
@@ -2855,6 +3106,30 @@ impl Connection {
                             prev_path.challenge = None;
                             prev_path.challenge_pending = false;
                         }
+                    } else if let Some(nat_traversal) = &mut self.nat_traversal {
+                        // Check if this is a response to NAT traversal PATH_CHALLENGE
+                        match nat_traversal.handle_validation_success(remote, token) {
+                            Ok(sequence) => {
+                                trace!("NAT traversal candidate {} validated for sequence {}", remote, sequence);
+                                
+                                // Check if this was part of a coordination round
+                                if nat_traversal.handle_coordination_success(remote) {
+                                    trace!("Coordination succeeded via {}", remote);
+                                    // Could trigger connection migration here if this is the best path
+                                } else {
+                                    // Mark the candidate pair as succeeded for regular validation
+                                    if nat_traversal.mark_pair_succeeded(remote) {
+                                        trace!("NAT traversal pair succeeded for {}", remote);
+                                    }
+                                }
+                            }
+                            Err(NatTraversalError::ChallengeMismatch) => {
+                                debug!("PATH_RESPONSE challenge mismatch for NAT candidate {}", remote);
+                            }
+                            Err(e) => {
+                                debug!("NAT traversal validation error: {}", e);
+                            }
+                        }
                     } else {
                         debug!(token, "ignoring invalid PATH_RESPONSE");
                     }
@@ -3045,6 +3320,15 @@ impl Connection {
                     if self.spaces[SpaceId::Handshake].crypto.is_some() {
                         self.discard_space(now, SpaceId::Handshake);
                     }
+                }
+                Frame::AddAddress(add_address) => {
+                    self.handle_add_address(&add_address, now)?;
+                }
+                Frame::PunchMeNow(punch_me_now) => {
+                    self.handle_punch_me_now(&punch_me_now, now)?;
+                }
+                Frame::RemoveAddress(remove_address) => {
+                    self.handle_remove_address(&remove_address)?;
                 }
             }
         }
@@ -3525,6 +3809,122 @@ impl Connection {
         self.path.mtud.on_peer_max_udp_payload_size_received(
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
         );
+
+        // Initialize NAT traversal if both peers support it
+        if let Some(nat_config) = &params.nat_traversal {
+            self.init_nat_traversal(nat_config);
+        }
+    }
+
+    /// Initialize NAT traversal state from negotiated transport parameters
+    fn init_nat_traversal(&mut self, peer_config: &crate::transport_parameters::NatTraversalConfig) {
+        use crate::transport_parameters::NatTraversalRole as TPRole;
+        
+        // Convert transport parameter role to internal role
+        let role = match peer_config.role {
+            TPRole::Client => NatTraversalRole::Client,
+            TPRole::Server { can_relay } => NatTraversalRole::Server { can_relay },
+            TPRole::Bootstrap => NatTraversalRole::Bootstrap,
+        };
+
+        // Use more restrictive limits
+        let max_candidates = peer_config.max_candidates.into_inner()
+            .min(50) as u32; // Cap at reasonable limit
+        let coordination_timeout = Duration::from_millis(
+            peer_config.coordination_timeout.into_inner().min(10000) // Cap at 10 seconds
+        );
+
+        self.nat_traversal = Some(NatTraversalState::new(
+            role,
+            max_candidates,
+            coordination_timeout,
+        ));
+
+        trace!("NAT traversal initialized with role {:?}", role);
+    }
+
+    /// Handle AddAddress frame from peer
+    fn handle_add_address(
+        &mut self,
+        add_address: &crate::frame::AddAddress,
+        now: Instant,
+    ) -> Result<(), TransportError> {
+        let nat_state = self.nat_traversal.as_mut()
+            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("AddAddress frame without NAT traversal negotiation"))?;
+
+        match nat_state.add_remote_candidate(
+            add_address.sequence,
+            add_address.address,
+            add_address.priority,
+            now,
+        ) {
+            Ok(()) => {
+                trace!("Added remote candidate: {} (seq={}, priority={})", 
+                       add_address.address, add_address.sequence, add_address.priority);
+                
+                // TODO: Trigger validation of this candidate
+                // This will be implemented when we add the packet sending logic
+                Ok(())
+            }
+            Err(NatTraversalError::TooManyCandidates) => {
+                Err(TransportError::PROTOCOL_VIOLATION("too many NAT traversal candidates"))
+            }
+            Err(NatTraversalError::DuplicateAddress) => {
+                // Silently ignore duplicates (peer may resend)
+                Ok(())
+            }
+            Err(e) => {
+                warn!("Failed to add remote candidate: {}", e);
+                Ok(()) // Don't terminate connection for non-critical errors
+            }
+        }
+    }
+
+    /// Handle PunchMeNow frame from peer (via coordinator)
+    fn handle_punch_me_now(
+        &mut self,
+        punch_me_now: &crate::frame::PunchMeNow,
+        now: Instant,
+    ) -> Result<(), TransportError> {
+        let nat_state = self.nat_traversal.as_mut()
+            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("PunchMeNow frame without NAT traversal negotiation"))?;
+
+        trace!("Received PunchMeNow: round={}, target_seq={}, local_addr={}", 
+               punch_me_now.round, punch_me_now.target_sequence, punch_me_now.local_address);
+        
+        // Handle peer's coordination request
+        if nat_state.handle_peer_punch_request(punch_me_now.round, now) {
+            trace!("Coordination synchronized for round {}", punch_me_now.round);
+            
+            // Extract peer's target addresses if this was relayed by coordinator
+            // In full implementation, the coordinator would relay both sides' addresses
+            // For now, we use the local_address from the frame as the peer's target
+            
+            // TODO: Create punch targets based on peer's candidates
+            // This is where we'd use the candidate pairing system
+            
+        } else {
+            debug!("Failed to synchronize coordination for round {}", punch_me_now.round);
+        }
+        
+        Ok(())
+    }
+
+    /// Handle RemoveAddress frame from peer
+    fn handle_remove_address(
+        &mut self,
+        remove_address: &crate::frame::RemoveAddress,
+    ) -> Result<(), TransportError> {
+        let nat_state = self.nat_traversal.as_mut()
+            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("RemoveAddress frame without NAT traversal negotiation"))?;
+
+        if nat_state.remove_candidate(remove_address.sequence) {
+            trace!("Removed candidate with sequence {}", remove_address.sequence);
+        } else {
+            trace!("Attempted to remove unknown candidate sequence {}", remove_address.sequence);
+        }
+
+        Ok(())
     }
 
     fn decrypt_packet(

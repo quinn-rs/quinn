@@ -89,6 +89,11 @@ macro_rules! make_struct {
             /// Frequency
             pub(crate) min_ack_delay: Option<VarInt>,
 
+            /// NAT traversal configuration for this connection
+            ///
+            /// When present, indicates support for QUIC NAT traversal extension
+            pub(crate) nat_traversal: Option<NatTraversalConfig>,
+
             // Server-only
             /// The value of the Destination Connection ID field from the first Initial packet sent
             /// by the client
@@ -126,6 +131,7 @@ macro_rules! make_struct {
                     initial_src_cid: None,
                     grease_quic_bit: false,
                     min_ack_delay: None,
+                    nat_traversal: None,
 
                     original_dst_cid: None,
                     retry_src_cid: None,
@@ -211,6 +217,87 @@ impl TransportParameters {
     pub(crate) fn issue_cids_limit(&self) -> u64 {
         self.active_connection_id_limit.0.min(LOC_CID_COUNT)
     }
+}
+
+/// NAT traversal configuration for a QUIC connection
+///
+/// This configuration is negotiated as part of the transport parameters and
+/// enables QUIC NAT traversal extension functionality.
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub struct NatTraversalConfig {
+    /// Role of this endpoint in NAT traversal coordination
+    pub(crate) role: NatTraversalRole,
+    /// Maximum number of candidate addresses to exchange
+    pub(crate) max_candidates: VarInt,
+    /// Timeout for coordination protocol in milliseconds
+    pub(crate) coordination_timeout: VarInt,
+    /// Maximum number of concurrent traversal attempts
+    pub(crate) max_concurrent_attempts: VarInt,
+}
+
+impl NatTraversalConfig {
+    fn wire_size(&self) -> u16 {
+        1 + // role discriminant
+        self.max_candidates.size() as u16 +
+        self.coordination_timeout.size() as u16 +
+        self.max_concurrent_attempts.size() as u16 +
+        match self.role {
+            NatTraversalRole::Server { .. } => 1, // can_relay boolean
+            _ => 0,
+        }
+    }
+
+    fn write<W: BufMut>(&self, w: &mut W) {
+        match self.role {
+            NatTraversalRole::Client => w.put_u8(0),
+            NatTraversalRole::Server { can_relay } => {
+                w.put_u8(1);
+                w.put_u8(if can_relay { 1 } else { 0 });
+            }
+            NatTraversalRole::Bootstrap => w.put_u8(2),
+        }
+        w.write(self.max_candidates);
+        w.write(self.coordination_timeout);
+        w.write(self.max_concurrent_attempts);
+    }
+
+    fn read<R: Buf>(r: &mut R) -> Result<Self, Error> {
+        let role_byte = r.get::<u8>()?;
+        let role = match role_byte {
+            0 => NatTraversalRole::Client,
+            1 => {
+                let can_relay = r.get::<u8>()? != 0;
+                NatTraversalRole::Server { can_relay }
+            }
+            2 => NatTraversalRole::Bootstrap,
+            _ => return Err(Error::IllegalValue),
+        };
+        
+        let max_candidates = r.get()?;
+        let coordination_timeout = r.get()?;
+        let max_concurrent_attempts = r.get()?;
+        
+        Ok(Self {
+            role,
+            max_candidates,
+            coordination_timeout,
+            max_concurrent_attempts,
+        })
+    }
+}
+
+/// Role of an endpoint in NAT traversal coordination
+#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+pub(crate) enum NatTraversalRole {
+    /// Client endpoint (initiates connections, on-demand)
+    Client,
+    /// Server endpoint (accepts connections, always reachable)
+    Server { 
+        /// Whether this server can act as a relay for other connections
+        can_relay: bool,
+    },
+    /// Bootstrap/relay endpoint (publicly reachable, coordinates traversal)
+    Bootstrap,
 }
 
 /// A server's preferred address
@@ -380,6 +467,13 @@ impl TransportParameters {
                         w.write(x);
                     }
                 }
+                TransportParameterId::NatTraversal => {
+                    if let Some(ref x) = self.nat_traversal {
+                        w.write_var(id as u64);
+                        w.write_var(x.wire_size() as u64);
+                        x.write(w);
+                    }
+                }
                 id => {
                     macro_rules! write_params {
                         {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
@@ -477,6 +571,12 @@ impl TransportParameters {
                 },
                 TransportParameterId::MinAckDelayDraft07 => {
                     params.min_ack_delay = Some(r.get().unwrap())
+                }
+                TransportParameterId::NatTraversal => {
+                    if params.nat_traversal.is_some() {
+                        return Err(Error::Malformed);
+                    }
+                    params.nat_traversal = Some(NatTraversalConfig::read(&mut r.take(len))?);
                 }
                 _ => {
                     macro_rules! parse {
@@ -640,11 +740,15 @@ pub(crate) enum TransportParameterId {
 
     // https://datatracker.ietf.org/doc/html/draft-ietf-quic-ack-frequency#section-10.1
     MinAckDelayDraft07 = 0xFF04DE1B,
+
+    // NAT Traversal Extension - using reserved parameter space (31*N + 27)
+    // This follows RFC 9000 reserved parameter pattern for experimental extensions
+    NatTraversal = 0x58, // 31*1 + 27 = 58
 }
 
 impl TransportParameterId {
     /// Array with all supported transport parameter IDs
-    const SUPPORTED: [Self; 21] = [
+    const SUPPORTED: [Self; 22] = [
         Self::MaxIdleTimeout,
         Self::MaxUdpPayloadSize,
         Self::InitialMaxData,
@@ -666,6 +770,7 @@ impl TransportParameterId {
         Self::RetrySourceConnectionId,
         Self::GreaseQuicBit,
         Self::MinAckDelayDraft07,
+        Self::NatTraversal,
     ];
 }
 
@@ -705,6 +810,7 @@ impl TryFrom<u64> for TransportParameterId {
             id if Self::RetrySourceConnectionId == id => Self::RetrySourceConnectionId,
             id if Self::GreaseQuicBit == id => Self::GreaseQuicBit,
             id if Self::MinAckDelayDraft07 == id => Self::MinAckDelayDraft07,
+            id if Self::NatTraversal == id => Self::NatTraversal,
             _ => return Err(()),
         };
         Ok(param)

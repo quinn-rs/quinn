@@ -44,6 +44,9 @@ pub struct TransportConfig {
     pub(crate) congestion_controller_factory: Arc<dyn congestion::ControllerFactory + Send + Sync>,
 
     pub(crate) enable_segmentation_offload: bool,
+    
+    /// NAT traversal configuration
+    pub(crate) nat_traversal_config: Option<crate::transport_parameters::NatTraversalConfig>,
 }
 
 impl TransportConfig {
@@ -329,6 +332,22 @@ impl TransportConfig {
         self.enable_segmentation_offload = enabled;
         self
     }
+
+    /// Configure NAT traversal capabilities for this connection
+    ///
+    /// When enabled, this connection will support QUIC NAT traversal extensions including:
+    /// - Address candidate advertisement and validation
+    /// - Coordinated hole punching through bootstrap nodes
+    /// - Multi-path connectivity testing
+    /// - Automatic path migration for NAT rebinding
+    ///
+    /// This is required for P2P connections through NATs in MaidSafe networks.
+    /// Pass `None` to disable NAT traversal or use the high-level NAT traversal API
+    /// to create appropriate configurations.
+    pub fn nat_traversal_config(&mut self, config: Option<crate::transport_parameters::NatTraversalConfig>) -> &mut Self {
+        self.nat_traversal_config = config;
+        self
+    }
 }
 
 impl Default for TransportConfig {
@@ -370,6 +389,7 @@ impl Default for TransportConfig {
             congestion_controller_factory: Arc::new(congestion::CubicConfig::default()),
 
             enable_segmentation_offload: true,
+            nat_traversal_config: None,
         }
     }
 }
@@ -402,6 +422,7 @@ impl fmt::Debug for TransportConfig {
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
             enable_segmentation_offload,
+            nat_traversal_config,
         } = self;
         fmt.debug_struct("TransportConfig")
             .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
@@ -430,6 +451,7 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             // congestion_controller_factory not debug
             .field("enable_segmentation_offload", enable_segmentation_offload)
+            .field("nat_traversal_config", nat_traversal_config)
             .finish_non_exhaustive()
     }
 }

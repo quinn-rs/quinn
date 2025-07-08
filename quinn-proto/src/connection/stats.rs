@@ -93,6 +93,9 @@ impl FrameStats {
             Frame::AckFrequency(_) => self.ack_frequency += 1,
             Frame::ImmediateAck => self.immediate_ack += 1,
             Frame::HandshakeDone => self.handshake_done = self.handshake_done.saturating_add(1),
+            Frame::AddAddress(_) => { /* NAT traversal frames - not counted in basic stats */ }
+            Frame::PunchMeNow(_) => { /* NAT traversal frames - not counted in basic stats */ }
+            Frame::RemoveAddress(_) => { /* NAT traversal frames - not counted in basic stats */ }
         }
     }
 }
