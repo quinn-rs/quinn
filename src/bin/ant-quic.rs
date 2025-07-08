@@ -17,7 +17,7 @@ use std::{
 };
 
 use clap::Parser;
-use quinn_proto::{
+use ant_quic::{
     nat_traversal_api::{CandidateAddress, PeerId},
     CandidateSource, CandidateState,
 };

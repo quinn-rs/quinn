@@ -219,17 +219,7 @@ ant-quic is designed for high-performance P2P networking:
 - **Scalability**: Efficient resource usage for large-scale P2P networks
 - **Reliability**: Multiple connection paths and automatic failover
 
-### Benchmarks
-
-| Scenario | Connection Success Rate | Avg. Establishment Time |
-|----------|------------------------|-------------------------|
-| Full Cone NAT | ~99% | ~100ms |
-| Restricted Cone | ~95% | ~250ms |
-| Port Restricted | ~90% | ~400ms |
-| Symmetric NAT | ~85% | ~800ms |
-| CGNAT + Relay | ~99% | ~1200ms |
-
-*Benchmarks measured in controlled environment with simulated network conditions*
+Performance benchmarks will be added in future releases after comprehensive testing across different network scenarios.
 
 ## Contributing
 
