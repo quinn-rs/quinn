@@ -577,7 +577,7 @@ pub enum PathStatus {
 }
 
 /// Application events about paths
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum PathEvent {
     /// A new path has been opened
     Opened {
@@ -593,12 +593,23 @@ pub enum PathEvent {
         /// for a list of known errors.
         error_code: VarInt,
     },
-    /// Path was closed locally.
+    /// Path was closed locally
     LocallyClosed {
-        /// Path for which the error occurred.
+        /// Path for which the error occurred
         id: PathId,
         /// The error that occurred
         error: PathError,
+    },
+    /// The remote changed the status of the path
+    ///
+    /// The local status is not changed because of this event. It is up to the application
+    /// to update the local status, wihch is used for packet scheduling, when the remote
+    /// changes the status.
+    RemoteStatus {
+        /// Path which has changed status
+        id: PathId,
+        /// The new status set by the remote
+        status: PathStatus,
     },
 }
 

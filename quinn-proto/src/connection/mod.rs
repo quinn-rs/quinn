@@ -623,7 +623,7 @@ impl Connection {
             .map(|path_state| &mut path_state.data)
     }
 
-    /// Gets the [`PathStatus`] for a known [`PathId`]
+    /// Gets the local [`PathStatus`] for a known [`PathId`]
     pub fn path_status(&self, path_id: PathId) -> Result<PathStatus, ClosedPath> {
         self.path(path_id)
             .map(PathData::local_status)
@@ -5129,6 +5129,13 @@ impl Connection {
         } else {
             debug!("PATH_AVAILABLE received unknown path {:?}", path_id);
         }
+        self.events.push_back(
+            PathEvent::RemoteStatus {
+                id: path_id,
+                status,
+            }
+            .into(),
+        );
     }
 
     /// Returns the maximum [`PathId`] to be used in this connection.
@@ -5430,6 +5437,12 @@ pub enum Event {
     ObservedAddr(SocketAddr),
     /// (Multi)Path events
     Path(PathEvent),
+}
+
+impl From<PathEvent> for Event {
+    fn from(source: PathEvent) -> Self {
+        Self::Path(source)
+    }
 }
 
 fn instant_saturating_sub(x: Instant, y: Instant) -> Duration {
