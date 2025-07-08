@@ -264,6 +264,7 @@ at your option.
 ## Acknowledgments
 
 - Built on the excellent [Quinn](https://github.com/quinn-rs/quinn) QUIC implementation
+- Implements NAT traversal based on [draft-seemann-quic-nat-traversal-01](https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-01.html)
 - Inspired by WebRTC ICE protocols and P2P networking research
 - Developed for the [Autonomi](https://autonomi.com) decentralized network ecosystem
 
