@@ -1,0 +1,33 @@
+╭──────────────────── ant-quic v0.1.1 ──────────────────────╮
+│ Starting QUIC P2P with NAT Traversal                  │
+╰──────────────────────────────────────────────────────────╯
+
+✓ Initializing node... 
+
+Node ID: 🔑 188d8c70...
+
+📡 Network Interfaces:
+
+🗣️ Human-Readable Four-Word Network Addresses
+  • We use memorable four-word addresses that are easy to share
+  • Tell your friends these words instead of hard-to-remember numbers!
+
+  • Local Addresses:
+    • silver.curb.july.unlock [127.0.0.1:8001]
+    • hunting.broaden.taste.unlock [192.168.1.23:8001]
+
+🌐 Mode: Bootstrap Coordinator
+  ℹ No peers specified - running as bootstrap coordinator
+  ✓ Ready to accept connections on port 8001
+
+  ⏳ Waiting for peers to connect...
+
+📊 Status: Active | Mode: Coordinator | Peers: 0 | Up: 00:00:05
+
+✓ New client connected: 5a3f2b9c... from paper.broaden.smith.bully [192.168.1.42:53421]
+
+📊 Status: Active | Mode: Coordinator | Peers: 1 | Up: 00:00:08
+
+⟳ Coordinating connection: a1b2c3d4... anyone.aaron.line.rl [10.5.0.2:64903] wants to reach 5a3f2b9c... paper.broaden.smith.bully [192.168.1.42:53421]
+
+📊 Status: Active | Mode: Coordinator | Peers: 2 | Up: 00:00:15

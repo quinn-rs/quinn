@@ -588,6 +588,17 @@ impl UnifiedP2PNode {
         
         debug!("Client registration from {:?} at {}", peer_id, peer_addr);
         
+        // Show connection with four-word address
+        println!();
+        print_status(
+            symbols::CHECK,
+            &format!("New client connected: {} from {}", 
+                format_peer_id(&peer_id.0),
+                format_address_with_words(&peer_addr)
+            ),
+            colors::GREEN
+        );
+        
         // Register the peer
         {
             let mut served_peers = self.served_peers.lock().unwrap();
@@ -662,6 +673,19 @@ impl UnifiedP2PNode {
         
         match target_info {
             Some(target_info) => {
+                // Show coordination with four-word addresses
+                println!();
+                print_status(
+                    symbols::CIRCULAR_ARROWS,
+                    &format!("Coordinating connection: {} {} wants to reach {} {}", 
+                        format_peer_id(&requesting_peer.0),
+                        format_address_with_words(&peer_addr),
+                        format_peer_id(&target_peer.0),
+                        format_address_with_words(&target_info.observed_address)
+                    ),
+                    colors::BLUE
+                );
+                
                 // Create coordination session
                 {
                     let mut sessions = self.coordination_sessions.lock().unwrap();
@@ -740,7 +764,17 @@ impl UnifiedP2PNode {
             let port = u16::from_be_bytes(port_bytes);
             let target_addr = SocketAddr::from((ip_bytes, port));
             
-            info!("Received coordination instructions to connect to {}", target_addr);
+            info!("Received coordination instructions to connect to {}", format_address_with_words(&target_addr));
+            
+            // Show coordination with four-word address
+            println!();
+            print_status(
+                symbols::ROCKET,
+                &format!("Initiating NAT traversal to peer at {}", 
+                    format_address_with_words(&target_addr)
+                ),
+                colors::CYAN
+            );
             
             // Start hole punching to target address
             self.start_hole_punching(target_addr).await;
@@ -759,7 +793,7 @@ impl UnifiedP2PNode {
             let error_len = data[33] as usize;
             if data.len() >= 34 + error_len {
                 let error_msg = String::from_utf8_lossy(&data[34..34 + error_len]);
-                warn!("Error from {}: {}", peer_addr, error_msg);
+                warn!("Error from {}: {}", format_address_with_words(&peer_addr), error_msg);
             }
         }
     }
@@ -774,20 +808,30 @@ impl UnifiedP2PNode {
     
     /// Start hole punching to target address
     async fn start_hole_punching(&self, target_addr: SocketAddr) {
-        info!("Starting hole punching to {}", target_addr);
+        info!("Starting hole punching to {}", format_address_with_words(&target_addr));
         
         // Send multiple packets to try to open NAT hole
         for i in 0..5 {
             let punch_packet = self.create_punch_packet(i);
             if let Err(e) = self.socket.send_to(&punch_packet, target_addr).await {
-                warn!("Hole punch {} to {} failed: {}", i, target_addr, e);
+                warn!("Hole punch {} to {} failed: {}", i, format_address_with_words(&target_addr), e);
             } else {
-                debug!("Sent hole punch {} to {}", i, target_addr);
+                debug!("Sent hole punch {} to {}", i, format_address_with_words(&target_addr));
             }
             
             // Brief delay between punches
             sleep(Duration::from_millis(100)).await;
         }
+        
+        // Show completion
+        println!();
+        print_status(
+            symbols::CHECK,
+            &format!("NAT traversal attempt completed to {}", 
+                format_address_with_words(&target_addr)
+            ),
+            colors::GREEN
+        );
     }
     
     /// Create hole punch packet
