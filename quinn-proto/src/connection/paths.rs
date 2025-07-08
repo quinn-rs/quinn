@@ -324,6 +324,14 @@ impl PathData {
             }
         }
     }
+
+    pub(crate) fn remote_status(&self) -> Option<PathStatus> {
+        self.status.remote_status.map(|(_seq, status)| status)
+    }
+
+    pub(crate) fn local_status(&self) -> PathStatus {
+        self.status.local_status
+    }
 }
 
 /// RTT estimation for a particular network path
@@ -510,29 +518,42 @@ impl InFlight {
 #[derive(Debug, Clone, Default)]
 pub(super) struct PathStatusState {
     /// The local status
-    pub(super) local_status: PathStatus,
+    local_status: PathStatus,
     /// Local sequence number, for both PATH_AVAIALABLE and PATH_BACKUP
     ///
     /// This is the number of the *next* path status frame to be sent.
-    pub(super) local_seq: VarInt,
+    local_seq: VarInt,
     /// The status set by the remote
-    pub(super) remote_status: Option<PathStatus>,
-    /// Remote sequence number, for both PATH_AVAIALABLE and PATH_BACKUP
-    pub(super) remote_seq: Option<VarInt>,
+    remote_status: Option<(VarInt, PathStatus)>,
 }
 
 impl PathStatusState {
     /// To be called on received PATH_AVAILABLE/PATH_BACKUP frames
-    pub(super) fn on_path_status(&mut self, status: PathStatus, seq: VarInt) {
-        if Some(seq) <= self.remote_seq {
-            tracing::warn!("whoops");
-            return;
+    pub(super) fn remote_update(&mut self, status: PathStatus, seq: VarInt) {
+        if self.remote_status.is_some_and(|(curr, _)| curr >= seq) {
+            return trace!(%seq, "ignoring path status update");
         }
-        self.remote_seq = Some(seq);
-        let prev = self.remote_status.replace(status);
+
+        let prev = self.remote_status.replace((seq, status)).map(|(_, s)| s);
         if prev != Some(status) {
             debug!(?status, ?seq, "remote changed path status");
         }
+    }
+
+    /// Updates the local status
+    ///
+    /// If the local status changed, the previous value is returned
+    pub(super) fn local_update(&mut self, status: PathStatus) -> Option<PathStatus> {
+        if self.local_status == status {
+            return None;
+        }
+
+        self.local_seq = self.local_seq.saturating_add(1u8);
+        Some(std::mem::replace(&mut self.local_status, status))
+    }
+
+    pub(crate) fn seq(&self) -> VarInt {
+        self.local_seq
     }
 }
 

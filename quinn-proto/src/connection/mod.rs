@@ -560,7 +560,7 @@ impl Connection {
         // Create PathData, schedule PATH_CHALLENGE to be sent.
         // TODO(flub): Not sure if we need to send a PATH_CHALLENGE in all situations?
         let mut path = PathData::new(remote, self.allow_mtud, None, now, &self.config);
-        path.status.local_status = initial_status;
+        path.status.local_update(initial_status);
         path.challenge = Some(self.rng.random());
         path.challenge_pending = true;
         self.paths.insert(
@@ -571,8 +571,6 @@ impl Connection {
             },
         );
 
-        // Inform the remote of the path status.
-        self.spaces[SpaceId::Data].pending.path_status.push(path_id);
         let pn_space = spaces::PacketNumberSpace::new(now, SpaceId::Data, &mut self.rng);
         self.spaces[SpaceId::Data]
             .number_spaces
@@ -628,10 +626,9 @@ impl Connection {
 
     /// Gets the [`PathStatus`] for a known [`PathId`]
     pub fn path_status(&self, path_id: PathId) -> Result<PathStatus, ClosedPath> {
-        match self.paths.get(&path_id) {
-            Some(path) => Ok(path.data.status.local_status),
-            None => Err(ClosedPath { _private: () }),
-        }
+        self.path(path_id)
+            .map(PathData::local_status)
+            .ok_or(ClosedPath { _private: () })
     }
 
     /// Sets the [`PathStatus`] for a known [`PathId`]
@@ -642,15 +639,18 @@ impl Connection {
         path_id: PathId,
         status: PathStatus,
     ) -> Result<PathStatus, ClosedPath> {
-        match self.paths.get_mut(&path_id) {
-            Some(path) => {
-                let prev_status = path.data.status.local_status;
-                path.data.status.local_status = status;
-                self.spaces[SpaceId::Data].pending.path_status.push(path_id);
-                Ok(prev_status)
+        let path = self.path_mut(path_id).ok_or(ClosedPath { _private: () })?;
+        let prev = match path.status.local_update(status) {
+            Some(prev) => {
+                self.spaces[SpaceId::Data]
+                    .pending
+                    .path_status
+                    .insert(path_id);
+                prev
             }
-            None => Err(ClosedPath { _private: () }),
-        }
+            None => path.local_status(),
+        };
+        Ok(prev)
     }
 
     /// Returns the remote path status
@@ -658,9 +658,7 @@ impl Connection {
     //    this as an API, but for now it allows me to write a test easily.
     // TODO(flub): Technically this should be a Result<Option<PathSTatus>>?
     pub fn remote_path_status(&self, path_id: PathId) -> Option<PathStatus> {
-        self.paths
-            .get(&path_id)
-            .and_then(|path| path.data.status.remote_status)
+        self.path(path_id).and_then(|path| path.remote_status())
     }
 
     /// Sets the max_idle_timeout for a specific path
@@ -826,7 +824,7 @@ impl Connection {
         let have_available_path = self
             .paths
             .values()
-            .any(|path| path.data.status.local_status == PathStatus::Available);
+            .any(|path| path.data.local_status() == PathStatus::Available);
 
         // Setup for the first path_id
         let mut transmit = TransmitBuf::new(
@@ -907,7 +905,7 @@ impl Connection {
             let path_should_send = {
                 let path_exclusive_only = space_id == SpaceId::Data
                     && have_available_path
-                    && self.path_data(path_id).status.local_status == PathStatus::Backup;
+                    && self.path_data(path_id).local_status() == PathStatus::Backup;
                 let path_should_send = if path_exclusive_only {
                     can_send.path_exclusive
                 } else {
@@ -1174,7 +1172,7 @@ impl Connection {
 
             let sent_frames = {
                 let path_exclusive_only = have_available_path
-                    && self.path_data(path_id).status.local_status == PathStatus::Backup;
+                    && self.path_data(path_id).local_status() == PathStatus::Backup;
                 let pn = builder.exact_number;
                 self.populate_packet(
                     now,
@@ -4275,6 +4273,13 @@ impl Connection {
                 buf.write(frame::FrameType::PATH_CHALLENGE);
                 buf.write(token);
 
+                // TODO(@divma): this is a bit of a bandaid, revisit this once the validation story
+                // is clear
+                if is_multipath_negotiated && !path.validated {
+                    // queue informing the path status along with the challenge
+                    space.pending.path_status.insert(path_id);
+                }
+
                 // Always include an OBSERVED_ADDR frame with a PATH_CHALLENGE, regardless
                 // of whether one has already been sent on this path.
                 if space_id == SpaceId::Data
@@ -4399,22 +4404,17 @@ impl Connection {
             && space_id == SpaceId::Data
             && frame::PathAvailable::SIZE_BOUND <= buf.remaining_mut()
         {
-            let Some(path_id) = space.pending.path_status.pop() else {
+            let Some(path_id) = space.pending.path_status.pop_first() else {
                 break;
             };
-            let Some(path) = self
-                .paths
-                .get_mut(&path_id)
-                .map(|path_state| &mut path_state.data)
-            else {
+            let Some(path) = self.paths.get(&path_id).map(|path_state| &path_state.data) else {
                 trace!(%path_id, "discarding queued path status for unknown path");
                 continue;
             };
 
-            let status_state = &mut path.status;
-            let seq = status_state.local_seq;
-            status_state.local_seq = status_state.local_seq.saturating_add(1u8);
-            match status_state.local_status {
+            let seq = path.status.seq();
+            sent.retransmits.get_or_create().path_status.insert(path_id);
+            match path.local_status() {
                 PathStatus::Available => {
                     frame::PathAvailable {
                         path_id,
@@ -5126,7 +5126,7 @@ impl Connection {
     /// Handle new path status information: PATH_AVAILABLE, PATH_BACKUP
     fn on_path_status(&mut self, path_id: PathId, status: PathStatus, status_seq_no: VarInt) {
         if let Some(path) = self.paths.get_mut(&path_id) {
-            path.data.status.on_path_status(status, status_seq_no);
+            path.data.status.remote_update(status, status_seq_no);
         } else {
             debug!("PATH_AVAILABLE received unknown path {:?}", path_id);
         }
