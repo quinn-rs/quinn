@@ -29,6 +29,7 @@ use tokio::{
 };
 use tracing::{info, warn, debug, error};
 use terminal_ui::{colors, symbols, print_banner, print_section, print_item, print_status, format_peer_id, format_address, format_address_with_words, describe_address, ProgressIndicator};
+use four_word_networking::FourWordAdaptiveEncoder;
 
 /// Command line arguments for ant-quic
 #[derive(Parser, Debug)]
@@ -49,7 +50,7 @@ struct Args {
     #[arg(short, long, default_value = "0.0.0.0:0")]
     listen: SocketAddr,
     
-    /// Bootstrap nodes to connect to (comma separated)
+    /// Bootstrap nodes to connect to (comma separated, supports IP:port or four-word addresses)
     #[arg(short, long)]
     bootstrap: Option<String>,
     
@@ -1140,13 +1141,41 @@ fn parse_peer_id(hex_str: &str) -> Result<PeerId, Box<dyn std::error::Error>> {
     Ok(PeerId(bytes))
 }
 
-/// Parse bootstrap addresses from comma-separated string
+/// Parse a single address that could be either IP:port or four-word format
+fn parse_single_address(addr_str: &str) -> Result<SocketAddr, Box<dyn std::error::Error>> {
+    let addr_str = addr_str.trim();
+    
+    // First try to parse as normal IP:port
+    if let Ok(addr) = addr_str.parse::<SocketAddr>() {
+        return Ok(addr);
+    }
+    
+    // If that fails, try to decode as four-word address
+    match FourWordAdaptiveEncoder::new() {
+        Ok(encoder) => {
+            match encoder.decode(addr_str) {
+                Ok(decoded) => {
+                    // The decoder returns a string, parse it as SocketAddr
+                    decoded.parse::<SocketAddr>()
+                        .map_err(|e| format!("Invalid decoded address '{}': {}", decoded, e).into())
+                }
+                Err(e) => {
+                    Err(format!("Invalid address format '{}'. Expected IP:port or four-word format. Error: {}", addr_str, e).into())
+                }
+            }
+        }
+        Err(e) => {
+            Err(format!("Failed to create four-word decoder: {}", e).into())
+        }
+    }
+}
+
+/// Parse bootstrap addresses from comma-separated string (supports both IP:port and four-word formats)
 fn parse_bootstrap_addresses(bootstrap_str: &str) -> Result<Vec<SocketAddr>, Box<dyn std::error::Error>> {
     bootstrap_str
         .split(',')
-        .map(|addr| addr.trim().parse())
+        .map(parse_single_address)
         .collect::<Result<Vec<_>, _>>()
-        .map_err(|e: std::net::AddrParseError| e.into())
 }
 
 #[tokio::main]
