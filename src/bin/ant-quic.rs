@@ -9,6 +9,8 @@
 //! Nodes automatically detect their reachability and enable coordinator services
 //! when they can be reached directly, creating a decentralized bootstrap network.
 
+mod terminal_ui;
+
 use std::{
     collections::HashMap,
     net::{IpAddr, SocketAddr},
@@ -26,6 +28,7 @@ use tokio::{
     time::{interval, sleep, timeout},
 };
 use tracing::{info, warn, debug, error};
+use terminal_ui::{colors, symbols, print_banner, print_section, print_item, print_status, format_peer_id, format_address, format_address_with_words, describe_address, ProgressIndicator};
 
 /// Command line arguments for ant-quic
 #[derive(Parser, Debug)]
@@ -301,7 +304,7 @@ impl UnifiedP2PNode {
         let socket = UdpSocket::bind(listen_addr).await?;
         let local_addr = socket.local_addr()?;
         
-        info!("Node {:?} starting on {}", peer_id, local_addr);
+        debug!("Node {:?} starting on {}", peer_id, local_addr);
         
         Ok(Self {
             peer_id,
@@ -321,7 +324,7 @@ impl UnifiedP2PNode {
     
     /// Start the unified node
     async fn start(&mut self, bootstrap_addresses: Vec<SocketAddr>) -> Result<(), Box<dyn std::error::Error>> {
-        info!("Starting unified P2P node {:?}", self.peer_id);
+        debug!("Starting unified P2P node {:?}", self.peer_id);
         
         // Store bootstrap nodes
         {
@@ -329,19 +332,34 @@ impl UnifiedP2PNode {
             bootstraps.extend(bootstrap_addresses.clone());
         }
         
-        // Detect node capability and determine role
-        self.detect_capability().await;
-        self.determine_role();
+        // Smart mode selection based on bootstrap presence
+        if bootstrap_addresses.is_empty() {
+            // No bootstrap peers - try to be a coordinator
+            self.capability = NodeCapability::PublicCoordinator;
+            self.current_role = NodeRole::Coordinator;
+            debug!("No bootstrap peers - starting as coordinator");
+        } else {
+            // Have bootstrap peers - detect capability normally
+            self.detect_capability().await;
+            self.determine_role();
+            
+            // Register with bootstrap nodes if we're in client mode
+            if matches!(self.current_role, NodeRole::Client | NodeRole::Hybrid) {
+                self.register_with_bootstraps().await;
+            }
+        }
+        
+        // Update stats with initial role
+        {
+            let mut stats = self.stats.lock().unwrap();
+            stats.current_role = self.current_role;
+            stats.capability = self.capability;
+        }
         
         // Start periodic tasks
         let _stats_task = self.start_stats_task();
         let _cleanup_task = self.start_cleanup_task();
         let _connection_manager_task = self.start_connection_manager_task();
-        
-        // Register with bootstrap nodes if we're in client mode
-        if matches!(self.current_role, NodeRole::Client | NodeRole::Hybrid) {
-            self.register_with_bootstraps().await;
-        }
         
         // Main packet processing loop
         let mut buffer = vec![0u8; 1472];
@@ -365,11 +383,11 @@ impl UnifiedP2PNode {
     
     /// Detect node's reachability capability
     async fn detect_capability(&mut self) {
-        info!("Detecting node reachability capability...");
+        debug!("Detecting node reachability capability...");
         
         if self.config.force_coordinator {
             self.capability = NodeCapability::PublicCoordinator;
-            info!("Forced coordinator mode - assuming public reachability");
+            debug!("Forced coordinator mode - assuming public reachability");
             return;
         }
         
@@ -386,16 +404,16 @@ impl UnifiedP2PNode {
         
         if is_public_ip {
             self.capability = NodeCapability::PublicCoordinator;
-            info!("Detected public IP - enabling coordinator services");
+            debug!("Detected public IP - enabling coordinator services");
         } else {
             // Test reachability through bootstrap nodes
             let reachable = self.test_reachability_via_bootstraps().await;
             if reachable {
                 self.capability = NodeCapability::LimitedReachability;
-                info!("Limited reachability detected - may provide coordinator services");
+                debug!("Limited reachability detected - may provide coordinator services");
             } else {
                 self.capability = NodeCapability::ClientOnly;
-                info!("Behind NAT - client-only mode");
+                debug!("Behind NAT - client-only mode");
             }
         }
     }
@@ -436,21 +454,21 @@ impl UnifiedP2PNode {
     fn determine_role(&mut self) {
         if !self.config.enable_coordinator {
             self.current_role = NodeRole::Client;
-            info!("Coordinator services disabled - client-only mode");
+            debug!("Coordinator services disabled - client-only mode");
             return;
         }
         
         self.current_role = match self.capability {
             NodeCapability::PublicCoordinator => {
-                info!("Enabling full coordinator services");
+                debug!("Enabling full coordinator services");
                 NodeRole::Hybrid // Can act as both coordinator and client
             }
             NodeCapability::LimitedReachability => {
-                info!("Enabling limited coordinator services");
+                debug!("Enabling limited coordinator services");
                 NodeRole::Hybrid
             }
             NodeCapability::ClientOnly => {
-                info!("Client-only mode");
+                debug!("Client-only mode");
                 NodeRole::Client
             }
         };
@@ -468,11 +486,25 @@ impl UnifiedP2PNode {
         let bootstrap_nodes = self.bootstrap_nodes.lock().unwrap().clone();
         
         for bootstrap_addr in &bootstrap_nodes {
-            info!("Registering with bootstrap node {}", bootstrap_addr);
+            debug!("Registering with bootstrap node {}", bootstrap_addr);
             
             let registration_packet = self.create_registration_packet();
-            if let Err(e) = self.socket.send_to(&registration_packet, bootstrap_addr).await {
-                warn!("Failed to register with {}: {}", bootstrap_addr, e);
+            match self.socket.send_to(&registration_packet, bootstrap_addr).await {
+                Ok(_) => {
+                    // Show connection progress
+                    print_status(
+                        symbols::CIRCULAR_ARROWS, 
+                        &format!("Registering with {}", format_address_with_words(bootstrap_addr)),
+                        colors::BLUE
+                    );
+                }
+                Err(e) => {
+                    print_status(
+                        symbols::CROSS,
+                        &format!("Failed to reach {}: {}", format_address_with_words(bootstrap_addr), e),
+                        colors::RED
+                    );
+                }
             }
         }
         
@@ -620,7 +652,7 @@ impl UnifiedP2PNode {
         let target_peer_bytes: [u8; 32] = data[33..65].try_into().unwrap();
         let target_peer = PeerId(target_peer_bytes);
         
-        info!("Coordination request: {:?} wants to connect to {:?}", requesting_peer, target_peer);
+        debug!("Coordination request: {:?} wants to connect to {:?}", requesting_peer, target_peer);
         
         // Check if target peer is known
         let target_info = {
@@ -661,7 +693,7 @@ impl UnifiedP2PNode {
     }
     
     /// Handle registration ACK (client role)
-    async fn handle_registration_ack(&self, data: &[u8], _peer_addr: SocketAddr) {
+    async fn handle_registration_ack(&self, data: &[u8], peer_addr: SocketAddr) {
         if data.len() >= 39 {
             // Extract server reflexive address from response
             let ip_bytes: [u8; 4] = data[33..37].try_into().unwrap();
@@ -669,7 +701,16 @@ impl UnifiedP2PNode {
             let port = u16::from_be_bytes(port_bytes);
             let server_reflexive = SocketAddr::from((ip_bytes, port));
             
-            info!("Received server reflexive address: {}", server_reflexive);
+            // Print external address discovery with formatting
+            println!();
+            print_status(
+                symbols::CHECK, 
+                &format!("External address discovered: {} (observed by {})", 
+                    format_address_with_words(&server_reflexive),
+                    format_address_with_words(&peer_addr)
+                ),
+                colors::GREEN
+            );
             
             // Add to local candidates
             {
@@ -951,24 +992,12 @@ impl UnifiedP2PNode {
                     stats.clone()
                 };
                 
-                info!("=== Node Statistics ===");
-                info!("Role: {:?}, Capability: {:?}", stats_snapshot.current_role, stats_snapshot.capability);
-                info!("Uptime: {:?}", stats_snapshot.uptime);
-                info!("Bootstrap nodes: {}", stats_snapshot.bootstrap_nodes);
-                info!("Active connections: {}", stats_snapshot.active_connections);
-                info!("Successful connections: {}", stats_snapshot.successful_connections);
-                info!("Failed connections: {}", stats_snapshot.failed_connections);
-                info!("NAT traversal attempts: {}", stats_snapshot.nat_traversal_attempts);
-                
-                if matches!(stats_snapshot.current_role, NodeRole::Coordinator | NodeRole::Hybrid) {
-                    info!("=== Coordinator Stats ===");
-                    info!("Served clients: {}", stats_snapshot.served_clients);
-                    info!("Discovery requests handled: {}", stats_snapshot.discovery_requests_handled);
-                    info!("Coordination requests handled: {}", stats_snapshot.coordination_requests_handled);
-                    info!("Active coordination sessions: {}", stats_snapshot.active_coordination_sessions);
-                    info!("Reflexive discoveries provided: {}", stats_snapshot.reflexive_discoveries_provided);
-                }
-                info!("========================");
+                // Only log detailed stats in debug mode
+                debug!("Node statistics - Role: {:?}, Connections: {}, Uptime: {:?}", 
+                    stats_snapshot.current_role, 
+                    stats_snapshot.active_connections,
+                    stats_snapshot.uptime
+                );
             }
         })
     }
@@ -994,7 +1023,7 @@ impl UnifiedP2PNode {
                 };
                 
                 if !stale_peers.is_empty() {
-                    info!("Cleaning up {} stale served peers", stale_peers.len());
+                    debug!("Cleaning up {} stale served peers", stale_peers.len());
                     
                     let mut peers = served_peers.lock().unwrap();
                     for peer_id in stale_peers {
@@ -1080,13 +1109,19 @@ fn parse_bootstrap_addresses(bootstrap_str: &str) -> Result<Vec<SocketAddr>, Box
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let args = Args::parse();
     
-    // Initialize logging
+    // Initialize logging with custom formatter
     let log_level = if args.verbose { "debug" } else { "info" };
     tracing_subscriber::fmt()
-        .with_env_filter(format!("nat_p2p_node={}", log_level))
+        .with_env_filter(format!("ant_quic={}", log_level))
+        .with_ansi(true)
+        .with_target(false)
+        .with_thread_ids(false)
+        .with_thread_names(false)
+        .compact()
         .init();
     
-    info!("Starting Unified NAT Traversal P2P Node");
+    // Print startup banner
+    print_banner(env!("CARGO_PKG_VERSION"));
     
     // Parse bootstrap nodes
     let bootstrap_addresses = if let Some(bootstrap_str) = &args.bootstrap {
@@ -1105,7 +1140,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     // Create and start the unified node
+    let mut progress = ProgressIndicator::new("Initializing node...".to_string());
+    progress.tick();
+    
     let mut node = UnifiedP2PNode::new(args.listen, config).await?;
+    let node_peer_id = node.peer_id;
+    let actual_addr = node.local_addr;
+    
+    progress.finish_success("");
+    
+    // Display node information
+    println!();
+    print_section(&format!("Node ID: {}", symbols::KEY), &format_peer_id(&node_peer_id.0));
+    println!();
+    
+    // Display network interfaces
+    print_section(symbols::NETWORK, "Network Interfaces:");
+    display_network_interfaces(actual_addr).await;
+    println!();
+    
+    // Determine and display mode
+    if bootstrap_addresses.is_empty() {
+        print_section(symbols::GLOBE, "Mode: Bootstrap Coordinator");
+        print_status(symbols::INFO, "No peers specified - running as bootstrap coordinator", colors::BLUE);
+        print_status(symbols::CHECK, &format!("Ready to accept connections on port {}", actual_addr.port()), colors::GREEN);
+    } else {
+        print_section(symbols::GLOBE, "Mode: P2P Client");
+        print_status(symbols::INFO, &format!("Connecting to {} bootstrap node(s)", bootstrap_addresses.len()), colors::BLUE);
+    }
+    println!();
     
     // If connect argument provided, initiate connection after startup
     let connect_peer = if let Some(connect_str) = &args.connect {
@@ -1115,36 +1178,150 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     };
     
     // Start the node in a separate task
-    let node_peer_id = node.peer_id;
     let node_stats = Arc::clone(&node.stats);
+    let bootstrap_addrs_clone = bootstrap_addresses.clone();
     
-    tokio::spawn(async move {
-        if let Err(e) = node.start(bootstrap_addresses).await {
+    let node_handle = tokio::spawn(async move {
+        if let Err(e) = node.start(bootstrap_addrs_clone).await {
             error!("Node failed: {}", e);
         }
     });
+    
+    // If we have bootstrap nodes, show connection progress
+    if !bootstrap_addresses.is_empty() {
+        sleep(Duration::from_millis(100)).await;
+        println!("{} Connecting to bootstrap network...", symbols::NETWORK);
+        for addr in &bootstrap_addresses {
+            print_item(&format!("{} ... {}", format_address_with_words(addr), symbols::CIRCULAR_ARROWS), 2);
+        }
+        println!();
+    }
     
     // Brief delay to let node start up
     sleep(Duration::from_secs(1)).await;
     
     // If connect peer specified, initiate connection
     if let Some(target_peer_id) = connect_peer {
-        info!("Initiating connection to peer {:?}", target_peer_id);
-        // Connection would be initiated here
-        // node.connect_to_peer(target_peer_id).await;
+        print_status(
+            symbols::CIRCULAR_ARROWS,
+            &format!("Initiating connection to peer {}", format_peer_id(&target_peer_id.0)),
+            colors::BLUE
+        );
     }
     
-    info!("Node {:?} is running. Press Ctrl+C to stop.", node_peer_id);
+    // Show waiting status
+    if bootstrap_addresses.is_empty() {
+        print_status(symbols::HOURGLASS, "Waiting for peers to connect...", colors::DIM);
+    } else {
+        print_status(symbols::CHECK, "Ready for P2P connections", colors::GREEN);
+    }
+    println!();
+    
+    // Create a task for live status updates
+    let stats_clone = Arc::clone(&node_stats);
+    let status_task = tokio::spawn(async move {
+        let mut interval = interval(Duration::from_secs(5));
+        loop {
+            interval.tick().await;
+            update_status_line(&stats_clone);
+        }
+    });
     
     // Wait for Ctrl+C
     tokio::signal::ctrl_c().await?;
-    info!("Shutting down...");
+    
+    // Cleanup
+    println!();
+    print_status(symbols::INFO, "Shutting down...", colors::YELLOW);
+    
+    status_task.abort();
+    node_handle.abort();
     
     // Print final statistics
     let final_stats = node_stats.lock().unwrap().clone();
-    info!("Final statistics: {:?}", final_stats);
+    println!();
+    print_section("📊", "Final Statistics:");
+    print_item(&format!("Uptime: {}", terminal_ui::format_duration(final_stats.uptime)), 2);
+    print_item(&format!("Role: {:?}", final_stats.current_role), 2);
+    print_item(&format!("Connections: {} successful, {} failed", 
+        final_stats.successful_connections, 
+        final_stats.failed_connections), 2);
+    
+    if matches!(final_stats.current_role, NodeRole::Coordinator | NodeRole::Hybrid) {
+        print_item(&format!("Clients served: {}", final_stats.served_clients), 2);
+        print_item(&format!("Discovery requests: {}", final_stats.discovery_requests_handled), 2);
+    }
     
     Ok(())
+}
+
+/// Display network interfaces with categorization
+async fn display_network_interfaces(bound_addr: SocketAddr) {
+    // Add a message about four-word addresses
+    println!();
+    print_section("🗣️", "Human-Readable Four-Word Network Addresses");
+    print_item("We use memorable four-word addresses that are easy to share", 2);
+    print_item("Tell your friends these words instead of hard-to-remember numbers!", 2);
+    println!();
+    
+    print_item("Local Addresses:", 2);
+    
+    // Show the actual bound address
+    let bound_desc = if bound_addr.ip().is_unspecified() {
+        format!("{} {} bound to all interfaces", 
+            format_address(&bound_addr),
+            symbols::ARROW_RIGHT
+        )
+    } else {
+        format_address_with_words(&bound_addr)
+    };
+    print_item(&bound_desc, 4);
+    
+    // Try to get local network interfaces
+    match local_ip_address::list_afinet_netifas() {
+        Ok(interfaces) => {
+            let mut displayed = std::collections::HashSet::new();
+            
+            for (_name, ip) in interfaces {
+                let addr = SocketAddr::new(ip, bound_addr.port());
+                if !ip.is_unspecified() {
+                    let addr_str = format_address_with_words(&addr);
+                    if displayed.insert(addr.to_string()) {
+                        print_item(&addr_str, 4);
+                    }
+                }
+            }
+        }
+        Err(_) => {
+            // Fallback if we can't enumerate interfaces
+            if bound_addr.ip().is_unspecified() {
+                let localhost_v4 = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)), bound_addr.port());
+                let localhost_v6 = SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), bound_addr.port());
+                
+                print_item(&format_address_with_words(&localhost_v4), 4);
+                print_item(&format_address_with_words(&localhost_v6), 4);
+            }
+        }
+    }
+}
+
+/// Update the status line with current statistics
+fn update_status_line(stats: &Arc<Mutex<NodeStats>>) {
+    let stats = stats.lock().unwrap();
+    let uptime = terminal_ui::format_duration(stats.uptime);
+    
+    // Clear current line and print status
+    print!("\r\x1b[K"); // Clear line
+    print!(
+        "📊 Status: {} | Mode: {:?} | Peers: {} | Up: {}",
+        format!("{}Active{}", colors::GREEN, colors::RESET),
+        stats.current_role,
+        stats.active_connections,
+        uptime
+    );
+    
+    use std::io::{self, Write};
+    io::stdout().flush().unwrap();
 }
 
 #[cfg(test)]

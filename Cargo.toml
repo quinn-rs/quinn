@@ -56,6 +56,10 @@ tracing = { version = "0.1.10", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.28.1", features = ["full"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
+local-ip-address = "0.6"
+unicode-width = "0.1"
+hex = "0.4"
+four-word-networking = "1.2"
 
 # Feature flags & dependencies for wasm
 # wasm-bindgen is assumed for a wasm*-*-unknown target
