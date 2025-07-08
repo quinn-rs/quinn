@@ -990,6 +990,11 @@ impl WeakConnectionHandle {
         self.0.upgrade().is_some()
     }
 
+    /// Upgrade the handle to a full `Connection`
+    pub fn upgrade(&self) -> Option<Connection> {
+        self.0.upgrade().map(|i| Connection(ConnectionRef(i)))
+    }
+
     /// Resets path-specific state.
     ///
     /// This resets several subsystems keeping state for a specific network path.  It is
