@@ -341,7 +341,7 @@ impl TransportConfig {
     /// - Multi-path connectivity testing
     /// - Automatic path migration for NAT rebinding
     ///
-    /// This is required for P2P connections through NATs in MaidSafe networks.
+    /// This is required for P2P connections through NATs in Autonomi networks.
     /// Pass `None` to disable NAT traversal or use the high-level NAT traversal API
     /// to create appropriate configurations.
     pub fn nat_traversal_config(&mut self, config: Option<crate::transport_parameters::NatTraversalConfig>) -> &mut Self {

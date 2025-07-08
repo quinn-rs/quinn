@@ -1,4 +1,4 @@
-//! High-level NAT Traversal API for MaidSafe P2P Networks
+//! High-level NAT Traversal API for Autonomi P2P Networks
 //!
 //! This module provides a simple, high-level interface for establishing
 //! QUIC connections through NATs using sophisticated hole punching and
@@ -20,7 +20,7 @@ use crate::{
     Endpoint, VarInt,
 };
 
-/// High-level NAT traversal endpoint for MaidSafe P2P networks
+/// High-level NAT traversal endpoint for Autonomi P2P networks
 pub struct NatTraversalEndpoint {
     /// Underlying Quinn endpoint
     endpoint: Endpoint,
@@ -55,7 +55,7 @@ pub struct NatTraversalConfig {
     pub max_concurrent_attempts: usize,
 }
 
-/// Role of an endpoint in the MaidSafe network
+/// Role of an endpoint in the Autonomi network
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EndpointRole {
     /// Regular client node (most common)

@@ -30,7 +30,7 @@ fn convert_to_nat_source(discovery_source: DiscoverySourceType) -> CandidateSour
 
 /// Source type used during discovery process
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum DiscoverySourceType {
+pub enum DiscoverySourceType {
     Local,
     ServerReflexive,
     Predicted,
@@ -38,7 +38,7 @@ enum DiscoverySourceType {
 
 /// Internal candidate type used during discovery
 #[derive(Debug, Clone)]
-struct DiscoveryCandidate {
+pub struct DiscoveryCandidate {
     pub address: SocketAddr,
     pub priority: u32,
     pub source: DiscoverySourceType,
