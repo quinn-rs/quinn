@@ -897,3 +897,10 @@ impl std::fmt::Display for NatTraversalError {
 }
 
 impl std::error::Error for NatTraversalError {}
+
+#[cfg(test)]
+mod tests;
+
+#[cfg(test)]
+#[path = "nat_traversal_tests.rs"]
+mod nat_traversal_tests;
