@@ -9,7 +9,7 @@
 //! Nodes automatically detect their reachability and enable coordinator services
 //! when they can be reached directly, creating a decentralized bootstrap network.
 
-mod terminal_ui;
+use ant_quic::terminal_ui;
 
 use std::{
     collections::HashMap,
