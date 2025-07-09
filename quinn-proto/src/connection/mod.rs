@@ -534,11 +534,10 @@ impl Connection {
             return Err(PathError::ServerSideNotAllowed);
         }
 
-        let open_paths: FxHashSet<PathId> = self.paths.keys().copied().collect();
-        let used_paths = open_paths.union(&self.abandoned_paths);
-        let path_id = used_paths
-            .max()
-            .copied()
+        let max_abandoned = self.abandoned_paths.iter().max().copied();
+        let max_used = self.paths.keys().last().copied();
+        let path_id = max_abandoned
+            .max(max_used)
             .unwrap_or(PathId::ZERO)
             .saturating_add(1u8);
 
