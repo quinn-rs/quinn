@@ -74,7 +74,7 @@ struct RelayQueue {
 
 /// Relay statistics for monitoring and debugging
 #[derive(Debug, Default)]
-struct RelayStats {
+pub struct RelayStats {
     /// Total relay requests received
     requests_received: u64,
     /// Successfully relayed requests
@@ -321,7 +321,7 @@ impl Endpoint {
     }
 
     /// Queue a frame for relay to a target peer
-    pub fn queue_frame_for_peer(&mut self, peer_id: &PeerId, frame: frame::PunchMeNow) -> bool {
+    pub(crate) fn queue_frame_for_peer(&mut self, peer_id: &PeerId, frame: frame::PunchMeNow) -> bool {
         self.relay_stats.requests_received += 1;
         
         if let Some(ch) = self.lookup_peer_connection(peer_id) {
