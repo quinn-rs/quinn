@@ -61,7 +61,10 @@ impl Stats {
     fn record(&mut self, stream_stats: Arc<StreamStats>) {
         if stream_stats.finished.load(Ordering::SeqCst) {
             let duration = stream_stats.duration.load(Ordering::SeqCst);
-            let bps = throughput_bytes_per_second(duration, stream_stats.request_size);
+            let bps = throughput_bytes_per_second(
+                duration,
+                stream_stats.request_size.load(Ordering::SeqCst),
+            );
 
             if stream_stats.sender {
                 self.upload_throughput.record(bps as u64).unwrap();
@@ -139,7 +142,7 @@ impl OpenStreamStats {
     pub fn new_sender(&self, stream: &quinn::SendStream, upload_size: u64) -> Arc<StreamStats> {
         let send_stream_stats = StreamStats {
             id: stream.id(),
-            request_size: upload_size,
+            request_size: AtomicU64::new(upload_size),
             bytes: Default::default(),
             sender: true,
             finished: Default::default(),
@@ -154,7 +157,7 @@ impl OpenStreamStats {
     pub fn new_receiver(&self, stream: &quinn::RecvStream, download_size: u64) -> Arc<StreamStats> {
         let recv_stream_stats = StreamStats {
             id: stream.id(),
-            request_size: download_size,
+            request_size: AtomicU64::new(download_size),
             bytes: Default::default(),
             sender: false,
             finished: Default::default(),
@@ -173,7 +176,7 @@ impl OpenStreamStats {
 
 pub struct StreamStats {
     id: StreamId,
-    request_size: u64,
+    request_size: AtomicU64,
     bytes: AtomicUsize,
     sender: bool,
     finished: AtomicBool,
@@ -191,7 +194,9 @@ impl StreamStats {
         self.bytes.fetch_add(bytes, Ordering::SeqCst);
     }
 
-    pub fn finish(&self, duration: Duration) {
+    pub fn finish(&self, duration: Duration, real_size: u64) {
+        // correct request size with what was really uploaded/downloaded
+        self.request_size.store(real_size, Ordering::SeqCst);
         self.duration
             .store(duration.as_micros() as u64, Ordering::SeqCst);
         self.finished.store(true, Ordering::SeqCst);
