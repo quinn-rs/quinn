@@ -328,6 +328,12 @@ pub struct Retransmits {
     /// something. However, due to the architecture of Quinn, it is considerably simpler to not do
     /// that; consider what such a change would mean for implementing `BitOrAssign` on Self.
     pub(super) new_tokens: Vec<SocketAddr>,
+    /// NAT traversal AddAddress frames to be sent
+    pub(super) add_addresses: Vec<frame::AddAddress>,
+    /// NAT traversal PunchMeNow frames to be sent
+    pub(super) punch_me_now: Vec<frame::PunchMeNow>,
+    /// NAT traversal RemoveAddress frames to be sent
+    pub(super) remove_addresses: Vec<frame::RemoveAddress>,
 }
 
 impl Retransmits {
@@ -346,6 +352,9 @@ impl Retransmits {
             && !self.ack_frequency
             && !self.handshake_done
             && self.new_tokens.is_empty()
+            && self.add_addresses.is_empty()
+            && self.punch_me_now.is_empty()
+            && self.remove_addresses.is_empty()
     }
 }
 
@@ -368,6 +377,9 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.ack_frequency |= rhs.ack_frequency;
         self.handshake_done |= rhs.handshake_done;
         self.new_tokens.extend_from_slice(&rhs.new_tokens);
+        self.add_addresses.extend_from_slice(&rhs.add_addresses);
+        self.punch_me_now.extend_from_slice(&rhs.punch_me_now);
+        self.remove_addresses.extend_from_slice(&rhs.remove_addresses);
     }
 }
 

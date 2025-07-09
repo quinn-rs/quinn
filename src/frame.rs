@@ -1022,7 +1022,7 @@ impl AddAddress {
 }
 
 impl FrameStruct for AddAddress {
-    const SIZE_BOUND: usize = 1 + 8 + 8 + 1 + 16 + 2 + 4 + 4; // Worst case IPv6
+    const SIZE_BOUND: usize = 1 + 9 + 9 + 1 + 16 + 2 + 4 + 4; // Worst case IPv6
 }
 
 /// NAT traversal frame for requesting simultaneous hole punching
@@ -1034,6 +1034,9 @@ pub(crate) struct PunchMeNow {
     pub(crate) target_sequence: VarInt,
     /// Local address for this punch attempt
     pub(crate) local_address: SocketAddr,
+    /// Target peer ID for relay by bootstrap nodes (optional)
+    /// When present, this frame should be relayed to the specified peer
+    pub(crate) target_peer_id: Option<[u8; 32]>,
 }
 
 impl PunchMeNow {
@@ -1054,6 +1057,17 @@ impl PunchMeNow {
                 buf.put_u16(addr.port());
                 buf.put_u32(addr.flowinfo());
                 buf.put_u32(addr.scope_id());
+            }
+        }
+        
+        // Encode target_peer_id if present
+        match &self.target_peer_id {
+            Some(peer_id) => {
+                buf.put_u8(1); // Presence indicator
+                buf.put_slice(peer_id);
+            }
+            None => {
+                buf.put_u8(0); // Absence indicator
             }
         }
     }
@@ -1089,16 +1103,31 @@ impl PunchMeNow {
             _ => return Err(UnexpectedEnd),
         };
         
+        // Decode target_peer_id if present
+        let target_peer_id = if r.remaining() > 0 {
+            let has_peer_id = r.get::<u8>()?;
+            if has_peer_id == 1 {
+                let mut peer_id = [0u8; 32];
+                r.copy_to_slice(&mut peer_id);
+                Some(peer_id)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
         Ok(Self {
             round,
             target_sequence,
             local_address,
+            target_peer_id,
         })
     }
 }
 
 impl FrameStruct for PunchMeNow {
-    const SIZE_BOUND: usize = 1 + 8 + 8 + 1 + 16 + 2 + 4 + 4; // Worst case IPv6
+    const SIZE_BOUND: usize = 1 + 9 + 9 + 1 + 16 + 2 + 4 + 4 + 1 + 32; // Worst case IPv6 + peer ID
 }
 
 /// NAT traversal frame for removing stale addresses
@@ -1121,7 +1150,7 @@ impl RemoveAddress {
 }
 
 impl FrameStruct for RemoveAddress {
-    const SIZE_BOUND: usize = 1 + 8; // frame type + sequence
+    const SIZE_BOUND: usize = 1 + 9; // frame type + sequence
 }
 
 #[cfg(test)]
@@ -1189,5 +1218,146 @@ mod test {
         let frames = frames(buf);
         assert_eq!(frames.len(), 1);
         assert_matches!(&frames[0], Frame::ImmediateAck);
+    }
+
+    #[test]
+    fn add_address_ipv4_coding() {
+        let mut buf = Vec::new();
+        let addr = SocketAddr::from(([127, 0, 0, 1], 8080));
+        let original = AddAddress {
+            sequence: VarInt(42),
+            address: addr,
+            priority: VarInt(100),
+        };
+        original.encode(&mut buf);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::AddAddress(decoded) => {
+                assert_eq!(decoded.sequence, original.sequence);
+                assert_eq!(decoded.address, original.address);
+                assert_eq!(decoded.priority, original.priority);
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn add_address_ipv6_coding() {
+        let mut buf = Vec::new();
+        let addr = SocketAddr::from(([0, 0, 0, 0, 0, 0, 0, 1], 8080));
+        let original = AddAddress {
+            sequence: VarInt(123),
+            address: addr,
+            priority: VarInt(200),
+        };
+        original.encode(&mut buf);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::AddAddress(decoded) => {
+                assert_eq!(decoded.sequence, original.sequence);
+                assert_eq!(decoded.address, original.address);
+                assert_eq!(decoded.priority, original.priority);
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn punch_me_now_ipv4_coding() {
+        let mut buf = Vec::new();
+        let addr = SocketAddr::from(([192, 168, 1, 1], 9000));
+        let original = PunchMeNow {
+            round: VarInt(1),
+            target_sequence: VarInt(42),
+            local_address: addr,
+            target_peer_id: None,
+        };
+        original.encode(&mut buf);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::PunchMeNow(decoded) => {
+                assert_eq!(decoded.round, original.round);
+                assert_eq!(decoded.target_sequence, original.target_sequence);
+                assert_eq!(decoded.local_address, original.local_address);
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn punch_me_now_ipv6_coding() {
+        let mut buf = Vec::new();
+        let addr = SocketAddr::from(([0xfe80, 0, 0, 0, 0, 0, 0, 1], 9000));
+        let original = PunchMeNow {
+            round: VarInt(2),
+            target_sequence: VarInt(100),
+            local_address: addr,
+            target_peer_id: None,
+        };
+        original.encode(&mut buf);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::PunchMeNow(decoded) => {
+                assert_eq!(decoded.round, original.round);
+                assert_eq!(decoded.target_sequence, original.target_sequence);
+                assert_eq!(decoded.local_address, original.local_address);
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn remove_address_coding() {
+        let mut buf = Vec::new();
+        let original = RemoveAddress {
+            sequence: VarInt(42),
+        };
+        original.encode(&mut buf);
+        let frames = frames(buf);
+        assert_eq!(frames.len(), 1);
+        match &frames[0] {
+            Frame::RemoveAddress(decoded) => {
+                assert_eq!(decoded.sequence, original.sequence);
+            }
+            x => panic!("incorrect frame {x:?}"),
+        }
+    }
+
+    #[test]
+    fn nat_traversal_frame_size_bounds() {
+        // Test that the SIZE_BOUND constants are correct
+        let mut buf = Vec::new();
+        
+        // AddAddress with IPv6 (worst case)
+        let addr = AddAddress {
+            sequence: VarInt::MAX,
+            address: SocketAddr::from(([0xffff; 8], 65535)),
+            priority: VarInt::MAX,
+        };
+        addr.encode(&mut buf);
+        assert!(buf.len() <= AddAddress::SIZE_BOUND);
+        buf.clear();
+        
+        // PunchMeNow with IPv6 (worst case)
+        let punch = PunchMeNow {
+            round: VarInt::MAX,
+            target_sequence: VarInt::MAX,
+            local_address: SocketAddr::from(([0xffff; 8], 65535)),
+            target_peer_id: Some([0xff; 32]),
+        };
+        punch.encode(&mut buf);
+        assert!(buf.len() <= PunchMeNow::SIZE_BOUND);
+        buf.clear();
+        
+        // RemoveAddress
+        let remove = RemoveAddress {
+            sequence: VarInt::MAX,
+        };
+        remove.encode(&mut buf);
+        assert!(buf.len() <= RemoveAddress::SIZE_BOUND);
     }
 }

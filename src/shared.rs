@@ -58,6 +58,8 @@ pub(crate) enum EndpointEventInner {
     /// Stop routing connection ID for this sequence number to the connection
     /// When `bool == true`, a new connection ID will be issued to peer
     RetireConnectionId(Instant, u64, bool),
+    /// Request to relay a PunchMeNow frame to a target peer
+    RelayPunchMeNow([u8; 32], crate::frame::PunchMeNow),
 }
 
 /// Protocol-level identifier for a connection.

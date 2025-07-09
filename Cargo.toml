@@ -56,7 +56,6 @@ tracing = { version = "0.1.10", default-features = false, features = ["std"] }
 clap = { version = "4", features = ["derive"] }
 tokio = { version = "1.28.1", features = ["full"] }
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
-local-ip-address = "0.6"
 unicode-width = "0.1"
 hex = "0.4"
 four-word-networking = "1.2"
@@ -82,10 +81,6 @@ wasm-bindgen-test = { version = "0.3.45" }
 # https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
 unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 
-# NAT traversal examples (for reference and testing)
-[[example]]
-name = "nat_simulation"
-path = "examples/nat_simulation.rs"
 
 # Main binary - unified P2P node with automatic coordinator services
 [[bin]]

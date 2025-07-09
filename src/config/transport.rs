@@ -77,7 +77,7 @@ impl TransportConfig {
     ///
     /// ```
     /// # use std::{convert::TryInto, time::Duration};
-    /// # use quinn_proto::{TransportConfig, VarInt, VarIntBoundsExceeded};
+    /// # use ant_quic::{TransportConfig, VarInt, VarIntBoundsExceeded};
     /// # fn main() -> Result<(), VarIntBoundsExceeded> {
     /// let mut config = TransportConfig::default();
     ///
@@ -306,7 +306,7 @@ impl TransportConfig {
     ///
     /// # Example
     /// ```
-    /// # use quinn_proto::*; use std::sync::Arc;
+    /// # use ant_quic::*; use std::sync::Arc;
     /// let mut config = TransportConfig::default();
     /// config.congestion_controller_factory(Arc::new(congestion::NewRenoConfig::default()));
     /// ```
@@ -346,6 +346,26 @@ impl TransportConfig {
     /// to create appropriate configurations.
     pub fn nat_traversal_config(&mut self, config: Option<crate::transport_parameters::NatTraversalConfig>) -> &mut Self {
         self.nat_traversal_config = config;
+        self
+    }
+    
+    /// Enable NAT traversal with default client configuration
+    ///
+    /// This is a convenience method that enables NAT traversal with sensible defaults
+    /// for a client endpoint. Use `nat_traversal_config()` for more control.
+    pub fn enable_nat_traversal(&mut self, enabled: bool) -> &mut Self {
+        if enabled {
+            use crate::transport_parameters::{NatTraversalConfig, NatTraversalRole};
+            self.nat_traversal_config = Some(NatTraversalConfig {
+                role: NatTraversalRole::Client,
+                max_candidates: VarInt::from_u32(10),
+                coordination_timeout: VarInt::from_u32(5000), // 5 seconds
+                max_concurrent_attempts: VarInt::from_u32(3),
+                peer_id: None, // Will be set later when peer ID is determined
+            });
+        } else {
+            self.nat_traversal_config = None;
+        }
         self
     }
 }
@@ -657,7 +677,7 @@ impl Default for MtuDiscoveryConfig {
 ///
 /// ```
 /// # use std::{convert::TryFrom, time::Duration};
-/// # use quinn_proto::{IdleTimeout, VarIntBoundsExceeded, VarInt};
+/// # use ant_quic::{IdleTimeout, VarIntBoundsExceeded, VarInt};
 /// # fn main() -> Result<(), VarIntBoundsExceeded> {
 /// // A `VarInt`-encoded value in milliseconds
 /// let timeout = IdleTimeout::from(VarInt::from_u32(10_000));

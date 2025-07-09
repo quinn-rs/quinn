@@ -83,15 +83,32 @@ cargo test --target wasm32-unknown-unknown -p quinn-proto
 
 ### NAT Traversal Architecture
 
-The NAT traversal system implements an ICE-like protocol with custom QUIC extension frames:
+**IMPORTANT: This implementation uses QUIC protocol extensions (draft-seemann-quic-nat-traversal-01), NOT STUN/TURN protocols.**
+
+The NAT traversal system implements the IETF QUIC NAT traversal draft with custom extension frames:
 
 - **Transport Parameter 0x58**: Negotiates NAT traversal capabilities
 - **Extension Frames**:
-  - `ADD_ADDRESS` (0xBAAD): Advertise candidate addresses
-  - `PUNCH_ME_NOW` (0xBEEF): Coordinate simultaneous hole punching  
-  - `REMOVE_ADDRESS` (0xDEAD): Remove invalid candidates
+  - `ADD_ADDRESS` (0x40): Advertise candidate addresses
+  - `PUNCH_ME_NOW` (0x41): Coordinate simultaneous hole punching  
+  - `REMOVE_ADDRESS` (0x42): Remove invalid candidates
 - **Roles**: Client, Server (with relay capability), Bootstrap coordinator
 - **Candidate Pairing**: Priority-based ICE-like connection establishment
+
+#### Address Discovery (No STUN Required)
+
+Unlike traditional NAT traversal, we discover addresses through:
+
+1. **Local Interface Enumeration**: Discover local IP addresses directly
+2. **Bootstrap Node Observation**: Bootstrap nodes observe the source address of incoming QUIC connections and inform clients via ADD_ADDRESS frames
+3. **Symmetric NAT Prediction**: Predict likely external ports for symmetric NATs
+4. **Peer Exchange**: Learn addresses from successful connections
+
+Bootstrap nodes act as **address observers and coordinators**, not STUN servers. They:
+- Observe the public address:port of connecting clients
+- Send this information back via ADD_ADDRESS frames
+- Coordinate hole punching timing via PUNCH_ME_NOW frames
+- All communication happens over existing QUIC connections
 
 ### Key Data Flow
 

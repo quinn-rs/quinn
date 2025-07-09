@@ -67,7 +67,7 @@ macro_rules! apply_params {
 macro_rules! make_struct {
     {$($(#[$doc:meta])* $name:ident ($id:ident) = $default:expr,)*} => {
         /// Transport parameters used to negotiate connection-level preferences between peers
-        #[derive(Debug, Copy, Clone, Eq, PartialEq)]
+        #[derive(Debug, Clone, Eq, PartialEq)]
         pub struct TransportParameters {
             $($(#[$doc])* pub(crate) $name : VarInt,)*
 
@@ -223,7 +223,7 @@ impl TransportParameters {
 ///
 /// This configuration is negotiated as part of the transport parameters and
 /// enables QUIC NAT traversal extension functionality.
-#[derive(Debug, Copy, Clone, Eq, PartialEq)]
+#[derive(Debug, Clone, Eq, PartialEq)]
 pub struct NatTraversalConfig {
     /// Role of this endpoint in NAT traversal coordination
     pub(crate) role: NatTraversalRole,
@@ -233,6 +233,8 @@ pub struct NatTraversalConfig {
     pub(crate) coordination_timeout: VarInt,
     /// Maximum number of concurrent traversal attempts
     pub(crate) max_concurrent_attempts: VarInt,
+    /// Peer ID for this endpoint (used for relay functionality)
+    pub(crate) peer_id: Option<[u8; 32]>,
 }
 
 impl NatTraversalConfig {
@@ -244,7 +246,9 @@ impl NatTraversalConfig {
         match self.role {
             NatTraversalRole::Server { .. } => 1, // can_relay boolean
             _ => 0,
-        }
+        } +
+        1 + // peer_id presence indicator
+        if self.peer_id.is_some() { 32 } else { 0 } // peer_id bytes
     }
 
     fn write<W: BufMut>(&self, w: &mut W) {
@@ -259,6 +263,17 @@ impl NatTraversalConfig {
         w.write(self.max_candidates);
         w.write(self.coordination_timeout);
         w.write(self.max_concurrent_attempts);
+        
+        // Write peer_id if present
+        match &self.peer_id {
+            Some(peer_id) => {
+                w.put_u8(1); // Presence indicator
+                w.put_slice(peer_id);
+            }
+            None => {
+                w.put_u8(0); // Absence indicator
+            }
+        }
     }
 
     fn read<R: Buf>(r: &mut R) -> Result<Self, Error> {
@@ -277,11 +292,26 @@ impl NatTraversalConfig {
         let coordination_timeout = r.get()?;
         let max_concurrent_attempts = r.get()?;
         
+        // Read peer_id if present
+        let peer_id = if r.remaining() > 0 {
+            let has_peer_id = r.get::<u8>()?;
+            if has_peer_id == 1 {
+                let mut peer_id = [0u8; 32];
+                r.copy_to_slice(&mut peer_id);
+                Some(peer_id)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        
         Ok(Self {
             role,
             max_candidates,
             coordination_timeout,
             max_concurrent_attempts,
+            peer_id,
         })
     }
 }

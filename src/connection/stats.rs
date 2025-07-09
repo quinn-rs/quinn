@@ -53,6 +53,9 @@ pub struct FrameStats {
     pub streams_blocked_uni: u64,
     pub stop_sending: u64,
     pub stream: u64,
+    pub add_address: u64,
+    pub punch_me_now: u64,
+    pub remove_address: u64,
 }
 
 impl FrameStats {
@@ -93,9 +96,9 @@ impl FrameStats {
             Frame::AckFrequency(_) => self.ack_frequency += 1,
             Frame::ImmediateAck => self.immediate_ack += 1,
             Frame::HandshakeDone => self.handshake_done = self.handshake_done.saturating_add(1),
-            Frame::AddAddress(_) => { /* NAT traversal frames - not counted in basic stats */ }
-            Frame::PunchMeNow(_) => { /* NAT traversal frames - not counted in basic stats */ }
-            Frame::RemoveAddress(_) => { /* NAT traversal frames - not counted in basic stats */ }
+            Frame::AddAddress(_) => self.add_address += 1,
+            Frame::PunchMeNow(_) => self.punch_me_now += 1,
+            Frame::RemoveAddress(_) => self.remove_address += 1,
         }
     }
 }
@@ -127,6 +130,9 @@ impl std::fmt::Debug for FrameStats {
             .field("STREAMS_BLOCKED_UNI", &self.streams_blocked_uni)
             .field("STOP_SENDING", &self.stop_sending)
             .field("STREAM", &self.stream)
+            .field("ADD_ADDRESS", &self.add_address)
+            .field("PUNCH_ME_NOW", &self.punch_me_now)
+            .field("REMOVE_ADDRESS", &self.remove_address)
             .finish()
     }
 }

@@ -4,7 +4,7 @@
 
 use std::net::{IpAddr, SocketAddr};
 use unicode_width::UnicodeWidthStr;
-use tracing::{Level, Metadata};
+use tracing::Level;
 use tracing_subscriber::fmt::{format::Writer, FormatFields};
 use four_word_networking::FourWordAdaptiveEncoder;
 
@@ -280,6 +280,23 @@ pub fn format_bytes(bytes: u64) -> String {
 pub fn format_duration(duration: std::time::Duration) -> String {
     let total_seconds = duration.as_secs();
     let hours = total_seconds / 3600;
+    let minutes = (total_seconds % 3600) / 60;
+    let seconds = total_seconds % 60;
+    
+    format!("{:02}:{:02}:{:02}", hours, minutes, seconds)
+}
+
+/// Format timestamp into HH:MM:SS format
+pub fn format_timestamp(_timestamp: std::time::Instant) -> String {
+    use std::time::SystemTime;
+    
+    // This is a simplified timestamp - in a real app you'd want proper time handling
+    let now = SystemTime::now();
+    let duration_since_epoch = now.duration_since(SystemTime::UNIX_EPOCH)
+        .unwrap_or_else(|_| std::time::Duration::ZERO);
+    
+    let total_seconds = duration_since_epoch.as_secs();
+    let hours = (total_seconds % 86400) / 3600;
     let minutes = (total_seconds % 3600) / 60;
     let seconds = total_seconds % 60;
     

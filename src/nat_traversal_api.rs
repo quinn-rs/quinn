@@ -170,6 +170,12 @@ pub enum NatTraversalEvent {
         final_address: SocketAddr,
         total_time: Duration,
     },
+    /// Connection established after NAT traversal
+    ConnectionEstablished {
+        peer_id: PeerId,
+        /// The socket address where the connection was established
+        remote_address: SocketAddr,
+    },
     /// NAT traversal failed
     TraversalFailed {
         peer_id: PeerId,
@@ -199,6 +205,12 @@ pub enum NatTraversalError {
     ConfigError(String),
     /// Internal protocol error
     ProtocolError(String),
+    /// NAT traversal timed out
+    Timeout,
+    /// Connection failed after successful traversal
+    ConnectionFailed(String),
+    /// General traversal failure
+    TraversalFailed(String),
 }
 
 impl Default for NatTraversalConfig {
@@ -261,11 +273,9 @@ impl NatTraversalEndpoint {
             CandidateDiscoveryManager::new(discovery_config, nat_traversal_role)
         ));
 
-        // TODO: Create actual Quinn endpoint with TLS configuration
-        // For now, this is a placeholder - would need proper crypto setup
-        // This will be implemented when integrating with quinn crate that provides
-        // higher-level endpoint construction
-        let endpoint = unsafe { std::mem::zeroed() }; // Placeholder
+        // Create QUIC endpoint with NAT traversal enabled
+        // Note: This is a simplified version - in production you'd need proper TLS setup
+        let endpoint = Self::create_quic_endpoint(&config, nat_traversal_role)?;
 
         Ok(Self {
             endpoint,
@@ -374,6 +384,87 @@ impl NatTraversalEndpoint {
 
     // Private implementation methods
 
+    /// Create a QUIC endpoint with NAT traversal configured
+    fn create_quic_endpoint(
+        config: &NatTraversalConfig,
+        nat_role: NatTraversalRole,
+    ) -> Result<Endpoint, NatTraversalError> {
+        use crate::{
+            EndpointConfig, TransportConfig,
+            transport_parameters::NatTraversalConfig as TPNatConfig,
+            transport_parameters::NatTraversalRole as TPRole,
+        };
+        
+        #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+        use crate::crypto::rustls::QuicServerConfig;
+        
+        // Configure transport with NAT traversal
+        let mut transport_config = TransportConfig::default();
+        
+        // Convert role for transport parameters
+        let tp_role = match nat_role {
+            NatTraversalRole::Client => TPRole::Client,
+            NatTraversalRole::Server { can_relay } => TPRole::Server { can_relay },
+            NatTraversalRole::Bootstrap => TPRole::Bootstrap,
+        };
+        
+        // Enable NAT traversal in transport parameters
+        transport_config.nat_traversal_config = Some(TPNatConfig {
+            role: tp_role,
+            max_candidates: VarInt::from_u32(config.max_candidates as u32),
+            coordination_timeout: VarInt::from_u32(config.coordination_timeout.as_millis() as u32),
+            max_concurrent_attempts: VarInt::from_u32(config.max_concurrent_attempts as u32),
+            peer_id: None, // Will be set dynamically when peer ID is determined
+        });
+        
+        // Create endpoint configuration
+        let endpoint_config = Arc::new(EndpointConfig::default());
+        
+        // Create server config if this is a coordinator/bootstrap node
+        let server_config = match config.role {
+            EndpointRole::Bootstrap | EndpointRole::Server { .. } => {
+                // For demo purposes, create a simple server config
+                // In production, you'd need proper certificate management
+                let cert = rustls::pki_types::CertificateDer::from(vec![0; 32]); // Dummy cert
+                let key = rustls::pki_types::PrivateKeyDer::try_from(vec![0; 32]).ok(); // Dummy key
+                
+                if let Some(key) = key {
+                    #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+                    {
+                        let server_config = QuicServerConfig::try_from(
+                            rustls::ServerConfig::builder()
+                                .with_no_client_auth()
+                                .with_single_cert(vec![cert], key)
+                                .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?
+                        ).map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
+                        
+                        Some(Arc::new(crate::ServerConfig::with_crypto(Arc::new(server_config))))
+                    }
+                    #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
+                    {
+                        None
+                    }
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        };
+        
+        // Create the endpoint
+        let endpoint = Endpoint::new(
+            endpoint_config,
+            server_config,
+            true, // allow_mtud
+            None, // rng_seed
+        );
+        
+        // NOTE: Client configuration would need to be set when connecting to peers
+        // The Endpoint doesn't have a set_default_client_config method
+        
+        Ok(endpoint)
+    }
+
     fn discover_candidates(&self, peer_id: PeerId) -> Result<(), NatTraversalError> {
         debug!("Discovering address candidates for peer {:?}", peer_id);
         
@@ -392,10 +483,15 @@ impl NatTraversalEndpoint {
     ) -> Result<(), NatTraversalError> {
         debug!("Coordinating with bootstrap {} for peer {:?}", coordinator, peer_id);
         
-        // TODO: Implement bootstrap coordination
-        // 1. Send PUNCH_ME_NOW frame to coordinator
-        // 2. Wait for peer's coordination
-        // 3. Synchronize timing for hole punching
+        // TODO: This needs to be async or use a different approach
+        // For now, we'll just log the intent and return
+        // In a real implementation, this would:
+        // 1. Connect to coordinator
+        // 2. Send PUNCH_ME_NOW frame
+        // 3. Wait for peer's coordination
+        // 4. Synchronize timing for hole punching
+        
+        info!("Would coordinate with bootstrap {} for peer {:?}", coordinator, peer_id);
         
         Ok(())
     }
@@ -523,6 +619,9 @@ impl fmt::Display for NatTraversalError {
             Self::NetworkError(msg) => write!(f, "network error: {}", msg),
             Self::ConfigError(msg) => write!(f, "configuration error: {}", msg),
             Self::ProtocolError(msg) => write!(f, "protocol error: {}", msg),
+            Self::Timeout => write!(f, "operation timed out"),
+            Self::ConnectionFailed(msg) => write!(f, "connection failed: {}", msg),
+            Self::TraversalFailed(msg) => write!(f, "traversal failed: {}", msg),
         }
     }
 }
@@ -542,6 +641,70 @@ impl fmt::Display for PeerId {
 impl From<[u8; 32]> for PeerId {
     fn from(bytes: [u8; 32]) -> Self {
         Self(bytes)
+    }
+}
+
+/// Dummy certificate verifier that accepts any certificate
+/// WARNING: This is only for testing/demo purposes - use proper verification in production!
+#[derive(Debug)]
+struct SkipServerVerification;
+
+impl SkipServerVerification {
+    #[allow(dead_code)]
+    fn new() -> Arc<Self> {
+        Arc::new(Self)
+    }
+}
+
+impl rustls::client::danger::ServerCertVerifier for SkipServerVerification {
+    fn verify_server_cert(
+        &self,
+        _end_entity: &rustls::pki_types::CertificateDer<'_>,
+        _intermediates: &[rustls::pki_types::CertificateDer<'_>],
+        _server_name: &rustls::pki_types::ServerName<'_>,
+        _ocsp_response: &[u8],
+        _now: rustls::pki_types::UnixTime,
+    ) -> Result<rustls::client::danger::ServerCertVerified, rustls::Error> {
+        Ok(rustls::client::danger::ServerCertVerified::assertion())
+    }
+
+    fn verify_tls12_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn verify_tls13_signature(
+        &self,
+        _message: &[u8],
+        _cert: &rustls::pki_types::CertificateDer<'_>,
+        _dss: &rustls::DigitallySignedStruct,
+    ) -> Result<rustls::client::danger::HandshakeSignatureValid, rustls::Error> {
+        Ok(rustls::client::danger::HandshakeSignatureValid::assertion())
+    }
+
+    fn supported_verify_schemes(&self) -> Vec<rustls::SignatureScheme> {
+        vec![
+            rustls::SignatureScheme::RSA_PKCS1_SHA256,
+            rustls::SignatureScheme::ECDSA_NISTP256_SHA256,
+            rustls::SignatureScheme::ED25519,
+        ]
+    }
+}
+
+/// Default token store that accepts all tokens (for demo purposes)
+struct DefaultTokenStore;
+
+impl crate::TokenStore for DefaultTokenStore {
+    fn insert(&self, _server_name: &str, _token: bytes::Bytes) {
+        // Ignore token storage for demo
+    }
+
+    fn take(&self, _server_name: &str) -> Option<bytes::Bytes> {
+        None
     }
 }
 

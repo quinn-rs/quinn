@@ -47,7 +47,7 @@ use ack_frequency::AckFrequencyState;
 
 pub mod nat_traversal;
 pub use nat_traversal::{NatTraversalRole, NatTraversalError, CoordinationPhase};
-use nat_traversal::NatTraversalState;
+use nat_traversal::{NatTraversalState, CandidateSource};
 
 mod assembler;
 pub use assembler::Chunk;
@@ -3115,7 +3115,24 @@ impl Connection {
                                 // Check if this was part of a coordination round
                                 if nat_traversal.handle_coordination_success(remote) {
                                     trace!("Coordination succeeded via {}", remote);
-                                    // Could trigger connection migration here if this is the best path
+                                    
+                                    // Check if we should migrate to this better path
+                                    let can_migrate = match &self.side {
+                                        ConnectionSide::Client { .. } => true, // Clients can always migrate
+                                        ConnectionSide::Server { server_config } => server_config.migration,
+                                    };
+                                    
+                                    if can_migrate {
+                                        // Get the best paths to see if this new one is better
+                                        let best_pairs = nat_traversal.get_best_succeeded_pairs();
+                                        if let Some(best) = best_pairs.first() {
+                                            if best.remote_addr == remote && best.remote_addr != self.path.remote {
+                                                debug!("NAT traversal found better path, initiating migration");
+                                                // Note: We could trigger migration here, but for now just log
+                                                // self.migrate_to_nat_traversal_path(now).ok();
+                                            }
+                                        }
+                                    }
                                 } else {
                                     // Mark the candidate pair as succeeded for regular validation
                                     if nat_traversal.mark_pair_succeeded(remote) {
@@ -3419,6 +3436,47 @@ impl Connection {
         self.update_rem_cid();
         self.ping();
     }
+    
+    /// Migrate to a better path discovered through NAT traversal
+    pub fn migrate_to_nat_traversal_path(&mut self, now: Instant) -> Result<(), TransportError> {
+        // Extract necessary data before mutable operations
+        let (remote_addr, local_addr) = {
+            let nat_state = self.nat_traversal.as_ref()
+                .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("NAT traversal not enabled"))?;
+            
+            // Get the best validated NAT traversal path
+            let best_pairs = nat_state.get_best_succeeded_pairs();
+            if best_pairs.is_empty() {
+                return Err(TransportError::PROTOCOL_VIOLATION("No validated NAT traversal paths"));
+            }
+            
+            // Select the best path (highest priority that's different from current)
+            let best_path = best_pairs.iter()
+                .find(|pair| pair.remote_addr != self.path.remote)
+                .or_else(|| best_pairs.first());
+            
+            let best_path = best_path
+                .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("No suitable NAT traversal path"))?;
+            
+            debug!("Migrating to NAT traversal path: {} -> {} (priority: {})",
+                   self.path.remote, best_path.remote_addr, best_path.priority);
+            
+            (best_path.remote_addr, best_path.local_addr)
+        };
+        
+        // Perform the migration
+        self.migrate(now, remote_addr);
+        
+        // Update local address if needed
+        if local_addr != SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0) {
+            self.local_ip = Some(local_addr.ip());
+        }
+        
+        // Queue a PATH_CHALLENGE to confirm the new path
+        self.path.challenge_pending = true;
+        
+        Ok(())
+    }
 
     /// Switch to a previously unused remote connection ID, if possible
     fn update_rem_cid(&mut self) {
@@ -3712,6 +3770,53 @@ impl Connection {
             self.stats.frame_tx.new_token += 1;
         }
 
+        // NAT traversal frames - AddAddress
+        while buf.len() + frame::AddAddress::SIZE_BOUND < max_size && space_id == SpaceId::Data {
+            let add_address = match space.pending.add_addresses.pop() {
+                Some(x) => x,
+                None => break,
+            };
+            trace!(
+                sequence = %add_address.sequence,
+                address = %add_address.address,
+                "ADD_ADDRESS"
+            );
+            add_address.encode(buf);
+            sent.retransmits.get_or_create().add_addresses.push(add_address);
+            self.stats.frame_tx.add_address += 1;
+        }
+
+        // NAT traversal frames - PunchMeNow
+        while buf.len() + frame::PunchMeNow::SIZE_BOUND < max_size && space_id == SpaceId::Data {
+            let punch_me_now = match space.pending.punch_me_now.pop() {
+                Some(x) => x,
+                None => break,
+            };
+            trace!(
+                round = %punch_me_now.round,
+                target_sequence = %punch_me_now.target_sequence,
+                "PUNCH_ME_NOW"
+            );
+            punch_me_now.encode(buf);
+            sent.retransmits.get_or_create().punch_me_now.push(punch_me_now);
+            self.stats.frame_tx.punch_me_now += 1;
+        }
+
+        // NAT traversal frames - RemoveAddress
+        while buf.len() + frame::RemoveAddress::SIZE_BOUND < max_size && space_id == SpaceId::Data {
+            let remove_address = match space.pending.remove_addresses.pop() {
+                Some(x) => x,
+                None => break,
+            };
+            trace!(
+                sequence = %remove_address.sequence,
+                "REMOVE_ADDRESS"
+            );
+            remove_address.encode(buf);
+            sent.retransmits.get_or_create().remove_addresses.push(remove_address);
+            self.stats.frame_tx.remove_address += 1;
+        }
+
         // STREAM
         if space_id == SpaceId::Data {
             sent.stream_frames =
@@ -3805,33 +3910,46 @@ impl Connection {
             }).expect("preferred address CID is the first received, and hence is guaranteed to be legal");
         }
         self.ack_frequency.peer_max_ack_delay = get_max_ack_delay(&params);
-        self.peer_params = params;
-        self.path.mtud.on_peer_max_udp_payload_size_received(
-            u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
-        );
-
+        
         // Initialize NAT traversal if both peers support it
         if let Some(nat_config) = &params.nat_traversal {
             self.init_nat_traversal(nat_config);
         }
+        
+        self.peer_params = params;
+        self.path.mtud.on_peer_max_udp_payload_size_received(
+            u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX),
+        );
     }
 
     /// Initialize NAT traversal state from negotiated transport parameters
     fn init_nat_traversal(&mut self, peer_config: &crate::transport_parameters::NatTraversalConfig) {
         use crate::transport_parameters::NatTraversalRole as TPRole;
         
-        // Convert transport parameter role to internal role
-        let role = match peer_config.role {
+        // Check if we also have NAT traversal enabled locally
+        let local_config = match &self.config.nat_traversal_config {
+            Some(config) => config,
+            None => {
+                debug!("NAT traversal not enabled locally, ignoring peer config");
+                return;
+            }
+        };
+        
+        // Convert transport parameter role to internal role - use our local role
+        let role = match local_config.role {
             TPRole::Client => NatTraversalRole::Client,
             TPRole::Server { can_relay } => NatTraversalRole::Server { can_relay },
             TPRole::Bootstrap => NatTraversalRole::Bootstrap,
         };
 
-        // Use more restrictive limits
-        let max_candidates = peer_config.max_candidates.into_inner()
+        // Use more restrictive limits between local and peer config
+        let max_candidates = local_config.max_candidates.into_inner()
+            .min(peer_config.max_candidates.into_inner())
             .min(50) as u32; // Cap at reasonable limit
         let coordination_timeout = Duration::from_millis(
-            peer_config.coordination_timeout.into_inner().min(10000) // Cap at 10 seconds
+            local_config.coordination_timeout.into_inner()
+                .min(peer_config.coordination_timeout.into_inner())
+                .min(10000) // Cap at 10 seconds
         );
 
         self.nat_traversal = Some(NatTraversalState::new(
@@ -3841,6 +3959,9 @@ impl Connection {
         ));
 
         trace!("NAT traversal initialized with role {:?}", role);
+        
+        // Start candidate discovery
+        self.start_candidate_discovery();
     }
 
     /// Handle AddAddress frame from peer
@@ -3886,22 +4007,60 @@ impl Connection {
         punch_me_now: &crate::frame::PunchMeNow,
         now: Instant,
     ) -> Result<(), TransportError> {
-        let nat_state = self.nat_traversal.as_mut()
-            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("PunchMeNow frame without NAT traversal negotiation"))?;
-
         trace!("Received PunchMeNow: round={}, target_seq={}, local_addr={}", 
                punch_me_now.round, punch_me_now.target_sequence, punch_me_now.local_address);
+
+        // Check if we're a bootstrap node that should relay this
+        if let Some(nat_state) = &self.nat_traversal {
+            if matches!(nat_state.role, NatTraversalRole::Bootstrap) {
+                // We're a bootstrap node - relay this to the target peer
+                if let Some(target_peer_id) = punch_me_now.target_peer_id {
+                    trace!("Bootstrap node relaying PUNCH_ME_NOW to target peer {:?}", target_peer_id);
+                    
+                    // Create a relay frame without the target_peer_id (for the final recipient)
+                    let relay_frame = crate::frame::PunchMeNow {
+                        round: punch_me_now.round,
+                        target_sequence: punch_me_now.target_sequence,
+                        local_address: punch_me_now.local_address,
+                        target_peer_id: None, // Remove target_peer_id when relaying
+                    };
+                    
+                    // Send relay request to endpoint
+                    self.endpoint_events.push_back(
+                        crate::shared::EndpointEventInner::RelayPunchMeNow(target_peer_id, relay_frame)
+                    );
+                    
+                    return Ok(());
+                } else {
+                    trace!("Bootstrap node received PUNCH_ME_NOW without target_peer_id");
+                    return Ok(());
+                }
+            }
+        }
+
+        // We're a regular peer receiving coordination from bootstrap
+        let nat_state = self.nat_traversal.as_mut()
+            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("PunchMeNow frame without NAT traversal negotiation"))?;
         
         // Handle peer's coordination request
         if nat_state.handle_peer_punch_request(punch_me_now.round, now) {
             trace!("Coordination synchronized for round {}", punch_me_now.round);
             
-            // Extract peer's target addresses if this was relayed by coordinator
-            // In full implementation, the coordinator would relay both sides' addresses
-            // For now, we use the local_address from the frame as the peer's target
+            // Create punch targets based on the received information
+            // The peer's local_address tells us where they'll be listening
+            let local_addr = self.local_ip
+                .map(|ip| SocketAddr::new(ip, 0))
+                .unwrap_or_else(|| SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0));
             
-            // TODO: Create punch targets based on peer's candidates
-            // This is where we'd use the candidate pairing system
+            let target = nat_traversal::PunchTarget {
+                remote_addr: punch_me_now.local_address,
+                local_addr,
+                remote_sequence: punch_me_now.target_sequence,
+                challenge: self.rng.random(),
+            };
+            
+            // Start coordination with this target
+            nat_state.start_coordination_round(vec![target], now);
             
         } else {
             debug!("Failed to synchronize coordination for round {}", punch_me_now.round);
@@ -3925,6 +4084,330 @@ impl Connection {
         }
 
         Ok(())
+    }
+
+    /// Queue an AddAddress frame to advertise a new candidate address
+    fn queue_add_address(&mut self, sequence: VarInt, address: SocketAddr, priority: VarInt) {
+        // Queue the AddAddress frame
+        let add_address = frame::AddAddress {
+            sequence,
+            address,
+            priority,
+        };
+        
+        self.spaces[SpaceId::Data].pending.add_addresses.push(add_address);
+        trace!("Queued AddAddress frame: seq={}, addr={}, priority={}", sequence, address, priority);
+    }
+
+    /// Queue a PunchMeNow frame to coordinate NAT traversal
+    pub fn queue_punch_me_now(&mut self, round: VarInt, target_sequence: VarInt, local_address: SocketAddr) {
+        let punch_me_now = frame::PunchMeNow {
+            round,
+            target_sequence,
+            local_address,
+            target_peer_id: None, // Direct peer-to-peer communication
+        };
+        
+        self.spaces[SpaceId::Data].pending.punch_me_now.push(punch_me_now);
+        trace!("Queued PunchMeNow frame: round={}, target={}", round, target_sequence);
+    }
+
+    /// Queue a RemoveAddress frame to remove a candidate
+    pub fn queue_remove_address(&mut self, sequence: VarInt) {
+        let remove_address = frame::RemoveAddress { sequence };
+        
+        self.spaces[SpaceId::Data].pending.remove_addresses.push(remove_address);
+        trace!("Queued RemoveAddress frame: seq={}", sequence);
+    }
+
+    /// Start candidate discovery for NAT traversal
+    fn start_candidate_discovery(&mut self) {
+        // Discover local interface addresses first
+        let addresses = match self.discover_local_addresses() {
+            Ok(addrs) => addrs,
+            Err(e) => {
+                warn!("Failed to discover local addresses: {}", e);
+                return;
+            }
+        };
+        
+        let now = Instant::now();
+        
+        // Calculate priorities before borrowing mutably
+        let candidates_with_priority: Vec<(SocketAddr, VarInt)> = addresses
+            .into_iter()
+            .map(|addr| {
+                let priority = self.calculate_candidate_priority(&addr, CandidateSource::Local);
+                (addr, priority)
+            })
+            .collect();
+        
+        // Now work with NAT state and queue frames
+        for (addr, priority) in candidates_with_priority {
+            let seq = match self.nat_traversal.as_mut() {
+                Some(state) => state.add_local_candidate(addr, CandidateSource::Local, now),
+                None => return,
+            };
+            
+            self.queue_add_address(seq, addr, priority);
+            debug!("Added local candidate: {} (seq={})", addr, seq);
+        }
+        
+        // If we're a bootstrap node, send the peer's observed address back to them
+        if let Some(nat_state) = self.nat_traversal.as_ref() {
+            if matches!(nat_state.role, NatTraversalRole::Bootstrap) {
+                // Send the peer's observed address (path.remote) back via ADD_ADDRESS
+                let observed_addr = self.path.remote;
+                let priority = self.calculate_candidate_priority(&observed_addr, CandidateSource::Observed { by_node: None });
+                
+                // Generate a sequence number for this observation
+                let seq = VarInt::from_u32(1000); // High sequence number for observed addresses
+                
+                // Queue ADD_ADDRESS frame to inform peer of their public address
+                let add_address = frame::AddAddress {
+                    sequence: seq,
+                    address: observed_addr,
+                    priority,
+                };
+                
+                self.spaces[SpaceId::Data].pending.add_addresses.push(add_address);
+                trace!("Bootstrap node queuing observed address {} for peer", observed_addr);
+            }
+        }
+        
+        // TODO: Generate symmetric NAT predictions if enabled
+    }
+    
+    /// Discover local network interface addresses
+    fn discover_local_addresses(&self) -> Result<Vec<SocketAddr>, std::io::Error> {
+        let mut addresses = Vec::new();
+        
+        // First, use the connection's local IP if available
+        if let Some(local_ip) = self.local_ip {
+            // Use a reasonable default port (will be updated by bootstrap observation)
+            let local_port = 0; // Let the system assign
+            addresses.push(SocketAddr::new(local_ip, local_port));
+        }
+        
+        // Lightweight discovery using UDP socket trick
+        // This works cross-platform without dependencies
+        if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            // Connect to a public IP (doesn't actually send data)
+            // Using multiple targets for better coverage
+            let targets = [
+                "8.8.8.8:80",      // Google DNS
+                "1.1.1.1:80",      // Cloudflare DNS
+                "208.67.222.222:80", // OpenDNS
+            ];
+            
+            for target in &targets {
+                if socket.connect(target).is_ok() {
+                    if let Ok(local_addr) = socket.local_addr() {
+                        if !addresses.iter().any(|a| a.ip() == local_addr.ip()) {
+                            // Use port 0 to indicate it needs to be determined
+                            addresses.push(SocketAddr::new(local_addr.ip(), 0));
+                        }
+                        break; // One successful discovery is enough
+                    }
+                }
+            }
+        }
+        
+        // Try IPv6 discovery separately
+        if let Ok(socket) = std::net::UdpSocket::bind("[::]:0") {
+            // Well-known IPv6 addresses
+            let targets = [
+                "[2001:4860:4860::8888]:80", // Google DNS IPv6
+                "[2606:4700:4700::1111]:80", // Cloudflare DNS IPv6
+            ];
+            
+            for target in &targets {
+                if socket.connect(target).is_ok() {
+                    if let Ok(local_addr) = socket.local_addr() {
+                        if !addresses.iter().any(|a| a.ip() == local_addr.ip()) {
+                            addresses.push(SocketAddr::new(local_addr.ip(), 0));
+                        }
+                        break;
+                    }
+                }
+            }
+        }
+        
+        // Note: The actual port will be determined when bootstrap nodes
+        // observe our connection and send it back via ADD_ADDRESS frames
+        
+        Ok(addresses)
+    }
+    
+    /// Calculate priority for a candidate address (ICE-style)
+    fn calculate_candidate_priority(&self, addr: &SocketAddr, source: CandidateSource) -> VarInt {
+        // Priority = (2^24)*(type preference) + (2^8)*(local preference) + (256 - component ID)
+        let type_preference: u32 = match source {
+            CandidateSource::Local => 126,
+            CandidateSource::Observed { .. } => 100,
+            CandidateSource::Peer => 110,
+            CandidateSource::Predicted => 0,
+        };
+        
+        let local_preference: u32 = if addr.is_ipv6() { 65535 } else { 65534 };
+        let component_id: u32 = 1;
+        
+        let priority = (type_preference << 24) | (local_preference << 8) | (256 - component_id);
+        VarInt::from_u32(priority)
+    }
+    
+    /// Check if NAT traversal is enabled for this connection
+    pub fn has_nat_traversal(&self) -> bool {
+        self.nat_traversal.is_some()
+    }
+
+    /// Get current NAT traversal state information
+    pub fn nat_traversal_state(&self) -> Option<(NatTraversalRole, usize, usize)> {
+        self.nat_traversal.as_ref().map(|state| {
+            (
+                state.role,
+                state.local_candidates.len(),
+                state.remote_candidates.len(),
+            )
+        })
+    }
+    
+    /// Initiate NAT traversal coordination through a bootstrap node
+    pub fn initiate_nat_traversal_coordination(&mut self, now: Instant) -> Result<(), TransportError> {
+        let nat_state = self.nat_traversal.as_mut()
+            .ok_or_else(|| TransportError::PROTOCOL_VIOLATION("NAT traversal not enabled"))?;
+        
+        // Check if we should send PUNCH_ME_NOW to coordinator
+        if nat_state.should_send_punch_request() {
+            // Generate candidate pairs for coordination
+            nat_state.generate_candidate_pairs(now);
+            
+            // Get the best candidate pairs to try
+            let pairs = nat_state.get_next_validation_pairs(3);
+            if pairs.is_empty() {
+                return Err(TransportError::PROTOCOL_VIOLATION("No candidate pairs for coordination"));
+            }
+            
+            // Create punch targets from the pairs
+            let targets: Vec<_> = pairs.into_iter()
+                .map(|pair| nat_traversal::PunchTarget {
+                    remote_addr: pair.remote_addr,
+                    local_addr: pair.local_addr,
+                    remote_sequence: pair.remote_sequence,
+                    challenge: self.rng.random(),
+                })
+                .collect();
+            
+            // Start coordination round
+            let round = nat_state.start_coordination_round(targets, now);
+            
+            // Queue PUNCH_ME_NOW frame to be sent to bootstrap node
+            // Include our best local address for the peer to target
+            let local_addr = self.local_ip
+                .map(|ip| SocketAddr::new(ip, self.local_ip.map(|_| 0).unwrap_or(0)))
+                .unwrap_or_else(|| SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), 0));
+            
+            let punch_me_now = frame::PunchMeNow {
+                round,
+                target_sequence: VarInt::from_u32(0), // Will be filled by bootstrap
+                local_address: local_addr,
+                target_peer_id: None, // Direct peer-to-peer communication
+            };
+            
+            self.spaces[SpaceId::Data].pending.punch_me_now.push(punch_me_now);
+            nat_state.mark_punch_request_sent();
+            
+            trace!("Initiated NAT traversal coordination round {}", round);
+        }
+        
+        Ok(())
+    }
+    
+    /// Process NAT traversal timeouts and state transitions
+    fn handle_nat_traversal_timeout(&mut self, now: Instant) {
+        if let Some(nat_state) = &mut self.nat_traversal {
+            // Check coordination timeout
+            if nat_state.check_coordination_timeout(now) {
+                trace!("NAT traversal coordination timed out");
+                // Could retry or fall back to other methods
+            }
+            
+            // Check if it's time to start punching
+            if nat_state.should_start_punching(now) {
+                nat_state.start_punching_phase(now);
+                
+                // Send PATH_CHALLENGE frames to punch targets
+                let punch_targets: Vec<_> = nat_state.get_punch_targets()
+                    .map(|targets| targets.to_vec())
+                    .unwrap_or_default();
+                
+                if !punch_targets.is_empty() {
+                    for target in punch_targets {
+                        // Queue PATH_CHALLENGE for this target
+                        trace!("Sending PATH_CHALLENGE to {} for NAT punch", target.remote_addr);
+                        
+                        // Store the challenge for validation
+                        nat_state.start_validation(
+                            target.remote_sequence,
+                            target.challenge,
+                            now
+                        ).ok();
+                        
+                        // The actual PATH_CHALLENGE will be sent by the normal path validation logic
+                        // For now, we're just preparing the state
+                    }
+                    
+                    nat_state.mark_coordination_validating();
+                }
+            }
+        }
+    }
+    
+    /// Trigger validation of NAT traversal candidates using PATH_CHALLENGE
+    pub fn validate_nat_candidates(&mut self, now: Instant) {
+        // Get candidates ready for validation first
+        let candidates = match self.nat_traversal.as_ref() {
+            Some(state) => state.get_validation_candidates(),
+            None => return,
+        };
+        
+        if candidates.is_empty() {
+            return;
+        }
+        
+        // Validate up to 3 candidates in parallel
+        let max_concurrent = 3;
+        let validations: Vec<_> = candidates
+            .into_iter()
+            .take(max_concurrent)
+            .map(|(seq, candidate)| {
+                // Generate a random challenge token
+                let challenge: u64 = self.rng.random();
+                (seq, candidate.address, challenge)
+            })
+            .collect();
+        
+        // Now start validations with mutable access
+        let nat_state = match self.nat_traversal.as_mut() {
+            Some(state) => state,
+            None => return,
+        };
+        
+        for (seq, address, challenge) in validations {
+            // Start validation for this candidate
+            if let Err(e) = nat_state.start_validation(seq, challenge, now) {
+                debug!("Failed to start validation for candidate {}: {}", seq, e);
+                continue;
+            }
+            
+            // Queue PATH_CHALLENGE frame to be sent to this address
+            // This will be picked up by the path validation system
+            trace!("Starting NAT validation for {} with challenge {:08x}", address, challenge);
+            
+            // TODO: Actually send PATH_CHALLENGE to the candidate address
+            // This requires modifying the packet sending logic to support
+            // sending to addresses other than the current path
+        }
     }
 
     fn decrypt_packet(

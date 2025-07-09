@@ -117,6 +117,9 @@ pub use nat_traversal_api::{
 // Re-export NAT traversal types from connection module
 pub use connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole};
 
+pub mod quic_node;
+pub use quic_node::{QuicP2PNode, QuicNodeConfig, NodeStats as QuicNodeStats};
+
 pub mod terminal_ui;
 
 #[cfg(feature = "arbitrary")]

@@ -28,8 +28,10 @@ use tokio::{
     time::{interval, sleep, timeout},
 };
 use tracing::{info, warn, debug, error};
+use rand::{self, Rng};
 use terminal_ui::{colors, symbols, print_banner, print_section, print_item, print_status, format_peer_id, format_address, format_address_with_words, describe_address, ProgressIndicator};
 use four_word_networking::FourWordAdaptiveEncoder;
+use std::io;
 
 /// Command line arguments for ant-quic
 #[derive(Parser, Debug)]
@@ -207,6 +209,8 @@ impl Default for NodeStats {
 struct ServedPeer {
     /// Peer's ID
     peer_id: PeerId,
+    /// Peer's chosen nickname
+    nickname: String,
     /// Observed address
     observed_address: SocketAddr,
     /// Local candidates reported by peer
@@ -226,6 +230,84 @@ struct CoordinationSession {
     started_at: Instant,
     /// Session timeout
     timeout: Duration,
+}
+
+/// Chat message between peers
+#[derive(Debug, Clone)]
+struct ChatMessage {
+    /// Message ID for deduplication
+    message_id: u64,
+    /// Sender's peer ID
+    from_peer_id: PeerId,
+    /// Sender's nickname
+    from_nickname: String,
+    /// Target peer ID (None for broadcast)
+    to_peer_id: Option<PeerId>,
+    /// Target nickname (None for broadcast)
+    to_nickname: Option<String>,
+    /// Message content
+    content: String,
+    /// Timestamp when sent
+    timestamp: Instant,
+    /// Whether this is a broadcast message
+    is_broadcast: bool,
+}
+
+/// Chat state management
+#[derive(Debug, Clone)]
+struct ChatState {
+    /// Our own nickname
+    our_nickname: String,
+    /// Message history
+    message_history: Vec<ChatMessage>,
+    /// Connected peers with nicknames
+    connected_peers: HashMap<PeerId, String>,
+    /// Next message ID
+    next_message_id: u64,
+}
+
+/// Network packet types for our protocol
+#[derive(Debug, Clone)]
+enum NetworkPacket {
+    /// Peer registration request with nickname
+    PeerRegistration {
+        peer_id: PeerId,
+        nickname: String,
+    },
+    /// Peer registration acknowledgment
+    RegistrationAck {
+        server_reflexive_addr: SocketAddr,
+    },
+    /// Discovery request
+    DiscoveryRequest {
+        peer_id: PeerId,
+    },
+    /// Discovery response
+    DiscoveryResponse {
+        peers: Vec<(PeerId, SocketAddr)>,
+    },
+    /// Chat message
+    ChatMessage {
+        message: ChatMessage,
+    },
+    /// Coordination request - initiates NAT traversal
+    CoordinationRequest {
+        requester_id: PeerId,
+        target_id: PeerId,
+    },
+    /// Coordination response - provides target addresses
+    CoordinationResponse {
+        success: bool,
+        target_addresses: Vec<SocketAddr>,
+    },
+    /// Punch notification - coordinator tells peers to start punching
+    PunchNotification {
+        peer_a_id: PeerId,
+        peer_a_addr: SocketAddr,
+        peer_b_id: PeerId,
+        peer_b_addr: SocketAddr,
+        round: u32,
+    },
 }
 
 /// Main unified P2P node
@@ -260,6 +342,12 @@ struct UnifiedP2PNode {
     served_peers: Arc<Mutex<HashMap<PeerId, ServedPeer>>>,
     /// Active coordination sessions
     coordination_sessions: Arc<Mutex<HashMap<(PeerId, PeerId), CoordinationSession>>>,
+    
+    // Chat state
+    /// Chat functionality
+    chat_state: Arc<Mutex<ChatState>>,
+    /// All known peer addresses for chat (includes both served peers and bootstrap nodes)
+    all_peer_addresses: Arc<Mutex<HashMap<SocketAddr, String>>>,
 }
 
 /// Configuration for the unified node
@@ -295,11 +383,38 @@ impl Default for NodeConfig {
     }
 }
 
+/// Generate a random nickname for a peer
+fn generate_random_nickname() -> String {
+    let adjectives = [
+        "Swift", "Bright", "Clever", "Brave", "Quick", "Wise", "Bold", "Sharp",
+        "Keen", "Smart", "Agile", "Fast", "Noble", "Kind", "Cool", "Calm",
+        "Strong", "Gentle", "Witty", "Cheerful", "Loyal", "Honest", "Creative",
+        "Inventive", "Curious", "Patient", "Friendly", "Helpful", "Generous", "Thoughtful"
+    ];
+    
+    let animals = [
+        "Wolf", "Eagle", "Tiger", "Lion", "Bear", "Fox", "Hawk", "Raven",
+        "Falcon", "Panther", "Cheetah", "Dolphin", "Shark", "Whale", "Otter",
+        "Badger", "Lynx", "Jaguar", "Puma", "Cobra", "Viper", "Phoenix",
+        "Dragon", "Griffin", "Pegasus", "Unicorn", "Sphinx", "Kraken", "Hydra", "Titan"
+    ];
+    
+    use rand::Rng;
+    let mut rng = rand::rng();
+    let adjective = adjectives[rng.random_range(0..adjectives.len())];
+    let animal = animals[rng.random_range(0..animals.len())];
+    let number = rng.random_range(0..1000);
+    
+    format!("{}{}{}", adjective, animal, number)
+}
+
 impl UnifiedP2PNode {
     /// Create a new unified P2P node
     async fn new(listen_addr: SocketAddr, config: NodeConfig) -> Result<Self, Box<dyn std::error::Error>> {
         // Generate random peer ID
-        let peer_id = PeerId(rand::random());
+        use rand::Rng;
+        let mut rng = rand::rng();
+        let peer_id = PeerId(rng.random());
         
         // Bind socket
         let socket = UdpSocket::bind(listen_addr).await?;
@@ -309,6 +424,10 @@ impl UnifiedP2PNode {
         verify_port_allocation(&listen_addr, &local_addr)?;
         
         debug!("Node {:?} starting on {}", peer_id, local_addr);
+        
+        // Generate a random nickname for this node
+        let nickname = generate_random_nickname();
+        info!("Generated nickname: {}", nickname);
         
         Ok(Self {
             peer_id,
@@ -323,6 +442,13 @@ impl UnifiedP2PNode {
             local_candidates: Arc::new(Mutex::new(Vec::new())),
             served_peers: Arc::new(Mutex::new(HashMap::new())),
             coordination_sessions: Arc::new(Mutex::new(HashMap::new())),
+            chat_state: Arc::new(Mutex::new(ChatState {
+                our_nickname: nickname,
+                message_history: Vec::new(),
+                connected_peers: HashMap::new(),
+                next_message_id: 1,
+            })),
+            all_peer_addresses: Arc::new(Mutex::new(HashMap::new())),
         })
     }
     
@@ -334,6 +460,14 @@ impl UnifiedP2PNode {
         {
             let mut bootstraps = self.bootstrap_nodes.lock().unwrap();
             bootstraps.extend(bootstrap_addresses.clone());
+        }
+        
+        // Add bootstrap nodes to all_peer_addresses for chat
+        {
+            let mut all_peers = self.all_peer_addresses.lock().unwrap();
+            for addr in &bootstrap_addresses {
+                all_peers.insert(*addr, "BootstrapNode".to_string());
+            }
         }
         
         // Smart mode selection based on bootstrap presence
@@ -396,7 +530,7 @@ impl UnifiedP2PNode {
         }
         
         // Try to determine if we're publicly reachable
-        // This is a simplified test - in practice, we'd use STUN or similar
+        // This is a simplified test - in practice, bootstrap nodes observe our public address
         let is_public_ip = match self.local_addr.ip() {
             IpAddr::V4(ip) => {
                 !ip.is_private() && !ip.is_loopback() && !ip.is_link_local()
@@ -534,7 +668,7 @@ impl UnifiedP2PNode {
         }
         
         let message_type = data[0];
-        debug!("Received message type {} from {}", message_type, peer_addr);
+        info!("Received message type 0x{:02x} ({} bytes) from {}", message_type, data.len(), peer_addr);
         
         match message_type {
             0x01 => {
@@ -571,6 +705,18 @@ impl UnifiedP2PNode {
                 // Error response
                 self.handle_error_response(data, peer_addr).await;
             }
+            0x10 => {
+                // Hole punch packet
+                self.handle_hole_punch_packet(data, peer_addr).await;
+            }
+            0x11 => {
+                // Chat message
+                self.handle_chat_message(data, peer_addr).await;
+            }
+            0x12 => {
+                // Punch notification from coordinator
+                self.handle_punch_notification(data, peer_addr).await;
+            }
             0xFF => {
                 // Reachability test
                 self.handle_reachability_test(data, peer_addr).await;
@@ -606,12 +752,30 @@ impl UnifiedP2PNode {
         // Register the peer
         {
             let mut served_peers = self.served_peers.lock().unwrap();
+            let nickname = generate_random_nickname();
             served_peers.insert(peer_id, ServedPeer {
                 peer_id,
+                nickname: nickname.clone(),
                 observed_address: peer_addr,
                 local_candidates: Vec::new(),
                 last_seen: Instant::now(),
             });
+            
+            // Add to chat state connected peers
+            {
+                let mut chat_state = self.chat_state.lock().unwrap();
+                chat_state.connected_peers.insert(peer_id, nickname.clone());
+            }
+            
+            // Track peer address for chat
+            {
+                let mut all_peers = self.all_peer_addresses.lock().unwrap();
+                all_peers.insert(peer_addr, nickname.clone());
+            }
+            
+            info!("Peer {} connected with nickname: {} from {}", 
+                format_peer_id(&peer_id.0), nickname, 
+                format_address_with_words(&peer_addr));
         }
         
         // Send registration ACK with server reflexive address
@@ -703,9 +867,26 @@ impl UnifiedP2PNode {
                     }
                 }
                 
-                // Send coordination instructions to both peers
-                self.send_coordination_instructions(requesting_peer, peer_addr, target_info.observed_address).await;
-                self.send_coordination_instructions(target_peer, target_info.observed_address, peer_addr).await;
+                // Send punch notifications to both peers for simultaneous hole punching
+                let round = rand::rng().random_range(0..u32::MAX);
+                
+                // Notify requesting peer about target
+                self.send_punch_notification(
+                    requesting_peer, 
+                    peer_addr, 
+                    target_peer, 
+                    target_info.observed_address,
+                    round
+                ).await;
+                
+                // Notify target peer about requester
+                self.send_punch_notification(
+                    target_peer,
+                    target_info.observed_address,
+                    requesting_peer,
+                    peer_addr,
+                    round
+                ).await;
                 
                 // Update stats
                 {
@@ -808,6 +989,248 @@ impl UnifiedP2PNode {
         // Send simple response
         let response = vec![0xFE]; // Reachability test response
         let _ = self.socket.send_to(&response, peer_addr).await;
+    }
+    
+    /// Handle hole punch packet for NAT traversal
+    async fn handle_hole_punch_packet(&self, data: &[u8], peer_addr: SocketAddr) {
+        if data.len() < 37 { // 1 + 32 + 4 = minimum size
+            debug!("Hole punch packet too short from {}", peer_addr);
+            return;
+        }
+        
+        // Parse packet: [type(1)] [peer_id(32)] [sequence(4)]
+        let from_peer_id = PeerId({
+            let mut bytes = [0u8; 32];
+            bytes.copy_from_slice(&data[1..33]);
+            bytes
+        });
+        
+        let sequence = u32::from_be_bytes({
+            let mut bytes = [0u8; 4];
+            bytes.copy_from_slice(&data[33..37]);
+            bytes
+        });
+        
+        info!("Received hole punch {} from peer {} at {}", 
+            sequence, format_peer_id(&from_peer_id.0), format_address_with_words(&peer_addr));
+        
+        // Track this peer for chat if not already known
+        {
+            let mut all_peers = self.all_peer_addresses.lock().unwrap();
+            if !all_peers.contains_key(&peer_addr) {
+                all_peers.insert(peer_addr, format!("Peer_{}", format_peer_id(&from_peer_id.0)));
+            }
+        }
+        
+        // Send hole punch response to establish bidirectional flow
+        let response_packet = self.create_punch_response(sequence);
+        if let Err(e) = self.socket.send_to(&response_packet, peer_addr).await {
+            warn!("Failed to send hole punch response to {}: {}", peer_addr, e);
+        } else {
+            debug!("Sent hole punch response {} to {}", sequence, peer_addr);
+            
+            // Mark connection as successful if this is part of our NAT traversal attempt
+            let connections = self.peer_connections.lock().unwrap();
+            if connections.values().any(|conn| conn.peer_id == from_peer_id) {
+                print_status(
+                    symbols::CHECK,
+                    &format!("NAT traversal successful with {} at {}",
+                        format_peer_id(&from_peer_id.0),
+                        format_address_with_words(&peer_addr)
+                    ),
+                    colors::GREEN
+                );
+                
+                // Update stats
+                let mut stats = self.stats.lock().unwrap();
+                stats.successful_connections += 1;
+            }
+        }
+    }
+    
+    /// Create a hole punch response packet
+    fn create_punch_response(&self, sequence: u32) -> Vec<u8> {
+        let mut packet = Vec::new();
+        packet.push(0x10); // Hole punch message type (same as request)
+        packet.extend_from_slice(&self.peer_id.0);
+        packet.extend_from_slice(&sequence.to_be_bytes());
+        packet
+    }
+    
+    /// Handle incoming chat message
+    async fn handle_chat_message(&self, data: &[u8], peer_addr: SocketAddr) {
+        info!("Received potential chat message from {} with {} bytes", peer_addr, data.len());
+        if data.len() < 42 { // 1 + 32 + 8 + 1 = minimum size
+            debug!("Chat message too short from {}", peer_addr);
+            return;
+        }
+        
+        // Parse message: [type(1)] [from_peer_id(32)] [message_id(8)] [nickname_len(1)] [nickname] [content_len(2)] [content]
+        let from_peer_id = PeerId({
+            let mut bytes = [0u8; 32];
+            bytes.copy_from_slice(&data[1..33]);
+            bytes
+        });
+        
+        let message_id = u64::from_be_bytes({
+            let mut bytes = [0u8; 8];
+            bytes.copy_from_slice(&data[33..41]);
+            bytes
+        });
+        
+        let nickname_len = data[41] as usize;
+        if data.len() < 44 + nickname_len {
+            debug!("Chat message malformed (nickname) from {}", peer_addr);
+            return;
+        }
+        
+        let from_nickname = String::from_utf8_lossy(&data[42..42+nickname_len]).to_string();
+        
+        let content_len_start = 42 + nickname_len;
+        if data.len() < content_len_start + 2 {
+            debug!("Chat message malformed (content length) from {}", peer_addr);
+            return;
+        }
+        
+        let content_len = u16::from_be_bytes([
+            data[content_len_start],
+            data[content_len_start + 1]
+        ]) as usize;
+        
+        let content_start = content_len_start + 2;
+        if data.len() < content_start + content_len {
+            debug!("Chat message malformed (content) from {}", peer_addr);
+            return;
+        }
+        
+        let content = String::from_utf8_lossy(&data[content_start..content_start+content_len]).to_string();
+        
+        // Create chat message
+        let chat_message = ChatMessage {
+            message_id,
+            from_peer_id,
+            from_nickname: from_nickname.clone(),
+            to_peer_id: None, // TODO: parse target peer ID for direct messages
+            to_nickname: None,
+            content: content.clone(),
+            timestamp: Instant::now(),
+            is_broadcast: true, // TODO: determine if broadcast or direct
+        };
+        
+        // Add to message history
+        {
+            let mut chat_state = self.chat_state.lock().unwrap();
+            chat_state.message_history.push(chat_message.clone());
+            
+            // Update connected peers list
+            chat_state.connected_peers.insert(from_peer_id, from_nickname.clone());
+        }
+        
+        // Track this peer's address for future messages
+        {
+            let mut all_peers = self.all_peer_addresses.lock().unwrap();
+            all_peers.insert(peer_addr, from_nickname.clone());
+        }
+        
+        // Display the message
+        self.display_chat_message(&chat_message);
+        
+        info!("Successfully processed chat from {}: {}", from_nickname, content);
+    }
+    
+    /// Send a chat message
+    async fn send_chat_message(&self, content: String, target_nickname: Option<String>) {
+        debug!("Sending chat message: {} to {:?}", content, target_nickname);
+        let (our_peer_id, our_nickname, message_id) = {
+            let chat_state = self.chat_state.lock().unwrap();
+            let message_id = chat_state.next_message_id;
+            (self.peer_id, chat_state.our_nickname.clone(), message_id)
+        };
+        
+        // Increment message ID
+        {
+            let mut chat_state = self.chat_state.lock().unwrap();
+            chat_state.next_message_id += 1;
+        }
+        
+        // Create chat message
+        let chat_message = ChatMessage {
+            message_id,
+            from_peer_id: our_peer_id,
+            from_nickname: our_nickname.clone(),
+            to_peer_id: None, // TODO: resolve target peer ID from nickname
+            to_nickname: target_nickname.clone(),
+            content: content.clone(),
+            timestamp: Instant::now(),
+            is_broadcast: target_nickname.is_none(),
+        };
+        
+        // Add to our own message history
+        {
+            let mut chat_state = self.chat_state.lock().unwrap();
+            chat_state.message_history.push(chat_message.clone());
+        }
+        
+        // Create packet: [type(1)] [from_peer_id(32)] [message_id(8)] [nickname_len(1)] [nickname] [content_len(2)] [content]
+        let mut packet = Vec::new();
+        packet.push(0x11); // Chat message type
+        packet.extend_from_slice(&our_peer_id.0);
+        packet.extend_from_slice(&message_id.to_be_bytes());
+        packet.push(our_nickname.len() as u8);
+        packet.extend_from_slice(our_nickname.as_bytes());
+        packet.extend_from_slice(&(content.len() as u16).to_be_bytes());
+        packet.extend_from_slice(content.as_bytes());
+        
+        // Send to all connected peers
+        let all_peers = self.all_peer_addresses.lock().unwrap();
+        
+        let target_peers: Vec<(SocketAddr, String)> = if let Some(ref target_nick) = target_nickname {
+            // Find specific peer by nickname
+            all_peers.iter()
+                .filter(|(_, nick)| *nick == target_nick)
+                .map(|(addr, nick)| (*addr, nick.clone()))
+                .collect()
+        } else {
+            // Broadcast to all peers
+            all_peers.iter()
+                .map(|(addr, nick)| (*addr, nick.clone()))
+                .collect()
+        };
+        
+        info!("Sending chat to {} peers (target: {:?})", target_peers.len(), target_nickname);
+        
+        for (peer_addr, nickname) in target_peers {
+            info!("Sending chat to {} at {}", nickname, peer_addr);
+            if let Err(e) = self.socket.send_to(&packet, peer_addr).await {
+                warn!("Failed to send chat message to {}: {}", format_address_with_words(&peer_addr), e);
+            } else {
+                info!("Successfully sent chat message to {}", peer_addr);
+            }
+        }
+        
+        // Display our own message
+        self.display_chat_message(&chat_message);
+    }
+    
+    /// Display a chat message in the terminal
+    fn display_chat_message(&self, message: &ChatMessage) {
+        let timestamp = terminal_ui::format_timestamp(message.timestamp);
+        let prefix = if message.is_broadcast {
+            format!("[{}] {}{}:{}", timestamp, colors::CYAN, message.from_nickname, colors::RESET)
+        } else {
+            format!("[{}] {}{} → {}{}:{}", 
+                timestamp, 
+                colors::CYAN, message.from_nickname,
+                colors::MAGENTA, message.to_nickname.as_ref().unwrap_or(&"Unknown".to_string()),
+                colors::RESET
+            )
+        };
+        
+        println!();
+        println!("{} {}", prefix, message.content);
+        print!("💬 Chat: ");
+        use std::io::{self, Write};
+        io::stdout().flush().unwrap();
     }
     
     /// Start hole punching to target address
@@ -942,27 +1365,6 @@ impl UnifiedP2PNode {
         }
     }
     
-    async fn send_coordination_instructions(&self, peer_id: PeerId, peer_addr: SocketAddr, target_addr: SocketAddr) {
-        let mut response = Vec::new();
-        response.push(0x83); // Coordination instructions
-        response.extend_from_slice(&peer_id.0);
-        
-        // Add target address
-        match target_addr {
-            SocketAddr::V4(addr) => {
-                response.extend_from_slice(&addr.ip().octets());
-                response.extend_from_slice(&addr.port().to_be_bytes());
-            }
-            SocketAddr::V6(_) => {
-                response.extend_from_slice(&[0u8; 6]);
-            }
-        }
-        
-        if let Err(e) = self.socket.send_to(&response, peer_addr).await {
-            warn!("Failed to send coordination instructions to {}: {}", peer_addr, e);
-        }
-    }
-    
     async fn send_coordination_error(&self, peer_id: PeerId, peer_addr: SocketAddr, error: &str) {
         let mut response = Vec::new();
         response.push(0x84); // Coordination error
@@ -975,6 +1377,142 @@ impl UnifiedP2PNode {
         if let Err(e) = self.socket.send_to(&response, peer_addr).await {
             warn!("Failed to send coordination error to {}: {}", peer_addr, e);
         }
+    }
+    
+    /// Send punch notification to a peer (coordinator role)
+    async fn send_punch_notification(
+        &self, 
+        to_peer_id: PeerId, 
+        to_peer_addr: SocketAddr,
+        other_peer_id: PeerId,
+        other_peer_addr: SocketAddr,
+        round: u32
+    ) {
+        let mut packet = Vec::new();
+        packet.push(0x12); // Punch notification
+        packet.extend_from_slice(&to_peer_id.0);
+        packet.extend_from_slice(&other_peer_id.0);
+        
+        // Add other peer's address
+        match other_peer_addr {
+            SocketAddr::V4(addr) => {
+                packet.extend_from_slice(&addr.ip().octets());
+                packet.extend_from_slice(&addr.port().to_be_bytes());
+            }
+            SocketAddr::V6(_) => {
+                // Simple IPv4-only implementation for now
+                packet.extend_from_slice(&[0u8; 6]);
+            }
+        }
+        
+        // Add round number for coordination
+        packet.extend_from_slice(&round.to_be_bytes());
+        
+        if let Err(e) = self.socket.send_to(&packet, to_peer_addr).await {
+            warn!("Failed to send punch notification to {}: {}", to_peer_addr, e);
+        } else {
+            info!("Sent punch notification to {} about {} (round {})", 
+                format_address_with_words(&to_peer_addr),
+                format_address_with_words(&other_peer_addr), 
+                round
+            );
+        }
+    }
+    
+    /// Handle punch notification from coordinator (client role)
+    async fn handle_punch_notification(&self, data: &[u8], coordinator_addr: SocketAddr) {
+        if data.len() < 73 { // 1 + 32 + 32 + 4 + 2 + 4 = minimum size
+            debug!("Punch notification too short from {}", coordinator_addr);
+            return;
+        }
+        
+        // Parse: [type(1)] [to_peer_id(32)] [other_peer_id(32)] [ip(4)] [port(2)] [round(4)]
+        let other_peer_id = PeerId({
+            let mut bytes = [0u8; 32];
+            bytes.copy_from_slice(&data[33..65]);
+            bytes
+        });
+        
+        let ip_bytes: [u8; 4] = data[65..69].try_into().unwrap();
+        let port_bytes: [u8; 2] = data[69..71].try_into().unwrap();
+        let port = u16::from_be_bytes(port_bytes);
+        let target_addr = SocketAddr::from((ip_bytes, port));
+        
+        let round = u32::from_be_bytes({
+            let mut bytes = [0u8; 4];
+            bytes.copy_from_slice(&data[71..75]);
+            bytes
+        });
+        
+        info!("Received punch notification from coordinator: punch to {} at {} (round {})",
+            format_peer_id(&other_peer_id.0),
+            format_address_with_words(&target_addr),
+            round
+        );
+        
+        // Show coordination with four-word address
+        println!();
+        print_status(
+            symbols::ROCKET,
+            &format!("Coordinated NAT traversal to peer {} at {} (round {})", 
+                format_peer_id(&other_peer_id.0),
+                format_address_with_words(&target_addr),
+                round
+            ),
+            colors::CYAN
+        );
+        
+        // Start synchronized hole punching
+        self.start_synchronized_hole_punching(target_addr, round).await;
+    }
+    
+    /// Start synchronized hole punching with coordination round
+    async fn start_synchronized_hole_punching(&self, target_addr: SocketAddr, round: u32) {
+        info!("Starting synchronized hole punching to {} (round {})", 
+            format_address_with_words(&target_addr), round);
+        
+        // Brief delay to ensure both peers are ready
+        sleep(Duration::from_millis(100)).await;
+        
+        // Send multiple packets rapidly to maximize success chance
+        for i in 0..10 {
+            let punch_packet = self.create_punch_packet_with_round(i, round);
+            if let Err(e) = self.socket.send_to(&punch_packet, target_addr).await {
+                warn!("Hole punch {} to {} failed: {}", i, format_address_with_words(&target_addr), e);
+            } else {
+                debug!("Sent synchronized hole punch {} to {} (round {})", i, target_addr, round);
+            }
+            
+            // Very brief delay between punches
+            sleep(Duration::from_millis(20)).await;
+        }
+        
+        // Show completion
+        println!();
+        print_status(
+            symbols::CHECK,
+            &format!("Synchronized NAT traversal completed to {} (round {})", 
+                format_address_with_words(&target_addr),
+                round
+            ),
+            colors::GREEN
+        );
+        
+        // Update stats
+        {
+            let mut stats = self.stats.lock().unwrap();
+            stats.nat_traversal_attempts += 1;
+        }
+    }
+    
+    /// Create hole punch packet with round number
+    fn create_punch_packet_with_round(&self, sequence: u32, round: u32) -> Vec<u8> {
+        let mut packet = Vec::new();
+        packet.push(0x10); // Hole punch message type
+        packet.extend_from_slice(&self.peer_id.0);
+        packet.extend_from_slice(&sequence.to_be_bytes());
+        packet.extend_from_slice(&round.to_be_bytes());
+        packet
     }
     
     /// Process various timeouts
@@ -1130,6 +1668,105 @@ impl UnifiedP2PNode {
     }
 }
 
+/// Send a chat message using standalone components (for main function)
+async fn send_chat_message_standalone(
+    content: String,
+    target_nickname: Option<String>,
+    our_peer_id: PeerId,
+    chat_state: &Arc<Mutex<ChatState>>,
+    served_peers: &Arc<Mutex<HashMap<PeerId, ServedPeer>>>,
+    local_addr: SocketAddr
+) {
+    let (our_nickname, message_id) = {
+        let mut chat_state = chat_state.lock().unwrap();
+        let message_id = chat_state.next_message_id;
+        chat_state.next_message_id += 1;
+        (chat_state.our_nickname.clone(), message_id)
+    };
+    
+    // Create chat message
+    let chat_message = ChatMessage {
+        message_id,
+        from_peer_id: our_peer_id,
+        from_nickname: our_nickname.clone(),
+        to_peer_id: None, // TODO: resolve target peer ID from nickname
+        to_nickname: target_nickname.clone(),
+        content: content.clone(),
+        timestamp: Instant::now(),
+        is_broadcast: target_nickname.is_none(),
+    };
+    
+    // Add to our own message history
+    {
+        let mut chat_state = chat_state.lock().unwrap();
+        chat_state.message_history.push(chat_message.clone());
+    }
+    
+    // Create packet: [type(1)] [from_peer_id(32)] [message_id(8)] [nickname_len(1)] [nickname] [content_len(2)] [content]
+    let mut packet = Vec::new();
+    packet.push(0x11); // Chat message type
+    packet.extend_from_slice(&our_peer_id.0);
+    packet.extend_from_slice(&message_id.to_be_bytes());
+    packet.push(our_nickname.len() as u8);
+    packet.extend_from_slice(our_nickname.as_bytes());
+    packet.extend_from_slice(&(content.len() as u16).to_be_bytes());
+    packet.extend_from_slice(content.as_bytes());
+    
+    // Send to all connected peers (broadcast) or specific peer
+    let peers: Vec<SocketAddr> = {
+        let served_peers = served_peers.lock().unwrap();
+        if target_nickname.is_some() {
+            // Find specific peer by nickname
+            served_peers.values()
+                .filter(|peer| Some(&peer.nickname) == target_nickname.as_ref())
+                .map(|peer| peer.observed_address)
+                .collect()
+        } else {
+            // Broadcast to all peers
+            served_peers.values()
+                .map(|peer| peer.observed_address)
+                .collect()
+        }
+    };
+    
+    // Create a temporary socket for sending chat messages
+    // Use port 0 to let OS assign an available port
+    let send_addr = SocketAddr::new(local_addr.ip(), 0);
+    if let Ok(socket) = UdpSocket::bind(send_addr).await {
+        for peer_addr in peers {
+            if let Err(e) = socket.send_to(&packet, peer_addr).await {
+                warn!("Failed to send chat message to {}: {}", format_address_with_words(&peer_addr), e);
+            }
+        }
+    } else {
+        warn!("Failed to create socket for sending chat message");
+    }
+    
+    // Display our own message
+    display_chat_message_standalone(&chat_message);
+}
+
+/// Display a chat message in the terminal (standalone version)
+fn display_chat_message_standalone(message: &ChatMessage) {
+    let timestamp = terminal_ui::format_timestamp(message.timestamp);
+    let prefix = if message.is_broadcast {
+        format!("[{}] {}{}:{}", timestamp, colors::CYAN, message.from_nickname, colors::RESET)
+    } else {
+        format!("[{}] {}{} → {}{}:{}", 
+            timestamp, 
+            colors::CYAN, message.from_nickname,
+            colors::MAGENTA, message.to_nickname.as_ref().unwrap_or(&"Unknown".to_string()),
+            colors::RESET
+        )
+    };
+    
+    println!();
+    println!("{} {}", prefix, message.content);
+    print!("💬 Chat: ");
+    use std::io::{self, Write};
+    io::stdout().flush().unwrap();
+}
+
 /// Parse peer ID from hex string
 fn parse_peer_id(hex_str: &str) -> Result<PeerId, Box<dyn std::error::Error>> {
     if hex_str.len() != 64 {
@@ -1281,7 +1918,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut progress = ProgressIndicator::new("Initializing node...".to_string());
     progress.tick();
     
-    let mut node = UnifiedP2PNode::new(args.listen, config).await?;
+    let node = UnifiedP2PNode::new(args.listen, config).await?;
     let node_peer_id = node.peer_id;
     let actual_addr = node.local_addr;
     
@@ -1318,12 +1955,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         None
     };
     
-    // Start the node in a separate task
+    // Get our nickname for chat display
+    let our_nickname = {
+        let chat_state = node.chat_state.lock().unwrap();
+        chat_state.our_nickname.clone()
+    };
+    
+    // Extract shared state before moving node
     let node_stats = Arc::clone(&node.stats);
+    let chat_state_for_input = Arc::clone(&node.chat_state);
+    let served_peers_for_chat = Arc::clone(&node.served_peers);
+    let local_addr_for_chat = node.local_addr;
+    let peer_id_for_chat = node.peer_id;
+    
     let bootstrap_addrs_clone = bootstrap_addresses.clone();
     
+    // Start the node in a separate task
+    let mut node_for_start = node;
     let node_handle = tokio::spawn(async move {
-        if let Err(e) = node.start(bootstrap_addrs_clone).await {
+        if let Err(e) = node_for_start.start(bootstrap_addrs_clone).await {
             error!("Node failed: {}", e);
         }
     });
@@ -1350,7 +2000,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         );
     }
     
-    // Show waiting status
+    // Show waiting status and chat instructions
     if bootstrap_addresses.is_empty() {
         print_status(symbols::HOURGLASS, "Waiting for peers to connect...", colors::DIM);
     } else {
@@ -1358,18 +2008,115 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }
     println!();
     
+    // Show chat instructions
+    print_section("💬", "Chat Interface:");
+    print_item(&format!("Your nickname: {}{}{}", colors::CYAN, our_nickname, colors::RESET), 2);
+    print_item("Type a message to broadcast to all peers", 2);
+    print_item("Type '@nickname message' to send to specific peer", 2);
+    print_item("Type '/list' to see connected peers", 2);
+    print_item("Type '/quit' or Ctrl+C to exit", 2);
+    println!();
+    
     // Create a task for live status updates
     let stats_clone = Arc::clone(&node_stats);
     let status_task = tokio::spawn(async move {
-        let mut interval = interval(Duration::from_secs(5));
+        let mut interval = interval(Duration::from_secs(30)); // Less frequent to not interfere with chat
         loop {
             interval.tick().await;
             update_status_line(&stats_clone);
         }
     });
     
-    // Wait for Ctrl+C
-    tokio::signal::ctrl_c().await?;
+    // Chat input handling
+    println!("💬 Chat: ");
+    let input_handle = tokio::spawn(async move {
+        let stdin = io::stdin();
+        loop {
+            let mut input = String::new();
+            match stdin.read_line(&mut input) {
+                Ok(_) => {
+                    let input = input.trim();
+                    
+                    if input.is_empty() {
+                        print!("💬 Chat: ");
+                        continue;
+                    }
+                    
+                    if input == "/quit" {
+                        break;
+                    }
+                    
+                    if input == "/list" {
+                        let chat_state = chat_state_for_input.lock().unwrap();
+                        println!();
+                        if chat_state.connected_peers.is_empty() {
+                            println!("No peers connected yet.");
+                        } else {
+                            println!("Connected peers:");
+                            for (peer_id, nickname) in &chat_state.connected_peers {
+                                println!("  {} {}{}{} ({})", 
+                                    symbols::DOT, 
+                                    colors::CYAN, nickname, colors::RESET,
+                                    format_peer_id(&peer_id.0)
+                                );
+                            }
+                        }
+                        print!("💬 Chat: ");
+                        continue;
+                    }
+                    
+                    // Parse message
+                    if input.starts_with('@') {
+                        // Direct message
+                        if let Some(space_pos) = input.find(' ') {
+                            let target_nickname = input[1..space_pos].to_string();
+                            let message = input[space_pos + 1..].to_string();
+                            
+                            if !message.is_empty() {
+                                send_chat_message_standalone(
+                                    message, 
+                                    Some(target_nickname), 
+                                    peer_id_for_chat,
+                                    &chat_state_for_input,
+                                    &served_peers_for_chat,
+                                    local_addr_for_chat
+                                ).await;
+                            }
+                        } else {
+                            println!("Usage: @nickname message");
+                        }
+                    } else {
+                        // Broadcast message
+                        send_chat_message_standalone(
+                            input.to_string(), 
+                            None, 
+                            peer_id_for_chat,
+                            &chat_state_for_input,
+                            &served_peers_for_chat,
+                            local_addr_for_chat
+                        ).await;
+                    }
+                    
+                    print!("💬 Chat: ");
+                    use std::io::{self, Write};
+                    io::stdout().flush().unwrap();
+                }
+                Err(e) => {
+                    eprintln!("Error reading input: {}", e);
+                    break;
+                }
+            }
+        }
+    });
+    
+    // Wait for either input handler to finish or Ctrl+C
+    tokio::select! {
+        _ = input_handle => {},
+        _ = tokio::signal::ctrl_c() => {
+            println!();
+            print_status(symbols::INFO, "Received Ctrl+C, shutting down...", colors::YELLOW);
+        }
+    }
     
     // Cleanup
     println!();
@@ -1477,58 +2224,55 @@ async fn display_network_interfaces(bound_addr: SocketAddr, bootstrap_addresses:
     };
     print_item(&bound_desc, 4);
     
-    // Try to get local network interfaces
-    match local_ip_address::list_afinet_netifas() {
-        Ok(interfaces) => {
-            let mut displayed_v4 = std::collections::HashSet::new();
-            let mut displayed_v6 = std::collections::HashSet::new();
-            let mut ipv4_addrs = Vec::new();
-            let mut ipv6_addrs = Vec::new();
-            
-            // Separate IPv4 and IPv6 addresses
-            for (_name, ip) in interfaces {
-                if !ip.is_unspecified() {
-                    let addr = SocketAddr::new(ip, bound_addr.port());
-                    match ip {
-                        IpAddr::V4(_) => {
-                            if displayed_v4.insert(addr.to_string()) {
-                                ipv4_addrs.push(addr);
-                            }
+    // Discover local network interfaces using our lightweight approach
+    let local_addresses = discover_local_addresses_lightweight(bound_addr.port());
+    if !local_addresses.is_empty() {
+        let mut displayed_v4 = std::collections::HashSet::new();
+        let mut displayed_v6 = std::collections::HashSet::new();
+        let mut ipv4_addrs = Vec::new();
+        let mut ipv6_addrs = Vec::new();
+        
+        // Separate IPv4 and IPv6 addresses
+        for addr in local_addresses {
+            if !addr.ip().is_unspecified() {
+                match addr.ip() {
+                    IpAddr::V4(_) => {
+                        if displayed_v4.insert(addr.to_string()) {
+                            ipv4_addrs.push(addr);
                         }
-                        IpAddr::V6(_) => {
-                            if displayed_v6.insert(addr.to_string()) {
-                                ipv6_addrs.push(addr);
-                            }
+                    }
+                    IpAddr::V6(_) => {
+                        if displayed_v6.insert(addr.to_string()) {
+                            ipv6_addrs.push(addr);
                         }
                     }
                 }
             }
-            
-            // Display IPv4 addresses
-            if !ipv4_addrs.is_empty() {
-                for addr in ipv4_addrs {
-                    let desc = describe_address(&addr);
-                    print_item(&format!("{} ({})", format_address_with_words(&addr), desc), 4);
-                }
-            }
-            
-            // Display IPv6 addresses
-            if !ipv6_addrs.is_empty() {
-                for addr in ipv6_addrs {
-                    let desc = describe_address(&addr);
-                    print_item(&format!("{} ({})", format_address_with_words(&addr), desc), 4);
-                }
+        }
+        
+        // Display IPv4 addresses
+        if !ipv4_addrs.is_empty() {
+            for addr in ipv4_addrs {
+                let desc = describe_address(&addr);
+                print_item(&format!("{} ({})", format_address_with_words(&addr), desc), 4);
             }
         }
-        Err(_) => {
-            // Fallback if we can't enumerate interfaces
-            if bound_addr.ip().is_unspecified() {
-                let localhost_v4 = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)), bound_addr.port());
-                let localhost_v6 = SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), bound_addr.port());
-                
-                print_item(&format!("{} ({})", format_address_with_words(&localhost_v4), describe_address(&localhost_v4)), 4);
-                print_item(&format!("{} ({})", format_address_with_words(&localhost_v6), describe_address(&localhost_v6)), 4);
+        
+        // Display IPv6 addresses
+        if !ipv6_addrs.is_empty() {
+            for addr in ipv6_addrs {
+                let desc = describe_address(&addr);
+                print_item(&format!("{} ({})", format_address_with_words(&addr), desc), 4);
             }
+        }
+    } else {
+        // Fallback if we can't discover interfaces
+        if bound_addr.ip().is_unspecified() {
+            let localhost_v4 = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::new(127, 0, 0, 1)), bound_addr.port());
+            let localhost_v6 = SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), bound_addr.port());
+            
+            print_item(&format!("{} ({})", format_address_with_words(&localhost_v4), describe_address(&localhost_v4)), 4);
+            print_item(&format!("{} ({})", format_address_with_words(&localhost_v6), describe_address(&localhost_v6)), 4);
         }
     }
 }
@@ -1550,6 +2294,55 @@ fn update_status_line(stats: &Arc<Mutex<NodeStats>>) {
     
     use std::io::{self, Write};
     io::stdout().flush().unwrap();
+}
+
+/// Lightweight local address discovery without external dependencies
+fn discover_local_addresses_lightweight(port: u16) -> Vec<SocketAddr> {
+    let mut addresses = Vec::new();
+    
+    // Try IPv4 discovery
+    if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+        // Connect to a public IP (doesn't actually send data)
+        let targets = [
+            "8.8.8.8:80",      // Google DNS
+            "1.1.1.1:80",      // Cloudflare DNS
+            "208.67.222.222:80", // OpenDNS
+        ];
+        
+        for target in &targets {
+            if socket.connect(target).is_ok() {
+                if let Ok(local_addr) = socket.local_addr() {
+                    addresses.push(SocketAddr::new(local_addr.ip(), port));
+                    break; // One successful discovery is enough
+                }
+            }
+        }
+    }
+    
+    // Try IPv6 discovery
+    if let Ok(socket) = std::net::UdpSocket::bind("[::]:0") {
+        let targets = [
+            "[2001:4860:4860::8888]:80", // Google DNS IPv6
+            "[2606:4700:4700::1111]:80", // Cloudflare DNS IPv6
+        ];
+        
+        for target in &targets {
+            if socket.connect(target).is_ok() {
+                if let Ok(local_addr) = socket.local_addr() {
+                    addresses.push(SocketAddr::new(local_addr.ip(), port));
+                    break;
+                }
+            }
+        }
+    }
+    
+    // Always include localhost as fallback
+    if addresses.is_empty() {
+        addresses.push(SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::LOCALHOST), port));
+        addresses.push(SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::LOCALHOST), port));
+    }
+    
+    addresses
 }
 
 #[cfg(test)]
