@@ -1230,27 +1230,27 @@ impl State {
                         old != *addr
                     });
                 }
-                Path(evt @ PathEvent::Opened { id }) => {
-                    self.path_events.send(evt).ok();
+                Path(ref evt @ PathEvent::Opened { id }) => {
+                    self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.open_path.remove(&id) {
                         let _ = sender.send(Ok(()));
                     }
                 }
-                Path(evt @ PathEvent::Closed { id, error_code }) => {
-                    self.path_events.send(evt).ok();
+                Path(ref evt @ PathEvent::Closed { id, error_code }) => {
+                    self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.close_path.remove(&id) {
                         let _ = sender.send(error_code);
                     }
                 }
-                Path(evt @ PathEvent::LocallyClosed { id, error }) => {
-                    self.path_events.send(evt).ok();
+                Path(ref evt @ PathEvent::LocallyClosed { id, error }) => {
+                    self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.open_path.remove(&id) {
                         let _ = sender.send(Err(error));
                     }
                     // this will happen also for already opened paths
                 }
-                Path(evt @ PathEvent::RemoteStatus { .. }) => {
-                    self.path_events.send(evt).ok();
+                Path(ref evt @ PathEvent::RemoteStatus { .. }) => {
+                    self.path_events.send(evt.clone()).ok();
                 }
             }
         }
