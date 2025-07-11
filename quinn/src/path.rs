@@ -66,8 +66,8 @@ impl Future for OpenPath {
 
 /// An open (Multi)Path
 pub struct Path {
-    id: PathId,
-    conn: ConnectionRef,
+    pub(crate) id: PathId,
+    pub(crate) conn: ConnectionRef,
 }
 
 impl Path {
@@ -76,7 +76,7 @@ impl Path {
         self.id
     }
 
-    /// The current [`PathStatus`] of this path.
+    /// The current local [`PathStatus`] of this path.
     pub fn status(&self) -> Result<PathStatus, ClosedPath> {
         self.conn
             .state

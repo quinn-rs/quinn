@@ -17,7 +17,7 @@ use tokio::sync::{Notify, futures::Notified, mpsc, oneshot, watch};
 use tracing::{Instrument, Span, debug_span};
 
 use crate::{
-    ConnectionEvent, Duration, Instant, VarInt,
+    ConnectionEvent, Duration, Instant, Path, VarInt,
     mutex::Mutex,
     path::OpenPath,
     recv_stream::RecvStream,
@@ -359,7 +359,7 @@ impl Connection {
         }
     }
 
-    /// Open a (Multi)Path.
+    /// Open a (Multi)Path
     pub fn open_path(&self, addr: SocketAddr, initial_status: PathStatus) -> OpenPath {
         let mut state = self.0.state.lock("open_path");
         let (on_open_path_send, on_open_path_recv) = oneshot::channel();
@@ -374,6 +374,21 @@ impl Connection {
             }
             Err(err) => OpenPath::rejected(err),
         }
+    }
+
+    /// Returns the [`Path`] structure of an open path
+    pub fn path(&self, id: PathId) -> Option<Path> {
+        // TODO(flub): Using this to know if the path still exists is... hacky.
+        self.0.state.lock("path").inner.path_status(id).ok()?;
+        Some(Path {
+            id,
+            conn: self.0.clone(),
+        })
+    }
+
+    /// A broadcast receiver of [`PathEvent`]s for all paths in this connection
+    pub fn path_events(&self) -> tokio::sync::broadcast::Receiver<PathEvent> {
+        self.0.state.lock("path_events").path_events.subscribe()
     }
 
     /// Wait for the connection to be closed for any reason
@@ -924,6 +939,7 @@ impl ConnectionRef {
                 stopped: FxHashMap::default(),
                 open_path: FxHashMap::default(),
                 close_path: FxHashMap::default(),
+                path_events: tokio::sync::broadcast::channel(32).0,
                 error: None,
                 ref_count: 0,
                 sender,
@@ -1052,6 +1068,7 @@ pub(crate) struct State {
     open_path: FxHashMap<PathId, oneshot::Sender<Result<(), PathError>>>,
     /// Tracks paths being closed
     pub(crate) close_path: FxHashMap<PathId, oneshot::Sender<VarInt>>,
+    path_events: tokio::sync::broadcast::Sender<PathEvent>,
     /// Number of live handles that can be used to initiate or handle I/O; excludes the driver
     ref_count: usize,
     sender: Pin<Box<dyn UdpSender>>,
@@ -1213,21 +1230,27 @@ impl State {
                         old != *addr
                     });
                 }
-                Path(PathEvent::Opened { id }) => {
+                Path(ref evt @ PathEvent::Opened { id }) => {
+                    self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.open_path.remove(&id) {
                         let _ = sender.send(Ok(()));
                     }
                 }
-                Path(PathEvent::Closed { id, error_code }) => {
+                Path(ref evt @ PathEvent::Closed { id, error_code }) => {
+                    self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.close_path.remove(&id) {
                         let _ = sender.send(error_code);
                     }
                 }
-                Path(PathEvent::LocallyClosed { id, error }) => {
+                Path(ref evt @ PathEvent::LocallyClosed { id, error }) => {
+                    self.path_events.send(evt.clone()).ok();
                     if let Some(sender) = self.open_path.remove(&id) {
                         let _ = sender.send(Err(error));
                     }
                     // this will happen also for already opened paths
+                }
+                Path(ref evt @ PathEvent::RemoteStatus { .. }) => {
+                    self.path_events.send(evt.clone()).ok();
                 }
             }
         }
