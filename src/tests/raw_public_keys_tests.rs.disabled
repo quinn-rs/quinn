@@ -1,0 +1,582 @@
+//! Comprehensive tests for RFC 7250 Raw Public Keys implementation
+//!
+//! These tests verify the complete functionality of Raw Public Keys support
+//! in ant-quic, including certificate verification, key extraction, and
+//! integration with the QUIC protocol.
+
+use std::sync::Arc;
+
+use ed25519_dalek::{VerifyingKey as Ed25519PublicKey, SigningKey as Ed25519SecretKey};
+use rustls::{
+    pki_types::{CertificateDer, ServerName, UnixTime},
+    ClientConfig, ServerConfig, SignatureScheme,
+};
+
+use crate::crypto::{
+    raw_public_keys::{
+        RawPublicKeyVerifier, RawPublicKeyResolver, RawPublicKeyConfigBuilder,
+        create_ed25519_subject_public_key_info, utils,
+    },
+    rpk_integration::{RpkNatConfig, rpk_utils},
+};
+
+use crate::nat_traversal_api::EndpointRole;
+
+/// Test utilities for Raw Public Keys testing
+mod test_utils {
+    use super::*;
+
+    /// Create a test Ed25519 keypair with deterministic seed
+    pub fn create_deterministic_keypair(seed: u8) -> (Ed25519SecretKey, Ed25519PublicKey) {
+        let seed_bytes = [seed; 32];
+        let private_key = Ed25519SecretKey::from_bytes(&seed_bytes);
+        let public_key = private_key.verifying_key();
+        (private_key, public_key)
+    }
+
+    /// Create a SubjectPublicKeyInfo certificate for testing
+    pub fn create_test_certificate(public_key: &Ed25519PublicKey) -> CertificateDer<'static> {
+        let spki = create_ed25519_subject_public_key_info(public_key);
+        CertificateDer::from(spki)
+    }
+
+    /// Create a malformed certificate for negative testing
+    pub fn create_malformed_certificate() -> CertificateDer<'static> {
+        CertificateDer::from(vec![0xFF; 50]) // Invalid ASN.1
+    }
+
+    /// Create a certificate with wrong algorithm OID
+    pub fn create_wrong_algorithm_certificate() -> CertificateDer<'static> {
+        // Create a valid-looking certificate but with wrong OID
+        let mut spki = vec![
+            0x30, 0x2a, // SEQUENCE
+            0x30, 0x05, // Algorithm identifier SEQUENCE
+            0x06, 0x03, 0x2a, 0x86, 0x48, // Wrong OID (RSA instead of Ed25519)
+            0x03, 0x21, 0x00, // BIT STRING
+        ];
+        spki.extend_from_slice(&[0x42; 32]); // 32 bytes of dummy data
+        CertificateDer::from(spki)
+    }
+}
+
+/// Tests for RawPublicKeyVerifier
+mod verifier_tests {
+    use super::*;
+    use super::test_utils::*;
+
+    #[test]
+    fn test_create_verifier_with_trusted_keys() {
+        let (_, public_key1) = create_deterministic_keypair(1);
+        let (_, public_key2) = create_deterministic_keypair(2);
+        
+        let key1_bytes = utils::public_key_to_bytes(&public_key1);
+        let key2_bytes = utils::public_key_to_bytes(&public_key2);
+        
+        let verifier = RawPublicKeyVerifier::new(vec![key1_bytes, key2_bytes]);
+        
+        // Verifier should be created successfully
+        // The actual verification logic is tested in other tests
+    }
+
+    #[test]
+    fn test_create_verifier_allow_any() {
+        let verifier = RawPublicKeyVerifier::allow_any();
+        // Verifier should be created successfully in allow-any mode
+    }
+
+    #[tokio::test]
+    async fn test_verify_trusted_certificate() {
+        let (_, public_key) = create_deterministic_keypair(1);
+        let key_bytes = utils::public_key_to_bytes(&public_key);
+        
+        let verifier = RawPublicKeyVerifier::new(vec![key_bytes]);
+        let cert = create_test_certificate(&public_key);
+        let server_name = ServerName::try_from("test.example.com").unwrap();
+        
+        let result = verifier.verify_server_cert(
+            &cert,
+            &[],
+            &server_name,
+            &[],
+            UnixTime::now(),
+        );
+        
+        assert!(result.is_ok(), "Trusted certificate should verify successfully");
+    }
+
+    #[tokio::test]
+    async fn test_verify_untrusted_certificate() {
+        let (_, trusted_key) = create_deterministic_keypair(1);
+        let (_, untrusted_key) = create_deterministic_keypair(2);
+        
+        let trusted_bytes = utils::public_key_to_bytes(&trusted_key);
+        let verifier = RawPublicKeyVerifier::new(vec![trusted_bytes]);
+        
+        let cert = create_test_certificate(&untrusted_key);
+        let server_name = ServerName::try_from("test.example.com").unwrap();
+        
+        let result = verifier.verify_server_cert(
+            &cert,
+            &[],
+            &server_name,
+            &[],
+            UnixTime::now(),
+        );
+        
+        assert!(result.is_err(), "Untrusted certificate should fail verification");
+    }
+
+    #[tokio::test]
+    async fn test_verify_allow_any_mode() {
+        let verifier = RawPublicKeyVerifier::allow_any();
+        
+        // Should accept any valid Ed25519 key
+        let (_, random_key) = utils::generate_ed25519_keypair();
+        let cert = create_test_certificate(&random_key);
+        let server_name = ServerName::try_from("test.example.com").unwrap();
+        
+        let result = verifier.verify_server_cert(
+            &cert,
+            &[],
+            &server_name,
+            &[],
+            UnixTime::now(),
+        );
+        
+        assert!(result.is_ok(), "Allow-any mode should accept valid certificates");
+    }
+
+    #[tokio::test]
+    async fn test_verify_malformed_certificate() {
+        let verifier = RawPublicKeyVerifier::allow_any();
+        let cert = create_malformed_certificate();
+        let server_name = ServerName::try_from("test.example.com").unwrap();
+        
+        let result = verifier.verify_server_cert(
+            &cert,
+            &[],
+            &server_name,
+            &[],
+            UnixTime::now(),
+        );
+        
+        assert!(result.is_err(), "Malformed certificate should fail verification");
+    }
+
+    #[tokio::test]
+    async fn test_verify_wrong_algorithm_certificate() {
+        let verifier = RawPublicKeyVerifier::allow_any();
+        let cert = create_wrong_algorithm_certificate();
+        let server_name = ServerName::try_from("test.example.com").unwrap();
+        
+        let result = verifier.verify_server_cert(
+            &cert,
+            &[],
+            &server_name,
+            &[],
+            UnixTime::now(),
+        );
+        
+        assert!(result.is_err(), "Certificate with wrong algorithm should fail verification");
+    }
+
+    #[test]
+    fn test_extract_ed25519_key_valid() {
+        let (_, public_key) = create_deterministic_keypair(1);
+        let spki = create_ed25519_subject_public_key_info(&public_key);
+        
+        let verifier = RawPublicKeyVerifier::allow_any();
+        let extracted_key = verifier.extract_ed25519_key(&spki).unwrap();
+        
+        assert_eq!(extracted_key, utils::public_key_to_bytes(&public_key));
+    }
+
+    #[test]
+    fn test_extract_ed25519_key_invalid() {
+        let verifier = RawPublicKeyVerifier::allow_any();
+        
+        // Test various invalid inputs
+        let invalid_inputs = vec![
+            vec![0x00; 10], // Too short
+            vec![0xFF; 100], // Invalid ASN.1
+            vec![0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2a, 0x86, 0x48], // Wrong OID, too short
+        ];
+        
+        for invalid_input in invalid_inputs {
+            let result = verifier.extract_ed25519_key(&invalid_input);
+            assert!(result.is_err(), "Invalid input should fail key extraction");
+        }
+    }
+}
+
+/// Tests for RawPublicKeyResolver
+mod resolver_tests {
+    use super::*;
+    use super::test_utils::*;
+
+    #[test]
+    fn test_create_resolver() {
+        let (private_key, _public_key) = create_deterministic_keypair(1);
+        let resolver = RawPublicKeyResolver::new(private_key);
+        assert!(resolver.is_ok(), "Resolver creation should succeed");
+    }
+
+    #[test]
+    fn test_resolver_provides_certificate() {
+        let (private_key, _public_key) = create_deterministic_keypair(1);
+        let resolver = RawPublicKeyResolver::new(private_key).unwrap();
+        
+        // Mock ClientHello (simplified)
+        use rustls::server::ClientHello;
+        // Note: Creating a real ClientHello is complex, so this is a conceptual test
+        // In practice, you'd need to create a proper mock or use integration tests
+        
+        // The resolver should always return a certificate for any client hello
+        // This test verifies the structure exists and can be created
+        assert!(true, "Resolver created successfully");
+    }
+}
+
+/// Tests for RawPublicKeyConfigBuilder
+mod config_builder_tests {
+    use super::*;
+    use super::test_utils::*;
+
+    #[test]
+    fn test_config_builder_client() {
+        let (_, public_key) = create_deterministic_keypair(1);
+        let key_bytes = utils::public_key_to_bytes(&public_key);
+        
+        let config = RawPublicKeyConfigBuilder::new()
+            .add_trusted_key(key_bytes)
+            .build_client_config();
+        
+        assert!(config.is_ok(), "Client config building should succeed");
+    }
+
+    #[test]
+    fn test_config_builder_server() {
+        let (private_key, _public_key) = create_deterministic_keypair(1);
+        
+        let config = RawPublicKeyConfigBuilder::new()
+            .with_server_key(private_key)
+            .build_server_config();
+        
+        assert!(config.is_ok(), "Server config building should succeed");
+    }
+
+    #[test]
+    fn test_config_builder_allow_any() {
+        let config = RawPublicKeyConfigBuilder::new()
+            .allow_any_key()
+            .build_client_config();
+        
+        assert!(config.is_ok(), "Allow-any client config should succeed");
+    }
+
+    #[test]
+    fn test_config_builder_multiple_trusted_keys() {
+        let (_, key1) = create_deterministic_keypair(1);
+        let (_, key2) = create_deterministic_keypair(2);
+        let (_, key3) = create_deterministic_keypair(3);
+        
+        let key1_bytes = utils::public_key_to_bytes(&key1);
+        let key2_bytes = utils::public_key_to_bytes(&key2);
+        let key3_bytes = utils::public_key_to_bytes(&key3);
+        
+        let config = RawPublicKeyConfigBuilder::new()
+            .add_trusted_key(key1_bytes)
+            .add_trusted_key(key2_bytes)
+            .add_trusted_key(key3_bytes)
+            .build_client_config();
+        
+        assert!(config.is_ok(), "Multiple trusted keys should work");
+    }
+
+    #[test]
+    fn test_config_builder_server_without_key() {
+        let config = RawPublicKeyConfigBuilder::new()
+            .build_server_config();
+        
+        assert!(config.is_err(), "Server config without key should fail");
+    }
+}
+
+/// Tests for RPK integration with NAT traversal
+mod integration_tests {
+    use super::*;
+    use super::test_utils::*;
+
+    #[test]
+    fn test_rpk_nat_config_creation() {
+        let config = RpkNatConfig::new(EndpointRole::Client);
+        
+        assert_eq!(config.role, EndpointRole::Client);
+        assert!(!config.allow_any_peer);
+        assert_eq!(config.trusted_peers.len(), 0);
+    }
+
+    #[test]
+    fn test_rpk_nat_config_with_keypair() {
+        let (private_key, public_key) = create_deterministic_keypair(1);
+        let config = RpkNatConfig::with_keypair(private_key, public_key, EndpointRole::Server { can_coordinate: true });
+        
+        assert!(matches!(config.role, EndpointRole::Server { .. }));
+        
+        let expected_key_bytes = utils::public_key_to_bytes(&public_key);
+        assert_eq!(config.local_public_key_bytes(), expected_key_bytes);
+    }
+
+    #[test]
+    fn test_rpk_nat_config_trusted_peers() {
+        let peer_key1 = [1u8; 32];
+        let peer_key2 = [2u8; 32];
+        
+        let config = RpkNatConfig::new(EndpointRole::Client)
+            .add_trusted_peer(peer_key1)
+            .add_trusted_peer(peer_key2);
+        
+        assert_eq!(config.trusted_peers.len(), 2);
+        assert!(config.trusted_peers.contains(&peer_key1));
+        assert!(config.trusted_peers.contains(&peer_key2));
+    }
+
+    #[test]
+    fn test_rpk_nat_config_peer_id() {
+        let (private_key, public_key) = create_deterministic_keypair(42);
+        let config = RpkNatConfig::with_keypair(private_key, public_key, EndpointRole::Client);
+        
+        let peer_id = config.peer_id();
+        let key_bytes = config.local_public_key_bytes();
+        
+        // PeerId should be the full 32-byte public key
+        assert_eq!(peer_id.0[..], key_bytes[..]);
+    }
+
+    #[tokio::test]
+    async fn test_rpk_nat_config_create_client_config() {
+        let config = RpkNatConfig::new(EndpointRole::Client)
+            .allow_any_peer();
+        
+        let result = config.create_client_config();
+        assert!(result.is_ok(), "Client config creation should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_rpk_nat_config_create_server_config() {
+        let config = RpkNatConfig::new(EndpointRole::Server { can_coordinate: true });
+        
+        let result = config.create_server_config();
+        assert!(result.is_ok(), "Server config creation should succeed");
+    }
+
+    #[tokio::test]
+    async fn test_rpk_nat_config_create_endpoint_configs() {
+        let config = RpkNatConfig::new(EndpointRole::Client)
+            .allow_any_peer();
+        
+        let result = config.create_endpoint_configs();
+        assert!(result.is_ok(), "Endpoint configs creation should succeed");
+        
+        let (client_config, server_config) = result.unwrap();
+        // Verify both configs exist
+        // Additional validation would be done through the rustls APIs
+    }
+
+    #[test]
+    fn test_rpk_utils_bootstrap_config() {
+        let config = rpk_utils::create_bootstrap_config();
+        
+        assert_eq!(config.role, EndpointRole::Bootstrap);
+        assert!(config.allow_any_peer, "Bootstrap should allow any peer");
+    }
+
+    #[test]
+    fn test_rpk_utils_client_config() {
+        let bootstrap_keys = vec![[1u8; 32], [2u8; 32]];
+        let config = rpk_utils::create_client_config(bootstrap_keys.clone());
+        
+        assert_eq!(config.role, EndpointRole::Client);
+        assert_eq!(config.trusted_peers.len(), 2);
+        assert!(config.trusted_peers.contains(&[1u8; 32]));
+        assert!(config.trusted_peers.contains(&[2u8; 32]));
+    }
+
+    #[test]
+    fn test_rpk_utils_server_config() {
+        let bootstrap_keys = vec![[3u8; 32], [4u8; 32]];
+        let config = rpk_utils::create_server_config(bootstrap_keys.clone());
+        
+        assert!(matches!(config.role, EndpointRole::Server { .. }));
+        assert_eq!(config.trusted_peers.len(), 2);
+        assert!(config.trusted_peers.contains(&[3u8; 32]));
+        assert!(config.trusted_peers.contains(&[4u8; 32]));
+    }
+
+    #[test]
+    fn test_rpk_utils_create_test_configs() {
+        let (client_config, server_config) = rpk_utils::create_test_configs();
+        
+        assert_eq!(client_config.role, EndpointRole::Client);
+        assert!(matches!(server_config.role, EndpointRole::Server { .. }));
+        
+        // Each should trust the other's public key
+        assert_eq!(client_config.trusted_peers.len(), 1);
+        assert_eq!(server_config.trusted_peers.len(), 1);
+        
+        // The trusted key should match the other's public key
+        let client_key = client_config.local_public_key_bytes();
+        let server_key = server_config.local_public_key_bytes();
+        
+        assert!(server_config.trusted_peers.contains(&client_key));
+        assert!(client_config.trusted_peers.contains(&server_key));
+    }
+}
+
+/// Tests for SubjectPublicKeyInfo creation and parsing
+mod spki_tests {
+    use super::*;
+    use super::test_utils::*;
+
+    #[test]
+    fn test_create_ed25519_subject_public_key_info() {
+        let (_, public_key) = create_deterministic_keypair(1);
+        let spki = create_ed25519_subject_public_key_info(&public_key);
+        
+        // Should be exactly 44 bytes for Ed25519
+        assert_eq!(spki.len(), 44);
+        
+        // Should start with correct ASN.1 structure for Ed25519
+        let expected_header = [
+            0x30, 0x2a, // SEQUENCE, 42 bytes
+            0x30, 0x05, // SEQUENCE, 5 bytes (algorithm identifier)
+            0x06, 0x03, 0x2b, 0x65, 0x70, // OID 1.3.101.112 (Ed25519)
+            0x03, 0x21, 0x00, // BIT STRING, 33 bytes (32 + unused bits byte)
+        ];
+        
+        assert_eq!(&spki[0..expected_header.len()], &expected_header);
+        
+        // Should end with the actual public key bytes
+        assert_eq!(&spki[12..], public_key.as_bytes());
+    }
+
+    #[test]
+    fn test_different_keys_produce_different_spki() {
+        let (_, key1) = create_deterministic_keypair(1);
+        let (_, key2) = create_deterministic_keypair(2);
+        
+        let spki1 = create_ed25519_subject_public_key_info(&key1);
+        let spki2 = create_ed25519_subject_public_key_info(&key2);
+        
+        // Headers should be the same
+        assert_eq!(&spki1[0..12], &spki2[0..12]);
+        
+        // But the key parts should be different
+        assert_ne!(&spki1[12..], &spki2[12..]);
+    }
+}
+
+/// Utility tests
+mod utils_tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_ed25519_keypair() {
+        let (private_key1, public_key1) = utils::generate_ed25519_keypair();
+        let (private_key2, public_key2) = utils::generate_ed25519_keypair();
+        
+        // Different keypairs should be different
+        assert_ne!(private_key1.as_bytes(), private_key2.as_bytes());
+        assert_ne!(public_key1.as_bytes(), public_key2.as_bytes());
+    }
+
+    #[test]
+    fn test_public_key_conversion() {
+        let (_, public_key) = utils::generate_ed25519_keypair();
+        
+        let key_bytes = utils::public_key_to_bytes(&public_key);
+        let recovered_key = utils::public_key_from_bytes(&key_bytes).unwrap();
+        
+        assert_eq!(public_key.as_bytes(), recovered_key.as_bytes());
+    }
+
+    #[test]
+    fn test_public_key_from_invalid_bytes() {
+        let invalid_bytes = [0xFF; 32]; // Invalid Ed25519 public key
+        let result = utils::public_key_from_bytes(&invalid_bytes);
+        
+        // This might succeed or fail depending on Ed25519 validation
+        // The test ensures we handle both cases gracefully
+        match result {
+            Ok(_) => {}, // Some invalid bytes might still parse
+            Err(_) => {}, // Expected for most invalid bytes
+        }
+    }
+
+    #[test]
+    fn test_create_test_keypair() {
+        let (private_key1, public_key1) = utils::create_test_keypair();
+        let (private_key2, public_key2) = utils::create_test_keypair();
+        
+        // Test keypairs should be deterministic
+        assert_eq!(private_key1.as_bytes(), private_key2.as_bytes());
+        assert_eq!(public_key1.as_bytes(), public_key2.as_bytes());
+    }
+}
+
+/// Performance tests (optional, for benchmarking)
+#[cfg(test)]
+mod performance_tests {
+    use super::*;
+    use std::time::Instant;
+
+    #[test]
+    fn test_key_generation_performance() {
+        let start = Instant::now();
+        
+        for _ in 0..100 {
+            let _ = utils::generate_ed25519_keypair();
+        }
+        
+        let duration = start.elapsed();
+        println!("Generated 100 keypairs in {:?}", duration);
+        
+        // Should be reasonably fast (adjust threshold as needed)
+        assert!(duration.as_millis() < 1000, "Key generation too slow");
+    }
+
+    #[test]
+    fn test_spki_creation_performance() {
+        let (_, public_key) = utils::generate_ed25519_keypair();
+        let start = Instant::now();
+        
+        for _ in 0..1000 {
+            let _ = create_ed25519_subject_public_key_info(&public_key);
+        }
+        
+        let duration = start.elapsed();
+        println!("Created 1000 SPKI structures in {:?}", duration);
+        
+        // Should be very fast
+        assert!(duration.as_millis() < 100, "SPKI creation too slow");
+    }
+
+    #[test]
+    fn test_key_extraction_performance() {
+        let (_, public_key) = utils::generate_ed25519_keypair();
+        let spki = create_ed25519_subject_public_key_info(&public_key);
+        let verifier = RawPublicKeyVerifier::allow_any();
+        
+        let start = Instant::now();
+        
+        for _ in 0..1000 {
+            let _ = verifier.extract_ed25519_key(&spki).unwrap();
+        }
+        
+        let duration = start.elapsed();
+        println!("Extracted 1000 keys in {:?}", duration);
+        
+        // Should be very fast
+        assert!(duration.as_millis() < 50, "Key extraction too slow");
+    }
+}

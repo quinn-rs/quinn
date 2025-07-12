@@ -230,10 +230,6 @@ impl RelayQueue {
         self.pending.len()
     }
 
-    /// Check if queue is empty
-    fn is_empty(&self) -> bool {
-        self.pending.is_empty()
-    }
 }
 
 /// The main entry point to the library
@@ -467,7 +463,7 @@ impl Endpoint {
     ) -> Option<ConnectionEvent> {
         use EndpointEventInner::*;
         match event.0 {
-            NeedIdentifiers(now, n) => {
+            EndpointEventInner::NeedIdentifiers(now, n) => {
                 return Some(self.send_new_identifiers(now, ch, n));
             }
             ResetToken(remote, token) => {
@@ -495,6 +491,15 @@ impl Endpoint {
                 } else {
                     warn!("Failed to queue PunchMeNow relay for peer {:?}", peer_id);
                 }
+            }
+            SendAddressFrame(add_address_frame) => {
+                // Handle bootstrap node request to send ADD_ADDRESS frame
+                trace!("Sending ADD_ADDRESS frame: seq={}, addr={}, priority={}", 
+                       add_address_frame.sequence, add_address_frame.address, add_address_frame.priority);
+                
+                // For now, log the frame since the queuing mechanism needs more integration
+                // TODO: Implement proper frame queuing in the connection layer
+                debug!("ADD_ADDRESS frame ready for transmission: {:?}", add_address_frame);
             }
             Drained => {
                 if let Some(conn) = self.connections.try_remove(ch.0) {

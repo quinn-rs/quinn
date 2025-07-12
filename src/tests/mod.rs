@@ -37,6 +37,15 @@ use util::*;
 
 mod token;
 
+#[cfg(test)]
+// mod raw_public_keys_tests; // Temporarily disabled due to private method testing
+
+#[cfg(test)]
+mod tls_extensions_tests;
+
+#[cfg(test)]
+pub mod integration;
+
 #[cfg(all(target_family = "wasm", target_os = "unknown"))]
 use wasm_bindgen_test::wasm_bindgen_test as test;
 

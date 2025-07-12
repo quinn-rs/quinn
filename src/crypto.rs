@@ -24,6 +24,46 @@ pub(crate) mod ring_like;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 pub mod rustls;
 
+/// Production-ready certificate management
+#[cfg(feature = "production-ready")]
+pub mod certificate_manager;
+
+/// RFC 7250 Raw Public Keys support
+pub mod raw_public_keys;
+
+/// Integration of Raw Public Keys with ant-quic
+pub mod rpk_integration;
+
+/// TLS Extensions for RFC 7250 certificate type negotiation
+pub mod tls_extensions;
+
+/// rustls Extension Handlers for certificate type negotiation
+pub mod extension_handlers;
+
+/// Certificate Type Negotiation Protocol Implementation
+pub mod certificate_negotiation;
+
+/// Quinn QUIC Integration for certificate type negotiation
+pub mod quinn_integration;
+
+/// Bootstrap Node Certificate Type Support
+pub mod bootstrap_support;
+
+/// Performance Monitoring and Production Hardening
+pub mod performance_monitoring;
+
+/// Advanced 0-RTT Optimization for Raw Public Keys
+pub mod zero_rtt_rpk;
+
+/// Distributed Peer Discovery with Certificate Type Awareness
+pub mod peer_discovery;
+
+/// Enterprise Certificate Management System
+pub mod enterprise_cert_mgmt;
+
+/// Performance Optimization Engine
+pub mod performance_optimization;
+
 /// A cryptographic session (commonly TLS)
 pub trait Session: Send + Sync + 'static {
     /// Create the initial set of keys given the client's initial destination ConnectionId

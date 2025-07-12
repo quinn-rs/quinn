@@ -31,7 +31,7 @@ pub mod coding;
 mod constant_time;
 mod range_set;
 #[cfg(all(test, any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
-mod tests;
+pub mod tests;
 pub mod transport_parameters;
 mod varint;
 
@@ -121,6 +121,10 @@ pub mod quic_node;
 pub use quic_node::{QuicP2PNode, QuicNodeConfig, NodeStats as QuicNodeStats};
 
 pub mod terminal_ui;
+
+pub mod workflow;
+
+pub mod monitoring;
 
 #[cfg(feature = "arbitrary")]
 use arbitrary::Arbitrary;

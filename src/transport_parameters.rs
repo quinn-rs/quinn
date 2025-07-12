@@ -773,7 +773,7 @@ pub(crate) enum TransportParameterId {
 
     // NAT Traversal Extension - using reserved parameter space (31*N + 27)
     // This follows RFC 9000 reserved parameter pattern for experimental extensions
-    NatTraversal = 0x58, // 31*1 + 27 = 58
+    NatTraversal = 0x3A, // 31*1 + 27 = 58 (0x3A)
 }
 
 impl TransportParameterId {
@@ -859,6 +859,109 @@ fn decode_cid(len: usize, value: &mut Option<ConnectionId>, r: &mut impl Buf) ->
 #[cfg(test)]
 mod test {
     use super::*;
+
+    #[test]
+    fn test_nat_traversal_transport_parameter_encoding_decoding() {
+        // Test all role variants
+        let test_cases = vec![
+            NatTraversalConfig {
+                role: NatTraversalRole::Client,
+                max_candidates: VarInt::from_u32(8),
+                coordination_timeout: VarInt::from_u32(5000),
+                max_concurrent_attempts: VarInt::from_u32(3),
+                peer_id: None,
+            },
+            NatTraversalConfig {
+                role: NatTraversalRole::Server { can_relay: true },
+                max_candidates: VarInt::from_u32(16),
+                coordination_timeout: VarInt::from_u32(10000),
+                max_concurrent_attempts: VarInt::from_u32(5),
+                peer_id: Some([0x42; 32]),
+            },
+            NatTraversalConfig {
+                role: NatTraversalRole::Server { can_relay: false },
+                max_candidates: VarInt::from_u32(4),
+                coordination_timeout: VarInt::from_u32(2000),
+                max_concurrent_attempts: VarInt::from_u32(2),
+                peer_id: Some([0xAB; 32]),
+            },
+            NatTraversalConfig {
+                role: NatTraversalRole::Bootstrap,
+                max_candidates: VarInt::from_u32(32),
+                coordination_timeout: VarInt::from_u32(15000),
+                max_concurrent_attempts: VarInt::from_u32(10),
+                peer_id: None,
+            },
+        ];
+
+        for (i, original_config) in test_cases.iter().enumerate() {
+            println!("Testing case {}: {:?}", i, original_config.role);
+            
+            // Create transport parameters with NAT traversal config
+            let mut params = TransportParameters::default();
+            params.nat_traversal = Some(original_config.clone());
+            
+            // Encode to bytes
+            let mut encoded = Vec::new();
+            params.write(&mut encoded);
+            
+            // Decode from bytes
+            let decoded_params = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+                .expect("Failed to decode transport parameters");
+            
+            // Verify NAT traversal config was preserved
+            let decoded_config = decoded_params.nat_traversal
+                .expect("NAT traversal config should be present");
+            
+            assert_eq!(decoded_config.role, original_config.role);
+            assert_eq!(decoded_config.max_candidates, original_config.max_candidates);
+            assert_eq!(decoded_config.coordination_timeout, original_config.coordination_timeout);
+            assert_eq!(decoded_config.max_concurrent_attempts, original_config.max_concurrent_attempts);
+            assert_eq!(decoded_config.peer_id, original_config.peer_id);
+        }
+    }
+
+    #[test]
+    fn test_nat_traversal_parameter_without_peer_id() {
+        // Test configuration without peer_id
+        let config = NatTraversalConfig {
+            role: NatTraversalRole::Client,
+            max_candidates: VarInt::from_u32(4),
+            coordination_timeout: VarInt::from_u32(3000),
+            max_concurrent_attempts: VarInt::from_u32(2),
+            peer_id: None,
+        };
+        
+        let mut params = TransportParameters::default();
+        params.nat_traversal = Some(config);
+        
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+        
+        let decoded_params = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Failed to decode transport parameters");
+        
+        let decoded_config = decoded_params.nat_traversal
+            .expect("NAT traversal config should be present");
+        
+        assert_eq!(decoded_config.role, NatTraversalRole::Client);
+        assert!(decoded_config.peer_id.is_none());
+    }
+
+    #[test]
+    fn test_transport_parameters_without_nat_traversal() {
+        // Test that transport parameters work without NAT traversal config
+        let mut params = TransportParameters::default();
+        params.nat_traversal = None;
+        
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+        
+        let decoded_params = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Failed to decode transport parameters");
+        
+        assert!(decoded_params.nat_traversal.is_none());
+    }
 
     #[test]
     fn coding() {

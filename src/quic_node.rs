@@ -92,7 +92,7 @@ impl Default for NodeStats {
 
 impl QuicP2PNode {
     /// Create a new QUIC P2P node
-    pub fn new(config: QuicNodeConfig) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(config: QuicNodeConfig) -> Result<Self, Box<dyn std::error::Error>> {
         // Create NAT traversal configuration
         let nat_config = NatTraversalConfig {
             role: config.role,
@@ -129,7 +129,7 @@ impl QuicP2PNode {
 
         // Create NAT traversal endpoint
         let nat_endpoint = Arc::new(
-            NatTraversalEndpoint::new(nat_config, Some(event_callback))?
+            NatTraversalEndpoint::new(nat_config, Some(event_callback)).await?
         );
 
         Ok(Self {

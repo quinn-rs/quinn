@@ -19,6 +19,25 @@ use crate::{
     nat_traversal_api::{BootstrapNode, CandidateAddress, PeerId},
 };
 
+// Platform-specific implementations
+#[cfg(target_os = "windows")]
+pub mod windows;
+
+#[cfg(target_os = "windows")]
+pub use windows::WindowsInterfaceDiscovery;
+
+#[cfg(target_os = "linux")]
+pub mod linux;
+
+#[cfg(target_os = "linux")]
+pub use linux::LinuxInterfaceDiscovery;
+
+#[cfg(target_os = "macos")]
+pub(crate) mod macos;
+
+#[cfg(target_os = "macos")]
+pub(crate) use macos::MacOSInterfaceDiscovery;
+
 /// Convert discovery source type to NAT traversal source type
 fn convert_to_nat_source(discovery_source: DiscoverySourceType) -> CandidateSource {
     match discovery_source {
@@ -38,7 +57,7 @@ pub enum DiscoverySourceType {
 
 /// Internal candidate type used during discovery
 #[derive(Debug, Clone)]
-pub struct DiscoveryCandidate {
+pub(crate) struct DiscoveryCandidate {
     pub address: SocketAddr,
     pub priority: u32,
     pub source: DiscoverySourceType,
@@ -47,7 +66,7 @@ pub struct DiscoveryCandidate {
 
 impl DiscoveryCandidate {
     /// Convert to external CandidateAddress
-    pub fn to_candidate_address(&self) -> CandidateAddress {
+    pub(crate) fn to_candidate_address(&self) -> CandidateAddress {
         CandidateAddress {
             address: self.address,
             priority: self.priority,
@@ -297,7 +316,7 @@ impl ValidatedCandidate {
 
 /// Discovery session state tracking
 #[derive(Debug)]
-pub struct DiscoverySessionState {
+pub(crate) struct DiscoverySessionState {
     pub peer_id: PeerId,
     pub session_id: u64,
     pub started_at: Instant,
@@ -859,13 +878,13 @@ pub struct DiscoveryResults {
 // Placeholder implementations for components to be implemented
 
 /// Platform-specific network interface discovery
-pub trait NetworkInterfaceDiscovery {
+pub(crate) trait NetworkInterfaceDiscovery {
     fn start_scan(&mut self) -> Result<(), String>;
     fn check_scan_complete(&mut self) -> Option<Vec<NetworkInterface>>;
 }
 
 /// Network interface information
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct NetworkInterface {
     pub name: String,
     pub addresses: Vec<SocketAddr>,
@@ -876,23 +895,23 @@ pub struct NetworkInterface {
 
 /// Server reflexive address discovery coordinator
 #[derive(Debug)]
-pub struct ServerReflexiveDiscovery {
+pub(crate) struct ServerReflexiveDiscovery {
     config: DiscoveryConfig,
 }
 
 impl ServerReflexiveDiscovery {
-    pub fn new(config: &DiscoveryConfig) -> Self {
+    pub(crate) fn new(config: &DiscoveryConfig) -> Self {
         Self {
             config: config.clone(),
         }
     }
 
-    pub fn start_queries(&mut self, _bootstrap_nodes: &[BootstrapNodeId], _now: Instant) -> HashMap<BootstrapNodeId, QueryState> {
+    pub(crate) fn start_queries(&mut self, _bootstrap_nodes: &[BootstrapNodeId], _now: Instant) -> HashMap<BootstrapNodeId, QueryState> {
         // Placeholder implementation
         HashMap::new()
     }
 
-    pub fn poll_queries(&mut self, _active_queries: &HashMap<BootstrapNodeId, QueryState>, _now: Instant) -> Vec<ServerReflexiveResponse> {
+    pub(crate) fn poll_queries(&mut self, _active_queries: &HashMap<BootstrapNodeId, QueryState>, _now: Instant) -> Vec<ServerReflexiveResponse> {
         // Placeholder implementation
         Vec::new()
     }
@@ -900,18 +919,18 @@ impl ServerReflexiveDiscovery {
 
 /// Symmetric NAT port prediction engine
 #[derive(Debug)]
-pub struct SymmetricNatPredictor {
+pub(crate) struct SymmetricNatPredictor {
     config: DiscoveryConfig,
 }
 
 impl SymmetricNatPredictor {
-    pub fn new(config: &DiscoveryConfig) -> Self {
+    pub(crate) fn new(config: &DiscoveryConfig) -> Self {
         Self {
             config: config.clone(),
         }
     }
 
-    pub fn generate_predictions(&mut self, _pattern_analysis: &PatternAnalysisState, _max_count: usize) -> Vec<DiscoveryCandidate> {
+    pub(crate) fn generate_predictions(&mut self, _pattern_analysis: &PatternAnalysisState, _max_count: usize) -> Vec<DiscoveryCandidate> {
         // Placeholder implementation
         Vec::new()
     }
@@ -919,20 +938,20 @@ impl SymmetricNatPredictor {
 
 /// Bootstrap node health manager
 #[derive(Debug)]
-pub struct BootstrapNodeManager {
+pub(crate) struct BootstrapNodeManager {
     config: DiscoveryConfig,
     bootstrap_nodes: HashMap<BootstrapNodeId, BootstrapNode>,
 }
 
 impl BootstrapNodeManager {
-    pub fn new(config: &DiscoveryConfig) -> Self {
+    pub(crate) fn new(config: &DiscoveryConfig) -> Self {
         Self {
             config: config.clone(),
             bootstrap_nodes: HashMap::new(),
         }
     }
 
-    pub fn update_bootstrap_nodes(&mut self, nodes: Vec<BootstrapNode>) {
+    pub(crate) fn update_bootstrap_nodes(&mut self, nodes: Vec<BootstrapNode>) {
         // Placeholder implementation
         self.bootstrap_nodes.clear();
         for (i, node) in nodes.into_iter().enumerate() {
@@ -940,23 +959,23 @@ impl BootstrapNodeManager {
         }
     }
 
-    pub fn get_active_bootstrap_nodes(&self) -> Vec<BootstrapNodeId> {
+    pub(crate) fn get_active_bootstrap_nodes(&self) -> Vec<BootstrapNodeId> {
         self.bootstrap_nodes.keys().copied().collect()
     }
 
-    pub fn get_bootstrap_address(&self, id: BootstrapNodeId) -> Option<SocketAddr> {
+    pub(crate) fn get_bootstrap_address(&self, id: BootstrapNodeId) -> Option<SocketAddr> {
         self.bootstrap_nodes.get(&id).map(|node| node.address)
     }
 }
 
 /// Discovery result cache
 #[derive(Debug)]
-pub struct DiscoveryCache {
+pub(crate) struct DiscoveryCache {
     config: DiscoveryConfig,
 }
 
 impl DiscoveryCache {
-    pub fn new(config: &DiscoveryConfig) -> Self {
+    pub(crate) fn new(config: &DiscoveryConfig) -> Self {
         Self {
             config: config.clone(),
         }
@@ -964,7 +983,7 @@ impl DiscoveryCache {
 }
 
 /// Create platform-specific network interface discovery
-pub fn create_platform_interface_discovery() -> Box<dyn NetworkInterfaceDiscovery + Send> {
+pub(crate) fn create_platform_interface_discovery() -> Box<dyn NetworkInterfaceDiscovery + Send> {
     #[cfg(target_os = "windows")]
     return Box::new(WindowsInterfaceDiscovery::new());
     
@@ -978,129 +997,21 @@ pub fn create_platform_interface_discovery() -> Box<dyn NetworkInterfaceDiscover
     return Box::new(GenericInterfaceDiscovery::new());
 }
 
-// Platform-specific implementations (placeholders for now)
+// Platform-specific implementations
 
-#[cfg(target_os = "windows")]
-pub struct WindowsInterfaceDiscovery {
-    scan_complete: bool,
-}
+// Windows implementation is in windows.rs module
 
-#[cfg(target_os = "windows")]
-impl WindowsInterfaceDiscovery {
-    pub fn new() -> Self {
-        Self { scan_complete: false }
-    }
-}
+// Linux implementation is in linux.rs module
 
-#[cfg(target_os = "windows")]
-impl NetworkInterfaceDiscovery for WindowsInterfaceDiscovery {
-    fn start_scan(&mut self) -> Result<(), String> {
-        // TODO: Implement Windows-specific interface enumeration using IP Helper API
-        self.scan_complete = true;
-        Ok(())
-    }
-
-    fn check_scan_complete(&mut self) -> Option<Vec<NetworkInterface>> {
-        if self.scan_complete {
-            self.scan_complete = false;
-            Some(vec![
-                NetworkInterface {
-                    name: "Local Area Connection".to_string(),
-                    addresses: vec!["192.168.1.100:0".parse().unwrap()],
-                    is_up: true,
-                    is_wireless: false,
-                    mtu: Some(1500),
-                }
-            ])
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-pub struct LinuxInterfaceDiscovery {
-    scan_complete: bool,
-}
-
-#[cfg(target_os = "linux")]
-impl LinuxInterfaceDiscovery {
-    pub fn new() -> Self {
-        Self { scan_complete: false }
-    }
-}
-
-#[cfg(target_os = "linux")]
-impl NetworkInterfaceDiscovery for LinuxInterfaceDiscovery {
-    fn start_scan(&mut self) -> Result<(), String> {
-        // TODO: Implement Linux-specific interface enumeration using netlink
-        self.scan_complete = true;
-        Ok(())
-    }
-
-    fn check_scan_complete(&mut self) -> Option<Vec<NetworkInterface>> {
-        if self.scan_complete {
-            self.scan_complete = false;
-            Some(vec![
-                NetworkInterface {
-                    name: "eth0".to_string(),
-                    addresses: vec!["192.168.1.100:0".parse().unwrap()],
-                    is_up: true,
-                    is_wireless: false,
-                    mtu: Some(1500),
-                }
-            ])
-        } else {
-            None
-        }
-    }
-}
-
-#[cfg(target_os = "macos")]
-pub struct MacOSInterfaceDiscovery {
-    scan_complete: bool,
-}
-
-#[cfg(target_os = "macos")]
-impl MacOSInterfaceDiscovery {
-    pub fn new() -> Self {
-        Self { scan_complete: false }
-    }
-}
-
-#[cfg(target_os = "macos")]
-impl NetworkInterfaceDiscovery for MacOSInterfaceDiscovery {
-    fn start_scan(&mut self) -> Result<(), String> {
-        // TODO: Implement macOS-specific interface enumeration using System Configuration
-        self.scan_complete = true;
-        Ok(())
-    }
-
-    fn check_scan_complete(&mut self) -> Option<Vec<NetworkInterface>> {
-        if self.scan_complete {
-            self.scan_complete = false;
-            Some(vec![
-                NetworkInterface {
-                    name: "en0".to_string(),
-                    addresses: vec!["192.168.1.100:0".parse().unwrap()],
-                    is_up: true,
-                    is_wireless: true,
-                    mtu: Some(1500),
-                }
-            ])
-        } else {
-            None
-        }
-    }
-}
+// macOS implementation is in macos.rs module
 
 // Generic fallback implementation
-pub struct GenericInterfaceDiscovery {
+pub(crate) struct GenericInterfaceDiscovery {
     scan_complete: bool,
 }
 
 impl GenericInterfaceDiscovery {
-    pub fn new() -> Self {
+    pub(crate) fn new() -> Self {
         Self { scan_complete: false }
     }
 }

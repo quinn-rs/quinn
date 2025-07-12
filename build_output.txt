@@ -1,0 +1,2100 @@
+[1m[32m   Compiling[0m ant-quic v0.2.1 (/Users/davidirvine/Desktop/Devel/projects/ant-quic)
+[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `nix`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/config/validation.rs:11:17[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m11[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(all(unix, feature = "nix"))][0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `aws-lc-rs-fips`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `rustls`, `rustls-aws-lc-rs`, `rustls-aws-lc-rs-fips`, `rustls-log`, `rustls-ring`, and `stun`[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `nix` as a feature in `Cargo.toml`[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: requested on the command line with `-W unexpected-cfgs`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `nix`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/config/validation.rs:364:17[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m364[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(all(unix, feature = "nix"))][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `aws-lc-rs-fips`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `rustls`, `rustls-aws-lc-rs`, `rustls-aws-lc-rs-fips`, `rustls-log`, `rustls-ring`, and `stun`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `nix` as a feature in `Cargo.toml`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `nix`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/config/validation.rs:352:21[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m352[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    #[cfg(all(unix, feature = "nix"))][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `aws-lc-rs-fips`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `rustls`, `rustls-aws-lc-rs`, `rustls-aws-lc-rs-fips`, `rustls-log`, `rustls-ring`, and `stun`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `nix` as a feature in `Cargo.toml`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `nix`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/config/validation.rs:397:21[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m397[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    #[cfg(all(unix, feature = "nix"))][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `aws-lc-rs-fips`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `rustls`, `rustls-aws-lc-rs`, `rustls-aws-lc-rs-fips`, `rustls-log`, `rustls-ring`, and `stun`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `nix` as a feature in `Cargo.toml`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused imports: `debug` and `warn`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/enterprise_cert_mgmt.rs:16:15[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m16[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, info, warn, error, instrument};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m               [0m[0m[1m[33m^^^^^[0m[0m        [0m[0m[1m[33m^^^^[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_imports)]` on by default[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused imports: `AtomicBool`, `Layout`, `alloc`, `dealloc`, and `mem::MaybeUninit`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/performance_optimization.rs:8:50[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m8[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    sync::{Arc, atomic::{AtomicU64, AtomicUsize, AtomicBool, Ordering}},[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                                  [0m[0m[1m[33m^^^^^^^^^^[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m11[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    mem::MaybeUninit,[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;12m12[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    alloc::{alloc, dealloc, Layout},[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^[0m[0m  [0m[0m[1m[33m^^^^^^^[0m[0m  [0m[0m[1m[33m^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused imports: `Guard` and `Shared`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/performance_optimization.rs:15:53[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m15[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse crossbeam_epoch::{self as epoch, Atomic, Owned, Shared, Guard};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                                     [0m[0m[1m[33m^^^^^^[0m[0m  [0m[0m[1m[33m^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused imports: `debug`, `info`, `instrument`, and `warn`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/performance_optimization.rs:17:15[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m17[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, info, warn, instrument};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m               [0m[0m[1m[33m^^^^^[0m[0m  [0m[0m[1m[33m^^^^[0m[0m  [0m[0m[1m[33m^^^^[0m[0m  [0m[0m[1m[33m^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `CertificateType`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/performance_optimization.rs:20:22[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m20[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    tls_extensions::{CertificateType, NegotiationResult},[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `std::arch`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/performance_optimization.rs:323:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m323[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    use std::arch;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `std::arch::aarch64::*`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/performance_optimization.rs:361:17[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m361[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            use std::arch::aarch64::*;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `endpoint::Endpoint`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:33:5[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m33[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    endpoint::Endpoint,[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `Incoming`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:44:5[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m44[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Incoming,[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused imports: `ClientConfig as RustlsClientConfig` and `ServerConfig as RustlsServerConfig`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:53:5[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m53[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    ServerConfig as RustlsServerConfig,[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;12m54[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    ClientConfig as RustlsClientConfig,[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `ConfigValidationError`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:58:68[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m58[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse crate::config::validation::{ConfigValidator, ValidationResult, ConfigValidationError};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                                                    [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused imports: `debug`, `error`, `info`, and `warn`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/mod.rs:15:15[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m15[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, error, info, warn};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m               [0m[0m[1m[33m^^^^^[0m[0m  [0m[0m[1m[33m^^^^^[0m[0m  [0m[0m[1m[33m^^^^[0m[0m  [0m[0m[1m[33m^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `debug`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/definition.rs:11:15[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m11[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, info};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m               [0m[0m[1m[33m^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused imports: `WorkflowContext` and `WorkflowId`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/definition.rs:15:21[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m15[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    WorkflowAction, WorkflowContext, WorkflowError, WorkflowEvent, WorkflowId,[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m[0m                                [0m[0m[1m[33m^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused imports: `BackoffStrategy` and `ErrorHandler`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/engine.rs:19:5[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m19[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    BackoffStrategy, Condition, ErrorHandler, RollbackStrategy, StageId, Version,[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `error`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/state_store.rs:15:22[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m15[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, error, info};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `warn`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/coordinator.rs:17:35[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m17[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, error, info, warn, instrument};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[1m[33m^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `WorkflowEvent`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/coordinator.rs:20:28[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m20[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    workflow::{WorkflowId, WorkflowEvent, WorkflowError, StageId},[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                            [0m[0m[1m[33m^^^^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `Instant`[0m
+[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/monitor.rs:9:22[0m
+[0m  [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m9[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    time::{Duration, Instant},[0m
+[0m  [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `Instant`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:10:22[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m10[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    time::{Duration, Instant, SystemTime},[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `warn`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:15:21[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m15[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{info, warn, error};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[33m^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `AtomicBool`[0m
+[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/metrics.rs:9:29[0m
+[0m  [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m9[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        atomic::{AtomicU64, AtomicBool, Ordering},[0m
+[0m  [0m[0m[1m[38;5;12m|[0m[0m                             [0m[0m[1m[33m^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `error`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/metrics.rs:19:34[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m19[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, info, warn, error};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                  [0m[0m[1m[33m^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `VecDeque`[0m
+[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/alerting.rs:7:28[0m
+[0m  [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m7[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    collections::{HashMap, VecDeque},[0m
+[0m  [0m[0m[1m[38;5;12m|[0m[0m                            [0m[0m[1m[33m^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `error`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/alerting.rs:16:34[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m16[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, info, warn, error};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                  [0m[0m[1m[33m^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `error`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/distributed_tracing.rs:13:34[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m13[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, info, warn, error, Span};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                  [0m[0m[1m[33m^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `error`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/health.rs:16:34[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m16[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, info, warn, error};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                  [0m[0m[1m[33m^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `error`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/export.rs:13:34[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m13[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, info, warn, error};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                  [0m[0m[1m[33m^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `MetricsSummary`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/export.rs:16:42[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m16[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse crate::monitoring::{MonitoringError, MetricsSummary};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                          [0m[0m[1m[33m^^^^^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `error`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:13:34[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m13[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse tracing::{debug, info, warn, error};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                  [0m[0m[1m[33m^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused imports: `MetricsSummary` and `NatTraversalResult`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:16:42[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m16[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse crate::monitoring::{MonitoringError, MetricsSummary, NatTraversalResult};[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                          [0m[0m[1m[33m^^^^^^^^^^^^^^[0m[0m  [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: use of deprecated function `rand::thread_rng`: Renamed to `rng`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/zero_rtt_rpk.rs:61:29[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m61[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let mut rng = rand::thread_rng();[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                             [0m[0m[1m[33m^^^^^^^^^^[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(deprecated)]` on by default[0m
+
+[0m[1m[33mwarning[0m[0m[1m: use of deprecated function `rand::thread_rng`: Renamed to `rng`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/peer_discovery.rs:546:29[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m546[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let mut rng = rand::thread_rng();[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                             [0m[0m[1m[33m^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: use of deprecated function `rand::thread_rng`: Renamed to `rng`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/mod.rs:38:15[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m38[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        rand::thread_rng().fill_bytes(&mut id);[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m               [0m[0m[1m[33m^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `client_config`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:227:14[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m227[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let (client_config, server_config) = rpk_config.create_endpoint_configs()?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_client_config`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_variables)]` on by default[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `server_config`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:227:29[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m227[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let (client_config, server_config) = rpk_config.create_endpoint_configs()?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                             [0m[0m[1m[33m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_server_config`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `nat_config`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:230:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m230[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let nat_config = NatTraversalConfig {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_nat_config`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `server_config`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:252:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m252[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let server_config = rpk_config.create_server_config()?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_server_config`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `client_config`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:266:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m266[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let client_config = rpk_config.create_client_config()?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_client_config`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `connection`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/quinn_integration.rs:239:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m239[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        connection: &Connection,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_connection`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `announcement`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/peer_discovery.rs:280:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m280[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let announcement = PeerAnnouncement::new([0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_announcement`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `nat_role`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:662:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m662[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        nat_role: NatTraversalRole,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_nat_role`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `cert_bundle`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:720:17[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m720[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            let cert_bundle = cert_manager.generate_certificate()[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[33m^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_cert_bundle`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `participants`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/coordinator.rs:544:80[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m544[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            CoordinationMessage::CoordinationRequest { workflow_id, requester, participants, timeout: _ } => {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                                [0m[0m[1m[33m^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: try ignoring the field: `participants: _`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: an associated function with this name may be added to the standard library in the future[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/monitor.rs:479:37[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m479[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let mut interval = interval(Duration::from_hours(1));[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mwarning[0m[0m: once this associated item is added to the standard library, the ambiguity may cause an error or change in behavior![0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for more information, see issue #48919 <https://github.com/rust-lang/rust/issues/48919>[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: call with fully qualified syntax `DurationExt::from_hours(...)` to keep using the current method[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unstable_name_collisions)]` on by default[0m
+
+[0m[1m[38;5;9merror[E0596][0m[0m[1m: cannot borrow data in an `Arc` as mutable[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:149:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m149[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        self.dashboard_manager.stop().await?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mcannot borrow as mutable[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `Arc<DashboardManager>`[0m
+
+[0m[1m[38;5;9merror[E0596][0m[0m[1m: cannot borrow data in an `Arc` as mutable[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:153:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m153[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        self.health_monitor.stop().await?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mcannot borrow as mutable[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `Arc<HealthMonitor>`[0m
+
+[0m[1m[38;5;9merror[E0596][0m[0m[1m: cannot borrow data in an `Arc` as mutable[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:155:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m155[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        self.metrics_collector.stop().await?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mcannot borrow as mutable[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: trait `DerefMut` is required to modify through a dereference, but it is not implemented for `Arc<ProductionMetricsCollector>`[0m
+
+[0m[1m[38;5;9merror[E0599][0m[0m[1m: no method named `drain` found for struct `Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>` in the current scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/metrics.rs:104:32[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m104[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        for task in self.tasks.drain(..) {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;9m^^^^^[0m[0m [0m[0m[1m[38;5;9mmethod not found in `Arc<Mutex<Vec<JoinHandle<()>>>>`[0m
+
+[0m[1m[38;5;9merror[E0382][0m[0m[1m: use of moved value: `health`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/metrics.rs:313:54[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m307[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                let health = metrics_store.get_health_metrics().await;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;12m------[0m[0m [0m[0m[1m[38;5;12mmove occurs because `health` has type `metrics::HealthMetrics`, which does not implement the `Copy` trait[0m
+[0m[1m[38;5;12m308[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                circuit_breaker.update_health(health).await;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                               [0m[0m[1m[38;5;12m------[0m[0m [0m[0m[1m[38;5;12mvalue moved here[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m313[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                collector_state.metrics_collected += health.metrics_per_second as u64;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                      [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mvalue used here after move[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: consider changing this parameter type in method `update_health` to borrow instead if owning the value isn't necessary[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/metrics.rs:721:43[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m721[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn update_health(&self, health: HealthMetrics) {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12min this method[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mthis parameter takes ownership of the value[0m
+[0m[1m[38;5;10mnote[0m[0m: if `metrics::HealthMetrics` implemented `Clone`, you could clone the value[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/metrics.rs:881:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m308[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                circuit_breaker.update_health(health).await;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                               [0m[0m[1m[38;5;12m------[0m[0m [0m[0m[1m[38;5;12myou could clone this value[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m881[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mstruct HealthMetrics {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mconsider implementing `Clone` for this type[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `one_hour_ago`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/metrics.rs:568:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m568[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let one_hour_ago = SystemTime::now() - Duration::from_secs(3600);[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_one_hour_ago`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `rule`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/alerting.rs:590:42[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m590[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn should_evaluate_rule(&self, rule: &AlertRule, _timestamp: SystemTime) -> bool {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                          [0m[0m[1m[33m^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_rule`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `duration`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/alerting.rs:515:66[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m515[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            AlertCondition::Threshold { metric, operator, value, duration } => {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                  [0m[0m[1m[33m^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: try ignoring the field: `duration: _`[0m
+
+[0m[1m[38;5;9merror[E0382][0m[0m[1m: borrow of moved value: `event_type`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/distributed_tracing.rs:204:65[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m188[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        event_type: TraceEventType,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m----------[0m[0m [0m[0m[1m[38;5;12mmove occurs because `event_type` has type `TraceEventType`, which does not implement the `Copy` trait[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m196[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                event_type,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[38;5;12m----------[0m[0m [0m[0m[1m[38;5;12mvalue moved here[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m204[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            debug!("Added event {:?} to trace for attempt: {}", event_type, attempt_id);[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                 [0m[0m[1m[38;5;9m^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mvalue borrowed here after move[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the macro `$crate::__macro_support::format_args` which comes from the expansion of the macro `debug` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+[0m[1m[38;5;14mhelp[0m[0m: consider cloning the value if the performance cost is acceptable[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m196[0m[0m [0m[0m[1m[38;5;12m| [0m[0m                event_type[0m[0m[38;5;10m: event_type.clone()[0m[0m,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                           [0m[0m[38;5;10m++++++++++++++++++++[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `attempt`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/distributed_tracing.rs:608:45[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m608[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn should_sample_nat_trace(&self, attempt: &NatTraversalAttempt) -> bool {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                             [0m[0m[1m[33m^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_attempt`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `trace_id`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/distributed_tracing.rs:664:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m664[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        trace_id: &TraceId,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_trace_id`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `trace_id`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/distributed_tracing.rs:715:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m715[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        trace_id: &TraceId,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_trace_id`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `history`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/diagnostics.rs:78:25[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m78[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                let mut history = diagnostic_history.write().await;[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                         [0m[0m[1m[33m^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_history`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `cutoff`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/diagnostics.rs:80:21[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m80[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                let cutoff = SystemTime::now() - config.history_retention;[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[33m^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_cutoff`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: variable does not need to be mutable[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/diagnostics.rs:78:21[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m78[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                let mut history = diagnostic_history.write().await;[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;12m----[0m[0m[1m[33m^^^^^^^[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;12mhelp: remove this `mut`[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_mut)]` on by default[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `start_time`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/diagnostics.rs:123:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m123[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let start_time = Instant::now();[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_start_time`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `remediation`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/diagnostics.rs:135:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m135[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let remediation = self.remediation_advisor.generate_remediation(&root_causes).await?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_remediation`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `performance_impact`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/diagnostics.rs:138:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m138[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let performance_impact = self.performance_profiler.analyze_performance_impact(&context).await?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_performance_impact`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `network_analysis`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/diagnostics.rs:141:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m141[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let network_analysis = self.network_analyzer.analyze_network_conditions(&context).await?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_network_analysis`[0m
+
+[0m[1m[38;5;9merror[E0599][0m[0m[1m: no method named `drain` found for struct `Arc<tokio::sync::Mutex<Vec<tokio::task::JoinHandle<()>>>>` in the current scope[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/health.rs:87:32[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m87[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        for task in self.tasks.drain(..) {[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;9m^^^^^[0m[0m [0m[0m[1m[38;5;9mmethod not found in `Arc<Mutex<Vec<JoinHandle<()>>>>`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `result`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/health.rs:165:40[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m165[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn handle_nat_failure(&self, result: &NatTraversalResult) -> Result<(), MonitoringError> {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                        [0m[0m[1m[33m^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_result`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `health_state`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/health.rs:516:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m516[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let health_state = self.health_state.clone();[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_health_state`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: variable does not need to be mutable[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:45:13[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m45[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let mut manager = Self {[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[38;5;12m----[0m[0m[1m[33m^^^^^^^[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[38;5;12mhelp: remove this `mut`[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:148:61[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m148[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        self.widget_registry.register_widget("time_series", Box::new(TimeSeriesWidget::new())).await;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12m---------------[0m[0m                [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `WidgetBuilderImpl`, found `Box<TimeSeriesWidget>`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12marguments to this method are incorrect[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected enum `[0m[0m[1m[35mWidgetBuilderImpl[0m[0m`[0m
+[0m             found struct `[0m[0m[1m[35mBox<TimeSeriesWidget>[0m[0m`[0m
+[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:582:14[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m582[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn register_widget(&self, widget_type: &str, builder: WidgetBuilderImpl) {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^[0m[0m                           [0m[0m[1m[38;5;12m--------------------------[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:149:57[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m149[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        self.widget_registry.register_widget("counter", Box::new(CounterWidget::new())).await;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12m---------------[0m[0m            [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `WidgetBuilderImpl`, found `Box<CounterWidget>`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                              [0m[0m[1m[38;5;12marguments to this method are incorrect[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected enum `[0m[0m[1m[35mWidgetBuilderImpl[0m[0m`[0m
+[0m             found struct `[0m[0m[1m[35mBox<CounterWidget>[0m[0m`[0m
+[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:582:14[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m582[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn register_widget(&self, widget_type: &str, builder: WidgetBuilderImpl) {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^[0m[0m                           [0m[0m[1m[38;5;12m--------------------------[0m
+
+[0m[1m[38;5;9merror[E0034][0m[0m[1m: multiple applicable items in scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:150:77[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m150[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        self.widget_registry.register_widget("gauge", Box::new(GaugeWidget::new())).await;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                             [0m[0m[1m[38;5;9m^^^[0m[0m [0m[0m[1m[38;5;9mmultiple `new` found[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: candidate #1 is defined in an impl for the type `GaugeWidget`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:755:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m755[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;10mnote[0m[0m: candidate #2 is defined in an impl for the type `GaugeWidget`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:761:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m761[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[38;5;9merror[E0034][0m[0m[1m: multiple applicable items in scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:151:81[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m151[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        self.widget_registry.register_widget("heatmap", Box::new(HeatmapWidget::new())).await;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                                 [0m[0m[1m[38;5;9m^^^[0m[0m [0m[0m[1m[38;5;9mmultiple `new` found[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: candidate #1 is defined in an impl for the type `HeatmapWidget`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:778:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m778[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;10mnote[0m[0m: candidate #2 is defined in an impl for the type `HeatmapWidget`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:784:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m784[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[38;5;9merror[E0034][0m[0m[1m: multiple applicable items in scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:152:77[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m152[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        self.widget_registry.register_widget("table", Box::new(TableWidget::new())).await;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                             [0m[0m[1m[38;5;9m^^^[0m[0m [0m[0m[1m[38;5;9mmultiple `new` found[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: candidate #1 is defined in an impl for the type `TableWidget`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:801:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m801[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;10mnote[0m[0m: candidate #2 is defined in an impl for the type `TableWidget`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:807:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m807[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[38;5;9merror[E0034][0m[0m[1m: multiple applicable items in scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:157:106[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m157[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        providers.insert("nat_results".to_string(), DataProviderImpl::NatResults(NatResultsDataProvider::new()));[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                                                          [0m[0m[1m[38;5;9m^^^[0m[0m [0m[0m[1m[38;5;9mmultiple `new` found[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: candidate #1 is defined in an impl for the type `NatResultsDataProvider`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:837:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m837[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;10mnote[0m[0m: candidate #2 is defined in an impl for the type `NatResultsDataProvider`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:843:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m843[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[38;5;9merror[E0034][0m[0m[1m: multiple applicable items in scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:158:93[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m158[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        providers.insert("health".to_string(), DataProviderImpl::Health(HealthDataProvider::new()));[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                                             [0m[0m[1m[38;5;9m^^^[0m[0m [0m[0m[1m[38;5;9mmultiple `new` found[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: candidate #1 is defined in an impl for the type `HealthDataProvider`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:869:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m869[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;10mnote[0m[0m: candidate #2 is defined in an impl for the type `HealthDataProvider`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:875:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m875[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[38;5;9merror[E0599][0m[0m[1m: no method named `ok_or_else` found for opaque type `impl std::future::Future<Output = std::option::Option<WidgetBuilderImpl>>` in the current scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:199:14[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m198[0m[0m [0m[0m[1m[38;5;12m|[0m[0m   [0m[0m        let widget_builder = self.widget_registry.get_widget(&config.widget_type)[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m ______________________________-[0m
+[0m[1m[38;5;12m199[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            .ok_or_else(|| MonitoringError::ConfigError(format!("Unknown widget type: {}", config.widget_type)))?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[38;5;12m-[0m[0m[1m[38;5;9m^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mmethod not found in `impl Future<Output = Option<WidgetBuilderImpl>>`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|_____________|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;14mhelp[0m[0m: consider `await`ing on the `Future` and calling the method on its `Output`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m199[0m[0m [0m[0m[1m[38;5;12m| [0m[0m            .[0m[0m[38;5;10mawait.[0m[0mok_or_else(|| MonitoringError::ConfigError(format!("Unknown widget type: {}", config.widget_type)))?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[38;5;10m++++++[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `widget_registry`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:226:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m226[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let widget_registry = self.widget_registry.clone();[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_widget_registry`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `data_providers`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:227:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m227[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let data_providers = self.data_providers.clone();[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[33m^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_data_providers`[0m
+
+[0m[1m[38;5;9merror[E0599][0m[0m[1m: no method named `refresh` found for reference `&NatAttemptsDataProvider` in the current scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:612:65[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m612[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            DataProviderImpl::NatAttempts(provider) => provider.refresh().await,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                 [0m[0m[1m[38;5;9m^^^^^^^[0m[0m [0m[0m[1m[38;5;9mmethod not found in `&NatAttemptsDataProvider`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: items from traits can only be used if the trait is implemented and in scope[0m
+[0m[1m[38;5;10mnote[0m[0m: `DataProvider` defines an item `refresh`, perhaps you need to implement it[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:645:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m645[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mtrait DataProvider {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[38;5;9merror[E0599][0m[0m[1m: no method named `fetch_data` found for reference `&NatAttemptsDataProvider` in the current scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:604:65[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m604[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            DataProviderImpl::NatAttempts(provider) => provider.fetch_data(query).await,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                 [0m[0m[1m[38;5;9m^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mmethod not found in `&NatAttemptsDataProvider`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: items from traits can only be used if the trait is implemented and in scope[0m
+[0m[1m[38;5;10mnote[0m[0m: `DataProvider` defines an item `fetch_data`, perhaps you need to implement it[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:645:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m645[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mtrait DataProvider {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:729:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m729[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m--[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `WidgetData`, found `&WidgetData`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12marguments to this enum variant are incorrect[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: `WidgetData` does not implement `Clone`, so `&WidgetData` was cloned instead[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:729:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m729[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: the type constructed contains `&WidgetData` due to the type of the argument passed[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:729:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m729[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;14m^^^[0m[0m[1m[38;5;12m------------[0m[0m[1m[38;5;14m^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12mthis argument influences the type of `Ok`[0m
+[0m[1m[38;5;10mnote[0m[0m: tuple variant defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:552:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m552[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Ok(#[stable(feature = "rust1", since = "1.0.0")] T),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: consider annotating `WidgetData` with `#[derive(Clone)]`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m524[0m[0m [0m[0m[38;5;10m+ #[derive(Clone)][0m
+[0m[1m[38;5;12m525[0m[0m [0m[0m[1m[38;5;12m| [0m[0mpub struct WidgetData {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:746:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m746[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m--[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `WidgetData`, found `&WidgetData`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12marguments to this enum variant are incorrect[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: `WidgetData` does not implement `Clone`, so `&WidgetData` was cloned instead[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:746:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m746[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: the type constructed contains `&WidgetData` due to the type of the argument passed[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:746:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m746[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;14m^^^[0m[0m[1m[38;5;12m------------[0m[0m[1m[38;5;14m^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12mthis argument influences the type of `Ok`[0m
+[0m[1m[38;5;10mnote[0m[0m: tuple variant defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:552:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m552[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Ok(#[stable(feature = "rust1", since = "1.0.0")] T),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: consider annotating `WidgetData` with `#[derive(Clone)]`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m524[0m[0m [0m[0m[38;5;10m+ #[derive(Clone)][0m
+[0m[1m[38;5;12m525[0m[0m [0m[0m[1m[38;5;12m| [0m[0mpub struct WidgetData {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:769:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m769[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m--[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `WidgetData`, found `&WidgetData`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12marguments to this enum variant are incorrect[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: `WidgetData` does not implement `Clone`, so `&WidgetData` was cloned instead[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:769:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m769[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: the type constructed contains `&WidgetData` due to the type of the argument passed[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:769:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m769[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;14m^^^[0m[0m[1m[38;5;12m------------[0m[0m[1m[38;5;14m^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12mthis argument influences the type of `Ok`[0m
+[0m[1m[38;5;10mnote[0m[0m: tuple variant defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:552:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m552[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Ok(#[stable(feature = "rust1", since = "1.0.0")] T),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: consider annotating `WidgetData` with `#[derive(Clone)]`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m524[0m[0m [0m[0m[38;5;10m+ #[derive(Clone)][0m
+[0m[1m[38;5;12m525[0m[0m [0m[0m[1m[38;5;12m| [0m[0mpub struct WidgetData {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:792:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m792[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m--[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `WidgetData`, found `&WidgetData`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12marguments to this enum variant are incorrect[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: `WidgetData` does not implement `Clone`, so `&WidgetData` was cloned instead[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:792:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m792[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: the type constructed contains `&WidgetData` due to the type of the argument passed[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:792:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m792[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;14m^^^[0m[0m[1m[38;5;12m------------[0m[0m[1m[38;5;14m^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12mthis argument influences the type of `Ok`[0m
+[0m[1m[38;5;10mnote[0m[0m: tuple variant defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:552:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m552[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Ok(#[stable(feature = "rust1", since = "1.0.0")] T),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: consider annotating `WidgetData` with `#[derive(Clone)]`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m524[0m[0m [0m[0m[38;5;10m+ #[derive(Clone)][0m
+[0m[1m[38;5;12m525[0m[0m [0m[0m[1m[38;5;12m| [0m[0mpub struct WidgetData {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:815:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m815[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m--[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `WidgetData`, found `&WidgetData`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12marguments to this enum variant are incorrect[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: `WidgetData` does not implement `Clone`, so `&WidgetData` was cloned instead[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:815:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m815[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: the type constructed contains `&WidgetData` due to the type of the argument passed[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:815:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m815[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(data.clone())[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;14m^^^[0m[0m[1m[38;5;12m------------[0m[0m[1m[38;5;14m^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12mthis argument influences the type of `Ok`[0m
+[0m[1m[38;5;10mnote[0m[0m: tuple variant defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:552:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m552[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Ok(#[stable(feature = "rust1", since = "1.0.0")] T),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: consider annotating `WidgetData` with `#[derive(Clone)]`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m524[0m[0m [0m[0m[38;5;10m+ #[derive(Clone)][0m
+[0m[1m[38;5;12m525[0m[0m [0m[0m[1m[38;5;12m| [0m[0mpub struct WidgetData {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+
+[0m[1m[38;5;9merror[E0592][0m[0m[1m: duplicate definitions with name `new`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:755:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m755[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mduplicate definitions for `new`[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m761[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m----------------[0m[0m [0m[0m[1m[38;5;12mother definition for `new`[0m
+
+[0m[1m[38;5;9merror[E0592][0m[0m[1m: duplicate definitions with name `new`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:778:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m778[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mduplicate definitions for `new`[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m784[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m----------------[0m[0m [0m[0m[1m[38;5;12mother definition for `new`[0m
+
+[0m[1m[38;5;9merror[E0592][0m[0m[1m: duplicate definitions with name `new`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:801:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m801[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mduplicate definitions for `new`[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m807[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m----------------[0m[0m [0m[0m[1m[38;5;12mother definition for `new`[0m
+
+[0m[1m[38;5;9merror[E0592][0m[0m[1m: duplicate definitions with name `new`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:837:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m837[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mduplicate definitions for `new`[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m843[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m----------------[0m[0m [0m[0m[1m[38;5;12mother definition for `new`[0m
+
+[0m[1m[38;5;9merror[E0592][0m[0m[1m: duplicate definitions with name `new`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/dashboards.rs:869:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m869[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mduplicate definitions for `new`[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m875[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m----------------[0m[0m [0m[0m[1m[38;5;12mother definition for `new`[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/raw_public_keys.rs:154:17[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m153[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            return Err(TlsError::InvalidMessage([0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;12m------------------------[0m[0m [0m[0m[1m[38;5;12marguments to this enum variant are incorrect[0m
+[0m[1m[38;5;12m154[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                "Invalid signature length".to_string(),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `InvalidMessage`, found `String`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: tuple variant defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustls-0.23.27/src/error.rs:45:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m45[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    InvalidMessage(InvalidMessage),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/raw_public_keys.rs:164:51[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m164[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            .map_err(|_| TlsError::InvalidMessage("Signature verification failed".to_string()))?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                          [0m[0m[1m[38;5;12m------------------------[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `InvalidMessage`, found `String`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                          [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                          [0m[0m[1m[38;5;12marguments to this enum variant are incorrect[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: tuple variant defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rustls-0.23.27/src/error.rs:45:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m45[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    InvalidMessage(InvalidMessage),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the `?` operator can only be applied to values that implement `Try`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/raw_public_keys.rs:351:26[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m351[0m[0m [0m[0m[1m[38;5;12m|[0m[0m   [0m[0m        let mut config = ClientConfig::builder()[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m __________________________^[0m
+[0m[1m[38;5;12m352[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|[0m[0m [0m[0m            .dangerous()[0m
+[0m[1m[38;5;12m353[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|[0m[0m [0m[0m            .with_custom_certificate_verifier(Arc::new(verifier))[0m
+[0m[1m[38;5;12m354[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|[0m[0m [0m[0m            .with_no_client_auth()?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|___________________________________^[0m[0m [0m[0m[1m[38;5;9mthe `?` operator cannot be applied to type `rustls::ClientConfig`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the trait `Try` is not implemented for `rustls::ClientConfig`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the `?` operator can only be applied to values that implement `Try`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/raw_public_keys.rs:375:26[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m375[0m[0m [0m[0m[1m[38;5;12m|[0m[0m   [0m[0m        let mut config = ServerConfig::builder()[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m __________________________^[0m
+[0m[1m[38;5;12m376[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|[0m[0m [0m[0m            .with_no_client_auth()[0m
+[0m[1m[38;5;12m377[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|[0m[0m [0m[0m            .with_cert_resolver(Arc::new(resolver))?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;9m|____________________________________________________^[0m[0m [0m[0m[1m[38;5;9mthe `?` operator cannot be applied to type `rustls::ServerConfig`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the trait `Try` is not implemented for `rustls::ServerConfig`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `OsRng: rand_core::CryptoRngCore` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/raw_public_keys.rs:399:54[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m399[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let private_key = Ed25519SecretKey::generate(&mut rng);[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                           [0m[0m[1m[38;5;12m--------------------------[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `rand_core::CryptoRng` is not implemented for `OsRng`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                           [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                           [0m[0m[1m[38;5;12mrequired by a bound introduced by this call[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: there are [0m[0m[1m[35mmultiple different versions[0m[0m of crate `[0m[0m[1m[35mrand_core[0m[0m` in the dependency graph[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.6.4/src/lib.rs:209:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m209[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub trait CryptoRng {}[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mthis is the required trait[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0msrc/crypto/raw_public_keys.rs:18:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m18[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse ed25519_dalek::{[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12mone version of crate `rand_core` used here, as a dependency of crate `ed25519_dalek`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0msrc/transport_parameters.rs:15:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m15[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse rand::{Rng as _, RngCore, seq::SliceRandom as _};[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m----[0m[0m [0m[0m[1m[38;5;12mone version of crate `rand_core` used here, as a dependency of crate `rand`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.9.3/src/os.rs:47:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m47[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct OsRng;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m----------------[0m[0m [0m[0m[1m[38;5;12mthis type doesn't implement the required trait[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.6.4/src/os.rs:48:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m48[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct OsRng;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m----------------[0m[0m [0m[0m[1m[38;5;12mthis type implements the required trait[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.9.3/src/block.rs:67:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m67[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub trait BlockRngCore {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m----------------------[0m[0m [0m[0m[1m[38;5;12mthis is the found trait[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: two types coming from two different versions of the same crate are different types [0m[0m[1m[35meven if they look the same[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: you can use `[0m[0m[1m[35mcargo tree[0m[0m` to explore your dependency tree[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: required for `OsRng` to implement `rand_core::CryptoRngCore`[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `ed25519_dalek::SigningKey::generate`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ed25519-dalek-2.2.0/src/signing.rs:202:24[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m202[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn generate<R: CryptoRngCore + ?Sized>(csprng: &mut R) -> SigningKey {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SigningKey::generate`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `OsRng: rand_core::CryptoRngCore` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/raw_public_keys.rs:399:54[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m399[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let private_key = Ed25519SecretKey::generate(&mut rng);[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                           [0m[0m[1m[38;5;12m--------------------------[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `rand_core::RngCore` is not implemented for `OsRng`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                           [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                           [0m[0m[1m[38;5;12mrequired by a bound introduced by this call[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: there are [0m[0m[1m[35mmultiple different versions[0m[0m of crate `[0m[0m[1m[35mrand_core[0m[0m` in the dependency graph[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.6.4/src/lib.rs:142:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m142[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub trait RngCore {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mthis is the required trait[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0msrc/crypto/raw_public_keys.rs:18:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m18[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse ed25519_dalek::{[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12mone version of crate `rand_core` used here, as a dependency of crate `ed25519_dalek`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0msrc/transport_parameters.rs:15:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m15[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse rand::{Rng as _, RngCore, seq::SliceRandom as _};[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m----[0m[0m [0m[0m[1m[38;5;12mone version of crate `rand_core` used here, as a dependency of crate `rand`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.9.3/src/os.rs:47:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m47[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct OsRng;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m----------------[0m[0m [0m[0m[1m[38;5;12mthis type doesn't implement the required trait[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.6.4/src/os.rs:48:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m48[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct OsRng;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m----------------[0m[0m [0m[0m[1m[38;5;12mthis type implements the required trait[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/rand_core-0.9.3/src/block.rs:67:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m67[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub trait BlockRngCore {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m----------------------[0m[0m [0m[0m[1m[38;5;12mthis is the found trait[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: two types coming from two different versions of the same crate are different types [0m[0m[1m[35meven if they look the same[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: you can use `[0m[0m[1m[35mcargo tree[0m[0m` to explore your dependency tree[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: required for `OsRng` to implement `rand_core::CryptoRngCore`[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `ed25519_dalek::SigningKey::generate`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/ed25519-dalek-2.2.0/src/signing.rs:202:24[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m202[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn generate<R: CryptoRngCore + ?Sized>(csprng: &mut R) -> SigningKey {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SigningKey::generate`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `rustls::ClientConfig: ServerCertVerifier` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:102:34[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m102[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(QuicClientConfig::new(Arc::new(rustls_config)))[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                  [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `ServerCertVerifier` is not implemented for `rustls::ClientConfig`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `ServerCertVerifier`:[0m
+[0m              RawPublicKeyVerifier[0m
+[0m              WebPkiServerVerifier[0m
+[0m              rustls_platform_verifier::verification::apple::Verifier[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: required for the cast from `Arc<rustls::ClientConfig>` to `Arc<(dyn ServerCertVerifier + 'static)>`[0m
+
+[0m[1m[38;5;9merror[E0061][0m[0m[1m: this function takes 2 arguments but 1 argument was supplied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:114:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m114[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(QuicServerConfig::new(Arc::new(rustls_config)))[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^[0m[0m[1m[38;5;12m-------------------------[0m[0m [0m[0m[1m[38;5;12margument #2 of type `PrivateKeyDer<'static>` is missing[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: expected `Vec<CertificateDer<'_>>`, found `Arc<ServerConfig>`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:114:34[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m114[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(QuicServerConfig::new(Arc::new(rustls_config)))[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                  [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected struct `[0m[0m[1m[35mVec<CertificateDer<'static>>[0m[0m`[0m
+[0m               found struct `[0m[0m[1m[35mArc<rustls::ServerConfig>[0m[0m`[0m
+[0m[1m[38;5;10mnote[0m[0m: associated function defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rustls.rs:435:19[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m435[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub(crate) fn new([0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                   [0m[0m[1m[38;5;10m^^^[0m
+[0m[1m[38;5;12m436[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        cert_chain: Vec<CertificateDer<'static>>,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m----------------------------------------[0m
+[0m[1m[38;5;12m437[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        key: PrivateKeyDer<'static>,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m---------------------------[0m
+[0m[1m[38;5;14mhelp[0m[0m: provide the argument[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m114[0m[0m [0m[0m[38;5;9m- [0m[0m        Ok(QuicServerConfig::new[0m[0m[38;5;9m(Arc::new(rustls_config))[0m[0m)[0m
+[0m[1m[38;5;12m114[0m[0m [0m[0m[38;5;10m+ [0m[0m        Ok(QuicServerConfig::new[0m[0m[38;5;10m(/* Vec<CertificateDer<'static>> */, /* PrivateKeyDer<'static> */)[0m[0m)[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:114:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m114[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(QuicServerConfig::new(Arc::new(rustls_config)))[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m--[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `QuicServerConfig`, found `Result<QuicServerConfig, Error>`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;12marguments to this enum variant are incorrect[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected struct `crypto::rustls::QuicServerConfig`[0m
+[0m                 found enum `[0m[0m[1m[35mstd::result::Result<[0m[0mcrypto::rustls::QuicServerConfig, [0m[0m[1m[35mrustls::Error>[0m[0m`[0m
+[0m[1m[38;5;14mhelp[0m[0m: the type constructed contains `std::result::Result<crypto::rustls::QuicServerConfig, rustls::Error>` due to the type of the argument passed[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:114:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m114[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        Ok(QuicServerConfig::new(Arc::new(rustls_config)))[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;14m^^^[0m[0m[1m[38;5;12m----------------------------------------------[0m[0m[1m[38;5;14m^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12mthis argument influences the type of `Ok`[0m
+[0m[1m[38;5;10mnote[0m[0m: tuple variant defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/result.rs:552:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m552[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Ok(#[stable(feature = "rust1", since = "1.0.0")] T),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;10m^^[0m
+[0m[1m[38;5;14mhelp[0m[0m: use the `?` operator to extract the `std::result::Result<crypto::rustls::QuicServerConfig, rustls::Error>` value, propagating a `Result::Err` value to the caller[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m114[0m[0m [0m[0m[1m[38;5;12m| [0m[0m        Ok(QuicServerConfig::new(Arc::new(rustls_config))[0m[0m[38;5;10m?[0m[0m)[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                          [0m[0m[38;5;10m+[0m
+
+[0m[1m[38;5;9merror[E0533][0m[0m[1m: expected value, found struct variant `EndpointRole::Server`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:167:44[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m167[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let mut config = RpkNatConfig::new(EndpointRole::Server);[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                            [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mnot a value[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;14mhelp[0m[0m: you might have meant to create a new value of the struct[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m167[0m[0m [0m[0m[38;5;9m- [0m[0m        let mut config = RpkNatConfig::new(EndpointRole::Server[0m[0m[38;5;9m)[0m[0m;[0m
+[0m[1m[38;5;12m167[0m[0m [0m[0m[38;5;10m+ [0m[0m        let mut config = RpkNatConfig::new(EndpointRole::Server[0m[0m[38;5;10m { can_coordinate: /* value */ }[0m[0m;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+
+[0m[1m[38;5;9merror[E0369][0m[0m[1m: binary operation `==` cannot be applied to type `&CertificateTypePreferences`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/certificate_negotiation.rs:29:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m22[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, PartialEq, Eq)][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;12m---------[0m[0m [0m[0m[1m[38;5;12min this derive macro expansion[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m29[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        our_preferences: CertificateTypePreferences,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: an implementation of `PartialEq` might be missing for `CertificateTypePreferences`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/tls_extensions.rs:279:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m279[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct CertificateTypePreferences {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mmust implement `PartialEq`[0m
+[0m[1m[38;5;14mhelp[0m[0m: consider annotating `CertificateTypePreferences` with `#[derive(PartialEq)]`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/tls_extensions.rs:279:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m279[0m[0m [0m[0m[38;5;10m+ #[derive(PartialEq)][0m
+[0m[1m[38;5;12m280[0m[0m [0m[0m[1m[38;5;12m| [0m[0mpub struct CertificateTypePreferences {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `CertificateTypePreferences: std::cmp::Eq` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/certificate_negotiation.rs:29:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m22[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, PartialEq, Eq)][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[1m[38;5;12m--[0m[0m [0m[0m[1m[38;5;12min this derive macro expansion[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m29[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        our_preferences: CertificateTypePreferences,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `std::cmp::Eq` is not implemented for `CertificateTypePreferences`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `AssertParamIsEq`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/core/src/cmp.rs:364:31[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m364[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct AssertParamIsEq<T: Eq + ?Sized> {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                               [0m[0m[1m[38;5;10m^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `AssertParamIsEq`[0m
+[0m[1m[38;5;14mhelp[0m[0m: consider annotating `CertificateTypePreferences` with `#[derive(Eq)]`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/tls_extensions.rs:279:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m279[0m[0m [0m[0m[38;5;10m+ #[derive(Eq)][0m
+[0m[1m[38;5;12m280[0m[0m [0m[0m[1m[38;5;12m| [0m[0mpub struct CertificateTypePreferences {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+
+[0m[1m[38;5;9merror[E0599][0m[0m[1m: no method named `clone` found for struct `std::sync::MutexGuard<'_, NegotiationStats>` in the current scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/certificate_negotiation.rs:454:36[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m454[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        self.stats.lock().unwrap().clone()[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                    [0m[0m[1m[38;5;9m^^^^^[0m[0m [0m[0m[1m[38;5;9mmethod not found in `MutexGuard<'_, NegotiationStats>`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: items from traits can only be used if the trait is implemented and in scope[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: the following trait defines an item `clone`, perhaps you need to implement it:[0m
+[0m            candidate #1: `Clone`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: `?` couldn't convert the error to `QuicConnectionError`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/quinn_integration.rs:489:86[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m489[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            QuinnClientConfig::new(Arc::new(QuicClientConfig::try_from(rustls_config)?))[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                             [0m[0m[1m[38;5;12m-----------------------------------------[0m[0m[1m[38;5;9m^[0m[0m [0m[0m[1m[38;5;9mthe trait `From<quinn::crypto::rustls::NoInitialCipherSuite>` is not implemented for `QuicConnectionError`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                             [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                             [0m[0m[1m[38;5;12mthis can't be annotated with `?` because it has type `Result<_, quinn::crypto::rustls::NoInitialCipherSuite>`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: `QuicConnectionError` needs to implement `From<quinn::crypto::rustls::NoInitialCipherSuite>`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/quinn_integration.rs:410:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m410[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub enum QuicConnectionError {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `From<T>`:[0m
+[0m              `QuicConnectionError` implements `From<TlsExtensionError>`[0m
+[0m              `QuicConnectionError` implements `From<quinn::ConnectError>`[0m
+[0m              `QuicConnectionError` implements `From<quinn::ConnectionError>`[0m
+
+[0m[1m[38;5;9merror[E0599][0m[0m[1m: no function or associated item named `with_native_roots` found for struct `quinn::ClientConfig` in the current scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/quinn_integration.rs:492:32[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m492[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            QuinnClientConfig::with_native_roots()[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mfunction or associated item not found in `ClientConfig`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: if you're trying to build a new `quinn::ClientConfig` consider using one of the following associated functions:[0m
+[0m      quinn::ClientConfig::new[0m
+[0m      quinn::ClientConfig::with_platform_verifier[0m
+[0m      quinn::ClientConfig::with_root_certificates[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/quinn-proto-0.11.12/src/config/mod.rs:566:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m566[0m[0m [0m[0m[1m[38;5;12m|[0m[0m   [0m[0m    pub fn new(crypto: Arc<dyn crypto::ClientConfig>) -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m       [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m619[0m[0m [0m[0m[1m[38;5;12m|[0m[0m   [0m[0m    pub fn with_platform_verifier() -> Self {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m       [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m626[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m/[0m[0m [0m[0m    pub fn with_root_certificates([0m
+[0m[1m[38;5;12m627[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m|[0m[0m [0m[0m        roots: Arc<rustls::RootCertStore>,[0m
+[0m[1m[38;5;12m628[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m|[0m[0m [0m[0m    ) -> Result<Self, rustls::client::VerifierBuilderError> {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m|___________________________________________________________^[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: `?` couldn't convert the error to `QuicConnectionError`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/quinn_integration.rs:532:94[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m532[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            QuinnServerConfig::with_crypto(Arc::new(QuicServerConfig::try_from(rustls_config)?))[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                     [0m[0m[1m[38;5;12m-----------------------------------------[0m[0m[1m[38;5;9m^[0m[0m [0m[0m[1m[38;5;9mthe trait `From<quinn::crypto::rustls::NoInitialCipherSuite>` is not implemented for `QuicConnectionError`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                     [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                     [0m[0m[1m[38;5;12mthis can't be annotated with `?` because it has type `Result<_, quinn::crypto::rustls::NoInitialCipherSuite>`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: `QuicConnectionError` needs to implement `From<quinn::crypto::rustls::NoInitialCipherSuite>`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/quinn_integration.rs:410:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m410[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub enum QuicConnectionError {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: the question mark operation (`?`) implicitly performs a conversion on the error value using the `From` trait[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `From<T>`:[0m
+[0m              `QuicConnectionError` implements `From<TlsExtensionError>`[0m
+[0m              `QuicConnectionError` implements `From<quinn::ConnectError>`[0m
+[0m              `QuicConnectionError` implements `From<quinn::ConnectionError>`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: use of deprecated method `rand::Rng::gen`: Renamed to `random` to avoid conflict with the new `gen` keyword in Rust 2024.[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/zero_rtt_rpk.rs:75:26[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m75[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            age_add: rng.gen(),[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                          [0m[0m[1m[33m^^^[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `nat_traversal_api::PeerId: Ord` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/peer_discovery.rs:144:20[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m144[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        candidates.sort_by_key(|(distance, _)| *distance);[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                    [0m[0m[1m[38;5;9m^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Ord` is not implemented for `nat_traversal_api::PeerId`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `std::slice::<impl [T]>::sort_by_key`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.rustup/toolchains/stable-aarch64-apple-darwin/lib/rustlib/src/rust/library/alloc/src/slice.rs:250:12[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m247[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub fn sort_by_key<K, F>(&mut self, mut f: F)[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m-----------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m250[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        K: Ord,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `std::slice::<impl [T]>::sort_by_key`[0m
+[0m[1m[38;5;14mhelp[0m[0m: consider annotating `nat_traversal_api::PeerId` with `#[derive(Ord)]`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:137:1[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m137[0m[0m [0m[0m[38;5;10m+ #[derive(Ord)][0m
+[0m[1m[38;5;12m138[0m[0m [0m[0m[1m[38;5;12m| [0m[0mpub struct PeerId(pub [u8; 32]);[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+
+[0m[1m[38;5;9merror[E0599][0m[0m[1m: no method named `unwrap` found for struct `ed25519_dalek::SigningKey` in the current scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/enterprise_cert_mgmt.rs:788:104[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m788[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                    let secret = Ed25519SecretKey::from_bytes(&secret_bytes[..32].try_into().unwrap()).unwrap();[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                                                        [0m[0m[1m[38;5;9m^^^^^^[0m[0m [0m[0m[1m[38;5;9mmethod not found in `SigningKey`[0m
+
+[0m[1m[38;5;9merror[E0599][0m[0m[1m: the method `return_object` exists for struct `MemoryPool<T>`, but its trait bounds were not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/performance_optimization.rs:215:35[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m123[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct MemoryPool<T> {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m------------------------[0m[0m [0m[0m[1m[38;5;12mmethod `return_object` not found for this struct[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m215[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            unsafe { (*self.pool).return_object(object) };[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[1m[38;5;9m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mmethod cannot be called on `MemoryPool<T>` due to unsatisfied trait bounds[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;10mnote[0m[0m: trait bound `T: Default` was not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/performance_optimization.rs:136:9[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m136[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mimpl<T: Default> MemoryPool<T> {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;10m^^^^^^^[0m[0m  [0m[0m[1m[38;5;12m-------------[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;10m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[38;5;10munsatisfied trait bound introduced here[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/performance_optimization.rs:295:37[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m295[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                guard.defer_destroy(old_node);[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                       [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;9m^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `Shared<'_, _>`, found `&CacheNode`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                       [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                       [0m[0m[1m[38;5;12marguments to this method are incorrect[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected struct `[0m[0m[1m[35mShared<'_, _>[0m[0m`[0m
+[0m            found reference `[0m[0m[1m[35m&CacheNode[0m[0m`[0m
+[0m[1m[38;5;10mnote[0m[0m: method defined here[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/crossbeam-epoch-0.9.18/src/guard.rs:268:19[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m268[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub unsafe fn defer_destroy<T>(&self, ptr: Shared<'_, T>) {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                   [0m[0m[1m[38;5;10m^^^^^^^^^^^^^[0m
+
+[0m[1m[38;5;9merror[E0599][0m[0m[1m: no method named `hour` found for struct `DateTime` in the current scope[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/performance_optimization.rs:446:13[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m446[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        now.hour() as f32 / 24.0[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m             [0m[0m[1m[38;5;9m^^^^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m::: [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/chrono-0.4.41/src/traits.rs:285:8[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m285[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn hour(&self) -> u32;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m----[0m[0m [0m[0m[1m[38;5;12mthe method is available for `DateTime<Local>` here[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: items from traits can only be used if the trait is in scope[0m
+[0m[1m[38;5;14mhelp[0m[0m: trait `Timelike` which provides `hour` is implemented but not in scope; perhaps you want to import it[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m7[0m[0m   [0m[0m[38;5;10m+ use chrono::Timelike;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;14mhelp[0m[0m: there is a method `hour12` with a similar name[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m446[0m[0m [0m[0m[1m[38;5;12m| [0m[0m        now.hour[0m[0m[38;5;10m12[0m[0m() as f32 / 24.0[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[38;5;10m++[0m
+
+[0m[1m[33mwarning[0m[0m[1m: an associated function with this name may be added to the standard library in the future[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/monitor.rs:44:31[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m44[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            retention_period: Duration::from_hours(24),[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                               [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mwarning[0m[0m: once this associated item is added to the standard library, the ambiguity may cause an error or change in behavior![0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for more information, see issue #48919 <https://github.com/rust-lang/rust/issues/48919>[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: call with fully qualified syntax `DurationExt::from_hours(...)` to keep using the current method[0m
+
+[0m[1m[33mwarning[0m[0m[1m: an associated function with this name may be added to the standard library in the future[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/monitor.rs:70:36[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m70[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            max_workflow_duration: Duration::from_hours(1),[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                    [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mwarning[0m[0m: once this associated item is added to the standard library, the ambiguity may cause an error or change in behavior![0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for more information, see issue #48919 <https://github.com/rust-lang/rust/issues/48919>[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: call with fully qualified syntax `DurationExt::from_hours(...)` to keep using the current method[0m
+
+[0m[1m[33mwarning[0m[0m[1m: an associated function with this name may be added to the standard library in the future[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/monitor.rs:71:33[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m71[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            max_stage_duration: Duration::from_mins(10),[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                                 [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mwarning[0m[0m: once this associated item is added to the standard library, the ambiguity may cause an error or change in behavior![0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for more information, see issue #48919 <https://github.com/rust-lang/rust/issues/48919>[0m
+[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: call with fully qualified syntax `DurationExt::from_mins(...)` to keep using the current method[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/distributed_tracing.rs:270:16[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m270[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        if let Some(perf) = &result.performance_metrics {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                [0m[0m[1m[38;5;9m^^^^^^^^^^[0m[0m   [0m[0m[1m[38;5;12m---------------------------[0m[0m [0m[0m[1m[38;5;12mthis expression has type `&PerformanceMetrics`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                [0m[0m[1m[38;5;9m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                [0m[0m[1m[38;5;9mexpected `PerformanceMetrics`, found `Option<_>`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected struct `[0m[0m[1m[35mPerformanceMetrics[0m[0m`[0m
+[0m                 found enum `[0m[0m[1m[35mstd::option::Option<_>[0m[0m`[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: `match` arms have incompatible types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/distributed_tracing.rs:904:22[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m899[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m/[0m[0m [0m[0m            match value {[0m
+[0m[1m[38;5;12m900[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                AttributeValue::String(s) => span.record(key.as_str(), &s),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m                                              [0m[0m[1m[38;5;12m-----------------------------[0m[0m [0m[0m[1m[38;5;12mthis is found to be of type `&Span`[0m
+[0m[1m[38;5;12m901[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                AttributeValue::Int(i) => span.record(key.as_str(), &i),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m                                           [0m[0m[1m[38;5;12m-----------------------------[0m[0m [0m[0m[1m[38;5;12mthis is found to be of type `&Span`[0m
+[0m[1m[38;5;12m902[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                AttributeValue::Float(f) => span.record(key.as_str(), &f),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m                                             [0m[0m[1m[38;5;12m-----------------------------[0m[0m [0m[0m[1m[38;5;12mthis is found to be of type `&Span`[0m
+[0m[1m[38;5;12m903[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                AttributeValue::Bool(b) => span.record(key.as_str(), &b),[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m                                            [0m[0m[1m[38;5;12m-----------------------------[0m[0m [0m[0m[1m[38;5;12mthis is found to be of type `&Span`[0m
+[0m[1m[38;5;12m904[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                _ => {} // Complex types not supported by tracing[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[38;5;9m^^[0m[0m [0m[0m[1m[38;5;9mexpected `&Span`, found `()`[0m
+[0m[1m[38;5;12m905[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m            }[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m|_____________-[0m[0m [0m[0m[1m[38;5;12m`match` arms have incompatible types[0m
+
+[0m[1m[38;5;9merror[E0308][0m[0m[1m: mismatched types[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/export.rs:654:46[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m654[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let exponential_delay = base_delay * (2_u64.pow(retry_count));[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                              [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mexpected `u32`, found `u64`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;14mhelp[0m[0m: you can convert `base_delay` from `u32` to `u64`, matching the type of `(2_u64.pow(retry_count))`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m654[0m[0m [0m[0m[1m[38;5;12m| [0m[0m        let exponential_delay = [0m[0m[38;5;10mu64::from([0m[0mbase_delay[0m[0m[38;5;10m)[0m[0m * (2_u64.pow(retry_count));[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                 [0m[0m[38;5;10m++++++++++[0m[0m          [0m[0m[38;5;10m+[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `MetricsConfig: Serialize` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:362:24[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m362[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;9m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Serialize` is not implemented for `MetricsConfig`[0m
+[0m[1m[38;5;12m363[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct MonitoringConfig {[0m
+[0m[1m[38;5;12m364[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    /// Metrics collection configuration[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m------------------------------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound introduced by this call[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Serialize)]` to your `MetricsConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Serialize`:[0m
+[0m               &'a T[0m
+[0m               &'a mut T[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m               (T0, T1, T2, T3, T4)[0m
+[0m             and 253 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::ser::SerializeStruct::serialize_field`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/ser/mod.rs:1866:21[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1864[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m---------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1865[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1866[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: ?Sized + Serialize;[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;10m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SerializeStruct::serialize_field`[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Serialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `AlertingConfig: Serialize` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:362:24[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m362[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;9m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Serialize` is not implemented for `AlertingConfig`[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m366[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    /// Alerting configuration[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m--------------------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound introduced by this call[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Serialize)]` to your `AlertingConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Serialize`:[0m
+[0m               &'a T[0m
+[0m               &'a mut T[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m               (T0, T1, T2, T3, T4)[0m
+[0m             and 253 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::ser::SerializeStruct::serialize_field`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/ser/mod.rs:1866:21[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1864[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m---------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1865[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1866[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: ?Sized + Serialize;[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;10m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SerializeStruct::serialize_field`[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Serialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `TracingConfig: Serialize` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:362:24[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m362[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;9m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Serialize` is not implemented for `TracingConfig`[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m368[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    /// Tracing configuration[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m-------------------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound introduced by this call[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Serialize)]` to your `TracingConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Serialize`:[0m
+[0m               &'a T[0m
+[0m               &'a mut T[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m               (T0, T1, T2, T3, T4)[0m
+[0m             and 253 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::ser::SerializeStruct::serialize_field`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/ser/mod.rs:1866:21[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1864[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m---------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1865[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1866[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: ?Sized + Serialize;[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;10m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SerializeStruct::serialize_field`[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Serialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `HealthConfig: Serialize` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:362:24[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m362[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;9m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Serialize` is not implemented for `HealthConfig`[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m370[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    /// Health monitoring configuration[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m-----------------------------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound introduced by this call[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Serialize)]` to your `HealthConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Serialize`:[0m
+[0m               &'a T[0m
+[0m               &'a mut T[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m               (T0, T1, T2, T3, T4)[0m
+[0m             and 253 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::ser::SerializeStruct::serialize_field`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/ser/mod.rs:1866:21[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1864[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m---------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1865[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1866[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: ?Sized + Serialize;[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;10m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SerializeStruct::serialize_field`[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Serialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `DiagnosticsConfig: Serialize` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:362:24[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m362[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;9m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Serialize` is not implemented for `DiagnosticsConfig`[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m372[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    /// Diagnostics configuration[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m-----------------------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound introduced by this call[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Serialize)]` to your `DiagnosticsConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Serialize`:[0m
+[0m               &'a T[0m
+[0m               &'a mut T[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m               (T0, T1, T2, T3, T4)[0m
+[0m             and 253 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::ser::SerializeStruct::serialize_field`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/ser/mod.rs:1866:21[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1864[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m---------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1865[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1866[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: ?Sized + Serialize;[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;10m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SerializeStruct::serialize_field`[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Serialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `MetricsConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:365:18[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m365[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub metrics: MetricsConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                  [0m[0m[1m[38;5;9m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `MetricsConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `MetricsConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_element`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1732:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1730[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_element<T>(&mut self) -> Result<Option<T>, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1731[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1732[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SeqAccess::next_element`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `AlertingConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:367:19[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m367[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub alerting: AlertingConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                   [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `AlertingConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `AlertingConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_element`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1732:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1730[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_element<T>(&mut self) -> Result<Option<T>, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1731[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1732[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SeqAccess::next_element`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `TracingConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:369:18[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m369[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub tracing: TracingConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                  [0m[0m[1m[38;5;9m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `TracingConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `TracingConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_element`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1732:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1730[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_element<T>(&mut self) -> Result<Option<T>, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1731[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1732[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SeqAccess::next_element`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `HealthConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:371:17[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m371[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub health: HealthConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[38;5;9m^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `HealthConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `HealthConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_element`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1732:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1730[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_element<T>(&mut self) -> Result<Option<T>, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1731[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1732[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SeqAccess::next_element`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `DiagnosticsConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:373:22[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m373[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub diagnostics: DiagnosticsConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `DiagnosticsConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `DiagnosticsConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_element`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1732:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1730[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_element<T>(&mut self) -> Result<Option<T>, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1731[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1732[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SeqAccess::next_element`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `MetricsConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:365:18[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m365[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub metrics: MetricsConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                  [0m[0m[1m[38;5;9m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `MetricsConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `MetricsConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_value`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1871:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1869[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_value<V>(&mut self) -> Result<V, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m----------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1870[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1871[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        V: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `MapAccess::next_value`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `AlertingConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:367:19[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m367[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub alerting: AlertingConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                   [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `AlertingConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `AlertingConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_value`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1871:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1869[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_value<V>(&mut self) -> Result<V, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m----------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1870[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1871[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        V: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `MapAccess::next_value`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `TracingConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:369:18[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m369[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub tracing: TracingConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                  [0m[0m[1m[38;5;9m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `TracingConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `TracingConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_value`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1871:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1869[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_value<V>(&mut self) -> Result<V, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m----------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1870[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1871[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        V: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `MapAccess::next_value`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `HealthConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:371:17[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m371[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub health: HealthConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[38;5;9m^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `HealthConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `HealthConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_value`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1871:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1869[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_value<V>(&mut self) -> Result<V, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m----------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1870[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1871[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        V: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `MapAccess::next_value`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `DiagnosticsConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:373:22[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m373[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub diagnostics: DiagnosticsConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `DiagnosticsConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `DiagnosticsConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_value`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1871:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1869[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_value<V>(&mut self) -> Result<V, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m----------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1870[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1871[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        V: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `MapAccess::next_value`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `MetricsConfig: Deserialize<'_>` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:362:35[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m362[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[1m[38;5;9m^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `MetricsConfig`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `MetricsConfig` type[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m              &'a Path[0m
+[0m              &'a [u8][0m
+[0m              &'a str[0m
+[0m              ()[0m
+[0m              (T,)[0m
+[0m              (T0, T1)[0m
+[0m              (T0, T1, T2)[0m
+[0m              (T0, T1, T2, T3)[0m
+[0m            and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::__private::de::missing_field`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/private/de.rs:25:8[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m23[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub fn missing_field<'de, V, E>(field: &'static str) -> Result<V, E>[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this function[0m
+[0m[1m[38;5;12m24[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mwhere[0m
+[0m[1m[38;5;12m25[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    V: Deserialize<'de>,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `missing_field`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Deserialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `AlertingConfig: Deserialize<'_>` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:362:35[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m362[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[1m[38;5;9m^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `AlertingConfig`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `AlertingConfig` type[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m              &'a Path[0m
+[0m              &'a [u8][0m
+[0m              &'a str[0m
+[0m              ()[0m
+[0m              (T,)[0m
+[0m              (T0, T1)[0m
+[0m              (T0, T1, T2)[0m
+[0m              (T0, T1, T2, T3)[0m
+[0m            and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::__private::de::missing_field`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/private/de.rs:25:8[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m23[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub fn missing_field<'de, V, E>(field: &'static str) -> Result<V, E>[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this function[0m
+[0m[1m[38;5;12m24[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mwhere[0m
+[0m[1m[38;5;12m25[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    V: Deserialize<'de>,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `missing_field`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Deserialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `TracingConfig: Deserialize<'_>` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:362:35[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m362[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[1m[38;5;9m^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `TracingConfig`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `TracingConfig` type[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m              &'a Path[0m
+[0m              &'a [u8][0m
+[0m              &'a str[0m
+[0m              ()[0m
+[0m              (T,)[0m
+[0m              (T0, T1)[0m
+[0m              (T0, T1, T2)[0m
+[0m              (T0, T1, T2, T3)[0m
+[0m            and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::__private::de::missing_field`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/private/de.rs:25:8[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m23[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub fn missing_field<'de, V, E>(field: &'static str) -> Result<V, E>[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this function[0m
+[0m[1m[38;5;12m24[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mwhere[0m
+[0m[1m[38;5;12m25[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    V: Deserialize<'de>,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `missing_field`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Deserialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `HealthConfig: Deserialize<'_>` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:362:35[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m362[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[1m[38;5;9m^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `HealthConfig`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `HealthConfig` type[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m              &'a Path[0m
+[0m              &'a [u8][0m
+[0m              &'a str[0m
+[0m              ()[0m
+[0m              (T,)[0m
+[0m              (T0, T1)[0m
+[0m              (T0, T1, T2)[0m
+[0m              (T0, T1, T2, T3)[0m
+[0m            and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::__private::de::missing_field`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/private/de.rs:25:8[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m23[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub fn missing_field<'de, V, E>(field: &'static str) -> Result<V, E>[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this function[0m
+[0m[1m[38;5;12m24[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mwhere[0m
+[0m[1m[38;5;12m25[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    V: Deserialize<'de>,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `missing_field`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Deserialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `DiagnosticsConfig: Deserialize<'_>` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:362:35[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m362[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[1m[38;5;9m^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `DiagnosticsConfig`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `DiagnosticsConfig` type[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m              &'a Path[0m
+[0m              &'a [u8][0m
+[0m              &'a str[0m
+[0m              ()[0m
+[0m              (T,)[0m
+[0m              (T0, T1)[0m
+[0m              (T0, T1, T2)[0m
+[0m              (T0, T1, T2, T3)[0m
+[0m            and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::__private::de::missing_field`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/private/de.rs:25:8[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m23[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub fn missing_field<'de, V, E>(field: &'static str) -> Result<V, E>[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this function[0m
+[0m[1m[38;5;12m24[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mwhere[0m
+[0m[1m[38;5;12m25[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    V: Deserialize<'de>,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `missing_field`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Deserialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `nat_traversal_api::NatTraversalConfig: Serialize` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:506:24[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m506[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                        [0m[0m[1m[38;5;9m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Serialize` is not implemented for `nat_traversal_api::NatTraversalConfig`[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m516[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    /// NAT traversal configuration[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;12m-------------------------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound introduced by this call[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Serialize)]` to your `nat_traversal_api::NatTraversalConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Serialize`:[0m
+[0m               &'a T[0m
+[0m               &'a mut T[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m               (T0, T1, T2, T3, T4)[0m
+[0m             and 253 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::ser::SerializeStruct::serialize_field`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/ser/mod.rs:1866:21[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1864[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn serialize_field<T>(&mut self, key: &'static str, value: &T) -> Result<(), Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m---------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1865[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1866[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: ?Sized + Serialize;[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;10m^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SerializeStruct::serialize_field`[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Serialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `nat_traversal_api::NatTraversalConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:517:21[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m517[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub nat_config: NatTraversalConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `nat_traversal_api::NatTraversalConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `nat_traversal_api::NatTraversalConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_element`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1732:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1730[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_element<T>(&mut self) -> Result<Option<T>, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1731[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1732[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        T: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `SeqAccess::next_element`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `nat_traversal_api::NatTraversalConfig: Deserialize<'_>` is not satisfied[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:517:21[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m517[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub nat_config: NatTraversalConfig,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                     [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `nat_traversal_api::NatTraversalConfig`[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `nat_traversal_api::NatTraversalConfig` type[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m               &'a Path[0m
+[0m               &'a [u8][0m
+[0m               &'a str[0m
+[0m               ()[0m
+[0m               (T,)[0m
+[0m               (T0, T1)[0m
+[0m               (T0, T1, T2)[0m
+[0m               (T0, T1, T2, T3)[0m
+[0m             and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `next_value`[0m
+[0m    [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/de/mod.rs:1871:12[0m
+[0m     [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m1869[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn next_value<V>(&mut self) -> Result<V, Self::Error>[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m----------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this associated function[0m
+[0m[1m[38;5;12m1870[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    where[0m
+[0m[1m[38;5;12m1871[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        V: Deserialize<'de>,[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `MapAccess::next_value`[0m
+
+[0m[1m[38;5;9merror[E0277][0m[0m[1m: the trait bound `nat_traversal_api::NatTraversalConfig: Deserialize<'_>` is not satisfied[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/monitoring/mod.rs:506:35[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m506[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[derive(Debug, Clone, Serialize, Deserialize)][0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                   [0m[0m[1m[38;5;9m^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9mthe trait `Deserialize<'_>` is not implemented for `nat_traversal_api::NatTraversalConfig`[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for local types consider adding `#[derive(serde::Deserialize)]` to your `nat_traversal_api::NatTraversalConfig` type[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: for types from other crates check whether the crate offers a `serde` feature flag[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: the following other types implement trait `Deserialize<'de>`:[0m
+[0m              &'a Path[0m
+[0m              &'a [u8][0m
+[0m              &'a str[0m
+[0m              ()[0m
+[0m              (T,)[0m
+[0m              (T0, T1)[0m
+[0m              (T0, T1, T2)[0m
+[0m              (T0, T1, T2, T3)[0m
+[0m            and 298 others[0m
+[0m[1m[38;5;10mnote[0m[0m: required by a bound in `nat_traversal_api::_::_serde::__private::de::missing_field`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0m/Users/davidirvine/.cargo/registry/src/index.crates.io-1949cf8c6b5b557f/serde-1.0.219/src/private/de.rs:25:8[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m23[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub fn missing_field<'de, V, E>(field: &'static str) -> Result<V, E>[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12mrequired by a bound in this function[0m
+[0m[1m[38;5;12m24[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mwhere[0m
+[0m[1m[38;5;12m25[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    V: Deserialize<'de>,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;10mrequired by this bound in `missing_field`[0m
+[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: this error originates in the derive macro `Deserialize` (in Nightly builds, run with -Z macro-backtrace for more info)[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `WorkflowAction`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/engine.rs:20:5[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m20[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    WorkflowAction, WorkflowContext, WorkflowDefinition, WorkflowError, WorkflowEvent,[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused import: `Condition`[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/workflow/engine.rs:19:22[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m19[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    BackoffStrategy, Condition, ErrorHandler, RollbackStrategy, StageId, Version,[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m                      [0m[0m[1m[33m^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `client_config`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:136:14[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m136[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let (client_config, server_config) = rpk_config.create_endpoint_configs()?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_client_config`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `server_config`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:136:29[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m136[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        let (client_config, server_config) = rpk_config.create_endpoint_configs()?;[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                             [0m[0m[1m[33m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_server_config`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: variable does not need to be mutable[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/rpk_integration.rs:134:29[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m134[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn with_raw_public_keys(mut self, rpk_config: &RpkNatConfig) -> Result<Self, Box<dyn std::error::Error>> {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                             [0m[0m[1m[38;5;12m----[0m[0m[1m[33m^^^^[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                             [0m[0m[1m[38;5;12m|[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                             [0m[0m[1m[38;5;12mhelp: remove this `mut`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `v`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/certificate_negotiation.rs:346:40[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m346[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;12m...[0m[0m                   .map(|(k, (v, t))| (k.clone(), t.clone()))[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                                  [0m[0m[1m[33m^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_v`[0m
+
+[0m[1m[33mwarning[0m[0m[1m: unused variable: `key_id`[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/crypto/enterprise_cert_mgmt.rs:778:20[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m778[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn sign(&self, key_id: &str, _data: &[u8]) -> Result<Vec<u8>, HsmError> {[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m                    [0m[0m[1m[33m^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_key_id`[0m
+
+[0m[1mSome errors have detailed explanations: E0034, E0061, E0277, E0308, E0369, E0382, E0533, E0592, E0596...[0m
+[0m[1mFor more information about an error, try `rustc --explain E0034`.[0m
+[1m[33mwarning[0m[1m:[0m `ant-quic` (lib) generated 78 warnings
+[1m[31merror[0m[1m:[0m could not compile `ant-quic` (lib) due to 75 previous errors; 78 warnings emitted

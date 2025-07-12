@@ -28,6 +28,11 @@ use crate::{
 mod transport;
 pub use transport::{AckFrequencyConfig, IdleTimeout, MtuDiscoveryConfig, TransportConfig};
 
+// Production-ready configuration validation
+#[cfg(feature = "production-ready")]
+pub(crate) mod validation;
+
+
 /// Global configuration for the endpoint, affecting all connections
 ///
 /// Default values should be suitable for most internet applications.

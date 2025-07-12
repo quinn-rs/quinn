@@ -12,7 +12,7 @@ categories = ["network-programming", "asynchronous"]
 [features]
 # NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
 # comment in that file for more information.
-default = ["rustls-ring", "log", "bloom"]
+default = ["rustls-ring", "log", "bloom", "production-ready"]
 aws-lc-rs = ["dep:aws-lc-rs", "aws-lc-rs?/aws-lc-sys", "aws-lc-rs?/prebuilt-nasm"]
 aws-lc-rs-fips = ["aws-lc-rs", "aws-lc-rs?/fips"]
 # Enables BloomTokenLog, and uses it by default
@@ -35,6 +35,22 @@ rustls-log = ["rustls?/logging"]
 # Enable qlog support
 __qlog = ["dep:qlog"]
 
+# Production-ready features
+production-ready = [
+    "dep:rustls-pemfile", 
+    "dep:rcgen", 
+    "dep:tokio-util", 
+    "dep:futures-util", 
+    "dep:hickory-resolver",
+    "dep:socket2",
+    "dep:nix",
+    "dep:time"
+]
+# STUN protocol support (optional)
+stun = ["dep:stun-rs"]
+# Enhanced network interface discovery
+network-discovery = ["dep:socket2", "dep:nix"]
+
 [dependencies]
 arbitrary = { version = "1.0.1", features = ["derive"], optional = true }
 aws-lc-rs = { version = "1.9", default-features = false, optional = true }
@@ -50,7 +66,29 @@ rustls-platform-verifier = { version = "0.6", optional = true }
 slab = "0.4.6"
 thiserror = "2.0.3"
 tinyvec = { version = "1.1", features = ["alloc"] }
-tracing = { version = "0.1.10", default-features = false, features = ["std"] }
+tracing = { version = "0.1.10", default-features = false, features = ["std", "attributes"] }
+async-trait = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+uuid = { version = "1.0", features = ["v4", "serde"] }
+ed25519-dalek = { version = "2.1", features = ["rand_core"] }
+chrono = "0.4"
+crossbeam-epoch = "0.9"
+parking_lot = "0.12"
+
+# Production QUIC and networking dependencies
+quinn = { version = "0.11" }
+rustls-pemfile = { version = "2.0", optional = true }
+rcgen = { version = "0.14", optional = true }
+tokio-util = { version = "0.7", optional = true }
+futures-util = { version = "0.3", optional = true }
+hickory-resolver = { version = "0.24", optional = true }
+socket2 = { version = "0.5", optional = true }
+nix = { version = "0.29", features = ["resource"], optional = true }
+time = { version = "0.3", optional = true }
+
+# Platform-specific dependencies
+stun-rs = { version = "0.1", optional = true }
 
 # Dependencies for ant-quic binary
 clap = { version = "4", features = ["derive"] }
@@ -74,8 +112,28 @@ hex-literal = "1"
 rand_pcg = "0.9"
 rcgen = "0.14"
 tracing-subscriber = { version = "0.3.0", default-features = false, features = ["env-filter", "fmt", "ansi", "time", "local-time"] }
+tempfile = "3"
 lazy_static = "1"
 wasm-bindgen-test = { version = "0.3.45" }
+
+# Platform-specific target dependencies
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.58", features = [
+    "Win32_Foundation",
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_Networking_WinSock",
+    "Win32_System_IO",
+] }
+libc = "0.2"
+
+[target.'cfg(target_os = "linux")'.dependencies]
+netlink-packet-route = "0.20"
+netlink-sys = "0.8"
+hex = "0.4"
+
+[target.'cfg(target_os = "macos")'.dependencies]
+system-configuration = "0.6"
+core-foundation = "0.9"
 
 [lints.rust]
 # https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing

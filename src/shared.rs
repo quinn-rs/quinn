@@ -60,6 +60,8 @@ pub(crate) enum EndpointEventInner {
     RetireConnectionId(Instant, u64, bool),
     /// Request to relay a PunchMeNow frame to a target peer
     RelayPunchMeNow([u8; 32], crate::frame::PunchMeNow),
+    /// Request to send an AddAddress frame to the peer
+    SendAddressFrame(crate::frame::AddAddress),
 }
 
 /// Protocol-level identifier for a connection.

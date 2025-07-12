@@ -402,6 +402,45 @@ struct PathResponse {
     remote: SocketAddr,
 }
 
+/// Tracks PATH_CHALLENGE tokens for NAT traversal candidate validation
+#[derive(Default)]
+pub(crate) struct NatTraversalChallenges {
+    pending: Vec<NatTraversalChallenge>,
+}
+
+impl NatTraversalChallenges {
+    pub(crate) fn push(&mut self, remote: SocketAddr, token: u64) {
+        /// Arbitrary permissive limit to prevent abuse
+        const MAX_NAT_CHALLENGES: usize = 10;
+        
+        // Check if we already have a challenge for this address
+        if let Some(existing) = self.pending.iter_mut().find(|x| x.remote == remote) {
+            existing.token = token;
+            return;
+        }
+        
+        if self.pending.len() < MAX_NAT_CHALLENGES {
+            self.pending.push(NatTraversalChallenge { remote, token });
+        } else {
+            // Replace the oldest challenge
+            self.pending[0] = NatTraversalChallenge { remote, token };
+        }
+    }
+    
+    
+    pub(crate) fn is_empty(&self) -> bool {
+        self.pending.is_empty()
+    }
+}
+
+#[derive(Copy, Clone)]
+struct NatTraversalChallenge {
+    /// The address to send the PATH_CHALLENGE to
+    remote: SocketAddr,
+    /// The challenge token
+    token: u64,
+}
+
 /// Summary statistics of packets that have been sent on a particular path, but which have not yet
 /// been acked or deemed lost
 pub(super) struct InFlight {

@@ -12,18 +12,55 @@ use std::{
     time::Duration,
 };
 
+#[cfg(feature = "production-ready")]
+use std::sync::atomic::{AtomicBool, Ordering};
+
+#[cfg(feature = "production-ready")]
+use tokio::{
+    net::UdpSocket,
+    sync::mpsc,
+    time::{sleep, timeout},
+};
+
+#[cfg(feature = "production-ready")]
+// use futures_util::StreamExt;
+
 use tracing::{debug, info};
 
 use crate::{
     candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig, DiscoveryEvent},
     connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole},
-    Endpoint, VarInt,
+    VarInt,
 };
+
+#[cfg(feature = "production-ready")]
+use quinn::{
+    Endpoint as QuinnEndpoint,
+    EndpointConfig,
+    ServerConfig,
+    ClientConfig,
+    Connection,
+    ConnectionError,
+    TransportConfig,
+    crypto::rustls::QuicServerConfig,
+    crypto::rustls::QuicClientConfig,
+};
+
+
+#[cfg(feature = "production-ready")]
+use crate::config::validation::{ConfigValidator, ValidationResult};
+
+#[cfg(feature = "production-ready")]
+use crate::crypto::certificate_manager::{CertificateManager, CertificateConfig};
 
 /// High-level NAT traversal endpoint for Autonomi P2P networks
 pub struct NatTraversalEndpoint {
     /// Underlying Quinn endpoint
-    endpoint: Endpoint,
+    #[cfg(feature = "production-ready")]
+    quinn_endpoint: Option<QuinnEndpoint>,
+    /// Fallback internal endpoint for non-production builds
+    #[cfg(not(feature = "production-ready"))]
+    internal_endpoint: Endpoint,
     /// NAT traversal configuration
     config: NatTraversalConfig,
     /// Known bootstrap/coordinator nodes
@@ -34,10 +71,21 @@ pub struct NatTraversalEndpoint {
     discovery_manager: Arc<std::sync::Mutex<CandidateDiscoveryManager>>,
     /// Event callback for coordination (simplified without async channels)
     event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+    /// Shutdown flag for async operations
+    #[cfg(feature = "production-ready")]
+    shutdown: Arc<AtomicBool>,
+    /// Channel for internal communication
+    #[cfg(feature = "production-ready")]
+    event_tx: Option<mpsc::UnboundedSender<NatTraversalEvent>>,
+    /// Active connections by peer ID
+    #[cfg(feature = "production-ready")]
+    connections: Arc<std::sync::RwLock<HashMap<PeerId, Connection>>>,
+    /// Local peer ID
+    local_peer_id: PeerId,
 }
 
 /// Configuration for NAT traversal behavior
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct NatTraversalConfig {
     /// Role of this endpoint in the network
     pub role: EndpointRole,
@@ -56,7 +104,7 @@ pub struct NatTraversalConfig {
 }
 
 /// Role of an endpoint in the Autonomi network
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum EndpointRole {
     /// Regular client node (most common)
     Client,
@@ -66,8 +114,19 @@ pub enum EndpointRole {
     Bootstrap,
 }
 
+impl EndpointRole {
+    /// Get a string representation of the role for use in certificate common names
+    pub fn name(&self) -> &'static str {
+        match self {
+            EndpointRole::Client => "client",
+            EndpointRole::Server { .. } => "server",
+            EndpointRole::Bootstrap => "bootstrap",
+        }
+    }
+}
+
 /// Unique identifier for a peer in the network
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
 pub struct PeerId(pub [u8; 32]);
 
 /// Information about a bootstrap/coordinator node
@@ -182,6 +241,11 @@ pub enum NatTraversalEvent {
         error: NatTraversalError,
         fallback_available: bool,
     },
+    /// Connection lost
+    ConnectionLost {
+        peer_id: PeerId,
+        reason: String,
+    },
 }
 
 /// Errors that can occur during NAT traversal
@@ -227,17 +291,156 @@ impl Default for NatTraversalConfig {
     }
 }
 
+#[cfg(feature = "production-ready")]
+impl ConfigValidator for NatTraversalConfig {
+    fn validate(&self) -> ValidationResult<()> {
+        use crate::config::validation::*;
+        
+        // Validate role-specific requirements
+        match self.role {
+            EndpointRole::Client => {
+                if self.bootstrap_nodes.is_empty() {
+                    return Err(ConfigValidationError::InvalidRole(
+                        "Client endpoints require at least one bootstrap node".to_string()
+                    ));
+                }
+            }
+            EndpointRole::Server { can_coordinate } => {
+                if can_coordinate && self.bootstrap_nodes.is_empty() {
+                    return Err(ConfigValidationError::InvalidRole(
+                        "Server endpoints with coordination capability require bootstrap nodes".to_string()
+                    ));
+                }
+            }
+            EndpointRole::Bootstrap => {
+                // Bootstrap nodes don't need other bootstrap nodes
+            }
+        }
+        
+        // Validate bootstrap nodes
+        if !self.bootstrap_nodes.is_empty() {
+            validate_bootstrap_nodes(&self.bootstrap_nodes)?;
+        }
+        
+        // Validate candidate limits
+        validate_range(
+            self.max_candidates,
+            1,
+            256,
+            "max_candidates"
+        )?;
+        
+        // Validate coordination timeout
+        validate_duration(
+            self.coordination_timeout,
+            Duration::from_millis(100),
+            Duration::from_secs(300),
+            "coordination_timeout"
+        )?;
+        
+        // Validate concurrent attempts
+        validate_range(
+            self.max_concurrent_attempts,
+            1,
+            16,
+            "max_concurrent_attempts"
+        )?;
+        
+        // Validate configuration compatibility
+        if self.max_concurrent_attempts > self.max_candidates {
+            return Err(ConfigValidationError::IncompatibleConfiguration(
+                "max_concurrent_attempts cannot exceed max_candidates".to_string()
+            ));
+        }
+        
+        if self.role == EndpointRole::Bootstrap && self.enable_relay_fallback {
+            return Err(ConfigValidationError::IncompatibleConfiguration(
+                "Bootstrap nodes should not enable relay fallback".to_string()
+            ));
+        }
+        
+        Ok(())
+    }
+}
+
 impl NatTraversalEndpoint {
     /// Create a new NAT traversal endpoint with optional event callback
+    #[cfg(feature = "production-ready")]
+    pub async fn new(
+        config: NatTraversalConfig,
+        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+    ) -> Result<Self, NatTraversalError> {
+        Self::new_impl(config, event_callback).await
+    }
+    
+    /// Create a new NAT traversal endpoint with optional event callback (non-async fallback)
+    #[cfg(not(feature = "production-ready"))]
     pub fn new(
         config: NatTraversalConfig,
         event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
     ) -> Result<Self, NatTraversalError> {
-        // Validate configuration
-        if config.bootstrap_nodes.is_empty() && config.role != EndpointRole::Bootstrap {
-            return Err(NatTraversalError::ConfigError(
-                "At least one bootstrap node required for non-bootstrap endpoints".to_string(),
-            ));
+        Self::new_fallback(config, event_callback)
+    }
+    
+    /// Internal async implementation for production builds
+    #[cfg(feature = "production-ready")]
+    async fn new_impl(
+        config: NatTraversalConfig,
+        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+    ) -> Result<Self, NatTraversalError> {
+        Self::new_common(config, event_callback).await
+    }
+    
+    /// Internal fallback implementation for non-production builds
+    #[cfg(not(feature = "production-ready"))]
+    fn new_fallback(
+        config: NatTraversalConfig,
+        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+    ) -> Result<Self, NatTraversalError> {
+        Self::new_common_sync(config, event_callback)
+    }
+    
+    /// Common implementation for both async and sync versions
+    #[cfg(feature = "production-ready")]
+    async fn new_common(
+        config: NatTraversalConfig,
+        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+    ) -> Result<Self, NatTraversalError> {
+        // Existing implementation with async support
+        Self::new_shared_logic(config, event_callback).await
+    }
+    
+    /// Common implementation for sync versions
+    #[cfg(not(feature = "production-ready"))]
+    fn new_common_sync(
+        config: NatTraversalConfig,
+        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+    ) -> Result<Self, NatTraversalError> {
+        // Existing implementation without async support
+        Self::new_shared_logic_sync(config, event_callback)
+    }
+    
+    /// Shared logic for endpoint creation (async version)
+    #[cfg(feature = "production-ready")]
+    async fn new_shared_logic(
+        config: NatTraversalConfig,
+        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+    ) -> Result<Self, NatTraversalError> {
+        // Validate configuration using production-ready validation
+        #[cfg(feature = "production-ready")]
+        {
+            config.validate()
+                .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
+        }
+        
+        // Fallback validation for non-production builds
+        #[cfg(not(feature = "production-ready"))]
+        {
+            if config.bootstrap_nodes.is_empty() && config.role != EndpointRole::Bootstrap {
+                return Err(NatTraversalError::ConfigError(
+                    "At least one bootstrap node required for non-bootstrap endpoints".to_string(),
+                ));
+            }
         }
 
         // Initialize bootstrap nodes
@@ -274,16 +477,77 @@ impl NatTraversalEndpoint {
         ));
 
         // Create QUIC endpoint with NAT traversal enabled
-        // Note: This is a simplified version - in production you'd need proper TLS setup
-        let endpoint = Self::create_quic_endpoint(&config, nat_traversal_role)?;
+        // Create QUIC endpoint with NAT traversal enabled
+        let (quinn_endpoint, event_tx) = Self::create_quinn_endpoint(&config, nat_traversal_role).await?;
 
         Ok(Self {
-            endpoint,
+            quinn_endpoint: Some(quinn_endpoint),
             config,
             bootstrap_nodes,
             active_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
             discovery_manager,
             event_callback,
+            shutdown: Arc::new(AtomicBool::new(false)),
+            event_tx: Some(event_tx),
+            connections: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            local_peer_id: Self::generate_local_peer_id(),
+        })
+    }
+    
+    /// Shared logic for endpoint creation (sync version)
+    #[cfg(not(feature = "production-ready"))]
+    fn new_shared_logic_sync(
+        config: NatTraversalConfig,
+        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
+    ) -> Result<Self, NatTraversalError> {
+        // Validate configuration using production-ready validation
+        config.validate()
+            .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
+        
+        // Initialize bootstrap nodes
+        let bootstrap_nodes = Arc::new(std::sync::RwLock::new(
+            config
+                .bootstrap_nodes
+                .iter()
+                .map(|&address| BootstrapNode {
+                    address,
+                    last_seen: std::time::Instant::now(),
+                    can_coordinate: true,
+                    rtt: None,
+                    coordination_count: 0,
+                })
+                .collect(),
+        ));
+        
+        // Create candidate discovery manager
+        let discovery_config = DiscoveryConfig {
+            total_timeout: config.coordination_timeout,
+            max_candidates: config.max_candidates,
+            enable_symmetric_prediction: config.enable_symmetric_nat,
+            ..DiscoveryConfig::default()
+        };
+        
+        let nat_traversal_role = match config.role {
+            EndpointRole::Client => NatTraversalRole::Client,
+            EndpointRole::Server { can_coordinate } => NatTraversalRole::Server { can_relay: can_coordinate },
+            EndpointRole::Bootstrap => NatTraversalRole::Bootstrap,
+        };
+        
+        let discovery_manager = Arc::new(std::sync::Mutex::new(
+            CandidateDiscoveryManager::new(discovery_config, nat_traversal_role)
+        ));
+        
+        // Create fallback endpoint
+        let internal_endpoint = Self::create_fallback_endpoint(&config, nat_traversal_role)?;
+        
+        Ok(Self {
+            internal_endpoint,
+            config,
+            bootstrap_nodes,
+            active_sessions: Arc::new(std::sync::RwLock::new(HashMap::new())),
+            discovery_manager,
+            event_callback,
+            local_peer_id: Self::generate_local_peer_id(),
         })
     }
 
@@ -384,10 +648,118 @@ impl NatTraversalEndpoint {
 
     // Private implementation methods
 
-    /// Create a QUIC endpoint with NAT traversal configured
-    fn create_quic_endpoint(
+    /// Create a Quinn endpoint with NAT traversal configured (async version)
+    #[cfg(feature = "production-ready")]
+    async fn create_quinn_endpoint(
         config: &NatTraversalConfig,
-        nat_role: NatTraversalRole,
+        _nat_role: NatTraversalRole,
+    ) -> Result<(QuinnEndpoint, mpsc::UnboundedSender<NatTraversalEvent>), NatTraversalError> {
+        use std::sync::Arc;
+        
+        // Create server config if this is a coordinator/bootstrap node
+        let server_config = match config.role {
+            EndpointRole::Bootstrap | EndpointRole::Server { .. } => {
+                // Production certificate management
+                let cert_config = CertificateConfig {
+                    common_name: format!("ant-quic-{}", config.role.name()),
+                    subject_alt_names: vec![
+                        "localhost".to_string(),
+                        "ant-quic-node".to_string(),
+                    ],
+                    self_signed: true, // Use self-signed for P2P networks
+                    ..CertificateConfig::default()
+                };
+                
+                let cert_manager = CertificateManager::new(cert_config)
+                    .map_err(|e| NatTraversalError::ConfigError(format!("Certificate manager creation failed: {}", e)))?;
+                
+                let cert_bundle = cert_manager.generate_certificate()
+                    .map_err(|e| NatTraversalError::ConfigError(format!("Certificate generation failed: {}", e)))?;
+                
+                let rustls_config = cert_manager.create_server_config(&cert_bundle)
+                    .map_err(|e| NatTraversalError::ConfigError(format!("Server config creation failed: {}", e)))?;
+                
+                let server_crypto = QuicServerConfig::try_from(rustls_config.as_ref().clone())
+                    .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
+                
+                let mut server_config = ServerConfig::with_crypto(Arc::new(server_crypto));
+                
+                // Configure transport parameters for NAT traversal
+                let mut transport_config = TransportConfig::default();
+                transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
+                transport_config.max_idle_timeout(Some(quinn::VarInt::from_u32(30000).into()));
+                server_config.transport_config(Arc::new(transport_config));
+                
+                Some(server_config)
+            }
+            _ => None,
+        };
+        
+        // Create client config for outgoing connections
+        let client_config = {
+            let cert_config = CertificateConfig {
+                common_name: format!("ant-quic-{}", config.role.name()),
+                subject_alt_names: vec![
+                    "localhost".to_string(),
+                    "ant-quic-node".to_string(),
+                ],
+                self_signed: true,
+                ..CertificateConfig::default()
+            };
+            
+            let cert_manager = CertificateManager::new(cert_config)
+                .map_err(|e| NatTraversalError::ConfigError(format!("Certificate manager creation failed: {}", e)))?;
+            
+            let _cert_bundle = cert_manager.generate_certificate()
+                .map_err(|e| NatTraversalError::ConfigError(format!("Certificate generation failed: {}", e)))?;
+            
+            let rustls_config = cert_manager.create_client_config()
+                .map_err(|e| NatTraversalError::ConfigError(format!("Client config creation failed: {}", e)))?;
+            
+            let client_crypto = QuicClientConfig::try_from(rustls_config.as_ref().clone())
+                .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
+            
+            let mut client_config = ClientConfig::new(Arc::new(client_crypto));
+            
+            // Configure transport parameters for NAT traversal
+            let mut transport_config = TransportConfig::default();
+            transport_config.keep_alive_interval(Some(Duration::from_secs(5)));
+            transport_config.max_idle_timeout(Some(quinn::VarInt::from_u32(30000).into()));
+            client_config.transport_config(Arc::new(transport_config));
+            
+            client_config
+        };
+        
+        // Create UDP socket
+        let socket = UdpSocket::bind("0.0.0.0:0").await
+            .map_err(|e| NatTraversalError::NetworkError(format!("Failed to bind UDP socket: {}", e)))?;
+        
+        // Convert tokio socket to std socket
+        let std_socket = socket.into_std()
+            .map_err(|e| NatTraversalError::NetworkError(format!("Failed to convert socket: {}", e)))?;
+        
+        // Create Quinn endpoint
+        let mut endpoint = QuinnEndpoint::new(
+            EndpointConfig::default(),
+            server_config,
+            std_socket,
+            Arc::new(quinn::TokioRuntime),
+        ).map_err(|e| NatTraversalError::ConfigError(format!("Failed to create Quinn endpoint: {}", e)))?;
+        
+        // Set default client config
+        endpoint.set_default_client_config(client_config);
+        
+        // Create event channel
+        let (event_tx, _event_rx) = mpsc::unbounded_channel();
+        
+        Ok((endpoint, event_tx))
+    }
+    
+    /// Create a fallback endpoint for non-production builds
+    #[cfg(not(feature = "production-ready"))]
+    fn create_fallback_endpoint(
+        config: &NatTraversalConfig,
+        _nat_role: NatTraversalRole,
     ) -> Result<Endpoint, NatTraversalError> {
         use crate::{
             EndpointConfig, TransportConfig,
@@ -423,20 +795,32 @@ impl NatTraversalEndpoint {
         // Create server config if this is a coordinator/bootstrap node
         let server_config = match config.role {
             EndpointRole::Bootstrap | EndpointRole::Server { .. } => {
-                // For demo purposes, create a simple server config
-                // In production, you'd need proper certificate management
-                let cert = rustls::pki_types::CertificateDer::from(vec![0; 32]); // Dummy cert
-                let key = rustls::pki_types::PrivateKeyDer::try_from(vec![0; 32]).ok(); // Dummy key
-                
-                if let Some(key) = key {
+                #[cfg(feature = "production-ready")]
+                {
+                    // Production certificate management
+                    let cert_config = CertificateConfig {
+                        common_name: format!("ant-quic-{}", config.role.name()),
+                        subject_alt_names: vec![
+                            "localhost".to_string(),
+                            "ant-quic-node".to_string(),
+                        ],
+                        self_signed: true, // Use self-signed for P2P networks
+                        ..CertificateConfig::default()
+                    };
+                    
+                    let cert_manager = CertificateManager::new(cert_config)
+                        .map_err(|e| NatTraversalError::ConfigError(format!("Certificate manager creation failed: {}", e)))?;
+                    
+                    let _cert_bundle = cert_manager.generate_certificate()
+                        .map_err(|e| NatTraversalError::ConfigError(format!("Certificate generation failed: {}", e)))?;
+                    
                     #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
                     {
-                        let server_config = QuicServerConfig::try_from(
-                            rustls::ServerConfig::builder()
-                                .with_no_client_auth()
-                                .with_single_cert(vec![cert], key)
-                                .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?
-                        ).map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
+                        let rustls_config = cert_manager.create_server_config(&cert_bundle)
+                            .map_err(|e| NatTraversalError::ConfigError(format!("Server config creation failed: {}", e)))?;
+                        
+                        let server_config = QuicServerConfig::try_from(rustls_config.as_ref().clone())
+                            .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
                         
                         Some(Arc::new(crate::ServerConfig::with_crypto(Arc::new(server_config))))
                     }
@@ -444,8 +828,32 @@ impl NatTraversalEndpoint {
                     {
                         None
                     }
-                } else {
-                    None
+                }
+                #[cfg(not(feature = "production-ready"))]
+                {
+                    // Fallback to dummy certificates for development
+                    let cert = rustls::pki_types::CertificateDer::from(vec![0; 32]);
+                    let key = rustls::pki_types::PrivateKeyDer::try_from(vec![0; 32]).ok();
+                    
+                    if let Some(key) = key {
+                        #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
+                        {
+                            let server_config = QuicServerConfig::try_from(
+                                rustls::ServerConfig::builder()
+                                    .with_no_client_auth()
+                                    .with_single_cert(vec![cert], key)
+                                    .map_err(|e| NatTraversalError::ConfigError(e.to_string()))?
+                            ).map_err(|e| NatTraversalError::ConfigError(e.to_string()))?;
+                            
+                            Some(Arc::new(crate::ServerConfig::with_crypto(Arc::new(server_config))))
+                        }
+                        #[cfg(not(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
+                        {
+                            None
+                        }
+                    } else {
+                        None
+                    }
                 }
             }
             _ => None,
@@ -464,7 +872,495 @@ impl NatTraversalEndpoint {
         
         Ok(endpoint)
     }
+    
+    /// Start listening for incoming connections (async version)
+    #[cfg(feature = "production-ready")]
+    pub async fn start_listening(&self, bind_addr: SocketAddr) -> Result<(), NatTraversalError> {
+        let endpoint = self.quinn_endpoint.as_ref()
+            .ok_or_else(|| NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string()))?;
+        
+        // Rebind the endpoint to the specified address
+        let _socket = UdpSocket::bind(bind_addr).await
+            .map_err(|e| NatTraversalError::NetworkError(format!("Failed to bind to {}: {}", bind_addr, e)))?;
+        
+        info!("Started listening on {}", bind_addr);
+        
+        // Start accepting connections in a background task
+        let endpoint_clone = endpoint.clone();
+        let shutdown_clone = self.shutdown.clone();
+        let event_tx = self.event_tx.as_ref().unwrap().clone();
+        
+        tokio::spawn(async move {
+            Self::accept_connections(endpoint_clone, shutdown_clone, event_tx).await;
+        });
+        
+        Ok(())
+    }
+    
+    /// Accept incoming connections
+    #[cfg(feature = "production-ready")]
+    async fn accept_connections(
+        endpoint: QuinnEndpoint,
+        shutdown: Arc<AtomicBool>,
+        event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
+    ) {
+        while !shutdown.load(Ordering::Relaxed) {
+            match endpoint.accept().await {
+                Some(connecting) => {
+                    let event_tx = event_tx.clone();
+                    tokio::spawn(async move {
+                        match connecting.await {
+                            Ok(connection) => {
+                                info!("Accepted connection from {}", connection.remote_address());
+                                
+                                // Generate peer ID from connection address
+                                let peer_id = Self::generate_peer_id_from_address(connection.remote_address());
+                                
+                                let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
+                                    peer_id,
+                                    remote_address: connection.remote_address(),
+                                });
+                                
+                                // Handle connection streams
+                                Self::handle_connection(connection, event_tx).await;
+                            }
+                            Err(e) => {
+                                debug!("Connection failed: {}", e);
+                            }
+                        }
+                    });
+                }
+                None => {
+                    // Endpoint closed
+                    break;
+                }
+            }
+        }
+    }
+    
+    /// Handle an established connection
+    #[cfg(feature = "production-ready")]
+    async fn handle_connection(
+        connection: Connection,
+        event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
+    ) {
+        let peer_id = Self::generate_peer_id_from_address(connection.remote_address());
+        let remote_address = connection.remote_address();
+        
+        debug!("Handling connection from peer {:?} at {}", peer_id, remote_address);
+        // Handle bidirectional and unidirectional streams
+        loop {
+            tokio::select! {
+                stream = connection.accept_bi() => {
+                    match stream {
+                        Ok((send, recv)) => {
+                            tokio::spawn(async move {
+                                Self::handle_bi_stream(send, recv).await;
+                            });
+                        }
+                        Err(e) => {
+                            debug!("Error accepting bidirectional stream: {}", e);
+                            let _ = event_tx.send(NatTraversalEvent::ConnectionLost {
+                                peer_id,
+                                reason: format!("Stream error: {}", e),
+                            });
+                            break;
+                        }
+                    }
+                }
+                stream = connection.accept_uni() => {
+                    match stream {
+                        Ok(recv) => {
+                            tokio::spawn(async move {
+                                Self::handle_uni_stream(recv).await;
+                            });
+                        }
+                        Err(e) => {
+                            debug!("Error accepting unidirectional stream: {}", e);
+                            let _ = event_tx.send(NatTraversalEvent::ConnectionLost {
+                                peer_id,
+                                reason: format!("Stream error: {}", e),
+                            });
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    /// Handle a bidirectional stream
+    #[cfg(feature = "production-ready")]
+    async fn handle_bi_stream(
+        mut send: quinn::SendStream,
+        mut recv: quinn::RecvStream,
+    ) {
+        let mut buffer = vec![0u8; 1024];
+        
+        loop {
+            match recv.read(&mut buffer).await {
+                Ok(Some(size)) => {
+                    debug!("Received {} bytes on bidirectional stream", size);
+                    
+                    // Echo back the data for now
+                    if let Err(e) = send.write_all(&buffer[..size]).await {
+                        debug!("Failed to write to stream: {}", e);
+                        break;
+                    }
+                }
+                Ok(None) => {
+                    debug!("Bidirectional stream closed by peer");
+                    break;
+                }
+                Err(e) => {
+                    debug!("Error reading from bidirectional stream: {}", e);
+                    break;
+                }
+            }
+        }
+    }
+    
+    /// Handle a unidirectional stream
+    #[cfg(feature = "production-ready")]
+    async fn handle_uni_stream(mut recv: quinn::RecvStream) {
+        let mut buffer = vec![0u8; 1024];
+        
+        loop {
+            match recv.read(&mut buffer).await {
+                Ok(Some(size)) => {
+                    debug!("Received {} bytes on unidirectional stream", size);
+                    // Process the data
+                }
+                Ok(None) => {
+                    debug!("Unidirectional stream closed by peer");
+                    break;
+                }
+                Err(e) => {
+                    debug!("Error reading from unidirectional stream: {}", e);
+                    break;
+                }
+            }
+        }
+    }
+    
+    /// Connect to a peer using NAT traversal
+    #[cfg(feature = "production-ready")]
+    pub async fn connect_to_peer(
+        &self,
+        peer_id: PeerId,
+        server_name: &str,
+        remote_addr: SocketAddr,
+    ) -> Result<Connection, NatTraversalError> {
+        let endpoint = self.quinn_endpoint.as_ref()
+            .ok_or_else(|| NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string()))?;
+        
+        info!("Connecting to peer {:?} at {}", peer_id, remote_addr);
+        
+        // Attempt connection with timeout
+        let connecting = endpoint.connect(remote_addr, server_name)
+            .map_err(|e| NatTraversalError::ConnectionFailed(format!("Failed to initiate connection: {}", e)))?;
+        
+        let connection = timeout(Duration::from_secs(10), connecting)
+            .await
+            .map_err(|_| NatTraversalError::Timeout)?
+            .map_err(|e| NatTraversalError::ConnectionFailed(format!("Connection failed: {}", e)))?;
+        
+        info!("Successfully connected to peer {:?} at {}", peer_id, remote_addr);
+        
+        // Send event notification
+        if let Some(ref event_tx) = self.event_tx {
+            let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
+                peer_id,
+                remote_address: remote_addr,
+            });
+        }
+        
+        Ok(connection)
+    }
+    
+    /// Accept incoming connections on the endpoint
+    #[cfg(feature = "production-ready")]
+    pub async fn accept_connection(&self) -> Result<(PeerId, Connection), NatTraversalError> {
+        let endpoint = self.quinn_endpoint.as_ref()
+            .ok_or_else(|| NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string()))?;
+        
+        // Accept incoming connection
+        let incoming = endpoint.accept().await
+            .ok_or_else(|| NatTraversalError::NetworkError("Endpoint closed".to_string()))?;
+        
+        let remote_addr = incoming.remote_address();
+        info!("Accepting connection from {}", remote_addr);
+        
+        // Accept the connection
+        let connection = incoming.await
+            .map_err(|e| NatTraversalError::ConnectionFailed(format!("Failed to accept connection: {}", e)))?;
+        
+        // Generate or extract peer ID from connection
+        let peer_id = self.extract_peer_id_from_connection(&connection).await
+            .unwrap_or_else(|| Self::generate_peer_id_from_address(remote_addr));
+        
+        // Store the connection
+        {
+            let mut connections = self.connections.write()
+                .map_err(|_| NatTraversalError::ProtocolError("Connections lock poisoned".to_string()))?;
+            connections.insert(peer_id, connection.clone());
+        }
+        
+        info!("Connection accepted from peer {:?} at {}", peer_id, remote_addr);
+        
+        // Send event notification
+        if let Some(ref event_tx) = self.event_tx {
+            let _ = event_tx.send(NatTraversalEvent::ConnectionEstablished {
+                peer_id,
+                remote_address: remote_addr,
+            });
+        }
+        
+        Ok((peer_id, connection))
+    }
+    
+    /// Get the local peer ID
+    pub fn local_peer_id(&self) -> PeerId {
+        self.local_peer_id
+    }
+    
+    /// Get an active connection by peer ID
+    #[cfg(feature = "production-ready")]
+    pub fn get_connection(&self, peer_id: &PeerId) -> Result<Option<Connection>, NatTraversalError> {
+        let connections = self.connections.read()
+            .map_err(|_| NatTraversalError::ProtocolError("Connections lock poisoned".to_string()))?;
+        Ok(connections.get(peer_id).cloned())
+    }
+    
+    /// Remove a connection by peer ID
+    #[cfg(feature = "production-ready")]
+    pub fn remove_connection(&self, peer_id: &PeerId) -> Result<Option<Connection>, NatTraversalError> {
+        let mut connections = self.connections.write()
+            .map_err(|_| NatTraversalError::ProtocolError("Connections lock poisoned".to_string()))?;
+        Ok(connections.remove(peer_id))
+    }
+    
+    /// List all active connections
+    #[cfg(feature = "production-ready")]
+    pub fn list_connections(&self) -> Result<Vec<(PeerId, SocketAddr)>, NatTraversalError> {
+        let connections = self.connections.read()
+            .map_err(|_| NatTraversalError::ProtocolError("Connections lock poisoned".to_string()))?;
+        let mut result = Vec::new();
+        for (peer_id, connection) in connections.iter() {
+            result.push((*peer_id, connection.remote_address()));
+        }
+        Ok(result)
+    }
+    
+    /// Handle incoming data from a connection
+    #[cfg(feature = "production-ready")]
+    pub async fn handle_connection_data(
+        &self,
+        peer_id: PeerId,
+        connection: &Connection,
+    ) -> Result<(), NatTraversalError> {
+        info!("Handling connection data from peer {:?}", peer_id);
+        
+        // Spawn task to handle bidirectional streams
+        let connection_clone = connection.clone();
+        let peer_id_clone = peer_id;
+        tokio::spawn(async move {
+            loop {
+                match connection_clone.accept_bi().await {
+                    Ok((send, recv)) => {
+                        debug!("Accepted bidirectional stream from peer {:?}", peer_id_clone);
+                        tokio::spawn(Self::handle_bi_stream(send, recv));
+                    }
+                    Err(ConnectionError::ApplicationClosed(_)) => {
+                        debug!("Connection closed by peer {:?}", peer_id_clone);
+                        break;
+                    }
+                    Err(e) => {
+                        debug!("Error accepting bidirectional stream from peer {:?}: {}", peer_id_clone, e);
+                        break;
+                    }
+                }
+            }
+        });
+        
+        // Spawn task to handle unidirectional streams
+        let connection_clone = connection.clone();
+        let peer_id_clone = peer_id;
+        tokio::spawn(async move {
+            loop {
+                match connection_clone.accept_uni().await {
+                    Ok(recv) => {
+                        debug!("Accepted unidirectional stream from peer {:?}", peer_id_clone);
+                        tokio::spawn(Self::handle_uni_stream(recv));
+                    }
+                    Err(ConnectionError::ApplicationClosed(_)) => {
+                        debug!("Connection closed by peer {:?}", peer_id_clone);
+                        break;
+                    }
+                    Err(e) => {
+                        debug!("Error accepting unidirectional stream from peer {:?}: {}", peer_id_clone, e);
+                        break;
+                    }
+                }
+            }
+        });
+        
+        Ok(())
+    }
+    
+    /// Generate a local peer ID
+    fn generate_local_peer_id() -> PeerId {
+        use std::time::SystemTime;
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        SystemTime::now().hash(&mut hasher);
+        std::process::id().hash(&mut hasher);
+        
+        let hash = hasher.finish();
+        let mut peer_id = [0u8; 32];
+        peer_id[0..8].copy_from_slice(&hash.to_be_bytes());
+        
+        // Add some randomness
+        for i in 8..32 {
+            peer_id[i] = rand::random();
+        }
+        
+        PeerId(peer_id)
+    }
+    
+    /// Generate a peer ID from a socket address
+    fn generate_peer_id_from_address(addr: SocketAddr) -> PeerId {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+        
+        let mut hasher = DefaultHasher::new();
+        addr.hash(&mut hasher);
+        
+        let hash = hasher.finish();
+        let mut peer_id = [0u8; 32];
+        peer_id[0..8].copy_from_slice(&hash.to_be_bytes());
+        
+        // Add some randomness to avoid collisions
+        for i in 8..32 {
+            peer_id[i] = rand::random();
+        }
+        
+        PeerId(peer_id)
+    }
+    
+    /// Extract peer ID from connection (stub implementation)
+    #[cfg(feature = "production-ready")]
+    async fn extract_peer_id_from_connection(&self, connection: &Connection) -> Option<PeerId> {
+        // TODO: In a real implementation, this would:
+        // 1. Read the peer's certificate
+        // 2. Extract the peer ID from the certificate subject
+        // 3. Or use a custom transport parameter
+        // For now, we'll return None to fall back to address-based generation
+        let _ = connection;
+        None
+    }
+    
+    /// Shutdown the endpoint
+    #[cfg(feature = "production-ready")]
+    pub async fn shutdown(&self) -> Result<(), NatTraversalError> {
+        // Set shutdown flag
+        self.shutdown.store(true, Ordering::Relaxed);
+        
+        // Close all active connections
+        {
+            let mut connections = self.connections.write()
+                .map_err(|_| NatTraversalError::ProtocolError("Connections lock poisoned".to_string()))?;
+            for (peer_id, connection) in connections.drain() {
+                info!("Closing connection to peer {:?}", peer_id);
+                connection.close(0u32.into(), b"Shutdown");
+            }
+        }
+        
+        // Wait for connection to be closed
+        if let Some(ref endpoint) = self.quinn_endpoint {
+            endpoint.wait_idle().await;
+        }
+        
+        info!("NAT traversal endpoint shutdown completed");
+        Ok(())
+    }
 
+    /// Discover address candidates for a peer
+    #[cfg(feature = "production-ready")]
+    pub async fn discover_candidates(&self, peer_id: PeerId) -> Result<Vec<CandidateAddress>, NatTraversalError> {
+        debug!("Discovering address candidates for peer {:?}", peer_id);
+        
+        let mut candidates = Vec::new();
+        
+        // Get bootstrap nodes
+        let bootstrap_nodes = {
+            let nodes = self.bootstrap_nodes.read()
+                .map_err(|_| NatTraversalError::ProtocolError("Lock poisoned".to_string()))?;
+            nodes.clone()
+        };
+        
+        // Start discovery process
+        {
+            let mut discovery = self.discovery_manager.lock()
+                .map_err(|_| NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string()))?;
+            
+            discovery.start_discovery(peer_id, bootstrap_nodes)
+                .map_err(|e| NatTraversalError::CandidateDiscoveryFailed(e.to_string()))?;
+        }
+        
+        // Poll for discovery results with timeout
+        let timeout_duration = self.config.coordination_timeout;
+        let start_time = std::time::Instant::now();
+        
+        while start_time.elapsed() < timeout_duration {
+            let discovery_events = {
+                let mut discovery = self.discovery_manager.lock()
+                    .map_err(|_| NatTraversalError::ProtocolError("Discovery manager lock poisoned".to_string()))?;
+                discovery.poll(std::time::Instant::now())
+            };
+            
+            for event in discovery_events {
+                match event {
+                    DiscoveryEvent::LocalCandidateDiscovered { candidate } => {
+                        candidates.push(candidate);
+                    }
+                    DiscoveryEvent::ServerReflexiveCandidateDiscovered { candidate, .. } => {
+                        candidates.push(candidate);
+                    }
+                    DiscoveryEvent::PredictedCandidateGenerated { candidate, .. } => {
+                        candidates.push(candidate);
+                    }
+                    DiscoveryEvent::DiscoveryCompleted { .. } => {
+                        // Discovery complete, return candidates
+                        return Ok(candidates);
+                    }
+                    DiscoveryEvent::DiscoveryFailed { error, partial_results } => {
+                        // Use partial results if available
+                        candidates.extend(partial_results);
+                        if candidates.is_empty() {
+                            return Err(NatTraversalError::CandidateDiscoveryFailed(error.to_string()));
+                        }
+                        return Ok(candidates);
+                    }
+                    _ => {}
+                }
+            }
+            
+            // Brief delay before next poll
+            sleep(Duration::from_millis(10)).await;
+        }
+        
+        if candidates.is_empty() {
+            Err(NatTraversalError::NoCandidatesFound)
+        } else {
+            Ok(candidates)
+        }
+    }
+    
+    /// Fallback candidate discovery for non-production builds
+    #[cfg(not(feature = "production-ready"))]
     fn discover_candidates(&self, peer_id: PeerId) -> Result<(), NatTraversalError> {
         debug!("Discovering address candidates for peer {:?}", peer_id);
         
