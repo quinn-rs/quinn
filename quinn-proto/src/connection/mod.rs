@@ -580,27 +580,59 @@ impl Connection {
 
     /// Closes a path by sending a PATH_ABANDON frame
     ///
-    /// This will not allow closing the last path.
+    /// This will not allow closing the last path. It does allow closing paths which have
+    /// not yet been opened, as e.g. is the case when receiving a PATH_ABANDON from the peer
+    /// for a path that was never opened locally.
     pub fn close_path(
         &mut self,
+        now: Instant,
         path_id: PathId,
-        _error_code: VarInt,
+        error_code: VarInt,
     ) -> Result<(), ClosePathError> {
-        // TODO(flub): We are allowed to close paths that have not yet been opened to use up
-        //    already issued path IDs.
-        let _path = self
+        if self.abandoned_paths.contains(&path_id) || Some(path_id) > self.max_path_id() {
+            return Err(ClosePathError::ClosedPath);
+        }
+        if self
             .paths
-            .get_mut(&path_id)
-            .ok_or(ClosePathError::ClosedPath)?;
-        if self.paths.len() < 2 {
+            .keys()
+            .filter(|&id| !self.abandoned_paths.contains(id))
+            .count()
+            < 2
+        {
             return Err(ClosePathError::LastOpenPath);
         }
-        // - send PATH_ABANDON
-        // - retire received CIDs for this path - this means no more sending anything using
-        //   it.
-        // - Now set a timer for 3 * PTO to remove the rest of the state? and set the reset
-        //   token.
-        todo!()
+
+        // Send PATH_ABANDON
+        self.spaces[SpaceId::Data]
+            .pending
+            .path_abandon
+            .insert(path_id, error_code.into());
+
+        // Consider remotely issued CIDs as retired.
+        // Technically we don't have to do this just yet.  We only need to do this *after*
+        // the ABANDON_PATH frame is sent, allowing us to still send it on the
+        // to-be-abandoned path.  However it is recommended to send it on another path, and
+        // we do not allow abandoning the last path anyway.
+        // We don't fully retire these CIDs.  We remove them so we can no longer send using
+        // them, but the reset tokens are still registered with the endpoint.  They will be
+        // removed when the connection is cleaned up, which is right because we might still
+        // receive stateless resets.
+        self.rem_cids.remove(&path_id);
+        self.endpoint_events
+            .push_back(EndpointEventInner::RetireResetToken(path_id));
+
+        self.abandoned_paths.insert(path_id);
+
+        self.set_max_path_id(now, self.local_max_path_id.saturating_add(1u8));
+
+        // The peer MUST respond with a corresponding PATH_ABANDON frame. If not, this timer
+        // expires.
+        self.timers.set(
+            Timer::PathNotAbandoned(path_id),
+            now + self.pto_max_path(SpaceId::Data),
+        );
+
+        Ok(())
     }
 
     /// Gets the [`PathData`] for a known [`PathId`].
@@ -843,19 +875,24 @@ impl Connection {
             // check if there is at least one active CID to use for sending
             let Some(remote_cid) = self.rem_cids.get(&path_id).map(CidQueue::active) else {
                 let err = PathError::RemoteCidsExhausted;
-                debug!(?err, %path_id, "no active CID for path");
-                self.events.push_back(Event::Path(PathEvent::LocallyClosed {
-                    id: path_id,
-                    error: err,
-                }));
-                // Locally we should have refused to open this path, the remote should have
-                // given us CIDs for this path before opening it.
-                self.close_path(path_id, TransportErrorCode::NO_CID_AVAILABLE.into())
-                    .ok();
-                self.spaces[SpaceId::Data]
-                    .pending
-                    .path_cids_blocked
-                    .push(path_id);
+                if !self.abandoned_paths.contains(&path_id) {
+                    debug!(?err, %path_id, "no active CID for path");
+                    self.events.push_back(Event::Path(PathEvent::LocallyClosed {
+                        id: path_id,
+                        error: err,
+                    }));
+                    // Locally we should have refused to open this path, the remote should
+                    // have given us CIDs for this path before opening it.  So we can always
+                    // abandon this here.
+                    self.close_path(now, path_id, TransportErrorCode::NO_CID_AVAILABLE.into())
+                        .ok();
+                    self.spaces[SpaceId::Data]
+                        .pending
+                        .path_cids_blocked
+                        .push(path_id);
+                } else {
+                    trace!(?path_id, "remote CIDs retired for abandoned path");
+                }
 
                 match self.paths.keys().find(|&&next| next > path_id) {
                     Some(next_path_id) => {
@@ -864,7 +901,7 @@ impl Connection {
                             ?space_id,
                             ?path_id,
                             ?next_path_id,
-                            "nothing to send on path"
+                            "no CIDs to send on path"
                         );
                         path_id = *next_path_id;
                         space_id = SpaceId::Data;
@@ -884,7 +921,7 @@ impl Connection {
                         trace!(
                             ?space_id,
                             ?path_id,
-                            "nothing to send on path, no more paths"
+                            "no CIDs to send on path, no more paths"
                         );
                         break;
                     }
@@ -1119,8 +1156,9 @@ impl Connection {
                     }
                 }
                 builder.finish_and_track(now, self, path_id, sent_frames, pad_datagram);
-                if space_id == self.highest_space && path_id == *self.paths.keys().max().unwrap() {
-                    // Don't send another close packet
+                if space_id == self.highest_space {
+                    // Don't send another close packet. Even with multipath we only send
+                    // CONNECTION_CLOSE on a single path since we expect our paths to work.
                     self.close = false;
                     // `CONNECTION_CLOSE` is the final packet
                     break;
@@ -1654,7 +1692,7 @@ impl Connection {
                 Timer::PathIdle(path_id) => {
                     // TODO(flub): TransportErrorCode::NO_ERROR but where's the API to get
                     //    that into a VarInt?
-                    self.close_path(path_id, TransportErrorCode::NO_ERROR.into())
+                    self.close_path(now, path_id, TransportErrorCode::NO_ERROR.into())
                         .ok();
                 }
                 Timer::KeepAlive => {
@@ -1718,6 +1756,28 @@ impl Connection {
                         .for_path(path_id)
                         .pending_acks
                         .on_max_ack_delay_timeout()
+                }
+                Timer::PathAbandoned(path_id) => {
+                    // The path was abandoned and 3*PTO has expired since.  Clean up all
+                    // remaining state and install stateless reset token.
+                    if let Some(loc_cid_state) = self.local_cid_state.remove(&path_id) {
+                        let (min_seq, max_seq) = loc_cid_state.active_seq();
+                        for seq in min_seq..=max_seq {
+                            self.endpoint_events
+                                .push_back(EndpointEventInner::RetireConnectionId(
+                                    now, path_id, seq, false,
+                                ));
+                        }
+                    }
+                    self.paths.remove(&path_id);
+                    self.spaces[SpaceId::Data].number_spaces.remove(&path_id);
+                }
+                Timer::PathNotAbandoned(path_id) => {
+                    // The peer failed to respond with a PATH_ABANDON when we sent such a
+                    // frame.
+                    warn!(?path_id, "missing PATH_ABANDON from peer");
+                    // TODO(flub): What should the error code be?
+                    self.close(now, 0u8.into(), "peer ignored PATH_ABANDON frame".into());
                 }
             }
         }
@@ -3348,7 +3408,7 @@ impl Connection {
                     if let Some(token) = params.stateless_reset_token {
                         let remote = self.path_data(path_id).remote;
                         self.endpoint_events
-                            .push_back(EndpointEventInner::ResetToken(remote, token));
+                            .push_back(EndpointEventInner::ResetToken(path_id, remote, token));
                     }
                     self.handle_peer_params(params, loc_cid, rem_cid)?;
                     self.issue_first_cids(now);
@@ -3705,6 +3765,9 @@ impl Connection {
                         retire_prior_to = frame.retire_prior_to,
                     );
                     let path_id = frame.path_id.unwrap_or_default();
+                    // TODO(flub): We should only accept CIDs if path_id < self.max_path_id()
+                    //    because otherwise someone could attack us by sending us lots of
+                    //    CIDs.
                     let rem_cids = self
                         .rem_cids
                         .entry(path_id)
@@ -3740,7 +3803,7 @@ impl Connection {
                                 ));
                             }
                             pending_retired.extend(retired.map(|seq| (path_id, seq)));
-                            self.set_reset_token(remote, reset_token);
+                            self.set_reset_token(path_id, remote, reset_token);
                         }
                         Err(InsertError::ExceedsLimit) => {
                             return Err(TransportError::CONNECTION_ID_LIMIT_ERROR(""));
@@ -3861,8 +3924,31 @@ impl Connection {
                         migration_observed_addr = Some(observed)
                     }
                 }
-                Frame::PathAbandon(_) => {
-                    // TODO(@divma): jump ship?
+                Frame::PathAbandon(frame::PathAbandon {
+                    path_id,
+                    error_code,
+                }) => {
+                    // TODO(flub): don't really know which error code to use here.
+                    match self.close_path(now, path_id, error_code.into()) {
+                        Ok(()) => {
+                            trace!(?path_id, "peer abandoned path");
+                        }
+                        Err(ClosePathError::LastOpenPath) => {
+                            trace!("peer abandoned last path, closing connection");
+                            // TODO(flub): which error code?
+                            self.close(
+                                now,
+                                0u8.into(),
+                                Bytes::from_static(b"last path abandoned by peer"),
+                            );
+                        }
+                        Err(ClosePathError::ClosedPath) => {
+                            trace!(?path_id, "peer abandoned already closed path");
+                        }
+                    }
+                    let delay = self.pto(SpaceId::Data, path_id) * 3;
+                    self.timers.set(Timer::PathAbandoned(path_id), now + delay);
+                    self.timers.stop(Timer::PathNotAbandoned(path_id));
                 }
                 Frame::PathAvailable(info) => {
                     if self.is_multipath_negotiated() {
@@ -4062,11 +4148,11 @@ impl Connection {
 
     /// Switch to a previously unused remote connection ID, if possible
     fn update_rem_cid(&mut self, path_id: PathId) {
-        let (reset_token, retired) =
-            match self.rem_cids.get_mut(&path_id).and_then(|cids| cids.next()) {
-                Some(x) => x,
-                None => return,
-            };
+        let Some((reset_token, retired)) =
+            self.rem_cids.get_mut(&path_id).and_then(|cids| cids.next())
+        else {
+            return;
+        };
 
         // Retire the current remote CID and any CIDs we had to skip.
         self.spaces[SpaceId::Data]
@@ -4074,21 +4160,29 @@ impl Connection {
             .retire_cids
             .extend(retired.map(|seq| (path_id, seq)));
         let remote = self.path_data(path_id).remote;
-        self.set_reset_token(remote, reset_token);
+        self.set_reset_token(path_id, remote, reset_token);
     }
 
-    /// Sends this reset token to the endpoint.
+    /// Sends this reset token to the endpoint
     ///
-    /// The endpoint needs to have reset-tokens for past connections so that it can still
-    /// use those for stateless resets when the connection state is dropped.  See RFC 9000
-    /// section 10.3. Stateless Reset.
+    /// The endpoint needs to know the reset tokens issued by the peer, so that if the peer
+    /// sends a reset token it knows to route it to this connection. See RFC 9000 section
+    /// 10.3. Stateless Reset.
     ///
     /// Reset tokens are different for each path, the endpoint identifies paths by peer
     /// socket address however, not by path ID.
-    fn set_reset_token(&mut self, remote: SocketAddr, reset_token: ResetToken) {
+    fn set_reset_token(&mut self, path_id: PathId, remote: SocketAddr, reset_token: ResetToken) {
         self.endpoint_events
-            .push_back(EndpointEventInner::ResetToken(remote, reset_token));
-        self.peer_params.stateless_reset_token = Some(reset_token);
+            .push_back(EndpointEventInner::ResetToken(path_id, remote, reset_token));
+
+        // During the handshake the server sends a reset token in the transport
+        // parameters. When we are the client and we receive the reset token during the
+        // handshake we want this to affect our peer transport parameters.
+        // TODO(flub): Pretty sure this is pointless, the entire params is overwritten
+        //    shortly after this was called.  And then the params don't have this anymore.
+        if path_id == PathId::ZERO {
+            self.peer_params.stateless_reset_token = Some(reset_token);
+        }
     }
 
     /// Issue an initial set of connection IDs to the peer upon connection
@@ -4387,7 +4481,7 @@ impl Connection {
             && space_id == SpaceId::Data
             && frame::PathAbandon::SIZE_BOUND <= buf.remaining_mut()
         {
-            let Some((path_id, error_code)) = space.pending.path_abandon.pop() else {
+            let Some((path_id, error_code)) = space.pending.path_abandon.pop_first() else {
                 break;
             };
             frame::PathAbandon {
@@ -4396,6 +4490,12 @@ impl Connection {
             }
             .encode(buf);
             self.stats.frame_tx.path_abandon += 1;
+            trace!(?path_id, "PATH_ABANDON");
+            sent.retransmits
+                .get_or_create()
+                .path_abandon
+                .entry(path_id)
+                .or_insert(error_code);
         }
 
         // PATH_AVAILABLE & PATH_BACKUP
@@ -4678,11 +4778,11 @@ impl Connection {
         let delay = delay_micros >> ack_delay_exp.into_inner();
 
         if send_path_acks {
-            trace!("PATH_ACK {:?}, Delay = {}us", ranges, delay_micros);
+            trace!("PATH_ACK {path_id:?} {ranges:?}, Delay = {delay_micros}us");
             frame::PathAck::encode(path_id, delay as _, ranges, ecn, buf);
             stats.frame_tx.path_acks += 1;
         } else {
-            trace!("ACK {:?}, Delay = {}us", ranges, delay_micros);
+            trace!("ACK {ranges:?}, Delay = {delay_micros}us");
             frame::Ack::encode(delay as _, ranges, ecn, buf);
             stats.frame_tx.acks += 1;
         }
@@ -4737,11 +4837,10 @@ impl Connection {
         self.idle_timeout =
             negotiate_max_idle_timeout(self.config.max_idle_timeout, Some(params.max_idle_timeout));
         trace!("negotiated max idle timeout {:?}", self.idle_timeout);
-        let path_id = PathId(0);
 
         if let Some(ref info) = params.preferred_address {
             // During the handshake PathId(0) exists.
-            self.rem_cids.get_mut(&path_id).expect("not yet abandoned").insert(frame::NewConnectionId {
+            self.rem_cids.get_mut(&PathId::ZERO).expect("not yet abandoned").insert(frame::NewConnectionId {
                 path_id: None,
                 sequence: 1,
                 id: info.connection_id,
@@ -4751,8 +4850,8 @@ impl Connection {
             .expect(
                 "preferred address CID is the first received, and hence is guaranteed to be legal",
             );
-            let remote = self.path_data(path_id).remote;
-            self.set_reset_token(remote, info.stateless_reset_token);
+            let remote = self.path_data(PathId::ZERO).remote;
+            self.set_reset_token(PathId::ZERO, remote, info.stateless_reset_token);
         }
         self.ack_frequency.peer_max_ack_delay = get_max_ack_delay(&params);
 
@@ -4769,7 +4868,7 @@ impl Connection {
         self.peer_params = params;
         let peer_max_udp_payload_size =
             u16::try_from(self.peer_params.max_udp_payload_size.into_inner()).unwrap_or(u16::MAX);
-        self.path_data_mut(path_id)
+        self.path_data_mut(PathId::ZERO)
             .mtud
             .on_peer_max_udp_payload_size_received(peer_max_udp_payload_size);
     }

@@ -93,7 +93,9 @@ impl Path {
         let (on_path_close_send, on_path_close_recv) = oneshot::channel();
         {
             let mut state = self.conn.state.lock("close_path");
-            state.inner.close_path(self.id, error_code)?;
+            state
+                .inner
+                .close_path(crate::Instant::now(), self.id, error_code)?;
             state.close_path.insert(self.id, on_path_close_send);
         }
 

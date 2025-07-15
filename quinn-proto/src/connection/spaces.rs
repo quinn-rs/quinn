@@ -543,7 +543,7 @@ pub struct Retransmits {
     /// that; consider what such a change would mean for implementing `BitOrAssign` on Self.
     pub(super) new_tokens: Vec<SocketAddr>,
     /// Paths which need to be abandoned
-    pub(super) path_abandon: Vec<(PathId, TransportErrorCode)>,
+    pub(super) path_abandon: BTreeMap<PathId, TransportErrorCode>,
     /// If a [`frame::PathAvailable`] and [`frame::PathBackup`] need to be sent for a path
     pub(super) path_status: BTreeSet<PathId>,
     /// If a PATH_CIDS_BLOCKED frame needs to be sent for a path
@@ -575,7 +575,7 @@ impl Retransmits {
 }
 
 impl ::std::ops::BitOrAssign for Retransmits {
-    fn bitor_assign(&mut self, rhs: Self) {
+    fn bitor_assign(&mut self, mut rhs: Self) {
         // We reduce in-stream head-of-line blocking by queueing retransmits before other data for
         // STREAM and CRYPTO frames.
         self.max_data |= rhs.max_data;
@@ -594,7 +594,7 @@ impl ::std::ops::BitOrAssign for Retransmits {
         self.handshake_done |= rhs.handshake_done;
         self.observed_addr |= rhs.observed_addr;
         self.new_tokens.extend_from_slice(&rhs.new_tokens);
-        self.path_abandon.extend_from_slice(&rhs.path_abandon);
+        self.path_abandon.append(&mut rhs.path_abandon);
         self.max_path_id |= rhs.max_path_id;
         self.paths_blocked |= rhs.paths_blocked;
     }

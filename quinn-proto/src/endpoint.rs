@@ -105,12 +105,20 @@ impl Endpoint {
             NeedIdentifiers(path_id, now, n) => {
                 return Some(self.send_new_identifiers(path_id, now, ch, n));
             }
-            ResetToken(remote, token) => {
-                if let Some(old) = self.connections[ch].reset_token.replace((remote, token)) {
+            ResetToken(path_id, remote, token) => {
+                if let Some(old) = self.connections[ch]
+                    .reset_token
+                    .insert(path_id, (remote, token))
+                {
                     self.index.connection_reset_tokens.remove(old.0, old.1);
                 }
                 if self.index.connection_reset_tokens.insert(remote, token, ch) {
                     warn!("duplicate reset token");
+                }
+            }
+            RetireResetToken(path_id) => {
+                if let Some(old) = self.connections[ch].reset_token.remove(&path_id) {
+                    self.index.connection_reset_tokens.remove(old.0, old.1);
                 }
             }
             RetireConnectionId(now, path_id, seq, allow_more_cids) => {
@@ -119,7 +127,7 @@ impl Endpoint {
                     .get_mut(&path_id)
                     .and_then(|pcid| pcid.cids.remove(&seq))
                 {
-                    trace!(?path_id, "peer retired CID {}: {}", seq, cid);
+                    trace!(?path_id, "local CID retired {}: {}", seq, cid);
                     self.index.retire(cid);
                     if allow_more_cids {
                         return Some(self.send_new_identifiers(path_id, now, ch, 1));
@@ -266,6 +274,7 @@ impl Endpoint {
         }
     }
 
+    /// Builds a stateless reset packet to respond with
     fn stateless_reset(
         &mut self,
         now: Instant,
@@ -854,7 +863,7 @@ impl Endpoint {
             loc_cids: FxHashMap::from_iter([(PathId(0), path_cids)]),
             addresses,
             side,
-            reset_token: None,
+            reset_token: Default::default(),
         });
         debug_assert_eq!(id, ch.0, "connection handle allocation out of sync");
 
@@ -1085,8 +1094,8 @@ impl ConnectionIndex {
         self.incoming_connection_remotes.remove(&conn.addresses);
         self.outgoing_connection_remotes
             .remove(&conn.addresses.remote);
-        if let Some((remote, token)) = conn.reset_token {
-            self.connection_reset_tokens.remove(remote, token);
+        for (remote, token) in conn.reset_token.values() {
+            self.connection_reset_tokens.remove(*remote, *token);
         }
     }
 
@@ -1122,7 +1131,7 @@ impl ConnectionIndex {
         self.connection_reset_tokens
             .get(addresses.remote, &data[data.len() - RESET_TOKEN_SIZE..])
             .cloned()
-            .map(|ch| RouteDatagramTo::Connection(ch, PathId(0)))
+            .map(|ch| RouteDatagramTo::Connection(ch, PathId::ZERO))
     }
 }
 
@@ -1137,9 +1146,15 @@ pub(crate) struct ConnectionMeta {
     /// bother keeping it up to date.
     addresses: FourTuple,
     side: Side,
-    /// Reset token provided by the peer for the CID we're currently sending to, and the address
-    /// being sent to
-    reset_token: Option<(SocketAddr, ResetToken)>,
+    /// Reset tokens provided by the peer for CIDs we're currently sending to
+    ///
+    /// Since each reset token is for a CID, it is also for a fixed remote address which is
+    /// also stored. This allows us to look up which reset tokens we might expect from a
+    /// given remote address, see [`ResetTokenTable`].
+    ///
+    /// Each path has its own active CID. We use the [`PathId`] as a unique index, allowing
+    /// us to retire the reset token when a path is abandoned.
+    reset_token: FxHashMap<PathId, (SocketAddr, ResetToken)>,
 }
 
 /// Local connection IDs for a single path
