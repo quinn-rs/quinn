@@ -7,6 +7,8 @@ use std::{
     sync::Arc,
 };
 
+use indexmap::IndexMap;
+
 use bytes::{BufMut, Bytes, BytesMut};
 use rand::{Rng, RngCore, SeedableRng, rngs::StdRng};
 use rustc_hash::FxHashMap;
@@ -54,8 +56,10 @@ struct RelayQueueItem {
 /// Relay queue management for bootstrap nodes
 #[derive(Debug)]
 struct RelayQueue {
-    /// Pending relay requests
-    pending: VecDeque<RelayQueueItem>,
+    /// Pending relay requests with insertion order and O(1) access
+    pending: IndexMap<u64, RelayQueueItem>,
+    /// Next sequence number for insertion order
+    next_seq: u64,
     /// Maximum queue size to prevent memory exhaustion
     max_queue_size: usize,
     /// Timeout for relay requests
@@ -95,7 +99,8 @@ impl RelayQueue {
     /// Create a new relay queue with default settings
     fn new() -> Self {
         Self {
-            pending: VecDeque::new(),
+            pending: IndexMap::new(),
+            next_seq: 0,
             max_queue_size: 1000, // Reasonable default
             request_timeout: Duration::from_secs(30), // 30 second timeout
             max_retries: 3,
@@ -128,7 +133,9 @@ impl RelayQueue {
             last_attempt: None,
         };
 
-        self.pending.push_back(item);
+        let seq = self.next_seq;
+        self.next_seq += 1;
+        self.pending.insert(seq, item);
         
         // Record this request for rate limiting
         self.record_relay_request(target_peer_id, now);
@@ -166,18 +173,13 @@ impl RelayQueue {
     /// Get the next relay request that's ready to be processed
     fn next_ready(&mut self, now: Instant) -> Option<RelayQueueItem> {
         // Find the first request that's ready to be retried
-        for i in 0..self.pending.len() {
-            let item = &self.pending[i];
-            
+        let mut expired_keys = Vec::new();
+        let mut ready_key = None;
+        
+        for (seq, item) in &self.pending {
             // Check if request has timed out
             if now.saturating_duration_since(item.created_at) > self.request_timeout {
-                // Remove timed out request
-                let expired = self.pending.remove(i);
-                if let Some(expired) = expired {
-                    debug!("Relay request for peer {:?} timed out after {:?}", 
-                           expired.target_peer_id, 
-                           now.saturating_duration_since(expired.created_at));
-                }
+                expired_keys.push(*seq);
                 continue;
             }
 
@@ -185,12 +187,26 @@ impl RelayQueue {
             if item.attempts == 0 || 
                item.last_attempt.map_or(true, |last| 
                    now.saturating_duration_since(last) >= self.retry_interval) {
-                // Remove and return this item
-                if let Some(mut item) = self.pending.remove(i) {
-                    item.attempts += 1;
-                    item.last_attempt = Some(now);
-                    return Some(item);
-                }
+                ready_key = Some(*seq);
+                break;
+            }
+        }
+        
+        // Remove expired items
+        for key in expired_keys {
+            if let Some(expired) = self.pending.shift_remove(&key) {
+                debug!("Relay request for peer {:?} timed out after {:?}", 
+                       expired.target_peer_id, 
+                       now.saturating_duration_since(expired.created_at));
+            }
+        }
+        
+        // Return ready item if found
+        if let Some(key) = ready_key {
+            if let Some(mut item) = self.pending.shift_remove(&key) {
+                item.attempts += 1;
+                item.last_attempt = Some(now);
+                return Some(item);
             }
         }
 
@@ -202,7 +218,9 @@ impl RelayQueue {
         if item.attempts < self.max_retries {
             trace!("Requeuing failed relay request for peer {:?}, attempt {}/{}", 
                    item.target_peer_id, item.attempts, self.max_retries);
-            self.pending.push_back(item);
+            let seq = self.next_seq;
+            self.next_seq += 1;
+            self.pending.insert(seq, item);
         } else {
             debug!("Dropping relay request for peer {:?} after {} failed attempts", 
                    item.target_peer_id, item.attempts);
@@ -213,14 +231,23 @@ impl RelayQueue {
     fn cleanup_expired(&mut self, now: Instant) -> usize {
         let initial_len = self.pending.len();
         
+        // Collect expired keys
+        let expired_keys: Vec<u64> = self.pending.iter()
+            .filter_map(|(seq, item)| {
+                if now.saturating_duration_since(item.created_at) > self.request_timeout {
+                    Some(*seq)
+                } else {
+                    None
+                }
+            })
+            .collect();
+        
         // Remove expired items
-        self.pending.retain(|item| {
-            let expired = now.saturating_duration_since(item.created_at) <= self.request_timeout;
-            if !expired {
-                debug!("Removing expired relay request for peer {:?}", item.target_peer_id);
+        for key in expired_keys {
+            if let Some(expired) = self.pending.shift_remove(&key) {
+                debug!("Removing expired relay request for peer {:?}", expired.target_peer_id);
             }
-            expired
-        });
+        }
 
         initial_len - self.pending.len()
     }
@@ -373,26 +400,36 @@ impl Endpoint {
         let _now = Instant::now();
         let mut processed = 0;
         
-        // Look for queued requests for this peer
-        let mut i = 0;
-        while i < self.relay_queue.pending.len() {
-            if self.relay_queue.pending[i].target_peer_id == peer_id {
-                if let Some(item) = self.relay_queue.pending.remove(i) {
-                    if let Some(ch) = self.lookup_peer_connection(&peer_id) {
-                        if self.relay_frame_to_connection(ch, item.frame.clone()) {
-                            self.relay_stats.requests_relayed += 1;
-                            processed += 1;
-                            trace!("Processed queued relay for peer {:?}", peer_id);
-                        } else {
-                            // Failed to relay, requeue
-                            self.relay_queue.requeue_failed(item);
-                            self.relay_stats.requests_failed += 1;
-                        }
-                    }
-                    continue; // Don't increment i as we removed an item
+        // Collect items to process for this peer
+        let mut items_to_process = Vec::new();
+        let mut keys_to_remove = Vec::new();
+        
+        // Find all items for this peer
+        for (seq, item) in &self.relay_queue.pending {
+            if item.target_peer_id == peer_id {
+                items_to_process.push(item.clone());
+                keys_to_remove.push(*seq);
+            }
+        }
+        
+        // Remove items from queue
+        for key in keys_to_remove {
+            self.relay_queue.pending.shift_remove(&key);
+        }
+        
+        // Process the items
+        for item in items_to_process {
+            if let Some(ch) = self.lookup_peer_connection(&peer_id) {
+                if self.relay_frame_to_connection(ch, item.frame.clone()) {
+                    self.relay_stats.requests_relayed += 1;
+                    processed += 1;
+                    trace!("Processed queued relay for peer {:?}", peer_id);
+                } else {
+                    // Failed to relay, requeue
+                    self.relay_queue.requeue_failed(item);
+                    self.relay_stats.requests_failed += 1;
                 }
             }
-            i += 1;
         }
         
         self.relay_stats.current_queue_size = self.relay_queue.len();
@@ -500,6 +537,15 @@ impl Endpoint {
                 // For now, log the frame since the queuing mechanism needs more integration
                 // TODO: Implement proper frame queuing in the connection layer
                 debug!("ADD_ADDRESS frame ready for transmission: {:?}", add_address_frame);
+            }
+            NatCandidateValidated { address, challenge } => {
+                // Handle successful NAT traversal candidate validation
+                trace!("NAT candidate validation succeeded for {} with challenge {:016x}", address, challenge);
+                
+                // The validation success is primarily handled by the connection-level state machine
+                // This event serves as notification to the endpoint for potential coordination
+                // with other components or logging/metrics collection
+                debug!("NAT candidate {} validated successfully", address);
             }
             Drained => {
                 if let Some(conn) = self.connections.try_remove(ch.0) {
@@ -1455,17 +1501,26 @@ impl ConnectionIndex {
 
     /// Find the existing connection that `datagram` should be routed to, if any
     fn get(&self, addresses: &FourTuple, datagram: &PartialDecode) -> Option<RouteDatagramTo> {
-        if !datagram.dst_cid().is_empty() {
-            if let Some(&ch) = self.connection_ids.get(datagram.dst_cid()) {
+        let dst_cid = datagram.dst_cid();
+        let is_empty_cid = dst_cid.is_empty();
+        
+        // Fast path: Try most common lookup first (non-empty CID)
+        if !is_empty_cid {
+            if let Some(&ch) = self.connection_ids.get(dst_cid) {
                 return Some(RouteDatagramTo::Connection(ch));
             }
         }
+        
+        // Initial/0RTT packet lookup
         if datagram.is_initial() || datagram.is_0rtt() {
-            if let Some(&ch) = self.connection_ids_initial.get(datagram.dst_cid()) {
+            if let Some(&ch) = self.connection_ids_initial.get(dst_cid) {
                 return Some(ch);
             }
         }
-        if datagram.dst_cid().is_empty() {
+        
+        // Empty CID lookup (less common, do after fast path)
+        if is_empty_cid {
+            // Check incoming connections first (servers handle more incoming)
             if let Some(&ch) = self.incoming_connection_remotes.get(addresses) {
                 return Some(RouteDatagramTo::Connection(ch));
             }
@@ -1473,6 +1528,8 @@ impl ConnectionIndex {
                 return Some(RouteDatagramTo::Connection(ch));
             }
         }
+        
+        // Stateless reset token lookup (least common, do last)
         let data = datagram.data();
         if data.len() < RESET_TOKEN_SIZE {
             return None;

@@ -19,6 +19,8 @@ use crate::{
     ConnectError, ConnectionId, Side, TransportError, TransportErrorCode,
     crypto::{
         self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys, UnsupportedVersion,
+        tls_extension_simulation::{ExtensionAwareTlsSession, SimulatedExtensionContext, TlsExtensionHooks},
+        tls_extensions::CertificateTypePreferences,
     },
     transport_parameters::TransportParameters,
 };
@@ -280,6 +282,8 @@ pub struct HandshakeData {
 pub struct QuicClientConfig {
     pub(crate) inner: Arc<rustls::ClientConfig>,
     initial: Suite,
+    /// Optional RFC 7250 extension context for certificate type negotiation
+    pub(crate) extension_context: Option<Arc<SimulatedExtensionContext>>,
 }
 
 impl QuicClientConfig {
@@ -298,6 +302,7 @@ impl QuicClientConfig {
             initial: initial_suite_from_provider(inner.crypto_provider())
                 .expect("no initial cipher suite found"),
             inner: Arc::new(inner),
+            extension_context: None,
         })
     }
 
@@ -312,6 +317,7 @@ impl QuicClientConfig {
             initial: initial_suite_from_provider(inner.crypto_provider())
                 .expect("no initial cipher suite found"),
             inner: Arc::new(inner),
+            extension_context: None,
         }
     }
 
@@ -323,9 +329,15 @@ impl QuicClientConfig {
         initial: Suite,
     ) -> Result<Self, NoInitialCipherSuite> {
         match initial.suite.common.suite {
-            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial }),
+            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial, extension_context: None }),
             _ => Err(NoInitialCipherSuite { specific: true }),
         }
+    }
+
+    /// Set the certificate type extension context for RFC 7250 support
+    pub fn with_extension_context(mut self, context: Arc<SimulatedExtensionContext>) -> Self {
+        self.extension_context = Some(context);
+        self
     }
 
     pub(crate) fn inner(verifier: Arc<dyn ServerCertVerifier>) -> rustls::ClientConfig {
@@ -350,7 +362,7 @@ impl crypto::ClientConfig for QuicClientConfig {
         params: &TransportParameters,
     ) -> Result<Box<dyn crypto::Session>, ConnectError> {
         let version = interpret_version(version)?;
-        Ok(Box::new(TlsSession {
+        let inner_session = Box::new(TlsSession {
             version,
             got_handshake_data: false,
             next_secrets: None,
@@ -366,7 +378,24 @@ impl crypto::ClientConfig for QuicClientConfig {
                 .unwrap(),
             ),
             suite: self.initial,
-        }))
+        });
+
+        // Wrap with extension awareness if RFC 7250 support is enabled
+        if let Some(extension_context) = &self.extension_context {
+            let conn_id = format!("client-{}-{}", server_name, 
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos());
+            Ok(Box::new(ExtensionAwareTlsSession::new(
+                inner_session,
+                extension_context.clone() as Arc<dyn TlsExtensionHooks>,
+                conn_id,
+                true, // is_client
+            )))
+        } else {
+            Ok(inner_session)
+        }
     }
 }
 
@@ -429,6 +458,8 @@ impl std::error::Error for NoInitialCipherSuite {}
 pub struct QuicServerConfig {
     inner: Arc<rustls::ServerConfig>,
     initial: Suite,
+    /// Optional RFC 7250 extension context for certificate type negotiation
+    pub(crate) extension_context: Option<Arc<SimulatedExtensionContext>>,
 }
 
 impl QuicServerConfig {
@@ -442,7 +473,14 @@ impl QuicServerConfig {
             initial: initial_suite_from_provider(inner.crypto_provider())
                 .expect("no initial cipher suite found"),
             inner: Arc::new(inner),
+            extension_context: None,
         })
+    }
+
+    /// Set the certificate type extension context for RFC 7250 support
+    pub fn with_extension_context(mut self, context: Arc<SimulatedExtensionContext>) -> Self {
+        self.extension_context = Some(context);
+        self
     }
 
     /// Initialize a QUIC-compatible TLS client configuration with a separate initial cipher suite
@@ -453,7 +491,7 @@ impl QuicServerConfig {
         initial: Suite,
     ) -> Result<Self, NoInitialCipherSuite> {
         match initial.suite.common.suite {
-            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial }),
+            CipherSuite::TLS13_AES_128_GCM_SHA256 => Ok(Self { inner, initial, extension_context: None }),
             _ => Err(NoInitialCipherSuite { specific: true }),
         }
     }
@@ -494,6 +532,7 @@ impl TryFrom<Arc<rustls::ServerConfig>> for QuicServerConfig {
             initial: initial_suite_from_provider(inner.crypto_provider())
                 .ok_or(NoInitialCipherSuite { specific: false })?,
             inner,
+            extension_context: None,
         })
     }
 }
@@ -506,7 +545,7 @@ impl crypto::ServerConfig for QuicServerConfig {
     ) -> Box<dyn crypto::Session> {
         // Safe: `start_session()` is never called if `initial_keys()` rejected `version`
         let version = interpret_version(version).unwrap();
-        Box::new(TlsSession {
+        let inner_session = Box::new(TlsSession {
             version,
             got_handshake_data: false,
             next_secrets: None,
@@ -515,7 +554,24 @@ impl crypto::ServerConfig for QuicServerConfig {
                     .unwrap(),
             ),
             suite: self.initial,
-        })
+        });
+
+        // Wrap with extension awareness if RFC 7250 support is enabled
+        if let Some(extension_context) = &self.extension_context {
+            let conn_id = format!("server-{}", 
+                std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .unwrap()
+                    .as_nanos());
+            Box::new(ExtensionAwareTlsSession::new(
+                inner_session,
+                extension_context.clone() as Arc<dyn TlsExtensionHooks>,
+                conn_id,
+                false, // is_client = false for server
+            ))
+        } else {
+            inner_session
+        }
     }
 
     fn initial_keys(

@@ -75,9 +75,9 @@ ed25519-dalek = { version = "2.1", features = ["rand_core"] }
 chrono = "0.4"
 crossbeam-epoch = "0.9"
 parking_lot = "0.12"
+indexmap = "2.0"
 
-# Production QUIC and networking dependencies
-quinn = { version = "0.11" }
+# Production networking dependencies
 rustls-pemfile = { version = "2.0", optional = true }
 rcgen = { version = "0.14", optional = true }
 tokio-util = { version = "0.7", optional = true }
@@ -115,6 +115,8 @@ tracing-subscriber = { version = "0.3.0", default-features = false, features = [
 tempfile = "3"
 lazy_static = "1"
 wasm-bindgen-test = { version = "0.3.45" }
+criterion = { version = "0.5", features = ["html_reports"] }
+indexmap = "2.0"
 
 # Platform-specific target dependencies
 [target.'cfg(windows)'.dependencies]
@@ -134,6 +136,7 @@ hex = "0.4"
 [target.'cfg(target_os = "macos")'.dependencies]
 system-configuration = "0.6"
 core-foundation = "0.9"
+libc = "0.2"
 
 [lints.rust]
 # https://rust-fuzz.github.io/book/cargo-fuzz/guide.html#cfgfuzzing
@@ -144,6 +147,23 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)'] }
 [[bin]]
 name = "ant-quic"
 path = "src/bin/ant-quic.rs"
+
+# Benchmarks
+[[bench]]
+name = "relay_queue"
+harness = false
+
+[[bench]]
+name = "candidate_discovery"
+harness = false
+
+[[bench]]
+name = "nat_traversal"
+harness = false
+
+[[bench]]
+name = "connection_management"
+harness = false
 
 [package.metadata.docs.rs]
 # all non-default features except fips (cannot build on docs.rs environment)

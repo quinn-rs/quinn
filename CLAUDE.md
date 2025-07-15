@@ -6,6 +6,10 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ant-quic is a QUIC transport protocol implementation with advanced NAT traversal capabilities, optimized for P2P networks and the Autonomi ecosystem. It extends the proven Quinn QUIC implementation with sophisticated hole-punching protocols to achieve near 100% connectivity through restrictive NATs.
 
+## Project Insights
+
+- This is not a library to integrate with Quinn, it's a fork of Quinn that we are upgrading
+
 ## Development Commands
 
 ### Building and Testing

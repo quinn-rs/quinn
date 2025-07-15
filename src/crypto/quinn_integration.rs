@@ -11,7 +11,7 @@ use std::{
     time::{Duration, Instant},
 };
 
-use quinn::{
+use crate::{
     Endpoint, Connection, ConnectionError, ConnectError,
     ClientConfig as QuinnClientConfig, ServerConfig as QuinnServerConfig,
     crypto::rustls::QuicClientConfig, crypto::rustls::QuicServerConfig,
@@ -110,7 +110,7 @@ impl CertTypeAwareQuicEndpoint {
         addr: SocketAddr,
         server_name: &str,
     ) -> Result<(Connection, QuicNegotiationContext), QuicConnectionError> {
-        let _span = span!(Level::INFO, "quic_connect_with_cert_negotiation", %addr, %server_name).entered();
+        let _span = span!(Level::INFO, "quic_connect_with_cert_negotiation", %addr, %server_name);
 
         // Start certificate type negotiation
         let negotiation_id = self.negotiation_manager.start_negotiation(self.preferences.clone());
@@ -181,7 +181,7 @@ impl CertTypeAwareQuicEndpoint {
         &self,
         incoming: quinn::Incoming,
     ) -> Result<(Connection, QuicNegotiationContext), QuicConnectionError> {
-        let _span = span!(Level::INFO, "quic_accept_with_cert_negotiation").entered();
+        let _span = span!(Level::INFO, "quic_accept_with_cert_negotiation");
 
         let peer_addr = incoming.remote_address();
         let negotiation_id = self.negotiation_manager.start_negotiation(self.preferences.clone());

@@ -280,20 +280,15 @@ impl CertTypeP2PNode {
         let endpoint = self.endpoint.endpoint();
         
         while let Some(incoming) = endpoint.accept().await {
-            let performance_monitor = self.performance_monitor.clone();
-            let bootstrap_registry = self.bootstrap_registry.clone();
-            let production_system = self.production_system.clone();
+            let accept_start = std::time::Instant::now();
             
-            tokio::spawn(async move {
-                let accept_start = std::time::Instant::now();
-                
-                // Check rate limiting
-                if !production_system.check_negotiation_allowed() {
-                    warn!("Incoming connection rate limited");
-                    return;
-                }
+            // Check rate limiting
+            if !self.production_system.check_negotiation_allowed() {
+                warn!("Incoming connection rate limited");
+                continue;
+            }
 
-                match endpoint.accept_with_cert_negotiation(incoming).await {
+            match self.endpoint.accept_with_cert_negotiation(incoming).await {
                     Ok((connection, context)) => {
                         let duration = accept_start.elapsed();
                         info!("Accepted connection: client_cert={}, server_cert={}, 0rtt={}, duration={:?}",
@@ -301,7 +296,7 @@ impl CertTypeP2PNode {
                               context.used_0rtt, duration);
 
                         // Record performance metrics
-                        performance_monitor.record_negotiation(
+                        self.performance_monitor.record_negotiation(
                             duration,
                             true,
                             Some(context.result.clone()),
@@ -309,7 +304,7 @@ impl CertTypeP2PNode {
                         );
 
                         // Register peer in bootstrap registry if available
-                        if let Some(registry) = bootstrap_registry {
+                        if let Some(registry) = &self.bootstrap_registry {
                             // In real implementation, would extract actual capabilities from connection
                             let dummy_capabilities = CertificateTypeCapabilities::from_preferences(
                                 &CertificateTypePreferences::prefer_raw_public_key(),
@@ -326,7 +321,7 @@ impl CertTypeP2PNode {
                         let duration = accept_start.elapsed();
                         error!("Failed to accept connection: {}", e);
 
-                        performance_monitor.record_negotiation(
+                        self.performance_monitor.record_negotiation(
                             duration,
                             false,
                             None,
@@ -334,7 +329,6 @@ impl CertTypeP2PNode {
                         );
                     }
                 }
-            });
         }
 
         Ok(())

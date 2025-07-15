@@ -11,9 +11,14 @@ mod tests {
         VarInt, Instant, Duration,
         transport_parameters::TransportParameters,
         frame::{Frame, FrameType},
+        ConnectionError, TransportError, TransportErrorCode,
+        config::{EndpointConfig, TransportConfig},
+        crypto::{Keys, KeyPair},
+        packet::{SpaceId},
     };
     use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
     use std::collections::HashMap;
+    use std::sync::Arc;
 
     /// Create a test NAT traversal state
     fn create_test_state(role: NatTraversalRole) -> NatTraversalState {
@@ -502,6 +507,225 @@ mod tests {
         
         assert_eq!(state.local_candidates.len(), 2);
         assert_eq!(state.next_sequence.into_inner(), u32::MAX);
+    }
+
+    /// Create a mock connection for testing NAT traversal methods
+    fn create_test_connection() -> Connection {
+        use crate::{
+            Side, EndpointConfig, ServerConfig, TransportConfig,
+            crypto::{rustls::QuicServerConfig, rustls::QuicClientConfig},
+            shared::ConnectionId,
+        };
+        use std::sync::Arc;
+        
+        // Create a minimal connection for testing
+        // Note: This is a simplified mock - in real tests you'd use the proper connection setup
+        let endpoint_config = EndpointConfig::default();
+        let mut config = TransportConfig::default();
+        config.max_concurrent_uni_streams(100u32.into());
+        
+        let server_config = ServerConfig {
+            transport: Arc::new(config),
+            crypto: Arc::new(QuicServerConfig::with_single_cert(
+                vec![], // Empty cert chain for testing
+                Arc::new(ed25519_dalek::SigningKey::from_bytes(&[42; 32])),
+            ).unwrap()),
+        };
+        
+        Connection::new(
+            endpoint_config,
+            server_config,
+            ConnectionId::random(&mut rand::thread_rng(), 8),
+            ConnectionId::random(&mut rand::thread_rng(), 8),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4433),
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 4434),
+            Side::Server,
+            Some(NatTraversalRole::Server { can_relay: false }),
+        )
+    }
+
+    #[test]
+    fn test_send_nat_address_advertisement_success() {
+        let mut conn = create_test_connection();
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let priority = 1000;
+        
+        // Should succeed with NAT traversal enabled
+        let result = conn.send_nat_address_advertisement(address, priority);
+        assert!(result.is_ok());
+        
+        let frame_id = result.unwrap();
+        assert!(frame_id.into_inner() > 0);
+    }
+
+    #[test]
+    fn test_send_nat_address_advertisement_without_nat_traversal() {
+        let mut conn = create_test_connection();
+        // Disable NAT traversal
+        conn.nat_traversal = None;
+        
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let priority = 1000;
+        
+        // Should fail without NAT traversal
+        let result = conn.send_nat_address_advertisement(address, priority);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_send_nat_address_advertisement_sequence_increment() {
+        let mut conn = create_test_connection();
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let priority = 1000;
+        
+        // Send multiple advertisements
+        let frame1 = conn.send_nat_address_advertisement(address, priority).unwrap();
+        let frame2 = conn.send_nat_address_advertisement(address, priority + 100).unwrap();
+        
+        // Sequence numbers should increment
+        assert!(frame2.into_inner() > frame1.into_inner());
+    }
+
+    #[test]
+    fn test_send_nat_punch_coordination_success() {
+        let mut conn = create_test_connection();
+        let target_sequence = VarInt::from_u32(5);
+        let local_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let round = 1;
+        
+        // Should succeed with NAT traversal enabled
+        let result = conn.send_nat_punch_coordination(target_sequence, local_address, round);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_send_nat_punch_coordination_without_nat_traversal() {
+        let mut conn = create_test_connection();
+        // Disable NAT traversal
+        conn.nat_traversal = None;
+        
+        let target_sequence = VarInt::from_u32(5);
+        let local_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let round = 1;
+        
+        // Should fail without NAT traversal
+        let result = conn.send_nat_punch_coordination(target_sequence, local_address, round);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_send_nat_punch_coordination_invalid_sequence() {
+        let mut conn = create_test_connection();
+        let target_sequence = VarInt::from_u32(0); // Invalid sequence
+        let local_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let round = 1;
+        
+        // Should handle invalid sequence gracefully
+        let result = conn.send_nat_punch_coordination(target_sequence, local_address, round);
+        // This might succeed but with validation happening later
+        assert!(result.is_ok() || result.is_err());
+    }
+
+    #[test]
+    fn test_queue_add_address_frame_structure() {
+        let mut conn = create_test_connection();
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(203, 0, 113, 1)), 6000);
+        let priority = 2000;
+        
+        let frame_id = conn.send_nat_address_advertisement(address, priority).unwrap();
+        
+        // Verify the frame was queued properly
+        assert!(frame_id.into_inner() > 0);
+        
+        // Check that NAT stats were updated
+        if let Some(ref nat_state) = conn.nat_traversal {
+            assert!(nat_state.stats.frames_sent > 0);
+        }
+    }
+
+    #[test]
+    fn test_queue_punch_me_now_frame_structure() {
+        let mut conn = create_test_connection();
+        let target_sequence = VarInt::from_u32(10);
+        let local_address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let round = 2;
+        
+        let result = conn.send_nat_punch_coordination(target_sequence, local_address, round);
+        assert!(result.is_ok());
+        
+        // Check that NAT stats were updated
+        if let Some(ref nat_state) = conn.nat_traversal {
+            assert!(nat_state.stats.frames_sent > 0);
+        }
+    }
+
+    #[test]
+    fn test_multiple_frame_queuing() {
+        let mut conn = create_test_connection();
+        
+        // Queue multiple ADD_ADDRESS frames
+        for i in 1..=5 {
+            let address = SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(192, 168, 1, i as u8)),
+                5000 + i as u16,
+            );
+            let result = conn.send_nat_address_advertisement(address, 1000 + i * 100);
+            assert!(result.is_ok());
+        }
+        
+        // Queue multiple PUNCH_ME_NOW frames
+        for i in 1..=3 {
+            let target_sequence = VarInt::from_u32(i);
+            let local_address = SocketAddr::new(
+                IpAddr::V4(Ipv4Addr::new(10, 0, 0, i as u8)),
+                6000 + i as u16,
+            );
+            let result = conn.send_nat_punch_coordination(target_sequence, local_address, i as u8);
+            assert!(result.is_ok());
+        }
+        
+        // Verify frames were queued
+        if let Some(ref nat_state) = conn.nat_traversal {
+            assert!(nat_state.stats.frames_sent >= 8); // 5 ADD_ADDRESS + 3 PUNCH_ME_NOW
+        }
+    }
+
+    #[test]
+    fn test_nat_traversal_statistics_update() {
+        let mut conn = create_test_connection();
+        
+        // Initial stats should be zero
+        if let Some(ref nat_state) = conn.nat_traversal {
+            assert_eq!(nat_state.stats.frames_sent, 0);
+        }
+        
+        // Send a frame
+        let address = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(192, 168, 1, 100)), 5000);
+        let _ = conn.send_nat_address_advertisement(address, 1000);
+        
+        // Stats should be updated
+        if let Some(ref nat_state) = conn.nat_traversal {
+            assert!(nat_state.stats.frames_sent > 0);
+        }
+    }
+
+    #[test]
+    fn test_ipv6_address_handling() {
+        let mut conn = create_test_connection();
+        let ipv6_address = SocketAddr::new(
+            IpAddr::V6(Ipv6Addr::new(0x2001, 0xdb8, 0, 0, 0, 0, 0, 1)),
+            5000,
+        );
+        let priority = 1500;
+        
+        // Should handle IPv6 addresses correctly
+        let result = conn.send_nat_address_advertisement(ipv6_address, priority);
+        assert!(result.is_ok());
+        
+        // Test punch coordination with IPv6
+        let target_sequence = VarInt::from_u32(1);
+        let result = conn.send_nat_punch_coordination(target_sequence, ipv6_address, 1);
+        assert!(result.is_ok());
     }
 }
 

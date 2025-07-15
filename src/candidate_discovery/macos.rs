@@ -11,6 +11,14 @@ use std::{
     time::Instant,
 };
 
+// macOS-specific ioctl constants
+const SIOCGIFFLAGS: libc::c_ulong = 0xc0206911;
+const SIOCGIFMTU: libc::c_ulong = 0xc0206933;
+const SIOCGIFADDR: libc::c_ulong = 0xc0206921;
+
+// Interface type constants for macOS
+const IFT_ETHER: u8 = 6;
+
 use tracing::{debug, error, info, warn};
 
 use crate::candidate_discovery::{NetworkInterface, NetworkInterfaceDiscovery};
@@ -322,9 +330,14 @@ impl MacOSInterfaceDiscovery {
 
     /// Check if an interface exists on the system
     fn interface_exists(&self, interface_name: &str) -> bool {
-        // This would use system calls to check if the interface exists
-        // For now, we'll simulate common interfaces
-        matches!(interface_name, "en0" | "en1" | "lo0")
+        // Use if_nametoindex to check if interface exists
+        let c_name = match CString::new(interface_name) {
+            Ok(name) => name,
+            Err(_) => return false,
+        };
+        
+        let index = unsafe { libc::if_nametoindex(c_name.as_ptr()) };
+        index != 0
     }
 
     /// Process a network service to extract interface information
@@ -403,38 +416,142 @@ impl MacOSInterfaceDiscovery {
 
     /// Get interface state
     fn get_interface_state(&self, interface_name: &str) -> InterfaceState {
-        // This would query the actual interface state
-        // For now, assume active interfaces
-        match interface_name {
-            "en0" | "en1" => InterfaceState::Active,
-            "lo0" => InterfaceState::Active,
-            _ => InterfaceState::Inactive,
+        // Create socket for interface queries
+        let socket_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+        if socket_fd < 0 {
+            return InterfaceState::Unknown;
         }
+
+        // Prepare interface request structure
+        let mut ifreq: libc::ifreq = unsafe { std::mem::zeroed() };
+        let name_bytes = interface_name.as_bytes();
+        let copy_len = std::cmp::min(name_bytes.len(), libc::IFNAMSIZ - 1);
+        
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                name_bytes.as_ptr(),
+                ifreq.ifr_name.as_mut_ptr() as *mut u8,
+                copy_len,
+            );
+        }
+
+        // Get interface flags
+        let result = unsafe { libc::ioctl(socket_fd, SIOCGIFFLAGS, &mut ifreq) };
+        let state = if result >= 0 {
+            let flags = unsafe { ifreq.ifr_ifru.ifru_flags };
+            let is_up = (flags & libc::IFF_UP as i16) != 0;
+            let is_running = (flags & libc::IFF_RUNNING as i16) != 0;
+            
+            if is_up && is_running {
+                InterfaceState::Active
+            } else if is_up {
+                InterfaceState::Inactive
+            } else {
+                InterfaceState::Inactive
+            }
+        } else {
+            InterfaceState::Unknown
+        };
+
+        unsafe { libc::close(socket_fd); }
+        state
     }
 
     /// Get IPv4 addresses for an interface
     fn get_ipv4_addresses(&self, interface_name: &str) -> Result<Vec<Ipv4Addr>, MacOSNetworkError> {
-        // This would query the system for actual IPv4 addresses
-        // For now, provide reasonable defaults
-        match interface_name {
-            "en0" => Ok(vec![Ipv4Addr::new(192, 168, 1, 100)]),
-            "en1" => Ok(vec![Ipv4Addr::new(10, 0, 0, 100)]),
-            "lo0" => Ok(vec![Ipv4Addr::new(127, 0, 0, 1)]),
-            _ => Ok(Vec::new()),
+        let mut addresses = Vec::new();
+        
+        // Create socket for interface queries
+        let socket_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+        if socket_fd < 0 {
+            return Err(MacOSNetworkError::SystemConfigurationError {
+                function: "socket",
+                message: "Failed to create socket for IPv4 address query".to_string(),
+            });
         }
+
+        // Prepare interface request structure
+        let mut ifreq: libc::ifreq = unsafe { std::mem::zeroed() };
+        let name_bytes = interface_name.as_bytes();
+        let copy_len = std::cmp::min(name_bytes.len(), libc::IFNAMSIZ - 1);
+        
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                name_bytes.as_ptr(),
+                ifreq.ifr_name.as_mut_ptr() as *mut u8,
+                copy_len,
+            );
+        }
+
+        // Get interface address
+        let result = unsafe { libc::ioctl(socket_fd, SIOCGIFADDR, &mut ifreq) };
+        if result >= 0 {
+            let sockaddr_in = unsafe { 
+                &*(&ifreq.ifr_ifru.ifru_addr as *const libc::sockaddr as *const libc::sockaddr_in)
+            };
+            
+            if sockaddr_in.sin_family == libc::AF_INET as u8 {
+                let ip_bytes = sockaddr_in.sin_addr.s_addr.to_ne_bytes();
+                let ipv4_addr = Ipv4Addr::from(ip_bytes);
+                if !ipv4_addr.is_unspecified() {
+                    addresses.push(ipv4_addr);
+                }
+            }
+        }
+
+        unsafe { libc::close(socket_fd); }
+        Ok(addresses)
     }
 
     /// Get IPv6 addresses for an interface
     fn get_ipv6_addresses(&self, interface_name: &str) -> Result<Vec<Ipv6Addr>, MacOSNetworkError> {
-        // This would query the system for actual IPv6 addresses
-        // For now, provide reasonable defaults
-        match interface_name {
-            "en0" => Ok(vec![
-                Ipv6Addr::new(0xfe80, 0, 0, 0, 0x1234, 0x5678, 0x9abc, 0xdef0)
-            ]),
-            "lo0" => Ok(vec![Ipv6Addr::new(0, 0, 0, 0, 0, 0, 0, 1)]),
-            _ => Ok(Vec::new()),
+        let mut addresses = Vec::new();
+        
+        // Use getifaddrs to enumerate all interface addresses
+        let mut ifaddrs_ptr: *mut libc::ifaddrs = std::ptr::null_mut();
+        let result = unsafe { libc::getifaddrs(&mut ifaddrs_ptr) };
+        
+        if result != 0 {
+            return Err(MacOSNetworkError::SystemConfigurationError {
+                function: "getifaddrs",
+                message: "Failed to get interface addresses".to_string(),
+            });
         }
+
+        let mut current = ifaddrs_ptr;
+        while !current.is_null() {
+            let ifaddr = unsafe { &*current };
+            
+            // Check if this is the interface we're looking for
+            let if_name = unsafe {
+                let name_ptr = ifaddr.ifa_name;
+                let name_cstr = std::ffi::CStr::from_ptr(name_ptr);
+                name_cstr.to_string_lossy().to_string()
+            };
+            
+            if if_name == interface_name && !ifaddr.ifa_addr.is_null() {
+                let sockaddr = unsafe { &*ifaddr.ifa_addr };
+                
+                // Check if this is an IPv6 address
+                if sockaddr.sa_family == libc::AF_INET6 as u8 {
+                    let sockaddr_in6 = unsafe { 
+                        &*(ifaddr.ifa_addr as *const libc::sockaddr_in6)
+                    };
+                    
+                    let ipv6_bytes = sockaddr_in6.sin6_addr.s6_addr;
+                    
+                    let ipv6_addr = Ipv6Addr::from(ipv6_bytes);
+                    if !ipv6_addr.is_unspecified() {
+                        addresses.push(ipv6_addr);
+                    }
+                }
+            }
+            
+            current = ifaddr.ifa_next;
+        }
+
+        unsafe { libc::freeifaddrs(ifaddrs_ptr); }
+        Ok(addresses)
     }
 
     /// Get interface display name
@@ -451,19 +568,102 @@ impl MacOSInterfaceDiscovery {
 
     /// Get interface MTU
     fn get_interface_mtu(&self, interface_name: &str) -> u32 {
-        match interface_name {
-            "lo0" => 16384,
-            _ => 1500,
+        // Create socket for interface queries
+        let socket_fd = unsafe { libc::socket(libc::AF_INET, libc::SOCK_DGRAM, 0) };
+        if socket_fd < 0 {
+            return 1500; // Default MTU
         }
+
+        // Prepare interface request structure
+        let mut ifreq: libc::ifreq = unsafe { std::mem::zeroed() };
+        let name_bytes = interface_name.as_bytes();
+        let copy_len = std::cmp::min(name_bytes.len(), libc::IFNAMSIZ - 1);
+        
+        unsafe {
+            std::ptr::copy_nonoverlapping(
+                name_bytes.as_ptr(),
+                ifreq.ifr_name.as_mut_ptr() as *mut u8,
+                copy_len,
+            );
+        }
+
+        // Get interface MTU
+        let result = unsafe { libc::ioctl(socket_fd, SIOCGIFMTU, &mut ifreq) };
+        let mtu = if result >= 0 {
+            unsafe { ifreq.ifr_ifru.ifru_mtu as u32 }
+        } else {
+            // Default MTU values
+            match interface_name {
+                "lo0" => 16384,
+                _ => 1500,
+            }
+        };
+
+        unsafe { libc::close(socket_fd); }
+        mtu
     }
 
     /// Get hardware address (MAC)
     fn get_hardware_address(&self, interface_name: &str) -> Option<[u8; 6]> {
-        match interface_name {
-            "en0" => Some([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc]),
-            "en1" => Some([0x12, 0x34, 0x56, 0x78, 0x9a, 0xbd]),
-            _ => None,
+        // Use getifaddrs to get hardware address
+        let mut ifaddrs_ptr: *mut libc::ifaddrs = std::ptr::null_mut();
+        let result = unsafe { libc::getifaddrs(&mut ifaddrs_ptr) };
+        
+        if result != 0 {
+            return None;
         }
+
+        let mut hardware_address = None;
+        let mut current = ifaddrs_ptr;
+        
+        while !current.is_null() {
+            let ifaddr = unsafe { &*current };
+            
+            // Check if this is the interface we're looking for
+            let if_name = unsafe {
+                let name_ptr = ifaddr.ifa_name;
+                let name_cstr = std::ffi::CStr::from_ptr(name_ptr);
+                name_cstr.to_string_lossy().to_string()
+            };
+            
+            if if_name == interface_name && !ifaddr.ifa_addr.is_null() {
+                let sockaddr = unsafe { &*ifaddr.ifa_addr };
+                
+                // Check if this is a link-layer address (AF_LINK on macOS)
+                if sockaddr.sa_family == libc::AF_LINK as u8 {
+                    // On macOS, AF_LINK sockaddr contains the hardware address
+                    // Parse the sockaddr_dl structure properly
+                    let sockaddr_dl = unsafe { 
+                        &*(ifaddr.ifa_addr as *const libc::sockaddr_dl)
+                    };
+                    
+                    // Check if this is a 6-byte MAC address
+                    if sockaddr_dl.sdl_alen == 6 && sockaddr_dl.sdl_type == IFT_ETHER {
+                        // Calculate offset to hardware address data
+                        // sockaddr_dl layout: len, family, index, type, nlen, alen, slen, data[12], name[], addr[]
+                        let name_len = sockaddr_dl.sdl_nlen as usize;
+                        let addr_offset = 8 + name_len; // 8 bytes for fixed header + name length
+                        
+                        if addr_offset + 6 <= sockaddr_dl.sdl_len as usize {
+                            let addr_data = unsafe {
+                                let base_ptr = ifaddr.ifa_addr as *const u8;
+                                std::slice::from_raw_parts(base_ptr.add(addr_offset), 6)
+                            };
+                            
+                            let mut mac = [0u8; 6];
+                            mac.copy_from_slice(addr_data);
+                            hardware_address = Some(mac);
+                            break;
+                        }
+                    }
+                }
+            }
+            
+            current = ifaddr.ifa_next;
+        }
+
+        unsafe { libc::freeifaddrs(ifaddrs_ptr); }
+        hardware_address
     }
 
     /// Check if interface is built-in

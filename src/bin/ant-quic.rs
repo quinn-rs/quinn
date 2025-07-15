@@ -36,6 +36,179 @@ use tokio::{
 };
 use tracing::{debug, error, info, warn};
 
+/// Dual-stack socket manager for IPv4 and IPv6
+#[derive(Debug)]
+struct DualStackSocket {
+    /// IPv4 socket
+    ipv4_socket: Option<UdpSocket>,
+    /// IPv6 socket
+    ipv6_socket: Option<UdpSocket>,
+    /// Primary address (the one we bind to)
+    primary_addr: SocketAddr,
+    /// All bound addresses
+    bound_addresses: Vec<SocketAddr>,
+}
+
+impl DualStackSocket {
+    /// Create a new dual-stack socket binding to the specified address
+    async fn bind(addr: SocketAddr) -> Result<Self, Box<dyn std::error::Error>> {
+        let mut ipv4_socket = None;
+        let mut ipv6_socket = None;
+        let mut bound_addresses = Vec::new();
+
+        match addr {
+            SocketAddr::V4(_) => {
+                // Primary is IPv4, try to bind IPv4 first
+                if let Ok(socket) = UdpSocket::bind(addr).await {
+                    let bound_addr = socket.local_addr()?;
+                    bound_addresses.push(bound_addr);
+                    ipv4_socket = Some(socket);
+                    
+                    // Also try to bind IPv6 on same port for dual-stack
+                    let ipv6_addr = SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), bound_addr.port());
+                    if let Ok(socket) = UdpSocket::bind(ipv6_addr).await {
+                        let ipv6_bound_addr = socket.local_addr()?;
+                        bound_addresses.push(ipv6_bound_addr);
+                        ipv6_socket = Some(socket);
+                        debug!("Dual-stack: IPv6 socket bound to {}", ipv6_bound_addr);
+                    } else {
+                        debug!("Dual-stack: Failed to bind IPv6 socket, IPv4 only");
+                    }
+                } else {
+                    return Err("Failed to bind IPv4 socket".into());
+                }
+            }
+            SocketAddr::V6(_) => {
+                // Primary is IPv6, try to bind IPv6 first
+                if let Ok(socket) = UdpSocket::bind(addr).await {
+                    let bound_addr = socket.local_addr()?;
+                    bound_addresses.push(bound_addr);
+                    ipv6_socket = Some(socket);
+                    
+                    // Also try to bind IPv4 on same port for dual-stack
+                    let ipv4_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), bound_addr.port());
+                    if let Ok(socket) = UdpSocket::bind(ipv4_addr).await {
+                        let ipv4_bound_addr = socket.local_addr()?;
+                        bound_addresses.push(ipv4_bound_addr);
+                        ipv4_socket = Some(socket);
+                        debug!("Dual-stack: IPv4 socket bound to {}", ipv4_bound_addr);
+                    } else {
+                        debug!("Dual-stack: Failed to bind IPv4 socket, IPv6 only");
+                    }
+                } else {
+                    return Err("Failed to bind IPv6 socket".into());
+                }
+            }
+        }
+
+        if ipv4_socket.is_none() && ipv6_socket.is_none() {
+            return Err("Failed to bind any socket".into());
+        }
+
+        Ok(Self {
+            ipv4_socket,
+            ipv6_socket,
+            primary_addr: addr,
+            bound_addresses,
+        })
+    }
+
+    /// Get the primary local address
+    fn local_addr(&self) -> Result<SocketAddr, std::io::Error> {
+        if let Some(ref socket) = self.ipv4_socket {
+            socket.local_addr()
+        } else if let Some(ref socket) = self.ipv6_socket {
+            socket.local_addr()
+        } else {
+            Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "No sockets bound",
+            ))
+        }
+    }
+
+    /// Get all bound addresses
+    fn bound_addresses(&self) -> &[SocketAddr] {
+        &self.bound_addresses
+    }
+
+    /// Send data to a specific address using the appropriate socket
+    async fn send_to(&self, buf: &[u8], target: SocketAddr) -> Result<usize, std::io::Error> {
+        match target {
+            SocketAddr::V4(_) => {
+                if let Some(ref socket) = self.ipv4_socket {
+                    socket.send_to(buf, target).await
+                } else {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::AddrNotAvailable,
+                        "IPv4 socket not available",
+                    ))
+                }
+            }
+            SocketAddr::V6(_) => {
+                if let Some(ref socket) = self.ipv6_socket {
+                    socket.send_to(buf, target).await
+                } else {
+                    Err(std::io::Error::new(
+                        std::io::ErrorKind::AddrNotAvailable,
+                        "IPv6 socket not available",
+                    ))
+                }
+            }
+        }
+    }
+
+    /// Receive data from any bound socket
+    async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), std::io::Error> {
+        use tokio::select;
+        
+        match (&self.ipv4_socket, &self.ipv6_socket) {
+            (Some(ipv4), Some(ipv6)) => {
+                // Create separate buffer slices to avoid borrow checker issues
+                let mut ipv4_buf = [0u8; 1472];
+                let mut ipv6_buf = [0u8; 1472];
+                
+                select! {
+                    result = ipv4.recv_from(&mut ipv4_buf) => {
+                        match result {
+                            Ok((size, addr)) => {
+                                buf[..size].copy_from_slice(&ipv4_buf[..size]);
+                                Ok((size, addr))
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                    result = ipv6.recv_from(&mut ipv6_buf) => {
+                        match result {
+                            Ok((size, addr)) => {
+                                buf[..size].copy_from_slice(&ipv6_buf[..size]);
+                                Ok((size, addr))
+                            }
+                            Err(e) => Err(e),
+                        }
+                    }
+                }
+            }
+            (Some(ipv4), None) => ipv4.recv_from(buf).await,
+            (None, Some(ipv6)) => ipv6.recv_from(buf).await,
+            (None, None) => Err(std::io::Error::new(
+                std::io::ErrorKind::NotConnected,
+                "No sockets bound",
+            )),
+        }
+    }
+
+    /// Check if IPv4 is available
+    fn has_ipv4(&self) -> bool {
+        self.ipv4_socket.is_some()
+    }
+
+    /// Check if IPv6 is available
+    fn has_ipv6(&self) -> bool {
+        self.ipv6_socket.is_some()
+    }
+}
+
 /// Command line arguments for ant-quic
 #[derive(Parser, Debug)]
 #[command(name = "ant-quic")]
@@ -272,10 +445,12 @@ struct ChatState {
 struct UnifiedP2PNode {
     /// Node's own peer ID
     peer_id: PeerId,
-    /// UDP socket for communication
-    socket: UdpSocket,
-    /// Local address we're bound to
+    /// Dual-stack socket for IPv4/IPv6 communication
+    socket: DualStackSocket,
+    /// Primary local address we're bound to
     local_addr: SocketAddr,
+    /// All bound addresses (IPv4 and IPv6)
+    bound_addresses: Vec<SocketAddr>,
     /// Configuration
     config: NodeConfig,
 
@@ -403,9 +578,10 @@ impl UnifiedP2PNode {
         let mut rng = rand::rng();
         let peer_id = PeerId(rng.random());
 
-        // Bind socket
-        let socket = UdpSocket::bind(listen_addr).await?;
+        // Bind dual-stack socket
+        let socket = DualStackSocket::bind(listen_addr).await?;
         let local_addr = socket.local_addr()?;
+        let bound_addresses = socket.bound_addresses().to_vec();
 
         // Verify port allocation if random port was requested
         verify_port_allocation(&listen_addr, &local_addr)?;
@@ -420,6 +596,7 @@ impl UnifiedP2PNode {
             peer_id,
             socket,
             local_addr,
+            bound_addresses,
             config,
             capability: NodeCapability::ClientOnly,
             current_role: NodeRole::Client,
@@ -557,7 +734,7 @@ impl UnifiedP2PNode {
         for bootstrap_addr in &bootstrap_nodes {
             if let Ok(_) = timeout(
                 self.config.reachability_timeout,
-                self.socket.send_to(&test_packet, bootstrap_addr),
+                self.socket.send_to(&test_packet, *bootstrap_addr),
             )
             .await
             {
@@ -618,7 +795,7 @@ impl UnifiedP2PNode {
             let registration_packet = self.create_registration_packet();
             match self
                 .socket
-                .send_to(&registration_packet, bootstrap_addr)
+                .send_to(&registration_packet, *bootstrap_addr)
                 .await
             {
                 Ok(_) => {
@@ -1398,7 +1575,7 @@ impl UnifiedP2PNode {
 
         for bootstrap_addr in &bootstrap_nodes {
             let request_packet = self.create_coordination_request_packet(target_peer_id);
-            if let Err(e) = self.socket.send_to(&request_packet, bootstrap_addr).await {
+            if let Err(e) = self.socket.send_to(&request_packet, *bootstrap_addr).await {
                 warn!(
                     "Failed to request coordination from {}: {}",
                     bootstrap_addr, e

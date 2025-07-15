@@ -186,6 +186,7 @@ impl TransportParameters {
                 order.shuffle(rng);
                 order
             }),
+            nat_traversal: config.nat_traversal_config.clone(),
             ..Self::default()
         }
     }
@@ -216,6 +217,14 @@ impl TransportParameters {
     /// b) LOC_CID_COUNT used locally
     pub(crate) fn issue_cids_limit(&self) -> u64 {
         self.active_connection_id_limit.0.min(LOC_CID_COUNT)
+    }
+
+    /// Get the NAT traversal configuration for this connection
+    ///
+    /// This is a public accessor method for tests and external code that need to
+    /// examine the negotiated NAT traversal parameters.
+    pub fn nat_traversal_config(&self) -> Option<&NatTraversalConfig> {
+        self.nat_traversal.as_ref()
     }
 }
 
@@ -314,11 +323,88 @@ impl NatTraversalConfig {
             peer_id,
         })
     }
+
+    /// Create a new NAT traversal configuration
+    ///
+    /// This is a public constructor for creating NAT traversal configurations
+    /// in tests and external code.
+    pub fn new(
+        role: NatTraversalRole,
+        max_candidates: VarInt,
+        coordination_timeout: VarInt,
+        max_concurrent_attempts: VarInt,
+        peer_id: Option<[u8; 32]>,
+    ) -> Self {
+        Self {
+            role,
+            max_candidates,
+            coordination_timeout,
+            max_concurrent_attempts,
+            peer_id,
+        }
+    }
+
+    /// Get the role for this NAT traversal configuration
+    pub fn role(&self) -> NatTraversalRole {
+        self.role
+    }
+
+    /// Get the maximum number of candidates
+    pub fn max_candidates(&self) -> VarInt {
+        self.max_candidates
+    }
+
+    /// Get the coordination timeout
+    pub fn coordination_timeout(&self) -> VarInt {
+        self.coordination_timeout
+    }
+
+    /// Get the maximum concurrent attempts
+    pub fn max_concurrent_attempts(&self) -> VarInt {
+        self.max_concurrent_attempts
+    }
+
+    /// Get the peer ID
+    pub fn peer_id(&self) -> Option<[u8; 32]> {
+        self.peer_id
+    }
+
+    /// Validate NAT traversal configuration for consistency
+    pub fn validate(&self) -> Result<(), Error> {
+        // Validate max_candidates is reasonable
+        if self.max_candidates.0 == 0 || self.max_candidates.0 > 100 {
+            return Err(Error::IllegalValue);
+        }
+
+        // Validate coordination timeout is reasonable (1s to 60s)
+        if self.coordination_timeout.0 < 1000 || self.coordination_timeout.0 > 60000 {
+            return Err(Error::IllegalValue);
+        }
+
+        // Validate max_concurrent_attempts is reasonable
+        if self.max_concurrent_attempts.0 == 0 || self.max_concurrent_attempts.0 > 10 {
+            return Err(Error::IllegalValue);
+        }
+
+        Ok(())
+    }
+}
+
+impl Default for NatTraversalConfig {
+    fn default() -> Self {
+        Self {
+            role: NatTraversalRole::Client,
+            max_candidates: VarInt::from_u32(8),
+            coordination_timeout: VarInt::from_u32(10000), // 10 seconds
+            max_concurrent_attempts: VarInt::from_u32(3),
+            peer_id: None,
+        }
+    }
 }
 
 /// Role of an endpoint in NAT traversal coordination
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
-pub(crate) enum NatTraversalRole {
+pub enum NatTraversalRole {
     /// Client endpoint (initiates connections, on-demand)
     Client,
     /// Server endpoint (accepts connections, always reachable)
@@ -498,10 +584,32 @@ impl TransportParameters {
                     }
                 }
                 TransportParameterId::NatTraversal => {
-                    if let Some(ref x) = self.nat_traversal {
-                        w.write_var(id as u64);
-                        w.write_var(x.wire_size() as u64);
-                        x.write(w);
+                    if let Some(ref config) = self.nat_traversal {
+                        // Per draft-seemann-quic-nat-traversal-01:
+                        // - Client sends empty value to indicate support
+                        // - Server sends concurrency limit (1 byte)
+                        match config.role {
+                            NatTraversalRole::Client => {
+                                // Client sends empty value
+                                w.write_var(id as u64);
+                                w.write_var(0); // Empty value
+                            }
+                            NatTraversalRole::Server { can_relay: _ } => {
+                                // Server sends concurrency limit
+                                w.write_var(id as u64);
+                                w.write_var(1); // 1 byte for concurrency limit
+                                // Use max_concurrent_attempts as concurrency limit
+                                let limit = config.max_concurrent_attempts.0.min(255) as u8;
+                                w.put_u8(limit);
+                            }
+                            NatTraversalRole::Bootstrap => {
+                                // Bootstrap endpoints act as servers
+                                w.write_var(id as u64);
+                                w.write_var(1); // 1 byte for concurrency limit
+                                let limit = config.max_concurrent_attempts.0.min(255) as u8;
+                                w.put_u8(limit);
+                            }
+                        }
                     }
                 }
                 id => {
@@ -516,7 +624,9 @@ impl TransportParameters {
                                     }
                                 })*,
                                 _ => {
-                                    unimplemented!("Missing implementation of write for transport parameter with code {id:?}");
+                                    // This should never be reached for supported parameters
+                                    // All supported parameters should be handled in specific match arms above
+                                    panic!("Unsupported transport parameter reached write implementation: {id:?}");
                                 }
                             }
                         }
@@ -606,7 +716,36 @@ impl TransportParameters {
                     if params.nat_traversal.is_some() {
                         return Err(Error::Malformed);
                     }
-                    params.nat_traversal = Some(NatTraversalConfig::read(&mut r.take(len))?);
+                    // Per draft-seemann-quic-nat-traversal-01:
+                    // - Empty value (len=0) from client indicates support
+                    // - 1 byte value from server is concurrency limit
+                    match (side, len) {
+                        (Side::Server, 0) => {
+                            // Client sent empty value - they support NAT traversal
+                            params.nat_traversal = Some(NatTraversalConfig {
+                                role: NatTraversalRole::Client,
+                                max_candidates: VarInt::from_u32(8), // Default
+                                coordination_timeout: VarInt::from_u32(10000), // Default 10s
+                                max_concurrent_attempts: VarInt::from_u32(3), // Default
+                                peer_id: None,
+                            });
+                        }
+                        (Side::Client, 1) => {
+                            // Server sent concurrency limit
+                            let limit = r.get::<u8>()?;
+                            params.nat_traversal = Some(NatTraversalConfig {
+                                role: NatTraversalRole::Server { can_relay: false }, // Determined later
+                                max_candidates: VarInt::from_u32(8), // Default
+                                coordination_timeout: VarInt::from_u32(10000), // Default 10s
+                                max_concurrent_attempts: VarInt::from_u32(limit as u32),
+                                peer_id: None,
+                            });
+                        }
+                        _ => {
+                            // Invalid combination
+                            return Err(Error::Malformed);
+                        }
+                    }
                 }
                 _ => {
                     macro_rules! parse {
@@ -656,6 +795,30 @@ impl TransportParameters {
                 .preferred_address.is_some_and(|x| x.connection_id.is_empty())
         {
             return Err(Error::IllegalValue);
+        }
+
+        // NAT traversal parameter validation
+        if let Some(ref nat_config) = params.nat_traversal {
+            // Validate NAT traversal configuration
+            if let Err(_) = nat_config.validate() {
+                return Err(Error::IllegalValue);
+            }
+
+            // Validate role-specific constraints
+            match nat_config.role {
+                NatTraversalRole::Server { .. } | NatTraversalRole::Bootstrap => {
+                    // Server/Bootstrap roles should only be received by clients
+                    if side.is_server() {
+                        return Err(Error::IllegalValue);
+                    }
+                }
+                NatTraversalRole::Client => {
+                    // Client role should only be received by servers
+                    if side.is_client() {
+                        return Err(Error::IllegalValue);
+                    }
+                }
+            }
         }
 
         Ok(params)
@@ -771,9 +934,9 @@ pub(crate) enum TransportParameterId {
     // https://datatracker.ietf.org/doc/html/draft-ietf-quic-ack-frequency#section-10.1
     MinAckDelayDraft07 = 0xFF04DE1B,
 
-    // NAT Traversal Extension - using reserved parameter space (31*N + 27)
-    // This follows RFC 9000 reserved parameter pattern for experimental extensions
-    NatTraversal = 0x3A, // 31*1 + 27 = 58 (0x3A)
+    // NAT Traversal Extension - draft-seemann-quic-nat-traversal-01
+    // Transport parameter ID from the IETF draft specification
+    NatTraversal = 0x3d7e9f0bca12fea6,
 }
 
 impl TransportParameterId {
@@ -862,63 +1025,56 @@ mod test {
 
     #[test]
     fn test_nat_traversal_transport_parameter_encoding_decoding() {
-        // Test all role variants
-        let test_cases = vec![
-            NatTraversalConfig {
-                role: NatTraversalRole::Client,
-                max_candidates: VarInt::from_u32(8),
-                coordination_timeout: VarInt::from_u32(5000),
-                max_concurrent_attempts: VarInt::from_u32(3),
-                peer_id: None,
-            },
-            NatTraversalConfig {
-                role: NatTraversalRole::Server { can_relay: true },
-                max_candidates: VarInt::from_u32(16),
-                coordination_timeout: VarInt::from_u32(10000),
-                max_concurrent_attempts: VarInt::from_u32(5),
-                peer_id: Some([0x42; 32]),
-            },
-            NatTraversalConfig {
-                role: NatTraversalRole::Server { can_relay: false },
-                max_candidates: VarInt::from_u32(4),
-                coordination_timeout: VarInt::from_u32(2000),
-                max_concurrent_attempts: VarInt::from_u32(2),
-                peer_id: Some([0xAB; 32]),
-            },
-            NatTraversalConfig {
-                role: NatTraversalRole::Bootstrap,
-                max_candidates: VarInt::from_u32(32),
-                coordination_timeout: VarInt::from_u32(15000),
-                max_concurrent_attempts: VarInt::from_u32(10),
-                peer_id: None,
-            },
-        ];
-
-        for (i, original_config) in test_cases.iter().enumerate() {
-            println!("Testing case {}: {:?}", i, original_config.role);
-            
-            // Create transport parameters with NAT traversal config
-            let mut params = TransportParameters::default();
-            params.nat_traversal = Some(original_config.clone());
-            
-            // Encode to bytes
-            let mut encoded = Vec::new();
-            params.write(&mut encoded);
-            
-            // Decode from bytes
-            let decoded_params = TransportParameters::read(Side::Client, &mut encoded.as_slice())
-                .expect("Failed to decode transport parameters");
-            
-            // Verify NAT traversal config was preserved
-            let decoded_config = decoded_params.nat_traversal
-                .expect("NAT traversal config should be present");
-            
-            assert_eq!(decoded_config.role, original_config.role);
-            assert_eq!(decoded_config.max_candidates, original_config.max_candidates);
-            assert_eq!(decoded_config.coordination_timeout, original_config.coordination_timeout);
-            assert_eq!(decoded_config.max_concurrent_attempts, original_config.max_concurrent_attempts);
-            assert_eq!(decoded_config.peer_id, original_config.peer_id);
-        }
+        // Test draft-compliant NAT traversal parameter encoding/decoding
+        
+        // Test 1: Client sends empty value, server reads it
+        let client_config = NatTraversalConfig {
+            role: NatTraversalRole::Client,
+            max_candidates: VarInt::from_u32(8),
+            coordination_timeout: VarInt::from_u32(5000),
+            max_concurrent_attempts: VarInt::from_u32(3),
+            peer_id: None,
+        };
+        
+        let mut client_params = TransportParameters::default();
+        client_params.nat_traversal = Some(client_config);
+        
+        let mut encoded = Vec::new();
+        client_params.write(&mut encoded);
+        
+        // Server reads client params
+        let server_decoded = TransportParameters::read(Side::Server, &mut encoded.as_slice())
+            .expect("Failed to decode client transport parameters");
+        
+        // Server should see that client supports NAT traversal
+        assert!(server_decoded.nat_traversal.is_some());
+        let server_view = server_decoded.nat_traversal.unwrap();
+        assert!(matches!(server_view.role, NatTraversalRole::Client));
+        
+        // Test 2: Server sends concurrency limit, client reads it
+        let server_config = NatTraversalConfig {
+            role: NatTraversalRole::Server { can_relay: false },
+            max_candidates: VarInt::from_u32(16),
+            coordination_timeout: VarInt::from_u32(10000),
+            max_concurrent_attempts: VarInt::from_u32(5),
+            peer_id: None,
+        };
+        
+        let mut server_params = TransportParameters::default();
+        server_params.nat_traversal = Some(server_config);
+        
+        let mut encoded = Vec::new();
+        server_params.write(&mut encoded);
+        
+        // Client reads server params
+        let client_decoded = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+            .expect("Failed to decode server transport parameters");
+        
+        // Client should see server's concurrency limit
+        assert!(client_decoded.nat_traversal.is_some());
+        let client_view = client_decoded.nat_traversal.unwrap();
+        assert!(matches!(client_view.role, NatTraversalRole::Server { .. }));
+        assert_eq!(client_view.max_concurrent_attempts, VarInt::from_u32(5));
     }
 
     #[test]
@@ -961,6 +1117,323 @@ mod test {
             .expect("Failed to decode transport parameters");
         
         assert!(decoded_params.nat_traversal.is_none());
+    }
+
+    #[test]
+    fn test_nat_traversal_draft_compliant_encoding() {
+        // Test draft-seemann-quic-nat-traversal-01 compliant encoding
+        
+        // Test 1: Client sends empty value
+        let client_config = NatTraversalConfig {
+            role: NatTraversalRole::Client,
+            max_candidates: VarInt::from_u32(8),
+            coordination_timeout: VarInt::from_u32(10000),
+            max_concurrent_attempts: VarInt::from_u32(3),
+            peer_id: None,
+        };
+        
+        let mut client_params = TransportParameters::default();
+        client_params.nat_traversal = Some(client_config);
+        
+        let mut encoded = Vec::new();
+        client_params.write(&mut encoded);
+        
+        // Verify the encoded data contains empty value for client
+        // Find the NAT traversal parameter in the encoded data
+        use bytes::Buf;
+        let mut cursor = &encoded[..];
+        while cursor.has_remaining() {
+            let id = VarInt::from_u64(cursor.get_var().unwrap()).unwrap();
+            let len = VarInt::from_u64(cursor.get_var().unwrap()).unwrap();
+            if id.0 == 0x3d7e9f0bca12fea6 {
+                // Found NAT traversal parameter
+                assert_eq!(len.0, 0, "Client should send empty value");
+                break;
+            }
+            // Skip this parameter
+            cursor.advance(len.0 as usize);
+        }
+        
+        // Test 2: Server sends 1-byte concurrency limit
+        let server_config = NatTraversalConfig {
+            role: NatTraversalRole::Server { can_relay: true },
+            max_candidates: VarInt::from_u32(16),
+            coordination_timeout: VarInt::from_u32(10000),
+            max_concurrent_attempts: VarInt::from_u32(5),
+            peer_id: None,
+        };
+        
+        let mut server_params = TransportParameters::default();
+        server_params.nat_traversal = Some(server_config);
+        
+        let mut encoded = Vec::new();
+        server_params.write(&mut encoded);
+        
+        // Verify the encoded data contains 1-byte value for server
+        let mut cursor = &encoded[..];
+        while cursor.has_remaining() {
+            let id = VarInt::from_u64(cursor.get_var().unwrap()).unwrap();
+            let len = VarInt::from_u64(cursor.get_var().unwrap()).unwrap();
+            if id.0 == 0x3d7e9f0bca12fea6 {
+                // Found NAT traversal parameter
+                assert_eq!(len.0, 1, "Server should send 1-byte value");
+                let limit = cursor.chunk()[0];
+                assert_eq!(limit, 5, "Server should send concurrency limit");
+                break;
+            }
+            // Skip this parameter
+            cursor.advance(len.0 as usize);
+        }
+    }
+
+    #[test]
+    fn test_nat_traversal_draft_compliant_decoding() {
+        use bytes::BufMut;
+        
+        // Test 1: Decode empty value from client
+        let mut buf = Vec::new();
+        buf.write_var(0x3d7e9f0bca12fea6); // NAT traversal parameter ID
+        buf.write_var(0); // Empty value
+        
+        let params = TransportParameters::read(Side::Server, &mut buf.as_slice())
+            .expect("Failed to decode transport parameters");
+        
+        let config = params.nat_traversal.expect("NAT traversal should be present");
+        assert_eq!(config.role, NatTraversalRole::Client);
+        assert_eq!(config.max_candidates, VarInt::from_u32(8)); // Default value
+        assert_eq!(config.coordination_timeout, VarInt::from_u32(10000)); // Default value
+        assert_eq!(config.max_concurrent_attempts, VarInt::from_u32(3)); // Default value
+        
+        // Test 2: Decode 1-byte concurrency limit from server
+        let mut buf = Vec::new();
+        buf.write_var(0x3d7e9f0bca12fea6); // NAT traversal parameter ID
+        buf.write_var(1); // 1-byte value
+        buf.put_u8(7); // Concurrency limit of 7
+        
+        let params = TransportParameters::read(Side::Client, &mut buf.as_slice())
+            .expect("Failed to decode transport parameters");
+        
+        let config = params.nat_traversal.expect("NAT traversal should be present");
+        match config.role {
+            NatTraversalRole::Server { can_relay } => {
+                assert!(!can_relay); // Default to false
+            }
+            _ => panic!("Expected Server role"),
+        }
+        assert_eq!(config.max_concurrent_attempts, VarInt::from_u32(7));
+        
+        // Test 3: Invalid length should fail
+        let mut buf = Vec::new();
+        buf.write_var(0x3d7e9f0bca12fea6); // NAT traversal parameter ID
+        buf.write_var(2); // Invalid 2-byte value
+        buf.put_u8(7);
+        buf.put_u8(8);
+        
+        let result = TransportParameters::read(Side::Client, &mut buf.as_slice());
+        assert!(result.is_err(), "Should fail with invalid length");
+    }
+
+    #[test]
+    fn test_nat_traversal_parameter_id() {
+        // Verify the correct parameter ID is used
+        assert_eq!(TransportParameterId::NatTraversal as u64, 0x3d7e9f0bca12fea6);
+    }
+
+    #[test]
+    fn test_nat_traversal_config_validation() {
+        // Test valid configuration
+        let valid_config = NatTraversalConfig {
+            role: NatTraversalRole::Client,
+            max_candidates: VarInt::from_u32(8),
+            coordination_timeout: VarInt::from_u32(5000),
+            max_concurrent_attempts: VarInt::from_u32(3),
+            peer_id: None,
+        };
+        assert!(valid_config.validate().is_ok());
+
+        // Test invalid max_candidates (too low)
+        let invalid_config = NatTraversalConfig {
+            max_candidates: VarInt::from_u32(0),
+            ..valid_config
+        };
+        assert!(invalid_config.validate().is_err());
+
+        // Test invalid max_candidates (too high)
+        let invalid_config = NatTraversalConfig {
+            max_candidates: VarInt::from_u32(101),
+            ..valid_config
+        };
+        assert!(invalid_config.validate().is_err());
+
+        // Test invalid coordination_timeout (too low)
+        let invalid_config = NatTraversalConfig {
+            coordination_timeout: VarInt::from_u32(500),
+            ..valid_config
+        };
+        assert!(invalid_config.validate().is_err());
+
+        // Test invalid coordination_timeout (too high)
+        let invalid_config = NatTraversalConfig {
+            coordination_timeout: VarInt::from_u32(70000),
+            ..valid_config
+        };
+        assert!(invalid_config.validate().is_err());
+
+        // Test invalid max_concurrent_attempts (too low)
+        let invalid_config = NatTraversalConfig {
+            max_concurrent_attempts: VarInt::from_u32(0),
+            ..valid_config
+        };
+        assert!(invalid_config.validate().is_err());
+
+        // Test invalid max_concurrent_attempts (too high)
+        let invalid_config = NatTraversalConfig {
+            max_concurrent_attempts: VarInt::from_u32(11),
+            ..valid_config
+        };
+        assert!(invalid_config.validate().is_err());
+    }
+
+    #[test]
+    fn test_nat_traversal_role_validation() {
+        use bytes::BufMut;
+        
+        // Test client role validation - should fail when received by client
+        let mut buf = Vec::new();
+        buf.write_var(0x3d7e9f0bca12fea6); // NAT traversal parameter ID
+        buf.write_var(0); // Empty value (client role)
+        
+        // Client receiving client role should fail
+        let result = TransportParameters::read(Side::Client, &mut buf.as_slice());
+        assert!(result.is_err(), "Client should not accept client role from peer");
+        
+        // Server receiving client role should succeed
+        let result = TransportParameters::read(Side::Server, &mut buf.as_slice());
+        assert!(result.is_ok(), "Server should accept client role from peer");
+        
+        // Test server role validation - should fail when received by server
+        let mut buf = Vec::new();
+        buf.write_var(0x3d7e9f0bca12fea6); // NAT traversal parameter ID
+        buf.write_var(1); // 1-byte value (server role)
+        buf.put_u8(5); // Concurrency limit
+        
+        // Server receiving server role should fail
+        let result = TransportParameters::read(Side::Server, &mut buf.as_slice());
+        assert!(result.is_err(), "Server should not accept server role from peer");
+        
+        // Client receiving server role should succeed
+        let result = TransportParameters::read(Side::Client, &mut buf.as_slice());
+        assert!(result.is_ok(), "Client should accept server role from peer");
+    }
+
+    #[test]
+    fn test_nat_traversal_parameter_combinations() {
+        // Test that NAT traversal works with other transport parameters
+        let nat_config = NatTraversalConfig {
+            role: NatTraversalRole::Client,
+            max_candidates: VarInt::from_u32(10),
+            coordination_timeout: VarInt::from_u32(8000),
+            max_concurrent_attempts: VarInt::from_u32(4),
+            peer_id: Some([42u8; 32]),
+        };
+        
+        let mut params = TransportParameters::default();
+        params.nat_traversal = Some(nat_config);
+        params.max_idle_timeout = VarInt::from_u32(30000);
+        params.initial_max_data = VarInt::from_u32(1048576);
+        params.grease_quic_bit = true;
+        
+        // Test encoding
+        let mut encoded = Vec::new();
+        params.write(&mut encoded);
+        assert!(!encoded.is_empty());
+        
+        // Test decoding
+        let decoded = TransportParameters::read(Side::Server, &mut encoded.as_slice())
+            .expect("Should decode successfully");
+        
+        // Verify NAT traversal config is preserved
+        let decoded_config = decoded.nat_traversal.expect("NAT traversal should be present");
+        assert_eq!(decoded_config.role, NatTraversalRole::Client);
+        assert_eq!(decoded_config.max_candidates, VarInt::from_u32(8)); // Default value
+        
+        // Verify other parameters are preserved
+        assert_eq!(decoded.max_idle_timeout, VarInt::from_u32(30000));
+        assert_eq!(decoded.initial_max_data, VarInt::from_u32(1048576));
+        assert!(decoded.grease_quic_bit);
+    }
+
+    #[test]
+    fn test_nat_traversal_default_config() {
+        let default_config = NatTraversalConfig::default();
+        
+        assert_eq!(default_config.role, NatTraversalRole::Client);
+        assert_eq!(default_config.max_candidates, VarInt::from_u32(8));
+        assert_eq!(default_config.coordination_timeout, VarInt::from_u32(10000));
+        assert_eq!(default_config.max_concurrent_attempts, VarInt::from_u32(3));
+        assert!(default_config.peer_id.is_none());
+        
+        // Default config should be valid
+        assert!(default_config.validate().is_ok());
+    }
+
+    #[test]
+    fn test_nat_traversal_endpoint_role_negotiation() {
+        // Test complete client-server negotiation
+        
+        // 1. Client creates parameters with NAT traversal support
+        let client_config = NatTraversalConfig {
+            role: NatTraversalRole::Client,
+            max_candidates: VarInt::from_u32(12),
+            coordination_timeout: VarInt::from_u32(7000),
+            max_concurrent_attempts: VarInt::from_u32(5),
+            peer_id: None,
+        };
+        
+        let mut client_params = TransportParameters::default();
+        client_params.nat_traversal = Some(client_config);
+        
+        // 2. Client encodes and sends to server
+        let mut client_encoded = Vec::new();
+        client_params.write(&mut client_encoded);
+        
+        // 3. Server receives and decodes client parameters
+        let server_received = TransportParameters::read(Side::Server, &mut client_encoded.as_slice())
+            .expect("Server should decode client params");
+        
+        // Server should see client role
+        let server_view = server_received.nat_traversal.expect("NAT traversal should be present");
+        assert_eq!(server_view.role, NatTraversalRole::Client);
+        
+        // 4. Server creates response with server role
+        let server_config = NatTraversalConfig {
+            role: NatTraversalRole::Server { can_relay: true },
+            max_candidates: VarInt::from_u32(16),
+            coordination_timeout: VarInt::from_u32(12000),
+            max_concurrent_attempts: VarInt::from_u32(8),
+            peer_id: Some([123u8; 32]),
+        };
+        
+        let mut server_params = TransportParameters::default();
+        server_params.nat_traversal = Some(server_config);
+        
+        // 5. Server encodes and sends to client
+        let mut server_encoded = Vec::new();
+        server_params.write(&mut server_encoded);
+        
+        // 6. Client receives and decodes server parameters
+        let client_received = TransportParameters::read(Side::Client, &mut server_encoded.as_slice())
+            .expect("Client should decode server params");
+        
+        // Client should see server role with concurrency limit
+        let client_view = client_received.nat_traversal.expect("NAT traversal should be present");
+        match client_view.role {
+            NatTraversalRole::Server { can_relay } => {
+                assert!(!can_relay); // Default to false in decoded params
+            }
+            _ => panic!("Expected server role"),
+        }
+        assert_eq!(client_view.max_concurrent_attempts, VarInt::from_u32(8));
     }
 
     #[test]

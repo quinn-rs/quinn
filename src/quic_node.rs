@@ -11,6 +11,9 @@ use std::{
 };
 
 use tracing::{debug, info, error};
+
+#[cfg(feature = "production-ready")]
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::{
     nat_traversal_api::{
         NatTraversalEndpoint, NatTraversalConfig, NatTraversalEvent,
@@ -219,9 +222,40 @@ impl QuicP2PNode {
 
     /// Accept incoming connections
     pub async fn accept(&self) -> Result<(SocketAddr, PeerId), Box<dyn std::error::Error>> {
-        // This would accept incoming connections from the endpoint
-        // For now, it's a placeholder
-        todo!("Implement connection acceptance")
+        info!("Waiting for incoming connection...");
+        
+        // Accept connection through the NAT traversal endpoint
+        match self.nat_endpoint.accept_connection().await {
+            Ok((peer_id, connection)) => {
+                let remote_addr = connection.remote_address();
+                
+                // Store the connection
+                {
+                    let mut peers = self.connected_peers.write().await;
+                    peers.insert(peer_id, remote_addr);
+                }
+                
+                // Update stats
+                {
+                    let mut stats = self.stats.lock().await;
+                    stats.successful_connections += 1;
+                    stats.active_connections += 1;
+                }
+                
+                info!("Accepted connection from peer {:?} at {}", peer_id, remote_addr);
+                Ok((remote_addr, peer_id))
+            }
+            Err(e) => {
+                // Update stats
+                {
+                    let mut stats = self.stats.lock().await;
+                    stats.failed_connections += 1;
+                }
+                
+                error!("Failed to accept connection: {}", e);
+                Err(Box::new(e))
+            }
+        }
     }
 
     /// Send data to a peer
@@ -232,21 +266,126 @@ impl QuicP2PNode {
     ) -> Result<(), Box<dyn std::error::Error>> {
         let peers = self.connected_peers.read().await;
         
-        if let Some(_remote_addr) = peers.get(peer_id) {
-            // TODO: Implement actual data sending using the NAT traversal endpoint
-            // For now, this is a placeholder
-            debug!("Would send {} bytes to peer {:?}", data.len(), peer_id);
-            Ok(())
+        if let Some(remote_addr) = peers.get(peer_id) {
+            debug!("Sending {} bytes to peer {:?} at {}", data.len(), peer_id, remote_addr);
+            
+            // Get the Quinn connection for this peer from the NAT traversal endpoint
+            match self.nat_endpoint.get_connection(peer_id) {
+                Ok(Some(connection)) => {
+                    // Open a unidirectional stream for data transmission
+                    let mut send_stream = connection.open_uni().await
+                        .map_err(|e| format!("Failed to open stream: {}", e))?;
+                    
+                    // Send the data
+                    send_stream.write_all(data).await
+                        .map_err(|e| format!("Failed to write data: {}", e))?;
+                    
+                    // Finish the stream
+                    send_stream.finish();
+                    
+                    debug!("Successfully sent {} bytes to peer {:?}", data.len(), peer_id);
+                    Ok(())
+                }
+                Ok(None) => {
+                    error!("No active connection found for peer {:?}", peer_id);
+                    Err("No active connection".into())
+                }
+                Err(e) => {
+                    error!("Failed to get connection for peer {:?}: {}", peer_id, e);
+                    Err(Box::new(e))
+                }
+            }
         } else {
+            error!("Peer {:?} not connected", peer_id);
             Err("Peer not connected".into())
         }
     }
 
     /// Receive data from peers
     pub async fn receive(&self) -> Result<(PeerId, Vec<u8>), Box<dyn std::error::Error>> {
-        // This would receive data from any connected peer
-        // For now, it's a placeholder
-        todo!("Implement data reception")
+        debug!("Waiting to receive data from any connected peer...");
+        
+        // Get all connected peers
+        let peers = {
+            let peers_guard = self.connected_peers.read().await;
+            peers_guard.clone()
+        };
+        
+        if peers.is_empty() {
+            return Err("No connected peers".into());
+        }
+        
+        // Try to receive data from any connected peer
+        // In a real implementation, this would use a more sophisticated approach
+        // like select! over multiple connection streams
+        for (peer_id, _remote_addr) in peers.iter() {
+            match self.nat_endpoint.get_connection(peer_id) {
+                Ok(Some(connection)) => {
+                    // Try to accept incoming streams from this connection
+                    match tokio::time::timeout(Duration::from_millis(100), connection.accept_uni()).await {
+                        Ok(Ok(mut recv_stream)) => {
+                            debug!("Receiving data from peer {:?}", peer_id);
+                            
+                            // Read all data from the stream
+                            let mut buffer = Vec::new();
+                            match recv_stream.read_to_end(&mut buffer).await {
+                                Ok(_) => {
+                                    if !buffer.is_empty() {
+                                        debug!("Received {} bytes from peer {:?}", buffer.len(), peer_id);
+                                        return Ok((*peer_id, buffer));
+                                    }
+                                }
+                                Err(e) => {
+                                    debug!("Failed to read from stream for peer {:?}: {}", peer_id, e);
+                                }
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            debug!("Failed to accept stream from peer {:?}: {}", peer_id, e);
+                        }
+                        Err(_) => {
+                            // Timeout - continue to next peer
+                        }
+                    }
+                    
+                    // Also try to accept bidirectional streams
+                    match tokio::time::timeout(Duration::from_millis(100), connection.accept_bi()).await {
+                        Ok(Ok((_send_stream, mut recv_stream))) => {
+                            debug!("Receiving data from bidirectional stream from peer {:?}", peer_id);
+                            
+                            // Read all data from the receive side
+                            let mut buffer = Vec::new();
+                            match recv_stream.read_to_end(&mut buffer).await {
+                                Ok(_) => {
+                                    if !buffer.is_empty() {
+                                        debug!("Received {} bytes from peer {:?} via bidirectional stream", buffer.len(), peer_id);
+                                        return Ok((*peer_id, buffer));
+                                    }
+                                }
+                                Err(e) => {
+                                    debug!("Failed to read from bidirectional stream for peer {:?}: {}", peer_id, e);
+                                }
+                            }
+                        }
+                        Ok(Err(e)) => {
+                            debug!("Failed to accept bidirectional stream from peer {:?}: {}", peer_id, e);
+                        }
+                        Err(_) => {
+                            // Timeout - continue to next peer
+                        }
+                    }
+                }
+                Ok(None) => {
+                    debug!("No active connection for peer {:?}", peer_id);
+                }
+                Err(e) => {
+                    debug!("Failed to get connection for peer {:?}: {}", peer_id, e);
+                }
+            }
+        }
+        
+        // If we get here, no data was received from any peer
+        Err("No data available from any connected peer".into())
     }
 
     /// Get current statistics

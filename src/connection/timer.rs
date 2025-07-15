@@ -42,7 +42,7 @@ impl Timer {
 /// A table of data associated with each distinct kind of `Timer`
 #[derive(Debug, Copy, Clone, Default)]
 pub(crate) struct TimerTable {
-    data: [Option<Instant>; 11],
+    data: [Option<Instant>; 10],
 }
 
 impl TimerTable {

@@ -1,8 +1,10 @@
-//! Placeholder for Extension Handlers
+//! Extension Handlers for RFC 7250 Raw Public Keys
 //!
-//! Note: rustls 0.23.x already includes built-in RFC 7250 Raw Public Keys support,
-//! so we don't need custom extension handlers. This module is kept as a placeholder
-//! for future extensions if needed.
+//! Note: rustls 0.23.x does not yet have full RFC 7250 Raw Public Keys support.
+//! See https://github.com/rustls/rustls/issues/423 for the tracking issue.
+//! 
+//! This module provides a workaround by using custom certificate verifiers
+//! that can handle SubjectPublicKeyInfo structures as "certificates".
 
 use std::sync::Arc;
 

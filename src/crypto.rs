@@ -37,6 +37,9 @@ pub mod rpk_integration;
 /// TLS Extensions for RFC 7250 certificate type negotiation
 pub mod tls_extensions;
 
+/// TLS Extension Simulation for RFC 7250 Raw Public Keys
+pub mod tls_extension_simulation;
+
 /// rustls Extension Handlers for certificate type negotiation
 pub mod extension_handlers;
 
@@ -63,6 +66,10 @@ pub mod enterprise_cert_mgmt;
 
 /// Performance Optimization Engine
 pub mod performance_optimization;
+
+/// Test module for TLS extension simulation
+#[cfg(test)]
+mod test_tls_simulation;
 
 /// A cryptographic session (commonly TLS)
 pub trait Session: Send + Sync + 'static {
