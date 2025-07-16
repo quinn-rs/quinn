@@ -260,15 +260,14 @@ impl Endpoint {
         } else if !event.first_decode.is_initial()
             && self.local_cid_generator.validate(dst_cid).is_err()
         {
-            // If we got this far, we're receiving a seemingly valid packet for an unknown
-            // connection. Send a stateless reset if possible.
-
             debug!("dropping packet with invalid CID");
             None
         } else if dst_cid.is_empty() {
             trace!("dropping unrecognized short packet without ID");
             None
         } else {
+            // If we got this far, we're receiving a seemingly valid packet for an unknown
+            // connection. Send a stateless reset if possible.
             self.stateless_reset(now, datagram_len, addresses, *dst_cid, buf)
                 .map(DatagramEvent::Response)
         }
