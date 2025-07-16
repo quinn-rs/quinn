@@ -68,7 +68,7 @@ pub use proto::{
     TransportConfig, TransportErrorCode, UdpStats, ValidationTokenConfig, VarInt,
     VarIntBoundsExceeded, Written, congestion, crypto,
 };
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 pub use proto::{QlogConfig, QlogStream};
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 pub use rustls;

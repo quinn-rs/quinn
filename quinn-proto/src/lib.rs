@@ -58,7 +58,7 @@ pub use config::{
     AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
     ServerConfig, StdSystemTime, TimeSource, TransportConfig, ValidationTokenConfig,
 };
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 pub use config::{QlogConfig, QlogStream};
 
 pub mod crypto;
