@@ -9,7 +9,7 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use frame::StreamMetaVec;
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 use qlog::events::EventData;
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
@@ -364,11 +364,11 @@ impl Connection {
 
     /// Emit a `MetricsUpdated` event to the qlog streamer containing only updated values
     fn emit_qlog_recovery_metrics(&mut self, now: Instant) {
-        #[cfg(not(feature = "__qlog"))]
+        #[cfg(not(feature = "qlog"))]
         {
             _ = now;
         }
-        #[cfg(feature = "__qlog")]
+        #[cfg(feature = "qlog")]
         {
             let Some(qlog_stream) = self.config.qlog_stream.as_ref() else {
                 return;
