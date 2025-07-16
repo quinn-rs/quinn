@@ -378,10 +378,12 @@ impl Connection {
                 return;
             };
 
-            let event = EventData::MetricsUpdated(metrics);
+            // Time will be overwritten by `add_event_with_instant`
+            let mut event = qlog::events::Event::with_time(0.0, EventData::MetricsUpdated(metrics));
+            event.group_id = Some(self.orig_rem_cid.to_string());
 
             let mut qlog_streamer = qlog_stream.0.lock().unwrap();
-            if let Err(e) = qlog_streamer.add_event_data_with_instant(event, now) {
+            if let Err(e) = qlog_streamer.add_event_with_instant(event, now) {
                 warn!("could not emit qlog event: {e}");
             }
         }
