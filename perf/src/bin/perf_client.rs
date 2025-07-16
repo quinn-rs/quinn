@@ -165,6 +165,14 @@ async fn run(opt: Opt) -> Result<()> {
         transport.congestion_controller_factory(cong_alg.build());
     }
 
+    #[cfg(feature = "__qlog")]
+    if let Some(qlog_file) = &opt.qlog_file {
+        let mut qlog = quinn::QlogConfig::default();
+        qlog.writer(Box::new(File::create(qlog_file)?))
+            .title(Some("perf-client".into()));
+        transport.qlog_stream(qlog.into_stream());
+    }
+
     let crypto = Arc::new(QuicClientConfig::try_from(crypto)?);
     let mut config = quinn::ClientConfig::new(match opt.no_protection {
         true => Arc::new(NoProtectionClientConfig::new(crypto)),
@@ -174,16 +182,10 @@ async fn run(opt: Opt) -> Result<()> {
 
     let stream_stats = OpenStreamStats::default();
 
-    let mut connection = endpoint
+    let connection = endpoint
         .connect_with(config, addr, host_name)?
         .await
         .context("connecting")?;
-
-    #[cfg(feature = "__qlog")]
-    if let Some(qlog_file) = &opt.qlog_file {
-        let writer = File::create(qlog_file)?;
-        connection.set_qlog(Box::new(writer), Some("perf-client".to_string()), None);
-    }
 
     info!("established");
 

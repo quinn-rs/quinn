@@ -10,10 +10,7 @@ use std::{
 use bytes::{Bytes, BytesMut};
 use frame::StreamMetaVec;
 #[cfg(feature = "__qlog")]
-use qlog::{
-    Configuration, QLOG_VERSION, TraceSeq, VantagePoint, VantagePointType, events::EventData,
-    events::EventImportance, streamer::QlogStreamer,
-};
+use qlog::events::EventData;
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use thiserror::Error;
@@ -237,10 +234,6 @@ pub struct Connection {
     stats: ConnectionStats,
     /// QUIC version used for the connection.
     version: u32,
-
-    /// qlog streamer to ouput events as JSON text sequences
-    #[cfg(feature = "__qlog")]
-    qlog_streamer: Option<QlogStreamer>,
 }
 
 impl Connection {
@@ -357,9 +350,6 @@ impl Connection {
             rng,
             stats: ConnectionStats::default(),
             version,
-
-            #[cfg(feature = "__qlog")]
-            qlog_streamer: None,
         };
         if path_validated {
             this.on_path_validated();
@@ -372,73 +362,28 @@ impl Connection {
         this
     }
 
-    /// Set up qlog for this connection
-    #[cfg(feature = "__qlog")]
-    pub fn set_qlog(
-        &mut self,
-        writer: Box<dyn io::Write + Send + Sync>,
-        title: Option<String>,
-        description: Option<String>,
-        now: Instant,
-    ) {
-        let ty = if self.side.is_server() {
-            VantagePointType::Server
-        } else {
-            VantagePointType::Client
-        };
-
-        let level = EventImportance::Core;
-
-        let trace = TraceSeq::new(
-            VantagePoint {
-                name: None,
-                ty,
-                flow: None,
-            },
-            title.clone(),
-            description.clone(),
-            Some(Configuration {
-                time_offset: Some(0.0),
-                original_uris: None,
-            }),
-            None,
-        );
-
-        let mut streamer = QlogStreamer::new(
-            QLOG_VERSION.to_string(),
-            title,
-            description,
-            None,
-            now,
-            trace,
-            level,
-            writer,
-        );
-
-        if let Err(e) = streamer.start_log() {
-            warn!("could not initialize qlog streamer: {e}");
-            return;
-        }
-
-        self.qlog_streamer = Some(streamer);
-    }
-
     /// Emit a `MetricsUpdated` event to the qlog streamer containing only updated values
-    #[cfg(feature = "__qlog")]
     fn emit_qlog_recovery_metrics(&mut self, now: Instant) {
-        let Some(qlog_streamer) = &mut self.qlog_streamer else {
-            return;
-        };
+        #[cfg(not(feature = "__qlog"))]
+        {
+            _ = now;
+        }
+        #[cfg(feature = "__qlog")]
+        {
+            let Some(qlog_stream) = self.config.qlog_stream.as_ref() else {
+                return;
+            };
 
-        let Some(metrics) = self.path.qlog_congestion_metrics(self.pto_count) else {
-            return;
-        };
+            let Some(metrics) = self.path.qlog_congestion_metrics(self.pto_count) else {
+                return;
+            };
 
-        let event = EventData::MetricsUpdated(metrics);
+            let event = EventData::MetricsUpdated(metrics);
 
-        if let Err(e) = qlog_streamer.add_event_data_with_instant(event, now) {
-            warn!("could not emit qlog event, dropping qlog streamer: {e}");
-            self.qlog_streamer = None;
+            let mut qlog_streamer = qlog_stream.0.lock().unwrap();
+            if let Err(e) = qlog_streamer.add_event_data_with_instant(event, now) {
+                warn!("could not emit qlog event: {e}");
+            }
         }
     }
 
@@ -1004,7 +949,6 @@ impl Connection {
                 .congestion
                 .on_sent(now, buf.len() as u64, last_packet_number);
 
-            #[cfg(feature = "__qlog")]
             self.emit_qlog_recovery_metrics(now);
         }
 
@@ -1196,7 +1140,6 @@ impl Connection {
                     self.handle_coalesced(now, remote, ecn, data);
                 }
 
-                #[cfg(feature = "__qlog")]
                 self.emit_qlog_recovery_metrics(now);
 
                 if was_anti_amplification_blocked {
@@ -1254,7 +1197,6 @@ impl Connection {
                 Timer::LossDetection => {
                     self.on_loss_detection_timeout(now);
 
-                    #[cfg(feature = "__qlog")]
                     self.emit_qlog_recovery_metrics(now);
                 }
                 Timer::KeyDiscard => {
@@ -2063,7 +2005,6 @@ impl Connection {
             self.handle_coalesced(now, remote, ecn, data);
         }
 
-        #[cfg(feature = "__qlog")]
         self.emit_qlog_recovery_metrics(now);
 
         Ok(())
