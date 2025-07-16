@@ -1,8 +1,8 @@
 use std::{fmt, sync::Arc};
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 use std::{io, sync::Mutex, time::Instant};
 
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 use qlog::streamer::QlogStreamer;
 
 use crate::{Duration, INITIAL_MTU, MAX_UDP_PAYLOAD, VarInt, VarIntBoundsExceeded, congestion};
@@ -50,7 +50,7 @@ pub struct TransportConfig {
 
     pub(crate) enable_segmentation_offload: bool,
 
-    #[cfg(feature = "__qlog")]
+    #[cfg(feature = "qlog")]
     pub(crate) qlog_stream: Option<QlogStream>,
 }
 
@@ -339,7 +339,7 @@ impl TransportConfig {
     }
 
     /// qlog capture configuration to use for a particular connection
-    #[cfg(feature = "__qlog")]
+    #[cfg(feature = "qlog")]
     pub fn qlog_stream(&mut self, stream: Option<QlogStream>) -> &mut Self {
         self.qlog_stream = stream;
         self
@@ -386,7 +386,7 @@ impl Default for TransportConfig {
 
             enable_segmentation_offload: true,
 
-            #[cfg(feature = "__qlog")]
+            #[cfg(feature = "qlog")]
             qlog_stream: None,
         }
     }
@@ -420,7 +420,7 @@ impl fmt::Debug for TransportConfig {
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
             enable_segmentation_offload,
-            #[cfg(feature = "__qlog")]
+            #[cfg(feature = "qlog")]
             qlog_stream,
         } = self;
         let mut s = fmt.debug_struct("TransportConfig");
@@ -451,7 +451,7 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             // congestion_controller_factory not debug
             .field("enable_segmentation_offload", enable_segmentation_offload);
-        #[cfg(feature = "__qlog")]
+        #[cfg(feature = "qlog")]
         {
             s.field("qlog_stream", &qlog_stream.is_some());
         }
@@ -539,12 +539,12 @@ impl Default for AckFrequencyConfig {
 }
 
 /// Shareable handle to a single qlog output stream
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 #[derive(Clone)]
 pub struct QlogStream(pub(crate) Arc<Mutex<QlogStreamer>>);
 
 /// Configuration for qlog trace logging
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 pub struct QlogConfig {
     writer: Option<Box<dyn io::Write + Send + Sync>>,
     title: Option<String>,
@@ -552,7 +552,7 @@ pub struct QlogConfig {
     start_time: Instant,
 }
 
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 impl QlogConfig {
     /// Where to write a qlog `TraceSeq`
     pub fn writer(&mut self, writer: Box<dyn io::Write + Send + Sync>) -> &mut Self {
@@ -619,7 +619,7 @@ impl QlogConfig {
     }
 }
 
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 impl Default for QlogConfig {
     fn default() -> Self {
         Self {

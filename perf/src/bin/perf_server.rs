@@ -1,4 +1,4 @@
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 use std::fs::File;
 use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
@@ -53,7 +53,7 @@ struct Opt {
     #[clap(long = "congestion")]
     cong_alg: Option<CongestionAlgorithm>,
     /// qlog output file
-    #[cfg(feature = "__qlog")]
+    #[cfg(feature = "qlog")]
     #[clap(long = "qlog")]
     qlog_file: Option<PathBuf>,
 }
@@ -123,7 +123,7 @@ async fn run(opt: Opt) -> Result<()> {
         transport.congestion_controller_factory(cong_alg.build());
     }
 
-    #[cfg(feature = "__qlog")]
+    #[cfg(feature = "qlog")]
     if let Some(qlog_file) = &opt.qlog_file {
         let mut qlog = quinn::QlogConfig::default();
         qlog.writer(Box::new(File::create(qlog_file)?))
