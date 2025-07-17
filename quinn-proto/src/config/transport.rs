@@ -5,7 +5,12 @@ use std::{io, sync::Mutex, time::Instant};
 #[cfg(feature = "qlog")]
 use qlog::streamer::QlogStreamer;
 
-use crate::{Duration, INITIAL_MTU, MAX_UDP_PAYLOAD, VarInt, VarIntBoundsExceeded, congestion};
+#[cfg(feature = "qlog")]
+use crate::QlogStream;
+use crate::{
+    Duration, INITIAL_MTU, MAX_UDP_PAYLOAD, VarInt, VarIntBoundsExceeded, congestion,
+    connection::qlog::QlogSink,
+};
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -50,8 +55,7 @@ pub struct TransportConfig {
 
     pub(crate) enable_segmentation_offload: bool,
 
-    #[cfg(feature = "qlog")]
-    pub(crate) qlog_stream: Option<QlogStream>,
+    pub(crate) qlog_sink: QlogSink,
 }
 
 impl TransportConfig {
@@ -341,7 +345,7 @@ impl TransportConfig {
     /// qlog capture configuration to use for a particular connection
     #[cfg(feature = "qlog")]
     pub fn qlog_stream(&mut self, stream: Option<QlogStream>) -> &mut Self {
-        self.qlog_stream = stream;
+        self.qlog_sink = stream.into();
         self
     }
 }
@@ -386,8 +390,7 @@ impl Default for TransportConfig {
 
             enable_segmentation_offload: true,
 
-            #[cfg(feature = "qlog")]
-            qlog_stream: None,
+            qlog_sink: QlogSink::default(),
         }
     }
 }
@@ -420,8 +423,7 @@ impl fmt::Debug for TransportConfig {
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
             enable_segmentation_offload,
-            #[cfg(feature = "qlog")]
-            qlog_stream,
+            qlog_sink,
         } = self;
         let mut s = fmt.debug_struct("TransportConfig");
 
@@ -451,9 +453,8 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             // congestion_controller_factory not debug
             .field("enable_segmentation_offload", enable_segmentation_offload);
-        #[cfg(feature = "qlog")]
-        {
-            s.field("qlog_stream", &qlog_stream.is_some());
+        if cfg!(feature = "qlog") {
+            s.field("qlog_stream", &qlog_sink.is_enabled());
         }
 
         s.finish_non_exhaustive()
@@ -537,11 +538,6 @@ impl Default for AckFrequencyConfig {
         }
     }
 }
-
-/// Shareable handle to a single qlog output stream
-#[cfg(feature = "qlog")]
-#[derive(Clone)]
-pub struct QlogStream(pub(crate) Arc<Mutex<QlogStreamer>>);
 
 /// Configuration for qlog trace logging
 #[cfg(feature = "qlog")]

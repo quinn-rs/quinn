@@ -1,0 +1,82 @@
+// Function bodies in this module are regularly cfg'd out
+#![allow(unused_variables)]
+
+#[cfg(feature = "qlog")]
+use std::sync::{Arc, Mutex};
+
+#[cfg(feature = "qlog")]
+use qlog::{
+    events::{Event, EventData},
+    streamer::QlogStreamer,
+};
+#[cfg(feature = "qlog")]
+use tracing::warn;
+
+use crate::{ConnectionId, Instant, connection::PathData};
+
+/// Shareable handle to a single qlog output stream
+#[cfg(feature = "qlog")]
+#[derive(Clone)]
+pub struct QlogStream(pub(crate) Arc<Mutex<QlogStreamer>>);
+
+#[cfg(feature = "qlog")]
+impl QlogStream {
+    fn emit_event(&self, orig_rem_cid: ConnectionId, event: EventData, now: Instant) {
+        // Time will be overwritten by `add_event_with_instant`
+        let mut event = Event::with_time(0.0, event);
+        event.group_id = Some(orig_rem_cid.to_string());
+
+        let mut qlog_streamer = self.0.lock().unwrap();
+        if let Err(e) = qlog_streamer.add_event_with_instant(event, now) {
+            warn!("could not emit qlog event: {e}");
+        }
+    }
+}
+
+/// A [`QlogStream`] that may be either dynamically disabled or compiled out entirely
+#[derive(Clone, Default)]
+pub(crate) struct QlogSink {
+    #[cfg(feature = "qlog")]
+    stream: Option<QlogStream>,
+}
+
+impl QlogSink {
+    pub(crate) fn is_enabled(&self) -> bool {
+        #[cfg(feature = "qlog")]
+        {
+            self.stream.is_some()
+        }
+        #[cfg(not(feature = "qlog"))]
+        {
+            false
+        }
+    }
+
+    pub(super) fn emit_recovery_metrics(
+        &self,
+        pto_count: u32,
+        path: &mut PathData,
+        now: Instant,
+        orig_rem_cid: ConnectionId,
+    ) {
+        #[cfg(feature = "qlog")]
+        {
+            let Some(stream) = self.stream.as_ref() else {
+                return;
+            };
+
+            let Some(metrics) = path.qlog_congestion_metrics(pto_count) else {
+                return;
+            };
+
+            stream.emit_event(orig_rem_cid, EventData::MetricsUpdated(metrics), now);
+        }
+    }
+}
+
+#[cfg(feature = "qlog")]
+impl From<Option<QlogStream>> for QlogSink {
+    fn from(stream: Option<QlogStream>) -> Self {
+        Self { stream }
+    }
+}
