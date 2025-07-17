@@ -8,7 +8,7 @@ use std::sync::{Arc, Mutex};
 use qlog::{
     events::{
         Event, EventData,
-        quic::{PacketHeader, PacketLost, PacketLostTrigger, PacketType},
+        quic::{PacketHeader, PacketLost, PacketLostTrigger, PacketSent, PacketType},
     },
     streamer::QlogStreamer,
 };
@@ -98,7 +98,7 @@ impl QlogSink {
             let event = PacketLost {
                 header: Some(PacketHeader {
                     packet_number: Some(pn),
-                    packet_type: packet_type(space),
+                    packet_type: packet_type(space, false),
                     length: Some(info.size),
                     ..Default::default()
                 }),
@@ -112,6 +112,35 @@ impl QlogSink {
             stream.emit_event(orig_rem_cid, EventData::PacketLost(event), now);
         }
     }
+
+    pub(super) fn emit_packet_sent(
+        &self,
+        pn: u64,
+        len: usize,
+        space: SpaceId,
+        is_0rtt: bool,
+        now: Instant,
+        orig_rem_cid: ConnectionId,
+    ) {
+        #[cfg(feature = "qlog")]
+        {
+            let Some(stream) = self.stream.as_ref() else {
+                return;
+            };
+
+            let event = PacketSent {
+                header: PacketHeader {
+                    packet_number: Some(pn),
+                    packet_type: packet_type(space, is_0rtt),
+                    length: Some(len as u16),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            stream.emit_event(orig_rem_cid, EventData::PacketSent(event), now);
+        }
+    }
 }
 
 #[cfg(feature = "qlog")]
@@ -122,10 +151,11 @@ impl From<Option<QlogStream>> for QlogSink {
 }
 
 #[cfg(feature = "qlog")]
-fn packet_type(space: SpaceId) -> PacketType {
+fn packet_type(space: SpaceId, is_0rtt: bool) -> PacketType {
     match space {
         SpaceId::Initial => PacketType::Initial,
         SpaceId::Handshake => PacketType::Handshake,
+        SpaceId::Data if is_0rtt => PacketType::ZeroRtt,
         SpaceId::Data => PacketType::OneRtt,
     }
 }

@@ -1050,7 +1050,7 @@ impl Connection {
         // sending a datagram of this size
         builder.pad_to(MIN_INITIAL_SIZE);
 
-        builder.finish(self, buf);
+        builder.finish(self, now, buf);
         self.stats.udp_tx.on_sent(1, buf.len());
 
         Some(Transmit {
