@@ -6,13 +6,20 @@ use std::sync::{Arc, Mutex};
 
 #[cfg(feature = "qlog")]
 use qlog::{
-    events::{Event, EventData},
+    events::{
+        Event, EventData,
+        quic::{PacketHeader, PacketLost, PacketLostTrigger, PacketType},
+    },
     streamer::QlogStreamer,
 };
 #[cfg(feature = "qlog")]
 use tracing::warn;
 
-use crate::{ConnectionId, Instant, connection::PathData};
+use crate::{
+    ConnectionId, Instant,
+    connection::{PathData, SentPacket},
+    packet::SpaceId,
+};
 
 /// Shareable handle to a single qlog output stream
 #[cfg(feature = "qlog")]
@@ -72,11 +79,53 @@ impl QlogSink {
             stream.emit_event(orig_rem_cid, EventData::MetricsUpdated(metrics), now);
         }
     }
+
+    pub(super) fn emit_packet_lost(
+        &self,
+        pn: u64,
+        info: &SentPacket,
+        lost_send_time: Instant,
+        space: SpaceId,
+        now: Instant,
+        orig_rem_cid: ConnectionId,
+    ) {
+        #[cfg(feature = "qlog")]
+        {
+            let Some(stream) = self.stream.as_ref() else {
+                return;
+            };
+
+            let event = PacketLost {
+                header: Some(PacketHeader {
+                    packet_number: Some(pn),
+                    packet_type: packet_type(space),
+                    length: Some(info.size),
+                    ..Default::default()
+                }),
+                frames: None,
+                trigger: Some(match info.time_sent <= lost_send_time {
+                    true => PacketLostTrigger::TimeThreshold,
+                    false => PacketLostTrigger::ReorderingThreshold,
+                }),
+            };
+
+            stream.emit_event(orig_rem_cid, EventData::PacketLost(event), now);
+        }
+    }
 }
 
 #[cfg(feature = "qlog")]
 impl From<Option<QlogStream>> for QlogSink {
     fn from(stream: Option<QlogStream>) -> Self {
         Self { stream }
+    }
+}
+
+#[cfg(feature = "qlog")]
+fn packet_type(space: SpaceId) -> PacketType {
+    match space {
+        SpaceId::Initial => PacketType::Initial,
+        SpaceId::Handshake => PacketType::Handshake,
+        SpaceId::Data => PacketType::OneRtt,
     }
 }
