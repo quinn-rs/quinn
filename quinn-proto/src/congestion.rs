@@ -92,7 +92,7 @@ pub struct ControllerMetrics {
     pub congestion_window: u64,
     /// Slow start threshold (bytes)
     pub ssthresh: Option<u64>,
-    /// Pacing rate (bytes/s)
+    /// Pacing rate (bits/s)
     pub pacing_rate: Option<u64>,
 }
 
