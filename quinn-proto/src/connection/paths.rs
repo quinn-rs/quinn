@@ -48,7 +48,7 @@ pub(super) struct PathData {
 
     /// Snapshot of the qlog recovery metrics
     #[cfg(feature = "qlog")]
-    congestion_metrics: CongestionMetrics,
+    recovery_metrics: RecoveryMetrics,
 }
 
 impl PathData {
@@ -98,7 +98,7 @@ impl PathData {
             in_flight: InFlight::new(),
             first_packet: None,
             #[cfg(feature = "qlog")]
-            congestion_metrics: CongestionMetrics::default(),
+            recovery_metrics: RecoveryMetrics::default(),
         }
     }
 
@@ -121,7 +121,7 @@ impl PathData {
             in_flight: InFlight::new(),
             first_packet: None,
             #[cfg(feature = "qlog")]
-            congestion_metrics: prev.congestion_metrics.clone(),
+            recovery_metrics: prev.recovery_metrics.clone(),
         }
     }
 
@@ -168,10 +168,10 @@ impl PathData {
     }
 
     #[cfg(feature = "qlog")]
-    pub(super) fn qlog_congestion_metrics(&mut self, pto_count: u32) -> Option<MetricsUpdated> {
+    pub(super) fn qlog_recovery_metrics(&mut self, pto_count: u32) -> Option<MetricsUpdated> {
         let controller_metrics = self.congestion.metrics();
 
-        let metrics = CongestionMetrics {
+        let metrics = RecoveryMetrics {
             min_rtt: Some(self.rtt.min),
             smoothed_rtt: Some(self.rtt.get()),
             latest_rtt: Some(self.rtt.latest),
@@ -185,8 +185,8 @@ impl PathData {
             pacing_rate: controller_metrics.pacing_rate,
         };
 
-        let event = metrics.to_qlog_event(&self.congestion_metrics);
-        self.congestion_metrics = metrics;
+        let event = metrics.to_qlog_event(&self.recovery_metrics);
+        self.recovery_metrics = metrics;
         event
     }
 }
@@ -197,7 +197,7 @@ impl PathData {
 #[cfg(feature = "qlog")]
 #[derive(Default, Clone, PartialEq)]
 #[non_exhaustive]
-struct CongestionMetrics {
+struct RecoveryMetrics {
     pub min_rtt: Option<Duration>,
     pub smoothed_rtt: Option<Duration>,
     pub latest_rtt: Option<Duration>,
@@ -211,7 +211,7 @@ struct CongestionMetrics {
 }
 
 #[cfg(feature = "qlog")]
-impl CongestionMetrics {
+impl RecoveryMetrics {
     /// Retain only values that have been updated since the last snapshot.
     fn retain_updated(&self, previous: &Self) -> Self {
         macro_rules! keep_if_changed {
