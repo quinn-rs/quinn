@@ -9,8 +9,6 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use frame::StreamMetaVec;
-#[cfg(feature = "qlog")]
-use qlog::events::EventData;
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use thiserror::Error;
@@ -64,6 +62,8 @@ use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 mod paths;
 pub use paths::RttEstimator;
 use paths::{PathData, PathResponses};
+
+pub(crate) mod qlog;
 
 mod send_buffer;
 
@@ -360,33 +360,6 @@ impl Connection {
             this.init_0rtt();
         }
         this
-    }
-
-    /// Emit a `MetricsUpdated` event to the qlog streamer containing only updated values
-    fn emit_qlog_recovery_metrics(&mut self, now: Instant) {
-        #[cfg(not(feature = "qlog"))]
-        {
-            _ = now;
-        }
-        #[cfg(feature = "qlog")]
-        {
-            let Some(qlog_stream) = self.config.qlog_stream.as_ref() else {
-                return;
-            };
-
-            let Some(metrics) = self.path.qlog_congestion_metrics(self.pto_count) else {
-                return;
-            };
-
-            // Time will be overwritten by `add_event_with_instant`
-            let mut event = qlog::events::Event::with_time(0.0, EventData::MetricsUpdated(metrics));
-            event.group_id = Some(self.orig_rem_cid.to_string());
-
-            let mut qlog_streamer = qlog_stream.0.lock().unwrap();
-            if let Err(e) = qlog_streamer.add_event_with_instant(event, now) {
-                warn!("could not emit qlog event: {e}");
-            }
-        }
     }
 
     /// Returns the next time at which `handle_timeout` should be called
@@ -951,7 +924,12 @@ impl Connection {
                 .congestion
                 .on_sent(now, buf.len() as u64, last_packet_number);
 
-            self.emit_qlog_recovery_metrics(now);
+            self.config.qlog_sink.emit_recovery_metrics(
+                self.pto_count,
+                &mut self.path,
+                now,
+                self.orig_rem_cid,
+            );
         }
 
         self.app_limited = buf.is_empty() && !congestion_blocked;
@@ -1142,7 +1120,12 @@ impl Connection {
                     self.handle_coalesced(now, remote, ecn, data);
                 }
 
-                self.emit_qlog_recovery_metrics(now);
+                self.config.qlog_sink.emit_recovery_metrics(
+                    self.pto_count,
+                    &mut self.path,
+                    now,
+                    self.orig_rem_cid,
+                );
 
                 if was_anti_amplification_blocked {
                     // A prior attempt to set the loss detection timer may have failed due to
@@ -1199,7 +1182,12 @@ impl Connection {
                 Timer::LossDetection => {
                     self.on_loss_detection_timeout(now);
 
-                    self.emit_qlog_recovery_metrics(now);
+                    self.config.qlog_sink.emit_recovery_metrics(
+                        self.pto_count,
+                        &mut self.path,
+                        now,
+                        self.orig_rem_cid,
+                    );
                 }
                 Timer::KeyDiscard => {
                     self.zero_rtt_crypto = None;
@@ -2007,7 +1995,12 @@ impl Connection {
             self.handle_coalesced(now, remote, ecn, data);
         }
 
-        self.emit_qlog_recovery_metrics(now);
+        self.config.qlog_sink.emit_recovery_metrics(
+            self.pto_count,
+            &mut self.path,
+            now,
+            self.orig_rem_cid,
+        );
 
         Ok(())
     }
