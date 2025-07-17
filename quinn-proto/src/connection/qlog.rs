@@ -8,7 +8,9 @@ use std::sync::{Arc, Mutex};
 use qlog::{
     events::{
         Event, EventData,
-        quic::{PacketHeader, PacketLost, PacketLostTrigger, PacketSent, PacketType},
+        quic::{
+            PacketHeader, PacketLost, PacketLostTrigger, PacketReceived, PacketSent, PacketType,
+        },
     },
     streamer::QlogStreamer,
 };
@@ -139,6 +141,33 @@ impl QlogSink {
             };
 
             stream.emit_event(orig_rem_cid, EventData::PacketSent(event), now);
+        }
+    }
+
+    pub(super) fn emit_packet_received(
+        &self,
+        pn: u64,
+        space: SpaceId,
+        is_0rtt: bool,
+        now: Instant,
+        orig_rem_cid: ConnectionId,
+    ) {
+        #[cfg(feature = "qlog")]
+        {
+            let Some(stream) = self.stream.as_ref() else {
+                return;
+            };
+
+            let event = PacketReceived {
+                header: PacketHeader {
+                    packet_number: Some(pn),
+                    packet_type: packet_type(space, is_0rtt),
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+
+            stream.emit_event(orig_rem_cid, EventData::PacketReceived(event), now);
         }
     }
 }
