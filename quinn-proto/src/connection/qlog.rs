@@ -72,7 +72,7 @@ impl QlogSink {
                 return;
             };
 
-            let Some(metrics) = path.qlog_congestion_metrics(pto_count) else {
+            let Some(metrics) = path.qlog_recovery_metrics(pto_count) else {
                 return;
             };
 
