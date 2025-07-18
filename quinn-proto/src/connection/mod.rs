@@ -3217,7 +3217,7 @@ impl Connection {
         }
 
         // ACK
-        if space.pending_acks.can_send() {
+        if space.pending_acks.may_send() {
             Self::populate_acks(
                 now,
                 self.receiving_ecn,
