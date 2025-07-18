@@ -596,7 +596,7 @@ fn zero_rtt_happypath() {
         Ok(Some(chunk)) if chunk.offset == 0 && chunk.bytes == MSG
     );
     let _ = chunks.finalize();
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
 }
 
 #[test]
@@ -671,7 +671,7 @@ fn zero_rtt_rejection() {
     let mut chunks = recv.read(false).unwrap();
     assert_eq!(chunks.next(usize::MAX), Err(ReadError::Blocked));
     let _ = chunks.finalize();
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
 }
 
 fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: F) {
@@ -762,7 +762,7 @@ fn test_zero_rtt_incoming_limit<F: FnOnce(&mut ServerConfig)>(configure_server: 
     assert_eq!(offset, CLIENT_WRITES);
     let _ = chunks.finalize();
     assert_eq!(
-        pair.client_conn_mut(client_ch).lost_packets(),
+        pair.client_conn_mut(client_ch).stats().path.lost_packets,
         EXPECTED_DROPPED
     );
 }
@@ -1011,8 +1011,8 @@ fn key_update_simple() {
     );
     let _ = chunks.finalize();
 
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
-    assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
+    assert_eq!(pair.server_conn_mut(server_ch).stats().path.lost_packets, 0);
 }
 
 #[test]
@@ -1044,7 +1044,7 @@ fn key_update_reordered() {
     pair.client.finish_delay();
     pair.drive();
 
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
     assert_matches!(
         pair.server_conn_mut(server_ch).poll(),
         Some(Event::Stream(StreamEvent::Opened { dir: Dir::Bi }))
@@ -1059,8 +1059,8 @@ fn key_update_reordered() {
     assert_eq!(buf2.bytes, MSG2);
     let _ = chunks.finalize();
 
-    assert_eq!(pair.client_conn_mut(client_ch).lost_packets(), 0);
-    assert_eq!(pair.server_conn_mut(server_ch).lost_packets(), 0);
+    assert_eq!(pair.client_conn_mut(client_ch).stats().path.lost_packets, 0);
+    assert_eq!(pair.server_conn_mut(server_ch).stats().path.lost_packets, 0);
 }
 
 #[test]
@@ -1699,7 +1699,7 @@ fn handshake_1rtt_handling() {
 
     pair.drive();
 
-    assert!(pair.client_conn_mut(client_ch).lost_packets() != 0);
+    assert!(pair.client_conn_mut(client_ch).stats().path.lost_packets != 0);
     let mut recv = pair.server_recv(server_ch, s);
     let mut chunks = recv.read(false).unwrap();
     assert_matches!(
