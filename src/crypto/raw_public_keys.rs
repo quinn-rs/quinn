@@ -392,33 +392,32 @@ impl RawPublicKeyConfigBuilder {
 
     /// Build a client configuration with RFC 7250 extension simulation
     pub fn build_rfc7250_client_config(self) -> Result<Rfc7250ClientConfig, TlsError> {
-        let base_config = self.build_client_config()?;
-        let preferences = self.cert_type_preferences
+        let preferences = self.cert_type_preferences.clone()
             .unwrap_or_else(|| super::tls_extensions::CertificateTypePreferences::prefer_raw_public_key());
+        let base_config = self.build_client_config()?;
         
         Ok(Rfc7250ClientConfig::new(base_config, preferences))
     }
 
     /// Build a server configuration with RFC 7250 extension simulation
     pub fn build_rfc7250_server_config(self) -> Result<Rfc7250ServerConfig, TlsError> {
-        let base_config = self.build_server_config()?;
-        let preferences = self.cert_type_preferences
+        let preferences = self.cert_type_preferences.clone()
             .unwrap_or_else(|| super::tls_extensions::CertificateTypePreferences::prefer_raw_public_key());
+        let base_config = self.build_server_config()?;
         
         Ok(Rfc7250ServerConfig::new(base_config, preferences))
     }
 }
 
 /// Utility functions for key generation and conversion
-pub mod utils {
+pub mod key_utils {
     use super::*;
     
 
     /// Generate a new Ed25519 key pair
     pub fn generate_ed25519_keypair() -> (Ed25519SecretKey, Ed25519PublicKey) {
-        // Use a fixed seed for deterministic testing, in production would use proper RNG
-        let seed = [42u8; 32];  // In production, use OsRng or similar
-        let private_key = Ed25519SecretKey::from_bytes(&seed);
+        use rand::rngs::OsRng;
+        let private_key = Ed25519SecretKey::generate(&mut OsRng);
         let public_key = private_key.verifying_key();
         (private_key, public_key)
     }
@@ -501,7 +500,7 @@ pub mod utils {
 
 #[cfg(test)]
 mod tests {
-    use super::utils::*;
+    use super::key_utils::*;
     use super::*;
 
     #[test]

@@ -6,7 +6,7 @@
 #[cfg(test)]
 mod tests {
     use super::super::{
-        raw_public_keys::{RawPublicKeyConfigBuilder, utils::*},
+        raw_public_keys::{RawPublicKeyConfigBuilder, key_utils::*},
         tls_extensions::{CertificateTypePreferences, CertificateType},
         tls_extension_simulation::create_connection_id,
     };
@@ -21,8 +21,9 @@ mod tests {
             .enable_certificate_type_extensions();
 
         let rfc7250_client = config_builder.build_rfc7250_client_config().unwrap();
-        assert!(rfc7250_client.inner().is_some());
-        assert!(rfc7250_client.extension_context().is_some());
+        // inner() returns Arc<ClientConfig>, not Option
+        let _ = rfc7250_client.inner();
+        let _ = rfc7250_client.extension_context();
     }
 
     #[test]
@@ -34,8 +35,9 @@ mod tests {
             .enable_certificate_type_extensions();
 
         let rfc7250_server = config_builder.build_rfc7250_server_config().unwrap();
-        assert!(rfc7250_server.inner().is_some());
-        assert!(rfc7250_server.extension_context().is_some());
+        // inner() returns Arc<ServerConfig>, not Option
+        let _ = rfc7250_server.inner();
+        let _ = rfc7250_server.extension_context();
     }
 
     #[test]

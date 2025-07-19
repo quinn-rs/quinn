@@ -20,7 +20,6 @@ use crate::{
     crypto::{
         self, CryptoError, ExportKeyingMaterialError, HeaderKey, KeyPair, Keys, UnsupportedVersion,
         tls_extension_simulation::{ExtensionAwareTlsSession, SimulatedExtensionContext, TlsExtensionHooks},
-        tls_extensions::CertificateTypePreferences,
     },
     transport_parameters::TransportParameters,
 };
@@ -415,6 +414,7 @@ impl TryFrom<Arc<rustls::ClientConfig>> for QuicClientConfig {
             initial: initial_suite_from_provider(inner.crypto_provider())
                 .ok_or(NoInitialCipherSuite { specific: false })?,
             inner,
+            extension_context: None,
         })
     }
 }

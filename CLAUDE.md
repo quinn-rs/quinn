@@ -9,6 +9,8 @@ ant-quic is a QUIC transport protocol implementation with advanced NAT traversal
 ## Project Insights
 
 - This is not a library to integrate with Quinn, it's a fork of Quinn that we are upgrading
+- We use Quinn's high-level API patterns (Endpoint, Connection) for consistency
+- Focus on default features for compilation and testing
 
 ## Development Commands
 
@@ -177,11 +179,10 @@ cargo test --test nat_traversal_comprehensive
 - ICE-like candidate pairing with priority calculation
 - Multi-path packet transmission and coordination
 - Comprehensive test suite with network simulation
-- High-level NAT traversal API
+- High-level NAT traversal API with Quinn endpoint integration
 
 ### In Progress 🚧
 - Platform-specific network interface discovery (Windows IP Helper, Linux Netlink, macOS SCF)
-- Real Quinn endpoint integration in high-level API
 - Session state machine polling implementation
 - Relay connection logic for fallback scenarios
 

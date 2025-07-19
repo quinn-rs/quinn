@@ -26,10 +26,10 @@ fn generate_ipv4_addresses(count: usize) -> Vec<IpAddr> {
     
     for _ in 0..count {
         let octets = [
-            rng.random_range(1..=254),
-            rng.random_range(0..=255),
-            rng.random_range(0..=255),
-            rng.random_range(1..=254),
+            rng.gen_range(1..=254),
+            rng.gen_range(0..=255),
+            rng.gen_range(0..=255),
+            rng.gen_range(1..=254),
         ];
         addresses.push(IpAddr::V4(Ipv4Addr::from(octets)));
     }
@@ -135,7 +135,7 @@ fn bench_candidate_creation(c: &mut Criterion) {
                 b.iter(|| {
                     let mut candidates = Vec::new();
                     for addr in &addresses {
-                        let port = rng.random_range(1024..=65535);
+                        let port = rng.gen_range(1024..=65535);
                         let socket_addr = SocketAddr::new(*addr, port);
                         let priority = calculate_address_priority(addr);
                         
@@ -176,7 +176,7 @@ fn bench_candidate_pairing(c: &mut Criterion) {
                     
                     // Create candidate addresses
                     let local_candidates: Vec<CandidateAddress> = local_addrs.iter().map(|addr| {
-                        let port = rng.random_range(1024..=65535);
+                        let port = rng.gen_range(1024..=65535);
                         let socket_addr = SocketAddr::new(*addr, port);
                         let priority = calculate_address_priority(addr);
                         
@@ -189,7 +189,7 @@ fn bench_candidate_pairing(c: &mut Criterion) {
                     }).collect();
                     
                     let remote_candidates: Vec<CandidateAddress> = remote_addrs.iter().map(|addr| {
-                        let port = rng.random_range(1024..=65535);
+                        let port = rng.gen_range(1024..=65535);
                         let socket_addr = SocketAddr::new(*addr, port);
                         let priority = calculate_address_priority(addr);
                         
@@ -242,7 +242,7 @@ fn bench_candidate_sorting(c: &mut Criterion) {
                 
                 // Pre-generate candidates
                 let candidates: Vec<CandidateAddress> = addresses.iter().map(|addr| {
-                    let port = rng.random_range(1024..=65535);
+                    let port = rng.gen_range(1024..=65535);
                     let socket_addr = SocketAddr::new(*addr, port);
                     let priority = calculate_address_priority(addr);
                     
@@ -271,7 +271,7 @@ fn bench_candidate_sorting(c: &mut Criterion) {
                 
                 // Pre-generate candidates
                 let candidates: Vec<CandidateAddress> = addresses.iter().map(|addr| {
-                    let port = rng.random_range(1024..=65535);
+                    let port = rng.gen_range(1024..=65535);
                     let socket_addr = SocketAddr::new(*addr, port);
                     let priority = calculate_address_priority(addr);
                     
@@ -331,7 +331,7 @@ fn bench_candidate_storage(c: &mut Criterion) {
                     
                     // Insert candidates
                     for (i, addr) in addresses.iter().enumerate() {
-                        let port = rng.random_range(1024..=65535);
+                        let port = rng.gen_range(1024..=65535);
                         let socket_addr = SocketAddr::new(*addr, port);
                         let priority = calculate_address_priority(addr);
                         

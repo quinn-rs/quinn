@@ -58,13 +58,13 @@ fn generate_socket_addresses(count: usize) -> Vec<SocketAddr> {
     let mut addresses = Vec::with_capacity(count);
     
     for _ in 0..count {
-        let addr = if rng.random_bool(0.5) {
+        let addr = if rng.gen_bool(0.5) {
             // IPv4
             let octets = [
-                rng.random_range(1..=254),
-                rng.random_range(0..=255),
-                rng.random_range(0..=255),
-                rng.random_range(1..=254),
+                rng.gen_range(1..=254),
+                rng.gen_range(0..=255),
+                rng.gen_range(0..=255),
+                rng.gen_range(1..=254),
             ];
             IpAddr::V4(Ipv4Addr::from(octets))
         } else {
@@ -78,7 +78,7 @@ fn generate_socket_addresses(count: usize) -> Vec<SocketAddr> {
             IpAddr::V6(Ipv6Addr::from(segments))
         };
         
-        let port = rng.random_range(1024..=65535);
+        let port = rng.gen_range(1024..=65535);
         addresses.push(SocketAddr::new(addr, port));
     }
     
@@ -91,8 +91,8 @@ fn generate_candidates(count: usize) -> Vec<CandidateAddress> {
     let mut rng = thread_rng();
     
     addresses.into_iter().map(|addr| {
-        let priority = rng.random_range(1..10000);
-        let source = match rng.random_range(0..3) {
+        let priority = rng.gen_range(1..10000);
+        let source = match rng.gen_range(0..3) {
             0 => CandidateSource::Local,
             1 => CandidateSource::Observed { by_node: None },
             _ => CandidateSource::Peer,
@@ -171,8 +171,8 @@ fn bench_path_validation(c: &mut Criterion) {
                             if let Some(validation) = validations.get_mut(addr) {
                                 validation.attempts += 1;
                                 validation.last_attempt = Instant::now();
-                                validation.rtt = Some(Duration::from_millis(rng.random_range(1..200)));
-                                validation.state = if rng.random_bool(0.8) {
+                                validation.rtt = Some(Duration::from_millis(rng.gen_range(1..200)));
+                                validation.state = if rng.gen_bool(0.8) {
                                     ValidationState::Succeeded
                                 } else {
                                     ValidationState::Failed
@@ -200,17 +200,17 @@ fn bench_path_validation(c: &mut Criterion) {
                         let now = Instant::now();
                         
                         for addr in &addresses {
-                            let age = Duration::from_millis(rng.random_range(0..300_000));
+                            let age = Duration::from_millis(rng.gen_range(0..300_000));
                             let validation = PathValidationState {
                                 address: *addr,
-                                attempts: rng.random_range(0..10),
+                                attempts: rng.gen_range(0..10),
                                 last_attempt: now - age,
-                                rtt: if rng.random_bool(0.7) {
-                                    Some(Duration::from_millis(rng.random_range(1..200)))
+                                rtt: if rng.gen_bool(0.7) {
+                                    Some(Duration::from_millis(rng.gen_range(1..200)))
                                 } else {
                                     None
                                 },
-                                state: match rng.random_range(0..3) {
+                                state: match rng.gen_range(0..3) {
                                     0 => ValidationState::InProgress,
                                     1 => ValidationState::Succeeded,
                                     _ => ValidationState::Failed,
@@ -304,7 +304,7 @@ fn bench_coordination(c: &mut Criterion) {
                         for peer in participants.iter().take(size / 2) {
                             let response = CoordinationResponse {
                                 peer_id: *peer,
-                                ready: rand::thread_rng().random_bool(0.8),
+                                ready: rand::thread_rng().gen_bool(0.8),
                                 timestamp: Instant::now(),
                             };
                             coordination.responses.insert(*peer, response);
@@ -317,7 +317,7 @@ fn bench_coordination(c: &mut Criterion) {
                         for peer in coordination.participants.iter().skip(coordination.responses.len()) {
                             let response = CoordinationResponse {
                                 peer_id: *peer,
-                                ready: rand::thread_rng().random_bool(0.8),
+                                ready: rand::thread_rng().gen_bool(0.8),
                                 timestamp: Instant::now(),
                             };
                             coordination.responses.insert(*peer, response);
@@ -351,7 +351,7 @@ fn bench_pair_priority(c: &mut Criterion) {
             |b, &size| {
                 let mut rng = thread_rng();
                 let priorities: Vec<(u32, u32)> = (0..size)
-                    .map(|_| (rng.random_range(1..10000), rng.random_range(1..10000)))
+                    .map(|_| (rng.gen_range(1..10000), rng.gen_range(1..10000)))
                     .collect();
                 
                 b.iter(|| {
@@ -373,7 +373,7 @@ fn bench_pair_priority(c: &mut Criterion) {
             |b, &size| {
                 let mut rng = thread_rng();
                 let priorities: Vec<(u32, u32)> = (0..size)
-                    .map(|_| (rng.random_range(1..10000), rng.random_range(1..10000)))
+                    .map(|_| (rng.gen_range(1..10000), rng.gen_range(1..10000)))
                     .collect();
                 
                 b.iter_batched(
@@ -397,7 +397,7 @@ fn bench_pair_priority(c: &mut Criterion) {
             |b, &size| {
                 let mut rng = thread_rng();
                 let priorities: Vec<(u32, u32)> = (0..size)
-                    .map(|_| (rng.random_range(1..10000), rng.random_range(1..10000)))
+                    .map(|_| (rng.gen_range(1..10000), rng.gen_range(1..10000)))
                     .collect();
                 
                 b.iter_batched(
@@ -458,8 +458,8 @@ fn bench_multi_destination(c: &mut Criterion) {
                     let mut results = Vec::new();
                     
                     for candidate in &candidates {
-                        let transmission_time = Duration::from_millis(rng.random_range(1..50));
-                        let success = rng.random_bool(0.85); // 85% success rate
+                        let transmission_time = Duration::from_millis(rng.gen_range(1..50));
+                        let success = rng.gen_bool(0.85); // 85% success rate
                         
                         results.push(black_box((candidate.address, transmission_time, success)));
                     }
@@ -504,8 +504,8 @@ fn bench_connection_routing(c: &mut Criterion) {
                     
                     // Simulate connection routing lookups
                     for _ in 0..size {
-                        let random_addr = addresses[rng.random_range(0..addresses.len())];
-                        let success = rng.random_bool(0.85); // 85% lookup success rate
+                        let random_addr = addresses[rng.gen_range(0..addresses.len())];
+                        let success = rng.gen_bool(0.85); // 85% lookup success rate
                         
                         if success {
                             lookup_count += 1;
@@ -608,7 +608,7 @@ fn bench_pair_generation(c: &mut Criterion) {
                     
                     // Simulate lookups
                     for _ in 0..size {
-                        let addr = addresses[rng.random_range(0..addresses.len())];
+                        let addr = addresses[rng.gen_range(0..addresses.len())];
                         if index.contains_key(&addr) {
                             found_count += 1;
                         }

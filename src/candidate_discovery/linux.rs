@@ -5,8 +5,13 @@
 
 use std::{
     collections::HashMap,
+    ffi::{CStr, CString},
+    io,
+    mem,
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
-    os::unix::io::AsRawFd,
+    os::unix::io::{AsRawFd, RawFd},
+    ptr,
+    slice,
     time::Instant,
 };
 
@@ -790,10 +795,19 @@ impl LinuxInterfaceDiscovery {
                 if if_name == interface_name {
                     if let Ok(prefix_len) = u8::from_str_radix(prefix_len_str, 16) {
                         // Parse IPv6 address from hex string
-                        if let Ok(addr_bytes) = hex::decode(addr_str) {
-                            if addr_bytes.len() == 16 {
-                                let mut ipv6_bytes = [0u8; 16];
-                                ipv6_bytes.copy_from_slice(&addr_bytes);
+                        if addr_str.len() == 32 {
+                            // Convert hex string to bytes
+                            let mut ipv6_bytes = [0u8; 16];
+                            let mut valid = true;
+                            for i in 0..16 {
+                                if let Ok(byte) = u8::from_str_radix(&addr_str[i*2..i*2+2], 16) {
+                                    ipv6_bytes[i] = byte;
+                                } else {
+                                    valid = false;
+                                    break;
+                                }
+                            }
+                            if valid {
                                 let ipv6_addr = Ipv6Addr::from(ipv6_bytes);
                                 addresses.push((ipv6_addr, prefix_len));
                             }

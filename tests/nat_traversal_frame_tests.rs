@@ -17,7 +17,9 @@ pub struct AddAddress {
 
 impl AddAddress {
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
-        buf.put_u8(0x40); // ADD_ADDRESS frame type
+        buf.put_u8(0x3d); // First byte of ADD_ADDRESS frame type (0x3d7e90)
+        buf.put_u8(0x7e); // Second byte
+        buf.put_u8(0x90); // Third byte
         buf.write(self.sequence);
         buf.write(self.priority);
         
@@ -91,7 +93,9 @@ pub struct PunchMeNow {
 
 impl PunchMeNow {
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
-        buf.put_u8(0x41); // PUNCH_ME_NOW frame type
+        buf.put_u8(0x3d); // First byte of PUNCH_ME_NOW frame type (0x3d7e91)
+        buf.put_u8(0x7e); // Second byte
+        buf.put_u8(0x91); // Third byte
         buf.write(self.round);
         buf.write(self.target_sequence);
         
@@ -185,7 +189,9 @@ pub struct RemoveAddress {
 
 impl RemoveAddress {
     pub fn encode<W: BufMut>(&self, buf: &mut W) {
-        buf.put_u8(0x42); // REMOVE_ADDRESS frame type
+        buf.put_u8(0x3d); // First byte of REMOVE_ADDRESS frame type (0x3d7e92)
+        buf.put_u8(0x7e); // Second byte
+        buf.put_u8(0x92); // Third byte
         buf.write(self.sequence);
     }
     
@@ -212,14 +218,14 @@ mod frame_test_vectors {
         frame.encode(&mut buf);
 
         // Expected encoding:
-        // - Frame type: 0x40 (ADD_ADDRESS)
+        // - Frame type: 0x3d7e90 (ADD_ADDRESS)
         // - Sequence: 42 (VarInt)
         // - Priority: 100 (VarInt)
         // - IP version: 4
         // - IPv4 address: 192.168.1.100 (4 bytes)
         // - Port: 8080 (2 bytes)
         let expected = vec![
-            0x40,           // Frame type
+            0x3d, 0x7e, 0x90, // Frame type (0x3d7e90)
             42,             // Sequence (VarInt)
             100,            // Priority (VarInt)
             4,              // IPv4 indicator
@@ -614,19 +620,25 @@ mod frame_integration_tests {
         let mut buf = packet_data.freeze();
         
         // Parse first frame (AddAddress)
-        assert_eq!(buf.get_u8(), 0x40); // ADD_ADDRESS frame type
+        assert_eq!(buf.get_u8(), 0x3d); // First byte of ADD_ADDRESS frame type
+        assert_eq!(buf.get_u8(), 0x7e); // Second byte
+        assert_eq!(buf.get_u8(), 0x90); // Third byte
         let decoded_add = AddAddress::decode(&mut buf).expect("Failed to decode AddAddress");
         assert_eq!(decoded_add.sequence, VarInt::from_u32(1));
         assert_eq!(decoded_add.priority, VarInt::from_u32(100));
 
         // Parse second frame (PunchMeNow)
-        assert_eq!(buf.get_u8(), 0x41); // PUNCH_ME_NOW frame type
+        assert_eq!(buf.get_u8(), 0x3d); // First byte of PUNCH_ME_NOW frame type
+        assert_eq!(buf.get_u8(), 0x7e); // Second byte
+        assert_eq!(buf.get_u8(), 0x91); // Third byte
         let decoded_punch = PunchMeNow::decode(&mut buf).expect("Failed to decode PunchMeNow");
         assert_eq!(decoded_punch.round, VarInt::from_u32(1));
         assert_eq!(decoded_punch.target_sequence, VarInt::from_u32(1));
 
         // Parse third frame (RemoveAddress)
-        assert_eq!(buf.get_u8(), 0x42); // REMOVE_ADDRESS frame type
+        assert_eq!(buf.get_u8(), 0x3d); // First byte of REMOVE_ADDRESS frame type
+        assert_eq!(buf.get_u8(), 0x7e); // Second byte
+        assert_eq!(buf.get_u8(), 0x92); // Third byte
         let decoded_remove = RemoveAddress::decode(&mut buf).expect("Failed to decode RemoveAddress");
         assert_eq!(decoded_remove.sequence, VarInt::from_u32(2));
     }

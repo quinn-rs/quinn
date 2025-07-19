@@ -6,8 +6,8 @@
 #![cfg(feature = "rustls-ring")]
 
 use ant_quic::crypto::{
-    raw_public_keys::{RawPublicKeyConfigBuilder, utils},
-    tls_extensions::{CertificateType, CertificateTypePreferences, NegotiationResult},
+    raw_public_keys::{RawPublicKeyConfigBuilder, key_utils},
+    tls_extensions::{CertificateType, CertificateTypePreferences},
     certificate_negotiation::{CertificateNegotiationManager, NegotiationConfig},
 };
 
@@ -16,14 +16,14 @@ use std::time::Duration;
 #[test]
 fn test_raw_public_key_generation() {
     // Test Ed25519 key pair generation
-    let (private_key, public_key) = utils::generate_ed25519_keypair();
+    let (private_key, public_key) = key_utils::generate_ed25519_keypair();
     
     // Verify key sizes
     assert_eq!(private_key.as_bytes().len(), 32);
     assert_eq!(public_key.as_bytes().len(), 32);
     
     // Test public key extraction
-    let key_bytes = utils::public_key_to_bytes(&public_key);
+    let key_bytes = key_utils::public_key_to_bytes(&public_key);
     assert_eq!(key_bytes.len(), 32);
 }
 
@@ -107,7 +107,7 @@ fn test_negotiation_caching() {
 
 #[test]
 fn test_raw_public_key_config_builder() {
-    let (private_key, _public_key) = utils::generate_ed25519_keypair();
+    let (private_key, _public_key) = key_utils::generate_ed25519_keypair();
     
     // Build client config
     let client_builder = RawPublicKeyConfigBuilder::new()

@@ -31,8 +31,24 @@ pub mod certificate_manager;
 /// RFC 7250 Raw Public Keys support
 pub mod raw_public_keys;
 
-/// Integration of Raw Public Keys with ant-quic
-pub mod rpk_integration;
+/// Ed25519 key pair implementation
+pub mod raw_keys;
+
+// NOTE: The following modules were removed because they were written as external
+// integrations with Quinn, but ant-quic IS a fork of Quinn, not something that
+// integrates with it. These need to be rewritten as part of the Quinn implementation
+// if their functionality is needed.
+
+// Removed modules:
+// - rpk_integration (tried to integrate RPK with Quinn from outside)
+// - quinn_integration (tried to wrap Quinn endpoints)
+// - bootstrap_support (tried to add bootstrap support on top of Quinn)
+// - peer_discovery (distributed discovery layered on Quinn)
+// - enterprise_cert_mgmt (enterprise features added on top)
+// - performance_monitoring (monitoring Quinn from outside)
+// - performance_optimization (optimizing Quinn externally)
+// - zero_rtt_rpk (0-RTT features added on top)
+// - nat_rpk_integration (NAT traversal integration)
 
 /// TLS Extensions for RFC 7250 certificate type negotiation
 pub mod tls_extensions;
@@ -45,27 +61,6 @@ pub mod extension_handlers;
 
 /// Certificate Type Negotiation Protocol Implementation
 pub mod certificate_negotiation;
-
-/// Quinn QUIC Integration for certificate type negotiation
-pub mod quinn_integration;
-
-/// Bootstrap Node Certificate Type Support
-pub mod bootstrap_support;
-
-/// Performance Monitoring and Production Hardening
-pub mod performance_monitoring;
-
-/// Advanced 0-RTT Optimization for Raw Public Keys
-pub mod zero_rtt_rpk;
-
-/// Distributed Peer Discovery with Certificate Type Awareness
-pub mod peer_discovery;
-
-/// Enterprise Certificate Management System
-pub mod enterprise_cert_mgmt;
-
-/// Performance Optimization Engine
-pub mod performance_optimization;
 
 /// Test module for TLS extension simulation
 #[cfg(test)]

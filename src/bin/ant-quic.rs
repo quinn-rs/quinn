@@ -19,12 +19,13 @@ use std::{
 };
 
 use ant_quic::{
-    CandidateSource, CandidateState,
-    nat_traversal_api::{CandidateAddress, PeerId},
+    CandidateSource, CandidateState, CandidateAddress, PeerId,
+    generate_ed25519_keypair, derive_peer_id_from_public_key,
 };
 use clap::Parser;
-use four_word_networking::FourWordAdaptiveEncoder;
+// use four_word_networking::FourWordAdaptiveEncoder;
 use rand::{self, Rng};
+use ed25519_dalek::{SigningKey, VerifyingKey};
 use std::io;
 use terminal_ui::{
     ProgressIndicator, colors, describe_address, format_address, format_address_with_words,
@@ -443,8 +444,12 @@ struct ChatState {
 
 /// Main unified P2P node
 struct UnifiedP2PNode {
-    /// Node's own peer ID
+    /// Node's own peer ID (derived from public key)
     peer_id: PeerId,
+    /// Ed25519 private key for this node
+    private_key: SigningKey,
+    /// Ed25519 public key for this node
+    public_key: VerifyingKey,
     /// Dual-stack socket for IPv4/IPv6 communication
     socket: DualStackSocket,
     /// Primary local address we're bound to
@@ -559,10 +564,10 @@ fn generate_random_nickname() -> String {
     ];
 
     use rand::Rng;
-    let mut rng = rand::rng();
-    let adjective = adjectives[rng.random_range(0..adjectives.len())];
-    let animal = animals[rng.random_range(0..animals.len())];
-    let number = rng.random_range(0..1000);
+    let mut rng = rand::thread_rng();
+    let adjective = adjectives[rng.gen_range(0..adjectives.len())];
+    let animal = animals[rng.gen_range(0..animals.len())];
+    let number = rng.gen_range(0..1000);
 
     format!("{}{}{}", adjective, animal, number)
 }
@@ -573,10 +578,10 @@ impl UnifiedP2PNode {
         listen_addr: SocketAddr,
         config: NodeConfig,
     ) -> Result<Self, Box<dyn std::error::Error>> {
-        // Generate random peer ID
-        use rand::Rng;
-        let mut rng = rand::rng();
-        let peer_id = PeerId(rng.random());
+        // Generate Ed25519 keypair and derive peer ID from public key
+        let (private_key, public_key) = generate_ed25519_keypair();
+        let peer_id = derive_peer_id_from_public_key(&public_key);
+        debug!("Generated Ed25519 keypair, derived peer ID from public key");
 
         // Bind dual-stack socket
         let socket = DualStackSocket::bind(listen_addr).await?;
@@ -594,6 +599,8 @@ impl UnifiedP2PNode {
 
         Ok(Self {
             peer_id,
+            private_key,
+            public_key,
             socket,
             local_addr,
             bound_addresses,
@@ -1067,7 +1074,7 @@ impl UnifiedP2PNode {
                 }
 
                 // Send punch notifications to both peers for simultaneous hole punching
-                let round = rand::rng().random_range(0..u32::MAX);
+                let round = rand::thread_rng().gen_range(0..u32::MAX);
 
                 // Notify requesting peer about target
                 self.send_punch_notification(
@@ -1896,7 +1903,7 @@ impl UnifiedP2PNode {
 
     fn start_cleanup_task(&self) -> tokio::task::JoinHandle<()> {
         let served_peers = Arc::clone(&self.served_peers);
-        let stats = Arc::clone(&self.stats);
+        let stats: Arc<Mutex<NodeStats>> = Arc::clone(&self.stats);
         let timeout = self.config.client_timeout;
 
         tokio::spawn(async move {
@@ -1934,7 +1941,7 @@ impl UnifiedP2PNode {
     }
 
     fn start_connection_manager_task(&self) -> tokio::task::JoinHandle<()> {
-        let peer_connections = Arc::clone(&self.peer_connections);
+        let peer_connections: Arc<Mutex<HashMap<PeerId, PeerConnection>>> = Arc::clone(&self.peer_connections);
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(5));
@@ -2201,25 +2208,8 @@ fn parse_single_address(addr_str: &str) -> Result<SocketAddr, Box<dyn std::error
         return Ok(addr);
     }
 
-    // If that fails, try to decode as four-word address
-    match FourWordAdaptiveEncoder::new() {
-        Ok(encoder) => {
-            match encoder.decode(addr_str) {
-                Ok(decoded) => {
-                    // The decoder returns a string, parse it as SocketAddr
-                    decoded
-                        .parse::<SocketAddr>()
-                        .map_err(|e| format!("Invalid decoded address '{}': {}", decoded, e).into())
-                }
-                Err(e) => Err(format!(
-                    "Invalid address format '{}'. Expected IP:port or four-word format. Error: {}",
-                    addr_str, e
-                )
-                .into()),
-            }
-        }
-        Err(e) => Err(format!("Failed to create four-word decoder: {}", e).into()),
-    }
+    // If that fails, return error (four-word address support disabled)
+    Err(format!("Invalid address format '{}'. Expected IP:port format.", addr_str).into())
 }
 
 /// Parse bootstrap addresses from comma-separated string (supports both IP:port and four-word formats)

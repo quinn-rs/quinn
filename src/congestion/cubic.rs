@@ -266,7 +266,8 @@ impl Default for CubicConfig {
 }
 
 impl ControllerFactory for CubicConfig {
-    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller> {
-        Box::new(Cubic::new(self, now, current_mtu))
+    fn new_controller(&self, min_window: u64, _max_window: u64, now: Instant) -> Box<dyn Controller + Send + Sync> {
+        let current_mtu = (min_window / 4).max(1200).min(65535) as u16; // Derive MTU from min_window
+        Box::new(Cubic::new(Arc::new(self.clone()), now, current_mtu))
     }
 }

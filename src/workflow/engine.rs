@@ -722,7 +722,7 @@ impl WorkflowExecutor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::workflow::{WorkflowTemplates, InMemoryStateStore};
+    use crate::workflow::InMemoryStateStore;
 
     #[tokio::test]
     async fn test_workflow_engine_basic() {

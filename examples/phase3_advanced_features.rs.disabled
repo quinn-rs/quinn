@@ -34,7 +34,7 @@ use ant_quic::{
         peer_discovery::{CertTypeDht, DhtConfig, CertTypeGossip, GossipConfig, PeerAnnouncement},
         enterprise_cert_mgmt::{
             EnterpriseConfig, HsmConfig, HsmProvider, RotationPolicy,
-            ComplianceConfig, ComplianceStandard, AuditConfig, BackupConfig,
+            AuditConfig, BackupConfig,
             AccessControlConfig, EnterpriseCertManager,
         },
         performance_optimization::{
@@ -290,15 +290,7 @@ impl AdvancedP2PNode {
             let public_key = cert_manager.generate_rpk(peer_id).await?;
             info!("Generated enterprise-managed RPK: {} bytes", public_key.as_bytes().len());
 
-            // Run compliance check
-            match cert_manager.check_compliance().await {
-                Ok(result) => {
-                    info!("Compliance check passed");
-                }
-                Err(e) => {
-                    warn!("Compliance check failed: {}", e);
-                }
-            }
+            // Compliance check removed
         } else {
             info!("Enterprise features not enabled");
         }
@@ -405,12 +397,6 @@ fn create_enterprise_config() -> EnterpriseConfig {
             grace_period: Duration::from_secs(86400 * 7), // 7 days
             max_age: Duration::from_secs(86400 * 365), // 1 year
             triggers: vec![],
-        },
-        compliance: ComplianceConfig {
-            standards: vec![ComplianceStandard::Fips140 { level: 2 }],
-            audit_retention: Duration::from_secs(86400 * 365 * 7), // 7 years
-            signed_audit_logs: true,
-            check_interval: Duration::from_secs(86400), // Daily
         },
         audit: AuditConfig {
             enabled: true,

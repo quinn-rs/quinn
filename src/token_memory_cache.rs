@@ -172,8 +172,8 @@ mod tests {
             let cache_2 = TokenMemoryCache::new(20, 2);
 
             for i in 0..200 {
-                let server_name = rng.random::<u32>() % 10;
-                if rng.random_bool(0.666) {
+                let server_name = rng.gen::<u32>() % 10;
+                if rng.gen_bool(0.666) {
                     // store
                     let token = Bytes::from(vec![i]);
                     println!("STORE {server_name} {token:?}");

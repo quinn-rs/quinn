@@ -5,7 +5,7 @@ use std::{
 
 use bytes::Bytes;
 use thiserror::Error;
-use tracing::trace;
+use tracing::{trace, warn};
 
 use super::spaces::{Retransmits, ThinRetransmits};
 use crate::{
@@ -33,7 +33,6 @@ pub struct Streams<'a> {
     pub(super) conn_state: &'a super::State,
 }
 
-#[allow(clippy::needless_lifetimes)] // Needed for cfg(fuzzing)
 impl<'a> Streams<'a> {
     #[cfg(fuzzing)]
     pub fn new(state: &'a mut StreamsState, conn_state: &'a super::State) -> Self {
@@ -48,7 +47,6 @@ impl<'a> Streams<'a> {
             return None;
         }
 
-        // TODO: Queue STREAM_ID_BLOCKED if this fails
         if self.state.next[dir as usize] >= self.state.max[dir as usize] {
             return None;
         }
@@ -63,7 +61,6 @@ impl<'a> Streams<'a> {
     /// Accept a remotely initiated stream of a certain directionality, if possible
     ///
     /// Returns `None` if there are no new incoming streams for this connection.
-    /// Has no impact on the data flow-control or stream concurrency limits.
     pub fn accept(&mut self, dir: Dir) -> Option<StreamId> {
         if self.state.next_remote[dir as usize] == self.state.next_reported_remote[dir as usize] {
             return None;
@@ -89,12 +86,7 @@ impl<'a> Streams<'a> {
     }
 
     /// The number of remotely initiated open streams of a certain directionality.
-    ///
-    /// Includes remotely initiated streams, which have not been accepted via [`accept`](Self::accept).
-    /// These streams count against the respective concurrency limit reported by
-    /// [`Connection::max_concurrent_streams`](super::Connection::max_concurrent_streams).
     pub fn remote_open_streams(&self, dir: Dir) -> u64 {
-        // total opened - total closed = total opened - ( total permitted - total permitted unclosed )
         self.state.next_remote[dir as usize]
             - (self.state.max_remote[dir as usize]
                 - self.state.allocated_remote_count[dir as usize])
@@ -111,29 +103,30 @@ pub struct RecvStream<'a> {
 impl RecvStream<'_> {
     /// Read from the given recv stream
     ///
-    /// `max_length` limits the maximum size of the returned `Bytes` value; passing `usize::MAX`
-    /// will yield the best performance. `ordered` will make sure the returned chunk's offset will
-    /// have an offset exactly equal to the previously returned offset plus the previously returned
-    /// bytes' length.
+    /// `max_length` limits the maximum size of the returned `Bytes` value.
+    /// `ordered` ensures the returned chunk's offset is sequential.
     ///
     /// Yields `Ok(None)` if the stream was finished. Otherwise, yields a segment of data and its
-    /// offset in the stream. If `ordered` is `false`, segments may be received in any order, and
-    /// the `Chunk`'s `offset` field can be used to determine ordering in the caller.
+    /// offset in the stream.
     ///
-    /// While most applications will prefer to consume stream data in order, unordered reads can
-    /// improve performance when packet loss occurs and data cannot be retransmitted before the flow
-    /// control window is filled. On any given stream, you can switch from ordered to unordered
-    /// reads, but ordered reads on streams that have seen previous unordered reads will return
-    /// `ReadError::IllegalOrderedRead`.
+    /// Unordered reads can improve performance when packet loss occurs, but ordered reads
+    /// on streams that have seen previous unordered reads will return `ReadError::IllegalOrderedRead`.
     pub fn read(&mut self, ordered: bool) -> Result<Chunks, ReadableError> {
+        if self.state.conn_closed() {
+            return Err(ReadableError::ConnectionClosed);
+        }
+        
         Chunks::new(self.id, ordered, self.state, self.pending)
     }
 
     /// Stop accepting data on the given receive stream
     ///
-    /// Discards unread data and notifies the peer to stop transmitting. Once stopped, further
-    /// attempts to operate on a stream will yield `ClosedStream` errors.
+    /// Discards unread data and notifies the peer to stop transmitting.
     pub fn stop(&mut self, error_code: VarInt) -> Result<(), ClosedStream> {
+        if self.state.conn_closed() {
+            return Err(ClosedStream { _private: () });
+        }
+        
         let mut entry = match self.state.recv.entry(self.id) {
             hash_map::Entry::Occupied(s) => s,
             hash_map::Entry::Vacant(_) => return Err(ClosedStream { _private: () }),
@@ -148,14 +141,13 @@ impl RecvStream<'_> {
             });
         }
 
-        // We need to keep stopped streams around until they're finished or reset so we can update
-        // connection-level flow control to account for discarded data. Otherwise, we can discard
-        // state immediately.
+        // Clean up stream state if possible
         if !stream.final_offset_unknown() {
             let recv = entry.remove().expect("must have recv when stopping");
             self.state.stream_recv_freed(self.id, recv);
         }
 
+        // Update flow control if needed
         if self.state.add_read_credits(read_credits).should_transmit() {
             self.pending.max_data = true;
         }
@@ -163,26 +155,31 @@ impl RecvStream<'_> {
         Ok(())
     }
 
-    /// Check whether this stream has been reset by the peer, returning the reset error code if so
+    /// Check whether this stream has been reset by the peer
     ///
-    /// After returning `Ok(Some(_))` once, stream state will be discarded and all future calls will
-    /// return `Err(ClosedStream)`.
+    /// Returns the reset error code if the stream was reset.
     pub fn received_reset(&mut self) -> Result<Option<VarInt>, ClosedStream> {
+        if self.state.conn_closed() {
+            return Err(ClosedStream { _private: () });
+        }
+        
         let hash_map::Entry::Occupied(entry) = self.state.recv.entry(self.id) else {
             return Err(ClosedStream { _private: () });
         };
+        
         let Some(s) = entry.get().as_ref().and_then(|s| s.as_open_recv()) else {
             return Ok(None);
         };
+        
         if s.stopped {
             return Err(ClosedStream { _private: () });
         }
+        
         let Some(code) = s.reset_code() else {
             return Ok(None);
         };
 
-        // Clean up state after application observes the reset, since there's no reason for the
-        // application to attempt to read or stop the stream once it knows it's reset
+        // Clean up state after application observes the reset
         let (_, recv) = entry.remove_entry();
         self.state
             .stream_recv_freed(self.id, recv.expect("must have recv on reset"));
@@ -370,11 +367,10 @@ impl<'a> SendStream<'a> {
 /// A queue of streams with pending outgoing data, sorted by priority
 struct PendingStreamsQueue {
     streams: BinaryHeap<PendingStream>,
-    /// The next stream to write out. This is `Some` when `TransportConfig::send_fairness(false)` and writing a stream is
-    /// interrupted while the stream still has some pending data. See `reinsert_pending()`.
+    /// The next stream to write out. This is `Some` when writing a stream is
+    /// interrupted while the stream still has some pending data.
     next: Option<PendingStream>,
-    /// A monotonically decreasing counter, used to implement round-robin scheduling for streams of the same priority.
-    /// Underflowing is not a practical concern, as it is initialized to u64::MAX and only decremented by 1 in `push_pending`
+    /// A monotonically decreasing counter for round-robin scheduling of streams with the same priority
     recency: u64,
 }
 
@@ -389,26 +385,22 @@ impl PendingStreamsQueue {
 
     /// Reinsert a stream that was pending and still contains unsent data.
     fn reinsert_pending(&mut self, id: StreamId, priority: i32) {
-        assert!(self.next.is_none());
+        if self.next.is_some() {
+            warn!("Attempting to reinsert a pending stream when next is already set");
+            return;
+        }
 
         self.next = Some(PendingStream {
             priority,
-            recency: self.recency, // the value here doesn't really matter
+            recency: self.recency,
             id,
         });
     }
 
-    /// Push a pending stream ID with the given priority, queued after any already-queued streams for the priority
+    /// Push a pending stream ID with the given priority
     fn push_pending(&mut self, id: StreamId, priority: i32) {
-        // Note that in the case where fairness is disabled, if we have a reinserted stream we don't
-        // bump it even if priority > next.priority. In order to minimize fragmentation we
-        // always try to complete a stream once part of it has been written.
-
-        // As the recency counter is monotonically decreasing, we know that using its value to sort this stream will queue it
-        // after all other queued streams of the same priority.
-        // This is enough to implement round-robin scheduling for streams that are still pending even after being handled,
-        // as in that case they are removed from the `BinaryHeap`, handled, and then immediately reinserted.
-        self.recency -= 1;
+        // Decrement recency to ensure round-robin scheduling for streams of the same priority
+        self.recency = self.recency.saturating_sub(1);
         self.streams.push(PendingStream {
             priority,
             recency: self.recency,
@@ -416,15 +408,18 @@ impl PendingStreamsQueue {
         });
     }
 
+    /// Pop the highest priority stream
     fn pop(&mut self) -> Option<PendingStream> {
         self.next.take().or_else(|| self.streams.pop())
     }
 
+    /// Clear all pending streams
     fn clear(&mut self) {
         self.next = None;
         self.streams.clear();
     }
 
+    /// Iterate over all pending streams
     fn iter(&self) -> impl Iterator<Item = &PendingStream> {
         self.next.iter().chain(self.streams.iter())
     }

@@ -5,8 +5,6 @@ use std::{
 };
 
 use tracing::{trace, debug, warn, info};
-use hex;
-use rand;
 use crate::shared::ConnectionId;
 
 use crate::{
@@ -348,8 +346,8 @@ fn are_candidates_compatible(local: &AddressCandidate, remote: &AddressCandidate
 }
 
 /// Statistics for NAT traversal attempts
-#[derive(Debug, Default)]
-pub(super) struct NatTraversalStats {
+#[derive(Debug, Default, Clone)]
+pub(crate) struct NatTraversalStats {
     /// Total candidates received from peer
     pub(super) remote_candidates_received: u32,
     /// Total candidates we've advertised
@@ -1616,6 +1614,17 @@ impl ResourceCleanupCoordinator {
         if current_usage > self.stats.peak_memory_usage {
             self.stats.peak_memory_usage = current_usage;
         }
+    }
+
+    /// Perform resource cleanup based on current state
+    pub(super) fn perform_cleanup(&mut self, now: Instant) {
+        self.last_cleanup = Some(now);
+        self.cleanup_counter += 1;
+        
+        // Update cleanup statistics
+        self.stats.cleanup_operations += 1;
+        
+        debug!("Performed resource cleanup #{}", self.cleanup_counter);
     }
 }
 
@@ -3007,7 +3016,6 @@ impl NatTraversalState {
     
     /// Perform bootstrap cleanup operations
     /// 
-    
     /// Get observed address for a peer
     #[allow(dead_code)] // Used for address reflexive candidate discovery
     pub(super) fn get_observed_address(&self, peer_id: [u8; 32]) -> Option<SocketAddr> {
@@ -3015,6 +3023,49 @@ impl NatTraversalState {
             .as_ref()
             .and_then(|coord| coord.get_peer_record(peer_id))
             .map(|record| record.observed_address)
+    }
+
+    /// Start candidate discovery process
+    pub(super) fn start_candidate_discovery(&mut self) -> Result<(), NatTraversalError> {
+        debug!("Starting candidate discovery for NAT traversal");
+        
+        // Initialize discovery state if needed
+        if self.local_candidates.is_empty() {
+            // Add local interface candidates
+            // This would be populated by the candidate discovery manager
+            debug!("Local candidates will be populated by discovery manager");
+        }
+        
+        Ok(())
+    }
+
+    /// Queue an ADD_ADDRESS frame for transmission
+    pub(super) fn queue_add_address_frame(
+        &mut self,
+        sequence: VarInt,
+        address: SocketAddr,
+        priority: u32,
+    ) -> Result<(), NatTraversalError> {
+        debug!("Queuing ADD_ADDRESS frame: seq={}, addr={}, priority={}", 
+               sequence, address, priority);
+        
+        // Add to local candidates if not already present
+        let candidate = AddressCandidate {
+            address,
+            priority,
+            source: CandidateSource::Local,
+            discovered_at: Instant::now(),
+            state: CandidateState::New,
+            attempt_count: 0,
+            last_attempt: None,
+        };
+        
+        // Check if candidate already exists
+        if !self.local_candidates.values().any(|c| c.address == address) {
+            self.local_candidates.insert(sequence, candidate);
+        }
+        
+        Ok(())
     }
 }
 
@@ -3199,7 +3250,7 @@ struct AddressObservation {
 /// Active coordination session between two peers
 #[derive(Debug, Clone)]
 #[allow(dead_code)] // Fields tracked for coordination state management
-struct CoordinationSession {
+pub(crate) struct CoordinationSession {
     /// Unique session identifier
     session_id: CoordinationSessionId,
     /// First peer in coordination
@@ -3774,7 +3825,7 @@ impl BootstrapCoordinator {
     fn advance_session_state_static(
         session: &mut CoordinationSession,
         event: SessionAdvancementEvent,
-        now: Instant,
+        _now: Instant,
     ) -> Result<Vec<CoordinationSessionEvent>, NatTraversalError> {
         let mut events = Vec::new();
         let previous_phase = session.phase;
@@ -4053,7 +4104,7 @@ impl BootstrapCoordinator {
         session_id: CoordinationSessionId,
         from_peer: PeerId,
         frame: &crate::frame::PunchMeNow,
-        now: Instant,
+        _now: Instant,
     ) -> Result<Option<(PeerId, crate::frame::PunchMeNow)>, NatTraversalError> {
         let session = self.coordination_sessions.get_mut(&session_id)
             .ok_or(NatTraversalError::NoActiveCoordination)?;

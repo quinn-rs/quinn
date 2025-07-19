@@ -685,6 +685,9 @@ mod tests {
             timestamp: SystemTime::now(),
         }).await.unwrap();
         
+        // Give background tasks time to process events
+        tokio::time::sleep(Duration::from_millis(100)).await;
+        
         // Check metrics
         let summary = monitor.get_workflow_summary().await;
         assert_eq!(summary.completed_workflows, 1);

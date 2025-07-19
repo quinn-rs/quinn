@@ -13,6 +13,24 @@ use std::{
     time::Instant,
 };
 
+use windows::{
+    Win32::{
+        NetworkManagement::IpHelper::{
+            GetAdaptersAddresses, GetAdaptersInfo, GetIpForwardTable, MIB_IPFORWARDROW,
+            IP_ADAPTER_ADDRESSES_LH, IP_ADAPTER_INFO, AF_INET, AF_INET6, GAA_FLAG_SKIP_ANYCAST,
+            GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_DNS_SERVER, MIB_IF_TYPE_ETHERNET,
+            MIB_IF_TYPE_LOOPBACK, MIB_IF_TYPE_PPP, MIB_IF_TYPE_SLIP, MIB_IF_TYPE_TOKENRING,
+        },
+        Networking::WinSock::{
+            SOCKADDR_IN, SOCKADDR_IN6, AF_INET as SOCKET_AF_INET, AF_INET6 as SOCKET_AF_INET6,
+        },
+        Foundation::{
+            CloseHandle, ERROR_BUFFER_OVERFLOW, ERROR_IO_PENDING, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        },
+        System::IO::OVERLAPPED,
+    },
+};
+
 use tracing::{debug, error, info, warn};
 
 use crate::candidate_discovery::{NetworkInterface, NetworkInterfaceDiscovery};

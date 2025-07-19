@@ -34,7 +34,7 @@ impl WorkflowId {
     pub fn generate() -> Self {
         let mut id = [0u8; 16];
         use rand::Rng;
-        rand::rng().fill(&mut id);
+        rand::thread_rng().fill(&mut id);
         Self(id)
     }
 }

@@ -61,8 +61,7 @@ impl PathData {
     ) -> Self {
         let congestion = config
             .congestion_controller_factory
-            .clone()
-            .build(now, config.get_initial_mtu());
+            .new_controller(config.get_initial_mtu() as u64, 16 * 1024 * 1024, now);
         Self {
             remote,
             rtt: RttEstimator::new(config.initial_rtt),
@@ -132,8 +131,7 @@ impl PathData {
         self.rtt = RttEstimator::new(config.initial_rtt);
         self.congestion = config
             .congestion_controller_factory
-            .clone()
-            .build(now, config.get_initial_mtu());
+            .new_controller(config.get_initial_mtu() as u64, 16 * 1024 * 1024, now);
         self.mtud.reset(config.get_initial_mtu(), config.min_mtu);
     }
 

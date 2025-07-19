@@ -15,7 +15,7 @@ use std::{
 use tracing::{debug, info, warn};
 
 #[cfg(feature = "production-ready")]
-use crate::{Endpoint, ClientConfig, Connection};
+use crate::Connection;
 
 use crate::{
     connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole},
@@ -807,27 +807,38 @@ impl CandidateDiscoveryManager {
         let mut updated_results = validation_results.clone();
         let mut validation_started = false;
 
-        for (i, candidate) in self.session_state.discovered_candidates.iter().enumerate() {
-            let candidate_id = CandidateId(i as u64);
+        // Collect candidates to validate to avoid borrowing issues
+        let candidates_to_validate: Vec<(CandidateId, SocketAddr)> = self.session_state
+            .discovered_candidates
+            .iter()
+            .enumerate()
+            .filter_map(|(i, candidate)| {
+                let candidate_id = CandidateId(i as u64);
+                if !updated_results.contains_key(&candidate_id) {
+                    Some((candidate_id, candidate.address))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        // Now validate the collected candidates
+        for (candidate_id, address) in candidates_to_validate {
+            updated_results.insert(candidate_id, ValidationResult::Pending);
+            validation_started = true;
             
-            if !updated_results.contains_key(&candidate_id) {
-                // Start validation for this candidate
-                updated_results.insert(candidate_id, ValidationResult::Pending);
-                validation_started = true;
-                
-                debug!("Starting validation for candidate {}: {}", candidate_id.0, candidate.address);
-                
-                #[cfg(feature = "production-ready")]
-                {
-                    // Start real QUIC PATH_CHALLENGE/PATH_RESPONSE validation
-                    self.start_path_validation(candidate_id, candidate.address, now);
-                }
-                
-                #[cfg(not(feature = "production-ready"))]
-                {
-                    // Simulate validation in development builds
-                    self.simulate_path_validation(candidate_id, candidate.address, now);
-                }
+            debug!("Starting validation for candidate {}: {}", candidate_id.0, address);
+            
+            #[cfg(feature = "production-ready")]
+            {
+                // Start real QUIC PATH_CHALLENGE/PATH_RESPONSE validation
+                self.start_path_validation(candidate_id, address, now);
+            }
+            
+            #[cfg(not(feature = "production-ready"))]
+            {
+                // Simulate validation in development builds
+                self.simulate_path_validation(candidate_id, address, now);
             }
         }
 
@@ -896,7 +907,7 @@ impl CandidateDiscoveryManager {
                 // Simulate completion based on candidate characteristics
                 if let Some(candidate) = self.session_state.discovered_candidates.get(candidate_id.0 as usize) {
                     let validation_result = self.simulate_validation_result(&candidate.address);
-                    completions.push(*candidate_id, validation_result);
+                    completions.push((*candidate_id, validation_result));
                 }
             }
         }
@@ -976,7 +987,7 @@ impl CandidateDiscoveryManager {
 
     /// Calculate reliability score for a validated candidate
     fn calculate_reliability_score(&self, candidate: &DiscoveryCandidate, rtt: Duration) -> f64 {
-        let mut score = 0.5; // Base score
+        let mut score: f64 = 0.5; // Base score
         
         // Adjust based on source type
         match candidate.source {
@@ -1280,7 +1291,7 @@ pub struct DiscoveryResults {
 // Placeholder implementations for components to be implemented
 
 /// Platform-specific network interface discovery
-pub(crate) trait NetworkInterfaceDiscovery {
+pub trait NetworkInterfaceDiscovery {
     fn start_scan(&mut self) -> Result<(), String>;
     fn check_scan_complete(&mut self) -> Option<Vec<NetworkInterface>>;
 }
@@ -1300,7 +1311,7 @@ pub struct NetworkInterface {
 #[derive(Debug)]
 struct BootstrapConnection {
     /// Quinn connection to the bootstrap node
-    connection: quinn::Connection,
+    connection: crate::Connection,
     /// Address of the bootstrap node
     address: SocketAddr,
     /// When this connection was established
@@ -1421,7 +1432,7 @@ impl ServerReflexiveDiscovery {
             #[cfg(feature = "production-ready")]
             {
                 // Try to establish real Quinn connection in production
-                if let Some(runtime) = &self.runtime_handle {
+                if let Some(_runtime) = &self.runtime_handle {
                     self.start_quinn_query_with_address(node_id, bootstrap_address, now);
                 } else {
                     warn!("No async runtime available, falling back to simulation for node {:?}", node_id);
@@ -1481,7 +1492,7 @@ impl ServerReflexiveDiscovery {
             let timeout = self.config.bootstrap_query_timeout;
             
             // Create a channel for receiving responses
-            let (response_tx, mut response_rx) = tokio::sync::mpsc::unbounded_channel();
+            let (response_tx, _response_rx) = tokio::sync::mpsc::unbounded_channel();
             
             // Store the receiver for polling
             // Note: In a complete implementation, we'd store this receiver and poll it
@@ -1515,18 +1526,25 @@ impl ServerReflexiveDiscovery {
     }
     
     /// Perform the actual Quinn-based bootstrap query (async)
+    // NOTE: This function was written for Quinn's high-level API which we don't have
+    // since ant-quic IS a fork of Quinn, not something that uses Quinn.
+    // This needs to be rewritten to work with our low-level protocol implementation.
     #[cfg(feature = "production-ready")]
     async fn perform_bootstrap_query(
-        bootstrap_address: SocketAddr,
-        request_id: u64,
-        timeout: Duration,
+        _bootstrap_address: SocketAddr,
+        _request_id: u64,
+        _timeout: Duration,
     ) -> Result<SocketAddr, Box<dyn std::error::Error + Send + Sync>> {
+        // Temporarily return an error until this is properly implemented
+        Err("Bootstrap query not implemented for low-level API".into())
+        
+        /* Original implementation that used high-level Quinn API:
         use tokio::time::timeout as tokio_timeout;
         use crate::frame::{AddAddress, Frame};
         use crate::VarInt;
         
         // Create a Quinn client configuration with NAT traversal transport parameters
-        let mut transport_config = quinn::TransportConfig::default();
+        let mut transport_config = crate::TransportConfig::default();
         
         // Enable NAT traversal transport parameter
         // This signals to the bootstrap node that we support NAT traversal
@@ -1578,6 +1596,7 @@ impl ServerReflexiveDiscovery {
         tokio::time::sleep(Duration::from_millis(100)).await;
         
         Ok(observed_address)
+        */
     }
     
     /// Create a discovery request message
@@ -1603,10 +1622,15 @@ impl ServerReflexiveDiscovery {
     /// Wait for ADD_ADDRESS frame from bootstrap node
     #[cfg(feature = "production-ready")]
     async fn wait_for_add_address_frame(
-        connection: &Connection,
-        expected_request_id: u64,
+        _connection: &Connection,
+        _expected_request_id: u64,
     ) -> Result<SocketAddr, Box<dyn std::error::Error + Send + Sync>> {
-        use crate::frame::{Frame, FrameIter, AddAddress};
+        // TODO: This function needs to be rewritten to work with low-level Quinn API
+        // The high-level accept_uni() and read_to_end() methods are not available
+        Err("wait_for_add_address_frame not implemented for low-level API".into())
+        
+        /* Original code that uses high-level API:
+        use crate::frame::{Frame, AddAddress};
         use bytes::Bytes;
         
         // Accept incoming unidirectional stream from bootstrap node
@@ -1623,42 +1647,23 @@ impl ServerReflexiveDiscovery {
         
         // Parse QUIC frames using our frame parser
         let frame_bytes = Bytes::from(frame_data);
-        let mut frame_iter = FrameIter::new(frame_bytes, std::usize::MAX);
+        // Parse frame data directly without FrameIter
+        // For now, simulate frame parsing
         
         // Look for ADD_ADDRESS frame
-        while let Some(frame_result) = frame_iter.next() {
-            match frame_result {
-                Ok(frame) => {
-                    match frame {
-                        Frame::AddAddress(add_address_frame) => {
-                            debug!("Received ADD_ADDRESS frame: sequence={}, address={}, priority={}", 
-                                   add_address_frame.sequence.0, 
-                                   add_address_frame.address, 
-                                   add_address_frame.priority.0);
-                            
-                            // For now, we'll use the sequence number to correlate with request ID
-                            // In a complete implementation, we might embed the request ID differently
-                            if add_address_frame.sequence.0 == expected_request_id {
-                                return Ok(add_address_frame.address);
-                            } else {
-                                debug!("ADD_ADDRESS frame sequence {} doesn't match expected request ID {}", 
-                                       add_address_frame.sequence.0, expected_request_id);
-                            }
-                        }
-                        _ => {
-                            debug!("Received non-ADD_ADDRESS frame: {:?}", frame);
-                        }
-                    }
-                }
-                Err(e) => {
-                    warn!("Failed to parse frame: {:?}", e);
-                    continue;
-                }
-            }
+        // For now, simulate successful frame parsing
+        if !frame_data.is_empty() {
+            // Simulate parsing an ADD_ADDRESS frame
+            let simulated_address = "192.168.1.100:8080".parse().unwrap_or_else(|_| {
+                SocketAddr::new(std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 100)), 8080)
+            });
+            debug!("Simulated ADD_ADDRESS frame parsing: address={}", simulated_address);
+            return Ok(simulated_address);
         }
         
-        // If we get here, no matching ADD_ADDRESS frame was found
-        Err("No matching ADD_ADDRESS frame received from bootstrap node".into())
+        // If we get here, no valid frame was found
+        Err("No valid ADD_ADDRESS frame found".into())
+        */
     }
     
     /// Create a response channel for async communication (placeholder)
@@ -2103,7 +2108,7 @@ impl SymmetricNatPredictor {
                 let actual_step = sorted_ports[i] - sorted_ports[i-1];
                 let step_diff = (actual_step as i32 - expected_step as i32).abs() as f64;
                 let normalized_diff = step_diff / expected_step as f64;
-                uniform_score += (1.0 - normalized_diff.min(1.0));
+                uniform_score += 1.0 - normalized_diff.min(1.0);
             }
             
             uniform_score /= (sorted_ports.len() - 1) as f64;
@@ -2157,7 +2162,7 @@ impl SymmetricNatPredictor {
             };
             
             let normalized_diff = diff.as_millis() as f64 / avg_interval.as_millis() as f64;
-            consistency_score += (1.0 - normalized_diff.min(1.0));
+            consistency_score += 1.0 - normalized_diff.min(1.0);
         }
         
         consistency_score /= time_intervals.len() as f64;
@@ -2179,7 +2184,7 @@ impl SymmetricNatPredictor {
 
     /// Generate confidence-scored predictions for a given base address
     pub(crate) fn generate_confidence_scored_predictions(
-        &self, 
+        &mut self, 
         base_address: SocketAddr, 
         pattern_analysis: &PatternAnalysisState, 
         max_count: usize
@@ -2235,8 +2240,8 @@ impl SymmetricNatPredictor {
         
         // Factor in port range (prefer common NAT ranges)
         let port_range_score = match prediction.address.port() {
-            1024..=5000 => 0.1,   // User ports
-            5000..=10000 => 0.15, // Common NAT range
+            1024..=4999 => 0.1,   // User ports
+            5000..=9999 => 0.15, // Common NAT range
             10000..=20000 => 0.1, // Extended range
             32768..=65535 => 0.05, // Dynamic ports
             _ => 0.0,
@@ -2275,103 +2280,6 @@ impl SymmetricNatPredictor {
         // This would be updated based on actual validation results
         // For now, maintain current accuracy with slight decay
         pattern_analysis.prediction_accuracy *= 0.95;
-    }
-
-    /// Detect sequential port allocation pattern
-    fn detect_sequential_pattern(&self, ports: &[u16]) -> Option<PortAllocationPattern> {
-        if ports.len() < 3 {
-            return None;
-        }
-
-        let mut sequential_count = 0;
-        for i in 1..ports.len() {
-            if ports[i-1].wrapping_sub(ports[i]) == 1 {
-                sequential_count += 1;
-            }
-        }
-
-        let confidence = sequential_count as f64 / (ports.len() - 1) as f64;
-        
-        if confidence >= 0.6 {
-            Some(PortAllocationPattern {
-                pattern_type: AllocationPatternType::Sequential,
-                base_port: ports[0],
-                stride: 1,
-                pool_boundaries: None,
-                confidence,
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Detect fixed stride allocation pattern
-    fn detect_stride_pattern(&self, ports: &[u16]) -> Option<PortAllocationPattern> {
-        if ports.len() < 3 {
-            return None;
-        }
-
-        // Calculate strides between consecutive allocations
-        let mut strides = Vec::new();
-        for i in 1..ports.len() {
-            let stride = ports[i-1].wrapping_sub(ports[i]);
-            if stride > 0 && stride <= 100 {  // Reasonable stride range
-                strides.push(stride);
-            }
-        }
-
-        if strides.is_empty() {
-            return None;
-        }
-
-        // Find most common stride
-        let mut stride_counts = std::collections::HashMap::new();
-        for &stride in &strides {
-            *stride_counts.entry(stride).or_insert(0) += 1;
-        }
-
-        let (most_common_stride, count) = stride_counts.iter()
-            .max_by_key(|(_, &count)| count)?;
-
-        let confidence = *count as f64 / strides.len() as f64;
-
-        if confidence >= 0.5 {
-            Some(PortAllocationPattern {
-                pattern_type: AllocationPatternType::FixedStride,
-                base_port: ports[0],
-                stride: *most_common_stride,
-                pool_boundaries: None,
-                confidence,
-            })
-        } else {
-            None
-        }
-    }
-
-    /// Detect pool-based allocation pattern
-    fn detect_pool_pattern(&self, ports: &[u16]) -> Option<PortAllocationPattern> {
-        if ports.len() < 5 {
-            return None;
-        }
-
-        let min_port = *ports.iter().min()?;
-        let max_port = *ports.iter().max()?;
-        let range = max_port - min_port;
-
-        // If ports are clustered in a relatively small range, it might be pool-based
-        if range <= 1000 && range >= 10 {
-            let confidence = 1.0 - (range as f64 / 1000.0);
-            
-            Some(PortAllocationPattern {
-                pattern_type: AllocationPatternType::PoolBased,
-                base_port: min_port,
-                stride: 0,
-                pool_boundaries: Some((min_port, max_port)),
-                confidence,
-            })
-        } else {
-            None
-        }
     }
 }
 
@@ -2591,8 +2499,11 @@ impl BootstrapNodeManager {
         
         debug!("Performing health check on {} bootstrap nodes", self.bootstrap_nodes.len());
         
-        for (&node_id, node_info) in &mut self.bootstrap_nodes {
-            self.check_node_health(node_id, node_info, now);
+        // Collect node IDs to check to avoid borrowing issues
+        let node_ids: Vec<BootstrapNodeId> = self.bootstrap_nodes.keys().copied().collect();
+        
+        for node_id in node_ids {
+            self.check_node_health(node_id, now);
         }
         
         self.update_performance_metrics(now);
@@ -2600,43 +2511,62 @@ impl BootstrapNodeManager {
     }
 
     /// Check health of a specific bootstrap node
-    fn check_node_health(&mut self, node_id: BootstrapNodeId, node_info: &mut BootstrapNodeInfo, now: Instant) {
-        let stats = self.health_stats.get_mut(&node_id).unwrap();
+    fn check_node_health(&mut self, node_id: BootstrapNodeId, now: Instant) {
+        // Get current health status and node info before mutable operations
+        let node_info_opt = self.bootstrap_nodes.get(&node_id).cloned();
+        if node_info_opt.is_none() {
+            return; // Node not found
+        }
+        let node_info_for_priority = node_info_opt.unwrap();
+        let current_health_status = node_info_for_priority.health_status;
         
-        // Calculate success rate
-        let success_rate = if stats.connection_attempts > 0 {
-            stats.successful_connections as f64 / stats.connection_attempts as f64
-        } else {
-            1.0 // No attempts yet, assume healthy
+        // Calculate metrics from stats
+        let (_success_rate, new_health_status, _average_rtt) = {
+            let stats = self.health_stats.get_mut(&node_id).unwrap();
+            
+            // Calculate success rate
+            let success_rate = if stats.connection_attempts > 0 {
+                stats.successful_connections as f64 / stats.connection_attempts as f64
+            } else {
+                1.0 // No attempts yet, assume healthy
+            };
+            
+            // Calculate average RTT
+            if !stats.recent_rtts.is_empty() {
+                let total_rtt: Duration = stats.recent_rtts.iter().sum();
+                stats.average_rtt = Some(total_rtt / stats.recent_rtts.len() as u32);
+            }
+            
+            // Determine health status
+            let new_health_status = if stats.consecutive_failures >= 3 {
+                BootstrapHealthStatus::Unhealthy
+            } else if success_rate < self.failover_threshold {
+                BootstrapHealthStatus::Degraded
+            } else if success_rate >= 0.8 && stats.consecutive_failures == 0 {
+                BootstrapHealthStatus::Healthy
+            } else {
+                current_health_status // Keep current status
+            };
+            
+            stats.last_health_check = Some(now);
+            
+            (success_rate, new_health_status, stats.average_rtt)
         };
         
-        // Calculate average RTT
-        if !stats.recent_rtts.is_empty() {
-            let total_rtt: Duration = stats.recent_rtts.iter().sum();
-            stats.average_rtt = Some(total_rtt / stats.recent_rtts.len() as u32);
+        // Calculate new priority using stats snapshot
+        let stats_snapshot = self.health_stats.get(&node_id).unwrap();
+        let new_priority = self.calculate_dynamic_priority(&node_info_for_priority, stats_snapshot);
+        
+        // Now update the node info
+        if let Some(node_info) = self.bootstrap_nodes.get_mut(&node_id) {
+            if new_health_status != node_info.health_status {
+                info!("Bootstrap node {:?} health status changed: {:?} -> {:?}", 
+                      node_id, node_info.health_status, new_health_status);
+                node_info.health_status = new_health_status;
+            }
+            
+            node_info.priority = new_priority;
         }
-        
-        // Determine health status
-        let new_health_status = if stats.consecutive_failures >= 3 {
-            BootstrapHealthStatus::Unhealthy
-        } else if success_rate < self.failover_threshold {
-            BootstrapHealthStatus::Degraded
-        } else if success_rate >= 0.8 && stats.consecutive_failures == 0 {
-            BootstrapHealthStatus::Healthy
-        } else {
-            node_info.health_status // Keep current status
-        };
-        
-        if new_health_status != node_info.health_status {
-            info!("Bootstrap node {:?} health status changed: {:?} -> {:?}", 
-                  node_id, node_info.health_status, new_health_status);
-            node_info.health_status = new_health_status;
-        }
-        
-        // Update priority based on performance
-        node_info.priority = self.calculate_dynamic_priority(node_info, stats);
-        
-        stats.last_health_check = Some(now);
     }
 
     /// Record connection attempt result
@@ -2800,7 +2730,7 @@ impl BootstrapNodeManager {
     }
 
     /// Calculate performance score for ranking
-    fn calculate_performance_score(&self, node_id: BootstrapNodeId, node_info: &BootstrapNodeInfo) -> f64 {
+    fn calculate_performance_score(&self, node_id: BootstrapNodeId, _node_info: &BootstrapNodeInfo) -> f64 {
         let stats = self.health_stats.get(&node_id).unwrap();
         
         let mut score = 0.0;
@@ -2833,7 +2763,7 @@ impl BootstrapNodeManager {
         let stability_score = if stats.consecutive_failures == 0 {
             1.0
         } else {
-            (1.0 / (stats.consecutive_failures as f64 + 1.0))
+            1.0 / (stats.consecutive_failures as f64 + 1.0)
         };
         score += stability_score * 0.1;
         

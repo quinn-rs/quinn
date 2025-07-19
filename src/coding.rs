@@ -99,7 +99,7 @@ impl Codec for Ipv6Addr {
     }
 }
 
-pub(crate) trait BufExt {
+pub trait BufExt {
     fn get<T: Codec>(&mut self) -> Result<T>;
     fn get_var(&mut self) -> Result<u64>;
 }
@@ -114,7 +114,7 @@ impl<T: Buf> BufExt for T {
     }
 }
 
-pub(crate) trait BufMutExt {
+pub trait BufMutExt {
     fn write<T: Codec>(&mut self, x: T);
     fn write_var(&mut self, x: u64);
 }

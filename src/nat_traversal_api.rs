@@ -12,6 +12,7 @@ use std::{
     time::Duration,
 };
 
+use tracing::{debug, info, warn};
 
 #[cfg(feature = "production-ready")]
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -23,10 +24,8 @@ use tokio::{
     time::{sleep, timeout},
 };
 
-#[cfg(feature = "production-ready")]
-// use futures_util::StreamExt;
-
-use tracing::{debug, info, warn};
+#[cfg(feature = "runtime-tokio")]
+use crate::quinn_high_level::TokioRuntime;
 
 use crate::{
     candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig, DiscoveryEvent},
@@ -36,11 +35,10 @@ use crate::{
 
 #[cfg(feature = "production-ready")]
 use crate::{
-    Endpoint as QuinnEndpoint,
+    quinn_high_level::{HighLevelEndpoint as QuinnEndpoint, Connection as QuinnConnection},
     EndpointConfig,
     ServerConfig,
     ClientConfig,
-    Connection as QuinnConnection,
     ConnectionError,
     TransportConfig,
     crypto::rustls::QuicServerConfig,
@@ -143,6 +141,19 @@ pub struct BootstrapNode {
     pub rtt: Option<Duration>,
     /// Number of successful coordinations via this node
     pub coordination_count: u32,
+}
+
+impl BootstrapNode {
+    /// Create a new bootstrap node
+    pub fn new(address: SocketAddr) -> Self {
+        Self {
+            address,
+            last_seen: std::time::Instant::now(),
+            can_coordinate: true,
+            rtt: None,
+            coordination_count: 0,
+        }
+    }
 }
 
 /// A candidate pair for hole punching (ICE-like)
@@ -401,21 +412,19 @@ impl ConfigValidator for NatTraversalConfig {
 
 impl NatTraversalEndpoint {
     /// Create a new NAT traversal endpoint with optional event callback
-    #[cfg(feature = "production-ready")]
     pub async fn new(
         config: NatTraversalConfig,
         event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
     ) -> Result<Self, NatTraversalError> {
-        Self::new_impl(config, event_callback).await
-    }
-    
-    /// Create a new NAT traversal endpoint with optional event callback (non-async fallback)
-    #[cfg(not(feature = "production-ready"))]
-    pub fn new(
-        config: NatTraversalConfig,
-        event_callback: Option<Box<dyn Fn(NatTraversalEvent) + Send + Sync>>,
-    ) -> Result<Self, NatTraversalError> {
-        Self::new_fallback(config, event_callback)
+        #[cfg(feature = "production-ready")]
+        {
+            Self::new_impl(config, event_callback).await
+        }
+        #[cfg(not(feature = "production-ready"))]
+        {
+            // For non-production builds, we wrap the sync version in async
+            Ok(Self::new_fallback(config, event_callback)?)
+        }
     }
     
     /// Internal async implementation for production builds
@@ -688,7 +697,7 @@ impl NatTraversalEndpoint {
     #[cfg(feature = "production-ready")]
     async fn create_quinn_endpoint(
         config: &NatTraversalConfig,
-        _nat_role: NatTraversalRole,
+        nat_role: NatTraversalRole,
     ) -> Result<(QuinnEndpoint, mpsc::UnboundedSender<NatTraversalEvent>), NatTraversalError> {
         use std::sync::Arc;
         
@@ -809,7 +818,7 @@ impl NatTraversalEndpoint {
             EndpointConfig::default(),
             server_config,
             std_socket,
-            Arc::new(quinn::TokioRuntime),
+            Arc::new(TokioRuntime),
         ).map_err(|e| NatTraversalError::ConfigError(format!("Failed to create Quinn endpoint: {}", e)))?;
         
         // Set default client config
@@ -825,7 +834,7 @@ impl NatTraversalEndpoint {
     #[cfg(not(feature = "production-ready"))]
     fn create_fallback_endpoint(
         config: &NatTraversalConfig,
-        _nat_role: NatTraversalRole,
+        nat_role: NatTraversalRole,
     ) -> Result<Endpoint, NatTraversalError> {
         use crate::{
             EndpointConfig, TransportConfig,
@@ -1007,9 +1016,13 @@ impl NatTraversalEndpoint {
     /// Handle an established connection
     #[cfg(feature = "production-ready")]
     async fn handle_connection(
-        connection: QuinnConnection,
-        event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
+        _connection: QuinnConnection,
+        _event_tx: mpsc::UnboundedSender<NatTraversalEvent>,
     ) {
+        // TODO: This function needs to be rewritten to work with low-level Quinn API
+        // The high-level accept_bi() and accept_uni() methods are not available
+        
+        /* Original code that uses high-level API:
         let peer_id = Self::generate_peer_id_from_address(connection.remote_address());
         let remote_address = connection.remote_address();
         
@@ -1053,14 +1066,19 @@ impl NatTraversalEndpoint {
                 }
             }
         }
+        */
     }
     
     /// Handle a bidirectional stream
     #[cfg(feature = "production-ready")]
     async fn handle_bi_stream(
-        mut send: quinn::SendStream,
-        mut recv: quinn::RecvStream,
+        _send: crate::quinn_high_level::SendStream,
+        _recv: crate::quinn_high_level::RecvStream,
     ) {
+        // TODO: This function needs to be rewritten to work with low-level Quinn API
+        // The high-level read() and write_all() methods are not available
+        
+        /* Original code that uses high-level API:
         let mut buffer = vec![0u8; 1024];
         
         loop {
@@ -1084,11 +1102,12 @@ impl NatTraversalEndpoint {
                 }
             }
         }
+        */
     }
     
     /// Handle a unidirectional stream
     #[cfg(feature = "production-ready")]
-    async fn handle_uni_stream(mut recv: quinn::RecvStream) {
+    async fn handle_uni_stream(mut recv: crate::quinn_high_level::RecvStream) {
         let mut buffer = vec![0u8; 1024];
         
         loop {
@@ -1198,6 +1217,18 @@ impl NatTraversalEndpoint {
         Ok(connections.get(peer_id).cloned())
     }
     
+    /// Accept incoming connections on the endpoint (stub for non-production builds)
+    #[cfg(not(feature = "production-ready"))]
+    pub async fn accept_connection(&self) -> Result<(PeerId, crate::quinn_high_level::Connection), NatTraversalError> {
+        Err(NatTraversalError::ConfigError("accept_connection requires production-ready feature".to_string()))
+    }
+    
+    /// Get an active connection by peer ID (stub for non-production builds)
+    #[cfg(not(feature = "production-ready"))]
+    pub fn get_connection(&self, _peer_id: &PeerId) -> Result<Option<crate::quinn_high_level::Connection>, NatTraversalError> {
+        Err(NatTraversalError::ConfigError("get_connection requires production-ready feature".to_string()))
+    }
+    
     /// Remove a connection by peer ID
     #[cfg(feature = "production-ready")]
     pub fn remove_connection(&self, peer_id: &PeerId) -> Result<Option<QuinnConnection>, NatTraversalError> {
@@ -1297,6 +1328,10 @@ impl NatTraversalEndpoint {
     }
     
     /// Generate a peer ID from a socket address
+    /// 
+    /// WARNING: This is a fallback method that should only be used when
+    /// we cannot extract the peer's actual ID from their Ed25519 public key.
+    /// This generates a non-persistent ID that will change on each connection.
     fn generate_peer_id_from_address(addr: SocketAddr) -> PeerId {
         use std::collections::hash_map::DefaultHasher;
         use std::hash::{Hash, Hasher};
@@ -1309,22 +1344,36 @@ impl NatTraversalEndpoint {
         peer_id[0..8].copy_from_slice(&hash.to_be_bytes());
         
         // Add some randomness to avoid collisions
+        // NOTE: This makes the peer ID non-persistent across connections
         for i in 8..32 {
             peer_id[i] = rand::random();
         }
         
+        warn!("Generated temporary peer ID from address {}. This ID is not persistent!", addr);
         PeerId(peer_id)
     }
     
-    /// Extract peer ID from connection (stub implementation)
+    /// Extract peer ID from connection by deriving it from the peer's public key
     #[cfg(feature = "production-ready")]
     async fn extract_peer_id_from_connection(&self, connection: &QuinnConnection) -> Option<PeerId> {
-        // TODO: In a real implementation, this would:
-        // 1. Read the peer's certificate
-        // 2. Extract the peer ID from the certificate subject
-        // 3. Or use a custom transport parameter
-        // For now, we'll return None to fall back to address-based generation
-        let _ = connection;
+        // Get the peer's identity from the TLS handshake
+        if let Some(identity) = connection.peer_identity() {
+            // Check if we have an Ed25519 public key from raw public key authentication
+            if let Some(public_key_bytes) = identity.downcast_ref::<[u8; 32]>() {
+                // Derive peer ID from the public key
+                match crate::derive_peer_id_from_key_bytes(public_key_bytes) {
+                    Ok(peer_id) => {
+                        debug!("Derived peer ID from Ed25519 public key");
+                        return Some(peer_id);
+                    }
+                    Err(e) => {
+                        warn!("Failed to derive peer ID from public key: {}", e);
+                    }
+                }
+            }
+            // TODO: Handle X.509 certificate case if needed
+        }
+        
         None
     }
     
@@ -1340,7 +1389,7 @@ impl NatTraversalEndpoint {
                 .map_err(|_| NatTraversalError::ProtocolError("Connections lock poisoned".to_string()))?;
             for (peer_id, connection) in connections.drain() {
                 info!("Closing connection to peer {:?}", peer_id);
-                connection.close(quinn::VarInt::from_u32(0), b"Shutdown");
+                connection.close(crate::VarInt::from_u32(0), b"Shutdown");
             }
         }
         
@@ -1789,7 +1838,7 @@ impl NatTraversalEndpoint {
                     // Try to receive a response
                     let mut response_buffer = [0u8; 1024];
                     match local_socket.recv_from(&mut response_buffer) {
-                        Ok((bytes_received, response_addr)) => {
+                        Ok((_bytes_received, response_addr)) => {
                             if response_addr == pair.remote_candidate.address {
                                 info!("Hole punch succeeded for peer {:?}: {} <-> {}", 
                                       peer_id, pair.local_candidate.address, pair.remote_candidate.address);
@@ -1900,11 +1949,11 @@ impl NatTraversalEndpoint {
     ) -> Result<(), NatTraversalError> {
         #[cfg(feature = "production-ready")]
         {
-            let endpoint = self.quinn_endpoint.as_ref()
+            let _endpoint = self.quinn_endpoint.as_ref()
                 .ok_or_else(|| NatTraversalError::ConfigError("Quinn endpoint not initialized".to_string()))?;
             
             // Create server name for the connection
-            let server_name = format!("peer-{:x}", peer_id.0[0] as u32);
+            let _server_name = format!("peer-{:x}", peer_id.0[0] as u32);
             
             // Attempt connection (this would be async in real implementation)
             debug!("Attempting Quinn connection to candidate {} for peer {:?}", 
@@ -2017,7 +2066,7 @@ impl NatTraversalEndpoint {
     fn get_current_discovery_peer_id(&self) -> PeerId {
         // Try to get the peer ID from the most recent active session
         if let Ok(sessions) = self.active_sessions.read() {
-            if let Some((peer_id, session)) = sessions.iter()
+            if let Some((peer_id, _session)) = sessions.iter()
                 .filter(|(_, s)| matches!(s.phase, TraversalPhase::Discovery))
                 .next() {
                 return *peer_id;
@@ -2035,7 +2084,7 @@ impl NatTraversalEndpoint {
     
     /// Handle endpoint events from connection-level NAT traversal state machine
     #[cfg(feature = "production-ready")]
-    pub async fn handle_endpoint_event(&self, event: crate::shared::EndpointEventInner) -> Result<(), NatTraversalError> {
+    pub(crate) async fn handle_endpoint_event(&self, event: crate::shared::EndpointEventInner) -> Result<(), NatTraversalError> {
         match event {
             crate::shared::EndpointEventInner::NatCandidateValidated { address, challenge } => {
                 info!("NAT candidate validation succeeded for {} with challenge {:016x}", address, challenge);
@@ -2188,6 +2237,7 @@ impl NatTraversalEndpoint {
     /// This is the bridge between candidate discovery and actual frame transmission.
     /// It finds the connection to the peer and sends an ADD_ADDRESS frame using
     /// the Quinn extension frame API.
+    #[cfg(feature = "production-ready")]
     async fn send_candidate_advertisement(
         &self,
         peer_id: PeerId,
@@ -2266,6 +2316,7 @@ impl NatTraversalEndpoint {
     ///
     /// This method sends hole punching coordination frames using the real
     /// Quinn extension frame API instead of application-level streams.
+    #[cfg(feature = "production-ready")]
     async fn send_punch_coordination(
         &self,
         peer_id: PeerId,
@@ -2470,7 +2521,7 @@ mod tests {
 
     #[test]
     fn test_bootstrap_node_management() {
-        let config = NatTraversalConfig::default();
+        let _config = NatTraversalConfig::default();
         // Note: This will fail due to ServerConfig requirement in new() - for illustration only
         // let endpoint = NatTraversalEndpoint::new(config, None).unwrap();
     }

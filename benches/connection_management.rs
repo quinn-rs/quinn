@@ -70,10 +70,10 @@ fn generate_socket_addresses(count: usize) -> Vec<SocketAddr> {
     
     for _ in 0..count {
         let ip = format!("192.168.{}.{}", 
-            rng.random_range(0..255), 
-            rng.random_range(1..254)
+            rng.gen_range(0..255), 
+            rng.gen_range(1..254)
         ).parse().unwrap();
-        let port = rng.random_range(1024..=65535);
+        let port = rng.gen_range(1024..=65535);
         addresses.push(SocketAddr::new(ip, port));
     }
     
@@ -99,9 +99,9 @@ fn generate_connections(count: usize) -> Vec<MockConnection> {
             remote_addr: remote,
             state: ConnectionState::Connected,
             last_activity: Instant::now(),
-            bytes_sent: rng.random_range(0..1_000_000),
-            bytes_received: rng.random_range(0..1_000_000),
-            rtt: Some(Duration::from_millis(rng.random_range(1..200))),
+            bytes_sent: rng.gen_range(0..1_000_000),
+            bytes_received: rng.gen_range(0..1_000_000),
+            rtt: Some(Duration::from_millis(rng.gen_range(1..200))),
         }
     }).collect()
 }
@@ -194,9 +194,9 @@ fn bench_connection_tracking(c: &mut Criterion) {
                             for connection in connections.iter().take(size / 2) {
                                 if let Some(conn) = conn_map.get_mut(&connection.peer_id) {
                                     conn.last_activity = Instant::now();
-                                    conn.bytes_sent += rng.random_range(1..10000);
-                                    conn.bytes_received += rng.random_range(1..10000);
-                                    conn.rtt = Some(Duration::from_millis(rng.random_range(1..200)));
+                                    conn.bytes_sent += rng.gen_range(1..10000);
+                                    conn.bytes_received += rng.gen_range(1..10000);
+                                    conn.rtt = Some(Duration::from_millis(rng.gen_range(1..200)));
                                 }
                             }
                         }
@@ -279,12 +279,12 @@ fn bench_event_processing(c: &mut Criterion) {
                     let events = Arc::new(RwLock::new(VecDeque::new()));
                     
                     for _ in 0..size {
-                        let peer_id = peer_ids[rng.random_range(0..peer_ids.len())];
-                        let event = match rng.random_range(0..4) {
+                        let peer_id = peer_ids[rng.gen_range(0..peer_ids.len())];
+                        let event = match rng.gen_range(0..4) {
                             0 => ConnectionEvent::Connected(peer_id),
                             1 => ConnectionEvent::Disconnected(peer_id),
-                            2 => ConnectionEvent::DataReceived(peer_id, rng.random_range(1..10000)),
-                            _ => ConnectionEvent::DataSent(peer_id, rng.random_range(1..10000)),
+                            2 => ConnectionEvent::DataReceived(peer_id, rng.gen_range(1..10000)),
+                            _ => ConnectionEvent::DataSent(peer_id, rng.gen_range(1..10000)),
                         };
                         
                         let mut event_queue = events.write().unwrap();
@@ -319,12 +319,12 @@ fn bench_event_processing(c: &mut Criterion) {
                         {
                             let mut event_queue = events.write().unwrap();
                             for _ in 0..size {
-                                let peer_id = peer_ids[rng.random_range(0..peer_ids.len())];
-                                let event = match rng.random_range(0..4) {
+                                let peer_id = peer_ids[rng.gen_range(0..peer_ids.len())];
+                                let event = match rng.gen_range(0..4) {
                                     0 => ConnectionEvent::Connected(peer_id),
                                     1 => ConnectionEvent::Disconnected(peer_id),
-                                    2 => ConnectionEvent::DataReceived(peer_id, rng.random_range(1..10000)),
-                                    _ => ConnectionEvent::DataSent(peer_id, rng.random_range(1..10000)),
+                                    2 => ConnectionEvent::DataReceived(peer_id, rng.gen_range(1..10000)),
+                                    _ => ConnectionEvent::DataSent(peer_id, rng.gen_range(1..10000)),
                                 };
                                 event_queue.push_back(event);
                             }
@@ -387,7 +387,7 @@ fn bench_resource_cleanup(c: &mut Criterion) {
                                 let uuid_bytes = uuid.as_bytes();
                                 peer_id_bytes[..16].copy_from_slice(uuid_bytes);
                                 let peer_id = PeerId(peer_id_bytes);
-                                let age = Duration::from_secs(rng.random_range(0..3600));
+                                let age = Duration::from_secs(rng.gen_range(0..3600));
                                 let local_addr = generate_socket_addresses(1)[0];
                                 let remote_addr = generate_socket_addresses(1)[0];
                                 
@@ -395,15 +395,15 @@ fn bench_resource_cleanup(c: &mut Criterion) {
                                     peer_id,
                                     local_addr,
                                     remote_addr,
-                                    state: if rng.random_bool(0.1) {
+                                    state: if rng.gen_bool(0.1) {
                                         ConnectionState::Disconnected
                                     } else {
                                         ConnectionState::Connected
                                     },
                                     last_activity: now - age,
-                                    bytes_sent: rng.random_range(0..1_000_000),
-                                    bytes_received: rng.random_range(0..1_000_000),
-                                    rtt: Some(Duration::from_millis(rng.random_range(1..200))),
+                                    bytes_sent: rng.gen_range(0..1_000_000),
+                                    bytes_received: rng.gen_range(0..1_000_000),
+                                    rtt: Some(Duration::from_millis(rng.gen_range(1..200))),
                                 };
                                 
                                 conn_map.insert(peer_id, connection);
@@ -517,7 +517,7 @@ fn bench_concurrent_access(c: &mut Criterion) {
                             for connection in connections.iter().take(size / 10) {
                                 if let Some(conn) = conn_map.get_mut(&connection.peer_id) {
                                     conn.last_activity = Instant::now();
-                                    conn.bytes_sent += rng.random_range(1..1000);
+                                    conn.bytes_sent += rng.gen_range(1..1000);
                                 }
                             }
                         }

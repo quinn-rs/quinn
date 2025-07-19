@@ -45,7 +45,7 @@ cargo build --release
 # Run as P2P node (automatically detects if it can be a coordinator)
 ant-quic --listen 0.0.0.0:9000
 
-# Connect to bootstrap nodes for peer discovery
+# Connect to bootstrap nodes    for peer discovery
 ant-quic --bootstrap node1.example.com:9000,node2.example.com:9000
 
 # Connect to specific peer by ID
@@ -138,7 +138,7 @@ ant-quic extends the proven Quinn QUIC implementation with sophisticated NAT tra
 - ICE-like candidate pairing with priority calculation
 - Multi-path packet transmission
 - Round-based coordination protocol
-- High-level NAT traversal API
+- High-level NAT traversal API with Quinn integration
 - Candidate discovery framework
 - Connection establishment with fallback
 - Comprehensive test suite (266+ tests)
@@ -149,7 +149,6 @@ ant-quic extends the proven Quinn QUIC implementation with sophisticated NAT tra
   - Windows: IP Helper API integration
   - Linux: Netlink interface enumeration
   - macOS: System Configuration framework
-- Real Quinn endpoint integration in high-level API
 - Session state machine polling implementation
 - Relay connection logic for fallback scenarios
 
@@ -158,8 +157,8 @@ ant-quic extends the proven Quinn QUIC implementation with sophisticated NAT tra
 #### v0.1.0 - Foundation Release
 - ✅ Core NAT traversal functionality
 - ✅ Basic binary tools
+- ✅ Full Quinn endpoint integration
 - 🚧 Complete platform-specific interface discovery
-- 🚧 Full Quinn endpoint integration
 - 📋 Performance benchmarking and optimization
 
 #### v0.2.0 - Reliability & Platform Support
@@ -267,6 +266,12 @@ at your option.
 - Implements NAT traversal based on [draft-seemann-quic-nat-traversal-01](https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-01.html)
 - Inspired by WebRTC ICE protocols and P2P networking research
 - Developed for the [Autonomi](https://autonomi.com) decentralized network ecosystem
+
+## Contributors
+
+We are deeply grateful to all our [contributors](CONTRIBUTORS.md) who have helped make this project possible. These true heroes dedicate their time and expertise to help others at their own cost. Thank you for your contributions to open source!
+
+See our [CONTRIBUTORS.md](CONTRIBUTORS.md) file for a full list of amazing people who have contributed to this project.
 
 ## Security
 

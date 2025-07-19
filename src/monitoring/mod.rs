@@ -24,6 +24,8 @@ pub mod diagnostics;
 pub mod health;
 pub mod export;
 pub mod dashboards;
+pub mod structured_logging;
+pub mod error_recovery;
 
 // Selective imports to avoid conflicts
 pub use metrics::{ProductionMetricsCollector, MetricsConfig};
@@ -692,7 +694,7 @@ pub enum NatType {
 }
 
 /// Error categories
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub enum ErrorCategory {
     NetworkConnectivity,
     NatTraversal,

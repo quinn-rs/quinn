@@ -77,7 +77,7 @@ impl RandomConnectionIdGenerator {
 impl ConnectionIdGenerator for RandomConnectionIdGenerator {
     fn generate_cid(&mut self) -> ConnectionId {
         let mut bytes_arr = [0; MAX_CID_SIZE];
-        rand::rng().fill_bytes(&mut bytes_arr[..self.cid_len]);
+        rand::thread_rng().fill_bytes(&mut bytes_arr[..self.cid_len]);
 
         ConnectionId::new(&bytes_arr[..self.cid_len])
     }
@@ -105,7 +105,7 @@ pub struct HashedConnectionIdGenerator {
 impl HashedConnectionIdGenerator {
     /// Create a generator with a random key
     pub fn new() -> Self {
-        Self::from_key(rand::rng().random())
+        Self::from_key(rand::thread_rng().gen())
     }
 
     /// Create a generator with a specific key
@@ -135,7 +135,7 @@ impl Default for HashedConnectionIdGenerator {
 impl ConnectionIdGenerator for HashedConnectionIdGenerator {
     fn generate_cid(&mut self) -> ConnectionId {
         let mut bytes_arr = [0; NONCE_LEN + SIGNATURE_LEN];
-        rand::rng().fill_bytes(&mut bytes_arr[..NONCE_LEN]);
+        rand::thread_rng().fill_bytes(&mut bytes_arr[..NONCE_LEN]);
         let mut hasher = rustc_hash::FxHasher::default();
         hasher.write_u64(self.key);
         hasher.write(&bytes_arr[..NONCE_LEN]);

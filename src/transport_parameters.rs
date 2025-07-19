@@ -246,83 +246,10 @@ pub struct NatTraversalConfig {
     pub(crate) peer_id: Option<[u8; 32]>,
 }
 
+// Note: NatTraversalConfig is encoded/decoded according to draft-seemann-quic-nat-traversal-01
+// which uses a simple format (empty value from client, 1-byte concurrency limit from server)
+// rather than a complex custom encoding.
 impl NatTraversalConfig {
-    fn wire_size(&self) -> u16 {
-        1 + // role discriminant
-        self.max_candidates.size() as u16 +
-        self.coordination_timeout.size() as u16 +
-        self.max_concurrent_attempts.size() as u16 +
-        match self.role {
-            NatTraversalRole::Server { .. } => 1, // can_relay boolean
-            _ => 0,
-        } +
-        1 + // peer_id presence indicator
-        if self.peer_id.is_some() { 32 } else { 0 } // peer_id bytes
-    }
-
-    fn write<W: BufMut>(&self, w: &mut W) {
-        match self.role {
-            NatTraversalRole::Client => w.put_u8(0),
-            NatTraversalRole::Server { can_relay } => {
-                w.put_u8(1);
-                w.put_u8(if can_relay { 1 } else { 0 });
-            }
-            NatTraversalRole::Bootstrap => w.put_u8(2),
-        }
-        w.write(self.max_candidates);
-        w.write(self.coordination_timeout);
-        w.write(self.max_concurrent_attempts);
-        
-        // Write peer_id if present
-        match &self.peer_id {
-            Some(peer_id) => {
-                w.put_u8(1); // Presence indicator
-                w.put_slice(peer_id);
-            }
-            None => {
-                w.put_u8(0); // Absence indicator
-            }
-        }
-    }
-
-    fn read<R: Buf>(r: &mut R) -> Result<Self, Error> {
-        let role_byte = r.get::<u8>()?;
-        let role = match role_byte {
-            0 => NatTraversalRole::Client,
-            1 => {
-                let can_relay = r.get::<u8>()? != 0;
-                NatTraversalRole::Server { can_relay }
-            }
-            2 => NatTraversalRole::Bootstrap,
-            _ => return Err(Error::IllegalValue),
-        };
-        
-        let max_candidates = r.get()?;
-        let coordination_timeout = r.get()?;
-        let max_concurrent_attempts = r.get()?;
-        
-        // Read peer_id if present
-        let peer_id = if r.remaining() > 0 {
-            let has_peer_id = r.get::<u8>()?;
-            if has_peer_id == 1 {
-                let mut peer_id = [0u8; 32];
-                r.copy_to_slice(&mut peer_id);
-                Some(peer_id)
-            } else {
-                None
-            }
-        } else {
-            None
-        };
-        
-        Ok(Self {
-            role,
-            max_candidates,
-            coordination_timeout,
-            max_concurrent_attempts,
-            peer_id,
-        })
-    }
 
     /// Create a new NAT traversal configuration
     ///
@@ -854,7 +781,7 @@ impl ReservedTransportParameter {
     fn random(rng: &mut impl RngCore) -> Self {
         let id = Self::generate_reserved_id(rng);
 
-        let payload_len = rng.random_range(0..Self::MAX_PAYLOAD_LEN);
+        let payload_len = rng.gen_range(0..Self::MAX_PAYLOAD_LEN);
 
         let payload = {
             let mut slice = [0u8; Self::MAX_PAYLOAD_LEN];
@@ -881,7 +808,7 @@ impl ReservedTransportParameter {
     /// See: <https://www.rfc-editor.org/rfc/rfc9000.html#section-18.1> and <https://www.rfc-editor.org/rfc/rfc9000.html#section-22.3>
     fn generate_reserved_id(rng: &mut impl RngCore) -> VarInt {
         let id = {
-            let rand = rng.random_range(0u64..(1 << 62) - 27);
+            let rand = rng.gen_range(0u64..(1 << 62) - 27);
             let n = rand / 31;
             31 * n + 27
         };
@@ -1079,7 +1006,7 @@ mod test {
 
     #[test]
     fn test_nat_traversal_parameter_without_peer_id() {
-        // Test configuration without peer_id
+        // Test client-side NAT traversal config (sends empty value)
         let config = NatTraversalConfig {
             role: NatTraversalRole::Client,
             max_candidates: VarInt::from_u32(4),
@@ -1094,7 +1021,8 @@ mod test {
         let mut encoded = Vec::new();
         params.write(&mut encoded);
         
-        let decoded_params = TransportParameters::read(Side::Client, &mut encoded.as_slice())
+        // Server reads client's parameters
+        let decoded_params = TransportParameters::read(Side::Server, &mut encoded.as_slice())
             .expect("Failed to decode transport parameters");
         
         let decoded_config = decoded_params.nat_traversal
@@ -1102,6 +1030,37 @@ mod test {
         
         assert_eq!(decoded_config.role, NatTraversalRole::Client);
         assert!(decoded_config.peer_id.is_none());
+        
+        // Test server-side NAT traversal config (sends concurrency limit)
+        let server_config = NatTraversalConfig {
+            role: NatTraversalRole::Server { can_relay: true },
+            max_candidates: VarInt::from_u32(8),
+            coordination_timeout: VarInt::from_u32(5000),
+            max_concurrent_attempts: VarInt::from_u32(4),
+            peer_id: None,
+        };
+        
+        let mut server_params = TransportParameters::default();
+        server_params.nat_traversal = Some(server_config);
+        
+        let mut server_encoded = Vec::new();
+        server_params.write(&mut server_encoded);
+        
+        // Client reads server's parameters
+        let decoded_server_params = TransportParameters::read(Side::Client, &mut server_encoded.as_slice())
+            .expect("Failed to decode server transport parameters");
+        
+        let decoded_server_config = decoded_server_params.nat_traversal
+            .expect("Server NAT traversal config should be present");
+        
+        match decoded_server_config.role {
+            NatTraversalRole::Server { can_relay } => {
+                // The protocol doesn't encode can_relay, so it's always false when decoded
+                assert!(!can_relay);
+            },
+            _ => panic!("Expected server role"),
+        }
+        assert_eq!(decoded_server_config.max_concurrent_attempts, VarInt::from_u32(4));
     }
 
     #[test]
@@ -1499,7 +1458,7 @@ mod test {
     #[test]
     fn reserved_transport_parameter_ignored_when_read() {
         let mut buf = Vec::new();
-        let reserved_parameter = ReservedTransportParameter::random(&mut rand::rng());
+        let reserved_parameter = ReservedTransportParameter::random(&mut rand::thread_rng());
         assert!(reserved_parameter.payload_len < ReservedTransportParameter::MAX_PAYLOAD_LEN);
         assert!(reserved_parameter.id.0 % 31 == 27);
 

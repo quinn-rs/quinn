@@ -233,13 +233,9 @@ pub(super) trait BytesSource {
     /// This method will consume parts of the source.
     /// Calling it will yield `Bytes` elements up to the configured `limit`.
     ///
-    /// The method returns a tuple:
-    /// - The first item is the yielded `Bytes` element. The element will be
-    ///   empty if the limit is zero or no more data is available.
-    /// - The second item returns how many complete chunks inside the source had
-    ///   had been consumed. This can be less than 1, if a chunk inside the
-    ///   source had been truncated in order to adhere to the limit. It can also
-    ///   be more than 1, if zero-length chunks had been skipped.
+    /// Returns:
+    /// - A `Bytes` object containing the data (empty if limit is zero or no more data is available)
+    /// - The number of complete chunks consumed from the source
     fn pop_chunk(&mut self, limit: usize) -> (Bytes, usize);
 }
 
@@ -276,8 +272,12 @@ pub enum WriteError {
     /// The stream has not been opened or has already been finished or reset
     #[error("closed stream")]
     ClosedStream,
+    /// The connection was closed
+    #[error("connection closed")]
+    ConnectionClosed,
 }
 
+/// Stream sending state
 #[derive(Debug, Copy, Clone, Eq, PartialEq)]
 pub(super) enum SendState {
     /// Sending new data
@@ -302,6 +302,9 @@ pub enum FinishError {
     /// The stream has not been opened or was already finished or reset
     #[error("closed stream")]
     ClosedStream,
+    /// The connection was closed
+    #[error("connection closed")]
+    ConnectionClosed,
 }
 
 #[cfg(test)]

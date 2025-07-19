@@ -666,8 +666,13 @@ mod tests {
     #[tokio::test]
     async fn test_workflow_coordinator() {
         let peer_id = "test_peer_id".to_string();
+        
+        // Create a config with bootstrap nodes for client role
+        let mut config = crate::nat_traversal_api::NatTraversalConfig::default();
+        config.bootstrap_nodes.push("127.0.0.1:9000".parse().unwrap());
+        
         let endpoint = Arc::new(NatTraversalEndpoint::new(
-            crate::nat_traversal_api::NatTraversalConfig::default(),
+            config,
             None,
         ).await.unwrap());
         

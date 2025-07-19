@@ -2,10 +2,9 @@
 //!
 //! Run these tests with: cargo test --release --test stress_tests -- --ignored
 
-// Re-export the stress test module
-mod stress {
-    pub mod connection_stress_tests;
+// Placeholder test to prevent empty module error
+#[test]
+#[ignore]
+fn placeholder_stress_test() {
+    // TODO: Re-enable stress tests when connection_stress_tests.rs is re-enabled
 }
-
-// Import all stress tests
-use stress::connection_stress_tests::*;

@@ -834,7 +834,7 @@ impl PacketNumberFilter {
         // First skipped PN is in 0..64
         let exponent = 6;
         Self {
-            next_skipped_packet_number: rng.random_range(0..2u64.saturating_pow(exponent)),
+            next_skipped_packet_number: rng.gen_range(0..2u64.saturating_pow(exponent)),
             prev_skipped_packet_number: None,
             exponent,
         }
@@ -872,7 +872,7 @@ impl PacketNumberFilter {
         self.prev_skipped_packet_number = Some(self.next_skipped_packet_number);
         let next_exponent = self.exponent.saturating_add(1);
         self.next_skipped_packet_number = rng
-            .random_range(2u64.saturating_pow(self.exponent)..2u64.saturating_pow(next_exponent));
+            .gen_range(2u64.saturating_pow(self.exponent)..2u64.saturating_pow(next_exponent));
         self.exponent = next_exponent;
 
         space.get_tx_number()

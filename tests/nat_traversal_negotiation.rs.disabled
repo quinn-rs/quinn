@@ -5,7 +5,7 @@ use ant_quic::{
     TransportConfig, ServerConfig, EndpointConfig, Endpoint,
     transport_parameters::{NatTraversalConfig, NatTraversalRole},
     VarInt, RandomConnectionIdGenerator,
-    crypto::raw_public_keys::{RawPublicKeyConfigBuilder, utils::generate_ed25519_keypair},
+    crypto::raw_public_keys::{RawPublicKeyConfigBuilder, key_utils::generate_ed25519_keypair},
 };
 use tokio::net::UdpSocket;
 

@@ -94,7 +94,7 @@ impl PacketBuilder {
                 spin: if conn.spin_enabled {
                     conn.spin
                 } else {
-                    conn.rng.random()
+                    conn.rng.gen::<bool>()
                 },
                 key_phase: conn.key_phase,
             },
@@ -124,7 +124,7 @@ impl PacketBuilder {
             }),
         };
         let partial_encode = header.encode(buffer);
-        if conn.peer_params.grease_quic_bit && conn.rng.random() {
+        if conn.peer_params.grease_quic_bit && conn.rng.gen::<bool>() {
             buffer[partial_encode.start] ^= FIXED_BIT;
         }
 

@@ -1,20 +1,18 @@
-//! Low-level protocol logic for the QUIC protoocol
+//! ant-quic: QUIC transport protocol with advanced NAT traversal for P2P networks
 //!
-//! quinn-proto contains a fully deterministic implementation of QUIC protocol logic. It contains
-//! no networking code and does not get any relevant timestamps from the operating system. Most
-//! users may want to use the futures-based quinn API instead.
+//! This library provides a clean, modular implementation of QUIC-native NAT traversal
+//! using raw public keys for authentication. It is designed to be minimal, focused,
+//! and highly testable, with exceptional cross-platform support.
 //!
-//! The quinn-proto API might be of interest if you want to use it from a C or C++ project
-//! through C bindings or if you want to use a different event loop than the one tokio provides.
-//!
-//! The most important types are `Endpoint`, which conceptually represents the protocol state for
-//! a single socket and mostly manages configuration and dispatches incoming datagrams to the
-//! related `Connection`. `Connection` types contain the bulk of the protocol logic related to
-//! managing a single connection and all the related state (such as streams).
+//! The library is organized into the following main modules:
+//! - `transport`: Core QUIC transport functionality
+//! - `nat_traversal`: QUIC-native NAT traversal protocol
+//! - `discovery`: Platform-specific network interface discovery
+//! - `crypto`: Raw public key authentication
+//! - `api`: High-level P2P networking API
 
 #![cfg_attr(not(fuzzing), warn(missing_docs))]
 #![cfg_attr(test, allow(dead_code))]
-// Fixes welcome:
 #![warn(unreachable_pub)]
 #![allow(clippy::cognitive_complexity)]
 #![allow(clippy::too_many_arguments)]
@@ -26,179 +24,110 @@ use std::{
     ops,
 };
 
+// Core modules
 mod cid_queue;
 pub mod coding;
 mod constant_time;
 mod range_set;
-// Temporarily disabled for frame testing
-// #[cfg(all(test, any(feature = "rustls-aws-lc-rs", feature = "rustls-ring")))]
-// pub mod tests;
 pub mod transport_parameters;
 mod varint;
 
 pub use varint::{VarInt, VarIntBoundsExceeded};
 
-#[cfg(feature = "bloom")]
-mod bloom_token_log;
-#[cfg(feature = "bloom")]
-pub use bloom_token_log::BloomTokenLog;
+// Removed optional bloom module
 
-mod connection;
-pub use crate::connection::{
-    Chunk, Chunks, ClosedStream, Connection, ConnectionError, ConnectionStats, Datagrams, Event,
-    FinishError, FrameStats, PathStats, ReadError, ReadableError, RecvStream, RttEstimator,
-    SendDatagramError, SendStream, ShouldTransmit, StreamEvent, Streams, UdpStats, WriteError,
-    Written,
-};
-
-#[cfg(feature = "rustls")]
-pub use rustls;
-
-mod config;
-pub use config::{
-    AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
-    ServerConfig, StdSystemTime, TimeSource, TransportConfig, ValidationTokenConfig,
-};
-
-pub mod crypto;
-
-mod frame;
-use crate::frame::Frame;
-pub use crate::frame::{ApplicationClose, ConnectionClose, Datagram, FrameType};
-
-mod endpoint;
-pub use crate::endpoint::{
-    AcceptError, ConnectError, ConnectionHandle, DatagramEvent, Endpoint, Incoming, RetryError,
-};
-
-mod packet;
-pub use packet::{
-    ConnectionIdParser, FixedLengthConnectionIdParser, LongType, PacketDecodeError, PartialDecode,
-    ProtectedHeader, ProtectedInitialHeader,
-};
-
-mod shared;
-pub use crate::shared::{ConnectionEvent, ConnectionId, EcnCodepoint, EndpointEvent};
-
-mod transport_error;
-pub use crate::transport_error::{Code as TransportErrorCode, Error as TransportError};
-
-pub mod congestion;
-
-mod cid_generator;
-pub use crate::cid_generator::{
-    ConnectionIdGenerator, HashedConnectionIdGenerator, InvalidCid, RandomConnectionIdGenerator,
-};
-
+// Core implementation modules
+pub mod connection;
+pub mod config;
+pub mod frame;
+pub mod endpoint;
+pub mod packet;
+pub mod shared;
+pub mod transport_error;
+// Simplified congestion control
+mod congestion;
+pub mod cid_generator;
 mod token;
-use token::ResetToken;
-pub use token::{NoneTokenLog, NoneTokenStore, TokenLog, TokenReuseError, TokenStore};
-
 mod token_memory_cache;
-pub use token_memory_cache::TokenMemoryCache;
+pub mod candidate_discovery;
+mod connection_establishment_simple;
+pub mod nat_traversal_api;
 
-mod candidate_discovery;
+// Public modules with new structure
+pub mod transport;
+pub mod nat_traversal;
+pub mod discovery;
+pub mod crypto;
+pub mod api;
+
+// Additional modules
+pub mod quic_node;
+pub mod terminal_ui;
+pub mod workflow;
+pub mod monitoring;
+pub mod optimization;
+
+// High-level async API modules (ported from quinn crate)
+pub mod quinn_high_level;
+
+// Re-export high-level API types for easier usage
+#[cfg(feature = "production-ready")]
+pub use quinn_high_level::{
+    HighLevelEndpoint,
+    Connection as HighLevelConnection,
+    Connecting,
+    Accept,
+    RecvStream as HighLevelRecvStream,
+    SendStream as HighLevelSendStream,
+};
+
+// Re-export crypto utilities for peer ID management
+pub use crypto::raw_public_keys::key_utils::{
+    generate_ed25519_keypair, derive_peer_id_from_public_key,
+    derive_peer_id_from_key_bytes, verify_peer_id,
+    public_key_to_bytes, public_key_from_bytes,
+};
+
+// Re-export key types for backward compatibility
+pub use connection::{
+    Connection, ConnectionError, ConnectionStats, Event, 
+    RecvStream, SendStream, Streams, StreamEvent, SendDatagramError,
+    Chunk, Chunks, ClosedStream, FinishError, ReadError, ReadableError,
+    WriteError, Written, Datagrams,
+};
+pub use endpoint::{Endpoint, ConnectionHandle, Incoming, AcceptError, ConnectError, DatagramEvent};
+pub use shared::{ConnectionId, EcnCodepoint, EndpointEvent};
+pub use transport_error::{Code as TransportErrorCode, Error as TransportError};
 pub use candidate_discovery::{
     CandidateDiscoveryManager, DiscoveryConfig, DiscoveryEvent, DiscoveryError,
     NetworkInterface, ValidatedCandidate,
 };
-
-// Re-export test utilities for testing
-pub use candidate_discovery::test_utils;
-
-mod connection_establishment_simple;
 pub use connection_establishment_simple::{
     SimpleConnectionEstablishmentManager, SimpleEstablishmentConfig,
-    SimpleConnectionEvent, SimpleConnectionStatus,
+    SimpleConnectionEvent,
 };
-
-pub mod nat_traversal_api;
 pub use nat_traversal_api::{
     NatTraversalEndpoint, NatTraversalConfig, EndpointRole, PeerId, BootstrapNode,
     CandidateAddress, NatTraversalEvent, NatTraversalError, NatTraversalStatistics,
 };
-
-// Re-export NAT traversal types from connection module
 pub use connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole};
-
-pub mod quic_node;
 pub use quic_node::{QuicP2PNode, QuicNodeConfig, NodeStats as QuicNodeStats};
 
-pub mod terminal_ui;
-
-pub mod workflow;
-
-pub mod monitoring;
-
-#[cfg(feature = "arbitrary")]
-use arbitrary::Arbitrary;
-
-// Deal with time
-#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
-pub(crate) use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-#[cfg(all(target_family = "wasm", target_os = "unknown"))]
-pub(crate) use web_time::{Duration, Instant, SystemTime, UNIX_EPOCH};
-
 #[cfg(fuzzing)]
-pub mod fuzzing {
-    pub use crate::connection::{Retransmits, State as ConnectionState, StreamsState};
-    pub use crate::frame::ResetStream;
-    pub use crate::packet::PartialDecode;
-    pub use crate::transport_parameters::TransportParameters;
-    pub use bytes::{BufMut, BytesMut};
-
-    #[cfg(feature = "arbitrary")]
-    use arbitrary::{Arbitrary, Result, Unstructured};
-
-    #[cfg(feature = "arbitrary")]
-    impl<'arbitrary> Arbitrary<'arbitrary> for TransportParameters {
-        fn arbitrary(u: &mut Unstructured<'arbitrary>) -> Result<Self> {
-            Ok(Self {
-                initial_max_streams_bidi: u.arbitrary()?,
-                initial_max_streams_uni: u.arbitrary()?,
-                ack_delay_exponent: u.arbitrary()?,
-                max_udp_payload_size: u.arbitrary()?,
-                ..Self::default()
-            })
-        }
-    }
-
-    #[derive(Debug)]
-    pub struct PacketParams {
-        pub local_cid_len: usize,
-        pub buf: BytesMut,
-        pub grease_quic_bit: bool,
-    }
-
-    #[cfg(feature = "arbitrary")]
-    impl<'arbitrary> Arbitrary<'arbitrary> for PacketParams {
-        fn arbitrary(u: &mut Unstructured<'arbitrary>) -> Result<Self> {
-            let local_cid_len: usize = u.int_in_range(0..=crate::MAX_CID_SIZE)?;
-            let bytes: Vec<u8> = Vec::arbitrary(u)?;
-            let mut buf = BytesMut::new();
-            buf.put_slice(&bytes[..]);
-            Ok(Self {
-                local_cid_len,
-                buf,
-                grease_quic_bit: bool::arbitrary(u)?,
-            })
-        }
-    }
-}
+pub mod fuzzing;
 
 /// The QUIC protocol version implemented.
+/// 
+/// Simplified to include only the essential versions:
+/// - 0x00000001: QUIC v1 (RFC 9000)
+/// - 0xff00_001d: Draft 29
 pub const DEFAULT_SUPPORTED_VERSIONS: &[u32] = &[
-    0x00000001,
-    0xff00_001d,
-    0xff00_001e,
-    0xff00_001f,
-    0xff00_0020,
-    0xff00_0021,
-    0xff00_0022,
+    0x00000001, // QUIC v1 (RFC 9000)
+    0xff00_001d, // Draft 29
 ];
 
 /// Whether an endpoint was the initiator of a connection
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Side {
     /// The initiator of a connection
@@ -232,7 +161,7 @@ impl ops::Not for Side {
 }
 
 /// Whether a stream communicates data in both directions or only from the initiator
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub enum Dir {
     /// Data flows in both directions
@@ -258,7 +187,7 @@ impl fmt::Display for Dir {
 }
 
 /// Identifier for a stream within a particular connection
-#[cfg_attr(feature = "arbitrary", derive(Arbitrary))]
+#[cfg_attr(feature = "arbitrary", derive(arbitrary::Arbitrary))]
 #[derive(Debug, Copy, Clone, Eq, PartialEq, Ord, PartialOrd, Hash)]
 pub struct StreamId(u64);
 
@@ -349,18 +278,31 @@ pub struct Transmit {
     pub src_ip: Option<IpAddr>,
 }
 
+// Deal with time
+#[cfg(not(all(target_family = "wasm", target_os = "unknown")))]
+pub(crate) use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+#[cfg(all(target_family = "wasm", target_os = "unknown"))]
+pub(crate) use web_time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+
 //
 // Useful internal constants
 //
 
 /// The maximum number of CIDs we bother to issue per connection
-const LOC_CID_COUNT: u64 = 8;
-const RESET_TOKEN_SIZE: usize = 16;
-const MAX_CID_SIZE: usize = 20;
-const MIN_INITIAL_SIZE: u16 = 1200;
+pub(crate) const LOC_CID_COUNT: u64 = 8;
+pub(crate) const RESET_TOKEN_SIZE: usize = 16;
+pub(crate) const MAX_CID_SIZE: usize = 20;
+pub(crate) const MIN_INITIAL_SIZE: u16 = 1200;
 /// <https://www.rfc-editor.org/rfc/rfc9000.html#name-datagram-size>
-const INITIAL_MTU: u16 = 1200;
-const MAX_UDP_PAYLOAD: u16 = 65527;
-const TIMER_GRANULARITY: Duration = Duration::from_millis(1);
-/// Maximum number of streams that can be uniquely identified by a stream ID
-const MAX_STREAM_COUNT: u64 = 1 << 60;
+pub(crate) const INITIAL_MTU: u16 = 1200;
+pub(crate) const MAX_UDP_PAYLOAD: u16 = 65527;
+pub(crate) const TIMER_GRANULARITY: Duration = Duration::from_millis(1);
+/// Maximum number of streams that can be tracked per connection
+pub(crate) const MAX_STREAM_COUNT: u64 = 1 << 60;
+
+// Internal type re-exports for crate modules
+pub(crate) use token::{ResetToken, TokenStore, TokenLog, NoneTokenLog};
+pub(crate) use token_memory_cache::TokenMemoryCache;
+pub(crate) use frame::Frame;
+pub use config::{EndpointConfig, TransportConfig, ServerConfig, AckFrequencyConfig, MtuDiscoveryConfig, ClientConfig};
+pub use cid_generator::RandomConnectionIdGenerator;

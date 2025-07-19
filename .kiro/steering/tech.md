@@ -11,6 +11,8 @@
 
 ## Core Dependencies
 - **Quinn**: Foundation QUIC implementation
+  - Uses Quinn's high-level API: `Endpoint`, `Connection`, `SendStream`, `RecvStream`
+  - Extends Quinn with NAT traversal while maintaining API compatibility
 - **Tokio**: Async runtime and networking
 - **Rustls**: TLS implementation with multiple crypto provider options
 - **Tracing**: Structured logging and instrumentation
@@ -37,7 +39,7 @@ cargo build
 cargo build --release
 
 # Build with specific features
-cargo build --features "rustls-aws-lc-rs,stun"
+cargo build --features "rustls-aws-lc-rs,network-discovery"
 
 # Build all binaries
 cargo build --bins
@@ -93,10 +95,22 @@ cargo clippy --all-targets --all-features
 cargo deny check
 ```
 
+## NAT Traversal Protocol
+- **QUIC-native NAT traversal only**: Based on [draft-seemann-quic-nat-traversal-01](https://www.ietf.org/archive/id/draft-seemann-quic-nat-traversal-01.html)
+- **No STUN or ICE**: We do NOT use STUN, ICE, or any external protocols
+- **Pure QUIC extension**: NAT traversal is implemented entirely within QUIC using custom transport parameters and frames
+- **Coordinated hole punching**: Uses QUIC-native coordination protocol for symmetric NAT penetration
+- **Transport parameter negotiation**: NAT traversal capabilities are negotiated during QUIC handshake
+
 ## Feature Flags
 - `default`: Includes `rustls-ring`, `log`, `bloom`, `production-ready`
 - `production-ready`: Enables full networking stack with DNS resolution
 - `bloom`: Enables BloomTokenLog for token management
-- `stun`: STUN protocol support for NAT traversal
 - `network-discovery`: Enhanced network interface discovery
 - `platform-verifier`: Platform-specific certificate verification
+
+## API Design Philosophy
+- **Quinn Compatibility**: Maintain consistency with Quinn's high-level API patterns
+- **Default Features Focus**: Optimize for default feature compilation and testing
+- **Extension Pattern**: Add NAT traversal capabilities as natural extensions to Quinn's API
+- **Type Safety**: Use Quinn's existing types (`Endpoint`, `Connection`) for familiarity

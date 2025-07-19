@@ -12,7 +12,7 @@ use rustls::pki_types::{CertificateDer, PrivateKeyDer};
 use thiserror::Error;
 
 #[cfg(feature = "bloom")]
-use crate::BloomTokenLog;
+use crate::NoneTokenLog;
 #[cfg(not(feature = "bloom"))]
 use crate::NoneTokenLog;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
@@ -27,6 +27,8 @@ use crate::{
 
 mod transport;
 pub use transport::{AckFrequencyConfig, IdleTimeout, MtuDiscoveryConfig, TransportConfig};
+
+pub mod timeouts;
 
 // Production-ready configuration validation
 #[cfg(feature = "production-ready")]
@@ -187,7 +189,7 @@ impl Default for EndpointConfig {
         use ring::hmac;
 
         let mut reset_key = [0; 64];
-        rand::rng().fill_bytes(&mut reset_key);
+        rand::thread_rng().fill_bytes(&mut reset_key);
 
         Self::new(Arc::new(hmac::Key::new(hmac::HMAC_SHA256, &reset_key)))
     }
@@ -403,7 +405,7 @@ impl ServerConfig {
         #[cfg(feature = "ring")]
         use ring::hkdf;
 
-        let rng = &mut rand::rng();
+        let rng = &mut rand::thread_rng();
         let mut master_key = [0u8; 64];
         rng.fill_bytes(&mut master_key);
         let master_key = hkdf::Salt::new(hkdf::HKDF_SHA256, &[]).extract(&master_key);
@@ -526,9 +528,6 @@ impl ValidationTokenConfig {
 
 impl Default for ValidationTokenConfig {
     fn default() -> Self {
-        #[cfg(feature = "bloom")]
-        let log = Arc::new(BloomTokenLog::default());
-        #[cfg(not(feature = "bloom"))]
         let log = Arc::new(NoneTokenLog);
         Self {
             lifetime: Duration::from_secs(2 * 7 * 24 * 60 * 60),

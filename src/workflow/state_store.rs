@@ -176,7 +176,8 @@ impl FileStateStore {
     
     /// Get the file path for a workflow instance
     fn get_file_path(&self, instance_id: &WorkflowId) -> std::path::PathBuf {
-        self.base_dir.join(format!("{}.json", instance_id))
+        // Use full hex encoding of the WorkflowId bytes
+        self.base_dir.join(format!("{}.json", hex::encode(&instance_id.0)))
     }
     
     /// Get or create a lock for a workflow instance
@@ -504,14 +505,48 @@ mod tests {
         let temp_dir = tempfile::tempdir().unwrap();
         let store = FileStateStore::new(temp_dir.path().to_path_buf()).unwrap();
         
-        let state = WorkflowState {
+        // Create an old completed workflow
+        let old_state = WorkflowState {
             instance_id: WorkflowId::generate(),
-            workflow_id: "test_workflow".to_string(),
+            workflow_id: "old_workflow".to_string(),
             version: Version { major: 1, minor: 0, patch: 0 },
             status: WorkflowStatus::Completed { 
                 result: crate::workflow::WorkflowResult {
                     output: HashMap::new(),
-                    duration: Duration::from_secs(10),
+                    duration: Duration::from_secs(5),
+                    metrics: WorkflowMetrics::default(),
+                }
+            },
+            current_stage: StageId("final".to_string()),
+            input: HashMap::new(),
+            state: HashMap::new(),
+            metrics: WorkflowMetrics::default(),
+            retry_attempts: HashMap::new(),
+            created_at: SystemTime::now() - Duration::from_secs(200),
+            updated_at: SystemTime::now() - Duration::from_secs(200),
+            checkpoint_version: 1,
+        };
+        
+        // Save the old workflow using the store's save method first,
+        // then manually update the file to have old timestamps
+        store.save(&old_state).await.unwrap();
+        
+        // Now manually update the file's content to have old timestamps
+        let path = store.get_file_path(&old_state.instance_id);
+        let mut old_state_with_old_times = old_state.clone();
+        old_state_with_old_times.updated_at = SystemTime::now() - Duration::from_secs(200);
+        let json = serde_json::to_string_pretty(&old_state_with_old_times).unwrap();
+        tokio::fs::write(&path, json).await.unwrap();
+        
+        // Create a new workflow to verify it's not deleted
+        let new_state = WorkflowState {
+            instance_id: WorkflowId::generate(),
+            workflow_id: "new_workflow".to_string(),
+            version: Version { major: 1, minor: 0, patch: 0 },
+            status: WorkflowStatus::Completed { 
+                result: crate::workflow::WorkflowResult {
+                    output: HashMap::new(),
+                    duration: Duration::from_secs(5),
                     metrics: WorkflowMetrics::default(),
                 }
             },
@@ -525,14 +560,19 @@ mod tests {
             checkpoint_version: 1,
         };
         
-        // Save and load
-        store.save(&state).await.unwrap();
-        let loaded = store.load(&state.instance_id).await.unwrap();
-        assert_eq!(loaded.instance_id, state.instance_id);
+        // Save the new workflow normally
+        store.save(&new_state).await.unwrap();
         
-        // Cleanup old workflows
-        tokio::time::sleep(Duration::from_millis(100)).await;
-        let removed = store.cleanup(Duration::from_millis(50)).await.unwrap();
+        // Verify both exist
+        assert_eq!(store.list().await.unwrap().len(), 2);
+        
+        // Cleanup old workflows (older than 100 seconds)
+        let removed = store.cleanup(Duration::from_secs(100)).await.unwrap();
         assert_eq!(removed, 1);
+        
+        // Verify only the new workflow remains
+        let remaining = store.list().await.unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0], new_state.instance_id);
     }
 }

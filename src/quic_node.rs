@@ -12,8 +12,6 @@ use std::{
 
 use tracing::{debug, info, error};
 
-#[cfg(feature = "production-ready")]
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use crate::{
     nat_traversal_api::{
         NatTraversalEndpoint, NatTraversalConfig, NatTraversalEvent,
@@ -274,14 +272,14 @@ impl QuicP2PNode {
                 Ok(Some(connection)) => {
                     // Open a unidirectional stream for data transmission
                     let mut send_stream = connection.open_uni().await
-                        .map_err(|e| format!("Failed to open stream: {}", e))?;
+                        .map_err(|e| format!("Failed to open unidirectional stream: {}", e))?;
                     
                     // Send the data
                     send_stream.write_all(data).await
                         .map_err(|e| format!("Failed to write data: {}", e))?;
                     
                     // Finish the stream
-                    send_stream.finish();
+                    send_stream.finish().map_err(|e| format!("Failed to finish stream: {}", e))?;
                     
                     debug!("Successfully sent {} bytes to peer {:?}", data.len(), peer_id);
                     Ok(())
@@ -321,15 +319,14 @@ impl QuicP2PNode {
         for (peer_id, _remote_addr) in peers.iter() {
             match self.nat_endpoint.get_connection(peer_id) {
                 Ok(Some(connection)) => {
-                    // Try to accept incoming streams from this connection
+                    // Try to accept incoming unidirectional streams
                     match tokio::time::timeout(Duration::from_millis(100), connection.accept_uni()).await {
                         Ok(Ok(mut recv_stream)) => {
-                            debug!("Receiving data from peer {:?}", peer_id);
+                            debug!("Receiving data from unidirectional stream from peer {:?}", peer_id);
                             
                             // Read all data from the stream
-                            let mut buffer = Vec::new();
-                            match recv_stream.read_to_end(&mut buffer).await {
-                                Ok(_) => {
+                            match recv_stream.read_to_end(1024 * 1024).await { // 1MB limit
+                                Ok(buffer) => {
                                     if !buffer.is_empty() {
                                         debug!("Received {} bytes from peer {:?}", buffer.len(), peer_id);
                                         return Ok((*peer_id, buffer));
@@ -341,10 +338,10 @@ impl QuicP2PNode {
                             }
                         }
                         Ok(Err(e)) => {
-                            debug!("Failed to accept stream from peer {:?}: {}", peer_id, e);
+                            debug!("Failed to accept uni stream from peer {:?}: {}", peer_id, e);
                         }
                         Err(_) => {
-                            // Timeout - continue to next peer
+                            // Timeout - try bidirectional streams
                         }
                     }
                     
@@ -354,9 +351,8 @@ impl QuicP2PNode {
                             debug!("Receiving data from bidirectional stream from peer {:?}", peer_id);
                             
                             // Read all data from the receive side
-                            let mut buffer = Vec::new();
-                            match recv_stream.read_to_end(&mut buffer).await {
-                                Ok(_) => {
+                            match recv_stream.read_to_end(1024 * 1024).await { // 1MB limit
+                                Ok(buffer) => {
                                     if !buffer.is_empty() {
                                         debug!("Received {} bytes from peer {:?} via bidirectional stream", buffer.len(), peer_id);
                                         return Ok((*peer_id, buffer));

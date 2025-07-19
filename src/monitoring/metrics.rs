@@ -10,6 +10,7 @@ use std::{
         Arc,
     },
     time::{Duration, Instant, SystemTime},
+    net::SocketAddr,
 };
 
 use tokio::{
@@ -909,11 +910,13 @@ struct ResultMetric {
     connection_info: Option<crate::monitoring::ConnectionInfo>,
 }
 
-/// Counter metric
+/// Counter metric for tracking counts
+#[derive(Debug)]
 struct CounterMetric {
     name: String,
     labels: HashMap<String, String>,
     value: AtomicU64,
+    last_updated: std::sync::RwLock<Instant>,
 }
 
 impl CounterMetric {
@@ -922,68 +925,467 @@ impl CounterMetric {
             name,
             labels,
             value: AtomicU64::new(0),
+            last_updated: std::sync::RwLock::new(Instant::now()),
         }
     }
     
     fn increment(&self) {
         self.value.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut last_updated) = self.last_updated.write() {
+            *last_updated = Instant::now();
+        }
+    }
+    
+    fn get_value(&self) -> u64 {
+        self.value.load(Ordering::Relaxed)
     }
 }
 
-/// Histogram metric
+/// Histogram metric for tracking distributions
+#[derive(Debug)]
 struct HistogramMetric {
     name: String,
     labels: HashMap<String, String>,
-    buckets: RwLock<Vec<f64>>,
-    sum: AtomicU64, // Stored as fixed-point
-    count: AtomicU64,
+    values: std::sync::Mutex<Vec<f64>>,
+    buckets: Vec<f64>,
+    last_updated: std::sync::RwLock<Instant>,
 }
 
 impl HistogramMetric {
     fn new(name: String, labels: HashMap<String, String>) -> Self {
+        // Standard histogram buckets for latency/duration metrics
+        let buckets = vec![
+            0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0, 10.0, 25.0, 50.0, 100.0
+        ];
+        
         Self {
             name,
             labels,
-            buckets: RwLock::new(Vec::new()),
-            sum: AtomicU64::new(0),
-            count: AtomicU64::new(0),
+            values: std::sync::Mutex::new(Vec::new()),
+            buckets,
+            last_updated: std::sync::RwLock::new(Instant::now()),
         }
     }
     
     fn record(&self, value: f64) {
-        // Add to bucket (simplified)
-        self.sum.fetch_add((value * 1000.0) as u64, Ordering::Relaxed);
-        self.count.fetch_add(1, Ordering::Relaxed);
+        if let Ok(mut values) = self.values.lock() {
+            values.push(value);
+            // Keep only recent values to prevent unbounded growth
+            if values.len() > 10000 {
+                values.drain(0..5000);
+            }
+        }
+        if let Ok(mut last_updated) = self.last_updated.write() {
+            *last_updated = Instant::now();
+        }
+    }
+    
+    fn get_percentile(&self, percentile: f64) -> Option<f64> {
+        let values = self.values.lock().ok()?;
+        if values.is_empty() {
+            return None;
+        }
+        
+        let mut sorted_values = values.clone();
+        sorted_values.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+        
+        let index = ((percentile / 100.0) * (sorted_values.len() - 1) as f64) as usize;
+        Some(sorted_values[index])
+    }
+    
+    fn get_bucket_counts(&self) -> Vec<(f64, u64)> {
+        let values = match self.values.lock() {
+            Ok(guard) => guard,
+            Err(_) => return Vec::new(),
+        };
+        
+        self.buckets.iter().map(|&bucket| {
+            let count = values.iter().filter(|&&v| v <= bucket).count() as u64;
+            (bucket, count)
+        }).collect()
     }
 }
 
-/// Aggregated data
+/// Bootstrap node performance metrics
+#[derive(Debug, Clone)]
+pub struct BootstrapNodeMetrics {
+    /// Node address
+    pub address: SocketAddr,
+    /// Total coordination requests handled
+    pub coordination_requests: u64,
+    /// Successful coordinations
+    pub successful_coordinations: u64,
+    /// Average response time
+    pub avg_response_time_ms: f64,
+    /// Current availability (0.0 to 1.0)
+    pub availability: f64,
+    /// Last successful contact
+    pub last_contact: Option<SystemTime>,
+    /// Error rate in last hour
+    pub error_rate: f64,
+}
+
+/// NAT type success rate metrics
+#[derive(Debug, Clone)]
+pub struct NatTypeMetrics {
+    /// NAT type
+    pub nat_type: crate::monitoring::NatType,
+    /// Total attempts for this NAT type
+    pub total_attempts: u64,
+    /// Successful attempts
+    pub successful_attempts: u64,
+    /// Success rate (0.0 to 1.0)
+    pub success_rate: f64,
+    /// Average connection time for successful attempts
+    pub avg_connection_time_ms: f64,
+    /// Most common failure reasons
+    pub common_failures: Vec<(String, u64)>,
+}
+
+/// Connection latency and RTT metrics
+#[derive(Debug, Clone)]
+pub struct LatencyMetrics {
+    /// Connection establishment latency percentiles
+    pub connection_latency_p50: f64,
+    pub connection_latency_p95: f64,
+    pub connection_latency_p99: f64,
+    /// Round-trip time percentiles
+    pub rtt_p50: f64,
+    pub rtt_p95: f64,
+    pub rtt_p99: f64,
+    /// Jitter measurements
+    pub jitter_avg: f64,
+    pub jitter_max: f64,
+}
+
+/// Comprehensive metrics collection implementation
+impl ProductionMetricsCollector {
+    /// Record bootstrap node performance
+    pub async fn record_bootstrap_performance(
+        &self,
+        node_address: SocketAddr,
+        response_time: Duration,
+        success: bool,
+    ) -> Result<(), MonitoringError> {
+        // Update bootstrap node specific metrics
+        let node_str = node_address.to_string();
+        let status_str = if success { "success" } else { "failure" };
+        let labels = &[
+            ("node", node_str.as_str()),
+            ("status", status_str),
+        ];
+        
+        self.increment_counter("bootstrap_requests_total", labels).await;
+        self.record_histogram("bootstrap_response_time_ms", response_time.as_millis() as f64, &[
+            ("node", &node_address.to_string()),
+        ]).await;
+        
+        if !success {
+            self.increment_counter("bootstrap_errors_total", &[
+                ("node", &node_address.to_string()),
+            ]).await;
+        }
+        
+        Ok(())
+    }
+    
+    /// Record NAT type specific metrics
+    pub async fn record_nat_type_result(
+        &self,
+        nat_type: crate::monitoring::NatType,
+        success: bool,
+        duration: Duration,
+        error_category: Option<crate::monitoring::ErrorCategory>,
+    ) -> Result<(), MonitoringError> {
+        let nat_type_str = format!("{:?}", nat_type);
+        let status = if success { "success" } else { "failure" };
+        
+        // Record NAT type specific success/failure
+        self.increment_counter("nat_traversal_by_type_total", &[
+            ("nat_type", &nat_type_str),
+            ("status", status),
+        ]).await;
+        
+        // Record duration by NAT type
+        self.record_histogram("nat_traversal_duration_by_type_ms", duration.as_millis() as f64, &[
+            ("nat_type", &nat_type_str),
+            ("status", status),
+        ]).await;
+        
+        // Record error categories for failures
+        if let Some(error_cat) = error_category {
+            self.increment_counter("nat_traversal_errors_by_type", &[
+                ("nat_type", &nat_type_str),
+                ("error_category", &format!("{:?}", error_cat)),
+            ]).await;
+        }
+        
+        Ok(())
+    }
+    
+    /// Record connection quality metrics
+    pub async fn record_connection_quality(
+        &self,
+        latency_ms: u32,
+        jitter_ms: u32,
+        throughput_mbps: f32,
+        packet_loss_rate: f32,
+    ) -> Result<(), MonitoringError> {
+        // Record latency metrics
+        self.record_histogram("connection_latency_ms", latency_ms as f64, &[]).await;
+        self.record_histogram("connection_jitter_ms", jitter_ms as f64, &[]).await;
+        self.record_histogram("connection_throughput_mbps", throughput_mbps as f64, &[]).await;
+        self.record_histogram("connection_packet_loss_rate", packet_loss_rate as f64, &[]).await;
+        
+        Ok(())
+    }
+    
+    /// Get bootstrap node metrics
+    pub async fn get_bootstrap_metrics(&self) -> Vec<BootstrapNodeMetrics> {
+        let counters = self.metrics_store.counters.read().await;
+        let histograms = self.metrics_store.histograms.read().await;
+        
+        let mut node_metrics = HashMap::new();
+        
+        // Collect bootstrap node data from counters and histograms
+        for (key, counter) in counters.iter() {
+            if key.starts_with("bootstrap_requests_total:") {
+                if let Some(node_addr) = extract_label_value(key, "node") {
+                    let entry = node_metrics.entry(node_addr.clone()).or_insert_with(|| BootstrapNodeMetrics {
+                        address: node_addr.parse().unwrap_or_else(|_| "0.0.0.0:0".parse().unwrap()),
+                        coordination_requests: 0,
+                        successful_coordinations: 0,
+                        avg_response_time_ms: 0.0,
+                        availability: 1.0,
+                        last_contact: Some(SystemTime::now()),
+                        error_rate: 0.0,
+                    });
+                    
+                    if key.contains("status=success") {
+                        entry.successful_coordinations = counter.get_value();
+                    }
+                    entry.coordination_requests += counter.get_value();
+                }
+            }
+        }
+        
+        // Add response time data from histograms
+        for (key, histogram) in histograms.iter() {
+            if key.starts_with("bootstrap_response_time_ms:") {
+                if let Some(node_addr) = extract_label_value(key, "node") {
+                    if let Some(entry) = node_metrics.get_mut(&node_addr) {
+                        entry.avg_response_time_ms = histogram.get_percentile(50.0).unwrap_or(0.0);
+                    }
+                }
+            }
+        }
+        
+        // Calculate availability and error rates
+        for metrics in node_metrics.values_mut() {
+            if metrics.coordination_requests > 0 {
+                metrics.availability = metrics.successful_coordinations as f64 / metrics.coordination_requests as f64;
+                metrics.error_rate = 1.0 - metrics.availability;
+            }
+        }
+        
+        node_metrics.into_values().collect()
+    }
+    
+    /// Get NAT type success rate metrics
+    pub async fn get_nat_type_metrics(&self) -> Vec<NatTypeMetrics> {
+        let counters = self.metrics_store.counters.read().await;
+        let histograms = self.metrics_store.histograms.read().await;
+        
+        let mut nat_metrics = HashMap::new();
+        
+        // Collect NAT type data from counters
+        for (key, counter) in counters.iter() {
+            if key.starts_with("nat_traversal_by_type_total:") {
+                if let Some(nat_type_str) = extract_label_value(key, "nat_type") {
+                    let nat_type = parse_nat_type(&nat_type_str);
+                    let entry = nat_metrics.entry(nat_type_str.clone()).or_insert_with(|| NatTypeMetrics {
+                        nat_type,
+                        total_attempts: 0,
+                        successful_attempts: 0,
+                        success_rate: 0.0,
+                        avg_connection_time_ms: 0.0,
+                        common_failures: Vec::new(),
+                    });
+                    
+                    if key.contains("status=success") {
+                        entry.successful_attempts = counter.get_value();
+                    }
+                    entry.total_attempts += counter.get_value();
+                }
+            }
+        }
+        
+        // Add duration data from histograms
+        for (key, histogram) in histograms.iter() {
+            if key.starts_with("nat_traversal_duration_by_type_ms:") && key.contains("status=success") {
+                if let Some(nat_type_str) = extract_label_value(key, "nat_type") {
+                    if let Some(entry) = nat_metrics.get_mut(&nat_type_str) {
+                        entry.avg_connection_time_ms = histogram.get_percentile(50.0).unwrap_or(0.0);
+                    }
+                }
+            }
+        }
+        
+        // Calculate success rates
+        for metrics in nat_metrics.values_mut() {
+            if metrics.total_attempts > 0 {
+                metrics.success_rate = metrics.successful_attempts as f64 / metrics.total_attempts as f64;
+            }
+        }
+        
+        nat_metrics.into_values().collect()
+    }
+    
+    /// Get latency and RTT metrics
+    pub async fn get_latency_metrics(&self) -> LatencyMetrics {
+        let histograms = self.metrics_store.histograms.read().await;
+        
+        let connection_latency = histograms.get("connection_latency_ms:");
+        let rtt_histogram = histograms.get("connection_rtt_ms:");
+        let jitter_histogram = histograms.get("connection_jitter_ms:");
+        
+        LatencyMetrics {
+            connection_latency_p50: connection_latency.and_then(|h| h.get_percentile(50.0)).unwrap_or(0.0),
+            connection_latency_p95: connection_latency.and_then(|h| h.get_percentile(95.0)).unwrap_or(0.0),
+            connection_latency_p99: connection_latency.and_then(|h| h.get_percentile(99.0)).unwrap_or(0.0),
+            rtt_p50: rtt_histogram.and_then(|h| h.get_percentile(50.0)).unwrap_or(0.0),
+            rtt_p95: rtt_histogram.and_then(|h| h.get_percentile(95.0)).unwrap_or(0.0),
+            rtt_p99: rtt_histogram.and_then(|h| h.get_percentile(99.0)).unwrap_or(0.0),
+            jitter_avg: jitter_histogram.and_then(|h| h.get_percentile(50.0)).unwrap_or(0.0),
+            jitter_max: jitter_histogram.and_then(|h| h.get_percentile(100.0)).unwrap_or(0.0),
+        }
+    }
+}
+
+// Helper functions
+fn extract_label_value(key: &str, label_name: &str) -> Option<String> {
+    let label_prefix = format!("{}=", label_name);
+    key.split(',')
+        .find(|part| part.contains(&label_prefix))
+        .and_then(|part| part.split('=').nth(1))
+        .map(|s| s.to_string())
+}
+
+fn parse_nat_type(nat_type_str: &str) -> crate::monitoring::NatType {
+    match nat_type_str {
+        "FullCone" => crate::monitoring::NatType::FullCone,
+        "RestrictedCone" => crate::monitoring::NatType::RestrictedCone,
+        "PortRestrictedCone" => crate::monitoring::NatType::PortRestrictedCone,
+        "Symmetric" => crate::monitoring::NatType::Symmetric,
+        "CarrierGrade" => crate::monitoring::NatType::CarrierGrade,
+        "DoubleNat" => crate::monitoring::NatType::DoubleNat,
+        "None" => crate::monitoring::NatType::None,
+        _ => crate::monitoring::NatType::None,
+    }
+}
+
+/// Aggregated data for export
+#[derive(Debug)]
 struct AggregatedData {
-    window_start: Instant,
-    metrics: Vec<ExportMetric>,
+    /// Aggregated counters
+    counters: HashMap<String, u64>,
+    /// Aggregated histograms with percentiles
+    histograms: HashMap<String, HistogramSummary>,
+    /// Last aggregation time
+    last_aggregation: Instant,
 }
 
 impl AggregatedData {
     fn new() -> Self {
         Self {
-            window_start: Instant::now(),
-            metrics: Vec::new(),
+            counters: HashMap::new(),
+            histograms: HashMap::new(),
+            last_aggregation: Instant::now(),
         }
     }
     
     fn to_export_metrics(&self) -> Vec<ExportMetric> {
-        self.metrics.clone()
+        let mut metrics = Vec::new();
+        
+        // Export counters
+        for (name, value) in &self.counters {
+            metrics.push(ExportMetric {
+                name: name.clone(),
+                metric_type: MetricType::Counter,
+                value: MetricValue::Counter(*value),
+                labels: HashMap::new(),
+                timestamp: SystemTime::now(),
+            });
+        }
+        
+        // Export histogram summaries
+        for (name, summary) in &self.histograms {
+            metrics.push(ExportMetric {
+                name: format!("{}_p50", name),
+                metric_type: MetricType::Gauge,
+                value: MetricValue::Gauge(summary.p50),
+                labels: HashMap::new(),
+                timestamp: SystemTime::now(),
+            });
+            
+            metrics.push(ExportMetric {
+                name: format!("{}_p95", name),
+                metric_type: MetricType::Gauge,
+                value: MetricValue::Gauge(summary.p95),
+                labels: HashMap::new(),
+                timestamp: SystemTime::now(),
+            });
+            
+            metrics.push(ExportMetric {
+                name: format!("{}_p99", name),
+                metric_type: MetricType::Gauge,
+                value: MetricValue::Gauge(summary.p99),
+                labels: HashMap::new(),
+                timestamp: SystemTime::now(),
+            });
+        }
+        
+        metrics
     }
+}
+
+/// Histogram summary for aggregation
+#[derive(Debug, Clone)]
+struct HistogramSummary {
+    pub count: u64,
+    pub sum: f64,
+    pub p50: f64,
+    pub p95: f64,
+    pub p99: f64,
 }
 
 /// Export metric format
 #[derive(Debug, Clone)]
-struct ExportMetric {
-    name: String,
-    value: f64,
-    labels: HashMap<String, String>,
-    timestamp: SystemTime,
+pub struct ExportMetric {
+    pub name: String,
+    pub metric_type: MetricType,
+    pub value: MetricValue,
+    pub labels: HashMap<String, String>,
+    pub timestamp: SystemTime,
 }
+
+/// Metric types for export
+#[derive(Debug, Clone)]
+pub enum MetricType {
+    Counter,
+    Gauge,
+    Histogram,
+}
+
+/// Metric values for export
+#[derive(Debug, Clone)]
+pub enum MetricValue {
+    Counter(u64),
+    Gauge(f64),
+    Histogram(Vec<(f64, u64)>), // bucket, count pairs
+}
+
+
 
 #[cfg(test)]
 mod tests {
@@ -1000,15 +1402,21 @@ mod tests {
     
     #[tokio::test]
     async fn test_adaptive_sampler() {
-        let config = SamplingConfig::default();
-        let sampler = AdaptiveSampler::new(config);
+        let mut config = SamplingConfig::default();
+        // Set a shorter adjustment interval for testing
+        config.adaptive.adjustment_interval = Duration::from_millis(10);
+        let sampler = AdaptiveSampler::new(config.clone());
         
-        // Test rate adjustment
-        sampler.adjust_sampling_rate(500.0).await; // Half target rate
+        // Wait for the adjustment interval to allow first adjustment
+        tokio::time::sleep(Duration::from_millis(20)).await;
         
-        // Rate should increase to compensate
+        // Test rate adjustment with half the target rate
+        sampler.adjust_sampling_rate(500.0).await; // Half of target rate (1000)
+        
+        // Rate should increase to compensate (double the base rate)
         let rate = sampler.current_rate.load(Ordering::Relaxed) as f64 / 1_000_000.0;
-        assert!(rate > 0.01); // Should be higher than base rate
+        let expected_rate = config.base_attempt_rate * 2.0; // Should double
+        assert!((rate - expected_rate).abs() < 0.001); // Allow small floating point error
     }
     
     #[tokio::test]

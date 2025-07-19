@@ -1,0 +1,298 @@
+name: Platform-Specific Network Tests
+
+on:
+  push:
+    branches: [ master, main ]
+    paths:
+      - 'src/candidate_discovery/**'
+      - 'tests/**'
+      - '.github/workflows/platform-specific-tests.yml'
+  pull_request:
+    branches: [ master, main ]
+    paths:
+      - 'src/candidate_discovery/**'
+      - 'tests/**'
+      - '.github/workflows/platform-specific-tests.yml'
+  workflow_dispatch:
+
+env:
+  RUST_BACKTRACE: 1
+  RUSTFLAGS: -D warnings
+
+jobs:
+  # Windows-specific tests with different versions
+  windows-tests:
+    strategy:
+      matrix:
+        os: [windows-2019, windows-2022, windows-latest]
+        rust: [stable, 1.74.1]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Run Windows-specific tests
+        run: |
+          cargo test --features "platform-native" -- --test-threads=1 windows
+          cargo test --test platform_compatibility_tests windows_interface_discovery
+      
+      - name: Run Windows IP Helper tests
+        run: cargo test --lib candidate_discovery::windows::tests
+      
+      - name: Check Windows network interfaces
+        run: |
+          ipconfig /all
+          netsh interface show interface
+      
+      - name: Run integration tests
+        run: cargo test --test platform_api_integration_tests --features "platform-native" windows
+
+  # Linux-specific tests with different distributions
+  linux-tests:
+    strategy:
+      matrix:
+        include:
+          - os: ubuntu-20.04
+            rust: stable
+          - os: ubuntu-22.04
+            rust: stable
+          - os: ubuntu-latest
+            rust: stable
+          - os: ubuntu-latest
+            rust: 1.74.1
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y net-tools iproute2 wireless-tools
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Run Linux-specific tests
+        run: |
+          cargo test --features "platform-native" -- --test-threads=1 linux
+          cargo test --test platform_compatibility_tests linux_interface_discovery
+      
+      - name: Run Linux Netlink tests
+        run: cargo test --lib candidate_discovery::linux::tests
+      
+      - name: Check Linux network interfaces
+        run: |
+          ip addr show
+          ip link show
+          cat /proc/net/dev
+          cat /proc/net/if_inet6 || true
+      
+      - name: Test with network namespace (requires privileges)
+        run: |
+          if [ "${{ matrix.os }}" = "ubuntu-latest" ]; then
+            sudo ip netns add test-ns || true
+            sudo ip netns exec test-ns cargo test linux_netlink_namespace || true
+            sudo ip netns del test-ns || true
+          fi
+      
+      - name: Run integration tests
+        run: cargo test --test platform_api_integration_tests --features "platform-native" linux
+
+  # macOS-specific tests with different versions
+  macos-tests:
+    strategy:
+      matrix:
+        include:
+          - os: macos-11
+            rust: stable
+          - os: macos-12
+            rust: stable
+          - os: macos-13
+            rust: stable
+          - os: macos-latest
+            rust: stable
+          - os: macos-latest
+            rust: 1.74.1
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          components: rustfmt, clippy
+      
+      - name: Cache cargo registry
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/registry
+          key: ${{ runner.os }}-cargo-registry-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo index
+        uses: actions/cache@v3
+        with:
+          path: ~/.cargo/git
+          key: ${{ runner.os }}-cargo-index-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Cache cargo build
+        uses: actions/cache@v3
+        with:
+          path: target
+          key: ${{ runner.os }}-cargo-build-target-${{ hashFiles('**/Cargo.lock') }}
+      
+      - name: Run macOS-specific tests
+        run: |
+          cargo test --features "platform-native" -- --test-threads=1 macos
+          cargo test --test platform_compatibility_tests macos_interface_discovery
+      
+      - name: Run macOS System Configuration tests
+        run: cargo test --lib candidate_discovery::macos::tests
+      
+      - name: Check macOS network interfaces
+        run: |
+          ifconfig -a
+          networksetup -listallhardwareports
+          scutil --nwi
+      
+      - name: Run integration tests
+        run: cargo test --test platform_api_integration_tests --features "platform-native" macos
+
+  # Cross-platform feature matrix tests
+  feature-matrix-tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+        features: 
+          - "rustls-ring"
+          - "rustls-aws-lc-rs"
+          - "platform-native"
+          - "platform-native,rustls-ring"
+          - "platform-native,rustls-aws-lc-rs"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Run tests with features
+        run: cargo test --features "${{ matrix.features }}" candidate_discovery
+
+  # Platform API availability tests
+  api-availability-tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Create API availability test
+        run: |
+          cat > tests/check_platform_apis.rs << 'EOF'
+          #[test]
+          #[cfg(target_os = "windows")]
+          fn test_windows_apis_available() {
+              // Check that Windows IP Helper APIs are available
+              assert!(std::path::Path::new("C:\\Windows\\System32\\iphlpapi.dll").exists());
+          }
+          
+          #[test]
+          #[cfg(target_os = "linux")]
+          fn test_linux_apis_available() {
+              // Check that Linux network files are available
+              assert!(std::path::Path::new("/proc/net/dev").exists());
+              assert!(std::path::Path::new("/sys/class/net").exists());
+          }
+          
+          #[test]
+          #[cfg(target_os = "macos")]
+          fn test_macos_apis_available() {
+              // Check that macOS frameworks are available
+              assert!(std::path::Path::new("/System/Library/Frameworks/SystemConfiguration.framework").exists());
+              assert!(std::path::Path::new("/System/Library/Frameworks/CoreFoundation.framework").exists());
+          }
+          EOF
+      
+      - name: Run API availability tests
+        run: cargo test --test check_platform_apis
+
+  # Stress tests for platform-specific code
+  platform-stress-tests:
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+      
+      - name: Run platform stress tests
+        run: |
+          cargo test --release -- --ignored platform_stress
+        env:
+          RUST_TEST_THREADS: 1
+
+  # Summary job to ensure all platform tests pass
+  all-platform-tests:
+    needs: 
+      - windows-tests
+      - linux-tests
+      - macos-tests
+      - feature-matrix-tests
+      - api-availability-tests
+      - platform-stress-tests
+    runs-on: ubuntu-latest
+    steps:
+      - name: Summary
+        run: echo "All platform-specific tests completed successfully!"

@@ -97,7 +97,7 @@ impl Bbr {
             bw_at_last_round: 0,
             round_wo_bw_gain: 0,
             ack_aggregation: AckAggregationState::default(),
-            random_number_generator: rand::rngs::StdRng::from_os_rng(),
+            random_number_generator: rand::rngs::StdRng::from_entropy(),
         }
     }
 
@@ -116,7 +116,7 @@ impl Bbr {
         // follow each other.
         let mut rand_index = self
             .random_number_generator
-            .random_range(0..K_PACING_GAIN.len() as u8 - 1);
+            .gen_range(0..K_PACING_GAIN.len() as u8 - 1);
         if rand_index >= 1 {
             rand_index += 1;
         }
@@ -532,8 +532,9 @@ impl Default for BbrConfig {
 }
 
 impl ControllerFactory for BbrConfig {
-    fn build(self: Arc<Self>, _now: Instant, current_mtu: u16) -> Box<dyn Controller> {
-        Box::new(Bbr::new(self, current_mtu))
+    fn new_controller(&self, min_window: u64, _max_window: u64, now: Instant) -> Box<dyn Controller + Send + Sync> {
+        let current_mtu = (min_window / 4).max(1200).min(65535) as u16; // Derive MTU from min_window
+        Box::new(Bbr::new(Arc::new(self.clone()), current_mtu))
     }
 }
 

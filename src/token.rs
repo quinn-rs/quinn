@@ -207,7 +207,7 @@ impl Token {
     /// Construct with newly sampled randomness
     pub(crate) fn new(payload: TokenPayload, rng: &mut impl Rng) -> Self {
         Self {
-            nonce: rng.random(),
+            nonce: rng.gen(),
             payload,
         }
     }
@@ -417,7 +417,7 @@ mod test {
     use ring::hkdf;
 
     fn token_round_trip(payload: TokenPayload) -> TokenPayload {
-        let rng = &mut rand::rng();
+        let rng = &mut rand::thread_rng();
         let token = Token::new(payload, rng);
         let mut master_key = [0; 64];
         rng.fill_bytes(&mut master_key);
@@ -488,7 +488,7 @@ mod test {
         use super::*;
         use rand::RngCore;
 
-        let rng = &mut rand::rng();
+        let rng = &mut rand::thread_rng();
 
         let mut master_key = [0; 64];
         rng.fill_bytes(&mut master_key);
@@ -498,7 +498,7 @@ mod test {
         let mut invalid_token = Vec::new();
 
         let mut random_data = [0; 32];
-        rand::rng().fill_bytes(&mut random_data);
+        rand::thread_rng().fill_bytes(&mut random_data);
         invalid_token.put_slice(&random_data);
 
         // Assert: garbage sealed data returns err

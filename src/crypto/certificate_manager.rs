@@ -363,19 +363,10 @@ impl rustls::client::danger::ServerCertVerifier for NoCertificateVerifier {
 impl CertificateBundle {
     /// Check if the certificate is expired or will expire within the given duration
     pub fn expires_within(&self, duration: Duration) -> bool {
-        match std::time::SystemTime::now().elapsed() {
-            Ok(now) => {
-                match self.expires_at.duration_since(std::time::UNIX_EPOCH) {
-                    Ok(expires) => {
-                        match now.checked_add(duration) {
-                            Some(check_time) => check_time >= expires,
-                            None => true, // Overflow, assume expired
-                        }
-                    }
-                    Err(_) => true, // Can't determine, assume expired
-                }
-            }
-            Err(_) => true, // Can't determine current time, assume expired
+        let now = std::time::SystemTime::now();
+        match now.checked_add(duration) {
+            Some(check_time) => check_time >= self.expires_at,
+            None => true, // Overflow, assume will expire
         }
     }
 
@@ -423,9 +414,25 @@ mod tests {
 
     #[test]
     fn test_certificate_bundle_expiry_check() {
+        // Create a dummy PKCS#8 private key structure for testing
+        // This is a minimal valid PKCS#8 structure with an Ed25519 OID
+        let dummy_key = vec![
+            0x30, 0x2e, // SEQUENCE (46 bytes)
+            0x02, 0x01, 0x00, // INTEGER version 0
+            0x30, 0x05, // SEQUENCE (5 bytes) - AlgorithmIdentifier
+            0x06, 0x03, 0x2b, 0x65, 0x70, // OID 1.3.101.112 (Ed25519)
+            0x04, 0x22, // OCTET STRING (34 bytes) - PrivateKey
+            0x04, 0x20, // OCTET STRING (32 bytes) - actual key
+            // 32 bytes of dummy key data
+            0x00, 0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07,
+            0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e, 0x0f,
+            0x10, 0x11, 0x12, 0x13, 0x14, 0x15, 0x16, 0x17,
+            0x18, 0x19, 0x1a, 0x1b, 0x1c, 0x1d, 0x1e, 0x1f,
+        ];
+        
         let bundle = CertificateBundle {
             cert_chain: vec![],
-            private_key: PrivateKeyDer::try_from(vec![]).unwrap(),
+            private_key: PrivateKeyDer::try_from(dummy_key).unwrap(),
             created_at: std::time::SystemTime::now(),
             expires_at: std::time::SystemTime::now() + Duration::from_secs(3600), // 1 hour
         };

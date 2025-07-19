@@ -160,7 +160,7 @@ fn bench_rate_limit_cleanup(c: &mut Criterion) {
                             
                             // Add some old and some recent timestamps
                             for _j in 0..20 {
-                                let age = Duration::from_millis(rng.random_range(0..120_000));
+                                let age = Duration::from_millis(rng.gen_range(0..120_000));
                                 timestamps.push_back(now - age);
                             }
                             

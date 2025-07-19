@@ -1,29 +1,40 @@
-//! Logic for controlling the rate at which data is sent
+//! Congestion Control Algorithms
+//!
+//! This module provides congestion control algorithms for QUIC connections.
 
-use crate::Instant;
-use crate::connection::RttEstimator;
 use std::any::Any;
-use std::sync::Arc;
+use std::time::Instant;
+use crate::connection::RttEstimator;
 
-mod bbr;
-mod cubic;
-mod new_reno;
+// Re-export the congestion control implementations
+pub mod bbr;
+pub mod cubic;
+pub mod new_reno;
 
-pub use bbr::{Bbr, BbrConfig};
-pub use cubic::{Cubic, CubicConfig};
-pub use new_reno::{NewReno, NewRenoConfig};
+// Re-export commonly used types
+// pub use self::bbr::{Bbr, BbrConfig};
+pub use self::cubic::CubicConfig; 
+// pub use self::new_reno::{NewReno as NewRenoFull, NewRenoConfig};
 
-/// Common interface for different congestion controllers
+/// Metrics exported by congestion controllers
+#[derive(Debug, Default, Clone, Copy)]
+pub struct ControllerMetrics {
+    /// Current congestion window in bytes
+    pub congestion_window: u64,
+    /// Slow start threshold in bytes (optional)
+    pub ssthresh: Option<u64>,
+    /// Pacing rate in bytes per second (optional)
+    pub pacing_rate: Option<u64>,
+}
+
+/// Congestion controller interface
 pub trait Controller: Send + Sync {
-    /// One or more packets were just sent
-    #[allow(unused_variables)]
-    fn on_sent(&mut self, now: Instant, bytes: u64, last_packet_number: u64) {}
-
-    /// Packet deliveries were confirmed
-    ///
-    /// `app_limited` indicates whether the connection was blocked on outgoing
-    /// application data prior to receiving these acknowledgements.
-    #[allow(unused_variables)]
+    /// Called when a packet is sent
+    fn on_sent(&mut self, now: Instant, bytes: u64, last_packet_number: u64) {
+        let _ = (now, bytes, last_packet_number);
+    }
+    
+    /// Called when a packet is acknowledged
     fn on_ack(
         &mut self,
         now: Instant,
@@ -31,11 +42,9 @@ pub trait Controller: Send + Sync {
         bytes: u64,
         app_limited: bool,
         rtt: &RttEstimator,
-    ) {
-    }
-
-    /// Packets are acked in batches, all with the same `now` argument. This indicates one of those batches has completed.
-    #[allow(unused_variables)]
+    );
+    
+    /// Called when the known in-flight packet count has decreased (should be called exactly once per on_ack_received)
     fn on_end_acks(
         &mut self,
         now: Instant,
@@ -43,14 +52,10 @@ pub trait Controller: Send + Sync {
         app_limited: bool,
         largest_packet_num_acked: Option<u64>,
     ) {
+        let _ = (now, in_flight, app_limited, largest_packet_num_acked);
     }
-
-    /// Packets were deemed lost or marked congested
-    ///
-    /// `in_persistent_congestion` indicates whether all packets sent within the persistent
-    /// congestion threshold period ending when the most recent packet in this batch was sent were
-    /// lost.
-    /// `lost_bytes` indicates how many bytes were lost. This value will be 0 for ECN triggers.
+    
+    /// Called when a congestion event occurs (packet loss)
     fn on_congestion_event(
         &mut self,
         now: Instant,
@@ -58,14 +63,14 @@ pub trait Controller: Send + Sync {
         is_persistent_congestion: bool,
         lost_bytes: u64,
     );
-
-    /// The known MTU for the current network path has been updated
+    
+    /// Called when the maximum transmission unit (MTU) changes
     fn on_mtu_update(&mut self, new_mtu: u16);
-
-    /// Number of ack-eliciting bytes that may be in flight
+    
+    /// Get the current congestion window size
     fn window(&self) -> u64;
-
-    /// Retrieve implementation-specific metrics used to populate `qlog` traces when they are enabled
+    
+    /// Get controller metrics
     fn metrics(&self) -> ControllerMetrics {
         ControllerMetrics {
             congestion_window: self.window(),
@@ -73,33 +78,140 @@ pub trait Controller: Send + Sync {
             pacing_rate: None,
         }
     }
-
-    /// Duplicate the controller's state
+    
+    /// Clone this controller into a new boxed instance
     fn clone_box(&self) -> Box<dyn Controller>;
-
-    /// Initial congestion window
+    
+    /// Get the initial congestion window size
     fn initial_window(&self) -> u64;
-
-    /// Returns Self for use in down-casting to extract implementation details
+    
+    /// Convert this controller to Any for downcasting
     fn into_any(self: Box<Self>) -> Box<dyn Any>;
 }
 
-/// Common congestion controller metrics
-#[derive(Default)]
-#[non_exhaustive]
-pub struct ControllerMetrics {
-    /// Congestion window (bytes)
-    pub congestion_window: u64,
-    /// Slow start threshold (bytes)
-    pub ssthresh: Option<u64>,
-    /// Pacing rate (bytes/s)
-    pub pacing_rate: Option<u64>,
+/// Base datagram size constant
+pub const BASE_DATAGRAM_SIZE: u64 = 1200;
+
+/// Simplified NewReno congestion control algorithm
+///
+/// This is a minimal implementation that provides basic congestion control.
+#[derive(Clone)]
+pub struct NewReno {
+    /// Current congestion window size
+    window: u64,
+    
+    /// Slow start threshold
+    ssthresh: u64,
+    
+    /// Minimum congestion window size
+    min_window: u64,
+    
+    /// Maximum congestion window size
+    max_window: u64,
+    
+    /// Initial window size
+    initial_window: u64,
+    
+    /// Current MTU
+    current_mtu: u64,
+    
+    /// Recovery start time
+    recovery_start_time: Instant,
 }
 
-/// Constructs controllers on demand
-pub trait ControllerFactory {
-    /// Construct a fresh `Controller`
-    fn build(self: Arc<Self>, now: Instant, current_mtu: u16) -> Box<dyn Controller>;
+impl NewReno {
+    /// Create a new NewReno controller
+    pub fn new(min_window: u64, max_window: u64, now: Instant) -> Self {
+        let initial_window = min_window.max(10 * BASE_DATAGRAM_SIZE);
+        Self {
+            window: initial_window,
+            ssthresh: max_window,
+            min_window,
+            max_window,
+            initial_window,
+            current_mtu: BASE_DATAGRAM_SIZE,
+            recovery_start_time: now,
+        }
+    }
 }
 
-const BASE_DATAGRAM_SIZE: u64 = 1200;
+impl Controller for NewReno {
+    fn on_ack(
+        &mut self,
+        _now: Instant,
+        sent: Instant,
+        bytes: u64,
+        app_limited: bool,
+        _rtt: &RttEstimator,
+    ) {
+        if app_limited || sent <= self.recovery_start_time {
+            return;
+        }
+        
+        if self.window < self.ssthresh {
+            // Slow start
+            self.window = (self.window + bytes).min(self.max_window);
+        } else {
+            // Congestion avoidance - increase by MTU per RTT
+            let increase = (bytes * self.current_mtu) / self.window;
+            self.window = (self.window + increase).min(self.max_window);
+        }
+    }
+    
+    fn on_congestion_event(
+        &mut self,
+        now: Instant,
+        sent: Instant,
+        is_persistent_congestion: bool,
+        _lost_bytes: u64,
+    ) {
+        if sent <= self.recovery_start_time {
+            return;
+        }
+        
+        self.recovery_start_time = now;
+        self.window = (self.window / 2).max(self.min_window);
+        self.ssthresh = self.window;
+        
+        if is_persistent_congestion {
+            self.window = self.min_window;
+        }
+    }
+    
+    fn on_mtu_update(&mut self, new_mtu: u16) {
+        self.current_mtu = new_mtu as u64;
+        self.min_window = 2 * self.current_mtu;
+        self.window = self.window.max(self.min_window);
+    }
+    
+    fn window(&self) -> u64 {
+        self.window
+    }
+    
+    fn metrics(&self) -> ControllerMetrics {
+        ControllerMetrics {
+            congestion_window: self.window,
+            ssthresh: Some(self.ssthresh),
+            pacing_rate: None,
+        }
+    }
+    
+    fn clone_box(&self) -> Box<dyn Controller> {
+        Box::new(self.clone())
+    }
+    
+    fn initial_window(&self) -> u64 {
+        self.initial_window
+    }
+    
+    fn into_any(self: Box<Self>) -> Box<dyn Any> {
+        self
+    }
+}
+
+/// Factory trait for creating congestion controllers
+pub trait ControllerFactory: Send + Sync {
+    /// Create a new controller instance
+    fn new_controller(&self, min_window: u64, max_window: u64, now: Instant) -> Box<dyn Controller + Send + Sync>;
+}
+

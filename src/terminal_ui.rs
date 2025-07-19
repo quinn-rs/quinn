@@ -6,7 +6,7 @@ use std::net::{IpAddr, SocketAddr};
 use unicode_width::UnicodeWidthStr;
 use tracing::Level;
 use tracing_subscriber::fmt::{format::Writer, FormatFields};
-use four_word_networking::FourWordAdaptiveEncoder;
+// use four_word_networking::FourWordAdaptiveEncoder; // TODO: Add this dependency or implement locally
 
 /// ANSI color codes for terminal output
 pub mod colors {
@@ -119,52 +119,9 @@ pub fn format_address(addr: &SocketAddr) -> String {
 
 /// Format an address as four words with original address in brackets
 pub fn format_address_with_words(addr: &SocketAddr) -> String {
-    // Try to encode the address as four words
-    match FourWordAdaptiveEncoder::new() {
-        Ok(encoder) => {
-            match encoder.encode(&addr.to_string()) {
-                Ok(words) => {
-                    let color = match addr.ip() {
-                        IpAddr::V4(ip) => {
-                            if ip.is_loopback() {
-                                colors::DIM
-                            } else if ip.is_private() {
-                                colors::YELLOW
-                            } else {
-                                colors::GREEN
-                            }
-                        }
-                        IpAddr::V6(ip) => {
-                            if ip.is_loopback() {
-                                colors::DIM
-                            } else if ip.is_unspecified() {
-                                colors::DIM
-                            } else if is_ipv6_link_local(&ip) {
-                                colors::YELLOW
-                            } else if is_ipv6_unique_local(&ip) {
-                                colors::CYAN
-                            } else {
-                                colors::BRIGHT_CYAN
-                            }
-                        }
-                    };
-                    
-                    format!("{}{}{} {}{}{} {}", 
-                        colors::BOLD, color, words, colors::RESET,
-                        colors::DIM, format!("[{}]", addr), colors::RESET
-                    )
-                }
-                Err(_) => {
-                    // Fallback to regular address formatting if encoding fails
-                    format_address(addr)
-                }
-            }
-        }
-        Err(_) => {
-            // Fallback if encoder creation fails
-            format_address(addr)
-        }
-    }
+    // TODO: Implement four-word encoding or add dependency
+    // For now, just return the colored address
+    format_address(addr)
 }
 
 /// Categorize and describe an IP address

@@ -6,11 +6,11 @@
 
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
-use rustls::{ClientConfig, ServerConfig, ProtocolVersion};
+use rustls::{ClientConfig, ServerConfig};
 use crate::crypto::{ClientConfig as QuicClientConfig, ServerConfig as QuicServerConfig};
 
 use super::tls_extensions::{
-    CertificateType, CertificateTypeList, CertificateTypePreferences,
+    CertificateTypeList, CertificateTypePreferences,
     NegotiationResult, TlsExtensionError,
 };
 
@@ -508,6 +508,7 @@ impl QuicServerConfig for Rfc7250QuicServerConfig {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::tls_extensions::CertificateType;
 
     #[test]
     fn test_simulated_negotiation_flow() {

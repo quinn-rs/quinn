@@ -323,13 +323,13 @@ mod test {
         for i in 0..200 {
             let token = rng.random::<u128>();
             let now = UNIX_EPOCH + lifetime * 10 + lifetime * i / 10;
-            let issued = now - lifetime.mul_f32(rng.random_range(0.0..3.0));
+            let issued = now - lifetime.mul_f32(rng.gen_range(0.0..3.0));
             let result = log.check_and_insert(token, issued, lifetime);
             if result.is_ok() {
                 accepted += 1;
             }
             old.push((token, issued));
-            let old_idx = rng.random_range(0..old.len());
+            let old_idx = rng.gen_range(0..old.len());
             let (old_token, old_issued) = old[old_idx];
             assert!(
                 log.check_and_insert(old_token, old_issued, lifetime)

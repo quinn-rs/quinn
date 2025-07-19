@@ -406,6 +406,9 @@ pub enum ReadError {
     /// Carries an application-defined error code.
     #[error("reset by peer: code {0}")]
     Reset(VarInt),
+    /// The stream has been closed due to connection error
+    #[error("stream closed due to connection error")]
+    ConnectionClosed,
 }
 
 /// Errors triggered when opening a recv stream for reading
@@ -420,6 +423,9 @@ pub enum ReadableError {
     /// stream which cannot be recovered, making further ordered reads impossible.
     #[error("ordered read after unordered read")]
     IllegalOrderedRead,
+    /// The stream has been closed due to connection error
+    #[error("stream closed due to connection error")]
+    ConnectionClosed,
 }
 
 impl From<IllegalOrderedRead> for ReadableError {

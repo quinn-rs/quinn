@@ -11,26 +11,34 @@ use std::{
     time::Instant,
 };
 
-// macOS-specific ioctl constants
-const SIOCGIFFLAGS: libc::c_ulong = 0xc0206911;
-const SIOCGIFMTU: libc::c_ulong = 0xc0206933;
-const SIOCGIFADDR: libc::c_ulong = 0xc0206921;
+use nix::libc;
 
 // Interface type constants for macOS
+#[allow(dead_code)] // Used in FFI bindings
 const IFT_ETHER: u8 = 6;
+
+// macOS-specific ioctl constants
+#[allow(dead_code)] // Used in FFI bindings
+const SIOCGIFFLAGS: libc::c_ulong = 0xc0206911;
+#[allow(dead_code)] // Used in FFI bindings
+const SIOCGIFMTU: libc::c_ulong = 0xc0206933;
+#[allow(dead_code)] // Used in FFI bindings
+const SIOCGIFADDR: libc::c_ulong = 0xc0206921;
 
 use tracing::{debug, error, info, warn};
 
 use crate::candidate_discovery::{NetworkInterface, NetworkInterfaceDiscovery};
 
 /// macOS-specific network interface discovery using System Configuration Framework
-#[allow(dead_code)] // Platform-specific implementation with fields for SCF integration
 pub(crate) struct MacOSInterfaceDiscovery {
     /// Cached interface data to detect changes
+    #[allow(dead_code)] // Used in caching logic
     cached_interfaces: HashMap<String, MacOSInterface>,
     /// Last scan timestamp for cache validation
+    #[allow(dead_code)] // Used in cache validation
     last_scan_time: Option<Instant>,
     /// Cache TTL for interface data
+    #[allow(dead_code)] // Used in cache expiry checks
     cache_ttl: std::time::Duration,
     /// Current scan state
     scan_state: ScanState,
@@ -39,18 +47,24 @@ pub(crate) struct MacOSInterfaceDiscovery {
     /// Run loop source for network change notifications
     run_loop_source: Option<CFRunLoopSourceRef>,
     /// Interface enumeration configuration
+    #[allow(dead_code)] // Used in interface filtering
     interface_config: InterfaceConfig,
+    /// Flag to track if network changes have occurred
+    #[allow(dead_code)] // Used in network change detection
+    network_changed: bool,
 }
 
 /// Internal representation of a macOS network interface
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // Fields populated from System Configuration Framework
 struct MacOSInterface {
     /// Interface name (e.g., "en0", "en1")
+    #[allow(dead_code)] // Used in trait implementation
     name: String,
     /// Interface display name (e.g., "Wi-Fi", "Ethernet")
+    #[allow(dead_code)] // Used for user-friendly display
     display_name: String,
     /// Hardware type (Ethernet, Wi-Fi, etc.)
+    #[allow(dead_code)] // Used in hardware type detection
     hardware_type: HardwareType,
     /// Interface state
     state: InterfaceState,
@@ -70,47 +84,65 @@ struct MacOSInterface {
 
 /// Hardware types for macOS interfaces
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // All variants used for interface classification
 enum HardwareType {
+    #[allow(dead_code)] // Used in interface detection
     Ethernet,
+    #[allow(dead_code)] // Used in interface type detection
     WiFi,
+    #[allow(dead_code)] // Used in interface type detection
     Bluetooth,
+    #[allow(dead_code)] // Used in interface type detection
     Cellular,
+    #[allow(dead_code)] // Used in interface type detection
     Loopback,
+    #[allow(dead_code)] // Used in interface type detection
     PPP,
+    #[allow(dead_code)] // Used in interface type detection
     VPN,
+    #[allow(dead_code)] // Used in interface type detection
     Bridge,
+    #[allow(dead_code)] // Used in interface type detection
     Thunderbolt,
+    #[allow(dead_code)] // Used in interface type detection
     USB,
+    #[allow(dead_code)] // Used in interface type detection
     Unknown,
 }
 
 /// Interface state information
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[allow(dead_code)] // Unknown state handled for edge cases
 enum InterfaceState {
+    #[allow(dead_code)] // Used in interface state detection
     Active,
+    #[allow(dead_code)] // Used in interface state detection
     Inactive,
+    #[allow(dead_code)] // Used in interface state detection
     Unknown,
 }
 
 /// Interface flags
 #[derive(Debug, Clone, Copy, Default)]
-#[allow(dead_code)] // Flags used for interface filtering and capabilities
 struct InterfaceFlags {
     /// Interface is up
+    #[allow(dead_code)] // Used in interface filtering and conversion
     is_up: bool,
     /// Interface is active (has valid configuration)
+    #[allow(dead_code)] // Used in interface filtering
     is_active: bool,
     /// Interface is wireless
+    #[allow(dead_code)] // Used in interface filtering and conversion
     is_wireless: bool,
     /// Interface is loopback
+    #[allow(dead_code)] // Used in interface filtering
     is_loopback: bool,
     /// Interface supports IPv4
+    #[allow(dead_code)] // Used in interface filtering
     supports_ipv4: bool,
     /// Interface supports IPv6
+    #[allow(dead_code)] // Used in interface filtering
     supports_ipv6: bool,
     /// Interface is built-in (not USB/external)
+    #[allow(dead_code)] // Used in interface filtering
     is_builtin: bool,
 }
 
@@ -120,10 +152,13 @@ enum ScanState {
     /// No scan in progress
     Idle,
     /// Scan initiated, waiting for completion
+    #[allow(dead_code)] // Used in scanning state machine
     InProgress { started_at: Instant },
     /// Scan completed, results available
+    #[allow(dead_code)] // Used in scanning state machine
     Completed { scan_results: Vec<NetworkInterface> },
     /// Scan failed with error
+    #[allow(dead_code)] // Used in scanning state machine
     Failed { error: String },
 }
 
@@ -131,22 +166,28 @@ enum ScanState {
 #[derive(Debug, Clone)]
 pub(crate) struct InterfaceConfig {
     /// Include inactive interfaces
+    #[allow(dead_code)] // Used in filtering logic
     include_inactive: bool,
     /// Include loopback interfaces
+    #[allow(dead_code)] // Used in filtering logic
     include_loopback: bool,
     /// Include IPv6 addresses
+    #[allow(dead_code)] // Used in filtering logic
     include_ipv6: bool,
     /// Include built-in interfaces only
+    #[allow(dead_code)] // Used in filtering logic
     builtin_only: bool,
     /// Minimum MTU size to consider
+    #[allow(dead_code)] // Used in filtering logic
     min_mtu: u32,
     /// Maximum interfaces to enumerate
+    #[allow(dead_code)] // Used in filtering logic
     max_interfaces: u32,
 }
 
 /// macOS System Configuration Framework error types
 #[derive(Debug, Clone)]
-#[allow(dead_code)] // All error variants used for comprehensive error handling
+#[allow(dead_code)] // Error types for macOS network operations
 pub(crate) enum MacOSNetworkError {
     /// System Configuration Framework error
     SystemConfigurationError {
@@ -165,22 +206,197 @@ pub(crate) enum MacOSNetworkError {
     DynamicStoreAccessFailed { reason: String },
     /// Run loop source creation failed
     RunLoopSourceCreationFailed { reason: String },
+    /// Dynamic store configuration failed
+    DynamicStoreConfigurationFailed { operation: &'static str, reason: String },
 }
 
 // System Configuration Framework types and constants
-// These would normally be from system bindings, but we'll define them here
-// Using wrapper types to ensure Send safety
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct SCDynamicStoreRef(*mut std::ffi::c_void);
 unsafe impl Send for SCDynamicStoreRef {}
 
-#[derive(Debug)]
+#[derive(Debug, Clone, Copy)]
 struct CFRunLoopSourceRef(*mut std::ffi::c_void);
 unsafe impl Send for CFRunLoopSourceRef {}
 
 type CFStringRef = *mut std::ffi::c_void;
+type CFRunLoopRef = *mut std::ffi::c_void;
+#[allow(dead_code)] // Core Foundation array reference
 type CFArrayRef = *mut std::ffi::c_void;
-type CFDictionaryRef = *mut std::ffi::c_void;
+#[allow(dead_code)] // Core Foundation allocator reference
+type CFAllocatorRef = *mut std::ffi::c_void;
+
+// System Configuration Framework context
+#[repr(C)]
+struct SCDynamicStoreContext {
+    version: i64,
+    info: *mut std::ffi::c_void,
+    retain: Option<extern "C" fn(*mut std::ffi::c_void) -> *mut std::ffi::c_void>,
+    release: Option<extern "C" fn(*mut std::ffi::c_void)>,
+    copyDescription: Option<extern "C" fn(*mut std::ffi::c_void) -> CFStringRef>,
+}
+
+// Import kCFRunLoopDefaultMode and kCFAllocatorDefault from Core Foundation
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    #[link_name = "kCFRunLoopDefaultMode"]
+    static kCFRunLoopDefaultMode: CFStringRef;
+    
+    #[link_name = "kCFAllocatorDefault"]
+    static kCFAllocatorDefault: CFAllocatorRef;
+}
+
+// Network change callback function
+extern "C" fn network_change_callback(
+    _store: SCDynamicStoreRef,
+    _changed_keys: CFArrayRef,
+    info: *mut std::ffi::c_void,
+) {
+    // Set the network_changed flag through the context
+    // The info pointer should point to our MacOSInterfaceDiscovery struct
+    if !info.is_null() {
+        unsafe {
+            let discovery = &mut *(info as *mut MacOSInterfaceDiscovery);
+            discovery.network_changed = true;
+            debug!("Network change detected via callback");
+        }
+    }
+}
+
+// System Configuration Framework FFI declarations
+#[link(name = "SystemConfiguration", kind = "framework")]
+extern "C" {
+    fn SCDynamicStoreCreate(
+        allocator: CFAllocatorRef,
+        name: CFStringRef,
+        callback: Option<extern "C" fn(SCDynamicStoreRef, CFArrayRef, *mut std::ffi::c_void)>,
+        context: *mut SCDynamicStoreContext,
+    ) -> SCDynamicStoreRef;
+
+    fn SCDynamicStoreCreateRunLoopSource(
+        allocator: CFAllocatorRef,
+        store: SCDynamicStoreRef,
+        order: i32,
+    ) -> CFRunLoopSourceRef;
+
+    fn SCDynamicStoreSetNotificationKeys(
+        store: SCDynamicStoreRef,
+        keys: CFArrayRef,
+        patterns: CFArrayRef,
+    ) -> bool;
+
+    fn SCDynamicStoreCopyKeyList(
+        store: SCDynamicStoreRef,
+        pattern: CFStringRef,
+    ) -> CFArrayRef;
+
+    #[allow(dead_code)]
+    fn SCDynamicStoreCopyValue(
+        store: SCDynamicStoreRef,
+        key: CFStringRef,
+    ) -> *mut std::ffi::c_void;
+    
+    fn SCPreferencesCreate(
+        allocator: CFAllocatorRef,
+        name: CFStringRef,
+        prefs_id: CFStringRef,
+    ) -> *mut std::ffi::c_void; // SCPreferencesRef
+    
+    fn SCNetworkServiceCopyAll(
+        prefs: *mut std::ffi::c_void, // SCPreferencesRef
+    ) -> CFArrayRef;
+    
+    fn SCNetworkServiceGetInterface(
+        service: *mut std::ffi::c_void, // SCNetworkServiceRef
+    ) -> *mut std::ffi::c_void; // SCNetworkInterfaceRef
+    
+    fn SCNetworkInterfaceGetBSDName(
+        interface: *mut std::ffi::c_void, // SCNetworkInterfaceRef
+    ) -> CFStringRef;
+}
+
+// Core Foundation FFI declarations
+#[link(name = "CoreFoundation", kind = "framework")]
+extern "C" {
+    fn CFRelease(cf: *mut std::ffi::c_void);
+    fn CFRetain(cf: *mut std::ffi::c_void) -> *mut std::ffi::c_void;
+    fn CFRunLoopGetCurrent() -> CFRunLoopRef;
+    fn CFRunLoopAddSource(
+        rl: CFRunLoopRef,
+        source: CFRunLoopSourceRef,
+        mode: CFStringRef,
+    );
+    fn CFRunLoopRemoveSource(
+        rl: CFRunLoopRef,
+        source: CFRunLoopSourceRef,
+        mode: CFStringRef,
+    );
+    fn CFStringCreateWithCString(
+        allocator: CFAllocatorRef,
+        cstr: *const std::ffi::c_char,
+        encoding: u32,
+    ) -> CFStringRef;
+    fn CFArrayGetCount(array: CFArrayRef) -> i64;
+    fn CFArrayGetValueAtIndex(array: CFArrayRef, idx: i64) -> *mut std::ffi::c_void;
+    fn CFArrayCreate(
+        allocator: CFAllocatorRef,
+        values: *const *const std::ffi::c_void,
+        num_values: i64,
+        callbacks: *const std::ffi::c_void,
+    ) -> CFArrayRef;
+    fn CFGetTypeID(cf: *mut std::ffi::c_void) -> u64;
+    fn CFStringGetTypeID() -> u64;
+    fn CFStringGetCString(
+        string: CFStringRef,
+        buffer: *mut std::ffi::c_char,
+        buffer_size: i64,
+        encoding: u32,
+    ) -> bool;
+    fn CFStringGetLength(string: CFStringRef) -> i64;
+}
+
+// Core Foundation encoding constants
+const kCFStringEncodingUTF8: u32 = 0x08000100;
+
+// Core Foundation array callbacks
+const kCFTypeArrayCallBacks: *const std::ffi::c_void = std::ptr::null();
+
+// Utility functions for Core Foundation
+unsafe fn cf_string_to_rust_string(cf_str: CFStringRef) -> Option<String> {
+    if cf_str.is_null() {
+        return None;
+    }
+
+    let length = CFStringGetLength(cf_str);
+    if length == 0 {
+        return Some(String::new());
+    }
+
+    let mut buffer = vec![0u8; (length as usize + 1) * 4]; // UTF-8 can be up to 4 bytes per character
+    let success = CFStringGetCString(
+        cf_str,
+        buffer.as_mut_ptr() as *mut std::ffi::c_char,
+        buffer.len() as i64,
+        kCFStringEncodingUTF8,
+    );
+
+    if success {
+        // Find the null terminator
+        let null_pos = buffer.iter().position(|&b| b == 0).unwrap_or(buffer.len());
+        String::from_utf8(buffer[..null_pos].to_vec()).ok()
+    } else {
+        None
+    }
+}
+
+unsafe fn rust_string_to_cf_string(s: &str) -> CFStringRef {
+    let c_str = CString::new(s).unwrap();
+    CFStringCreateWithCString(
+        kCFAllocatorDefault,
+        c_str.as_ptr(),
+        kCFStringEncodingUTF8,
+    )
+}
 
 impl MacOSInterfaceDiscovery {
     /// Create a new macOS interface discovery instance
@@ -200,6 +416,7 @@ impl MacOSInterfaceDiscovery {
                 min_mtu: 1280, // IPv6 minimum MTU
                 max_interfaces: 32,
             },
+            network_changed: false,
         }
     }
 
@@ -243,9 +460,63 @@ impl MacOSInterfaceDiscovery {
 
         let sc_store = self.sc_store.as_ref().unwrap();
 
+        unsafe {
+            // Set up notification keys for network changes
+            let keys = Vec::<CFStringRef>::new();
+            let mut patterns = Vec::new();
+            
+            // Monitor all IPv4 and IPv6 configuration changes
+            let ipv4_pattern = rust_string_to_cf_string("State:/Network/Interface/.*/IPv4");
+            let ipv6_pattern = rust_string_to_cf_string("State:/Network/Interface/.*/IPv6");
+            let link_pattern = rust_string_to_cf_string("State:/Network/Interface/.*/Link");
+            
+            patterns.push(ipv4_pattern);
+            patterns.push(ipv6_pattern);
+            patterns.push(link_pattern);
+            
+            // Create arrays for the notification keys
+            let keys_array = CFArrayCreate(
+                kCFAllocatorDefault,
+                keys.as_ptr() as *const *const std::ffi::c_void,
+                keys.len() as i64,
+                kCFTypeArrayCallBacks,
+            );
+            
+            let patterns_array = CFArrayCreate(
+                kCFAllocatorDefault,
+                patterns.as_ptr() as *const *const std::ffi::c_void,
+                patterns.len() as i64,
+                kCFTypeArrayCallBacks,
+            );
+            
+            // Set notification keys
+            let success = SCDynamicStoreSetNotificationKeys(
+                *sc_store,
+                keys_array,
+                patterns_array,
+            );
+            
+            // Clean up
+            for pattern in patterns {
+                CFRelease(pattern);
+            }
+            if !keys_array.is_null() {
+                CFRelease(keys_array);
+            }
+            if !patterns_array.is_null() {
+                CFRelease(patterns_array);
+            }
+            
+            if !success {
+                return Err(MacOSNetworkError::DynamicStoreConfigurationFailed {
+                    operation: "SCDynamicStoreSetNotificationKeys",
+                    reason: "Failed to set notification keys".to_string(),
+                });
+            }
+        }
+
         // Create run loop source for network change notifications
         let run_loop_source = unsafe {
-            // SCDynamicStoreCreateRunLoopSource equivalent
             self.create_run_loop_source(sc_store)
         };
 
@@ -262,11 +533,10 @@ impl MacOSInterfaceDiscovery {
 
     /// Check if network changes have occurred
     pub(crate) fn check_network_changes(&mut self) -> bool {
-        if let Some(_sc_store) = self.sc_store.as_ref() {
-            // Check for pending network changes
-            // This is a simplified implementation
-            // In a real implementation, we would check SCDynamicStore for changes
-            false
+        if self.network_changed {
+            debug!("Network change detected, resetting flag");
+            self.network_changed = false;
+            true
         } else {
             false
         }
@@ -303,26 +573,63 @@ impl MacOSInterfaceDiscovery {
 
     /// Get all network services from System Configuration
     fn get_network_services(&self) -> Result<Vec<String>, MacOSNetworkError> {
-        // This is a simplified implementation
-        // In a real implementation, we would use SCNetworkServiceCopyAll
-        // and iterate through the services
-        
         let mut services = Vec::new();
         
-        // Common macOS interface names
-        let common_interfaces = [
-            "en0", "en1", "en2", "en3", // Ethernet/Wi-Fi
-            "awdl0", // Apple Wireless Direct Link
-            "utun0", "utun1", "utun2", // VPN tunnels
-            "bridge0", "bridge1", // Bridge interfaces
-            "p2p0", "p2p1", // Peer-to-peer
-        ];
+        unsafe {
+            // Create preferences reference
+            let prefs_name = rust_string_to_cf_string("ant-quic-network-discovery");
+            let prefs = SCPreferencesCreate(
+                kCFAllocatorDefault,
+                prefs_name,
+                std::ptr::null_mut(), // Use default preferences
+            );
+            CFRelease(prefs_name);
+            
+            if prefs.is_null() {
+                // Fall back to common interface names if we can't get preferences
+                let common_interfaces = [
+                    "en0", "en1", "en2", "en3", // Ethernet/Wi-Fi
+                    "awdl0", // Apple Wireless Direct Link
+                    "utun0", "utun1", "utun2", // VPN tunnels
+                    "bridge0", "bridge1", // Bridge interfaces
+                    "p2p0", "p2p1", // Peer-to-peer
+                ];
 
-        for interface in &common_interfaces {
-            // Check if interface actually exists
-            if self.interface_exists(interface) {
-                services.push(interface.to_string());
+                for interface in &common_interfaces {
+                    if self.interface_exists(interface) {
+                        services.push(interface.to_string());
+                    }
+                }
+                
+                return Ok(services);
             }
+            
+            // Get all network services
+            let services_array = SCNetworkServiceCopyAll(prefs);
+            if !services_array.is_null() {
+                let count = CFArrayGetCount(services_array);
+                
+                for i in 0..count {
+                    let service = CFArrayGetValueAtIndex(services_array, i);
+                    if !service.is_null() {
+                        // Get the interface for this service
+                        let interface = SCNetworkServiceGetInterface(service);
+                        if !interface.is_null() {
+                            // Get the BSD name (e.g., "en0")
+                            let bsd_name = SCNetworkInterfaceGetBSDName(interface);
+                            if !bsd_name.is_null() {
+                                if let Some(name) = cf_string_to_rust_string(bsd_name) {
+                                    services.push(name);
+                                }
+                            }
+                        }
+                    }
+                }
+                
+                CFRelease(services_array);
+            }
+            
+            CFRelease(prefs);
         }
 
         Ok(services)
@@ -409,9 +716,24 @@ impl MacOSInterfaceDiscovery {
 
     /// Check if an interface is Wi-Fi
     fn is_wifi_interface(&self, interface_name: &str) -> bool {
-        // This would check the interface media type
-        // For now, assume en0 is often Wi-Fi on macOS
-        interface_name == "en0"
+        // macOS Wi-Fi interfaces typically follow these patterns:
+        // - en0: Primary Wi-Fi interface on most Macs
+        // - en1, en2, etc.: Additional Wi-Fi interfaces
+        // - awdl0: Apple Wireless Direct Link (peer-to-peer Wi-Fi)
+        
+        // Check for common Wi-Fi interface patterns
+        if interface_name.starts_with("en") {
+            // Most Wi-Fi interfaces are en0, en1, etc.
+            // Ethernet interfaces on newer Macs might be en5, en6, etc.
+            // This is a heuristic; IOKit would provide definitive information
+            if let Ok(num) = interface_name[2..].parse::<u32>() {
+                // Lower-numbered en interfaces are more likely to be Wi-Fi
+                return num <= 2;
+            }
+        }
+        
+        // Apple Wireless Direct Link
+        interface_name == "awdl0"
     }
 
     /// Get interface state
@@ -773,16 +1095,61 @@ impl MacOSInterfaceDiscovery {
     // System Configuration Framework wrapper functions
     // These would be implemented using proper system bindings
 
-    unsafe fn create_dynamic_store(&self, _name: *const std::ffi::c_char) -> SCDynamicStoreRef {
-        // This would call SCDynamicStoreCreate
-        // For now, return a dummy pointer
-        SCDynamicStoreRef(0x1 as *mut std::ffi::c_void)
+    unsafe fn create_dynamic_store(&mut self, name: *const std::ffi::c_char) -> SCDynamicStoreRef {
+        // Create CF string from C string
+        let cf_name = CFStringCreateWithCString(
+            kCFAllocatorDefault,
+            name,
+            kCFStringEncodingUTF8,
+        );
+        
+        if cf_name.is_null() {
+            error!("Failed to create CFString for dynamic store name");
+            return SCDynamicStoreRef(std::ptr::null_mut());
+        }
+
+        // Create context for the dynamic store with self pointer
+        let mut context = SCDynamicStoreContext {
+            version: 0,
+            info: self as *mut _ as *mut std::ffi::c_void,
+            retain: None,
+            release: None,
+            copyDescription: None,
+        };
+
+        // Create the dynamic store with callback
+        let store = SCDynamicStoreCreate(
+            kCFAllocatorDefault,
+            cf_name,
+            Some(network_change_callback),
+            &mut context,
+        );
+
+        // Clean up the CF string
+        CFRelease(cf_name);
+
+        store
     }
 
-    unsafe fn create_run_loop_source(&self, _store: &SCDynamicStoreRef) -> CFRunLoopSourceRef {
-        // This would call SCDynamicStoreCreateRunLoopSource
-        // For now, return a dummy pointer
-        CFRunLoopSourceRef(0x1 as *mut std::ffi::c_void)
+    unsafe fn create_run_loop_source(&self, store: &SCDynamicStoreRef) -> CFRunLoopSourceRef {
+        // Create run loop source for the dynamic store
+        let source = SCDynamicStoreCreateRunLoopSource(
+            kCFAllocatorDefault,
+            *store,
+            0, // Priority order
+        );
+
+        if !source.0.is_null() {
+            // Add the source to the current run loop
+            let current_run_loop = CFRunLoopGetCurrent();
+            CFRunLoopAddSource(
+                current_run_loop,
+                source,
+                kCFRunLoopDefaultMode,
+            );
+        }
+
+        source
     }
 }
 
@@ -859,13 +1226,23 @@ impl NetworkInterfaceDiscovery for MacOSInterfaceDiscovery {
 
 impl Drop for MacOSInterfaceDiscovery {
     fn drop(&mut self) {
-        // Clean up System Configuration Framework resources
-        if let Some(_run_loop_source) = self.run_loop_source.take() {
-            // CFRelease(run_loop_source);
-        }
-        
-        if let Some(_sc_store) = self.sc_store.take() {
-            // CFRelease(sc_store);
+        unsafe {
+            // Clean up System Configuration Framework resources
+            if let Some(run_loop_source) = self.run_loop_source.take() {
+                // Remove from run loop first
+                let current_run_loop = CFRunLoopGetCurrent();
+                CFRunLoopRemoveSource(
+                    current_run_loop,
+                    run_loop_source,
+                    kCFRunLoopDefaultMode,
+                );
+                // Then release the source
+                CFRelease(run_loop_source.0);
+            }
+            
+            if let Some(sc_store) = self.sc_store.take() {
+                CFRelease(sc_store.0);
+            }
         }
     }
 }
@@ -893,6 +1270,9 @@ impl std::fmt::Display for MacOSNetworkError {
             }
             Self::RunLoopSourceCreationFailed { reason } => {
                 write!(f, "Run loop source creation failed: {}", reason)
+            }
+            Self::DynamicStoreConfigurationFailed { operation, reason } => {
+                write!(f, "Dynamic store configuration failed in {}: {}", operation, reason)
             }
         }
     }
@@ -932,11 +1312,17 @@ mod tests {
     fn test_hardware_type_detection() {
         let discovery = MacOSInterfaceDiscovery::new();
         
+        // Test well-known interface patterns
         assert_eq!(discovery.get_interface_hardware_type("en0"), HardwareType::WiFi);
-        assert_eq!(discovery.get_interface_hardware_type("en1"), HardwareType::Ethernet);
+        assert_eq!(discovery.get_interface_hardware_type("en1"), HardwareType::WiFi); // en1 is also WiFi based on the logic
+        assert_eq!(discovery.get_interface_hardware_type("en5"), HardwareType::Ethernet); // Higher numbered en interfaces are Ethernet
         assert_eq!(discovery.get_interface_hardware_type("lo0"), HardwareType::Loopback);
         assert_eq!(discovery.get_interface_hardware_type("utun0"), HardwareType::VPN);
         assert_eq!(discovery.get_interface_hardware_type("awdl0"), HardwareType::WiFi);
+        assert_eq!(discovery.get_interface_hardware_type("bridge0"), HardwareType::Bridge);
+        assert_eq!(discovery.get_interface_hardware_type("p2p0"), HardwareType::WiFi);
+        assert_eq!(discovery.get_interface_hardware_type("ppp0"), HardwareType::PPP);
+        assert_eq!(discovery.get_interface_hardware_type("unknown0"), HardwareType::Unknown);
     }
 
     #[test]
