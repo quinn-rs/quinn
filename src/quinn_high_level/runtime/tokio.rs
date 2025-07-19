@@ -122,7 +122,7 @@ impl AsyncUdpSocket for UdpSocket {
 }
 
 /// Extension trait to convert tokio::Handle to Runtime
-pub trait HandleRuntime {
+pub(super) trait HandleRuntime {
     /// Create a Runtime implementation from this handle
     fn as_runtime(&self) -> TokioRuntime;
 }

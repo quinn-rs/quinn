@@ -20,7 +20,7 @@ pub use self::connection::{
     AcceptBi, AcceptUni, Connecting, Connection, OpenBi, OpenUni, ReadDatagram, SendDatagram,
     SendDatagramError, ZeroRttAccepted,
 };
-pub use self::endpoint::{Accept, Endpoint as HighLevelEndpoint, EndpointStats};
+pub use self::endpoint::{Accept, Endpoint, EndpointStats};
 pub use self::incoming::{Incoming, IncomingFuture, RetryError};
 pub use self::recv_stream::{ReadError, ReadExactError, ReadToEndError, RecvStream, ResetError};
 pub use self::send_stream::{SendStream, StoppedError, WriteError};

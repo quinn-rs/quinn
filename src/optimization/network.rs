@@ -118,7 +118,7 @@ pub struct AdaptiveTimeoutManager {
 
 /// Network conditions measurement
 #[derive(Debug, Clone)]
-struct NetworkConditions {
+pub struct NetworkConditions {
     /// Recent RTT measurements
     rtt_samples: VecDeque<Duration>,
     /// Packet loss rate (0.0 - 1.0)
@@ -238,7 +238,7 @@ struct ValidationSession {
 
 /// Priority for path validation
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum ValidationPriority {
+pub enum ValidationPriority {
     Low,
     Normal,
     High,
@@ -303,7 +303,7 @@ struct MigrationSession {
 
 /// State of connection migration
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum MigrationState {
+pub enum MigrationState {
     Initiated,
     PathValidating,
     CongestionProbing,
@@ -337,7 +337,7 @@ struct CongestionEvent {
 
 /// Types of congestion events
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-enum CongestionEventType {
+pub enum CongestionEventType {
     PacketLoss,
     Timeout,
     ECNMark,

@@ -7,7 +7,7 @@ use crate::connection::RttEstimator;
 
 /// A simple, standard congestion controller
 #[derive(Debug, Clone)]
-pub struct NewReno {
+pub(crate) struct NewReno {
     config: Arc<NewRenoConfig>,
     current_mtu: u64,
     /// Maximum number of bytes in flight that may be sent.
@@ -24,7 +24,7 @@ pub struct NewReno {
 
 impl NewReno {
     /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<NewRenoConfig>, now: Instant, current_mtu: u16) -> Self {
+    pub(crate) fn new(config: Arc<NewRenoConfig>, now: Instant, current_mtu: u16) -> Self {
         Self {
             window: config.initial_window,
             ssthresh: u64::MAX,
@@ -135,7 +135,7 @@ impl Controller for NewReno {
 
 /// Configuration for the `NewReno` congestion controller
 #[derive(Debug, Clone)]
-pub struct NewRenoConfig {
+pub(crate) struct NewRenoConfig {
     initial_window: u64,
     loss_reduction_factor: f32,
 }
@@ -144,13 +144,13 @@ impl NewRenoConfig {
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
-    pub fn initial_window(&mut self, value: u64) -> &mut Self {
+    pub(crate) fn initial_window(&mut self, value: u64) -> &mut Self {
         self.initial_window = value;
         self
     }
 
     /// Reduction in congestion window when a new loss event is detected.
-    pub fn loss_reduction_factor(&mut self, value: f32) -> &mut Self {
+    pub(crate) fn loss_reduction_factor(&mut self, value: f32) -> &mut Self {
         self.loss_reduction_factor = value;
         self
     }

@@ -1,227 +1,3 @@
-[0m[1m[33mwarning[0m[0m[1m: unused import: `std::net::SocketAddr`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:6:5[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m6[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse std::net::SocketAddr;[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m  [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_imports)]` on by default[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused imports: `BootstrapNode`, `CandidateAddress`, `EndpointRole`, `NatTraversalConfig`, and `NatTraversalEvent`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:13:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m13[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    NatTraversalConfig,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^[0m
-[0m[1m[38;5;12m14[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    EndpointRole,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^[0m
-[0m[1m[38;5;12m15[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    PeerId,[0m
-[0m[1m[38;5;12m16[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    BootstrapNode,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^[0m
-[0m[1m[38;5;12m17[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    CandidateAddress,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^[0m
-[0m[1m[38;5;12m18[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    NatTraversalEvent,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `crate::crypto::raw_keys::Ed25519KeyPair`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:22:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m22[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse crate::crypto::raw_keys::Ed25519KeyPair;[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `runtime-smol`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/mod.rs:32:7[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m32[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(feature = "runtime-smol")][0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m       [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `runtime-smol` as a feature in `Cargo.toml`[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: requested on the command line with `-W unexpected-cfgs`[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `RetryError`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/endpoint.rs:20:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m20[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    RetryError,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `incoming::Incoming`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/endpoint.rs:38:29[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m38[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    connection::Connecting, incoming::Incoming, work_limiter::WorkLimiter,[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                             [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `lock_tracking`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/mutex.rs:6:7[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m6[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(feature = "lock_tracking")][0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m       [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m  [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m  [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `lock_tracking` as a feature in `Cargo.toml`[0m
-[0m  [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `lock_tracking`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/mutex.rs:112:7[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m112[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(feature = "lock_tracking")][0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m       [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `lock_tracking` as a feature in `Cargo.toml`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `lock_tracking`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/mutex.rs:115:11[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m115[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(not(feature = "lock_tracking"))][0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m           [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `lock_tracking` as a feature in `Cargo.toml`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `lock_tracking`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/mutex.rs:162:11[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m162[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(not(feature = "lock_tracking"))][0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m           [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `lock_tracking` as a feature in `Cargo.toml`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `futures-io`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/recv_stream.rs:489:7[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m489[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(feature = "futures-io")][0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m       [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `futures-io` as a feature in `Cargo.toml`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `runtime-smol`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/runtime.rs:196:11[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m196[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))][0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m           [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `runtime-smol` as a feature in `Cargo.toml`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `runtime-smol`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/runtime.rs:199:11[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m199[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(any(feature = "runtime-smol", feature = "runtime-async-std"))][0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m           [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `runtime-smol` as a feature in `Cargo.toml`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `runtime-smol`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/runtime.rs:120:9[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m120[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        feature = "runtime-smol",[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `runtime-smol` as a feature in `Cargo.toml`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `runtime-smol`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/runtime.rs:181:15[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m181[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    #[cfg(all(feature = "runtime-smol", not(feature = "runtime-async-std")))][0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m               [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `runtime-smol` as a feature in `Cargo.toml`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `runtime-smol`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/runtime.rs:186:50[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m186[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    #[cfg(not(any(feature = "runtime-async-std", feature = "runtime-smol")))][0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                  [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `runtime-smol` as a feature in `Cargo.toml`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unexpected `cfg` condition value: `futures-io`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/quinn_high_level/send_stream.rs:276:7[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m276[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m#[cfg(feature = "futures-io")][0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m       [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: expected values for `feature` are: `__qlog`, `arbitrary`, `aws-lc-rs`, `bloom`, `default`, `log`, `network-discovery`, `platform-verifier`, `production-ready`, `ring`, `runtime-async-std`, `runtime-tokio`, `rustls-aws-lc-rs`, `rustls-ring`, and `smol`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: consider adding `futures-io` as a feature in `Cargo.toml`[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: see <https://doc.rust-lang.org/nightly/rustc/check-cfg/cargo-specifics.html> for more information about checking conditional configuration[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused variable: `nat_role`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:700:9[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m700[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        nat_role: NatTraversalRole,[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_nat_role`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_variables)]` on by default[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused variable: `now`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/congestion/bbr/mod.rs:535:65[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m535[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn new_controller(&self, min_window: u64, _max_window: u64, now: Instant) -> Box<dyn Controller + Send + Sync> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m                                                                 [0m[0m[1m[33m^^^[0m[0m [0m[0m[1m[33mhelp: if this is intentional, prefix it with an underscore: `_now`[0m
-
-[0m[1m[33mwarning[0m[0m[1m: type `EndpointEventInner` is more private than the item `NatTraversalEndpoint::handle_endpoint_event`[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:2087:5[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m2087[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub async fn handle_endpoint_event(&self, event: crate::shared::EndpointEventInner) -> Result<(), NatTraversalError> {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mmethod `NatTraversalEndpoint::handle_endpoint_event` is reachable at visibility `pub`[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: but type `EndpointEventInner` is only usable at visibility `pub(crate)`[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/shared.rs:51:1[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m51[0m[0m   [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub(crate) enum EndpointEventInner {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(private_interfaces)]` on by default[0m
-
-[0m[1m[33mwarning[0m[0m[1m: type `CleanupPriority` is more private than the item `SessionCleanupCoordinator::register_session`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:898:5[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m898[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m/[0m[0m [0m[0m    pub async fn register_session([0m
-[0m[1m[38;5;12m899[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m        &self,[0m
-[0m[1m[38;5;12m900[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m        peer_id: PeerId,[0m
-[0m[1m[38;5;12m901[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m        memory_usage: usize,[0m
-[0m[1m[38;5;12m902[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m        priority: CleanupPriority,[0m
-[0m[1m[38;5;12m903[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|_____________________________________________________________^[0m[0m [0m[0m[1m[33mmethod `SessionCleanupCoordinator::register_session` is reachable at visibility `pub`[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: but type `CleanupPriority` is only usable at visibility `pub(self)`[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:192:1[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m192[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0menum CleanupPriority {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: type `FramePriority` is more private than the item `FrameBatchingCoordinator::add_frame`[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:1061:5[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m1061[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m/[0m[0m [0m[0m    pub async fn add_frame([0m
-[0m[1m[38;5;12m1062[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m        &self,[0m
-[0m[1m[38;5;12m1063[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m        destination: SocketAddr,[0m
-[0m[1m[38;5;12m1064[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m        frame_type: u8,[0m
-[0m[1m[38;5;12m1065[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m        payload: Vec<u8>,[0m
-[0m[1m[38;5;12m1066[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m        priority: FramePriority,[0m
-[0m[1m[38;5;12m1067[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|[0m[0m [0m[0m    ) -> Result<Option<Vec<u8>>, Box<dyn std::error::Error + Send + Sync>> {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[33m|__________________________________________________________________________^[0m[0m [0m[0m[1m[33mmethod `FrameBatchingCoordinator::add_frame` is reachable at visibility `pub`[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: but type `FramePriority` is only usable at visibility `pub(self)`[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:269:1[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m269[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0menum FramePriority {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^[0m
-
 [0m[1m[33mwarning[0m[0m[1m: type `network::NetworkConditions` is more private than the item `AdaptiveTimeoutManager::get_network_conditions`[0m
 [0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/network.rs:1033:5[0m
 [0m     [0m[0m[1m[38;5;12m|[0m
@@ -233,6 +9,7 @@
 [0m     [0m[0m[1m[38;5;12m|[0m
 [0m[1m[38;5;12m121[0m[0m  [0m[0m[1m[38;5;12m|[0m[0m [0m[0mstruct NetworkConditions {[0m
 [0m     [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(private_interfaces)]` on by default[0m
 
 [0m[1m[33mwarning[0m[0m[1m: type `ValidationPriority` is more private than the item `BandwidthAwareValidator::start_validation`[0m
 [0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/network.rs:1069:5[0m
@@ -1087,7 +864,7 @@
 [0m   [0m[0m[1m[38;5;12m|[0m
 [0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `SimpleAttemptState` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
 
-[0m[1m[33mwarning[0m[0m[1m: fields `peer_id`, `coordinator`, and `attempt` are never read[0m
+[0m[1m[33mwarning[0m[0m[1m: fields `peer_id`, `coordinator`, `attempt`, and `candidates` are never read[0m
 [0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:191:5[0m
 [0m    [0m[0m[1m[38;5;12m|[0m
 [0m[1m[38;5;12m189[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mstruct NatTraversalSession {[0m
@@ -1101,10 +878,13 @@
 [0m[1m[38;5;12m194[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    /// Current attempt number[0m
 [0m[1m[38;5;12m195[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    attempt: u32,[0m
 [0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m201[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    candidates: Vec<CandidateAddress>,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
 [0m    [0m[0m[1m[38;5;12m|[0m
 [0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `NatTraversalSession` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis[0m
 
-[0m[1m[33mwarning[0m[0m[1m: variants `Coordination`, `Synchronization`, `Punching`, `Validation`, and `Failed` are never constructed[0m
+[0m[1m[33mwarning[0m[0m[1m: variants `Coordination`, `Synchronization`, `Punching`, `Validation`, `Connected`, and `Failed` are never constructed[0m
 [0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:210:5[0m
 [0m    [0m[0m[1m[38;5;12m|[0m
 [0m[1m[38;5;12m206[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0menum TraversalPhase {[0m
@@ -1121,7 +901,10 @@
 [0m[1m[38;5;12m215[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    /// Validating established paths[0m
 [0m[1m[38;5;12m216[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Validation,[0m
 [0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
-[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m217[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    /// Successfully connected[0m
+[0m[1m[38;5;12m218[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Connected,[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^[0m
+[0m[1m[38;5;12m219[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    /// Failed, may retry or fallback[0m
 [0m[1m[38;5;12m220[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Failed,[0m
 [0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^[0m
 [0m    [0m[0m[1m[38;5;12m|[0m
@@ -1159,6 +942,12 @@
 [0m[1m[38;5;12m...[0m
 [0m[1m[38;5;12m1945[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    fn attempt_connection_to_candidate([0m
 [0m     [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m2087[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub(crate) async fn handle_endpoint_event(&self, event: crate::shared::EndpointEventInner) -> Result<(), NatTraversalError> {[0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m                         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
+[0m[1m[38;5;12m...[0m
+[0m[1m[38;5;12m2188[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn establish_connection_to_validated_candidate([0m
+[0m     [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
 [0m[1m[38;5;12m...[0m
 [0m[1m[38;5;12m2320[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    async fn send_punch_coordination([0m
 [0m     [0m[0m[1m[38;5;12m|[0m[0m              [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^[0m
@@ -1254,71 +1043,71 @@
 [0m   [0m[0m[1m[38;5;12m|[0m[0m        [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: fields `endpoint`, `config`, `connections`, and `events` are never read[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:33:5[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:26:5[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m31[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct P2PNode {[0m
+[0m[1m[38;5;12m24[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct P2PNode {[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m-------[0m[0m [0m[0m[1m[38;5;12mfields in this struct[0m
-[0m[1m[38;5;12m32[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Internal NAT traversal endpoint[0m
-[0m[1m[38;5;12m33[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    endpoint: NatTraversalEndpoint,[0m
+[0m[1m[38;5;12m25[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Internal NAT traversal endpoint[0m
+[0m[1m[38;5;12m26[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    endpoint: NatTraversalEndpoint,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^[0m
-[0m[1m[38;5;12m34[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Node configuration[0m
-[0m[1m[38;5;12m35[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    config: P2PConfig,[0m
+[0m[1m[38;5;12m27[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Node configuration[0m
+[0m[1m[38;5;12m28[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    config: P2PConfig,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^[0m
-[0m[1m[38;5;12m36[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Active connections[0m
-[0m[1m[38;5;12m37[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    connections: HashMap<PeerId, P2PConnection>,[0m
+[0m[1m[38;5;12m29[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Active connections[0m
+[0m[1m[38;5;12m30[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    connections: HashMap<PeerId, P2PConnection>,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^[0m
-[0m[1m[38;5;12m38[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Event queue[0m
-[0m[1m[38;5;12m39[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    events: Vec<P2PEvent>,[0m
+[0m[1m[38;5;12m31[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Event queue[0m
+[0m[1m[38;5;12m32[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    events: Vec<P2PEvent>,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: fields `peer_id`, `state`, and `stats` are never read[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:45:5[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:38:5[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m43[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct P2PConnection {[0m
+[0m[1m[38;5;12m36[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct P2PConnection {[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12mfields in this struct[0m
-[0m[1m[38;5;12m44[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Peer ID[0m
-[0m[1m[38;5;12m45[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    peer_id: PeerId,[0m
+[0m[1m[38;5;12m37[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Peer ID[0m
+[0m[1m[38;5;12m38[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    peer_id: PeerId,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^[0m
-[0m[1m[38;5;12m46[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Connection state[0m
-[0m[1m[38;5;12m47[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    state: ConnectionState,[0m
+[0m[1m[38;5;12m39[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Connection state[0m
+[0m[1m[38;5;12m40[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    state: ConnectionState,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^[0m
-[0m[1m[38;5;12m48[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Statistics[0m
-[0m[1m[38;5;12m49[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    stats: ConnectionStats,[0m
+[0m[1m[38;5;12m41[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Statistics[0m
+[0m[1m[38;5;12m42[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    stats: ConnectionStats,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: variants `Connecting`, `Connected`, `Disconnecting`, and `Disconnected` are never constructed[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:54:5[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:47:5[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m53[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0menum ConnectionState {[0m
+[0m[1m[38;5;12m46[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0menum ConnectionState {[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m      [0m[0m[1m[38;5;12m---------------[0m[0m [0m[0m[1m[38;5;12mvariants in this enum[0m
-[0m[1m[38;5;12m54[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Connecting,[0m
+[0m[1m[38;5;12m47[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Connecting,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
-[0m[1m[38;5;12m55[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Connected,[0m
+[0m[1m[38;5;12m48[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Connected,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^[0m
-[0m[1m[38;5;12m56[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Disconnecting,[0m
+[0m[1m[38;5;12m49[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Disconnecting,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^[0m
-[0m[1m[38;5;12m57[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Disconnected,[0m
+[0m[1m[38;5;12m50[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Disconnected,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: fields `rtt`, `bytes_sent`, `bytes_received`, `packets_sent`, and `packets_received` are never read[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:63:5[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:56:5[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m61[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct ConnectionStats {[0m
+[0m[1m[38;5;12m54[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub struct ConnectionStats {[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[38;5;12m---------------[0m[0m [0m[0m[1m[38;5;12mfields in this struct[0m
-[0m[1m[38;5;12m62[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Round-trip time[0m
-[0m[1m[38;5;12m63[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    rtt: Duration,[0m
+[0m[1m[38;5;12m55[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Round-trip time[0m
+[0m[1m[38;5;12m56[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    rtt: Duration,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^[0m
-[0m[1m[38;5;12m64[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Bytes sent[0m
-[0m[1m[38;5;12m65[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    bytes_sent: u64,[0m
+[0m[1m[38;5;12m57[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Bytes sent[0m
+[0m[1m[38;5;12m58[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    bytes_sent: u64,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
-[0m[1m[38;5;12m66[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Bytes received[0m
-[0m[1m[38;5;12m67[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    bytes_received: u64,[0m
+[0m[1m[38;5;12m59[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Bytes received[0m
+[0m[1m[38;5;12m60[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    bytes_received: u64,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^[0m
-[0m[1m[38;5;12m68[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Packets sent[0m
-[0m[1m[38;5;12m69[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    packets_sent: u64,[0m
+[0m[1m[38;5;12m61[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Packets sent[0m
+[0m[1m[38;5;12m62[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    packets_sent: u64,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^[0m
-[0m[1m[38;5;12m70[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Packets received[0m
-[0m[1m[38;5;12m71[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    packets_received: u64,[0m
+[0m[1m[38;5;12m63[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    // Packets received[0m
+[0m[1m[38;5;12m64[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    packets_received: u64,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: function `validate_bootstrap_nodes` is never used[0m
@@ -2322,20 +2111,6 @@
 [0m    [0m[0m[1m[38;5;12m|[0m
 [0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `SessionState` has a derived impl for the trait `Debug`, but this is intentionally ignored during dead code analysis[0m
 
-[0m[1m[33mwarning[0m[0m[1m: variants `Low`, `Normal`, and `High` are never constructed[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:193:5[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m192[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0menum CleanupPriority {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m      [0m[0m[1m[38;5;12m---------------[0m[0m [0m[0m[1m[38;5;12mvariants in this enum[0m
-[0m[1m[38;5;12m193[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Low,    // Keep as long as possible[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^[0m
-[0m[1m[38;5;12m194[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Normal, // Standard cleanup rules[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^[0m
-[0m[1m[38;5;12m195[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    High,   // Clean up aggressively[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `CleanupPriority` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
-
 [0m[1m[33mwarning[0m[0m[1m: field `destination` is never read[0m
 [0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:245:5[0m
 [0m    [0m[0m[1m[38;5;12m|[0m
@@ -2369,18 +2144,6 @@
 [0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^[0m
 [0m    [0m[0m[1m[38;5;12m|[0m
 [0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `BatchPriority` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
-
-[0m[1m[33mwarning[0m[0m[1m: variants `Background` and `Normal` are never constructed[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:270:5[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m269[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0menum FramePriority {[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m      [0m[0m[1m[38;5;12m-------------[0m[0m [0m[0m[1m[38;5;12mvariants in this enum[0m
-[0m[1m[38;5;12m270[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Background, // Low priority, can be delayed[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
-[0m[1m[38;5;12m271[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Normal,     // Standard priority[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m    [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `FramePriority` has derived impls for the traits `Clone` and `Debug`, but these are intentionally ignored during dead code analysis[0m
 
 [0m[1m[33mwarning[0m[0m[1m: fields `interface_name`, `interface_type`, and `priority` are never read[0m
 [0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/network.rs:71:5[0m
@@ -4155,75 +3918,75 @@
 [0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a struct field[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:78:9[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:71:9[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m78[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        peer_id: PeerId,[0m
+[0m[1m[38;5;12m71[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        peer_id: PeerId,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a struct field[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:82:9[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:75:9[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m82[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        peer_id: PeerId,[0m
+[0m[1m[38;5;12m75[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        peer_id: PeerId,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a struct field[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:83:9[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:76:9[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m83[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        reason: Option<String>,[0m
+[0m[1m[38;5;12m76[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        reason: Option<String>,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a struct field[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:87:9[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:80:9[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m87[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        peer_id: PeerId,[0m
+[0m[1m[38;5;12m80[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        peer_id: PeerId,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a struct field[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:88:9[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:81:9[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m88[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        data: Vec<u8>,[0m
+[0m[1m[38;5;12m81[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        data: Vec<u8>,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a struct field[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:92:9[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:85:9[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m92[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        peer_id: Option<PeerId>,[0m
+[0m[1m[38;5;12m85[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        peer_id: Option<PeerId>,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a struct field[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:93:9[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:86:9[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m93[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        error: P2PError,[0m
+[0m[1m[38;5;12m86[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m        error: P2PError,[0m
 [0m   [0m[0m[1m[38;5;12m|[0m[0m         [0m[0m[1m[33m^^^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:101:5[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m101[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Connection(String),[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:94:5[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m94[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Connection(String),[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:104:5[0m
-[0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m104[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Authentication(String),[0m
-[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^[0m
+[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:97:5[0m
+[0m   [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m97[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Authentication(String),[0m
+[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:107:5[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:100:5[0m
 [0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m107[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    NatTraversal(#[from] NatTraversalError),[0m
+[0m[1m[38;5;12m100[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    NatTraversal(#[from] NatTraversalError),[0m
 [0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:110:5[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:103:5[0m
 [0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m110[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Configuration(String),[0m
+[0m[1m[38;5;12m103[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Configuration(String),[0m
 [0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
-[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:113:5[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:106:5[0m
 [0m    [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m113[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Timeout(String),[0m
+[0m[1m[38;5;12m106[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Timeout(String),[0m
 [0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^[0m
 
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
@@ -7112,6 +6875,42 @@
 [0m[1m[38;5;12m872[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub success_rate: f64,[0m
 [0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^[0m
 
+[0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:193:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m193[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Low,    // Keep as long as possible[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:194:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m194[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Normal, // Standard cleanup rules[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:195:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m195[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    High,   // Clean up aggressively[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:270:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m270[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Background, // Low priority, can be delayed[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:271:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m271[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Normal,     // Standard priority[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^[0m
+
+[0m[1m[33mwarning[0m[0m[1m: missing documentation for a variant[0m
+[0m   [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:272:5[0m
+[0m    [0m[0m[1m[38;5;12m|[0m
+[0m[1m[38;5;12m272[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    Urgent,     // High priority, minimal delay[0m
+[0m    [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^[0m
+
 [0m[1m[33mwarning[0m[0m[1m: missing documentation for a struct field[0m
 [0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/optimization/memory.rs:1316:5[0m
 [0m     [0m[0m[1m[38;5;12m|[0m
@@ -7236,7 +7035,7 @@
 [0m    [0m[0m[1m[38;5;12m|[0m
 [0m    [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: or consider exporting it for use by other crates[0m
 
-[1m[33mwarning[0m[1m:[0m `ant-quic` (lib) generated 937 warnings (run `cargo fix --lib -p ant-quic` to apply 30 suggestions)
+[1m[33mwarning[0m[1m:[0m `ant-quic` (lib) generated 919 warnings (run `cargo fix --lib -p ant-quic` to apply 25 suggestions)
 [0m[1m[33mwarning[0m[0m[1m: field `primary_addr` is never read[0m
 [0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/bin/ant-quic.rs:48:5[0m
 [0m   [0m[0m[1m[38;5;12m|[0m
@@ -7386,89 +7185,16 @@
 [0m     [0m[0m[1m[38;5;12m|[0m[0m            [0m[0m[1m[33m^^^^^^^^^[0m
 
 [1m[33mwarning[0m[1m:[0m `ant-quic` (bin "ant-quic") generated 9 warnings
-[1m[32m   Compiling[0m ant-quic v0.2.1 (/Users/davidirvine/Desktop/Devel/projects/ant-quic)
 [1m[33mwarning[0m[1m:[0m `ant-quic` (bin "ant-quic" test) generated 9 warnings (9 duplicates)
-[0m[1m[38;5;9merror[E0583][0m[0m[1m: file not found for module `connection_stress_tests`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0mtests/stress_tests.rs:7:5[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m7[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub mod connection_stress_tests;[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[38;5;9m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m  [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: to create the module `connection_stress_tests`, create file "tests/stress/connection_stress_tests.rs" or "tests/stress/connection_stress_tests/mod.rs"[0m
-[0m  [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: if there is a `mod connection_stress_tests` elsewhere in the crate already, import it with `use crate::...` instead[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `stress::connection_stress_tests::*`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0mtests/stress_tests.rs:11:5[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m11[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse stress::connection_stress_tests::*;[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_imports)]` on by default[0m
-
-[0m[1mFor more information about this error, try `rustc --explain E0583`.[0m
-[1m[33mwarning[0m[1m:[0m `ant-quic` (test "stress_tests") generated 1 warning
-[1m[31merror[0m[1m:[0m could not compile `ant-quic` (test "stress_tests") due to 1 previous error; 1 warning emitted
-[1m[33mwarning[0m[1m:[0m build failed, waiting for other jobs to finish...
-[0m[1m[33mwarning[0m[0m[1m: unused import: `NegotiationResult`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0mtests/test_raw_public_keys.rs:10:67[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m10[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    tls_extensions::{CertificateType, CertificateTypePreferences, NegotiationResult},[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                                                   [0m[0m[1m[33m^^^^^^^^^^^^^^^^^[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_imports)]` on by default[0m
-
-[0m[1m[38;5;9merror[E0433][0m[0m[1m: failed to resolve: use of unresolved module or unlinked crate `key_key_utils`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0mtests/test_raw_public_keys.rs:19:37[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m19[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    let (private_key, public_key) = key_key_utils::generate_ed25519_keypair();[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                                     [0m[0m[1m[38;5;9m^^^^^^^^^^^^^[0m[0m [0m[0m[1m[38;5;9muse of unresolved module or unlinked crate `key_key_utils`[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mhelp[0m[0m: if you wanted to use a crate named `key_key_utils`, use `cargo add key_key_utils` to add it to your `Cargo.toml`[0m
-
-[0m[1mFor more information about this error, try `rustc --explain E0433`.[0m
-[1m[33mwarning[0m[1m:[0m `ant-quic` (test "test_raw_public_keys") generated 1 warning
-[1m[31merror[0m[1m:[0m could not compile `ant-quic` (test "test_raw_public_keys") due to 1 previous error; 1 warning emitted
-[0m[1m[33mwarning[0m[0m[1m: unused import: `std::collections::HashMap`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/discovery/mock.rs:8:5[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m8[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse std::collections::HashMap;[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m  [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(unused_imports)]` on by default[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused imports: `Duration` and `Instant`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/discovery/mock.rs:9:17[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m9[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse std::time::{Duration, Instant};[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m                 [0m[0m[1m[33m^^^^^^^^[0m[0m  [0m[0m[1m[33m^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: unused import: `std::net::SocketAddr`[0m
-[0m [0m[0m[1m[38;5;12m--> [0m[0msrc/api/mod.rs:6:5[0m
-[0m  [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m6[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0muse std::net::SocketAddr;[0m
-[0m  [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^[0m
-
-[0m[1m[33mwarning[0m[0m[1m: type `EndpointEventInner` is more private than the item `nat_traversal_api::NatTraversalEndpoint::handle_endpoint_event`[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/nat_traversal_api.rs:2087:5[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m2087[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m    pub async fn handle_endpoint_event(&self, event: crate::shared::EndpointEventInner) -> Result<(), NatTraversalError> {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m     [0m[0m[1m[33m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m[0m [0m[0m[1m[33mmethod `nat_traversal_api::NatTraversalEndpoint::handle_endpoint_event` is reachable at visibility `pub`[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;10mnote[0m[0m: but type `EndpointEventInner` is only usable at visibility `pub(crate)`[0m
-[0m    [0m[0m[1m[38;5;12m--> [0m[0msrc/shared.rs:51:1[0m
-[0m     [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m51[0m[0m   [0m[0m[1m[38;5;12m|[0m[0m [0m[0mpub(crate) enum EndpointEventInner {[0m
-[0m     [0m[0m[1m[38;5;12m|[0m[0m [0m[0m[1m[38;5;10m^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^[0m
-[0m     [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[warn(private_interfaces)]` on by default[0m
-
-[0m[1m[38;5;9merror[0m[0m[1m: literal out of range for `u16`[0m
-[0m  [0m[0m[1m[38;5;12m--> [0m[0msrc/discovery/mock.rs:42:27[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m[1m[38;5;12m42[0m[0m [0m[0m[1m[38;5;12m|[0m[0m [0m[0m                mtu: Some(65536),[0m
-[0m   [0m[0m[1m[38;5;12m|[0m[0m                           [0m[0m[1m[38;5;9m^^^^^[0m
-[0m   [0m[0m[1m[38;5;12m|[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: the literal `65536` does not fit into the type `u16` whose range is `0..=65535`[0m
-[0m   [0m[0m[1m[38;5;12m= [0m[0m[1mnote[0m[0m: `#[deny(overflowing_literals)]` on by default[0m
-
-[1m[33mwarning[0m[1m:[0m `ant-quic` (lib test) generated 777 warnings (773 duplicates)
-[1m[31merror[0m[1m:[0m could not compile `ant-quic` (lib test) due to 1 previous error; 777 warnings emitted
+[1m[33mwarning[0m[1m:[0m `ant-quic` (lib test) generated 759 warnings (759 duplicates)
+[1m[32m    Finished[0m `test` profile [unoptimized + debuginfo] target(s) in 0.08s
+[1m[32m  Executable[0m unittests src/lib.rs (target/debug/deps/ant_quic-20a1a0f99f099e1e)
+[1m[32m  Executable[0m unittests src/bin/ant-quic.rs (target/debug/deps/ant_quic-b88e8a7de219001d)
+[1m[32m  Executable[0m tests/connection_lifecycle_tests.rs (target/debug/deps/connection_lifecycle_tests-88a50ed28e1c3b2e)
+[1m[32m  Executable[0m tests/frame_encoding_tests.rs (target/debug/deps/frame_encoding_tests-e63e3b686c6f77b7)
+[1m[32m  Executable[0m tests/nat_simulation.rs (target/debug/deps/nat_simulation-7e6da9d37ca20487)
+[1m[32m  Executable[0m tests/nat_traversal_frame_tests.rs (target/debug/deps/nat_traversal_frame_tests-9925df6970d7d46e)
+[1m[32m  Executable[0m tests/nat_traversal_frames_test.rs (target/debug/deps/nat_traversal_frames_test-af6c8a32d0a34052)
+[1m[32m  Executable[0m tests/relay_queue_tests.rs (target/debug/deps/relay_queue_tests-70b6ca33ce7a48c4)
+[1m[32m  Executable[0m tests/stress_tests.rs (target/debug/deps/stress_tests-72984892d9983c11)
+[1m[32m  Executable[0m tests/test_raw_public_keys.rs (target/debug/deps/test_raw_public_keys-c9058a7503f679d5)

@@ -10,8 +10,8 @@ use std::{
     time::{Duration, Instant},
 };
 
-use criterion::{black_box, criterion_group, criterion_main, BenchmarkId, Criterion, Throughput};
-use rand::{thread_rng, Rng};
+use criterion::{BenchmarkId, Criterion, Throughput, black_box, criterion_group, criterion_main};
+use rand::{Rng, thread_rng};
 use uuid::Uuid;
 
 use ant_quic::PeerId;
@@ -67,16 +67,19 @@ impl MockConnectionManager {
 fn generate_socket_addresses(count: usize) -> Vec<SocketAddr> {
     let mut rng = thread_rng();
     let mut addresses = Vec::with_capacity(count);
-    
+
     for _ in 0..count {
-        let ip = format!("192.168.{}.{}", 
-            rng.gen_range(0..255), 
+        let ip = format!(
+            "192.168.{}.{}",
+            rng.gen_range(0..255),
             rng.gen_range(1..254)
-        ).parse().unwrap();
+        )
+        .parse()
+        .unwrap();
         let port = rng.gen_range(1024..=65535);
         addresses.push(SocketAddr::new(ip, port));
     }
-    
+
     addresses
 }
 
@@ -85,9 +88,11 @@ fn generate_connections(count: usize) -> Vec<MockConnection> {
     let local_addrs = generate_socket_addresses(count);
     let remote_addrs = generate_socket_addresses(count);
     let mut rng = thread_rng();
-    
-    local_addrs.into_iter().zip(remote_addrs).map(|(local, remote)| {
-        MockConnection {
+
+    local_addrs
+        .into_iter()
+        .zip(remote_addrs)
+        .map(|(local, remote)| MockConnection {
             peer_id: {
                 let mut peer_id_bytes = [0u8; 32];
                 let uuid = Uuid::new_v4();
@@ -102,46 +107,46 @@ fn generate_connections(count: usize) -> Vec<MockConnection> {
             bytes_sent: rng.gen_range(0..1_000_000),
             bytes_received: rng.gen_range(0..1_000_000),
             rtt: Some(Duration::from_millis(rng.gen_range(1..200))),
-        }
-    }).collect()
+        })
+        .collect()
 }
 
 /// Benchmark connection tracking operations
 fn bench_connection_tracking(c: &mut Criterion) {
     let mut group = c.benchmark_group("connection_tracking");
-    
+
     for connection_count in [10, 100, 1000, 5000] {
         group.throughput(Throughput::Elements(connection_count as u64));
-        
+
         group.bench_with_input(
             BenchmarkId::new("add_connections", connection_count),
             &connection_count,
             |b, &size| {
                 let connections = generate_connections(size);
-                
+
                 b.iter(|| {
                     let manager = MockConnectionManager::new();
-                    
+
                     for connection in &connections {
                         let mut conn_map = manager.connections.write().unwrap();
                         conn_map.insert(connection.peer_id, connection.clone());
-                        
+
                         let mut active_list = manager.active_connections.write().unwrap();
                         active_list.push(connection.peer_id);
                     }
-                    
+
                     black_box(manager);
                 });
             },
         );
-        
+
         group.bench_with_input(
             BenchmarkId::new("lookup_connections", connection_count),
             &connection_count,
             |b, &size| {
                 let connections = generate_connections(size);
                 let manager = MockConnectionManager::new();
-                
+
                 // Pre-populate connections
                 {
                     let mut conn_map = manager.connections.write().unwrap();
@@ -149,33 +154,33 @@ fn bench_connection_tracking(c: &mut Criterion) {
                         conn_map.insert(connection.peer_id, connection.clone());
                     }
                 }
-                
+
                 b.iter(|| {
                     let conn_map = manager.connections.read().unwrap();
                     let mut found = Vec::new();
-                    
+
                     for connection in &connections {
                         if let Some(conn) = conn_map.get(&connection.peer_id) {
                             found.push(black_box(conn.clone()));
                         }
                     }
-                    
+
                     found
                 });
             },
         );
-        
+
         group.bench_with_input(
             BenchmarkId::new("update_connections", connection_count),
             &connection_count,
             |b, &size| {
                 let connections = generate_connections(size);
                 let mut rng = thread_rng();
-                
+
                 b.iter_batched(
                     || {
                         let manager = MockConnectionManager::new();
-                        
+
                         // Pre-populate connections
                         {
                             let mut conn_map = manager.connections.write().unwrap();
@@ -183,13 +188,13 @@ fn bench_connection_tracking(c: &mut Criterion) {
                                 conn_map.insert(connection.peer_id, connection.clone());
                             }
                         }
-                        
+
                         manager
                     },
                     |manager| {
                         {
                             let mut conn_map = manager.connections.write().unwrap();
-                            
+
                             // Update random connections
                             for connection in connections.iter().take(size / 2) {
                                 if let Some(conn) = conn_map.get_mut(&connection.peer_id) {
@@ -200,24 +205,24 @@ fn bench_connection_tracking(c: &mut Criterion) {
                                 }
                             }
                         }
-                        
+
                         black_box(manager);
                     },
                     criterion::BatchSize::SmallInput,
                 );
             },
         );
-        
+
         group.bench_with_input(
             BenchmarkId::new("remove_connections", connection_count),
             &connection_count,
             |b, &size| {
                 let connections = generate_connections(size);
-                
+
                 b.iter_batched(
                     || {
                         let manager = MockConnectionManager::new();
-                        
+
                         // Pre-populate connections
                         {
                             let mut conn_map = manager.connections.write().unwrap();
@@ -227,21 +232,21 @@ fn bench_connection_tracking(c: &mut Criterion) {
                                 active_list.push(connection.peer_id);
                             }
                         }
-                        
+
                         manager
                     },
                     |manager| {
                         {
                             let mut conn_map = manager.connections.write().unwrap();
                             let mut active_list = manager.active_connections.write().unwrap();
-                            
+
                             // Remove half the connections
                             for connection in connections.iter().take(size / 2) {
                                 conn_map.remove(&connection.peer_id);
                                 active_list.retain(|&id| id != connection.peer_id);
                             }
                         }
-                        
+
                         black_box(manager);
                     },
                     criterion::BatchSize::SmallInput,
@@ -249,17 +254,17 @@ fn bench_connection_tracking(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 /// Benchmark event processing
 fn bench_event_processing(c: &mut Criterion) {
     let mut group = c.benchmark_group("event_processing");
-    
+
     for event_count in [10, 100, 1000, 10000] {
         group.throughput(Throughput::Elements(event_count as u64));
-        
+
         group.bench_with_input(
             BenchmarkId::new("queue_events", event_count),
             &event_count,
@@ -274,10 +279,10 @@ fn bench_event_processing(c: &mut Criterion) {
                     })
                     .collect();
                 let mut rng = thread_rng();
-                
+
                 b.iter(|| {
                     let events = Arc::new(RwLock::new(VecDeque::new()));
-                    
+
                     for _ in 0..size {
                         let peer_id = peer_ids[rng.gen_range(0..peer_ids.len())];
                         let event = match rng.gen_range(0..4) {
@@ -286,16 +291,16 @@ fn bench_event_processing(c: &mut Criterion) {
                             2 => ConnectionEvent::DataReceived(peer_id, rng.gen_range(1..10000)),
                             _ => ConnectionEvent::DataSent(peer_id, rng.gen_range(1..10000)),
                         };
-                        
+
                         let mut event_queue = events.write().unwrap();
                         event_queue.push_back(event);
                     }
-                    
+
                     black_box(events);
                 });
             },
         );
-        
+
         group.bench_with_input(
             BenchmarkId::new("process_events", event_count),
             &event_count,
@@ -310,11 +315,11 @@ fn bench_event_processing(c: &mut Criterion) {
                     })
                     .collect();
                 let mut rng = thread_rng();
-                
+
                 b.iter_batched(
                     || {
                         let events = Arc::new(RwLock::new(VecDeque::new()));
-                        
+
                         // Pre-populate events
                         {
                             let mut event_queue = events.write().unwrap();
@@ -323,30 +328,35 @@ fn bench_event_processing(c: &mut Criterion) {
                                 let event = match rng.gen_range(0..4) {
                                     0 => ConnectionEvent::Connected(peer_id),
                                     1 => ConnectionEvent::Disconnected(peer_id),
-                                    2 => ConnectionEvent::DataReceived(peer_id, rng.gen_range(1..10000)),
-                                    _ => ConnectionEvent::DataSent(peer_id, rng.gen_range(1..10000)),
+                                    2 => ConnectionEvent::DataReceived(
+                                        peer_id,
+                                        rng.gen_range(1..10000),
+                                    ),
+                                    _ => {
+                                        ConnectionEvent::DataSent(peer_id, rng.gen_range(1..10000))
+                                    }
                                 };
                                 event_queue.push_back(event);
                             }
                         }
-                        
+
                         events
                     },
                     |events| {
                         let mut processed = Vec::new();
-                        
+
                         loop {
                             let event = {
                                 let mut event_queue = events.write().unwrap();
                                 event_queue.pop_front()
                             };
-                            
+
                             match event {
                                 Some(event) => processed.push(black_box(event)),
                                 None => break,
                             }
                         }
-                        
+
                         processed
                     },
                     criterion::BatchSize::SmallInput,
@@ -354,33 +364,33 @@ fn bench_event_processing(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 /// Benchmark resource cleanup
 fn bench_resource_cleanup(c: &mut Criterion) {
     let mut group = c.benchmark_group("resource_cleanup");
-    
+
     for connection_count in [100, 1000, 5000] {
         group.throughput(Throughput::Elements(connection_count as u64));
-        
+
         group.bench_with_input(
             BenchmarkId::new("cleanup_inactive", connection_count),
             &connection_count,
             |b, &size| {
                 let mut rng = thread_rng();
-                
+
                 b.iter_batched(
                     || {
                         let manager = MockConnectionManager::new();
                         let now = Instant::now();
-                        
+
                         // Pre-populate connections with varying activity times
                         {
                             let mut conn_map = manager.connections.write().unwrap();
                             let mut active_list = manager.active_connections.write().unwrap();
-                            
+
                             for _i in 0..size {
                                 let mut peer_id_bytes = [0u8; 32];
                                 let uuid = Uuid::new_v4();
@@ -390,7 +400,7 @@ fn bench_resource_cleanup(c: &mut Criterion) {
                                 let age = Duration::from_secs(rng.gen_range(0..3600));
                                 let local_addr = generate_socket_addresses(1)[0];
                                 let remote_addr = generate_socket_addresses(1)[0];
-                                
+
                                 let connection = MockConnection {
                                     peer_id,
                                     local_addr,
@@ -405,37 +415,40 @@ fn bench_resource_cleanup(c: &mut Criterion) {
                                     bytes_received: rng.gen_range(0..1_000_000),
                                     rtt: Some(Duration::from_millis(rng.gen_range(1..200))),
                                 };
-                                
+
                                 conn_map.insert(peer_id, connection);
                                 active_list.push(peer_id);
                             }
                         }
-                        
+
                         (manager, now)
                     },
                     |(manager, now)| {
                         let timeout = Duration::from_secs(300); // 5 minutes
                         let mut removed = Vec::new();
-                        
+
                         // Cleanup inactive connections
                         {
                             let mut conn_map = manager.connections.write().unwrap();
                             let mut active_list = manager.active_connections.write().unwrap();
-                            
+
                             conn_map.retain(|&peer_id, connection| {
-                                let should_keep = matches!(connection.state, ConnectionState::Connected | ConnectionState::Connecting) &&
-                                    now.duration_since(connection.last_activity) < timeout;
-                                
+                                let should_keep = matches!(
+                                    connection.state,
+                                    ConnectionState::Connected | ConnectionState::Connecting
+                                ) && now.duration_since(connection.last_activity)
+                                    < timeout;
+
                                 if !should_keep {
                                     removed.push(peer_id);
                                 }
-                                
+
                                 should_keep
                             });
-                            
+
                             active_list.retain(|&peer_id| !removed.contains(&peer_id));
                         }
-                        
+
                         black_box((manager, removed));
                     },
                     criterion::BatchSize::SmallInput,
@@ -443,24 +456,24 @@ fn bench_resource_cleanup(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 
 /// Benchmark concurrent access patterns
 fn bench_concurrent_access(c: &mut Criterion) {
     let mut group = c.benchmark_group("concurrent_access");
-    
+
     for connection_count in [100, 1000] {
         group.throughput(Throughput::Elements(connection_count as u64));
-        
+
         group.bench_with_input(
             BenchmarkId::new("read_heavy_workload", connection_count),
             &connection_count,
             |b, &size| {
                 let connections = generate_connections(size);
                 let manager = MockConnectionManager::new();
-                
+
                 // Pre-populate connections
                 {
                     let mut conn_map = manager.connections.write().unwrap();
@@ -468,37 +481,37 @@ fn bench_concurrent_access(c: &mut Criterion) {
                         conn_map.insert(connection.peer_id, connection.clone());
                     }
                 }
-                
+
                 b.iter(|| {
                     // Simulate multiple read operations
                     let mut results = Vec::new();
-                    
+
                     for _ in 0..10 {
                         let conn_map = manager.connections.read().unwrap();
-                        
+
                         for connection in &connections {
                             if let Some(conn) = conn_map.get(&connection.peer_id) {
                                 results.push(black_box((conn.peer_id, conn.state.clone())));
                             }
                         }
                     }
-                    
+
                     results
                 });
             },
         );
-        
+
         group.bench_with_input(
             BenchmarkId::new("write_heavy_workload", connection_count),
             &connection_count,
             |b, &size| {
                 let connections = generate_connections(size);
                 let mut rng = thread_rng();
-                
+
                 b.iter_batched(
                     || {
                         let manager = MockConnectionManager::new();
-                        
+
                         // Pre-populate connections
                         {
                             let mut conn_map = manager.connections.write().unwrap();
@@ -506,14 +519,14 @@ fn bench_concurrent_access(c: &mut Criterion) {
                                 conn_map.insert(connection.peer_id, connection.clone());
                             }
                         }
-                        
+
                         manager
                     },
                     |manager| {
                         // Simulate multiple write operations
                         for _ in 0..10 {
                             let mut conn_map = manager.connections.write().unwrap();
-                            
+
                             for connection in connections.iter().take(size / 10) {
                                 if let Some(conn) = conn_map.get_mut(&connection.peer_id) {
                                     conn.last_activity = Instant::now();
@@ -521,7 +534,7 @@ fn bench_concurrent_access(c: &mut Criterion) {
                                 }
                             }
                         }
-                        
+
                         black_box(manager);
                     },
                     criterion::BatchSize::SmallInput,
@@ -529,7 +542,7 @@ fn bench_concurrent_access(c: &mut Criterion) {
             },
         );
     }
-    
+
     group.finish();
 }
 

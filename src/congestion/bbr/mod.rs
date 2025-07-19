@@ -22,7 +22,7 @@ mod min_max;
 /// of BBR <https://datatracker.ietf.org/doc/html/draft-cardwell-iccrg-bbr-congestion-control>.
 /// More discussion and links at <https://groups.google.com/g/bbr-dev>.
 #[derive(Debug, Clone)]
-pub struct Bbr {
+pub(crate) struct Bbr {
     config: Arc<BbrConfig>,
     current_mtu: u64,
     max_bandwidth: BandwidthEstimation,
@@ -61,7 +61,7 @@ pub struct Bbr {
 
 impl Bbr {
     /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<BbrConfig>, current_mtu: u16) -> Self {
+    pub(crate) fn new(config: Arc<BbrConfig>, current_mtu: u16) -> Self {
         let initial_window = config.initial_window;
         Self {
             config,
@@ -509,7 +509,7 @@ impl Controller for Bbr {
 
 /// Configuration for the [`Bbr`] congestion controller
 #[derive(Debug, Clone)]
-pub struct BbrConfig {
+pub(crate) struct BbrConfig {
     initial_window: u64,
 }
 
@@ -517,7 +517,7 @@ impl BbrConfig {
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
-    pub fn initial_window(&mut self, value: u64) -> &mut Self {
+    pub(crate) fn initial_window(&mut self, value: u64) -> &mut Self {
         self.initial_window = value;
         self
     }
@@ -532,7 +532,7 @@ impl Default for BbrConfig {
 }
 
 impl ControllerFactory for BbrConfig {
-    fn new_controller(&self, min_window: u64, _max_window: u64, now: Instant) -> Box<dyn Controller + Send + Sync> {
+    fn new_controller(&self, min_window: u64, _max_window: u64, _now: Instant) -> Box<dyn Controller + Send + Sync> {
         let current_mtu = (min_window / 4).max(1200).min(65535) as u16; // Derive MTU from min_window
         Box::new(Bbr::new(Arc::new(self.clone()), current_mtu))
     }

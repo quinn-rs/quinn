@@ -64,7 +64,14 @@ impl Endpoint {
     /// address. For example:
     ///
     /// ```
-    /// quinn::Endpoint::client((std::net::Ipv6Addr::UNSPECIFIED, 0).into());
+    /// # use std::net::{Ipv6Addr, SocketAddr};
+    /// # fn example() -> std::io::Result<()> {
+    /// use ant_quic::quinn_high_level::Endpoint;
+    /// 
+    /// let addr: SocketAddr = (Ipv6Addr::UNSPECIFIED, 0).into();
+    /// let endpoint = Endpoint::client(addr)?;
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// Some environments may not allow creation of dual-stack sockets, in which case an IPv6
@@ -138,7 +145,7 @@ impl Endpoint {
         let allow_mtud = !socket.may_fragment();
         let rc = EndpointRef::new(
             socket,
-            crate::Endpoint::new(
+            crate::endpoint::Endpoint::new(
                 Arc::new(config),
                 server_config.map(Arc::new),
                 allow_mtud,
@@ -467,7 +474,7 @@ pub(crate) struct State {
     /// During an active migration, abandoned_socket receives traffic
     /// until the first packet arrives on the new socket.
     prev_socket: Option<Arc<dyn AsyncUdpSocket>>,
-    inner: crate::Endpoint,
+    inner: crate::endpoint::Endpoint,
     recv_state: RecvState,
     driver: Option<Waker>,
     ipv6: bool,
@@ -672,7 +679,7 @@ pub(crate) struct EndpointRef(Arc<EndpointInner>);
 impl EndpointRef {
     pub(crate) fn new(
         socket: Arc<dyn AsyncUdpSocket>,
-        inner: crate::Endpoint,
+        inner: crate::endpoint::Endpoint,
         ipv6: bool,
         runtime: Arc<dyn Runtime>,
     ) -> Self {
@@ -742,7 +749,7 @@ impl RecvState {
     fn new(
         sender: mpsc::UnboundedSender<(ConnectionHandle, EndpointEvent)>,
         max_receive_segments: usize,
-        endpoint: &crate::Endpoint,
+        endpoint: &crate::endpoint::Endpoint,
     ) -> Self {
         let recv_buf = vec![
             0;
@@ -765,7 +772,7 @@ impl RecvState {
     fn poll_socket(
         &mut self,
         cx: &mut Context,
-        endpoint: &mut crate::Endpoint,
+        endpoint: &mut crate::endpoint::Endpoint,
         socket: &dyn AsyncUdpSocket,
         runtime: &dyn Runtime,
         now: Instant,

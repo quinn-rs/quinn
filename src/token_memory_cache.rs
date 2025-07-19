@@ -14,11 +14,11 @@ use crate::token::TokenStore;
 /// `TokenStore` implementation that stores up to `N` tokens per server name for up to a
 /// limited number of server names, in-memory
 #[derive(Debug)]
-pub struct TokenMemoryCache(Mutex<State>);
+pub(crate) struct TokenMemoryCache(Mutex<State>);
 
 impl TokenMemoryCache {
     /// Construct empty
-    pub fn new(max_server_names: u32, max_tokens_per_server: usize) -> Self {
+    pub(crate) fn new(max_server_names: u32, max_tokens_per_server: usize) -> Self {
         Self(Mutex::new(State::new(
             max_server_names,
             max_tokens_per_server,

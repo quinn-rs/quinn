@@ -67,7 +67,7 @@ pub trait TokenLog: Send + Sync {
 pub struct TokenReuseError;
 
 /// Null implementation of [`TokenLog`], which never accepts tokens
-pub struct NoneTokenLog;
+pub(crate) struct NoneTokenLog;
 
 impl TokenLog for NoneTokenLog {
     fn check_and_insert(&self, _: u128, _: SystemTime, _: Duration) -> Result<(), TokenReuseError> {
@@ -93,7 +93,7 @@ pub trait TokenStore: Send + Sync {
 }
 
 /// Null implementation of [`TokenStore`], which does not store any tokens
-pub struct NoneTokenStore;
+pub(crate) struct NoneTokenStore;
 
 impl TokenStore for NoneTokenStore {
     fn insert(&self, _: &str, _: Bytes) {}

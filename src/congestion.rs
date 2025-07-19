@@ -7,13 +7,13 @@ use std::time::Instant;
 use crate::connection::RttEstimator;
 
 // Re-export the congestion control implementations
-pub mod bbr;
-pub mod cubic;
-pub mod new_reno;
+pub(crate) mod bbr;
+pub(crate) mod cubic;
+pub(crate) mod new_reno;
 
 // Re-export commonly used types
 // pub use self::bbr::{Bbr, BbrConfig};
-pub use self::cubic::CubicConfig; 
+pub(crate) use self::cubic::CubicConfig; 
 // pub use self::new_reno::{NewReno as NewRenoFull, NewRenoConfig};
 
 /// Metrics exported by congestion controllers
@@ -90,13 +90,13 @@ pub trait Controller: Send + Sync {
 }
 
 /// Base datagram size constant
-pub const BASE_DATAGRAM_SIZE: u64 = 1200;
+pub(crate) const BASE_DATAGRAM_SIZE: u64 = 1200;
 
 /// Simplified NewReno congestion control algorithm
 ///
 /// This is a minimal implementation that provides basic congestion control.
 #[derive(Clone)]
-pub struct NewReno {
+pub(crate) struct NewReno {
     /// Current congestion window size
     window: u64,
     
@@ -121,7 +121,7 @@ pub struct NewReno {
 
 impl NewReno {
     /// Create a new NewReno controller
-    pub fn new(min_window: u64, max_window: u64, now: Instant) -> Self {
+    pub(crate) fn new(min_window: u64, max_window: u64, now: Instant) -> Self {
         let initial_window = min_window.max(10 * BASE_DATAGRAM_SIZE);
         Self {
             window: initial_window,

@@ -73,13 +73,17 @@ pub mod quinn_high_level;
 // Re-export high-level API types for easier usage
 #[cfg(feature = "production-ready")]
 pub use quinn_high_level::{
-    HighLevelEndpoint,
+    Endpoint,
     Connection as HighLevelConnection,
     Connecting,
     Accept,
     RecvStream as HighLevelRecvStream,
     SendStream as HighLevelSendStream,
 };
+
+// When production-ready feature is not enabled, use low-level endpoint as default
+#[cfg(not(feature = "production-ready"))]
+pub use endpoint::Endpoint;
 
 // Re-export crypto utilities for peer ID management
 pub use crypto::raw_public_keys::key_utils::{
@@ -95,7 +99,7 @@ pub use connection::{
     Chunk, Chunks, ClosedStream, FinishError, ReadError, ReadableError,
     WriteError, Written, Datagrams,
 };
-pub use endpoint::{Endpoint, ConnectionHandle, Incoming, AcceptError, ConnectError, DatagramEvent};
+pub use endpoint::{Endpoint as LowLevelEndpoint, ConnectionHandle, Incoming, AcceptError, ConnectError, DatagramEvent};
 pub use shared::{ConnectionId, EcnCodepoint, EndpointEvent};
 pub use transport_error::{Code as TransportErrorCode, Error as TransportError};
 pub use candidate_discovery::{

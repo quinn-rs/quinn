@@ -19,13 +19,13 @@ use std::{
 };
 
 use ant_quic::{
-    CandidateSource, CandidateState, CandidateAddress, PeerId,
-    generate_ed25519_keypair, derive_peer_id_from_public_key,
+    CandidateAddress, CandidateSource, CandidateState, PeerId, derive_peer_id_from_public_key,
+    generate_ed25519_keypair,
 };
 use clap::Parser;
 // use four_word_networking::FourWordAdaptiveEncoder;
-use rand::{self, Rng};
 use ed25519_dalek::{SigningKey, VerifyingKey};
+use rand::{self, Rng};
 use std::io;
 use terminal_ui::{
     ProgressIndicator, colors, describe_address, format_address, format_address_with_words,
@@ -64,9 +64,12 @@ impl DualStackSocket {
                     let bound_addr = socket.local_addr()?;
                     bound_addresses.push(bound_addr);
                     ipv4_socket = Some(socket);
-                    
+
                     // Also try to bind IPv6 on same port for dual-stack
-                    let ipv6_addr = SocketAddr::new(IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED), bound_addr.port());
+                    let ipv6_addr = SocketAddr::new(
+                        IpAddr::V6(std::net::Ipv6Addr::UNSPECIFIED),
+                        bound_addr.port(),
+                    );
                     if let Ok(socket) = UdpSocket::bind(ipv6_addr).await {
                         let ipv6_bound_addr = socket.local_addr()?;
                         bound_addresses.push(ipv6_bound_addr);
@@ -85,9 +88,12 @@ impl DualStackSocket {
                     let bound_addr = socket.local_addr()?;
                     bound_addresses.push(bound_addr);
                     ipv6_socket = Some(socket);
-                    
+
                     // Also try to bind IPv4 on same port for dual-stack
-                    let ipv4_addr = SocketAddr::new(IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED), bound_addr.port());
+                    let ipv4_addr = SocketAddr::new(
+                        IpAddr::V4(std::net::Ipv4Addr::UNSPECIFIED),
+                        bound_addr.port(),
+                    );
                     if let Ok(socket) = UdpSocket::bind(ipv4_addr).await {
                         let ipv4_bound_addr = socket.local_addr()?;
                         bound_addresses.push(ipv4_bound_addr);
@@ -162,13 +168,13 @@ impl DualStackSocket {
     /// Receive data from any bound socket
     async fn recv_from(&self, buf: &mut [u8]) -> Result<(usize, SocketAddr), std::io::Error> {
         use tokio::select;
-        
+
         match (&self.ipv4_socket, &self.ipv6_socket) {
             (Some(ipv4), Some(ipv6)) => {
                 // Create separate buffer slices to avoid borrow checker issues
                 let mut ipv4_buf = [0u8; 1472];
                 let mut ipv6_buf = [0u8; 1472];
-                
+
                 select! {
                     result = ipv4.recv_from(&mut ipv4_buf) => {
                         match result {
@@ -1941,7 +1947,8 @@ impl UnifiedP2PNode {
     }
 
     fn start_connection_manager_task(&self) -> tokio::task::JoinHandle<()> {
-        let peer_connections: Arc<Mutex<HashMap<PeerId, PeerConnection>>> = Arc::clone(&self.peer_connections);
+        let peer_connections: Arc<Mutex<HashMap<PeerId, PeerConnection>>> =
+            Arc::clone(&self.peer_connections);
 
         tokio::spawn(async move {
             let mut interval = interval(Duration::from_secs(5));
@@ -2209,7 +2216,11 @@ fn parse_single_address(addr_str: &str) -> Result<SocketAddr, Box<dyn std::error
     }
 
     // If that fails, return error (four-word address support disabled)
-    Err(format!("Invalid address format '{}'. Expected IP:port format.", addr_str).into())
+    Err(format!(
+        "Invalid address format '{}'. Expected IP:port format.",
+        addr_str
+    )
+    .into())
 }
 
 /// Parse bootstrap addresses from comma-separated string (supports both IP:port and four-word formats)

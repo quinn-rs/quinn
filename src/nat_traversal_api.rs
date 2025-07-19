@@ -35,7 +35,7 @@ use crate::{
 
 #[cfg(feature = "production-ready")]
 use crate::{
-    quinn_high_level::{HighLevelEndpoint as QuinnEndpoint, Connection as QuinnConnection},
+    quinn_high_level::{Endpoint as QuinnEndpoint, Connection as QuinnConnection},
     EndpointConfig,
     ServerConfig,
     ClientConfig,
@@ -697,7 +697,7 @@ impl NatTraversalEndpoint {
     #[cfg(feature = "production-ready")]
     async fn create_quinn_endpoint(
         config: &NatTraversalConfig,
-        nat_role: NatTraversalRole,
+        _nat_role: NatTraversalRole,
     ) -> Result<(QuinnEndpoint, mpsc::UnboundedSender<NatTraversalEvent>), NatTraversalError> {
         use std::sync::Arc;
         

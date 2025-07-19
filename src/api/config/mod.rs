@@ -54,9 +54,12 @@ pub type ConfigResult<T> = Result<T, ConfigError>;
 /// ```
 /// use ant_quic::api::config::P2PConfig;
 /// use ant_quic::crypto::raw_public_keys::key_utils;
+/// use ant_quic::nat_traversal::BootstrapNode;
+/// use std::net::SocketAddr;
 ///
+/// let bootstrap_addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
 /// let config = P2PConfig::builder()
-///     .with_bootstrap_nodes(vec!["bootstrap1.example.com:9000".parse().unwrap()])
+///     .with_bootstrap_nodes(vec![BootstrapNode::new(bootstrap_addr)])
 ///     .with_keypair(key_utils::generate_ed25519_keypair())
 ///     .with_nat_traversal(true)
 ///     .build()
@@ -153,9 +156,12 @@ impl P2PConfig {
 /// ```
 /// use ant_quic::api::config::P2PConfigBuilder;
 /// use ant_quic::crypto::raw_public_keys::key_utils;
+/// use ant_quic::nat_traversal::BootstrapNode;
+/// use std::net::SocketAddr;
 ///
+/// let bootstrap_addr: SocketAddr = "127.0.0.1:9000".parse().unwrap();
 /// let config = P2PConfigBuilder::new()
-///     .with_bootstrap_nodes(vec!["bootstrap1.example.com:9000".parse().unwrap()])
+///     .with_bootstrap_nodes(vec![BootstrapNode::new(bootstrap_addr)])
 ///     .with_keypair(key_utils::generate_ed25519_keypair())
 ///     .with_nat_traversal(true)
 ///     .build()

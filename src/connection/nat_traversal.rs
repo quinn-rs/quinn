@@ -254,6 +254,7 @@ pub(super) enum PairState {
     /// Validation succeeded - this pair works
     Succeeded,
     /// Validation failed 
+    #[allow(dead_code)] // Will be used when implementing pair retry logic
     Failed,
     /// Temporarily frozen (waiting for other pairs)
     Frozen,
@@ -502,6 +503,7 @@ impl SecurityValidationState {
     }
 
     /// Create new security validation state with custom rate limits
+    #[allow(dead_code)] // Will be used for custom security configurations
     fn new_with_limits(
         max_candidates_per_window: u32,
         max_coordination_per_window: u32,
@@ -616,6 +618,7 @@ impl SecurityValidationState {
     /// 
     /// This ensures that coordination rounds use secure random values to prevent
     /// prediction attacks and ensure proper synchronization security.
+    #[allow(dead_code)] // Used by BootstrapCoordinator
     fn generate_secure_coordination_round(&self) -> VarInt {
         // Use cryptographically secure random number generation
         let secure_random: u64 = rand::random();
@@ -1381,6 +1384,7 @@ impl ResourceCleanupCoordinator {
     }
     
     /// Perform cleanup of expired resources
+    #[allow(dead_code)] // Will be used when implementing automatic resource cleanup
     fn cleanup_expired_resources(&mut self, 
                                 active_validations: &mut HashMap<SocketAddr, PathValidationState>,
                                 local_candidates: &mut HashMap<VarInt, AddressCandidate>,
@@ -1413,6 +1417,7 @@ impl ResourceCleanupCoordinator {
     }
     
     /// Clean up expired path validations
+    #[allow(dead_code)] // Called from cleanup_expired_resources
     fn cleanup_expired_validations(&mut self, active_validations: &mut HashMap<SocketAddr, PathValidationState>, now: Instant) -> u64 {
         let mut cleaned = 0;
         let validation_timeout = self.config.validation_timeout;
@@ -1430,6 +1435,7 @@ impl ResourceCleanupCoordinator {
     }
     
     /// Clean up stale candidates
+    #[allow(dead_code)] // Called from cleanup_expired_resources
     fn cleanup_stale_candidates(&mut self, local_candidates: &mut HashMap<VarInt, AddressCandidate>, remote_candidates: &mut HashMap<VarInt, AddressCandidate>, now: Instant) -> u64 {
         let mut cleaned = 0;
         let candidate_timeout = self.config.candidate_timeout;
@@ -1462,6 +1468,7 @@ impl ResourceCleanupCoordinator {
     }
     
     /// Clean up failed candidate pairs
+    #[allow(dead_code)] // Called from cleanup_expired_resources
     fn cleanup_failed_pairs(&mut self, candidate_pairs: &mut Vec<CandidatePair>, now: Instant) -> u64 {
         let mut cleaned = 0;
         let pair_timeout = self.config.candidate_timeout;
@@ -1480,6 +1487,7 @@ impl ResourceCleanupCoordinator {
     }
     
     /// Clean up old coordination state
+    #[allow(dead_code)] // Called from cleanup_expired_resources
     fn cleanup_old_coordination(&mut self, coordination: &mut Option<CoordinationState>, now: Instant) -> u64 {
         let mut cleaned = 0;
         
@@ -1499,6 +1507,7 @@ impl ResourceCleanupCoordinator {
     }
     
     /// Perform aggressive cleanup when under memory pressure
+    #[allow(dead_code)] // Will be used when implementing memory pressure response
     fn aggressive_cleanup(&mut self, 
                          active_validations: &mut HashMap<SocketAddr, PathValidationState>,
                          local_candidates: &mut HashMap<VarInt, AddressCandidate>,
@@ -1769,6 +1778,7 @@ impl NetworkConditionMonitor {
     }
 
     /// Get recommended timeout multiplier based on conditions
+    #[allow(dead_code)] // Will be used for dynamic timeout adjustments
     fn get_timeout_multiplier(&self) -> f64 {
         let base_multiplier = 1.0;
         
@@ -1788,6 +1798,7 @@ impl NetworkConditionMonitor {
     }
 
     /// Clean up old samples and statistics
+    #[allow(dead_code)] // Will be used in periodic maintenance
     fn cleanup(&mut self, now: Instant) {
         // Remove old RTT samples (keep only recent ones)
         let _cutoff_time = now - Duration::from_secs(60);
@@ -3156,6 +3167,7 @@ pub(crate) struct BootstrapCoordinator {
     #[allow(dead_code)] // Used for coordination queue management
     pending_coordination: VecDeque<PendingCoordinationRequest>,
     /// Address observation cache for quick lookups
+    #[allow(dead_code)] // Will be used for address correlation and verification
     address_observations: HashMap<SocketAddr, AddressObservation>,
     /// Security validator for coordination requests
     security_validator: SecurityValidationState,
@@ -3239,11 +3251,13 @@ struct AddressObservation {
     #[allow(dead_code)] // Used for observation aging
     first_observed: Instant,
     /// How many times this address has been observed
+    #[allow(dead_code)] // Will be used for address reliability scoring
     observation_count: u32,
     /// Validation state for this address
     #[allow(dead_code)] // Used for address validation tracking
     validation_state: AddressValidationResult,
     /// Associated peer IDs for this address
+    #[allow(dead_code)] // Will be used for peer-address correlation
     associated_peers: Vec<PeerId>,
 }
 
@@ -3303,12 +3317,14 @@ pub(crate) struct BootstrapConfig {
 #[derive(Debug, Clone, Default)]
 pub(crate) struct BootstrapStats {
     /// Total address observations made
+    #[allow(dead_code)] // Will be used for bootstrap performance metrics
     total_observations: u64,
     /// Total coordination sessions facilitated
     total_coordinations: u64,
     /// Successful coordinations
     successful_coordinations: u64,
     /// Active peer count
+    #[allow(dead_code)] // Will be used for bootstrap load monitoring
     active_peers: usize,
     /// Active coordination sessions
     active_sessions: usize,
@@ -3318,6 +3334,7 @@ pub(crate) struct BootstrapStats {
 
 /// Events generated by the coordination session state machine
 #[derive(Debug, Clone)]
+#[allow(dead_code)] // Will be used for coordination event handling and logging
 pub(crate) enum CoordinationSessionEvent {
     /// Session phase changed
     PhaseChanged {
@@ -3347,6 +3364,7 @@ pub(crate) enum CoordinationSessionEvent {
 
 /// Events that trigger session state advancement
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)] // Will be used in coordination state machine implementation
 enum SessionAdvancementEvent {
     /// Both peers are ready for coordination
     BothPeersReady,
@@ -3366,6 +3384,7 @@ enum SessionAdvancementEvent {
 
 /// Recovery actions for coordination errors
 #[derive(Debug, Clone, Copy)]
+#[allow(dead_code)] // Will be used for coordination error recovery logic
 pub(crate) enum CoordinationRecoveryAction {
     /// No action needed
     NoAction,

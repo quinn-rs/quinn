@@ -1,8 +1,11 @@
+use bytes::{Buf, BufMut, Bytes, BytesMut};
 use std::net::{Ipv4Addr, Ipv6Addr, SocketAddr, SocketAddrV4, SocketAddrV6};
-use bytes::{Bytes, BytesMut, Buf, BufMut};
 
 // Import the frame types directly from the source
-use ant_quic::{VarInt, coding::{BufExt, BufMutExt, UnexpectedEnd}};
+use ant_quic::{
+    VarInt,
+    coding::{BufExt, BufMutExt, UnexpectedEnd},
+};
 
 /// NAT traversal frame for advertising candidate addresses
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -22,7 +25,7 @@ impl AddAddress {
         buf.put_u8(0x90); // Third byte
         buf.write(self.sequence);
         buf.write(self.priority);
-        
+
         match self.address {
             SocketAddr::V4(addr) => {
                 buf.put_u8(4); // IPv4 indicator
@@ -38,23 +41,26 @@ impl AddAddress {
             }
         }
     }
-    
+
     pub fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
         let sequence = r.get()?;
         let priority = r.get()?;
         let ip_version = r.get::<u8>()?;
-        
+
         let address = match ip_version {
             4 => {
+                if r.remaining() < 6 {
+                    return Err(UnexpectedEnd);
+                }
                 let mut octets = [0u8; 4];
                 r.copy_to_slice(&mut octets);
                 let port = r.get::<u16>()?;
-                SocketAddr::V4(SocketAddrV4::new(
-                    Ipv4Addr::from(octets),
-                    port,
-                ))
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(octets), port))
             }
             6 => {
+                if r.remaining() < 24 {
+                    return Err(UnexpectedEnd);
+                }
                 let mut octets = [0u8; 16];
                 r.copy_to_slice(&mut octets);
                 let port = r.get::<u16>()?;
@@ -69,7 +75,7 @@ impl AddAddress {
             }
             _ => return Err(UnexpectedEnd),
         };
-        
+
         Ok(Self {
             sequence,
             address,
@@ -98,7 +104,7 @@ impl PunchMeNow {
         buf.put_u8(0x91); // Third byte
         buf.write(self.round);
         buf.write(self.target_sequence);
-        
+
         match self.local_address {
             SocketAddr::V4(addr) => {
                 buf.put_u8(4); // IPv4 indicator
@@ -113,7 +119,7 @@ impl PunchMeNow {
                 buf.put_u32(addr.scope_id());
             }
         }
-        
+
         // Encode target_peer_id if present
         match &self.target_peer_id {
             Some(peer_id) => {
@@ -125,23 +131,26 @@ impl PunchMeNow {
             }
         }
     }
-    
+
     pub fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
         let round = r.get()?;
         let target_sequence = r.get()?;
         let ip_version = r.get::<u8>()?;
-        
+
         let local_address = match ip_version {
             4 => {
+                if r.remaining() < 6 {
+                    return Err(UnexpectedEnd);
+                }
                 let mut octets = [0u8; 4];
                 r.copy_to_slice(&mut octets);
                 let port = r.get::<u16>()?;
-                SocketAddr::V4(SocketAddrV4::new(
-                    Ipv4Addr::from(octets),
-                    port,
-                ))
+                SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::from(octets), port))
             }
             6 => {
+                if r.remaining() < 24 {
+                    return Err(UnexpectedEnd);
+                }
                 let mut octets = [0u8; 16];
                 r.copy_to_slice(&mut octets);
                 let port = r.get::<u16>()?;
@@ -156,11 +165,14 @@ impl PunchMeNow {
             }
             _ => return Err(UnexpectedEnd),
         };
-        
+
         // Decode target_peer_id if present
         let target_peer_id = if r.remaining() > 0 {
             let has_peer_id = r.get::<u8>()?;
             if has_peer_id == 1 {
+                if r.remaining() < 32 {
+                    return Err(UnexpectedEnd);
+                }
                 let mut peer_id = [0u8; 32];
                 r.copy_to_slice(&mut peer_id);
                 Some(peer_id)
@@ -170,7 +182,7 @@ impl PunchMeNow {
         } else {
             None
         };
-        
+
         Ok(Self {
             round,
             target_sequence,
@@ -194,7 +206,7 @@ impl RemoveAddress {
         buf.put_u8(0x92); // Third byte
         buf.write(self.sequence);
     }
-    
+
     pub fn decode<R: Buf>(r: &mut R) -> Result<Self, UnexpectedEnd> {
         let sequence = r.get()?;
         Ok(Self { sequence })
@@ -226,11 +238,11 @@ mod frame_test_vectors {
         // - Port: 8080 (2 bytes)
         let expected = vec![
             0x3d, 0x7e, 0x90, // Frame type (0x3d7e90)
-            42,             // Sequence (VarInt)
-            100,            // Priority (VarInt)
-            4,              // IPv4 indicator
+            42,   // Sequence (VarInt)
+            0x40, 100, // Priority (VarInt - 2 bytes for value >= 64)
+            4,   // IPv4 indicator
             192, 168, 1, 100, // IPv4 address
-            0x1f, 0x90,     // Port 8080 in big-endian
+            0x1f, 0x90, // Port 8080 in big-endian
         ];
 
         assert_eq!(buf.to_vec(), expected);
@@ -241,7 +253,9 @@ mod frame_test_vectors {
         let frame = AddAddress {
             sequence: VarInt::from_u32(123),
             address: SocketAddr::V6(SocketAddrV6::new(
-                Ipv6Addr::new(0x2001, 0x0db8, 0x85a3, 0x0000, 0x0000, 0x8a2e, 0x0370, 0x7334),
+                Ipv6Addr::new(
+                    0x2001, 0x0db8, 0x85a3, 0x0000, 0x0000, 0x8a2e, 0x0370, 0x7334,
+                ),
                 9000,
                 0x12345678,
                 0x87654321,
@@ -253,14 +267,13 @@ mod frame_test_vectors {
         frame.encode(&mut buf);
 
         let expected = vec![
-            0x40,           // Frame type
-            123,            // Sequence (VarInt)
-            200,            // Priority (VarInt)
-            6,              // IPv6 indicator
+            0x3d, 0x7e, 0x90, // Frame type (0x3d7e90)
+            0x40, 123, // Sequence (VarInt - 2 bytes)
+            0x40, 200, // Priority (VarInt - 2 bytes)
+            6,   // IPv6 indicator
             // IPv6 address bytes
-            0x20, 0x01, 0x0d, 0xb8, 0x85, 0xa3, 0x00, 0x00,
-            0x00, 0x00, 0x8a, 0x2e, 0x03, 0x70, 0x73, 0x34,
-            0x23, 0x28,     // Port 9000 in big-endian
+            0x20, 0x01, 0x0d, 0xb8, 0x85, 0xa3, 0x00, 0x00, 0x00, 0x00, 0x8a, 0x2e, 0x03, 0x70,
+            0x73, 0x34, 0x23, 0x28, // Port 9000 in big-endian
             0x12, 0x34, 0x56, 0x78, // Flow info
             0x87, 0x65, 0x43, 0x21, // Scope ID
         ];
@@ -271,11 +284,11 @@ mod frame_test_vectors {
     #[test]
     fn test_add_address_decoding_ipv4() {
         let data = vec![
-            42,             // Sequence (VarInt)
-            100,            // Priority (VarInt)
-            4,              // IPv4 indicator
-            10, 0, 0, 1,    // IPv4 address 10.0.0.1
-            0x1f, 0x90,     // Port 8080
+            42, // Sequence (VarInt)
+            0x40, 100, // Priority (VarInt - 2 bytes)
+            4,   // IPv4 indicator
+            10, 0, 0, 1, // IPv4 address 10.0.0.1
+            0x1f, 0x90, // Port 8080
         ];
 
         let mut buf = Bytes::from(data);
@@ -283,19 +296,21 @@ mod frame_test_vectors {
 
         assert_eq!(frame.sequence, VarInt::from_u32(42));
         assert_eq!(frame.priority, VarInt::from_u32(100));
-        assert_eq!(frame.address, SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 8080)));
+        assert_eq!(
+            frame.address,
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::new(10, 0, 0, 1), 8080))
+        );
     }
 
     #[test]
     fn test_add_address_decoding_ipv6() {
         let data = vec![
-            123,            // Sequence (VarInt)
-            200,            // Priority (VarInt)
-            6,              // IPv6 indicator
+            0x40, 123, // Sequence (VarInt - 2 bytes)
+            0x40, 200, // Priority (VarInt - 2 bytes)
+            6,   // IPv6 indicator
             // IPv6 address ::1
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-            0x1f, 0x90,     // Port 8080
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0x1f, 0x90, // Port 8080
             0x00, 0x00, 0x00, 0x00, // Flow info
             0x00, 0x00, 0x00, 0x00, // Scope ID
         ];
@@ -305,7 +320,10 @@ mod frame_test_vectors {
 
         assert_eq!(frame.sequence, VarInt::from_u32(123));
         assert_eq!(frame.priority, VarInt::from_u32(200));
-        assert_eq!(frame.address, SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 8080, 0, 0)));
+        assert_eq!(
+            frame.address,
+            SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 8080, 0, 0))
+        );
     }
 
     #[test]
@@ -321,13 +339,13 @@ mod frame_test_vectors {
         frame.encode(&mut buf);
 
         let expected = vec![
-            0x41,           // Frame type (PUNCH_ME_NOW)
-            5,              // Round (VarInt)
-            42,             // Target sequence (VarInt)
-            4,              // IPv4 indicator
-            172, 16, 0, 1,  // IPv4 address
-            0x30, 0x39,     // Port 12345 in big-endian
-            0,              // No peer ID
+            0x3d, 0x7e, 0x91, // Frame type (PUNCH_ME_NOW - 0x3d7e91)
+            5,    // Round (VarInt)
+            42,   // Target sequence (VarInt)
+            4,    // IPv4 indicator
+            172, 16, 0, 1, // IPv4 address
+            0x30, 0x39, // Port 12345 in big-endian
+            0,    // No peer ID
         ];
 
         assert_eq!(buf.to_vec(), expected);
@@ -347,17 +365,16 @@ mod frame_test_vectors {
         frame.encode(&mut buf);
 
         let mut expected = vec![
-            0x41,           // Frame type (PUNCH_ME_NOW)
-            10,             // Round (VarInt)
-            99,             // Target sequence (VarInt)
-            6,              // IPv6 indicator
+            0x3d, 0x7e, 0x91, // Frame type (PUNCH_ME_NOW - 0x3d7e91)
+            10,   // Round (VarInt)
+            0x40, 99, // Target sequence (VarInt - 2 bytes for value >= 64)
+            6,  // IPv6 indicator
             // IPv6 localhost address
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
-            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01,
-            0xd4, 0x31,     // Port 54321 in big-endian
+            0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+            0x00, 0x01, 0xd4, 0x31, // Port 54321 in big-endian
             0x00, 0x00, 0x00, 0x00, // Flow info
             0x00, 0x00, 0x00, 0x00, // Scope ID
-            1,              // Has peer ID
+            1,    // Has peer ID
         ];
         expected.extend_from_slice(&peer_id); // Peer ID bytes
 
@@ -368,12 +385,12 @@ mod frame_test_vectors {
     fn test_punch_me_now_decoding() {
         let peer_id = [0x33; 32];
         let mut data = vec![
-            7,              // Round (VarInt)
-            88,             // Target sequence (VarInt)
-            4,              // IPv4 indicator
-            127, 0, 0, 1,   // IPv4 address 127.0.0.1
-            0x27, 0x10,     // Port 10000
-            1,              // Has peer ID
+            7, // Round (VarInt)
+            0x40, 88, // Target sequence (VarInt - 2 bytes for value >= 64)
+            4,  // IPv4 indicator
+            127, 0, 0, 1, // IPv4 address 127.0.0.1
+            0x27, 0x10, // Port 10000
+            1,    // Has peer ID
         ];
         data.extend_from_slice(&peer_id);
 
@@ -382,7 +399,10 @@ mod frame_test_vectors {
 
         assert_eq!(frame.round, VarInt::from_u32(7));
         assert_eq!(frame.target_sequence, VarInt::from_u32(88));
-        assert_eq!(frame.local_address, SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 10000)));
+        assert_eq!(
+            frame.local_address,
+            SocketAddr::V4(SocketAddrV4::new(Ipv4Addr::LOCALHOST, 10000))
+        );
         assert_eq!(frame.target_peer_id, Some(peer_id));
     }
 
@@ -397,8 +417,8 @@ mod frame_test_vectors {
 
         // For sequence 777, VarInt encoding uses 2 bytes: 0x89, 0x09
         let expected = vec![
-            0x42,           // Frame type (REMOVE_ADDRESS)
-            0x89, 0x09,     // Sequence 777 as VarInt (2 bytes)
+            0x3d, 0x7e, 0x92, // Frame type (REMOVE_ADDRESS - 0x3d7e92)
+            0x43, 0x09, // Sequence 777 as VarInt (2 bytes: 0x4000 | 777)
         ];
 
         assert_eq!(buf.to_vec(), expected);
@@ -407,7 +427,7 @@ mod frame_test_vectors {
     #[test]
     fn test_remove_address_decoding() {
         let data = vec![
-            0x89, 0x09,     // Sequence 777 as VarInt
+            0x43, 0x09, // Sequence 777 as VarInt (0x4000 | 777 = 0x4309)
         ];
 
         let mut buf = Bytes::from(data);
@@ -430,8 +450,9 @@ mod frame_test_vectors {
 
         // Decode it back to verify
         let mut decode_buf = buf.clone().freeze();
-        decode_buf.advance(1); // Skip frame type
-        let decoded = AddAddress::decode(&mut decode_buf).expect("Failed to decode large VarInt frame");
+        decode_buf.advance(3); // Skip 3-byte frame type
+        let decoded =
+            AddAddress::decode(&mut decode_buf).expect("Failed to decode large VarInt frame");
 
         assert_eq!(decoded.sequence, frame.sequence);
         assert_eq!(decoded.priority, frame.priority);
@@ -447,10 +468,10 @@ mod malformed_frame_tests {
     #[test]
     fn test_add_address_truncated_ipv4() {
         let data = vec![
-            42,             // Sequence
-            100,            // Priority
-            4,              // IPv4 indicator
-            192, 168,       // Incomplete IPv4 address (only 2 bytes)
+            42, // Sequence
+            0x40, 100, // Priority (2 bytes)
+            4,   // IPv4 indicator
+            192, 168, // Incomplete IPv4 address (only 2 bytes)
         ];
 
         let mut buf = Bytes::from(data);
@@ -461,9 +482,9 @@ mod malformed_frame_tests {
     #[test]
     fn test_add_address_truncated_ipv6() {
         let data = vec![
-            42,             // Sequence
-            100,            // Priority
-            6,              // IPv6 indicator
+            42, // Sequence
+            0x40, 100, // Priority (2 bytes)
+            6,   // IPv6 indicator
             0x20, 0x01, 0x0d, 0xb8, // Incomplete IPv6 address (only 4 bytes)
         ];
 
@@ -475,9 +496,9 @@ mod malformed_frame_tests {
     #[test]
     fn test_add_address_invalid_ip_version() {
         let data = vec![
-            42,             // Sequence
-            100,            // Priority
-            7,              // Invalid IP version
+            42, // Sequence
+            0x40, 100, // Priority (2 bytes)
+            7,   // Invalid IP version
             192, 168, 1, 1, // Some data
         ];
 
@@ -489,13 +510,13 @@ mod malformed_frame_tests {
     #[test]
     fn test_punch_me_now_truncated_peer_id() {
         let data = vec![
-            5,              // Round
-            42,             // Target sequence
-            4,              // IPv4 indicator
-            127, 0, 0, 1,   // IPv4 address
-            0x1f, 0x90,     // Port
-            1,              // Has peer ID indicator
-            0x42, 0x43,     // Incomplete peer ID (only 2 bytes instead of 32)
+            5,  // Round
+            42, // Target sequence
+            4,  // IPv4 indicator
+            127, 0, 0, 1, // IPv4 address
+            0x1f, 0x90, // Port
+            1,    // Has peer ID indicator
+            0x42, 0x43, // Incomplete peer ID (only 2 bytes instead of 32)
         ];
 
         let mut buf = Bytes::from(data);
@@ -533,13 +554,19 @@ mod frame_size_tests {
 
         let mut buf = BytesMut::new();
         ipv4_frame.encode(&mut buf);
-        assert!(buf.len() <= ADD_ADDRESS_SIZE_BOUND, "IPv4 frame exceeds size bound");
+        // Account for 3-byte frame type prefix
+        assert!(
+            buf.len() <= ADD_ADDRESS_SIZE_BOUND + 3,
+            "IPv4 frame exceeds size bound"
+        );
 
         // Test IPv6 frame size (worst case)
         let ipv6_frame = AddAddress {
             sequence: VarInt::from_u64(0x3FFFFFFF).unwrap(), // Max VarInt
             address: SocketAddr::V6(SocketAddrV6::new(
-                Ipv6Addr::new(0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff),
+                Ipv6Addr::new(
+                    0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+                ),
                 65535,
                 0xffffffff,
                 0xffffffff,
@@ -549,7 +576,11 @@ mod frame_size_tests {
 
         let mut buf = BytesMut::new();
         ipv6_frame.encode(&mut buf);
-        assert!(buf.len() <= ADD_ADDRESS_SIZE_BOUND, "IPv6 frame exceeds size bound");
+        // Account for 3-byte frame type prefix
+        assert!(
+            buf.len() <= ADD_ADDRESS_SIZE_BOUND + 3,
+            "IPv6 frame exceeds size bound"
+        );
     }
 
     #[test]
@@ -559,7 +590,9 @@ mod frame_size_tests {
             round: VarInt::from_u64(0x3FFFFFFF).unwrap(),
             target_sequence: VarInt::from_u64(0x3FFFFFFF).unwrap(),
             local_address: SocketAddr::V6(SocketAddrV6::new(
-                Ipv6Addr::new(0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff),
+                Ipv6Addr::new(
+                    0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff, 0xffff,
+                ),
                 65535,
                 0xffffffff,
                 0xffffffff,
@@ -569,7 +602,11 @@ mod frame_size_tests {
 
         let mut buf = BytesMut::new();
         frame.encode(&mut buf);
-        assert!(buf.len() <= PUNCH_ME_NOW_SIZE_BOUND, "PunchMeNow frame exceeds size bound");
+        // Account for 3-byte frame type prefix
+        assert!(
+            buf.len() <= PUNCH_ME_NOW_SIZE_BOUND + 3,
+            "PunchMeNow frame exceeds size bound"
+        );
     }
 
     #[test]
@@ -580,7 +617,11 @@ mod frame_size_tests {
 
         let mut buf = BytesMut::new();
         frame.encode(&mut buf);
-        assert!(buf.len() <= REMOVE_ADDRESS_SIZE_BOUND, "RemoveAddress frame exceeds size bound");
+        // Account for 3-byte frame type prefix
+        assert!(
+            buf.len() <= REMOVE_ADDRESS_SIZE_BOUND + 3,
+            "RemoveAddress frame exceeds size bound"
+        );
     }
 }
 
@@ -618,7 +659,7 @@ mod frame_integration_tests {
 
         // Manually parse frames by reading from the buffer
         let mut buf = packet_data.freeze();
-        
+
         // Parse first frame (AddAddress)
         assert_eq!(buf.get_u8(), 0x3d); // First byte of ADD_ADDRESS frame type
         assert_eq!(buf.get_u8(), 0x7e); // Second byte
@@ -639,7 +680,8 @@ mod frame_integration_tests {
         assert_eq!(buf.get_u8(), 0x3d); // First byte of REMOVE_ADDRESS frame type
         assert_eq!(buf.get_u8(), 0x7e); // Second byte
         assert_eq!(buf.get_u8(), 0x92); // Third byte
-        let decoded_remove = RemoveAddress::decode(&mut buf).expect("Failed to decode RemoveAddress");
+        let decoded_remove =
+            RemoveAddress::decode(&mut buf).expect("Failed to decode RemoveAddress");
         assert_eq!(decoded_remove.sequence, VarInt::from_u32(2));
     }
 
@@ -654,7 +696,12 @@ mod frame_integration_tests {
             },
             AddAddress {
                 sequence: VarInt::from_u32(123),
-                address: SocketAddr::V6(SocketAddrV6::new(Ipv6Addr::LOCALHOST, 9000, 0x12345678, 0x87654321)),
+                address: SocketAddr::V6(SocketAddrV6::new(
+                    Ipv6Addr::LOCALHOST,
+                    9000,
+                    0x12345678,
+                    0x87654321,
+                )),
                 priority: VarInt::from_u32(200),
             },
         ];
@@ -664,10 +711,14 @@ mod frame_integration_tests {
             original.encode(&mut buf);
 
             let mut decode_buf = buf.freeze();
-            decode_buf.advance(1); // Skip frame type
+            decode_buf.advance(3); // Skip 3-byte frame type
             let decoded = AddAddress::decode(&mut decode_buf).expect("Failed to decode frame");
 
-            assert_eq!(original, decoded, "Roundtrip failed for frame: {:?}", original);
+            assert_eq!(
+                original, decoded,
+                "Roundtrip failed for frame: {:?}",
+                original
+            );
         }
     }
 }
@@ -689,7 +740,7 @@ mod edge_case_tests {
         frame.encode(&mut buf);
 
         let mut decode_buf = buf.clone().freeze();
-        decode_buf.advance(1); // Skip frame type
+        decode_buf.advance(3); // Skip 3-byte frame type
         let decoded = AddAddress::decode(&mut decode_buf).expect("Failed to decode zero values");
 
         assert_eq!(decoded.sequence, VarInt::from_u32(0));
@@ -709,7 +760,7 @@ mod edge_case_tests {
         frame.encode(&mut buf);
 
         let mut decode_buf = buf.clone().freeze();
-        decode_buf.advance(1); // Skip frame type
+        decode_buf.advance(3); // Skip 3-byte frame type
         let decoded = AddAddress::decode(&mut decode_buf).expect("Failed to decode max port");
 
         assert_eq!(decoded.address.port(), 65535);
@@ -735,7 +786,7 @@ mod edge_case_tests {
             frame.encode(&mut buf);
 
             let mut decode_buf = buf.clone().freeze();
-            decode_buf.advance(1); // Skip frame type
+            decode_buf.advance(3); // Skip 3-byte frame type
             let decoded = AddAddress::decode(&mut decode_buf)
                 .expect(&format!("Failed to decode IPv6 address: {}", addr));
 

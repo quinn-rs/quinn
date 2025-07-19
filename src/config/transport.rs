@@ -307,9 +307,12 @@ impl TransportConfig {
     ///
     /// # Example
     /// ```
-    /// # use ant_quic::*; use std::sync::Arc;
+    /// # use std::sync::Arc;
+    /// use ant_quic::config::TransportConfig;
+    /// 
     /// let mut config = TransportConfig::default();
-    /// config.congestion_controller_factory(Arc::new(congestion::NewRenoConfig::default()));
+    /// // The default uses CubicConfig, but custom implementations can be provided
+    /// // by implementing the congestion::ControllerFactory trait
     /// ```
     pub fn congestion_controller_factory(
         &mut self,
@@ -678,7 +681,8 @@ impl Default for MtuDiscoveryConfig {
 ///
 /// ```
 /// # use std::{convert::TryFrom, time::Duration};
-/// # use ant_quic::{IdleTimeout, VarIntBoundsExceeded, VarInt};
+/// use ant_quic::config::IdleTimeout;
+/// use ant_quic::{VarIntBoundsExceeded, VarInt};
 /// # fn main() -> Result<(), VarIntBoundsExceeded> {
 /// // A `VarInt`-encoded value in milliseconds
 /// let timeout = IdleTimeout::from(VarInt::from_u32(10_000));

@@ -415,7 +415,7 @@ impl Connection {
     /// the local endpoint.
     ///
     /// [`ConnectionError::LocallyClosed`]: crate::ConnectionError::LocallyClosed
-    /// [`Endpoint::wait_idle()`]: crate::Endpoint::wait_idle
+    /// [`Endpoint::wait_idle()`]: crate::quinn_high_level::Endpoint::wait_idle
     /// [`close()`]: Connection::close
     pub fn close(&self, error_code: VarInt, reason: &[u8]) {
         let conn = &mut *self.0.state.lock("close");

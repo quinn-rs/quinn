@@ -16,7 +16,7 @@ use std::{
 use tracing::{debug, info};
 
 #[cfg(feature = "production-ready")]
-use crate::{HighLevelConnection as QuinnConnection, HighLevelEndpoint as QuinnEndpoint};
+use crate::{HighLevelConnection as QuinnConnection, Endpoint as QuinnEndpoint};
 
 use crate::{
     nat_traversal_api::{CandidateAddress, PeerId},
@@ -189,7 +189,7 @@ struct SessionState {
 
 /// Priority for session cleanup
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum CleanupPriority {
+pub enum CleanupPriority {
     Low,    // Keep as long as possible
     Normal, // Standard cleanup rules
     High,   // Clean up aggressively
@@ -266,7 +266,7 @@ enum BatchPriority {
 
 /// Priority for individual frames
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
-enum FramePriority {
+pub enum FramePriority {
     Background, // Low priority, can be delayed
     Normal,     // Standard priority
     Urgent,     // High priority, minimal delay

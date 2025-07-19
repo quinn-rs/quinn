@@ -58,7 +58,7 @@ impl State {
 
 /// The RFC8312 congestion controller, as widely used for TCP
 #[derive(Debug, Clone)]
-pub struct Cubic {
+pub(crate) struct Cubic {
     config: Arc<CubicConfig>,
     /// Maximum number of bytes in flight that may be sent.
     window: u64,
@@ -74,7 +74,7 @@ pub struct Cubic {
 
 impl Cubic {
     /// Construct a state using the given `config` and current time `now`
-    pub fn new(config: Arc<CubicConfig>, _now: Instant, current_mtu: u16) -> Self {
+    pub(crate) fn new(config: Arc<CubicConfig>, _now: Instant, current_mtu: u16) -> Self {
         Self {
             window: config.initial_window,
             ssthresh: u64::MAX,
@@ -243,7 +243,7 @@ impl Controller for Cubic {
 
 /// Configuration for the `Cubic` congestion controller
 #[derive(Debug, Clone)]
-pub struct CubicConfig {
+pub(crate) struct CubicConfig {
     initial_window: u64,
 }
 
@@ -251,7 +251,7 @@ impl CubicConfig {
     /// Default limit on the amount of outstanding data in bytes.
     ///
     /// Recommended value: `min(10 * max_datagram_size, max(2 * max_datagram_size, 14720))`
-    pub fn initial_window(&mut self, value: u64) -> &mut Self {
+    pub(crate) fn initial_window(&mut self, value: u64) -> &mut Self {
         self.initial_window = value;
         self
     }
