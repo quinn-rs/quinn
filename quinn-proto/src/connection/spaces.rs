@@ -39,6 +39,9 @@ pub(super) struct PacketSpace {
     /// Transmitted but not acked
     // We use a BTreeMap here so we can efficiently query by range on ACK and for loss detection
     pub(super) sent_packets: BTreeMap<u64, SentPacket>,
+    /// Packets that were deemed lost
+    // Older packets are regularly removed in `Connection::drain_lost_packets`.
+    pub(super) lost_packets: BTreeMap<u64, LostPacket>,
     /// Number of explicit congestion notification codepoints seen on incoming packets
     pub(super) ecn_counters: frame::EcnCounts,
     /// Recent ECN counters sent by the peer in ACK frames
@@ -86,6 +89,7 @@ impl PacketSpace {
             largest_ack_eliciting_sent: 0,
             unacked_non_ack_eliciting_tail: 0,
             sent_packets: BTreeMap::new(),
+            lost_packets: BTreeMap::new(),
             ecn_counters: frame::EcnCounts::ZERO,
             ecn_feedback: frame::EcnCounts::ZERO,
 
@@ -295,6 +299,13 @@ pub(super) struct SentPacket {
     ///
     /// The actual application data is stored with the stream state.
     pub(super) stream_frames: frame::StreamMetaVec,
+}
+
+/// Represents one or more packets that are deemed lost.
+#[derive(Debug)]
+pub(super) struct LostPacket {
+    /// The time the packet was sent.
+    pub(super) time_sent: Instant,
 }
 
 /// Retransmittable data queue
