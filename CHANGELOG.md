@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.0] - 2025-07-19
+
 ### Added
 - Centralized timeout configuration module (`src/config/timeouts.rs`) to replace hardcoded durations
 - High-level API module structure (`src/api/`) for P2P networking
