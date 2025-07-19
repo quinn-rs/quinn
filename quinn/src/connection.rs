@@ -627,6 +627,13 @@ impl Connection {
         conn.wake();
     }
 
+    /// See [`proto::TransportConfig::send_window()`]
+    pub fn set_send_window(&self, send_window: u64) {
+        let mut conn = self.0.state.lock("set_send_window");
+        conn.inner.set_send_window(send_window);
+        conn.wake();
+    }
+
     /// See [`proto::TransportConfig::receive_window()`]
     pub fn set_receive_window(&self, receive_window: VarInt) {
         let mut conn = self.0.state.lock("set_receive_window");
