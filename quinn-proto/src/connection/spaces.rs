@@ -643,9 +643,29 @@ impl PendingAcks {
             .map(|earliest_unacked| earliest_unacked + max_ack_delay)
     }
 
-    /// Whether any ACK frames can be sent
+    /// Whether any ACK frames SHOULD be sent
+    ///
+    /// This takes part in the [`Connection::space_can_send`] evaluation of whether any
+    /// frames should be sent. It returns `true` if a packet should be built to send an ACK
+    /// frame.
+    ///
+    /// See also [`PendingAcks::may_send`].
+    ///
+    /// [`Connection::space_can_send`]: super::Connection::space_can_send
     pub(super) fn can_send(&self) -> bool {
         self.immediate_ack_required && !self.ranges.is_empty()
+    }
+
+    /// Whether any ACK frame MAY be sent
+    ///
+    /// Sometimes is it not required to send an ACK frame, but if a packet is being sent
+    /// anyway we may have new ACK frames to send. That is when this function returns
+    /// `true`.
+    ///
+    /// See also [`PendingAcks::can_send`].
+    pub(super) fn may_send(&self) -> bool {
+        !self.ranges.is_empty()
+            && (self.immediate_ack_required || self.ack_eliciting_since_last_ack_sent > 0)
     }
 
     /// Returns the delay since the packet with the largest packet number was received

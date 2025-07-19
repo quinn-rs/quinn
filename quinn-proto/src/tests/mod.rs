@@ -2707,6 +2707,51 @@ fn single_ack_eliciting_packet_with_ce_bit_triggers_immediate_ack() {
     );
 }
 
+#[test]
+fn ack_sent_with_other_packets() {
+    let _guard = subscribe();
+    let mut pair = Pair::default_with_deterministic_pns();
+    let (client_ch, server_ch) = pair.connect_with(client_config_with_deterministic_pns());
+    pair.drive();
+    info!("connected");
+
+    let client_stats_0 = pair.client_conn_mut(client_ch).stats();
+    let server_stats_0 = pair.server_conn_mut(server_ch).stats();
+
+    let client_stream = pair.client_streams(client_ch).open(Dir::Uni).unwrap();
+    pair.client_send(client_ch, client_stream)
+        .write(&[0; 512])
+        .unwrap();
+    pair.drive_client();
+
+    let server_stream = pair.server_streams(server_ch).open(Dir::Uni).unwrap();
+    pair.server_send(server_ch, server_stream)
+        .write(&[0; 512])
+        .unwrap();
+    pair.drive_server();
+
+    pair.client_send(client_ch, client_stream)
+        .write(&[0; 512])
+        .unwrap();
+    pair.drive_client();
+
+    pair.server_send(server_ch, server_stream)
+        .write(&[0; 512])
+        .unwrap();
+    pair.drive_server();
+
+    let client_stats_1 = pair.client_conn_mut(client_ch).stats();
+    let server_stats_1 = pair.server_conn_mut(server_ch).stats();
+
+    let stream_frames_tx_client = client_stats_1.frame_tx.stream - client_stats_0.frame_tx.stream;
+    let ack_frames_tx_client = client_stats_1.frame_tx.acks - client_stats_0.frame_tx.acks;
+    assert_eq!(stream_frames_tx_client - 1, ack_frames_tx_client);
+
+    let stream_frames_tx_server = server_stats_1.frame_tx.stream - server_stats_0.frame_tx.stream;
+    let ack_frames_tx_server = server_stats_1.frame_tx.acks - server_stats_0.frame_tx.acks;
+    assert_eq!(stream_frames_tx_server, ack_frames_tx_server);
+}
+
 fn setup_ack_frequency_test(max_ack_delay: Duration) -> (Pair, ConnectionHandle, ConnectionHandle) {
     let mut client_config = client_config_with_deterministic_pns();
     let mut ack_freq_config = AckFrequencyConfig::default();
