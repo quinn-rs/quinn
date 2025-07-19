@@ -9,7 +9,7 @@ use super::{
 };
 use crate::{Duration, Instant, TIMER_GRANULARITY, TransportConfig, congestion, packet::SpaceId};
 
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 use qlog::events::quic::MetricsUpdated;
 
 /// Description of a particular network path
@@ -47,8 +47,8 @@ pub(super) struct PathData {
     first_packet: Option<u64>,
 
     /// Snapshot of the qlog recovery metrics
-    #[cfg(feature = "__qlog")]
-    congestion_metrics: CongestionMetrics,
+    #[cfg(feature = "qlog")]
+    recovery_metrics: RecoveryMetrics,
 }
 
 impl PathData {
@@ -97,8 +97,8 @@ impl PathData {
             first_packet_after_rtt_sample: None,
             in_flight: InFlight::new(),
             first_packet: None,
-            #[cfg(feature = "__qlog")]
-            congestion_metrics: CongestionMetrics::default(),
+            #[cfg(feature = "qlog")]
+            recovery_metrics: RecoveryMetrics::default(),
         }
     }
 
@@ -120,8 +120,8 @@ impl PathData {
             first_packet_after_rtt_sample: prev.first_packet_after_rtt_sample,
             in_flight: InFlight::new(),
             first_packet: None,
-            #[cfg(feature = "__qlog")]
-            congestion_metrics: prev.congestion_metrics.clone(),
+            #[cfg(feature = "qlog")]
+            recovery_metrics: prev.recovery_metrics.clone(),
         }
     }
 
@@ -167,11 +167,11 @@ impl PathData {
         true
     }
 
-    #[cfg(feature = "__qlog")]
-    pub(super) fn qlog_congestion_metrics(&mut self, pto_count: u32) -> Option<MetricsUpdated> {
+    #[cfg(feature = "qlog")]
+    pub(super) fn qlog_recovery_metrics(&mut self, pto_count: u32) -> Option<MetricsUpdated> {
         let controller_metrics = self.congestion.metrics();
 
-        let metrics = CongestionMetrics {
+        let metrics = RecoveryMetrics {
             min_rtt: Some(self.rtt.min),
             smoothed_rtt: Some(self.rtt.get()),
             latest_rtt: Some(self.rtt.latest),
@@ -185,8 +185,8 @@ impl PathData {
             pacing_rate: controller_metrics.pacing_rate,
         };
 
-        let event = metrics.to_qlog_event(&self.congestion_metrics);
-        self.congestion_metrics = metrics;
+        let event = metrics.to_qlog_event(&self.recovery_metrics);
+        self.recovery_metrics = metrics;
         event
     }
 }
@@ -194,10 +194,10 @@ impl PathData {
 /// Congestion metrics as described in [`recovery_metrics_updated`].
 ///
 /// [`recovery_metrics_updated`]: https://datatracker.ietf.org/doc/html/draft-ietf-quic-qlog-quic-events.html#name-recovery_metrics_updated
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 #[derive(Default, Clone, PartialEq)]
 #[non_exhaustive]
-struct CongestionMetrics {
+struct RecoveryMetrics {
     pub min_rtt: Option<Duration>,
     pub smoothed_rtt: Option<Duration>,
     pub latest_rtt: Option<Duration>,
@@ -210,8 +210,8 @@ struct CongestionMetrics {
     pub pacing_rate: Option<u64>,
 }
 
-#[cfg(feature = "__qlog")]
-impl CongestionMetrics {
+#[cfg(feature = "qlog")]
+impl RecoveryMetrics {
     /// Retain only values that have been updated since the last snapshot.
     fn retain_updated(&self, previous: &Self) -> Self {
         macro_rules! keep_if_changed {

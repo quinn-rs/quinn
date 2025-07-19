@@ -1,6 +1,16 @@
 use std::{fmt, sync::Arc};
+#[cfg(feature = "qlog")]
+use std::{io, sync::Mutex, time::Instant};
 
-use crate::{Duration, INITIAL_MTU, MAX_UDP_PAYLOAD, VarInt, VarIntBoundsExceeded, congestion};
+#[cfg(feature = "qlog")]
+use qlog::streamer::QlogStreamer;
+
+#[cfg(feature = "qlog")]
+use crate::QlogStream;
+use crate::{
+    Duration, INITIAL_MTU, MAX_UDP_PAYLOAD, VarInt, VarIntBoundsExceeded, congestion,
+    connection::qlog::QlogSink,
+};
 
 /// Parameters governing the core QUIC state machine
 ///
@@ -44,6 +54,8 @@ pub struct TransportConfig {
     pub(crate) congestion_controller_factory: Arc<dyn congestion::ControllerFactory + Send + Sync>,
 
     pub(crate) enable_segmentation_offload: bool,
+
+    pub(crate) qlog_sink: QlogSink,
 }
 
 impl TransportConfig {
@@ -329,6 +341,13 @@ impl TransportConfig {
         self.enable_segmentation_offload = enabled;
         self
     }
+
+    /// qlog capture configuration to use for a particular connection
+    #[cfg(feature = "qlog")]
+    pub fn qlog_stream(&mut self, stream: Option<QlogStream>) -> &mut Self {
+        self.qlog_sink = stream.into();
+        self
+    }
 }
 
 impl Default for TransportConfig {
@@ -370,6 +389,8 @@ impl Default for TransportConfig {
             congestion_controller_factory: Arc::new(congestion::CubicConfig::default()),
 
             enable_segmentation_offload: true,
+
+            qlog_sink: QlogSink::default(),
         }
     }
 }
@@ -402,9 +423,11 @@ impl fmt::Debug for TransportConfig {
                 deterministic_packet_numbers: _,
             congestion_controller_factory: _,
             enable_segmentation_offload,
+            qlog_sink,
         } = self;
-        fmt.debug_struct("TransportConfig")
-            .field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
+        let mut s = fmt.debug_struct("TransportConfig");
+
+        s.field("max_concurrent_bidi_streams", max_concurrent_bidi_streams)
             .field("max_concurrent_uni_streams", max_concurrent_uni_streams)
             .field("max_idle_timeout", max_idle_timeout)
             .field("stream_receive_window", stream_receive_window)
@@ -429,8 +452,12 @@ impl fmt::Debug for TransportConfig {
             .field("datagram_receive_buffer_size", datagram_receive_buffer_size)
             .field("datagram_send_buffer_size", datagram_send_buffer_size)
             // congestion_controller_factory not debug
-            .field("enable_segmentation_offload", enable_segmentation_offload)
-            .finish_non_exhaustive()
+            .field("enable_segmentation_offload", enable_segmentation_offload);
+        if cfg!(feature = "qlog") {
+            s.field("qlog_stream", &qlog_sink.is_enabled());
+        }
+
+        s.finish_non_exhaustive()
     }
 }
 
@@ -508,6 +535,94 @@ impl Default for AckFrequencyConfig {
             ack_eliciting_threshold: VarInt(1),
             max_ack_delay: None,
             reordering_threshold: VarInt(2),
+        }
+    }
+}
+
+/// Configuration for qlog trace logging
+#[cfg(feature = "qlog")]
+pub struct QlogConfig {
+    writer: Option<Box<dyn io::Write + Send + Sync>>,
+    title: Option<String>,
+    description: Option<String>,
+    start_time: Instant,
+}
+
+#[cfg(feature = "qlog")]
+impl QlogConfig {
+    /// Where to write a qlog `TraceSeq`
+    pub fn writer(&mut self, writer: Box<dyn io::Write + Send + Sync>) -> &mut Self {
+        self.writer = Some(writer);
+        self
+    }
+
+    /// Title to record in the qlog capture
+    pub fn title(&mut self, title: Option<String>) -> &mut Self {
+        self.title = title;
+        self
+    }
+
+    /// Description to record in the qlog capture
+    pub fn description(&mut self, description: Option<String>) -> &mut Self {
+        self.description = description;
+        self
+    }
+
+    /// Epoch qlog event times are recorded relative to
+    pub fn start_time(&mut self, start_time: Instant) -> &mut Self {
+        self.start_time = start_time;
+        self
+    }
+
+    /// Construct the [`QlogStream`] described by this configuration
+    pub fn build(self) -> Option<QlogStream> {
+        use tracing::warn;
+
+        let writer = self.writer?;
+        let trace = qlog::TraceSeq::new(
+            qlog::VantagePoint {
+                name: None,
+                ty: qlog::VantagePointType::Unknown,
+                flow: None,
+            },
+            self.title.clone(),
+            self.description.clone(),
+            Some(qlog::Configuration {
+                time_offset: Some(0.0),
+                original_uris: None,
+            }),
+            None,
+        );
+
+        let mut streamer = QlogStreamer::new(
+            qlog::QLOG_VERSION.into(),
+            self.title,
+            self.description,
+            None,
+            self.start_time,
+            trace,
+            qlog::events::EventImportance::Core,
+            writer,
+        );
+
+        match streamer.start_log() {
+            Ok(()) => Some(QlogStream(Arc::new(Mutex::new(streamer)))),
+            Err(e) => {
+                warn!("could not initialize endpoint qlog streamer: {e}");
+                None
+            }
+        }
+    }
+}
+
+#[cfg(feature = "qlog")]
+impl Default for QlogConfig {
+    fn default() -> Self {
+        Self {
+            writer: None,
+            title: None,
+            description: None,
+            start_time: Instant::now(),
         }
     }
 }

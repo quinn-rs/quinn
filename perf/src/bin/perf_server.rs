@@ -1,4 +1,4 @@
-#[cfg(feature = "__qlog")]
+#[cfg(feature = "qlog")]
 use std::fs::File;
 use std::{fs, net::SocketAddr, path::PathBuf, sync::Arc, time::Duration};
 
@@ -53,7 +53,7 @@ struct Opt {
     #[clap(long = "congestion")]
     cong_alg: Option<CongestionAlgorithm>,
     /// qlog output file
-    #[cfg(feature = "__qlog")]
+    #[cfg(feature = "qlog")]
     #[clap(long = "qlog")]
     qlog_file: Option<PathBuf>,
 }
@@ -123,6 +123,14 @@ async fn run(opt: Opt) -> Result<()> {
         transport.congestion_controller_factory(cong_alg.build());
     }
 
+    #[cfg(feature = "qlog")]
+    if let Some(qlog_file) = &opt.qlog_file {
+        let mut qlog = quinn::QlogConfig::default();
+        qlog.writer(Box::new(File::create(qlog_file)?))
+            .title(Some("perf-server".into()));
+        transport.qlog_stream(qlog.build());
+    }
+
     let crypto = Arc::new(QuicServerConfig::try_from(crypto)?);
     let mut config = quinn::ServerConfig::with_crypto(match opt.no_protection {
         true => Arc::new(NoProtectionServerConfig::new(crypto)),
@@ -157,13 +165,7 @@ async fn run(opt: Opt) -> Result<()> {
 }
 
 async fn handle(handshake: quinn::Incoming, opt: Arc<Opt>) -> Result<()> {
-    let mut connection = handshake.await.context("handshake failed")?;
-
-    #[cfg(feature = "__qlog")]
-    if let Some(qlog_file) = &opt.qlog_file {
-        let writer = File::create(qlog_file)?;
-        connection.set_qlog(Box::new(writer), Some("perf-server".to_string()), None);
-    }
+    let connection = handshake.await.context("handshake failed")?;
 
     debug!("{} connected", connection.remote_address());
     tokio::try_join!(

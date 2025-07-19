@@ -8,11 +8,11 @@ publish = false
 [features]
 # NOTE: Please keep this in sync with the feature list in `.github/workflows/codecov.yml`, see
 # comment in that file for more information.
-default = ["json-output", "__qlog"]
+default = ["json-output", "qlog"]
 # Allow for json output from the perf client
 json-output = ["serde", "serde_json"]
 # Enable qlog support
-__qlog = ["quinn/__qlog"]
+qlog = ["quinn/qlog"]
 
 [dependencies]
 anyhow = { workspace = true }

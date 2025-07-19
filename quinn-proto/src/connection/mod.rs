@@ -9,11 +9,6 @@ use std::{
 
 use bytes::{Bytes, BytesMut};
 use frame::StreamMetaVec;
-#[cfg(feature = "__qlog")]
-use qlog::{
-    Configuration, QLOG_VERSION, TraceSeq, VantagePoint, VantagePointType, events::EventData,
-    events::EventImportance, streamer::QlogStreamer,
-};
 
 use rand::{Rng, SeedableRng, rngs::StdRng};
 use thiserror::Error;
@@ -67,6 +62,8 @@ use packet_crypto::{PrevCrypto, ZeroRttCrypto};
 mod paths;
 pub use paths::RttEstimator;
 use paths::{PathData, PathResponses};
+
+pub(crate) mod qlog;
 
 mod send_buffer;
 
@@ -237,10 +234,6 @@ pub struct Connection {
     stats: ConnectionStats,
     /// QUIC version used for the connection.
     version: u32,
-
-    /// qlog streamer to ouput events as JSON text sequences
-    #[cfg(feature = "__qlog")]
-    qlog_streamer: Option<QlogStreamer>,
 }
 
 impl Connection {
@@ -357,9 +350,6 @@ impl Connection {
             rng,
             stats: ConnectionStats::default(),
             version,
-
-            #[cfg(feature = "__qlog")]
-            qlog_streamer: None,
         };
         if path_validated {
             this.on_path_validated();
@@ -370,76 +360,6 @@ impl Connection {
             this.init_0rtt();
         }
         this
-    }
-
-    /// Set up qlog for this connection
-    #[cfg(feature = "__qlog")]
-    pub fn set_qlog(
-        &mut self,
-        writer: Box<dyn io::Write + Send + Sync>,
-        title: Option<String>,
-        description: Option<String>,
-        now: Instant,
-    ) {
-        let ty = if self.side.is_server() {
-            VantagePointType::Server
-        } else {
-            VantagePointType::Client
-        };
-
-        let level = EventImportance::Core;
-
-        let trace = TraceSeq::new(
-            VantagePoint {
-                name: None,
-                ty,
-                flow: None,
-            },
-            title.clone(),
-            description.clone(),
-            Some(Configuration {
-                time_offset: Some(0.0),
-                original_uris: None,
-            }),
-            None,
-        );
-
-        let mut streamer = QlogStreamer::new(
-            QLOG_VERSION.to_string(),
-            title,
-            description,
-            None,
-            now,
-            trace,
-            level,
-            writer,
-        );
-
-        if let Err(e) = streamer.start_log() {
-            warn!("could not initialize qlog streamer: {e}");
-            return;
-        }
-
-        self.qlog_streamer = Some(streamer);
-    }
-
-    /// Emit a `MetricsUpdated` event to the qlog streamer containing only updated values
-    #[cfg(feature = "__qlog")]
-    fn emit_qlog_recovery_metrics(&mut self, now: Instant) {
-        let Some(qlog_streamer) = &mut self.qlog_streamer else {
-            return;
-        };
-
-        let Some(metrics) = self.path.qlog_congestion_metrics(self.pto_count) else {
-            return;
-        };
-
-        let event = EventData::MetricsUpdated(metrics);
-
-        if let Err(e) = qlog_streamer.add_event_data_with_instant(event, now) {
-            warn!("could not emit qlog event, dropping qlog streamer: {e}");
-            self.qlog_streamer = None;
-        }
     }
 
     /// Returns the next time at which `handle_timeout` should be called
@@ -1004,8 +924,12 @@ impl Connection {
                 .congestion
                 .on_sent(now, buf.len() as u64, last_packet_number);
 
-            #[cfg(feature = "__qlog")]
-            self.emit_qlog_recovery_metrics(now);
+            self.config.qlog_sink.emit_recovery_metrics(
+                self.pto_count,
+                &mut self.path,
+                now,
+                self.orig_rem_cid,
+            );
         }
 
         self.app_limited = buf.is_empty() && !congestion_blocked;
@@ -1126,7 +1050,7 @@ impl Connection {
         // sending a datagram of this size
         builder.pad_to(MIN_INITIAL_SIZE);
 
-        builder.finish(self, buf);
+        builder.finish(self, now, buf);
         self.stats.udp_tx.on_sent(1, buf.len());
 
         Some(Transmit {
@@ -1196,8 +1120,12 @@ impl Connection {
                     self.handle_coalesced(now, remote, ecn, data);
                 }
 
-                #[cfg(feature = "__qlog")]
-                self.emit_qlog_recovery_metrics(now);
+                self.config.qlog_sink.emit_recovery_metrics(
+                    self.pto_count,
+                    &mut self.path,
+                    now,
+                    self.orig_rem_cid,
+                );
 
                 if was_anti_amplification_blocked {
                     // A prior attempt to set the loss detection timer may have failed due to
@@ -1254,8 +1182,12 @@ impl Connection {
                 Timer::LossDetection => {
                     self.on_loss_detection_timeout(now);
 
-                    #[cfg(feature = "__qlog")]
-                    self.emit_qlog_recovery_metrics(now);
+                    self.config.qlog_sink.emit_recovery_metrics(
+                        self.pto_count,
+                        &mut self.path,
+                        now,
+                        self.orig_rem_cid,
+                    );
                 }
                 Timer::KeyDiscard => {
                     self.zero_rtt_crypto = None;
@@ -1806,6 +1738,14 @@ impl Connection {
 
             for &packet in &lost_packets {
                 let info = self.spaces[pn_space].take(packet).unwrap(); // safe: lost_packets is populated just above
+                self.config.qlog_sink.emit_packet_lost(
+                    packet,
+                    &info,
+                    lost_send_time,
+                    pn_space,
+                    now,
+                    self.orig_rem_cid,
+                );
                 self.remove_in_flight(packet, &info);
                 for frame in info.stream_frames {
                     self.streams.retransmit(frame);
@@ -1994,6 +1934,14 @@ impl Connection {
             // Update outgoing spin bit, inverting iff we're the client
             self.spin = self.side.is_client() ^ spin;
         }
+
+        self.config.qlog_sink.emit_packet_received(
+            packet,
+            space_id,
+            !is_1rtt,
+            now,
+            self.orig_rem_cid,
+        );
     }
 
     fn reset_idle_timeout(&mut self, now: Instant, space: SpaceId) {
@@ -2063,8 +2011,12 @@ impl Connection {
             self.handle_coalesced(now, remote, ecn, data);
         }
 
-        #[cfg(feature = "__qlog")]
-        self.emit_qlog_recovery_metrics(now);
+        self.config.qlog_sink.emit_recovery_metrics(
+            self.pto_count,
+            &mut self.path,
+            now,
+            self.orig_rem_cid,
+        );
 
         Ok(())
     }

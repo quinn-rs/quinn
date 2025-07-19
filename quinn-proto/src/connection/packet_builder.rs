@@ -191,7 +191,7 @@ impl PacketBuilder {
         let ack_eliciting = self.ack_eliciting;
         let exact_number = self.exact_number;
         let space_id = self.space;
-        let (size, padded) = self.finish(conn, buffer);
+        let (size, padded) = self.finish(conn, now, buffer);
         let sent = match sent {
             Some(sent) => sent,
             None => return,
@@ -229,7 +229,12 @@ impl PacketBuilder {
     }
 
     /// Encrypt packet, returning the length of the packet and whether padding was added
-    pub(super) fn finish(self, conn: &mut Connection, buffer: &mut Vec<u8>) -> (usize, bool) {
+    pub(super) fn finish(
+        self,
+        conn: &mut Connection,
+        now: Instant,
+        buffer: &mut Vec<u8>,
+    ) -> (usize, bool) {
         let pad = buffer.len() < self.min_size;
         if pad {
             trace!("PADDING * {}", self.min_size - buffer.len());
@@ -261,6 +266,16 @@ impl PacketBuilder {
             Some((self.exact_number, packet_crypto)),
         );
 
-        (buffer.len() - encode_start, pad)
+        let len = buffer.len() - encode_start;
+        conn.config.qlog_sink.emit_packet_sent(
+            self.exact_number,
+            len,
+            self.space,
+            self.space == SpaceId::Data && conn.spaces[SpaceId::Data].crypto.is_none(),
+            now,
+            conn.orig_rem_cid,
+        );
+
+        (len, pad)
     }
 }

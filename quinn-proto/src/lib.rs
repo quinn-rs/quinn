@@ -49,11 +49,15 @@ pub use crate::connection::{
     SendDatagramError, SendStream, ShouldTransmit, StreamEvent, Streams, UdpStats, WriteError,
     Written,
 };
+#[cfg(feature = "qlog")]
+pub use connection::qlog::QlogStream;
 
 #[cfg(feature = "rustls")]
 pub use rustls;
 
 mod config;
+#[cfg(feature = "qlog")]
+pub use config::QlogConfig;
 pub use config::{
     AckFrequencyConfig, ClientConfig, ConfigError, EndpointConfig, IdleTimeout, MtuDiscoveryConfig,
     ServerConfig, StdSystemTime, TimeSource, TransportConfig, ValidationTokenConfig,

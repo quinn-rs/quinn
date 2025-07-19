@@ -34,7 +34,7 @@ log = ["tracing/log"]
 # Enable rustls logging
 rustls-log = ["rustls?/logging"]
 # Enable qlog support
-__qlog = ["dep:qlog"]
+qlog = ["dep:qlog"]
 
 [dependencies]
 arbitrary = { workspace = true, optional = true }
