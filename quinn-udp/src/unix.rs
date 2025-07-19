@@ -1028,6 +1028,7 @@ fn set_socket_option_supported(
     match set_socket_option(socket, level, name, value) {
         Ok(()) => Ok(true),
         Err(err) if err.raw_os_error() == Some(libc::ENOPROTOOPT) => Ok(false),
+        Err(err) if err.raw_os_error() == Some(libc::EOPNOTSUPP) => Ok(false),
         Err(err) => Err(err),
     }
 }
