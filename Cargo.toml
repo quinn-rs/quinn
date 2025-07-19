@@ -1,6 +1,6 @@
 [package]
 name = "ant-quic"
-version = "0.3.0"
+version = "0.3.1"
 edition = "2021"
 rust-version = "1.74.1"
 license = "MIT OR Apache-2.0"
@@ -130,6 +130,11 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_brows
 [[bin]]
 name = "ant-quic"
 path = "src/bin/ant-quic.rs"
+
+# QUIC-based P2P demo (migrated from UDP)
+[[bin]]
+name = "ant-quic-v2"
+path = "src/bin/ant-quic-v2.rs"
 
 # Benchmarks
 [[bench]]

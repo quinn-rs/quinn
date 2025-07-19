@@ -388,6 +388,11 @@ impl QuicP2PNode {
     pub async fn get_stats(&self) -> NodeStats {
         self.stats.lock().await.clone()
     }
+    
+    /// Get access to the NAT traversal endpoint
+    pub fn get_nat_endpoint(&self) -> Result<&NatTraversalEndpoint, Box<dyn std::error::Error + Send + Sync>> {
+        Ok(&*self.nat_endpoint)
+    }
 
     /// Start periodic statistics reporting
     pub fn start_stats_task(&self) -> tokio::task::JoinHandle<()> {

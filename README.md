@@ -59,6 +59,16 @@ ant-quic --verbose --listen 0.0.0.0:9000
 
 # Network simulation for testing
 ant-quic --simulate --nodes 50 --duration 300
+
+# New QUIC-based demo with real NAT traversal (v2)
+ant-quic-v2 --bootstrap localhost:9000
+
+# Run as coordinator with NAT traversal event monitoring
+ant-quic-v2 --force-coordinator --bootstrap localhost:9001
+
+# Check NAT traversal status while running
+# Type /status to see discovered addresses and coordination sessions
+# Type /help for available commands
 ```
 
 ### How It Works

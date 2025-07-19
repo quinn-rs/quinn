@@ -403,7 +403,7 @@ impl Default for DiscoveryConfig {
 
 impl CandidateDiscoveryManager {
     /// Create a new candidate discovery manager
-    pub fn new(config: DiscoveryConfig, _role: NatTraversalRole) -> Self {
+    pub fn new(config: DiscoveryConfig) -> Self {
         let interface_discovery = create_platform_interface_discovery();
         let server_reflexive_discovery = ServerReflexiveDiscovery::new(&config);
         let symmetric_predictor = SymmetricNatPredictor::new(&config);
@@ -426,6 +426,51 @@ impl CandidateDiscoveryManager {
                 statistics: DiscoveryStatistics::default(),
                 allocation_history: VecDeque::new(),
             },
+        }
+    }
+
+    /// Discover local network interface candidates synchronously
+    pub fn discover_local_candidates(&mut self) -> Result<Vec<ValidatedCandidate>, DiscoveryError> {
+        // Start interface scan
+        self.interface_discovery.start_scan().map_err(|e| {
+            DiscoveryError::NetworkError(format!("Failed to start interface scan: {}", e))
+        })?;
+        
+        // Poll until scan completes (this should be quick for local interfaces)
+        let start = Instant::now();
+        let timeout = Duration::from_secs(2);
+        
+        loop {
+            if start.elapsed() > timeout {
+                return Err(DiscoveryError::DiscoveryTimeout);
+            }
+            
+            if let Some(interfaces) = self.interface_discovery.check_scan_complete() {
+                // Convert interfaces to candidates
+                let mut candidates = Vec::new();
+                
+                for interface in interfaces {
+                    for addr in interface.addresses {
+                        candidates.push(ValidatedCandidate {
+                            id: CandidateId(rand::random()),
+                            address: addr,
+                            source: DiscoverySourceType::Local,
+                            priority: 50000, // High priority for local interfaces
+                            rtt: None,
+                            reliability_score: 1.0,
+                        });
+                    }
+                }
+                
+                if candidates.is_empty() {
+                    return Err(DiscoveryError::NoLocalInterfaces);
+                }
+                
+                return Ok(candidates);
+            }
+            
+            // Small sleep to avoid busy waiting
+            std::thread::sleep(Duration::from_millis(10));
         }
     }
 

@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.1] - 2025-07-19
+
+### Added
+- New `ant-quic-v2` binary demonstrating QUIC-based P2P connectivity with NAT traversal
+- Real-time NAT traversal event monitoring with `[NAT]` prefixed logging
+- `/status` command to display NAT traversal status (local candidates, reflexive addresses, coordination sessions)
+- `/help` command showing available commands in the demo binary
+- Chat messaging system over QUIC streams with serialization protocol
+- Platform-specific network discovery integration in ant-quic binary using `CandidateDiscoveryManager`
+- Synchronous `discover_local_candidates` method for binary usage
+- `get_nat_endpoint` method in `QuicP2PNode` for accessing NAT traversal endpoint
+
+### Changed
+- Migrated ant-quic binary from UDP sockets to real QUIC connections using `QuicP2PNode`
+- Enhanced binary with proper NAT traversal coordination protocol visibility
+- Improved error types to be `Send + Sync` for async compatibility
+
 ## [0.3.0] - 2025-07-19
 
 ### Added

@@ -20,7 +20,7 @@ use std::{
 
 use ant_quic::{
     CandidateAddress, CandidateSource, CandidateState, PeerId, derive_peer_id_from_public_key,
-    generate_ed25519_keypair,
+    generate_ed25519_keypair, candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig},
 };
 use clap::Parser;
 // use four_word_networking::FourWordAdaptiveEncoder;
@@ -390,12 +390,14 @@ impl Default for NodeStats {
 #[derive(Debug, Clone)]
 struct ServedPeer {
     /// Peer's ID
+    #[allow(dead_code)] // Will be used for peer identification in NAT traversal
     peer_id: PeerId,
     /// Peer's chosen nickname
     nickname: String,
     /// Observed address
     observed_address: SocketAddr,
     /// Local candidates reported by peer
+    #[allow(dead_code)] // Will be used for NAT traversal coordination
     local_candidates: Vec<CandidateAddress>,
     /// Last seen timestamp
     last_seen: Instant,
@@ -418,14 +420,18 @@ struct CoordinationSession {
 #[derive(Debug, Clone)]
 struct ChatMessage {
     /// Message ID for deduplication
+    #[allow(dead_code)] // Will be used for message deduplication
     message_id: u64,
     /// Sender's peer ID
+    #[allow(dead_code)] // Will be used for message verification
     from_peer_id: PeerId,
     /// Sender's nickname
     from_nickname: String,
     /// Target peer ID (None for broadcast)
+    #[allow(dead_code)] // Will be used for direct messaging
     to_peer_id: Option<PeerId>,
     /// Target nickname (None for broadcast)
+    #[allow(dead_code)] // Will be used for direct messaging UI
     to_nickname: Option<String>,
     /// Message content
     content: String,
@@ -453,14 +459,17 @@ struct UnifiedP2PNode {
     /// Node's own peer ID (derived from public key)
     peer_id: PeerId,
     /// Ed25519 private key for this node
+    #[allow(dead_code)] // Will be used for signing messages and authentication
     private_key: SigningKey,
     /// Ed25519 public key for this node
+    #[allow(dead_code)] // May be used for cryptographic operations in the future
     public_key: VerifyingKey,
     /// Dual-stack socket for IPv4/IPv6 communication
     socket: DualStackSocket,
     /// Primary local address we're bound to
     local_addr: SocketAddr,
     /// All bound addresses (IPv4 and IPv6)
+    #[allow(dead_code)] // Kept for potential future use in multi-homed scenarios
     bound_addresses: Vec<SocketAddr>,
     /// Configuration
     config: NodeConfig,
@@ -1385,6 +1394,7 @@ impl UnifiedP2PNode {
     }
 
     /// Send a chat message
+    #[allow(dead_code)] // Will be used when implementing full chat functionality
     async fn send_chat_message(&self, content: String, target_nickname: Option<String>) {
         debug!("Sending chat message: {} to {:?}", content, target_nickname);
         let (our_peer_id, our_nickname, message_id) = {
@@ -1553,6 +1563,7 @@ impl UnifiedP2PNode {
     }
 
     /// Connect to a specific peer
+    #[allow(dead_code)] // Will be used when implementing peer connection commands
     pub async fn connect_to_peer(&self, target_peer_id: PeerId) {
         info!("Attempting to connect to peer {:?}", target_peer_id);
 
@@ -1583,6 +1594,7 @@ impl UnifiedP2PNode {
     }
 
     /// Request coordination through bootstrap nodes
+    #[allow(dead_code)] // Will be used when implementing NAT traversal coordination
     async fn request_coordination(&self, target_peer_id: PeerId) {
         let bootstrap_nodes = self.bootstrap_nodes.lock().unwrap().clone();
 
@@ -1603,6 +1615,7 @@ impl UnifiedP2PNode {
     }
 
     /// Create coordination request packet
+    #[allow(dead_code)] // Will be used when implementing NAT traversal coordination
     fn create_coordination_request_packet(&self, target_peer_id: PeerId) -> Vec<u8> {
         let mut packet = Vec::new();
         packet.push(0x03); // Coordination request
@@ -1984,6 +1997,7 @@ impl UnifiedP2PNode {
     }
 
     /// Get current node statistics
+    #[allow(dead_code)] // Will be used when implementing status commands
     pub fn get_stats(&self) -> NodeStats {
         self.stats.lock().unwrap().clone()
     }
@@ -2694,8 +2708,8 @@ async fn display_network_interfaces(bound_addr: SocketAddr, bootstrap_addresses:
     };
     print_item(&bound_desc, 4);
 
-    // Discover local network interfaces using our lightweight approach
-    let local_addresses = discover_local_addresses_lightweight(bound_addr.port());
+    // Discover local network interfaces using the proper network discovery
+    let local_addresses = discover_local_addresses_proper(bound_addr.port());
     if !local_addresses.is_empty() {
         let mut displayed_v4 = std::collections::HashSet::new();
         let mut displayed_v6 = std::collections::HashSet::new();
@@ -2790,7 +2804,55 @@ fn update_status_line(stats: &Arc<Mutex<NodeStats>>) {
     io::stdout().flush().unwrap();
 }
 
-/// Lightweight local address discovery without external dependencies
+/// Discover local addresses using the proper network interface discovery
+fn discover_local_addresses_proper(port: u16) -> Vec<SocketAddr> {
+    let mut addresses = Vec::new();
+    
+    // Create a discovery manager with default config
+    let discovery_config = DiscoveryConfig {
+        total_timeout: Duration::from_secs(30),
+        local_scan_timeout: Duration::from_secs(2),
+        bootstrap_query_timeout: Duration::from_secs(5),
+        max_query_retries: 3,
+        max_candidates: 50,
+        enable_symmetric_prediction: false,
+        min_bootstrap_consensus: 2,
+        interface_cache_ttl: Duration::from_secs(60),
+        server_reflexive_cache_ttl: Duration::from_secs(300),
+    };
+    
+    let mut discovery = CandidateDiscoveryManager::new(discovery_config);
+    
+    // Discover local interfaces
+    info!("Starting local network interface discovery...");
+    match discovery.discover_local_candidates() {
+        Ok(candidates) => {
+            info!("Raw candidates discovered: {}", candidates.len());
+            for candidate in candidates {
+                // Convert validated candidates to socket addresses with the correct port
+                let mut addr = candidate.address;
+                addr.set_port(port);
+                addresses.push(addr);
+                debug!("Found local address: {} (source: {:?})", addr, candidate.source);
+            }
+            
+            info!("Discovered {} local addresses via proper interface enumeration", addresses.len());
+        }
+        Err(e) => {
+            error!("Failed to discover local interfaces: {}", e);
+        }
+    }
+    
+    // If discovery failed, fall back to the lightweight method
+    if addresses.is_empty() {
+        warn!("Falling back to lightweight address discovery");
+        addresses.extend(discover_local_addresses_lightweight(port));
+    }
+    
+    addresses
+}
+
+/// Lightweight local address discovery fallback (when proper discovery fails)
 fn discover_local_addresses_lightweight(port: u16) -> Vec<SocketAddr> {
     let mut addresses = Vec::new();
 
@@ -2881,5 +2943,12 @@ mod tests {
         assert!(config.enable_coordinator);
         assert!(!config.force_coordinator);
         assert_eq!(config.reachability_timeout, Duration::from_secs(5));
+    }
+    
+    #[test]
+    fn test_discover_local_addresses() {
+        let addresses = discover_local_addresses_proper(9000);
+        println!("Discovered addresses: {:?}", addresses);
+        assert!(!addresses.is_empty(), "Should discover at least one local address");
     }
 }

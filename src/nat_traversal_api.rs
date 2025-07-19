@@ -518,7 +518,7 @@ impl NatTraversalEndpoint {
         };
 
         let discovery_manager = Arc::new(std::sync::Mutex::new(
-            CandidateDiscoveryManager::new(discovery_config, nat_traversal_role)
+            CandidateDiscoveryManager::new(discovery_config)
         ));
 
         // Create QUIC endpoint with NAT traversal enabled
@@ -579,7 +579,7 @@ impl NatTraversalEndpoint {
         };
         
         let discovery_manager = Arc::new(std::sync::Mutex::new(
-            CandidateDiscoveryManager::new(discovery_config, nat_traversal_role)
+            CandidateDiscoveryManager::new(discovery_config)
         ));
         
         // Create fallback endpoint
