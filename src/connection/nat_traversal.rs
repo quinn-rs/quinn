@@ -1927,6 +1927,7 @@ impl NatTraversalState {
     }
 
     /// Add a local candidate that we've discovered
+    #[allow(dead_code)] // Reserved for future local candidate management
     pub(super) fn add_local_candidate(
         &mut self,
         address: SocketAddr,
@@ -1962,6 +1963,7 @@ impl NatTraversalState {
     }
 
     /// Calculate local preference for address prioritization
+    #[allow(dead_code)] // Reserved for ICE-like priority calculation
     fn calculate_local_preference(&self, addr: SocketAddr) -> u16 {
         match addr {
             SocketAddr::V4(v4) => {
@@ -2643,6 +2645,7 @@ impl NatTraversalState {
 
 
     /// Check for validation timeouts and handle retries
+    #[allow(dead_code)] // Reserved for validation timeout handling
     pub(super) fn check_validation_timeouts(&mut self, now: Instant) -> Vec<SocketAddr> {
         let mut expired_validations = Vec::new();
         let mut retry_validations = Vec::new();
@@ -2685,6 +2688,7 @@ impl NatTraversalState {
     }
     
     /// Schedule validation retries for active validations that need retry
+    #[allow(dead_code)] // Reserved for retry scheduling logic
     pub(super) fn schedule_validation_retries(&mut self, now: Instant) -> Vec<SocketAddr> {
         let mut retry_addresses = Vec::new();
         
@@ -2710,6 +2714,7 @@ impl NatTraversalState {
 
 
     /// Update network conditions and cleanup
+    #[allow(dead_code)] // Reserved for network condition monitoring
     pub(super) fn update_network_conditions(&mut self, now: Instant) {
         self.network_monitor.cleanup(now);
         
@@ -2732,6 +2737,7 @@ impl NatTraversalState {
 
 
     /// Check if coordination should be retried now
+    #[allow(dead_code)] // Reserved for coordination retry logic
     pub(super) fn should_retry_coordination(&self, now: Instant) -> bool {
         if let Some(coord) = &self.coordination {
             if coord.retry_count > 0 {
@@ -2746,6 +2752,7 @@ impl NatTraversalState {
 
 
     /// Perform resource management and cleanup
+    #[allow(dead_code)] // Reserved for resource management optimization
     pub(super) fn perform_resource_management(&mut self, now: Instant) -> u64 {
         // Update resource usage statistics
         self.resource_manager.update_stats(
@@ -2964,6 +2971,7 @@ impl NatTraversalState {
     /// 
     /// This method is called when a peer connects to this bootstrap node,
     /// allowing the bootstrap to observe the peer's public address.
+    #[allow(dead_code)] // Reserved for address observation handling
     pub(super) fn handle_address_observation(
         &mut self,
         peer_id: [u8; 32],
@@ -3051,6 +3059,7 @@ impl NatTraversalState {
     }
 
     /// Queue an ADD_ADDRESS frame for transmission
+    #[allow(dead_code)] // Reserved for ADD_ADDRESS frame queueing
     pub(super) fn queue_add_address_frame(
         &mut self,
         sequence: VarInt,
@@ -3415,6 +3424,7 @@ impl BootstrapCoordinator {
     /// 
     /// This is called when a peer connects to this bootstrap node,
     /// allowing us to observe their public address.
+    #[allow(dead_code)] // Reserved for peer address observation
     pub(crate) fn observe_peer_address(
         &mut self,
         peer_id: PeerId,
@@ -3481,6 +3491,7 @@ impl BootstrapCoordinator {
     /// 
     /// This creates an ADD_ADDRESS frame to inform a peer of their
     /// observed public address.
+    #[allow(dead_code)] // Reserved for ADD_ADDRESS frame generation
     pub(crate) fn generate_add_address_frame(
         &self,
         peer_id: PeerId,
@@ -3631,11 +3642,13 @@ impl BootstrapCoordinator {
     }
 
     /// Generate secure coordination round using cryptographically secure random values
+    #[allow(dead_code)] // Reserved for secure round generation
     pub(crate) fn generate_secure_coordination_round(&self) -> VarInt {
         self.security_validator.generate_secure_coordination_round()
     }
 
     /// Perform comprehensive security validation for coordination requests
+    #[allow(dead_code)] // Reserved for security validation
     pub(crate) fn validate_coordination_security(
         &mut self,
         peer_id: PeerId,
@@ -3659,6 +3672,7 @@ impl BootstrapCoordinator {
     }
 
     /// Clean up expired sessions and perform maintenance
+    #[allow(dead_code)] // Reserved for session cleanup
     pub(crate) fn cleanup_expired_sessions(&mut self, now: Instant) {
         let session_timeout = Duration::from_secs(300); // 5 minutes
         
@@ -3698,11 +3712,13 @@ impl BootstrapCoordinator {
     }
 
     /// Get bootstrap statistics
+    #[allow(dead_code)] // Reserved for statistics retrieval
     pub(crate) fn get_stats(&self) -> &BootstrapStats {
         &self.stats
     }
 
     /// Update peer coordination statistics
+    #[allow(dead_code)] // Reserved for stats updates
     pub(crate) fn update_peer_coordination_stats(
         &mut self,
         peer_id: PeerId,
@@ -3734,6 +3750,7 @@ impl BootstrapCoordinator {
     /// 
     /// This method implements the core session state machine polling logic
     /// with timeout handling, retry mechanisms, and error recovery.
+    #[allow(dead_code)] // Reserved for state machine polling
     pub(crate) fn poll_session_state_machine(&mut self, now: Instant) -> Vec<CoordinationSessionEvent> {
         let mut events = Vec::new();
         let mut sessions_to_update = Vec::new();
@@ -3779,6 +3796,7 @@ impl BootstrapCoordinator {
     }
 
     /// Check if a session should advance its state
+    #[allow(dead_code)] // Reserved for session advancement logic
     fn should_advance_session(&self, session: &CoordinationSession, now: Instant) -> Option<SessionAdvancementEvent> {
         let session_age = now.duration_since(session.started_at);
         
@@ -3841,6 +3859,7 @@ impl BootstrapCoordinator {
     }
 
     /// Advance session state based on event (static version to avoid borrowing issues)
+    #[allow(dead_code)] // Reserved for static state advancement
     fn advance_session_state_static(
         session: &mut CoordinationSession,
         event: SessionAdvancementEvent,
@@ -3929,6 +3948,7 @@ impl BootstrapCoordinator {
     }
 
     /// Clean up completed or failed sessions
+    #[allow(dead_code)] // Reserved for completed session cleanup
     fn cleanup_completed_sessions(&mut self, now: Instant) {
         let cleanup_timeout = Duration::from_secs(300); // 5 minutes
         
@@ -3955,6 +3975,7 @@ impl BootstrapCoordinator {
     /// 
     /// This method handles retry logic for failed coordination attempts
     /// with exponential backoff to avoid overwhelming the network.
+    #[allow(dead_code)] // Reserved for retry handling
     pub(crate) fn retry_failed_coordination(
         &mut self,
         session_id: CoordinationSessionId,
@@ -4007,6 +4028,7 @@ impl BootstrapCoordinator {
     }
 
     /// Handle coordination errors with appropriate recovery strategies
+    #[allow(dead_code)] // Reserved for error handling
     pub(crate) fn handle_coordination_error(
         &mut self,
         session_id: CoordinationSessionId,
@@ -4065,6 +4087,7 @@ impl BootstrapCoordinator {
     /// 
     /// This method implements the core coordination logic for establishing
     /// direct P2P connections through NAT traversal.
+    #[allow(dead_code)] // Reserved for hole punching coordination
     pub(crate) fn coordinate_hole_punching(
         &mut self,
         peer_a: PeerId,
@@ -4118,6 +4141,7 @@ impl BootstrapCoordinator {
     /// 
     /// This method handles the relay of coordination messages between peers
     /// to facilitate synchronized hole punching.
+    #[allow(dead_code)] // Reserved for frame relaying
     pub(crate) fn relay_coordination_frame(
         &mut self,
         session_id: CoordinationSessionId,
@@ -4175,6 +4199,7 @@ impl BootstrapCoordinator {
     /// 
     /// This method manages the timing and synchronization of hole punching rounds
     /// to maximize the chances of successful NAT traversal.
+    #[allow(dead_code)] // Reserved for round advancement
     pub(crate) fn advance_coordination_round(
         &mut self,
         session_id: CoordinationSessionId,
@@ -4248,16 +4273,19 @@ impl BootstrapCoordinator {
     }
 
     /// Get coordination session by ID
+    #[allow(dead_code)] // Reserved for session retrieval
     pub(crate) fn get_coordination_session(&self, session_id: CoordinationSessionId) -> Option<&CoordinationSession> {
         self.coordination_sessions.get(&session_id)
     }
 
     /// Get mutable coordination session by ID
+    #[allow(dead_code)] // Reserved for mutable session access
     pub(crate) fn get_coordination_session_mut(&mut self, session_id: CoordinationSessionId) -> Option<&mut CoordinationSession> {
         self.coordination_sessions.get_mut(&session_id)
     }
 
     /// Mark coordination session as successful
+    #[allow(dead_code)] // Reserved for success tracking
     pub(crate) fn mark_coordination_success(
         &mut self,
         session_id: CoordinationSessionId,
@@ -4286,6 +4314,7 @@ impl BootstrapCoordinator {
     }
 
     /// Mark coordination session as failed
+    #[allow(dead_code)] // Reserved for failure tracking
     pub(crate) fn mark_coordination_failure(
         &mut self,
         session_id: CoordinationSessionId,

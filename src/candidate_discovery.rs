@@ -18,7 +18,7 @@ use tracing::{debug, info, warn};
 use crate::Connection;
 
 use crate::{
-    connection::nat_traversal::{CandidateSource, CandidateState, NatTraversalRole},
+    connection::nat_traversal::{CandidateSource, CandidateState},
     nat_traversal_api::{BootstrapNode, CandidateAddress, PeerId},
 };
 

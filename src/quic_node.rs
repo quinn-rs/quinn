@@ -15,11 +15,16 @@ use tracing::{debug, info, error};
 use crate::{
     nat_traversal_api::{
         NatTraversalEndpoint, NatTraversalConfig, NatTraversalEvent,
-        EndpointRole, PeerId, NatTraversalError,
+        EndpointRole, PeerId, NatTraversalError, NatTraversalStatistics,
+    },
+    auth::{AuthManager, AuthConfig, AuthMessage, AuthProtocol},
+    crypto::raw_public_keys::key_utils::{
+        generate_ed25519_keypair, derive_peer_id_from_public_key,
     },
 };
 
 /// QUIC-based P2P node with NAT traversal
+#[derive(Clone)]
 pub struct QuicP2PNode {
     /// NAT traversal endpoint
     nat_endpoint: Arc<NatTraversalEndpoint>,
@@ -29,6 +34,10 @@ pub struct QuicP2PNode {
     stats: Arc<tokio::sync::Mutex<NodeStats>>,
     /// Node configuration
     config: QuicNodeConfig,
+    /// Authentication manager
+    auth_manager: Arc<AuthManager>,
+    /// Our peer ID
+    peer_id: PeerId,
 }
 
 /// Configuration for QUIC P2P node
@@ -46,6 +55,8 @@ pub struct QuicNodeConfig {
     pub connection_timeout: Duration,
     /// Statistics interval
     pub stats_interval: Duration,
+    /// Authentication configuration
+    pub auth_config: AuthConfig,
 }
 
 impl Default for QuicNodeConfig {
@@ -57,8 +68,22 @@ impl Default for QuicNodeConfig {
             max_connections: 100,
             connection_timeout: Duration::from_secs(30),
             stats_interval: Duration::from_secs(30),
+            auth_config: AuthConfig::default(),
         }
     }
+}
+
+/// Connection metrics for a specific peer
+#[derive(Debug, Clone)]
+pub struct ConnectionMetrics {
+    /// Bytes sent to this peer
+    pub bytes_sent: u64,
+    /// Bytes received from this peer
+    pub bytes_received: u64,
+    /// Round-trip time
+    pub rtt: Option<Duration>,
+    /// Packet loss rate (0.0 to 1.0)
+    pub packet_loss: f64,
 }
 
 /// Node statistics
@@ -93,7 +118,16 @@ impl Default for NodeStats {
 
 impl QuicP2PNode {
     /// Create a new QUIC P2P node
-    pub async fn new(config: QuicNodeConfig) -> Result<Self, Box<dyn std::error::Error>> {
+    pub async fn new(config: QuicNodeConfig) -> Result<Self, Box<dyn std::error::Error + Send + Sync>> {
+        // Generate Ed25519 keypair for authentication
+        let (secret_key, public_key) = generate_ed25519_keypair();
+        let peer_id = derive_peer_id_from_public_key(&public_key);
+        
+        info!("Creating QUIC P2P node with peer ID: {:?}", peer_id);
+        
+        // Create authentication manager
+        let auth_manager = Arc::new(AuthManager::new(secret_key, config.auth_config.clone()));
+        
         // Create NAT traversal configuration
         let nat_config = NatTraversalConfig {
             role: config.role,
@@ -101,7 +135,8 @@ impl QuicP2PNode {
             max_candidates: 50,
             coordination_timeout: Duration::from_secs(10),
             enable_symmetric_nat: true,
-            enable_relay_fallback: true,
+            // Bootstrap nodes should not enable relay fallback
+            enable_relay_fallback: !matches!(config.role, EndpointRole::Bootstrap),
             max_concurrent_attempts: 5,
         };
 
@@ -138,6 +173,8 @@ impl QuicP2PNode {
             connected_peers: Arc::new(tokio::sync::RwLock::new(HashMap::new())),
             stats: stats_clone,
             config,
+            auth_manager,
+            peer_id,
         })
     }
 
@@ -184,6 +221,26 @@ impl QuicP2PNode {
                             }
                             
                             info!("Successfully connected to peer {:?} at {}", peer_id, remote_address);
+                            
+                            // Perform authentication if required
+                            if self.config.auth_config.require_authentication {
+                                match self.authenticate_as_initiator(&peer_id).await {
+                                    Ok(_) => {
+                                        info!("Authentication successful with peer {:?}", peer_id);
+                                    }
+                                    Err(e) => {
+                                        error!("Authentication failed with peer {:?}: {}", peer_id, e);
+                                        // Remove from connected peers
+                                        self.connected_peers.write().await.remove(&peer_id);
+                                        // Update stats
+                                        let mut stats = self.stats.lock().await;
+                                        stats.active_connections = stats.active_connections.saturating_sub(1);
+                                        stats.failed_connections += 1;
+                                        return Err(NatTraversalError::ConfigError(format!("Authentication failed: {}", e)));
+                                    }
+                                }
+                            }
+                            
                             return Ok(remote_address);
                         }
                     }
@@ -219,7 +276,7 @@ impl QuicP2PNode {
     }
 
     /// Accept incoming connections
-    pub async fn accept(&self) -> Result<(SocketAddr, PeerId), Box<dyn std::error::Error>> {
+    pub async fn accept(&self) -> Result<(SocketAddr, PeerId), Box<dyn std::error::Error + Send + Sync>> {
         info!("Waiting for incoming connection...");
         
         // Accept connection through the NAT traversal endpoint
@@ -241,6 +298,23 @@ impl QuicP2PNode {
                 }
                 
                 info!("Accepted connection from peer {:?} at {}", peer_id, remote_addr);
+                
+                // Handle authentication if required
+                if self.config.auth_config.require_authentication {
+                    // Start a task to handle incoming authentication
+                    let self_clone = self.clone();
+                    let auth_peer_id = peer_id;
+                    tokio::spawn(async move {
+                        if let Err(e) = self_clone.handle_incoming_auth(auth_peer_id).await {
+                            error!("Failed to handle authentication for peer {:?}: {}", auth_peer_id, e);
+                            // Remove the peer if auth fails
+                            self_clone.connected_peers.write().await.remove(&auth_peer_id);
+                            let mut stats = self_clone.stats.lock().await;
+                            stats.active_connections = stats.active_connections.saturating_sub(1);
+                        }
+                    });
+                }
+                
                 Ok((remote_addr, peer_id))
             }
             Err(e) => {
@@ -261,7 +335,7 @@ impl QuicP2PNode {
         &self,
         peer_id: &PeerId,
         data: &[u8],
-    ) -> Result<(), Box<dyn std::error::Error>> {
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         let peers = self.connected_peers.read().await;
         
         if let Some(remote_addr) = peers.get(peer_id) {
@@ -300,7 +374,7 @@ impl QuicP2PNode {
     }
 
     /// Receive data from peers
-    pub async fn receive(&self) -> Result<(PeerId, Vec<u8>), Box<dyn std::error::Error>> {
+    pub async fn receive(&self) -> Result<(PeerId, Vec<u8>), Box<dyn std::error::Error + Send + Sync>> {
         debug!("Waiting to receive data from any connected peer...");
         
         // Get all connected peers
@@ -416,6 +490,173 @@ impl QuicP2PNode {
                 );
             }
         })
+    }
+
+
+    /// Get NAT traversal statistics
+    pub async fn get_nat_stats(&self) -> Result<NatTraversalStatistics, Box<dyn std::error::Error + Send + Sync>> {
+        self.nat_endpoint.get_nat_stats()
+    }
+
+    /// Get connection metrics for a specific peer
+    pub async fn get_connection_metrics(&self, peer_id: &PeerId) -> Result<ConnectionMetrics, Box<dyn std::error::Error + Send + Sync>> {
+        match self.nat_endpoint.get_connection(peer_id) {
+            Ok(Some(connection)) => {
+                // Get basic RTT from the connection
+                let rtt = connection.rtt();
+                
+                // Get congestion window and other stats
+                let stats = connection.stats();
+                
+                Ok(ConnectionMetrics {
+                    bytes_sent: stats.udp_tx.bytes,
+                    bytes_received: stats.udp_rx.bytes,
+                    rtt: Some(rtt),
+                    packet_loss: stats.path.lost_packets as f64 / (stats.path.sent_packets + stats.path.lost_packets).max(1) as f64,
+                })
+            }
+            Ok(None) => Err("Connection not found".into()),
+            Err(e) => Err(format!("Failed to get connection: {}", e).into()),
+        }
+    }
+    
+    /// Get this node's peer ID
+    pub fn peer_id(&self) -> PeerId {
+        self.peer_id
+    }
+    
+    /// Get this node's public key bytes
+    pub fn public_key_bytes(&self) -> [u8; 32] {
+        self.auth_manager.public_key_bytes()
+    }
+    
+    /// Send an authentication message to a peer
+    async fn send_auth_message(
+        &self,
+        peer_id: &PeerId,
+        message: AuthMessage,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let data = AuthManager::serialize_message(&message)?;
+        self.send_to_peer(peer_id, &data).await
+    }
+    
+    /// Perform authentication handshake as initiator
+    async fn authenticate_as_initiator(
+        &self,
+        peer_id: &PeerId,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Starting authentication with peer {:?}", peer_id);
+        
+        // Send authentication request
+        let auth_request = self.auth_manager.create_auth_request();
+        self.send_auth_message(peer_id, auth_request).await?;
+        
+        // Wait for challenge
+        let timeout_duration = self.config.auth_config.auth_timeout;
+        let start = Instant::now();
+        
+        while start.elapsed() < timeout_duration {
+            match tokio::time::timeout(Duration::from_secs(1), self.receive()).await {
+                Ok(Ok((recv_peer_id, data))) => {
+                    if recv_peer_id == *peer_id {
+                        match AuthManager::deserialize_message(&data) {
+                            Ok(AuthMessage::Challenge { nonce, .. }) => {
+                                // Create and send challenge response
+                                let response = self.auth_manager.create_challenge_response(nonce)?;
+                                self.send_auth_message(peer_id, response).await?;
+                            }
+                            Ok(AuthMessage::AuthSuccess { .. }) => {
+                                info!("Authentication successful with peer {:?}", peer_id);
+                                return Ok(());
+                            }
+                            Ok(AuthMessage::AuthFailure { reason }) => {
+                                return Err(format!("Authentication failed: {}", reason).into());
+                            }
+                            _ => continue,
+                        }
+                    }
+                }
+                _ => continue,
+            }
+        }
+        
+        Err("Authentication timeout".into())
+    }
+    
+    /// Handle incoming authentication messages
+    async fn handle_auth_message(
+        &self,
+        peer_id: PeerId,
+        message: AuthMessage,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        let auth_protocol = AuthProtocol::new(Arc::clone(&self.auth_manager));
+        
+        match auth_protocol.handle_message(peer_id, message).await {
+            Ok(Some(response)) => {
+                self.send_auth_message(&peer_id, response).await?;
+            }
+            Ok(None) => {
+                // No response needed
+            }
+            Err(e) => {
+                error!("Authentication error: {}", e);
+                let failure = AuthMessage::AuthFailure {
+                    reason: e.to_string(),
+                };
+                self.send_auth_message(&peer_id, failure).await?;
+                return Err(Box::new(e));
+            }
+        }
+        
+        Ok(())
+    }
+    
+    /// Check if a peer is authenticated
+    pub async fn is_peer_authenticated(&self, peer_id: &PeerId) -> bool {
+        self.auth_manager.is_authenticated(peer_id).await
+    }
+    
+    /// Get list of authenticated peers
+    pub async fn list_authenticated_peers(&self) -> Vec<PeerId> {
+        self.auth_manager.list_authenticated_peers().await
+    }
+    
+    /// Handle incoming authentication from a peer
+    async fn handle_incoming_auth(
+        &self,
+        peer_id: PeerId,
+    ) -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
+        info!("Handling incoming authentication from peer {:?}", peer_id);
+        
+        let timeout_duration = self.config.auth_config.auth_timeout;
+        let start = Instant::now();
+        
+        while start.elapsed() < timeout_duration {
+            match tokio::time::timeout(Duration::from_secs(1), self.receive()).await {
+                Ok(Ok((recv_peer_id, data))) => {
+                    if recv_peer_id == peer_id {
+                        match AuthManager::deserialize_message(&data) {
+                            Ok(auth_msg) => {
+                                self.handle_auth_message(peer_id, auth_msg).await?;
+                                
+                                // Check if authentication is complete
+                                if self.auth_manager.is_authenticated(&peer_id).await {
+                                    info!("Peer {:?} successfully authenticated", peer_id);
+                                    return Ok(());
+                                }
+                            }
+                            Err(_) => {
+                                // Not an auth message, ignore
+                                continue;
+                            }
+                        }
+                    }
+                }
+                _ => continue,
+            }
+        }
+        
+        Err("Authentication timeout waiting for peer".into())
     }
 }
 

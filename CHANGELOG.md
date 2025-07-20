@@ -7,6 +7,36 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Authentication module (`src/auth.rs`) with Ed25519-based peer authentication
+- Challenge-response authentication protocol with replay attack prevention
+- Chat messaging system (`src/chat.rs`) with protocol versioning and message types
+- Real-time statistics dashboard (`src/stats_dashboard.rs`) for connection monitoring
+- Comprehensive test suite for authentication (300+ tests)
+  - Security vulnerability tests (DoS, timing attacks, malleability)
+  - Performance and stress tests
+  - Integration tests with QUIC endpoints
+- Chat protocol tests with serialization validation
+- NAT traversal scenario tests for various NAT type combinations
+- P2P integration tests with multi-node scenarios
+- Authentication benchmarks for performance validation
+- Example applications demonstrating auth and chat features
+  - `simple_chat.rs`: Basic chat application with authentication
+  - `chat_demo.rs`: Advanced chat with peer discovery
+  - `dashboard_demo.rs`: Real-time statistics monitoring
+- `#[allow(dead_code)]` annotations with documentation for NAT traversal methods
+
+### Fixed
+- Fixed timestamp serialization in chat messages to preserve nanosecond precision
+- Fixed all compilation warnings in test files (unused imports and variables)
+- Fixed authentication test expectations to match correct error variants
+- Fixed NAT traversal test configuration for bootstrap nodes
+
+### Changed
+- Enhanced `ant-quic-v2` binary with authentication support
+- Updated `QuicP2PNode` to integrate authentication manager
+- Improved NAT traversal API with better error handling
+
 ## [0.3.1] - 2025-07-19
 
 ### Added

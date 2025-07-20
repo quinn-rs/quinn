@@ -19,8 +19,9 @@ use std::{
 };
 
 use ant_quic::{
-    CandidateAddress, CandidateSource, CandidateState, PeerId, derive_peer_id_from_public_key,
-    generate_ed25519_keypair, candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig},
+    CandidateAddress, CandidateSource, CandidateState, PeerId,
+    candidate_discovery::{CandidateDiscoveryManager, DiscoveryConfig},
+    derive_peer_id_from_public_key, generate_ed25519_keypair,
 };
 use clap::Parser;
 // use four_word_networking::FourWordAdaptiveEncoder;
@@ -2807,7 +2808,7 @@ fn update_status_line(stats: &Arc<Mutex<NodeStats>>) {
 /// Discover local addresses using the proper network interface discovery
 fn discover_local_addresses_proper(port: u16) -> Vec<SocketAddr> {
     let mut addresses = Vec::new();
-    
+
     // Create a discovery manager with default config
     let discovery_config = DiscoveryConfig {
         total_timeout: Duration::from_secs(30),
@@ -2820,9 +2821,9 @@ fn discover_local_addresses_proper(port: u16) -> Vec<SocketAddr> {
         interface_cache_ttl: Duration::from_secs(60),
         server_reflexive_cache_ttl: Duration::from_secs(300),
     };
-    
+
     let mut discovery = CandidateDiscoveryManager::new(discovery_config);
-    
+
     // Discover local interfaces
     info!("Starting local network interface discovery...");
     match discovery.discover_local_candidates() {
@@ -2833,22 +2834,28 @@ fn discover_local_addresses_proper(port: u16) -> Vec<SocketAddr> {
                 let mut addr = candidate.address;
                 addr.set_port(port);
                 addresses.push(addr);
-                debug!("Found local address: {} (source: {:?})", addr, candidate.source);
+                debug!(
+                    "Found local address: {} (source: {:?})",
+                    addr, candidate.source
+                );
             }
-            
-            info!("Discovered {} local addresses via proper interface enumeration", addresses.len());
+
+            info!(
+                "Discovered {} local addresses via proper interface enumeration",
+                addresses.len()
+            );
         }
         Err(e) => {
             error!("Failed to discover local interfaces: {}", e);
         }
     }
-    
+
     // If discovery failed, fall back to the lightweight method
     if addresses.is_empty() {
         warn!("Falling back to lightweight address discovery");
         addresses.extend(discover_local_addresses_lightweight(port));
     }
-    
+
     addresses
 }
 
@@ -2944,11 +2951,14 @@ mod tests {
         assert!(!config.force_coordinator);
         assert_eq!(config.reachability_timeout, Duration::from_secs(5));
     }
-    
+
     #[test]
     fn test_discover_local_addresses() {
         let addresses = discover_local_addresses_proper(9000);
         println!("Discovered addresses: {:?}", addresses);
-        assert!(!addresses.is_empty(), "Should discover at least one local address");
+        assert!(
+            !addresses.is_empty(),
+            "Should discover at least one local address"
+        );
     }
 }

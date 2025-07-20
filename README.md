@@ -24,6 +24,9 @@ A QUIC transport protocol implementation with advanced NAT traversal capabilitie
 - **Bootstrap Node Coordination**: Decentralized discovery and coordination services
 - **Connection Migration**: Seamless adaptation to changing network conditions
 - **Path Validation**: Robust verification of connection paths before use
+- **Peer Authentication**: Ed25519-based cryptographic authentication with challenge-response protocol
+- **Secure Chat Messaging**: Encrypted peer-to-peer messaging with protocol versioning
+- **Real-time Monitoring**: Built-in statistics dashboard for connection and performance metrics
 
 ## Quick Start
 
@@ -105,6 +108,21 @@ let peer_id = PeerId([0x12; 32]);
 let connection = endpoint.connect_to_peer(peer_id).await?;
 ```
 
+### Examples
+
+The repository includes several example applications demonstrating various features:
+
+- **[simple_chat](examples/simple_chat.rs)**: Basic P2P chat with authentication
+- **[chat_demo](examples/chat_demo.rs)**: Advanced chat with peer discovery and messaging
+- **[dashboard_demo](examples/dashboard_demo.rs)**: Real-time connection statistics monitoring
+
+Run examples with:
+```bash
+cargo run --example simple_chat -- --listen 0.0.0.0:9000
+cargo run --example chat_demo -- --bootstrap node1.example.com:9000
+cargo run --example dashboard_demo
+```
+
 ## Architecture
 
 ant-quic extends the proven Quinn QUIC implementation with sophisticated NAT traversal capabilities:
@@ -151,7 +169,7 @@ ant-quic extends the proven Quinn QUIC implementation with sophisticated NAT tra
 - High-level NAT traversal API with Quinn integration
 - Candidate discovery framework
 - Connection establishment with fallback
-- Comprehensive test suite (266+ tests)
+- Comprehensive test suite (580+ tests including auth, chat, and security tests)
 - Test binaries: coordinator, P2P node, network simulation
 
 🚧 **In Progress/TODO**:

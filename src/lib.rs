@@ -66,6 +66,9 @@ pub mod terminal_ui;
 pub mod workflow;
 pub mod monitoring;
 pub mod optimization;
+pub mod chat;
+pub mod stats_dashboard;
+pub mod auth;
 
 // High-level async API modules (ported from quinn crate)
 pub mod quinn_high_level;
