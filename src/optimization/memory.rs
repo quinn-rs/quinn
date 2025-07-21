@@ -15,7 +15,6 @@ use std::{
 
 use tracing::{debug, info};
 
-#[cfg(feature = "production-ready")]
 use crate::{HighLevelConnection as QuinnConnection, Endpoint as QuinnEndpoint};
 
 use crate::{
@@ -54,10 +53,7 @@ pub struct ConnectionPoolConfig {
 /// A pooled connection with metadata
 #[derive(Debug)]
 struct PooledConnection {
-    #[cfg(feature = "production-ready")]
     connection: Arc<QuinnConnection>,
-    #[cfg(not(feature = "production-ready"))]
-    _placeholder: (),
     peer_id: PeerId,
     remote_address: SocketAddr,
     created_at: Instant,
@@ -369,7 +365,6 @@ impl ConnectionPool {
     }
 
     /// Get or create a connection for a peer
-    #[cfg(feature = "production-ready")]
     pub async fn get_connection(
         &self,
         peer_id: PeerId,
@@ -389,7 +384,6 @@ impl ConnectionPool {
     }
 
     /// Try to get existing connection from pool
-    #[cfg(feature = "production-ready")]
     async fn try_get_existing_connection(
         &self,
         peer_id: PeerId,
@@ -416,7 +410,6 @@ impl ConnectionPool {
     }
 
     /// Create a new connection and add to pool
-    #[cfg(feature = "production-ready")]
     async fn create_new_connection(
         &self,
         peer_id: PeerId,
@@ -535,12 +528,9 @@ impl ConnectionPool {
                     to_remove.push(*peer_id);
                 }
 
-                #[cfg(feature = "production-ready")]
-                {
-                    // Also remove closed connections
-                    if pooled.connection.close_reason().is_some() {
-                        to_remove.push(*peer_id);
-                    }
+                // Also remove closed connections
+                if pooled.connection.close_reason().is_some() {
+                    to_remove.push(*peer_id);
                 }
             }
         }
@@ -573,7 +563,6 @@ impl ConnectionPool {
         }
 
         // Close all connections
-        #[cfg(feature = "production-ready")]
         {
             let connections = self.active_connections.read().unwrap();
             for (_, pooled) in connections.iter() {

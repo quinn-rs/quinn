@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.0] - 2025-07-21
+
+### Breaking Changes
+- Removed `production-ready` feature flag - all functionality is now included by default
+- Dependencies that were previously optional with `production-ready` are now required
+
+### Changed
+- Made `rcgen`, `tokio-util`, `futures-util`, `hickory-resolver`, `time`, and `rustls-pemfile` mandatory dependencies
+- Simplified codebase by removing all conditional compilation based on `production-ready` feature
+- All builds now have full NAT traversal and certificate management functionality
+
+### Benefits
+- Simpler compilation process without feature flags
+- Faster compilation on resource-constrained machines
+- No confusion about which features to enable
+- All functionality available in every build
+
 ## [0.3.2] - 2025-07-21
 
 ### Added

@@ -24,8 +24,7 @@ pub(crate) mod ring_like;
 #[cfg(any(feature = "rustls-aws-lc-rs", feature = "rustls-ring"))]
 pub mod rustls;
 
-/// Production-ready certificate management
-#[cfg(feature = "production-ready")]
+/// Certificate management
 pub mod certificate_manager;
 
 /// RFC 7250 Raw Public Keys support

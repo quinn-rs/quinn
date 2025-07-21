@@ -15,7 +15,6 @@ use std::{
 
 use tracing::{debug, error, info, warn};
 
-#[cfg(feature = "production-ready")]
 use crate::Connection;
 
 use crate::{
@@ -120,7 +119,6 @@ pub struct CandidateDiscoveryManager {
     /// Cache duration for local candidates
     local_cache_duration: Duration,
     /// Pending path validations
-    #[cfg(feature = "production-ready")]
     pending_validations: HashMap<CandidateId, PendingValidation>,
 }
 
@@ -268,7 +266,6 @@ pub enum DiscoveryEvent {
 pub struct BootstrapNodeId(pub u64);
 
 /// Pending path validation state
-#[cfg(feature = "production-ready")]
 struct PendingValidation {
     /// Address being validated
     candidate_address: SocketAddr,
@@ -504,7 +501,6 @@ impl CandidateDiscoveryManager {
             active_sessions: HashMap::new(),
             cached_local_candidates: None,
             local_cache_duration,
-            #[cfg(feature = "production-ready")]
             pending_validations: HashMap::new(),
         }
     }
@@ -1052,7 +1048,6 @@ impl CandidateDiscoveryManager {
 
 
     /// Start real QUIC PATH_CHALLENGE/PATH_RESPONSE validation for a candidate
-    #[cfg(feature = "production-ready")]
     fn start_path_validation(&mut self, candidate_id: CandidateId, candidate_address: SocketAddr, now: Instant, events: &mut Vec<DiscoveryEvent>) {
         debug!("Starting QUIC path validation for candidate {} at {}", candidate_id.0, candidate_address);
         
@@ -1079,7 +1074,6 @@ impl CandidateDiscoveryManager {
     }
     
     /// Handle PATH_RESPONSE received for a candidate
-    #[cfg(feature = "production-ready")]
     pub fn handle_path_response(&mut self, candidate_address: SocketAddr, challenge_token: u64, now: Instant) -> Option<DiscoveryEvent> {
         // Find the matching pending validation
         let candidate_id = self.pending_validations.iter()
@@ -1508,7 +1502,6 @@ pub struct NetworkInterface {
 }
 
 /// Active connection state to a bootstrap node (production builds)
-#[cfg(feature = "production-ready")]
 #[derive(Debug)]
 struct BootstrapConnection {
     /// Quinn connection to the bootstrap node
@@ -1543,10 +1536,8 @@ pub(crate) struct ServerReflexiveDiscovery {
     /// Query timeout tracker
     query_timeouts: HashMap<BootstrapNodeId, Instant>,
     /// Active Quinn connections to bootstrap nodes (production builds)
-    #[cfg(feature = "production-ready")]
     active_connections: HashMap<BootstrapNodeId, BootstrapConnection>,
     /// Runtime handle for async operations (production builds)
-    #[cfg(feature = "production-ready")]
     runtime_handle: Option<tokio::runtime::Handle>,
 }
 
@@ -1557,9 +1548,7 @@ impl ServerReflexiveDiscovery {
             active_queries: HashMap::new(),
             responses: VecDeque::new(),
             query_timeouts: HashMap::new(),
-            #[cfg(feature = "production-ready")]
             active_connections: HashMap::new(),
-            #[cfg(feature = "production-ready")]
             runtime_handle: tokio::runtime::Handle::try_current().ok(),
         }
     }
@@ -1570,7 +1559,6 @@ impl ServerReflexiveDiscovery {
         self.active_queries.clear();
         self.query_timeouts.clear();
         
-        #[cfg(feature = "production-ready")]
         self.active_connections.clear();
         
         for &node_id in bootstrap_nodes {
@@ -1584,20 +1572,11 @@ impl ServerReflexiveDiscovery {
             
             debug!("Starting server reflexive query to bootstrap node {:?}", node_id);
             
-            #[cfg(feature = "production-ready")]
-            {
-                // Try to establish real Quinn connection in production
-                if let Some(runtime) = &self.runtime_handle {
-                    self.start_quinn_query(node_id, runtime.clone(), now);
-                } else {
-                    warn!("No async runtime available, falling back to simulation for node {:?}", node_id);
-                    self.simulate_bootstrap_response(node_id, now);
-                }
-            }
-            
-            #[cfg(not(feature = "production-ready"))]
-            {
-                // Use simulation in development builds
+            // Try to establish real Quinn connection in production
+            if let Some(runtime) = &self.runtime_handle {
+                self.start_quinn_query(node_id, runtime.clone(), now);
+            } else {
+                warn!("No async runtime available, falling back to simulation for node {:?}", node_id);
                 self.simulate_bootstrap_response(node_id, now);
             }
         }
@@ -1616,7 +1595,6 @@ impl ServerReflexiveDiscovery {
         self.active_queries.clear();
         self.query_timeouts.clear();
         
-        #[cfg(feature = "production-ready")]
         self.active_connections.clear();
         
         for &(node_id, bootstrap_address) in bootstrap_nodes {
@@ -1630,20 +1608,11 @@ impl ServerReflexiveDiscovery {
             
             debug!("Starting server reflexive query to bootstrap node {:?} at {}", node_id, bootstrap_address);
             
-            #[cfg(feature = "production-ready")]
-            {
-                // Try to establish real Quinn connection in production
-                if let Some(_runtime) = &self.runtime_handle {
-                    self.start_quinn_query_with_address(node_id, bootstrap_address, now);
-                } else {
-                    warn!("No async runtime available, falling back to simulation for node {:?}", node_id);
-                    self.simulate_bootstrap_response(node_id, now);
-                }
-            }
-            
-            #[cfg(not(feature = "production-ready"))]
-            {
-                // Use simulation in development builds
+            // Try to establish real Quinn connection in production
+            if let Some(_runtime) = &self.runtime_handle {
+                self.start_quinn_query_with_address(node_id, bootstrap_address, now);
+            } else {
+                warn!("No async runtime available, falling back to simulation for node {:?}", node_id);
                 self.simulate_bootstrap_response(node_id, now);
             }
         }
@@ -1652,7 +1621,6 @@ impl ServerReflexiveDiscovery {
     }
     
     /// Start a real Quinn-based query to a bootstrap node (production builds)
-    #[cfg(feature = "production-ready")]
     fn start_quinn_query(&mut self, node_id: BootstrapNodeId, _runtime: tokio::runtime::Handle, now: Instant) {
         // For now, we need the bootstrap node address. This will be provided by 
         // the BootstrapNodeManager in the calling code. For this implementation,
@@ -1676,7 +1644,6 @@ impl ServerReflexiveDiscovery {
     }
 
     /// Start a real Quinn-based query with full bootstrap node information
-    #[cfg(feature = "production-ready")]
     pub(crate) fn start_quinn_query_with_address(
         &mut self, 
         node_id: BootstrapNodeId,
@@ -1737,22 +1704,8 @@ impl ServerReflexiveDiscovery {
     ) -> Result<SocketAddr, Box<dyn std::error::Error + Send + Sync>> {
         // For testing, return a simulated external address
         // In production, this would connect to the bootstrap node and get the observed address
-        #[cfg(not(feature = "production-ready"))]
-        {
-            // Simulate that the bootstrap node sees us from our local address
-            // In a real implementation, this would be our external NAT address
-            warn!("Using simulated bootstrap query - returning local address as observed address");
-            // Return the bootstrap address with a different port to simulate external observation
-            let mut observed = bootstrap_address;
-            observed.set_port(bootstrap_address.port() + 10000);
-            return Ok(observed);
-        }
-        
-        #[cfg(feature = "production-ready")]
-        {
-            // Temporarily return an error until this is properly implemented
-            Err("Bootstrap query not implemented for low-level API".into())
-        }
+        // Temporarily return an error until this is properly implemented
+        Err("Bootstrap query not implemented for low-level API".into())
         
         /* Original implementation that used high-level Quinn API:
         use tokio::time::timeout as tokio_timeout;
@@ -1816,7 +1769,6 @@ impl ServerReflexiveDiscovery {
     }
     
     /// Create a discovery request message
-    #[cfg(feature = "production-ready")]
     fn create_discovery_request(request_id: u64) -> Vec<u8> {
         let mut request = Vec::new();
         
@@ -1836,7 +1788,6 @@ impl ServerReflexiveDiscovery {
     }
     
     /// Wait for ADD_ADDRESS frame from bootstrap node
-    #[cfg(feature = "production-ready")]
     async fn wait_for_add_address_frame(
         _connection: &Connection,
         _expected_request_id: u64,
@@ -1883,7 +1834,6 @@ impl ServerReflexiveDiscovery {
     }
     
     /// Create a response channel for async communication (placeholder)
-    #[cfg(feature = "production-ready")]
     fn create_response_channel(&self) -> tokio::sync::mpsc::UnboundedSender<ServerReflexiveResponse> {
         // In a complete implementation, this would create a channel
         // that feeds responses back to the main discovery manager

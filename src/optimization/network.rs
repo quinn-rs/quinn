@@ -17,7 +17,6 @@ use tokio::time::timeout;
 
 use tracing::{debug, info, warn};
 
-#[cfg(feature = "production-ready")]
 use tokio::time::sleep;
 
 use crate::{
@@ -647,7 +646,6 @@ impl ParallelDiscoveryCoordinator {
         }
 
         // Simulate some discovery time
-        #[cfg(feature = "production-ready")]
         sleep(Duration::from_millis(100)).await;
 
         Ok(candidates)

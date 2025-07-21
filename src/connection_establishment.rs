@@ -13,7 +13,6 @@ use std::{
 
 use tracing::{debug, info, warn};
 
-#[cfg(feature = "production-ready")]
 use crate::quinn_high_level::{Endpoint as QuinnEndpoint, Connection as QuinnConnection, Connecting};
 
 use crate::{
@@ -36,7 +35,6 @@ pub struct ConnectionEstablishmentManager {
     /// Event callback for monitoring
     event_callback: Option<Box<dyn Fn(ConnectionEstablishmentEvent) + Send + Sync>>,
     /// Quinn endpoint for making QUIC connections
-    #[cfg(feature = "production-ready")]
     quinn_endpoint: Option<Arc<QuinnEndpoint>>,
 }
 
@@ -159,10 +157,8 @@ struct SubAttempt {
     /// Associated candidate information
     candidate: Option<CandidateAddress>,
     /// Active QUIC connection attempt
-    #[cfg(feature = "production-ready")]
     connection_handle: Option<tokio::task::JoinHandle<Result<QuinnConnection, crate::ConnectionError>>>,
     /// Established connection (if successful)
-    #[cfg(feature = "production-ready")]
     established_connection: Option<QuinnConnection>,
 }
 
@@ -320,7 +316,6 @@ impl ConnectionEstablishmentManager {
         bootstrap_nodes: Vec<BootstrapNode>,
         endpoint_role: EndpointRole,
         event_callback: Option<Box<dyn Fn(ConnectionEstablishmentEvent) + Send + Sync>>,
-        #[cfg(feature = "production-ready")]
         quinn_endpoint: Option<Arc<QuinnEndpoint>>,
     ) -> Self {
         Self {
@@ -330,7 +325,6 @@ impl ConnectionEstablishmentManager {
             bootstrap_nodes,
             endpoint_role,
             event_callback,
-            #[cfg(feature = "production-ready")]
             quinn_endpoint,
         }
     }
@@ -525,9 +519,7 @@ impl ConnectionEstablishmentManager {
                 started_at: Instant::now(),
                 state: SubAttemptState::Starting,
                 candidate: None,
-                #[cfg(feature = "production-ready")]
                 connection_handle: None,
-                #[cfg(feature = "production-ready")]
                 established_connection: None,
             };
 
@@ -545,7 +537,6 @@ impl ConnectionEstablishmentManager {
         }
 
         // Now initiate actual QUIC connections for each sub-attempt
-        #[cfg(feature = "production-ready")]
         if let Some(ref quinn_endpoint) = self.quinn_endpoint {
             let attempt = self.active_attempts.get_mut(&peer_id)
                 .ok_or(ConnectionError::ConfigurationError("Attempt not found".to_string()))?;
@@ -613,9 +604,7 @@ impl ConnectionEstablishmentManager {
             started_at: Instant::now(),
             state: SubAttemptState::Starting,
             candidate: None,
-            #[cfg(feature = "production-ready")]
             connection_handle: None,
-            #[cfg(feature = "production-ready")]
             established_connection: None,
         };
 
@@ -687,7 +676,6 @@ impl ConnectionEstablishmentManager {
     }
 
     /// Initiate a real QUIC connection for a sub-attempt
-    #[cfg(feature = "production-ready")]
     fn initiate_quic_connection(
         &self,
         peer_id: PeerId,
@@ -910,7 +898,6 @@ impl ConnectionEstablishmentManager {
     ) {
         for sub_attempt in &mut attempt.sub_attempts {
             if sub_attempt.state == SubAttemptState::Connecting {
-                #[cfg(feature = "production-ready")]
                 {
                     // Check actual QUIC connection status
                     if let Some(ref handle) = sub_attempt.connection_handle {
@@ -945,37 +932,6 @@ impl ConnectionEstablishmentManager {
                     }
                 }
                 
-                #[cfg(not(feature = "production-ready"))]
-                {
-                    // Fallback to simulation for non-production builds
-                    let elapsed = now.duration_since(sub_attempt.started_at);
-                    if elapsed > Duration::from_secs(2) {
-                        // Simulate some attempts succeeding
-                        if sub_attempt.method == ConnectionMethod::Direct {
-                            sub_attempt.state = SubAttemptState::Connected;
-                            
-                            events.push(ConnectionEstablishmentEvent::ConnectionMethodSucceeded {
-                                peer_id,
-                                method: sub_attempt.method,
-                                target_address: sub_attempt.target_address,
-                                establishment_time: elapsed,
-                            });
-
-                            // Mark attempt as connected
-                            attempt.state = AttemptState::Connected;
-                            
-                            events.push(ConnectionEstablishmentEvent::ConnectionEstablished {
-                                peer_id,
-                                final_address: sub_attempt.target_address,
-                                method: sub_attempt.method,
-                                total_time: now.duration_since(attempt.started_at),
-                                fallback_used: false,
-                            });
-                        } else {
-                            sub_attempt.state = SubAttemptState::Failed;
-                        }
-                    }
-                }
             }
         }
     }
@@ -1510,9 +1466,7 @@ impl ConnectionEstablishmentManager {
                 started_at: Instant::now(),
                 state: SubAttemptState::Starting,
                 candidate: Some(candidate.clone()),
-                #[cfg(feature = "production-ready")]
                 connection_handle: None,
-                #[cfg(feature = "production-ready")]
                 established_connection: None,
             };
 

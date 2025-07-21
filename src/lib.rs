@@ -74,7 +74,6 @@ pub mod auth;
 pub mod quinn_high_level;
 
 // Re-export high-level API types for easier usage
-#[cfg(feature = "production-ready")]
 pub use quinn_high_level::{
     Endpoint,
     Connection as HighLevelConnection,
@@ -83,10 +82,6 @@ pub use quinn_high_level::{
     RecvStream as HighLevelRecvStream,
     SendStream as HighLevelSendStream,
 };
-
-// When production-ready feature is not enabled, use low-level endpoint as default
-#[cfg(not(feature = "production-ready"))]
-pub use endpoint::Endpoint;
 
 // Re-export crypto utilities for peer ID management
 pub use crypto::raw_public_keys::key_utils::{

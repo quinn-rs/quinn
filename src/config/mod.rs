@@ -31,7 +31,6 @@ pub use transport::{AckFrequencyConfig, IdleTimeout, MtuDiscoveryConfig, Transpo
 pub mod timeouts;
 
 // Production-ready configuration validation
-#[cfg(feature = "production-ready")]
 pub(crate) mod validation;
 
 

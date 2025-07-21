@@ -129,7 +129,6 @@ impl CertificateManager {
     }
 
     /// Generate a new certificate bundle using rcgen
-    #[cfg(feature = "production-ready")]
     pub fn generate_certificate(&self) -> Result<CertificateBundle, CertificateError> {
         use rcgen::generate_simple_self_signed;
         
@@ -156,7 +155,6 @@ impl CertificateManager {
     }
 
     /// Load certificates from PEM file
-    #[cfg(feature = "production-ready")]
     pub fn load_certificate_from_pem(
         cert_path: &str,
         key_path: &str,
@@ -258,7 +256,6 @@ impl CertificateManager {
     }
 
     /// Load CA certificates from a file
-    #[cfg(feature = "production-ready")]
     fn load_ca_certificates(ca_path: &str) -> Result<Vec<CertificateDer<'static>>, CertificateError> {
         use rustls_pemfile::certs;
         
@@ -398,7 +395,6 @@ mod tests {
         assert!(manager.is_ok());
     }
 
-    #[cfg(feature = "production-ready")]
     #[test]
     fn test_certificate_generation() {
         let config = CertificateConfig::default();
