@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.3.2] - 2025-07-21
+
+### Added
+- Complete NAT traversal implementation with real QUIC operations
+- Session state machine for connection lifecycle tracking
+- Integration of ConnectionEstablishmentManager with Quinn endpoints
+- Real PATH_CHALLENGE/PATH_RESPONSE frame support for path validation
+- Comprehensive session monitoring with poll-based state updates
+- SessionStateChanged events for connection state transitions
+
+### Changed
+- Replaced all simulated NAT traversal operations with real QUIC protocol operations
+- Updated ConnectionEstablishmentManager to use actual Quinn connections
+- Enhanced NatTraversalEndpoint with session state tracking
+- Improved candidate discovery with real path validation
+
+### Fixed
+- Connection establishment now uses actual QUIC connections instead of simulations
+- Path validation properly implements QUIC PATH_CHALLENGE/PATH_RESPONSE frames
+- Session state transitions are properly tracked and reported
+
+## [0.3.1] - 2025-07-19
+
 ### Added
 - Authentication module (`src/auth.rs`) with Ed25519-based peer authentication
 - Challenge-response authentication protocol with replay attack prevention
