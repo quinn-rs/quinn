@@ -94,6 +94,7 @@ mod nat_traversal_api_tests {
             enable_symmetric_nat: false,
             enable_relay_fallback: false,
             max_concurrent_attempts: 5,
+            bind_addr: None,
         };
 
         assert_eq!(config.role, EndpointRole::Bootstrap);
@@ -269,6 +270,7 @@ mod functional_tests {
             enable_symmetric_nat: true,
             enable_relay_fallback: true,
             max_concurrent_attempts: 0, // Invalid
+            bind_addr: None,
         };
 
         // The validation logic might be in the endpoint creation
@@ -284,6 +286,7 @@ mod functional_tests {
             enable_symmetric_nat: true,
             enable_relay_fallback: true,
             max_concurrent_attempts: 3,
+            bind_addr: None,
         };
 
         // This might still fail due to other issues (TLS config), but should pass basic validation
@@ -462,6 +465,7 @@ mod performance_tests {
                 enable_symmetric_nat: i % 2 == 0,
                 enable_relay_fallback: i % 3 == 0,
                 max_concurrent_attempts: i as usize % 10 + 1,
+                bind_addr: None,
             };
 
             // Use the config to prevent optimization
@@ -555,6 +559,7 @@ mod relay_functionality_tests {
             enable_symmetric_nat: true,
             enable_relay_fallback: true,
             max_concurrent_attempts: 0, // Might be invalid
+            bind_addr: None,
         };
 
         // This might be accepted or rejected depending on implementation

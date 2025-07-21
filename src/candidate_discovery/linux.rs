@@ -15,6 +15,7 @@ use std::{
     time::Instant,
 };
 
+use nix::libc;
 use tracing::{debug, error, info, warn};
 
 use crate::candidate_discovery::{NetworkInterface, NetworkInterfaceDiscovery};
@@ -747,7 +748,7 @@ impl LinuxInterfaceDiscovery {
         let result = unsafe { libc::ioctl(socket_fd, libc::SIOCGIFADDR, &mut ifreq) };
         if result >= 0 {
             let sockaddr_in = unsafe { 
-                &*(ifreq.ifr_ifru.ifru_addr as *const libc::sockaddr as *const libc::sockaddr_in)
+                &*(&ifreq.ifr_ifru.ifru_addr as *const libc::sockaddr as *const libc::sockaddr_in)
             };
             
             if sockaddr_in.sin_family == libc::AF_INET as u16 {
@@ -758,7 +759,7 @@ impl LinuxInterfaceDiscovery {
                 let netmask_result = unsafe { libc::ioctl(socket_fd, libc::SIOCGIFNETMASK, &mut ifreq) };
                 let prefix_len = if netmask_result >= 0 {
                     let netmask_sockaddr_in = unsafe { 
-                        &*(ifreq.ifr_ifru.ifru_netmask as *const libc::sockaddr as *const libc::sockaddr_in)
+                        &*(&ifreq.ifr_ifru.ifru_netmask as *const libc::sockaddr as *const libc::sockaddr_in)
                     };
                     let netmask_bytes = netmask_sockaddr_in.sin_addr.s_addr.to_ne_bytes();
                     let netmask = u32::from_ne_bytes(netmask_bytes);

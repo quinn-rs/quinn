@@ -107,6 +107,7 @@ impl TestPeer {
             connection_timeout: Duration::from_secs(10),
             stats_interval: Duration::from_secs(5),
             auth_config: AuthConfig::default(),
+            bind_addr: Some(bind_addr),
         };
 
         let node = Arc::new(QuicP2PNode::new(config).await?);
@@ -205,7 +206,7 @@ impl P2PTestEnvironment {
 
         // Create bootstrap nodes
         for i in 0..env.config.num_bootstrap {
-            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 9000 + i as u16);
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 19000 + i as u16);
             // Use Bootstrap role for bootstrap nodes as they don't need other bootstrap nodes
             let bootstrap = TestPeer::new(addr, EndpointRole::Bootstrap, vec![]).await?;
             env.bootstrap_nodes.push(bootstrap);
@@ -216,7 +217,7 @@ impl P2PTestEnvironment {
 
         // Create regular peers
         for i in 0..env.config.num_peers {
-            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 10000 + i as u16);
+            let addr = SocketAddr::new(IpAddr::V4(Ipv4Addr::new(127, 0, 0, 1)), 20000 + i as u16);
             let peer = TestPeer::new(addr, EndpointRole::Client, bootstrap_addrs.clone()).await?;
             env.peers.push(peer);
         }
@@ -494,6 +495,14 @@ async fn test_nat_traversal_direct_connection() {
         .await
         .expect("Failed to create test environment");
 
+    // Add some debug logging
+    println!("Bootstrap address: {}", env.bootstrap_nodes[0].address);
+    println!("Peer 0 address: {}, ID: {:?}", env.peers[0].address, env.peers[0].id);
+    println!("Peer 1 address: {}, ID: {:?}", env.peers[1].address, env.peers[1].id);
+    
+    // Give some time for local discovery to complete
+    tokio::time::sleep(Duration::from_secs(2)).await;
+
     // Both peers attempt to connect simultaneously
     let peer1_id = env.peers[1].id;
     let peer0_id = env.peers[0].id;
@@ -504,6 +513,14 @@ async fn test_nat_traversal_direct_connection() {
 
     // Both should succeed
     let (result1, result2) = tokio::join!(connect1, connect2);
+    
+    println!("Connection results: peer0->peer1: {:?}, peer1->peer0: {:?}", result1.is_ok(), result2.is_ok());
+    if let Err(e) = &result1 {
+        println!("Peer 0 connection error: {:?}", e);
+    }
+    if let Err(e) = &result2 {
+        println!("Peer 1 connection error: {:?}", e);
+    }
 
     assert!(
         result1.is_ok() || result2.is_ok(),

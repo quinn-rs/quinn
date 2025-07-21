@@ -33,14 +33,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Fixed NAT traversal test configuration for bootstrap nodes
 
 ### Changed
-- Enhanced `ant-quic-v2` binary with authentication support
+- Enhanced `ant-quic` binary with authentication support
 - Updated `QuicP2PNode` to integrate authentication manager
 - Improved NAT traversal API with better error handling
 
 ## [0.3.1] - 2025-07-19
 
 ### Added
-- New `ant-quic-v2` binary demonstrating QUIC-based P2P connectivity with NAT traversal
+- New `ant-quic` binary demonstrating QUIC-based P2P connectivity with NAT traversal
 - Real-time NAT traversal event monitoring with `[NAT]` prefixed logging
 - `/status` command to display NAT traversal status (local candidates, reflexive addresses, coordination sessions)
 - `/help` command showing available commands in the demo binary

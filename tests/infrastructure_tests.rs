@@ -29,6 +29,7 @@ async fn test_node_creation() {
         connection_timeout: Duration::from_secs(10),
         stats_interval: Duration::from_secs(60),
         auth_config: AuthConfig::default(),
+        bind_addr: None,
     };
 
     let bootstrap_node = QuicP2PNode::new(bootstrap_config)
@@ -46,6 +47,7 @@ async fn test_node_creation() {
         connection_timeout: Duration::from_secs(10),
         stats_interval: Duration::from_secs(60),
         auth_config: AuthConfig::default(),
+        bind_addr: None,
     };
 
     let client_node = QuicP2PNode::new(client_config)
@@ -104,6 +106,7 @@ async fn test_role_validation() {
         connection_timeout: Duration::from_secs(10),
         stats_interval: Duration::from_secs(60),
         auth_config: AuthConfig::default(),
+        bind_addr: None,
     };
 
     // This should fail validation
@@ -126,6 +129,7 @@ async fn test_role_validation() {
         connection_timeout: Duration::from_secs(10),
         stats_interval: Duration::from_secs(60),
         auth_config: AuthConfig::default(),
+        bind_addr: None,
     };
 
     // This should succeed
@@ -151,6 +155,7 @@ async fn test_multiple_node_creation() {
         connection_timeout: Duration::from_secs(10),
         stats_interval: Duration::from_secs(60),
         auth_config: AuthConfig::default(),
+        bind_addr: None,
     };
 
     let _bootstrap = QuicP2PNode::new(bootstrap_config)
@@ -168,6 +173,7 @@ async fn test_multiple_node_creation() {
             connection_timeout: Duration::from_secs(10),
             stats_interval: Duration::from_secs(60),
             auth_config: AuthConfig::default(),
+            bind_addr: None,
         };
 
         let node = QuicP2PNode::new(config)
@@ -196,6 +202,7 @@ async fn test_nat_endpoint_access() {
         connection_timeout: Duration::from_secs(10),
         stats_interval: Duration::from_secs(60),
         auth_config: AuthConfig::default(),
+        bind_addr: None,
     };
 
     let node = QuicP2PNode::new(config)

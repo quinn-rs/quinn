@@ -128,6 +128,7 @@ impl NatTestPeer {
             connection_timeout: Duration::from_secs(10),
             stats_interval: Duration::from_secs(5),
             auth_config: AuthConfig::default(),
+            bind_addr: None,
         };
 
         let (_event_tx, _event_rx) = mpsc::unbounded_channel();

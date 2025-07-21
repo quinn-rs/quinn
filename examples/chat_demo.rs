@@ -43,6 +43,7 @@ impl ChatNode {
             connection_timeout: Duration::from_secs(30),
             stats_interval: Duration::from_secs(60),
             auth_config: AuthConfig::default(),
+            bind_addr: None,
         };
 
         let node = Arc::new(QuicP2PNode::new(config).await?);

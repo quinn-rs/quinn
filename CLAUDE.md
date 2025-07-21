@@ -50,19 +50,32 @@ cargo fmt --all -- --check
 ```
 
 ### Running Examples and Binaries
+
+#### Main QUIC Binary
 ```bash
-# Main P2P binary (auto-detects coordinator role)
+# Run the QUIC P2P binary
 cargo run --bin ant-quic -- --listen 0.0.0.0:9000
 
 # Connect to bootstrap nodes
 cargo run --bin ant-quic -- --bootstrap node1.example.com:9000,node2.example.com:9000
 
-# Network simulation testing
-cargo run --example nat_simulation
+# Run with monitoring dashboard
+cargo run --bin ant-quic -- --dashboard --listen 0.0.0.0:9000
 
-# Other examples
-cargo run --example nat_coordinator
-cargo run --example nat_p2p_node
+# Force coordinator mode
+cargo run --bin ant-quic -- --force-coordinator --listen 0.0.0.0:9000
+```
+
+#### Examples
+```bash
+# Chat demo with QUIC
+cargo run --example chat_demo
+
+# Simple chat example
+cargo run --example simple_chat
+
+# Dashboard demo
+cargo run --example dashboard_demo
 ```
 
 ### Feature Testing
@@ -77,15 +90,23 @@ cargo test --target wasm32-unknown-unknown -p quinn-proto
 
 ## Architecture Overview
 
-### Core Components Structure
+ant-quic has a three-layer architecture:
 
-- **`src/lib.rs`**: Main library exports and QUIC protocol constants
-- **`src/endpoint.rs`**: QUIC endpoint management and connection dispatch
-- **`src/connection/`**: Connection state management, streams, and protocol logic
-- **`src/connection/nat_traversal.rs`**: NAT traversal state and coordination logic
-- **`src/nat_traversal_api.rs`**: High-level NAT traversal API for applications
-- **`src/candidate_discovery.rs`**: Network interface and address candidate discovery
-- **`src/connection_establishment*.rs`**: Connection establishment managers
+### Layer 1: Protocol Implementation (Low-Level)
+- **`src/endpoint.rs`**: Core QUIC endpoint (forked from Quinn)
+- **`src/connection/`**: QUIC connection state machine with NAT traversal extensions
+- **`src/frame.rs`**: QUIC frames including NAT traversal extension frames
+- **`src/crypto/`**: TLS and Raw Public Key (RFC 7250) implementation
+
+### Layer 2: Integration APIs (High-Level)
+- **`src/nat_traversal_api.rs`**: `NatTraversalEndpoint` - High-level NAT traversal API
+- **`src/quic_node.rs`**: `QuicP2PNode` - Application-friendly P2P node wrapper
+- **`src/quinn_high_level/`**: Async wrapper around low-level Quinn (when `production-ready` feature enabled)
+- **`src/connection_establishment.rs`**: Connection orchestration (needs wiring to actual QUIC)
+
+### Layer 3: Applications (Binaries)
+- **`src/bin/ant-quic.rs`**: Main QUIC P2P binary using `QuicP2PNode`
+- **`examples/`**: Demo applications showing various use cases
 
 ### NAT Traversal Architecture
 
@@ -174,23 +195,25 @@ cargo test --test nat_traversal_comprehensive
 ## Current Development Status
 
 ### Completed ✅
-- Core QUIC protocol with NAT traversal extensions
-- Transport parameter negotiation and extension frames
+- Core QUIC protocol with NAT traversal extensions (forked from Quinn)
+- Transport parameter negotiation (ID 0x58) and extension frames
+- NAT traversal frames: ADD_ADDRESS (0x40), PUNCH_ME_NOW (0x41), REMOVE_ADDRESS (0x42)
 - ICE-like candidate pairing with priority calculation
-- Multi-path packet transmission and coordination
-- Comprehensive test suite with network simulation
-- High-level NAT traversal API with Quinn endpoint integration
+- Raw Public Keys (RFC 7250) implementation with Ed25519
+- High-level APIs: `QuicP2PNode` and `NatTraversalEndpoint`
+- Production binary `ant-quic` with full QUIC implementation
+- Comprehensive test suite (580+ tests)
 
 ### In Progress 🚧
-- Platform-specific network interface discovery (Windows IP Helper, Linux Netlink, macOS SCF)
-- Session state machine polling implementation
-- Relay connection logic for fallback scenarios
+- Session state machine polling in `nat_traversal_api.rs` (line 2022)
+- Connection status checking in `connection_establishment.rs` (line 844)
+- Wiring `SimpleConnectionEstablishmentManager` to actual QUIC connections
+- Platform-specific network interface discovery (placeholders exist)
 
-### Known Limitations
-- Platform network discovery needs completion for full functionality
-- IPv6 dual-stack support requires enhancement
-- Performance optimization needed for high-scale deployments
-- Relay selection algorithms need real-world testing
+### Architecture Notes
+- Bootstrap "registration" happens automatically via QUIC connections (per spec)
+- No STUN/TURN servers - address observation via QUIC extension frames
+- Three-layer architecture: Protocol → Integration APIs → Applications
 
 ## Development Notes
 

@@ -28,6 +28,7 @@ async fn create_test_node(
         connection_timeout: Duration::from_secs(10),
         stats_interval: Duration::from_secs(60),
         auth_config: AuthConfig::default(),
+        bind_addr: None,
     };
 
     QuicP2PNode::new(config).await

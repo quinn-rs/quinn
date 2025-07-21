@@ -131,11 +131,6 @@ unexpected_cfgs = { level = "warn", check-cfg = ['cfg(fuzzing)', 'cfg(wasm_brows
 name = "ant-quic"
 path = "src/bin/ant-quic.rs"
 
-# QUIC-based P2P demo (migrated from UDP)
-[[bin]]
-name = "ant-quic-v2"
-path = "src/bin/ant-quic-v2.rs"
-
 # Benchmarks
 [[bench]]
 name = "relay_queue"

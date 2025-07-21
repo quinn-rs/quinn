@@ -31,6 +31,7 @@ async fn test_authenticated_connection() {
             require_authentication: false, // Bootstrap doesn't require auth
             ..Default::default()
         },
+        bind_addr: None,
     };
 
     let _bootstrap = Arc::new(
@@ -52,6 +53,7 @@ async fn test_authenticated_connection() {
             auth_timeout: Duration::from_secs(10),
             ..Default::default()
         },
+        bind_addr: None,
     };
 
     let client2_config = client1_config.clone();
@@ -152,6 +154,7 @@ async fn test_authentication_failure() {
             require_authentication: false,
             ..Default::default()
         },
+        bind_addr: None,
     };
 
     let _bootstrap = Arc::new(
@@ -174,6 +177,7 @@ async fn test_authentication_failure() {
             max_auth_attempts: 1,
             ..Default::default()
         },
+        bind_addr: None,
     };
 
     let client = Arc::new(
@@ -212,6 +216,7 @@ async fn test_multiple_authenticated_peers() {
             require_authentication: false,
             ..Default::default()
         },
+        bind_addr: None,
     };
 
     let _bootstrap = Arc::new(
@@ -234,6 +239,7 @@ async fn test_multiple_authenticated_peers() {
                 require_authentication: true,
                 ..Default::default()
             },
+            bind_addr: None,
         };
 
         let client = Arc::new(
@@ -312,6 +318,7 @@ async fn test_auth_with_disconnection() {
             require_authentication: false,
             ..Default::default()
         },
+        bind_addr: None,
     };
 
     let _bootstrap = Arc::new(
@@ -332,6 +339,7 @@ async fn test_auth_with_disconnection() {
             require_authentication: true,
             ..Default::default()
         },
+        bind_addr: None,
     };
 
     let client1 = Arc::new(

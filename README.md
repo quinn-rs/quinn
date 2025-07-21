@@ -45,29 +45,17 @@ cargo build --release
 ### Basic Usage
 
 ```bash
-# Run as P2P node (automatically detects if it can be a coordinator)
+# Run as P2P node with QUIC protocol
 ant-quic --listen 0.0.0.0:9000
 
-# Connect to bootstrap nodes    for peer discovery
+# Connect to bootstrap nodes for peer discovery
 ant-quic --bootstrap node1.example.com:9000,node2.example.com:9000
 
-# Connect to specific peer by ID
-ant-quic --connect 1234567890abcdef1234567890abcdef12345678
-
-# Force coordinator mode (skip auto-detection)
+# Run as coordinator with NAT traversal event monitoring
 ant-quic --force-coordinator --listen 0.0.0.0:9000
 
-# Enable verbose logging to see role detection
-ant-quic --verbose --listen 0.0.0.0:9000
-
-# Network simulation for testing
-ant-quic --simulate --nodes 50 --duration 300
-
-# New QUIC-based demo with real NAT traversal (v2)
-ant-quic-v2 --bootstrap localhost:9000
-
-# Run as coordinator with NAT traversal event monitoring
-ant-quic-v2 --force-coordinator --bootstrap localhost:9001
+# Run with dashboard for real-time statistics
+ant-quic --dashboard --listen 0.0.0.0:9000
 
 # Check NAT traversal status while running
 # Type /status to see discovered addresses and coordination sessions
@@ -258,6 +246,8 @@ Contributions are welcome! Please see our [contributing guidelines](CONTRIBUTING
 git clone https://github.com/autonomi/ant-quic
 cd ant-quic
 cargo test --all-features
+
+# Run the QUIC binary
 cargo run --bin ant-quic -- --help
 ```
 

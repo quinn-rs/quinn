@@ -57,6 +57,8 @@ pub struct QuicNodeConfig {
     pub stats_interval: Duration,
     /// Authentication configuration
     pub auth_config: AuthConfig,
+    /// Bind address for the node
+    pub bind_addr: Option<SocketAddr>,
 }
 
 impl Default for QuicNodeConfig {
@@ -69,6 +71,7 @@ impl Default for QuicNodeConfig {
             connection_timeout: Duration::from_secs(30),
             stats_interval: Duration::from_secs(30),
             auth_config: AuthConfig::default(),
+            bind_addr: None,
         }
     }
 }
@@ -138,6 +141,7 @@ impl QuicP2PNode {
             // Bootstrap nodes should not enable relay fallback
             enable_relay_fallback: !matches!(config.role, EndpointRole::Bootstrap),
             max_concurrent_attempts: 5,
+            bind_addr: config.bind_addr,
         };
 
         // Create event callback for NAT traversal events
