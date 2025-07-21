@@ -56,8 +56,15 @@ pub trait Controller: Send + Sync {
         now: Instant,
         sent: Instant,
         is_persistent_congestion: bool,
+        is_ecn: bool,
         lost_bytes: u64,
     );
+
+    /// Packets were incorrectly deemed lost
+    ///
+    /// This function is called when all packets that were deemed lost (for instance because
+    /// of packet reordering) are acknowledged after the congestion event was raised.
+    fn on_spurious_congestion_event(&mut self) {}
 
     /// The known MTU for the current network path has been updated
     fn on_mtu_update(&mut self, new_mtu: u16);
