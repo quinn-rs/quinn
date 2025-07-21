@@ -884,6 +884,10 @@ impl NewConnectionId {
     }
 }
 
+impl FrameStruct for NewConnectionId {
+    const SIZE_BOUND: usize = 1 + 8 + 8 + 1 + MAX_CID_SIZE + RESET_TOKEN_SIZE;
+}
+
 /// Smallest number of bytes this type of frame is guaranteed to fit within.
 pub(crate) const RETIRE_CONNECTION_ID_SIZE_BOUND: usize = 9;
 
