@@ -18,15 +18,6 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         rust: [stable]
-
-  # ARM builds require cross-compilation
-  test-arm:
-    name: Test ARM
-    runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        target: [aarch64-unknown-linux-gnu]
-        rust: [stable]
     steps:
       - uses: actions/checkout@v4
       
@@ -69,6 +60,14 @@ jobs:
       - name: Build release
         run: cargo build --release --verbose
 
+  # ARM builds require cross-compilation
+  test-arm:
+    name: Test ARM
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [aarch64-unknown-linux-gnu]
+        rust: [stable]
     steps:
       - uses: actions/checkout@v4
       
