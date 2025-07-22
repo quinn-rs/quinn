@@ -5,11 +5,12 @@
 
 use std::{
     collections::HashMap,
-    ffi::OsString,
+    ffi::{c_char, CStr, OsString},
     mem::{self, MaybeUninit},
     net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr},
     os::windows::ffi::OsStringExt,
     ptr,
+    sync::Arc,
     time::Instant,
 };
 
@@ -17,17 +18,20 @@ use windows::{
     Win32::{
         NetworkManagement::IpHelper::{
             GetAdaptersAddresses, GetAdaptersInfo, GetIpForwardTable, MIB_IPFORWARDROW,
-            IP_ADAPTER_ADDRESSES_LH, IP_ADAPTER_INFO, AF_INET, AF_INET6, GAA_FLAG_SKIP_ANYCAST,
+            IP_ADAPTER_ADDRESSES_LH, IP_ADAPTER_INFO, GAA_FLAG_SKIP_ANYCAST,
             GAA_FLAG_SKIP_MULTICAST, GAA_FLAG_SKIP_DNS_SERVER, MIB_IF_TYPE_ETHERNET,
             MIB_IF_TYPE_LOOPBACK, MIB_IF_TYPE_PPP, MIB_IF_TYPE_SLIP, MIB_IF_TYPE_TOKENRING,
         },
         Networking::WinSock::{
-            SOCKADDR_IN, SOCKADDR_IN6, AF_INET as SOCKET_AF_INET, AF_INET6 as SOCKET_AF_INET6,
+            SOCKADDR_IN, SOCKADDR_IN6, AF_INET, AF_INET6, ADDRESS_FAMILY,
         },
         Foundation::{
             CloseHandle, ERROR_BUFFER_OVERFLOW, ERROR_IO_PENDING, HANDLE, WAIT_OBJECT_0, WAIT_TIMEOUT,
         },
-        System::IO::OVERLAPPED,
+        System::{
+            IO::OVERLAPPED,
+            Threading::WaitForSingleObject,
+        },
     },
 };
 
@@ -49,10 +53,14 @@ pub struct WindowsInterfaceDiscovery {
     /// Current scan state
     scan_state: ScanState,
     /// Network change monitoring handle
-    change_handle: Option<NetworkChangeHandle>,
+    change_handle: Option<Arc<NetworkChangeHandle>>,
     /// Adapter enumeration configuration
     adapter_config: AdapterConfig,
 }
+
+// WindowsInterfaceDiscovery is thread-safe due to Arc wrapper on handle
+unsafe impl Send for WindowsInterfaceDiscovery {}
+unsafe impl Sync for WindowsInterfaceDiscovery {}
 
 /// Internal representation of a Windows network interface
 #[derive(Debug, Clone)]
@@ -139,6 +147,10 @@ struct NetworkChangeHandle {
     /// Overlapped structure for asynchronous operations
     overlapped: windows::Win32::System::IO::OVERLAPPED,
 }
+
+// Mark NetworkChangeHandle as thread-safe
+unsafe impl Send for NetworkChangeHandle {}
+unsafe impl Sync for NetworkChangeHandle {}
 
 /// Configuration for adapter enumeration
 #[derive(Debug, Clone)]
@@ -231,7 +243,7 @@ impl WindowsInterfaceDiscovery {
             });
         }
 
-        self.change_handle = Some(NetworkChangeHandle { handle, overlapped });
+        self.change_handle = Some(Arc::new(NetworkChangeHandle { handle, overlapped }));
         debug!("Network change monitoring enabled");
         Ok(())
     }
@@ -240,7 +252,7 @@ impl WindowsInterfaceDiscovery {
     pub fn check_network_changes(&mut self) -> bool {
         if let Some(ref mut change_handle) = self.change_handle {
             let result = unsafe {
-                windows::Win32::Foundation::WaitForSingleObject(
+                WaitForSingleObject(
                     change_handle.handle,
                     0, // Don't wait
                 )
@@ -330,7 +342,8 @@ impl WindowsInterfaceDiscovery {
         // Extract adapter name
         let name = unsafe {
             let name_ptr = adapter.AdapterName.as_ptr() as *const i8;
-            let name_len = libc::strlen(name_ptr);
+            let name_cstr = CStr::from_ptr(name_ptr as *const c_char);
+            let name_len = name_cstr.to_bytes().len();
             let name_slice = std::slice::from_raw_parts(name_ptr as *const u8, name_len);
             String::from_utf8_lossy(name_slice).to_string()
         };
@@ -338,7 +351,8 @@ impl WindowsInterfaceDiscovery {
         // Extract description (friendly name)
         let friendly_name = unsafe {
             let desc_ptr = adapter.Description.as_ptr() as *const i8;
-            let desc_len = libc::strlen(desc_ptr);
+            let desc_cstr = CStr::from_ptr(desc_ptr as *const c_char);
+            let desc_len = desc_cstr.to_bytes().len();
             let desc_slice = std::slice::from_raw_parts(desc_ptr as *const u8, desc_len);
             String::from_utf8_lossy(desc_slice).to_string()
         };
@@ -360,7 +374,8 @@ impl WindowsInterfaceDiscovery {
         loop {
             let ip_str = unsafe {
                 let ip_ptr = current_addr.IpAddress.String.as_ptr() as *const i8;
-                let ip_len = libc::strlen(ip_ptr);
+                let ip_cstr = CStr::from_ptr(ip_ptr as *const c_char);
+                let ip_len = ip_cstr.to_bytes().len();
                 let ip_slice = std::slice::from_raw_parts(ip_ptr as *const u8, ip_len);
                 String::from_utf8_lossy(ip_slice).to_string()
             };
@@ -426,7 +441,7 @@ impl WindowsInterfaceDiscovery {
         loop {
             let result = unsafe {
                 windows::Win32::NetworkManagement::IpHelper::GetAdaptersAddresses(
-                    windows::Win32::NetworkManagement::IpHelper::AF_INET6 as u32,
+                    AF_INET6.0 as u32,
                     windows::Win32::NetworkManagement::IpHelper::GAA_FLAG_SKIP_ANYCAST
                         | windows::Win32::NetworkManagement::IpHelper::GAA_FLAG_SKIP_MULTICAST
                         | windows::Win32::NetworkManagement::IpHelper::GAA_FLAG_SKIP_DNS_SERVER,
@@ -458,14 +473,14 @@ impl WindowsInterfaceDiscovery {
         while !current_adapter.is_null() {
             let adapter = unsafe { &*current_adapter };
             
-            if adapter.IfIndex == adapter_index {
+            if adapter.Anonymous1.Anonymous.IfIndex == adapter_index {
                 let mut current_addr = adapter.FirstUnicastAddress;
                 
                 while !current_addr.is_null() {
                     let addr_info = unsafe { &*current_addr };
                     let sockaddr = unsafe { &*addr_info.Address.lpSockaddr };
                     
-                    if sockaddr.sa_family == windows::Win32::Networking::WinSock::AF_INET6 as u16 {
+                    if sockaddr.sa_family == AF_INET6 {
                         let sockaddr_in6 = unsafe { 
                             &*(addr_info.Address.lpSockaddr as *const windows::Win32::Networking::WinSock::SOCKADDR_IN6)
                         };
