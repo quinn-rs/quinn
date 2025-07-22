@@ -182,6 +182,90 @@ impl QuicP2PNode {
         })
     }
 
+    /// Get the node configuration
+    pub fn get_config(&self) -> &QuicNodeConfig {
+        &self.config
+    }
+
+    /// Connect directly to a bootstrap node
+    pub async fn connect_to_bootstrap(
+        &self,
+        bootstrap_addr: SocketAddr,
+    ) -> Result<PeerId, NatTraversalError> {
+        info!("Connecting to bootstrap node at {}", bootstrap_addr);
+        
+        // Get the quinn endpoint from NAT traversal endpoint
+        let endpoint = self.nat_endpoint.get_quinn_endpoint()
+            .ok_or_else(|| NatTraversalError::ConfigError("Quinn endpoint not available".to_string()))?;
+        
+        // Connect using the QUIC endpoint directly
+        match endpoint.connect(bootstrap_addr, "bootstrap-node") {
+            Ok(connecting) => {
+                match connecting.await {
+                    Ok(connection) => {
+                        // Extract peer ID from the connection
+                        // For now, we'll generate a temporary peer ID based on the address
+                        // In a real implementation, we'd exchange peer IDs during the handshake
+                        let peer_id = self.derive_peer_id_from_address(bootstrap_addr);
+                        
+                        // Store the connection
+                        self.connected_peers.write().await.insert(peer_id, bootstrap_addr);
+                        
+                        // Update stats
+                        {
+                            let mut stats = self.stats.lock().await;
+                            stats.active_connections += 1;
+                            stats.successful_connections += 1;
+                        }
+                        
+                        // Fire connection established event
+                        if let Some(ref callback) = self.nat_endpoint.get_event_callback() {
+                            callback(NatTraversalEvent::ConnectionEstablished {
+                                peer_id,
+                                remote_address: bootstrap_addr,
+                            });
+                        }
+                        
+                        info!("Successfully connected to bootstrap node {} with peer ID {:?}", bootstrap_addr, peer_id);
+                        Ok(peer_id)
+                    }
+                    Err(e) => {
+                        error!("Failed to establish connection to bootstrap node {}: {}", bootstrap_addr, e);
+                        {
+                            let mut stats = self.stats.lock().await;
+                            stats.failed_connections += 1;
+                        }
+                        Err(NatTraversalError::NetworkError(format!("Connection failed: {}", e)))
+                    }
+                }
+            }
+            Err(e) => {
+                error!("Failed to initiate connection to bootstrap node {}: {}", bootstrap_addr, e);
+                {
+                    let mut stats = self.stats.lock().await;
+                    stats.failed_connections += 1;
+                }
+                Err(NatTraversalError::NetworkError(format!("Connect error: {}", e)))
+            }
+        }
+    }
+    
+    /// Derive a peer ID from a socket address (temporary solution)
+    fn derive_peer_id_from_address(&self, addr: SocketAddr) -> PeerId {
+        use std::hash::{Hash, Hasher};
+        use std::collections::hash_map::DefaultHasher;
+        
+        let mut hasher = DefaultHasher::new();
+        addr.hash(&mut hasher);
+        let hash = hasher.finish();
+        
+        let mut peer_id_bytes = [0u8; 32];
+        peer_id_bytes[..8].copy_from_slice(&hash.to_le_bytes());
+        peer_id_bytes[8..16].copy_from_slice(&addr.port().to_le_bytes());
+        
+        PeerId(peer_id_bytes)
+    }
+
     /// Connect to a peer using NAT traversal
     pub async fn connect_to_peer(
         &self,

@@ -207,6 +207,29 @@ impl QuicDemoNode {
         let nat_status = Arc::clone(&self.nat_status);
         let _nat_handle = self.start_nat_event_monitor(nat_status);
 
+        // Connect to bootstrap nodes if we're not a bootstrap node ourselves
+        if !self.quic_node.get_config().bootstrap_nodes.is_empty() && 
+           !matches!(self.quic_node.get_config().role, EndpointRole::Bootstrap) {
+            info!("Connecting to {} bootstrap nodes", self.quic_node.get_config().bootstrap_nodes.len());
+            
+            for bootstrap_addr in &self.quic_node.get_config().bootstrap_nodes {
+                info!("Connecting to bootstrap node at {}", bootstrap_addr);
+                match self.quic_node.connect_to_bootstrap(*bootstrap_addr).await {
+                    Ok(peer_id) => {
+                        info!("Successfully connected to bootstrap node {} (peer ID: {})", 
+                              bootstrap_addr, hex::encode(&peer_id.0[..8]));
+                        self.connected_peers.lock().await.insert(
+                            peer_id, 
+                            format!("bootstrap-{}", bootstrap_addr)
+                        );
+                    }
+                    Err(e) => {
+                        warn!("Failed to connect to bootstrap node {}: {}", bootstrap_addr, e);
+                    }
+                }
+            }
+        }
+
         // Start dashboard update task if enabled
         if self.dashboard_enabled {
             if let Some(dashboard) = &self.dashboard {

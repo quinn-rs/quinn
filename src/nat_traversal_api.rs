@@ -652,6 +652,16 @@ impl NatTraversalEndpoint {
         Ok(endpoint)
     }
     
+    /// Get the underlying Quinn endpoint
+    pub fn get_quinn_endpoint(&self) -> Option<&crate::quinn_high_level::Endpoint> {
+        self.quinn_endpoint.as_ref()
+    }
+    
+    /// Get the event callback
+    pub fn get_event_callback(&self) -> Option<&Box<dyn Fn(NatTraversalEvent) + Send + Sync>> {
+        self.event_callback.as_ref()
+    }
+    
     /// Initiate NAT traversal to a peer (returns immediately, progress via events)
     pub fn initiate_nat_traversal(
         &self,

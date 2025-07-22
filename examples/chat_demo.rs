@@ -15,6 +15,7 @@ use ant_quic::{
 use std::{collections::HashMap, net::SocketAddr, sync::Arc, time::Duration};
 use tokio::sync::Mutex;
 use tracing::{error, info};
+use hex;
 
 #[derive(Clone)]
 struct ChatNode {
@@ -54,6 +55,27 @@ impl ChatNode {
             nickname,
             peers: Arc::new(Mutex::new(HashMap::new())),
         })
+    }
+
+    async fn connect_to_bootstrap(
+        &self,
+        bootstrap_addr: SocketAddr,
+    ) -> Result<PeerId, Box<dyn std::error::Error + Send + Sync>> {
+        info!("Connecting to bootstrap node at {}", bootstrap_addr);
+        
+        // Use the same logic as the ant-quic binary
+        let bootstrap_peer_id = self.node.connect_to_bootstrap(bootstrap_addr).await
+            .map_err(|e| format!("Failed to connect to bootstrap: {}", e))?;
+        
+        // Send join message to bootstrap
+        let join_msg = ChatMessage::join(self.nickname.clone(), self.peer_id);
+        let data = join_msg.serialize()?;
+        self.node
+            .send_to_peer(&bootstrap_peer_id, &data)
+            .await
+            .map_err(|e| format!("Failed to send join message to bootstrap: {}", e))?;
+        
+        Ok(bootstrap_peer_id)
     }
 
     async fn connect_to_peer(
@@ -196,18 +218,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
     // Parse command line arguments
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 2 {
-        eprintln!("Usage: {} <coordinator|client> [bootstrap_addr]", args[0]);
+        eprintln!("Usage: {} <coordinator|client> [bootstrap_addrs...]", args[0]);
+        eprintln!("       bootstrap_addrs: comma-separated list of addresses");
+        eprintln!("Example: {} client 192.168.1.10:9000,192.168.1.11:9000", args[0]);
         std::process::exit(1);
     }
 
     let mode = &args[1];
-    let bootstrap_addr = if args.len() > 2 {
-        args[2].parse::<SocketAddr>().unwrap_or_else(|_| {
-            eprintln!("Invalid bootstrap address: {}", args[2]);
-            std::process::exit(1);
-        })
+    let bootstrap_addrs: Vec<SocketAddr> = if args.len() > 2 {
+        args[2]
+            .split(',')
+            .filter_map(|addr| {
+                addr.trim().parse::<SocketAddr>().ok().or_else(|| {
+                    eprintln!("Warning: Invalid bootstrap address: {}", addr.trim());
+                    None
+                })
+            })
+            .collect()
     } else {
-        "127.0.0.1:9000".parse().unwrap()
+        vec!["127.0.0.1:9000".parse().unwrap()]
     };
 
     // Create chat node
@@ -228,8 +257,35 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
         }
     };
 
-    let chat_node = ChatNode::new(role, vec![bootstrap_addr], nickname.clone()).await?;
+    let chat_node = ChatNode::new(role, bootstrap_addrs.clone(), nickname.clone()).await?;
     info!("Started {} with peer ID: {:?}", nickname, chat_node.peer_id);
+    
+    // Connect to bootstrap nodes if we're a client
+    if matches!(role, EndpointRole::Client) && !bootstrap_addrs.is_empty() {
+        info!("Connecting to {} bootstrap nodes", bootstrap_addrs.len());
+        for bootstrap_addr in &bootstrap_addrs {
+            info!("Connecting to bootstrap node at {}", bootstrap_addr);
+            match chat_node.connect_to_bootstrap(*bootstrap_addr).await {
+                Ok(bootstrap_peer_id) => {
+                    info!("Connected to bootstrap node {} with peer ID: {:?}", 
+                          bootstrap_addr, bootstrap_peer_id);
+                    // Add bootstrap node to our peer list
+                    chat_node.peers.lock().await.insert(
+                        bootstrap_peer_id,
+                        PeerInfo {
+                            peer_id: bootstrap_peer_id.0,  // Use the inner byte array
+                            nickname: format!("Bootstrap-{}", bootstrap_addr),
+                            status: "connected".to_string(),
+                            joined_at: std::time::SystemTime::now(),
+                        }
+                    );
+                }
+                Err(e) => {
+                    error!("Failed to connect to bootstrap node {}: {}", bootstrap_addr, e);
+                }
+            }
+        }
+    }
 
     // Start message handler
     let handler_node = chat_node.clone();
@@ -242,7 +298,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
     // Simple CLI interface
     println!("Chat node started. Commands:");
-    println!("  /connect <peer_id> - Connect to a peer");
+    println!("  /connect <peer_id_hex> <coordinator_addr> - Connect to a peer via coordinator");
     println!("  /peers - List connected peers");
     println!("  /quit - Exit");
     println!("  <text> - Send message to all peers");
@@ -260,12 +316,29 @@ async fn main() -> Result<(), Box<dyn std::error::Error + Send + Sync>> {
 
         if line.starts_with("/connect ") {
             let parts: Vec<&str> = line.split_whitespace().collect();
-            if parts.len() >= 2 {
-                // Parse peer ID (simplified - in real app would parse hex)
-                let peer_id = PeerId([0u8; 32]); // Placeholder
-                if let Err(e) = chat_node.connect_to_peer(peer_id, bootstrap_addr).await {
-                    error!("Failed to connect: {}", e);
+            if parts.len() >= 3 {
+                // Parse peer ID and coordinator address
+                if let Ok(peer_id_bytes) = hex::decode(parts[1]) {
+                    if peer_id_bytes.len() == 32 {
+                        let mut peer_id_array = [0u8; 32];
+                        peer_id_array.copy_from_slice(&peer_id_bytes);
+                        let peer_id = PeerId(peer_id_array);
+                        
+                        if let Ok(coordinator_addr) = parts[2].parse::<SocketAddr>() {
+                            if let Err(e) = chat_node.connect_to_peer(peer_id, coordinator_addr).await {
+                                error!("Failed to connect: {}", e);
+                            }
+                        } else {
+                            error!("Invalid coordinator address: {}", parts[2]);
+                        }
+                    } else {
+                        error!("Peer ID must be 32 bytes (64 hex chars)");
+                    }
+                } else {
+                    error!("Invalid peer ID hex: {}", parts[1]);
                 }
+            } else {
+                println!("Usage: /connect <peer_id_hex> <coordinator_addr>");
             }
         } else if line == "/peers" {
             let peers = chat_node.peers.lock().await;

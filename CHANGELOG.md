@@ -7,6 +7,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.1] - 2025-07-22
+
+### Added
+- Bootstrap node connection functionality in main binary
+  - Automatically connects to all specified bootstrap nodes on startup
+  - New `connect_to_bootstrap` method in `QuicP2PNode`
+  - Better connection tracking and error handling
+- Enhanced chat example with bootstrap support
+  - Accepts multiple bootstrap addresses (comma-separated)
+  - Automatically connects to bootstrap nodes for client mode
+  - Improved `/connect` command with proper peer ID and coordinator parsing
+
+### Fixed
+- Bootstrap nodes are now actively connected instead of just stored in configuration
+- Chat example properly handles multiple bootstrap addresses
+- Connection establishment now works correctly for NAT traversal testing
+
 ## [0.4.0] - 2025-07-21
 
 ### Breaking Changes
