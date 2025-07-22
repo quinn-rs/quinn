@@ -1211,7 +1211,7 @@ impl CandidateDiscoveryManager {
         self.start_session_server_reflexive_discovery(session, events, now);
     }
     
-    fn poll_session_server_reflexive(&mut self, session: &mut DiscoverySession, started_at: Instant, active_queries: &HashMap<BootstrapNodeId, QueryState>, responses_received: &[(BootstrapNodeId, ServerReflexiveResponse)], now: Instant, events: &mut Vec<DiscoveryEvent>) {
+    fn poll_session_server_reflexive(&mut self, session: &mut DiscoverySession, _started_at: Instant, _active_queries: &HashMap<BootstrapNodeId, QueryState>, _responses_received: &[(BootstrapNodeId, ServerReflexiveResponse)], now: Instant, events: &mut Vec<DiscoveryEvent>) {
         // TODO: Implement server reflexive polling for session
         // For now, transition to completion
         self.complete_session_discovery_with_local_candidates(session, events, now);

@@ -376,7 +376,9 @@ impl LinuxInterfaceDiscovery {
             }
 
             // Parse netlink messages
-            let messages = self.parse_netlink_messages(&socket.receive_buffer[..bytes_read as usize])?;
+            // Copy the buffer to avoid borrow checker issues
+            let buffer_copy = socket.receive_buffer[..bytes_read as usize].to_vec();
+            let messages = self.parse_netlink_messages(&buffer_copy)?;
             
             for message in messages {
                 match message.message_type {
