@@ -376,9 +376,7 @@ impl LinuxInterfaceDiscovery {
             }
 
             // Parse netlink messages
-            // Copy the buffer to avoid borrow checker issues
-            let buffer_copy = socket.receive_buffer[..bytes_read as usize].to_vec();
-            let messages = self.parse_netlink_messages(&buffer_copy)?;
+            let messages = Self::parse_netlink_messages(&socket.receive_buffer[..bytes_read as usize])?;
             
             for message in messages {
                 match message.message_type {
@@ -398,7 +396,7 @@ impl LinuxInterfaceDiscovery {
     }
 
     /// Parse netlink messages from buffer
-    fn parse_netlink_messages(&self, buffer: &[u8]) -> Result<Vec<NetlinkMessage>, LinuxNetworkError> {
+    fn parse_netlink_messages(buffer: &[u8]) -> Result<Vec<NetlinkMessage>, LinuxNetworkError> {
         let mut messages = Vec::new();
         let mut offset = 0;
 

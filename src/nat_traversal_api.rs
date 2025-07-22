@@ -1200,7 +1200,7 @@ impl NatTraversalEndpoint {
                         // This event is used to trigger sending PATH_CHALLENGE frames
                         // The actual sending is handled by the QUIC connection layer
                     }
-                    DiscoveryEvent::PathValidationResponse { candidate_id, candidate_address, challenge_token, rtt } => {
+                    DiscoveryEvent::PathValidationResponse { candidate_id, candidate_address, challenge_token: _, rtt } => {
                         debug!("PATH_RESPONSE received for candidate {} at {} with RTT {:?}", 
                                candidate_id.0, candidate_address, rtt);
                         // Candidate has been validated with real QUIC path validation
@@ -2000,7 +2000,7 @@ impl NatTraversalEndpoint {
                     }
                     
                     // Update session candidates when discovered
-                    if let NatTraversalEvent::CandidateDiscovered { peer_id, candidate } = &nat_event {
+                    if let NatTraversalEvent::CandidateDiscovered { peer_id: _, candidate: _ } = &nat_event {
                         // Store candidate for the session (will be done after we release discovery lock)
                         // For now, just note that we need to update the session
                     }
