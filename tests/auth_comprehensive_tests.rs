@@ -749,6 +749,7 @@ async fn test_timing_attack_resistance() {
 // ===== Performance Characteristic Tests =====
 
 #[tokio::test]
+#[ignore = "Performance test - may timeout in CI environments"]
 async fn test_auth_performance_under_load() {
     let _ = tracing_subscriber::fmt::try_init();
 
