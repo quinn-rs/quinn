@@ -753,34 +753,63 @@ mod test {
 
     #[test]
     fn reserved_transport_parameter_generate_reserved_id() {
-        use rand::rngs::mock::StepRng;
         let mut rngs = [
-            StepRng::new(0, 1),
-            StepRng::new(1, 1),
-            StepRng::new(27, 1),
-            StepRng::new(31, 1),
-            StepRng::new(u32::MAX as u64, 1),
-            StepRng::new(u32::MAX as u64 - 1, 1),
-            StepRng::new(u32::MAX as u64 + 1, 1),
-            StepRng::new(u32::MAX as u64 - 27, 1),
-            StepRng::new(u32::MAX as u64 + 27, 1),
-            StepRng::new(u32::MAX as u64 - 31, 1),
-            StepRng::new(u32::MAX as u64 + 31, 1),
-            StepRng::new(u64::MAX, 1),
-            StepRng::new(u64::MAX - 1, 1),
-            StepRng::new(u64::MAX - 27, 1),
-            StepRng::new(u64::MAX - 31, 1),
-            StepRng::new(1 << 62, 1),
-            StepRng::new((1 << 62) - 1, 1),
-            StepRng::new((1 << 62) + 1, 1),
-            StepRng::new((1 << 62) - 27, 1),
-            StepRng::new((1 << 62) + 27, 1),
-            StepRng::new((1 << 62) - 31, 1),
-            StepRng::new((1 << 62) + 31, 1),
+            StepRng(0),
+            StepRng(1),
+            StepRng(27),
+            StepRng(31),
+            StepRng(u32::MAX as u64),
+            StepRng(u32::MAX as u64 - 1),
+            StepRng(u32::MAX as u64 + 1),
+            StepRng(u32::MAX as u64 - 27),
+            StepRng(u32::MAX as u64 + 27),
+            StepRng(u32::MAX as u64 - 31),
+            StepRng(u32::MAX as u64 + 31),
+            StepRng(u64::MAX),
+            StepRng(u64::MAX - 1),
+            StepRng(u64::MAX - 27),
+            StepRng(u64::MAX - 31),
+            StepRng(1 << 62),
+            StepRng((1 << 62) - 1),
+            StepRng((1 << 62) + 1),
+            StepRng((1 << 62) - 27),
+            StepRng((1 << 62) + 27),
+            StepRng((1 << 62) - 31),
+            StepRng((1 << 62) + 31),
         ];
         for rng in &mut rngs {
             let id = ReservedTransportParameter::generate_reserved_id(rng);
             assert!(id.0 % 31 == 27)
+        }
+    }
+
+    struct StepRng(u64);
+
+    impl RngCore for StepRng {
+        #[inline]
+        fn next_u32(&mut self) -> u32 {
+            self.next_u64() as u32
+        }
+
+        #[inline]
+        fn next_u64(&mut self) -> u64 {
+            let res = self.0;
+            self.0 = self.0.wrapping_add(1);
+            res
+        }
+
+        #[inline]
+        fn fill_bytes(&mut self, dst: &mut [u8]) {
+            let mut left = dst;
+            while left.len() >= 8 {
+                let (l, r) = left.split_at_mut(8);
+                left = r;
+                l.copy_from_slice(&self.next_u64().to_le_bytes());
+            }
+            let n = left.len();
+            if n > 0 {
+                left.copy_from_slice(&self.next_u32().to_le_bytes()[..n]);
+            }
         }
     }
 
