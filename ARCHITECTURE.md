@@ -47,8 +47,10 @@ This layer provides developer-friendly APIs wrapping the low-level protocol.
   - Peer discovery and connection management
   - Authentication with Ed25519
   - Chat protocol support
+  - Automatic bootstrap node connection (v0.4.1)
+  - Connection state tracking and statistics
 
-- **`src/quinn_high_level/`** - Async QUIC wrapper (when `production-ready` feature enabled)
+- **`src/quinn_high_level/`** - Async QUIC wrapper
   - `Endpoint` - Async endpoint management
   - `Connection` - High-level connection API
   - `SendStream`/`RecvStream` - Stream I/O with tokio integration
@@ -181,17 +183,24 @@ The architecture supports extensions through:
 - High-level APIs (`QuicP2PNode`, `NatTraversalEndpoint`)
 - Production binary with full functionality
 - Comprehensive test suite
+- Automatic bootstrap node connection (v0.4.1)
+- Peer authentication with Ed25519
+- Secure chat protocol
+- Real-time monitoring dashboard
+- GitHub Actions for automated releases
 
 ### In Progress
 - Session state machine polling (nat_traversal_api.rs:2022)
 - Connection status checking (connection_establishment.rs:844)
 - Platform-specific network discovery (stubs exist)
+- Windows and Linux ARM builds in CI
 
 ### Future Work
 - Performance optimizations
 - Additional NAT traversal strategies
 - Enhanced monitoring and metrics
 - WebTransport support
+- Decentralized bootstrap discovery
 
 ## Testing
 

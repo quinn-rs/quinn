@@ -1,23 +1,26 @@
-# Claude Code Task List for Ant-QUIC NAT Traversal Implementation
+# Ant-QUIC NAT Traversal Implementation Status (v0.4.1)
 
-## CRITICAL DISCOVERY: This is a Fork of quinn-proto
+## Project Overview
 
-**IMPORTANT**: Investigation reveals that ant-quic is a fork of quinn-proto (part of the quinn QUIC implementation). Evidence:
-1. The lib.rs file still contains the original quinn-proto documentation comment: "quinn-proto contains a fully deterministic implementation of QUIC protocol logic"
-2. The code structure and files (packet.rs, connection/, endpoint.rs, etc.) match quinn-proto's architecture
-3. Core QUIC protocol implementation is already complete from quinn-proto
+ant-quic is a fork of quinn-proto that extends QUIC with NAT traversal capabilities based on draft-seemann-quic-nat-traversal-01.
 
-**Implications**:
-- We should NOT be creating a "bridge" to quinn - we already HAVE quinn's core protocol implementation
-- The task should be to modify the existing quinn-proto code directly to add NAT traversal
-- No need to reimplement QUIC protocol logic - it's already there
-- Focus should be on adding the NAT traversal extensions to the existing codebase
+## Implementation Status
 
-**Recommended Approach**:
-1. Work within the existing quinn-proto fork structure
-2. Add NAT traversal frames to the existing frame handling system
-3. Extend the existing connection and endpoint logic
-4. No need for a separate "bridge" - just enhance what's already there
+### ✅ Completed Features
+1. **Core QUIC protocol** - Inherited from quinn-proto fork
+2. **NAT traversal extension frames** - ADD_ADDRESS, PUNCH_ME_NOW, REMOVE_ADDRESS
+3. **Transport parameter negotiation** - ID 0x58 for NAT traversal capability
+4. **High-level APIs** - `QuicP2PNode` and `NatTraversalEndpoint`
+5. **Production binary** - Full-featured `ant-quic` with chat and monitoring
+6. **Automatic bootstrap connection** - Nodes connect to bootstrap nodes on startup (v0.4.1)
+7. **Peer authentication** - Ed25519-based authentication protocol
+8. **Secure messaging** - Chat protocol with version negotiation
+9. **Real-time monitoring** - Dashboard for connection statistics
+
+### 🚧 In Progress
+1. **Session state machine polling** - Needs implementation in nat_traversal_api.rs
+2. **Connection status checking** - SimpleConnectionEstablishmentManager needs real QUIC integration
+3. **Platform-specific network discovery** - Stubs exist but need completion
 
 ## Phase 1: Core Draft Compliance (Priority: CRITICAL)
 

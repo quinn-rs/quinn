@@ -203,12 +203,19 @@ cargo test --test nat_traversal_comprehensive
 - High-level APIs: `QuicP2PNode` and `NatTraversalEndpoint`
 - Production binary `ant-quic` with full QUIC implementation
 - Comprehensive test suite (580+ tests)
+- Automatic bootstrap node connection on startup (v0.4.1)
+- Peer authentication with Ed25519 signatures
+- Secure chat protocol with message versioning
+- Real-time monitoring dashboard
+- GitHub Actions for automated releases
+- Multi-platform binary releases
 
 ### In Progress 🚧
 - Session state machine polling in `nat_traversal_api.rs` (line 2022)
 - Connection status checking in `connection_establishment.rs` (line 844)
 - Wiring `SimpleConnectionEstablishmentManager` to actual QUIC connections
 - Platform-specific network interface discovery (placeholders exist)
+- Windows and Linux ARM builds in GitHub Actions (failing)
 
 ### Architecture Notes
 - Bootstrap "registration" happens automatically via QUIC connections (per spec)

@@ -6,6 +6,8 @@ A QUIC transport protocol implementation with advanced NAT traversal capabilitie
 [![Crates.io](https://img.shields.io/crates/v/ant-quic.svg)](https://crates.io/crates/ant-quic)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE-MIT)
 [![License: Apache 2.0](https://img.shields.io/badge/License-Apache%202.0-blue.svg)](LICENSE-APACHE)
+[![Build Status](https://github.com/dirvine/ant-quic/actions/workflows/ci.yml/badge.svg)](https://github.com/dirvine/ant-quic/actions)
+[![Release](https://github.com/dirvine/ant-quic/actions/workflows/release.yml/badge.svg)](https://github.com/dirvine/ant-quic/releases)
 
 ## Features
 
@@ -14,6 +16,8 @@ A QUIC transport protocol implementation with advanced NAT traversal capabilitie
 - **High Connectivity**: Near 100% connection success rate through sophisticated NAT handling
 - **Autonomi Ready**: Integrated with Autonomi's decentralized networking requirements
 - **Built on Quinn**: Leverages the proven Quinn QUIC implementation as foundation
+- **Automatic Bootstrap Connection**: Nodes automatically connect to configured bootstrap nodes
+- **Production-Ready Binary**: Full-featured `ant-quic` binary for immediate deployment
 
 ## Key Capabilities
 
@@ -48,7 +52,7 @@ cargo build --release
 # Run as P2P node with QUIC protocol
 ant-quic --listen 0.0.0.0:9000
 
-# Connect to bootstrap nodes for peer discovery
+# Connect to bootstrap nodes for peer discovery (automatic connection on startup)
 ant-quic --bootstrap node1.example.com:9000,node2.example.com:9000
 
 # Run as coordinator with NAT traversal event monitoring
@@ -56,6 +60,10 @@ ant-quic --force-coordinator --listen 0.0.0.0:9000
 
 # Run with dashboard for real-time statistics
 ant-quic --dashboard --listen 0.0.0.0:9000
+
+# Run multiple nodes locally for testing
+ant-quic --listen 0.0.0.0:9000 # Bootstrap node
+ant-quic --listen 0.0.0.0:9001 --bootstrap 127.0.0.1:9000 # Client node
 
 # Check NAT traversal status while running
 # Type /status to see discovered addresses and coordination sessions
@@ -107,7 +115,7 @@ The repository includes several example applications demonstrating various featu
 Run examples with:
 ```bash
 cargo run --example simple_chat -- --listen 0.0.0.0:9000
-cargo run --example chat_demo -- --bootstrap node1.example.com:9000
+cargo run --example chat_demo -- --bootstrap node1.example.com:9000,node2.example.com:9000
 cargo run --example dashboard_demo
 ```
 
@@ -185,6 +193,10 @@ ant-quic implements and extends the following IETF specifications and drafts:
 - Connection establishment with fallback
 - Comprehensive test suite (580+ tests including auth, chat, and security tests)
 - Test binaries: coordinator, P2P node, network simulation
+- Automatic bootstrap node connection on startup
+- Peer authentication with Ed25519 signatures
+- Secure chat protocol with version negotiation
+- Real-time monitoring dashboard
 
 🚧 **In Progress/TODO**:
 - Platform-specific network interface discovery:
@@ -196,28 +208,41 @@ ant-quic implements and extends the following IETF specifications and drafts:
 
 ### Roadmap
 
-#### v0.1.0 - Foundation Release
+#### v0.1.0 - Foundation Release ✅
 - ✅ Core NAT traversal functionality
 - ✅ Basic binary tools
 - ✅ Full Quinn endpoint integration
 - 🚧 Complete platform-specific interface discovery
 - 📋 Performance benchmarking and optimization
 
-#### v0.2.0 - Reliability & Platform Support
-- 📋 Enhanced error handling and recovery
-- 📋 Improved symmetric NAT prediction algorithms
-- 📋 Comprehensive metrics and monitoring
-- 📋 Cross-platform testing and validation
-- 📋 Connection quality assessment
+#### v0.2.0 - Authentication & Security ✅
+- ✅ Peer authentication with Ed25519
+- ✅ Secure chat protocol implementation
+- ✅ Challenge-response authentication protocol
+- ✅ Message versioning and protocol negotiation
 
-#### v0.3.0 - Advanced Features
+#### v0.3.0 - Production Features ✅
+- ✅ Real-time monitoring dashboard
+- ✅ Automatic bootstrap node connection
+- ✅ Comprehensive error handling
+- ✅ GitHub Actions for automated releases
+- ✅ Binary releases for multiple platforms
+
+#### v0.4.0 - Bootstrap & Connectivity ✅
+- ✅ Automatic bootstrap connection on startup
+- ✅ Multi-bootstrap node support
+- ✅ Connection state management
+- ✅ Improved peer ID generation
+- 🚧 Platform-specific optimizations
+
+#### v0.5.0 - Advanced Features (Planned)
 - 📋 Adaptive retry strategies based on network conditions
 - 📋 Advanced relay selection algorithms
 - 📋 Protocol optimizations from real-world usage data
 - 📋 Enhanced debugging and diagnostic tools
 - 📋 Performance profiling and bottleneck analysis
 
-#### v0.4.0 - Autonomi Integration
+#### v1.0.0 - Autonomi Integration (Future)
 - 📋 Native Autonomi network protocol integration
 - 📋 Decentralized bootstrap node discovery
 - 📋 Enhanced security features for P2P networks

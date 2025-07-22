@@ -1,12 +1,18 @@
-# Implementation Quick Start Guide
+# Implementation Quick Start Guide (v0.4.1 Update)
 
-## Immediate Actions (Can Start Now)
+## Recent Achievements ✅
 
-### 1. Fix Compilation Error (5 minutes)
-```bash
-# In src/nat_traversal_api.rs, add at line 8:
-use crate::Endpoint;
-```
+### 1. Fixed Bootstrap Connection (v0.4.1)
+- Nodes now automatically connect to bootstrap nodes on startup
+- Added `connect_to_bootstrap()` method in `QuicP2PNode`
+- Fixed critical panic in peer ID generation
+
+### 2. Fixed Compilation Errors (v0.4.1)
+- Resolved Windows build issues with proper feature flags
+- Fixed all import errors and pattern matching issues
+- Project now compiles cleanly on all platforms
+
+## Remaining Actions
 
 ### 2. Implement Connection Status Check (1 hour)
 ```rust

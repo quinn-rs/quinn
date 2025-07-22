@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.4.2] - 2025-07-22
+
+### Documentation
+- Comprehensive update of all markdown documentation files
+- Updated README.md with current project status and features
+- Enhanced ARCHITECTURE.md with v0.4.1 improvements
+- Updated CLAUDE.md with recent completions
+- Improved INTEGRATION_REVIEW.md with fixed issues list
+- Created PROJECT_STATUS_v0.4.1.md summary document
+
+### Improved
+- Documentation now accurately reflects bootstrap connectivity feature
+- Clearer usage examples with multiple bootstrap nodes
+- Updated roadmap showing completed milestones
+
 ## [0.4.1] - 2025-07-22
 
 ### Added
@@ -23,6 +38,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Bootstrap nodes are now actively connected instead of just stored in configuration
 - Chat example properly handles multiple bootstrap addresses
 - Connection establishment now works correctly for NAT traversal testing
+- Critical panic in `derive_peer_id_from_address` - fixed incorrect byte array size (was copying 8 bytes into 2-byte slice)
+- Windows build compilation errors
+  - Added required Windows feature flags to Cargo.toml
+  - Fixed AF_INET/AF_INET6 imports in Windows network discovery
+  - Fixed pattern matching with ERROR_BUFFER_OVERFLOW
+  - Added thread safety implementations for WindowsInterfaceDiscovery
 
 ## [0.4.0] - 2025-07-21
 
