@@ -18,6 +18,15 @@ jobs:
       matrix:
         os: [ubuntu-latest, windows-latest, macos-latest]
         rust: [stable]
+
+  # ARM builds require cross-compilation
+  test-arm:
+    name: Test ARM
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        target: [aarch64-unknown-linux-gnu]
+        rust: [stable]
     steps:
       - uses: actions/checkout@v4
       
@@ -59,6 +68,24 @@ jobs:
       
       - name: Build release
         run: cargo build --release --verbose
+
+    steps:
+      - uses: actions/checkout@v4
+      
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: ${{ matrix.rust }}
+          targets: ${{ matrix.target }}
+      
+      - name: Install Cross
+        run: cargo install cross --git https://github.com/cross-rs/cross
+      
+      - name: Build with Cross
+        run: cross build --target ${{ matrix.target }} --verbose
+      
+      - name: Run tests with Cross
+        run: cross test --target ${{ matrix.target }} --verbose
 
   coverage:
     name: Code Coverage
