@@ -277,12 +277,10 @@ impl LinuxInterfaceDiscovery {
         }
 
         // Set up socket address
-        let mut addr = libc::sockaddr_nl {
-            nl_family: libc::AF_NETLINK as u16,
-            nl_pad: 0,
-            nl_pid: 0, // Kernel will assign PID
-            nl_groups: (1 << (libc::RTNLGRP_LINK - 1)) | (1 << (libc::RTNLGRP_IPV4_IFADDR - 1)) | (1 << (libc::RTNLGRP_IPV6_IFADDR - 1)),
-        };
+        let mut addr: libc::sockaddr_nl = unsafe { std::mem::zeroed() };
+        addr.nl_family = libc::AF_NETLINK as u16;
+        addr.nl_pid = 0; // Kernel will assign PID
+        addr.nl_groups = (1 << (libc::RTNLGRP_LINK - 1)) | (1 << (libc::RTNLGRP_IPV4_IFADDR - 1)) | (1 << (libc::RTNLGRP_IPV6_IFADDR - 1));
 
         // Bind socket
         let bind_result = unsafe {
